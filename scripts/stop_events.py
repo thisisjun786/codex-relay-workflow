@@ -7,7 +7,7 @@ answering one Stop are one event handled twice. The reading lives in crw_runtime
 the names of the files it reads, so the adapter and this command cannot disagree about them.
 
     python3 scripts/stop_events.py --journal-root <root> [--journal-root <root>]...
-        [--codex-home <home>]... [--since <ISO-8601 Z>] [--until <ISO-8601 Z>]
+        [--codex-home <home>]... [--since <YYYY-MM-DDTHH:MM:SSZ>] [--until <YYYY-MM-DDTHH:MM:SSZ>]
         [--session <id>] [--turn <id>]
 
 Give every journal root the host's registrations write to, and the host's Codex home. The
@@ -39,8 +39,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--journal-root", action="append", required=True,
                         help="a journal root a registration writes to; repeat for each")
-    parser.add_argument("--since", help="rows and claims at or after this UTC time")
-    parser.add_argument("--until", help="rows and claims before this UTC time")
+    parser.add_argument("--since", type=completion.window_bound,
+                        help="records at or after this UTC time, YYYY-MM-DDTHH:MM:SSZ")
+    parser.add_argument("--until", type=completion.window_bound,
+                        help="records before this UTC time, YYYY-MM-DDTHH:MM:SSZ")
     parser.add_argument("--session", help="only this session")
     parser.add_argument("--turn", help="only this turn")
     parser.add_argument("--codex-home", action="append", default=[],

@@ -1899,11 +1899,11 @@ def _ledger_shape(body, key, outcome):
                      or body.get("adapterOutcome") == ADAPTER_FAULTED)
                 and body.get("journalPolicy") in JOURNAL_POLICIES
                 and _guard_result_written(body)
-                and (body.get("attemptRow") is None or isinstance(body.get("attemptRow"), str)))
+                and (body.get("attemptRow") is None or _slot(body.get("attemptRow"))))
     claimed_by = body.get("claimedBy")
     return (_stamp(body.get("claimedAt")) and isinstance(body.get("stopHookActive"), bool)
             and isinstance(body.get("answerItem"), str) and bool(body.get("answerItem"))
-            and isinstance(claimed_by, dict) and isinstance(claimed_by.get("attemptRow"), str)
+            and isinstance(claimed_by, dict) and _slot(claimed_by.get("attemptRow"))
             and _is_count(claimed_by.get("pid"))
             and isinstance(claimed_by.get("hostLedger"), str) and bool(claimed_by.get("hostLedger"))
             # A claim is filed under the key of the event it names, recomputed here, so a claim
@@ -1982,7 +1982,7 @@ def _host_shape(body, key):
         return False
     claimed_by = body.get("claimedBy")
     return (isinstance(body.get("stopHookActive"), bool) and isinstance(claimed_by, dict)
-            and isinstance(claimed_by.get("attemptRow"), str) and _is_count(claimed_by.get("pid"))
+            and _slot(claimed_by.get("attemptRow")) and _is_count(claimed_by.get("pid"))
             and "journalRoot" in claimed_by
             and (claimed_by.get("journalRoot") is None
                  or isinstance(claimed_by.get("journalRoot"), str))
@@ -1995,7 +1995,44 @@ STAMP = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
 
 
 def _stamp(value):
-    return isinstance(value, str) and STAMP.match(value) is not None
+    """A real UTC second in now()'s format: the shape alone lets 2026-99-99T99:99:99Z through."""
+    if not isinstance(value, str) or STAMP.match(value) is None:
+        return False
+    try:
+        datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return False
+    return True
+
+
+def _journal_day(name):
+    """A day directory's name that is a real date, as new_slot() writes it."""
+    if not isinstance(name, str) or JOURNAL_DAY.match(name) is None:
+        return False
+    try:
+        datetime.strptime(name, "%Y%m%d")
+    except ValueError:
+        return False
+    return True
+
+
+def _slot(value):
+    """A row's place as slot_name() writes it: a real day and a row name."""
+    parts = value.split("/") if isinstance(value, str) else []
+    return (len(parts) == 2 and _journal_day(parts[0])
+            and JOURNAL_NAME.match(parts[1]) is not None)
+
+
+def window_bound(value):
+    """A --since or --until bound, which must be a time in the records' own format.
+
+    Records are compared with bounds as strings, which orders them correctly only when both are in
+    now()'s whole-second format; a fractional or offset bound would move the window's edge.
+    """
+    if not _stamp(value):
+        raise ValueError("a window bound is a UTC time in the records' own format,"
+                         " YYYY-MM-DDTHH:MM:SSZ, not " + repr(value))
+    return value
 
 
 def _exact(value, number):
@@ -2024,9 +2061,9 @@ def _identity_of(spelled):
 
 def _read_row(root, named):
     """The row an outcome names, read only from the shape a row takes under its own root."""
-    parts = named.split("/") if isinstance(named, str) else []
-    if len(parts) != 2 or not JOURNAL_DAY.match(parts[0]) or not JOURNAL_NAME.match(parts[1]):
+    if not _slot(named):
         return None
+    parts = named.split("/")
     body, readable = _read_json(Path(root) / parts[0] / parts[1])
     return body if readable and isinstance(body, dict) else None
 
@@ -2069,6 +2106,9 @@ def stop_events(roots, since=None, until=None, session=None, turn=None, hosts=No
     The old per-(session, turn) reading is reported too, labelled as superseded. Roots and host
     ledgers are deduplicated by the (device, inode) they reach.
     """
+    for bound in (since, until):
+        if bound is not None:
+            window_bound(bound)
     answer = {"predicate": PER_EVENT_PREDICATE, "verdict": None, "roots": [], "hostLedgers": [],
               "window": {"since": since, "until": until, "session": session, "turn": turn},
               "events": 0, "eventsWithMoreThanOneAcceptance": [], "duplicateInvocations": 0,
@@ -2156,6 +2196,10 @@ def _read_stop_events(answer, roots, since, until, session, turn, hosts):
                 continue
             table[key] = body
         for day in days:
+            if not _journal_day(day):
+                # Named like a day the adapter writes rows under, and not a date it can reach.
+                answer["rowsUnreadable"].append(str(root / day))
+                continue
             try:
                 names = sorted(e.name for e in os.scandir(str(root / day))
                                if e.is_file() and JOURNAL_NAME.match(e.name))

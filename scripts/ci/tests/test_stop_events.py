@@ -1143,3 +1143,47 @@ class ReviewRoundSevenControls(OneEventRecords, unittest.TestCase):
                 code, answer = verify(host.journal, **{"codex-home": str(host.codex_home)})
                 self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"),
                                  which + "." + field + "=" + repr(value) + " was vouched for")
+
+
+class ReviewRoundEightControls(OneEventRecords, unittest.TestCase):
+    """Red-first controls for the eighth review round and Devin's fractional bound (CRW-212).
+
+    A time the adapter writes is a real UTC second in now()'s format, and a day directory is a real
+    date: a record, a slot or a directory naming an impossible one was not written by the adapter.
+    A window bound is a time in the records' own format, so it compares with them correctly.
+    """
+
+    IMPOSSIBLE = "2026-99-99T99:99:99Z"
+
+    def test_an_impossible_time_is_not_vouched_for(self):
+        for which, field in (("host", "claimedAt"), ("claim", "claimedAt"), ("outcome", "at"),
+                             ("accepted", "at"), ("duplicate", "at")):
+            with self.subTest(record=which):
+                host, records = self.one_event()
+                self.change(records[which], lambda b: b.__setitem__(field, self.IMPOSSIBLE))
+                code, answer = verify(host.journal, **{"codex-home": str(host.codex_home)})
+                self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"),
+                                 which + "." + field + " was vouched for")
+
+    def test_a_row_under_an_impossible_day_is_not_vouched_for(self):
+        host, records = self.one_event()
+        day = host.journal / "99999999"
+        day.mkdir()
+        moved = day / records["accepted"].name
+        moved.write_text(records["accepted"].read_text(encoding="utf-8"), encoding="utf-8")
+        records["accepted"].unlink()
+        slot = "99999999/" + moved.name
+        self.change(records["claim"], lambda b: b["claimedBy"].__setitem__("attemptRow", slot))
+        self.change(records["host"], lambda b: b["claimedBy"].__setitem__("attemptRow", slot))
+        self.change(records["outcome"], lambda b: b.__setitem__("attemptRow", slot))
+        code, answer = verify(host.journal, **{"codex-home": str(host.codex_home)})
+        self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
+
+    def test_a_window_bound_not_in_the_records_format_is_refused(self):
+        host, _records = self.one_event()
+        done = subprocess.run([sys.executable, str(VERIFIER), "--journal-root", str(host.journal),
+                               "--since", "2026-09-23T11:58:17.500Z"],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        self.assertEqual(done.returncode, 2, "a fractional bound was accepted as a window")
+        with self.assertRaises(ValueError):
+            completion.stop_events([host.journal], until="2026-09-23 11:58:17")
