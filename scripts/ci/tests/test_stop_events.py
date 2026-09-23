@@ -1288,3 +1288,42 @@ class ReviewRoundTenControls(OneEventRecords, unittest.TestCase):
                 code, answer = verify(host.journal)
                 self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"),
                                  where + "=" + repr(value) + " was vouched for")
+
+
+class ReviewRoundElevenControls(OneEventRecords, unittest.TestCase):
+    """Red-first controls for the eleventh review round (CRW-212, PR #144).
+
+    journal() writes rows only as <32 hex>.json files in day directories, and the claims and
+    outcomes go under accepted/. Anything else in a journal root or a day directory is nothing the
+    adapter wrote, and a reading that skipped it would pass a second copy of an accepted row kept
+    under another name.
+    """
+
+    def test_an_entry_the_adapter_never_writes_is_reported_not_skipped(self):
+        def hidden(row):
+            return [row.parent / "hidden.json"]
+        def backup(row):
+            return [row.parent / (row.name + ".bak")]
+        def nested(row):
+            (row.parent / "sub").mkdir()
+            return [row.parent / "sub" / row.name]
+        def row_named_directory(row):
+            (row.parent / ("0" * 32 + ".json")).mkdir()
+            return []
+        def copied_day(row):
+            day = row.parent.parent / (row.parent.name + ".bak")
+            day.mkdir()
+            return [day / row.name]
+        def stray_root_file(row):
+            return [row.parent.parent / "stray.json"]
+        cases = [hidden, backup, nested, row_named_directory, copied_day, stray_root_file]
+        for place in cases:
+            with self.subTest(case=place.__name__):
+                host, records = self.one_event()
+                row = records["accepted"]
+                for target in place(row):
+                    shutil.copyfile(row, target)
+                code, answer = verify(host.journal)
+                self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"),
+                                 place.__name__ + " was skipped and the reading vouched for")
+                self.assertTrue(answer["foreignJournalEntries"], place.__name__ + " was not listed")

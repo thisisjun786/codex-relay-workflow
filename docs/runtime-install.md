@@ -1866,7 +1866,11 @@ one key, an accepted row whose claim is missing, or a duplicate that asked the g
   exited nor was signalled, the configuration and an established transcript path are absolute, an
   unestablished reason is one the adapter gives, and it carries the transcript path and answer
   item only where that reason is reached after them;
-- a row version it does not know, or an entry in a ledger that is not one of its records;
+- a row version it does not know, an entry in a ledger that is not one of its records, or an entry
+  in a journal root or a day directory that the adapter never writes there
+  (`foreignJournalEntries`): the root holds only day directories and `accepted`, a day only
+  `<32 hex>.json` rows. These are listed whatever the window, so a copy of a row kept under
+  another name is not skipped, and a journal root shared with other files never reads `TRUE`;
 - an outcome without its claim, naming another session or turn than its claim, or without the
   accepted row it names (or with none under `every_invocation`), and a claim without its outcome
   in the same root;

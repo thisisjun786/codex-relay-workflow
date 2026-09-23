@@ -2189,7 +2189,8 @@ def stop_events(roots, since=None, until=None, session=None, turn=None, hosts=No
               "unjudgedInvocations": {}, "legacyRows": 0, "acceptedWithoutOutcome": [],
               "outcomesWithoutClaim": [], "acceptedRowsWithoutLedger": [],
               "guardAskedOnDuplicate": [], "ledgerUnreadable": [], "rowsUnreadable": [],
-              "foreignLedgerEntries": [], "invocationsUnrecorded": [], "acceptedRowsMissing": [],
+              "foreignLedgerEntries": [], "foreignJournalEntries": [],
+              "invocationsUnrecorded": [], "acceptedRowsMissing": [],
               "duplicatesWithoutClaim": [], "hostFilesWithoutClaim": [],
               "claimsWithoutHostFile": [], "recordsThatDisagree": [],
               "turnsWithMoreThanOneEvent": 0,
@@ -2237,8 +2238,17 @@ def _read_stop_events(answer, roots, since, until, session, turn, hosts):
         reached[identity] = root
         entry["state"] = "read"
         try:
-            days = sorted(e.name for e in os.scandir(str(root))
-                          if e.is_dir() and JOURNAL_DAY.match(e.name))
+            # Everything in the root, not only what looks like a day: journal() writes rows only
+            # in day directories and claim_event() only under accepted/, so anything else here is
+            # nothing the adapter wrote, and skipping it would pass a copy of a row kept beside them.
+            days = []
+            for found in sorted(os.scandir(str(root)), key=lambda e: e.name):
+                if found.name == LEDGER_DIRECTORY:
+                    continue
+                if found.is_dir() and JOURNAL_DAY.match(found.name):
+                    days.append(found.name)
+                else:
+                    answer["foreignJournalEntries"].append(str(root / found.name))
             if (root / LEDGER_DIRECTORY).is_dir():
                 ledger = sorted(e.name for e in os.scandir(str(root / LEDGER_DIRECTORY)))
             elif os.path.lexists(str(root / LEDGER_DIRECTORY)):
@@ -2275,8 +2285,13 @@ def _read_stop_events(answer, roots, since, until, session, turn, hosts):
                 answer["rowsUnreadable"].append(str(root / day))
                 continue
             try:
-                names = sorted(e.name for e in os.scandir(str(root / day))
-                               if e.is_file() and JOURNAL_NAME.match(e.name))
+                # And every entry of the day: journal() writes only <32 hex>.json files there.
+                names = []
+                for found in sorted(os.scandir(str(root / day)), key=lambda e: e.name):
+                    if found.is_file() and JOURNAL_NAME.match(found.name):
+                        names.append(found.name)
+                    else:
+                        answer["foreignJournalEntries"].append(str(root / day / found.name))
             except OSError as error:
                 entry["state"], entry["detail"] = "unreadable", str(error)
                 listing_failed = True
@@ -2488,7 +2503,7 @@ def _read_stop_events(answer, roots, since, until, session, turn, hosts):
     for field in ("eventsWithMoreThanOneAcceptance", "acceptedWithoutOutcome",
                   "outcomesWithoutClaim", "invocationsUnrecorded", "acceptedRowsMissing",
                   "ledgerUnreadable", "duplicatesWithoutClaim", "foreignLedgerEntries",
-                  "hostFilesWithoutClaim", "claimsWithoutHostFile", "recordsThatDisagree"):
+                  "foreignJournalEntries", "hostFilesWithoutClaim", "claimsWithoutHostFile", "recordsThatDisagree"):
         answer[field] = sorted(set(answer[field]))
     if (answer["eventsWithMoreThanOneAcceptance"] or answer["acceptedRowsWithoutLedger"]
             or answer["guardAskedOnDuplicate"]):
@@ -2496,7 +2511,8 @@ def _read_stop_events(answer, roots, since, until, session, turn, hosts):
     elif (listing_failed or answer["ledgerUnreadable"] or answer["rowsUnreadable"]
           or answer["outcomesWithoutClaim"] or answer["acceptedWithoutOutcome"]
           or answer["invocationsUnrecorded"] or answer["acceptedRowsMissing"]
-          or answer["foreignLedgerEntries"] or answer["duplicatesWithoutClaim"]
+          or answer["foreignLedgerEntries"] or answer["foreignJournalEntries"]
+          or answer["duplicatesWithoutClaim"]
           or answer["hostFilesWithoutClaim"] or answer["claimsWithoutHostFile"]
           or answer["recordsThatDisagree"]
           or answer["unjudgedInvocations"] or answer["legacyRows"] or not events):
