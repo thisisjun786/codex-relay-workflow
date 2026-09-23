@@ -1016,6 +1016,9 @@ class RelayDaemon:
         report.notificationsDelivered += answer["delivered"]
         # Returned to pending with nothing sent: a deferral, as a supervisor report's is.
         report.deferred += answer["returned"]
+        # A parent measured for eligibility is a host observation this tick made and recorded,
+        # so a tick that made one is not quiet.
+        report.observed += answer["measured"]
         for notification, reason in answer["waiting"]:
             report.notes.append(f"fault notification {notification} waits: {reason}")
 

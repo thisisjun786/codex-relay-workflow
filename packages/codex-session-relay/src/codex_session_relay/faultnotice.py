@@ -49,9 +49,10 @@ class NoticeDeliverer:
         self._uncertain_after = None
 
     def tick(self, adapter, *, now=None, limit) -> dict:
-        """One bounded pass. Returns what it delivered, returned to pending and saw waiting."""
+        """One bounded pass. Returns what it delivered, returned to pending, measured (host
+        observations of a parent, each written as delivery writes one) and saw waiting."""
         now = self.clock.now() if now is None else now
-        answer = {"delivered": 0, "returned": 0, "waiting": []}
+        answer = {"delivered": 0, "returned": 0, "measured": 0, "waiting": []}
         self._reconcile(answer, now)
         if limit > 0 and self._ready(adapter, answer, now):
             taken = self.ledger.reserve_notifications(
@@ -130,6 +131,7 @@ class NoticeDeliverer:
                         and self._unmeasured(eligibility.get("contact"), now)):
                     measured.add(parent)
                     self._measure(adapter, parent)
+                    answer["measured"] += 1
                     ready = True
                 continue
             reason = self.waiting_for(one, now=now)

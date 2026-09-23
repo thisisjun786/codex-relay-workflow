@@ -960,6 +960,10 @@ Limits, stated rather than papered over:
   the fault withdrew, and a fault that flaps within one cycle is told once. Whether a withdrawal
   after a delivered blocking notice should itself go up is a criterion 7 decision this does not
   make.
+- The pre-pass reads pending notifications a page at a time by age, and a reservation takes the
+  least recently examined candidates, so under a large backlog of waiting notifications one that
+  can go may wait a few ticks for both to reach it. It is latency, not loss: every candidate is
+  reached within a bounded number of ticks.
 - The unsent-write warning (`attention()`) is still visible locally only, on `status` and as a
   tick note; it is not a notification.
 
@@ -1070,7 +1074,7 @@ ledger.fail_notification(notification_id, *, token, error)
 ledger.reconcile_notification(notification_id, *, delivered, ref)
 
 faultnotice.NoticeDeliverer(ledger, channel, *, owner).tick(adapter, *, now=None, limit)
-    -> delivered, returned, waiting
+    -> delivered, returned, measured, waiting
 
 faultsweep.sweep(store, *, product="crw", scope=None, readings=(), limit=32, policy=None,
                  readings_after=0, selection=None, now=None)
