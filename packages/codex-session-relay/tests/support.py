@@ -12,6 +12,7 @@ import re
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 from contextlib import contextmanager
 
 from codex_session_relay import NO_DELIVERABLE, identity, manifest
@@ -60,6 +61,12 @@ class RelayTestCase(unittest.TestCase):
         self.addCleanup(self.store.close)
         self.registry = Registry(self.store, self.clock)
         self.intake = ReceiptIntake(self.store, self.registry, self.clock)
+        # Hermetic host state. The fault collector reads the runtime installer's host record
+        # under XDG_STATE_HOME, and no test may read the one this host actually holds - nor may
+        # a relay process a test spawns, which inherits this environment.
+        state_home = patch.dict(os.environ, {"XDG_STATE_HOME": os.path.join(self.tmp, "xdg-state")})
+        state_home.start()
+        self.addCleanup(state_home.stop)
 
     # ----------------------------------------------------------- fixtures
 

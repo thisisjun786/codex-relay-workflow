@@ -3696,6 +3696,63 @@ class RetriableDestinationTests(unittest.TestCase):
             self.assertIn("could not be read", emitted[0]["candidate"])
 
 
+class InstallEntriesCarryTheirRevisionTests(unittest.TestCase):
+    """CRW-205 live findings: an installed relay states its revision from its OWN install entry.
+
+    The component-level facts an install writes can outlive it - a rollback removes a failed
+    install's entry and leaves them - so the installer writes the same identity onto the entry it
+    adds, and the entry and its revision are added and removed together.
+    """
+
+    def test_each_install_entry_carries_the_identity_its_component_facts_record(self):
+        import runtime_install
+
+        captured = {}
+        real_update = runtime_install.hostrecord.update
+        stop = reading.Reading(state=reading.ACCESS_ERROR, source="record", exception="Stop",
+                               at="test", detail="stopped after the installs were handed over")
+
+        def update(path, version, **kwargs):
+            if "installs" in kwargs:
+                captured.update(kwargs)
+                return stop
+            return real_update(path, version, **kwargs)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            site = Path(temporary) / "site"
+
+            def located(python, module):
+                where = site / module
+                where.mkdir(parents=True, exist_ok=True)
+                (where / "__init__.py").write_text("", encoding="utf-8")
+                return str(where), None, []
+
+            real_run = subprocess.run
+
+            def run(argv, *args, **kwargs):
+                # git answers for real, so the facts are the checkout's own identity; the
+                # environment and package steps are the only ones not performed.
+                if argv and Path(str(argv[0])).name == "git":
+                    return real_run(argv, *args, **kwargs)
+                return subprocess.CompletedProcess(argv, 0, "", "")
+
+            with mock.patch.object(runtime_install.hostrecord, "update", side_effect=update), \
+                 mock.patch.object(runtime_install.subprocess, "run", side_effect=run), \
+                 mock.patch.object(runtime_install.definition, "verify", return_value=[]), \
+                 mock.patch.object(runtime_install, "module_location", side_effect=located), \
+                 mock.patch.object(runtime_install, "interpreter_version", return_value="3.13.0"):
+                code, _emitted, _dest, _record = RetriableDestinationTests._install(self, temporary)
+        self.assertEqual(code, 1, "the run stops where the record would have been written")
+        installs = dict(captured.get("installs") or [])
+        facts = captured.get("component_facts") or {}
+        self.assertTrue(installs, "the run reached the write of its install entries")
+        for name, install in installs.items():
+            self.assertIn(name, facts, name)
+            self.assertRegex(facts[name].get("repositoryCommit") or "", "^[0-9a-f]{40}$", name)
+            self.assertEqual(facts[name], install.get("source"),
+                             name + ": the entry carries the revision its install recorded")
+
+
 # =========================================================================================
 # The preflight corpus, filled in
 # =========================================================================================
