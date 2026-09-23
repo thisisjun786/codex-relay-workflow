@@ -816,7 +816,7 @@ class WhatTheMergeBoundaryReviewFound(ChannelTestCase):
             self.channel._claim(message_id, now=now, owner="a racing caller",
                                 recipient=SUPERVISOR,
                             resolution=self.channel.resolve(self.rid))
-        self.assertIn("NotClaimable", type(caught.exception).__name__)
+        self.assertIsInstance(caught.exception, channel_module._Paced)
         self.assertEqual(self.channel.get(message_id)["state"], QUEUED,
                          "the claim rolled back, so nothing was spent")
 
@@ -1084,7 +1084,7 @@ class WhatTheFourthReviewRoundFound(ChannelTestCase):
             self.channel._claim(second, now=sent_at + 1, owner="a racing caller",
                                 recipient=SUPERVISOR,
                                 resolution=self.channel.resolve(self.rid))
-        self.assertIn("NotClaimable", type(caught.exception).__name__)
+        self.assertIsInstance(caught.exception, channel_module._Paced)
         self.assertEqual(self.channel.get(second)["state"], QUEUED)
         self.assertEqual(
             self.store.one("SELECT sends FROM recipient_rate WHERE recipient_task_id = ?",
@@ -1295,7 +1295,7 @@ class WhatTheFifthReviewRoundFound(ChannelTestCase):
         event_id = one["basis"]["eventId"]
         service = self.queued_delivery(event_id)
         self.channel.attempt(message_id, self.adapter)
-        with self.assertRaises(delivery_module._NotClaimable):
+        with self.assertRaises(delivery_module._Paced):
             service._claim(event_id, now=self.clock.now() + 1, owner="the other queue",
                            recipient=SUPERVISOR)
         self.assertEqual(service.get(event_id)["state"], QUEUED)
@@ -1311,7 +1311,7 @@ class WhatTheFifthReviewRoundFound(ChannelTestCase):
         with self.assertRaises(Exception) as caught:
             self.channel._claim(message_id, now=self.clock.now() + 1, owner="second",
                                 recipient=SUPERVISOR, resolution=self.channel.resolve(self.rid))
-        self.assertIn("NotClaimable", type(caught.exception).__name__)
+        self.assertIsInstance(caught.exception, channel_module._Paced)
         self.assertEqual(self.channel.get(message_id)["state"], QUEUED)
 
     def test_the_gap_is_read_across_the_hour_boundary(self):
@@ -1324,7 +1324,35 @@ class WhatTheFifthReviewRoundFound(ChannelTestCase):
         with self.assertRaises(Exception) as caught:
             self.channel._claim(second, now=boundary + 1, owner="next hour",
                                 recipient=SUPERVISOR, resolution=self.channel.resolve(self.rid))
-        self.assertIn("NotClaimable", type(caught.exception).__name__)
+        self.assertIsInstance(caught.exception, channel_module._Paced)
+
+    def test_a_report_refused_inside_its_claim_is_rescheduled_by_the_gap(self):
+        """Refused on the budget INSIDE the claim, through attempt(): deferred, never held.
+
+        The preflight is blinded, which is what a caller sees when a delivery to the same
+        task commits after its preflight read.
+        """
+        _one, message_id = self.staged()
+        now = self.clock.now()
+        self.store.db.execute(
+            "INSERT INTO recipient_rate (recipient_task_id, window_start, sends, last_send_at)"
+            " VALUES (?,?,1,?)", (SUPERVISOR, int(now // 3600) * 3600, now))
+        self.store.db.commit()
+        self.channel._rate_limited = lambda recipient, at: False
+
+        self.assertIsNone(self.channel.attempt(message_id, self.adapter, now=now + 1))
+        row = self.channel.get(message_id)
+        self.assertEqual(row["state"], QUEUED)
+        self.assertIsNone(row["hold_reason"])
+        self.assertEqual(row["attempt_count"], 0)
+        self.assertEqual(row["next_eligible_at"],
+                         now + 1 + self.channel.policy.min_send_interval_seconds)
+        self.assertEqual(self.store.all("SELECT request_id FROM supervisor_attempts"), [])
+        self.assertEqual(self.adapter.sends, [])
+
+        del self.channel._rate_limited
+        record = self.channel.attempt(message_id, self.adapter, now=row["next_eligible_at"])
+        self.assertEqual(record["deliveryState"], DISPATCHED)
 
     # ------------------------------------------------------------ quoted command lines
 

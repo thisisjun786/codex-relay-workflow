@@ -91,6 +91,9 @@ carried by the envelope alone until somebody decides what an answer cannot do wi
    reading one hour let two sends a second apart straddle the boundary. Each sender also reads
    the same predicate before the host, and that is a preflight: two callers pass it at the
    same moment, so on its own it paces nothing.
+   A claim refused on the budget is deferred by the same gap the preflight would have applied,
+   in both queues. It is never recorded as a failure and never held, because nothing about the
+   message or the recipient is wrong: another send simply got there first.
 4. Within one recipient the oldest claimable message is claimed first, and an older message
    that is IN FLIGHT blocks the one behind it too - that is the moment ordering matters most.
    It is still weaker than arrival order, deliberately: an older message that is held, inside

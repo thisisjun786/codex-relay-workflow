@@ -121,6 +121,14 @@ class _NotClaimable(Exception):
     """Nothing to claim, for any reason. The caller does nothing and reports nothing."""
 
 
+class _Paced(_NotClaimable):
+    """A claim refused on the recipient's shared send budget, and on nothing else.
+
+    attempt() defers it by the same gap the preflight uses, so a report refused inside the claim
+    is rescheduled rather than left eligible for a retry the same budget refuses again.
+    """
+
+
 class SupervisorChannel:
     """Staging, sending and reading back what a parent owes the level above."""
 
@@ -633,6 +641,9 @@ class SupervisorChannel:
             attempt_no, request_id, message = self._claim(
                 message_id, now=now, owner=owner, recipient=recipient,
                 resolution=resolution)
+        except _Paced:
+            self._reschedule(row, now + self.policy.min_send_interval_seconds)
+            return None
         except _NotClaimable:
             return None
         try:
@@ -850,7 +861,7 @@ class SupervisorChannel:
             # the intended trade, said out loud. _rate_limited reads the same predicate before
             # the host is read; two callers both pass that, so this is where it actually holds.
             if reserve_send(db, self.policy, recipient, now) is not None:
-                raise _NotClaimable()
+                raise _Paced()
         return attempt_no, request_id, message
 
     def _settle(self, row, request_id, facts, record, now) -> None:

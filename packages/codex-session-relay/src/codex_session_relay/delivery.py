@@ -963,7 +963,7 @@ class DeliveryService:
             # calls: the two share this recipient's budget, and a bound only one of its
             # writers re-checks inside its write is a bound the other one does not obey.
             if reserve_send(db, self.policy, recipient, now) is not None:
-                raise _NotClaimable()
+                raise _Paced()
         return attempt_no, request_id, message
 
     # -------------------------------------------------------------- attempt
@@ -1049,6 +1049,16 @@ class DeliveryService:
             attempt_no, request_id, message = self._claim(
                 event_id, now=now, owner=owner, recipient=recipient
             )
+        except _Paced:
+            # Refused on the shared budget INSIDE the claim: another sender woke this recipient
+            # after the preflight read. The claim rolled back, so this is the preflight's answer
+            # arriving late, and it gets the preflight's treatment - deferred by the same gap,
+            # never recorded as a failure and never held.
+            self._reschedule(
+                event_id, row["state"], now + self.policy.min_send_interval_seconds,
+                attempts=row["attempt_count"],
+            )
+            return None
         except _NotClaimable:
             return None
         except _LateSupersession as late:
@@ -2027,6 +2037,14 @@ def _status_for_record(observation) -> str:
 
 class _NotClaimable(Exception):
     pass
+
+
+class _Paced(_NotClaimable):
+    """A claim refused on the recipient's shared send budget, and on nothing else.
+
+    Its own class so attempt() can defer the delivery the way the preflight would have. As a
+    plain refusal it left the row eligible at once, for a retry the same budget refuses again.
+    """
 
 
 def _render_findings(findings):
