@@ -142,7 +142,16 @@ class Reporting(GuardTestCase):
             result = self.read(turn=turn)
             self.assertEqual(result["reportingState"], expected)
             self.assertEqual(result["stopObservation"]["record"]["observation"], "undeclared_turn_end")
-        self.assertEqual(first, self.read())
+        # The original warning is preserved whole: the diagnosis of a turn never changes
+        # because something happened after it. What changes is whether a report is still owed
+        # because of it - a later turn was admitted, so the work went on (omitted.classify).
+        again = self.read()
+        owed = ("owed", "owedReason")
+        self.assertEqual({k: v for k, v in first.items() if k not in owed},
+                         {k: v for k, v in again.items() if k not in owed})
+        self.assertEqual((first["owed"], first["owedReason"]), (True, omitted.OWED))
+        self.assertEqual((again["owed"], again["owedReason"]),
+                         (False, omitted.LATER_TURN_ADMITTED))
 
     def test_staged_ready_stays_staged(self):
         relation = self.managed()

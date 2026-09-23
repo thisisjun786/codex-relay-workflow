@@ -981,8 +981,12 @@ class TheCommandsAParentActuallyRuns(ReportingTestCase):
             self.store, self.clock, self.delivery = case.store, case.clock, case.delivery
             self.linkage = linkage
             from codex_session_relay.assignment import AssignmentView
+            from codex_session_relay.supervisorchannel import SupervisorChannel
             self.assignments = AssignmentView(case.store, case.registry, case.clock,
                                               linkage=linkage)
+            # supervisor-standing adds the omissions this store derives, through the channel.
+            self.supervisor_channel = SupervisorChannel(case.store, case.registry, linkage,
+                                                        case.clock)
 
     def services(self):
         from codex_session_relay.linkage import Linkage

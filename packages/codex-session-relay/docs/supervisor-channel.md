@@ -98,7 +98,9 @@ carried by the envelope alone until somebody decides what an answer cannot do wi
 2. An event-derived report is staged only from a fact the store already holds as final - that
    derivation requires `stage = 'final'` and no suppression - so it cannot precede the record
    it reports. An omission is the other path and has no event in this store at all: it comes
-   from a reporting observation the caller passes in, and what vouches for it is that reading.
+   from a reporting observation - one a caller passes in, or one this store derives from the
+   declarations the child's relay recorded here (see an omission this store derives) - and what
+   vouches for it is that reading, which cannot precede the settlement it reads.
 3. The per-recipient hourly bound is SHARED between the two queues on purpose. It bounds how
    often one task may be woken, and two queues feeding one task must not each get their own
    budget. The consequence, said rather than implied: where one task is both a parent and a
@@ -181,6 +183,88 @@ turn passes every other check. Otherwise staging refuses as `contradictory_obser
 and an obligation whose readings disagree about what it is or where it can be read is refused
 by name under `refused` rather than staged with one of them.
 
+### An omission this store derives
+
+A turn that ended without a report writes no event, and the relay daemon reads no marker file
+(hook-contract.md gives it nothing there), so from the store alone a turn that declared its
+outcome looked exactly like one that declared nothing. Two records close that, both written
+by the command that writes the marker fact, after it, mirroring the fact the marker then stands
+on (`declarations.py`):
+
+- `intent-claim` records in `reporting_sessions` that this session's relay writes its
+  declarations into this store, with the marker root and workspace the claim used and the issue
+  the intent was declared for - and only from a marker the marker reader could read at that
+  moment: every fact readable and the right shape, the claim standing and correlated with an
+  intent declared for that workspace. A marker `reporting-show` would answer `unmeasured` about
+  records nothing, and the session stays a legacy admission;
+- `intent-disposition` records the turn's declared outcome in `turn_declarations`,
+  create-once like the marker file, holding the store's write lock across the marker
+  publication and the record (`declarations.Held`): a staging, claim or transport start that
+  could act on the turn's omission takes the same lock, so it waits and sees the declaration
+  instead of reading the moment between the two.
+
+The store to write is the one the coordinator recorded in the intent (`dbPath`), the same one
+the Stop hook reads receipts from. Both commands answer with a `storeRecord` beside the marker
+answer: `recorded`, `unchanged`, `conflict` (the first record stands, as it does in the
+marker), `not_recorded` when the intent names no store or the store does not exist - there
+is then nothing to derive from either - and `failed` when the store could not be written,
+which exits 2 with the whole answer, because the marker fact was published and the caller has
+to see both. Running the command again retries only the store record.
+
+`omitted.derive` then reads one relationship's newest admitted turn from this store: the relay's
+own settlement, the admission, the recorded declaration, the receipt where readiness was
+declared, and whether a later turn was admitted. It hands those facts to `omitted.classify`,
+the same predicate `reporting-show`'s reader (`omitted.observe`) hands its facts to; neither
+reader classifies anything itself, and neither classifies a turn the other would refuse to place: the registration's identity - child, binding, issue, working directory and dispatch - is one predicate (`_identity_problem`) both apply first, the store reader against the workspace and issue its claim record carries. `tests/test_supervisor_omission_store.py` feeds one
+fact set through both and compares the facts and the answer. The diagnosis is CRW-180's,
+unchanged. Beside it the predicate answers whether a report is still OWED: not when the turn's
+own final receipt exists (it goes upward as its own fact), not when a later turn was admitted
+(the work went on; admissions are ordered by when the bound admission was made, to the
+microsecond), and not inside `omission_grace_seconds` after the settlement (300 by
+default), which gives the parent, or the child it steers, the chance to answer first. A
+reading that owes nothing raises no obligation and is not a gap.
+
+The readers still read different sources, and where the marker and the store disagree about
+the assignment itself each answers from its own. A marker that never received
+`intent-register` leaves the marker reader without the relationship id it reads the store
+with, so it answers `unmeasured`; the store reader finds the registration through the dispatch
+the claim recorded, and the Stop hook already reads that turn as `managed_unregistered`, an
+omission. A marker registration naming another generation than the store's is read by the
+marker reader as a receipt that cannot count, and by the store reader against the registration
+in this store; that direction wakes nobody.
+
+A marker that stops reading AFTER the claim - a fact rewritten out of shape, a file that can
+no longer be read - is one the store reader cannot see: the daemon reads no marker file. The
+store reader then answers from the registration and the declarations recorded here, which the
+marker's health does not change, while `reporting-show` answers `unmeasured`. The Stop hook
+releases a turn it cannot read the marker for rather than prompting the child to declare, so an
+omission derived then is a turn that really ended without a declaration.
+
+The cut-over is the claim record. A turn whose session has no `reporting_sessions` row -
+every child that claimed before its relay wrote here, or through a relay that does not - is a
+legacy admission: its declarations may exist only in the marker, so the store's silence proves
+nothing, `derive` answers `unmeasured` / `declarations_not_recorded`, and nothing is staged
+or sent for it automatically. It stays owed and visible exactly as before, through a reading
+somebody passes in.
+
+What the store derives is staged like any omission: with its reading, frozen on the row, now
+carrying `source: relay_store`, and `supervisor-show` prints `reporting-derive` as its
+recheck. `supervisor-standing`, `supervisor-stage --project` and the daemon's pass all add
+the store's owed readings beside a caller's; a caller's reading of the same obligation is kept
+and the store's left out, because one omission travels with one reading. The two readings of
+one omission share its message id, and where they agree field for field they are one reading
+as far as staging is concerned, so a parent's `reporting-show` staging and the daemon's
+derivation converge on one message.
+
+Where the turn's session records its declarations here, the store decides for EVERY omission,
+whatever reading it arrives with: staging asks it under the write lock and the transport start
+asks it again (`_omission_withdrawn`, from `_proposal_now`). A parent's `reporting-show`
+reading taken before the child declared the turn in progress is a proposal like any other; the
+staging refuses as `not_claimable`, or the message is held `superseded_by_report` at its
+transport start, and nobody is woken. Where the session records nothing here - a legacy
+admission - the store cannot see the declaration, and a caller's frozen reading stands as it
+always has, checked against the turn's final receipt.
+
 ### A staged row is a proposal
 
 A staged row is a proposal, not a commitment. Transport start re-derives the obligation's
@@ -192,7 +276,9 @@ now:
 
 - who it is for: the live hierarchy, through `resolve()`;
 - what it is: the obligation the row's event raises from that event's current work report, or
-  the one the reading frozen on an omission's row raises;
+  the one the reading frozen on an omission's row raises - and, for a reading this store
+  derived, the store's derivation of that same turn now, so a declaration recorded since, a
+  later admitted turn or the turn's own receipt leaves nothing owed through the message;
 - which statement: the newest event raising the obligation, found by the obligation's key
   rather than by asking the event the row was staged from first - that event can stop raising
   it while a newer statement of the same block still does - and that event's current report;
@@ -261,6 +347,15 @@ have them describe a recipient they were never sent to. Staging it again refuses
 reports it under `refused`; the successor has not been told through this channel, and the
 obligation stands until the Linear record confirms it. Sending never re-addresses anything;
 which task a report is for is decided where it is staged.
+
+A message the hierarchy gives no addressee does not hold the queue. The claim keeps
+per-recipient order - a message waits while an older one to the same task can go - so an
+unsent message whose `resolve()` refuses (an archived assignment) or names other endpoints than
+the row does was, left claimable, the oldest message to its recipient for good, and every later
+report to that task waited behind it. `attempt()` holds it as `hierarchy_unresolved` when it
+meets either refusal. The hold is derived: staging and the next attempt release it on the same
+message once `resolve()` names its endpoints again, and staging re-addresses one that was never
+sent. Order is kept among the messages that have an addressee.
 
 ### Who moves a message out of sending
 
@@ -533,8 +628,9 @@ obligation is not discharged by it.
 
 ## What this does not do
 
-Nothing here wakes anybody on a timer. There is no daemon pass behind these commands: a report
-goes out inside the parent's own turn. An uncertain send is never retried automatically either,
+Nothing here wakes anybody on a timer. The daemon's supervisor pass runs on the daemon's tick
+and sends a message once, for an owed fact, under the pacing and lifecycle rules above; a tick
+with nothing owed sends nothing and writes nothing. An uncertain send is never retried automatically either,
 because there is no reconciler for this queue and a second send that lands is a second wake for
 one fact; it stays `held_uncertain`, which is not claimable, and says so, until a verified
 readback of that attempt settles it.
@@ -581,7 +677,9 @@ answered as a fact already reported.
 
 A report still owed for an archived assignment has nobody to go to. `resolve()` finds the
 project by walking up the edge the assignment holds on its issue, and archiving the assignment
-releases that edge, so staging and sending refuse as `unregistered_scope` from then on. The
+releases that edge, so staging and sending refuse as `unregistered_scope` from then on, and
+the unsent message is held as `hierarchy_unresolved` so later reports to the same supervisor
+do not wait behind it. The
 obligation keeps standing and `supervisor-standing` keeps listing it; through this channel it
 goes out only if it is staged and sent before the assignment is archived. A superseded
 assignment is not affected, because its successor holds the edge.
@@ -603,28 +701,56 @@ unknown, and the send is withheld with no hold, so the next attempt through a so
 see the recipient sends it; nothing is recorded as sent, and a readback through such a socket
 cannot verify, because it needs the host to read the named turn on the recipient's thread.
 
+An omission derived from the store rests on the child's relay having recorded its declarations
+there. A store record that failed is reported and exits 2, and a child that carries on
+regardless leaves the store without the declaration its marker holds; so does a child that
+claimed through a relay carrying this change and later declared through one without it. Either
+way the store can derive an omission the marker would not, and the grace is all that stands
+between that and a wake. The store also has nothing like the marker's Stop record: its witness
+that the turn ended is the relay's own settlement read beside the recorded declaration, so a
+child whose Stop hook never fired is derived where `reporting-show` answers `stop_unobserved`.
+
 ## Who calls it today
 
-Nothing in the relay calls this channel on its own. Its commands are the whole entry surface -
+The relay daemon does, on every tick, with nobody asking. Its supervisor pass
+(`RelayDaemon._report_upward`) stages what each project owes - the same staging a parent runs
+by hand, restricted to obligations whose message is absent or still unsent - and attempts each
+recipient's oldest eligible message through `SupervisorChannel.attempt`, a page of them at a time
+starting after the last one the previous tick considered, so neither one recipient's backlog nor
+a page of recipients that are never sendable can keep a later recipient's report unread; an attempt that raises
+is deferred by the recheck interval, and only an attempt that reached the claim and the
+transport spends the send budget, so a recipient that is never sendable cannot take every tick's
+budget however far apart ticks are. So every rule above holds
+for it unchanged: one obligation is one message and one wake, what goes out is re-derived where
+the transport starts (I-247), the recipient's budget is shared with parent-child traffic and
+spent only at the transport start, a paused, archived or unreachable supervisor is withheld
+rather than woken and keeps the obligation, and a message another caller has claimed is left
+alone. It is bounded like the daemon's other passes, by `max_supervisor_projects_per_tick` and
+`max_supervisor_sends_per_tick`, project keys are read a page at a time, and a project whose
+messages have all gone out costs reads and no write. Within a project it reads the project's
+whole history, the read `supervisor-standing` makes, so it is bounded in projects and sends per
+tick and not in the length of one project's history.
+
+The commands stay valid and are what a parent runs when it wants an answer now:
 `supervisor-stage`, `supervisor-send`, `supervisor-read` and `supervisor-show`, beside the
-readings `supervisor-select`, `supervisor-standing` and `supervisor-report-recorded` - and no
-daemon pass, Stop hook, MCP tool or service stages or sends a report. In live
-operation the caller is the project parent, from inside its own turn - `supervisor-stage
---project` for what the project owes, then `supervisor-send` for each staged message - and the
-supervisor answers with `supervisor-read` from a turn of its own. crw-run's relay reference
-states that as an instruction to the parent and the relay does not enforce it, so a parent that
-does not run the commands reports nothing through this channel. The reporting duty is carried
-by that instruction, which is weaker than an automatic one, and making it automatic is not part
-of this change. What IS independent of the parent is the obligation: it is derived from the
-event row the child's final receipt wrote, so a parent that never stages or sends leaves the
-report owed and unreported in `supervisor-standing --project`, across a restart, until somebody
-reports it or the Linear record confirms it. Nothing notices that on its own; it is visible to
-whoever asks.
+readings `supervisor-select`, `supervisor-standing` and `supervisor-report-recorded`. A parent
+that stages or sends by hand converges on the same message ids as the daemon, and whichever
+claims a message first sends it; the other finds nothing to send. The supervisor still answers
+with `supervisor-read` from a turn of its own - nothing reads back on its behalf.
+
+An omission is staged by the pass too, from this store (see an omission this store derives):
+once its grace has passed, for a turn whose child's relay recorded its claim here. The daemon
+still reads no marker file; what it reads is what the child's own relay wrote into the store
+beside the marker. A legacy admission - a child that claimed without that record - is never
+staged automatically, and stays owed and visible in `supervisor-standing` whenever a
+`reporting-show` reading of it is passed in, as before.
 
 ## Scope of these claims
 
 Source-implemented and covered by `tests/test_supervisor_channel.py`, which stages, sends and
-reads back against this package's own fake host. That is evidence about this source and about
+reads back against this package's own fake host, and by `tests/test_supervisor_autosend.py` and
+`tests/test_supervisor_omission_store.py`, which run the daemon tick and the child's commands
+against it. That is evidence about this source and about
 that host. It is not an installed runtime, an activated service, or any report reaching any
 supervisor on any machine. Whether a real parent stages and sends a report, a real supervisor
 thread receives it, and a real supervisor reads it back is the live round trip, which is run
