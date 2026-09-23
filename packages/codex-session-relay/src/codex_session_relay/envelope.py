@@ -397,6 +397,14 @@ def region(*, direction, purpose, relation_id, sender, recipient, subject, obser
 
 def check(one) -> None:
     """Refuse a region that is missing what its own kind cannot do without."""
+    # Shape before membership: a list or a mapping where a name belongs cannot be looked up
+    # in a table without raising, and a validator that raises on what it was sent has not
+    # told the sender what was wrong with it.
+    for name in ("direction", "kind", "purpose"):
+        if not isinstance(one.get(name), str):
+            raise EnvelopeRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                f"the {name} is a name, not a {type(one.get(name)).__name__}")
     kind = one.get("kind")
     _known(kind, KINDS, "kind")
     for name in REQUIRED_ALWAYS + REQUIRED_BY_KIND[kind]:
@@ -408,12 +416,21 @@ def check(one) -> None:
             )
     for name in ("sender", "recipient"):
         endpoint = one[name]
+        if not isinstance(endpoint, dict):
+            raise EnvelopeRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                f"the {name} is an endpoint object with a task id, not a"
+                f" {type(endpoint).__name__}")
         if is_absent(endpoint.get("taskId")):
             continue
         if not isinstance(endpoint.get("taskId"), str) or not endpoint["taskId"].strip():
             raise EnvelopeRefused(
                 RefusalReason.MALFORMED_RECEIPT,
                 f"the {name} is neither a task id nor a stated absence")
+    if one.get("reach") is not None and not isinstance(one["reach"], dict):
+        raise EnvelopeRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "the reach is a ladder of named stages, not a " + type(one["reach"]).__name__)
     check_reach(one["direction"], one.get("reach") or {})
 
 

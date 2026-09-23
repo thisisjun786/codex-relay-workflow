@@ -27,6 +27,10 @@ CHILD = "01child-task"
 ISSUE = "CRW-149"
 DIGEST = "d" * 64
 HEAD = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+# The link revision the receiver reads for this relationship, and the dispatch request that
+# opened its current generation, which is what a first assignment names.
+REVISION = 3
+DISPATCH = "dispatch-crw149-first"
 
 BODY = chr(10).join((
     "TASK: land the typed packet contract",
@@ -37,32 +41,67 @@ BODY = chr(10).join((
     "RETURN FORMAT: result.json plus a final report naming that head",
     "DECISION BOUNDARY: routine implementation choices are yours; a scope change comes back",
 ))
+# A correction says what it corrects, in its own form, and carries the evidence it rests on.
+CORRECTION_BODY = chr(10).join((
+    "VIOLATED CRITERION: criterion 5, the review on the current head is unresolved",
+    "WHAT CHANGED: a finding arrived on the head the child reported",
+    "FIX SCOPE: the file the finding names",
+    "PRESERVE: the pull request, its branch and every passing check",
+    "REVERIFY AND RETURN: rerun the suite on the new head and report review_ready",
+))
+CORRECTION_EVIDENCE = ["/state/crw/crw-149/evidence/finding.txt"]
 
 
 def a_policy(**overrides):
     base = {"model": "anthropic/claude-opus-5", "effort": "xhigh",
-            "workflow": "CXC Loop", "sandbox": "danger-full-access",
+            "workflow": "CXC Loop", "mode": packets.LOOP, "sandbox": "danger-full-access",
             "approval": "never"}
     base.update(overrides)
     return packets.policy(**base)
+
+
+# The pair the parent runs on since 2026-09-23, and the one it left. A callback names the task
+# to answer and the pair that task is authorised to run now, so the left pair is what a stale
+# callback carries.
+PARENT_PAIR = ("anthropic/claude-opus-5-5", "xhigh")
+LEFT_PARENT_PAIR = ("devin/swe-2", "max")
+
+
+def a_callback(**overrides):
+    base = {"task_id": PARENT, "model": PARENT_PAIR[0], "effort": PARENT_PAIR[1]}
+    base.update(overrides)
+    return packets.callback(**base)
 
 
 def an_assignment(**overrides):
     base = dict(
         direction=envelope.PARENT_TO_CHILD, purpose="assignment", relation_id=RELATION,
         sender=PARENT, recipient=CHILD, subject=ISSUE, issue=ISSUE,
-        criteria_digest=DIGEST, policy_record=a_policy(), callback="parent task " + PARENT,
-        body=BODY,
+        criteria_digest=DIGEST, policy_record=a_policy(), callback=a_callback(),
+        body=BODY, relation_revision=REVISION,
     )
     base.update(overrides)
     return packets.compose(**base)
+
+
+def a_first_assignment(**overrides):
+    """The assignment as it is really sent: before the child exists.
+
+    It cannot name the relationship, whose id is derived from the child's task id, or the
+    recipient. It names the dispatch request registration binds, and states the recipient as
+    an absence. The earlier round trip pre-filled a future child id here, which no parent can.
+    """
+    base = dict(relation_id=DISPATCH, relation_revision=None, recipient=envelope.absent(
+        envelope.UNKNOWN, "creation has not returned the child's task id"))
+    base.update(overrides)
+    return an_assignment(**base)
 
 
 def a_review_ready(**overrides):
     base = dict(
         direction=envelope.CHILD_TO_PARENT, purpose="review_ready", relation_id=RELATION,
         sender=CHILD, recipient=PARENT, subject="evt-1", issue=ISSUE, generation=1,
-        criteria_digest=DIGEST,
+        criteria_digest=DIGEST, relation_revision=REVISION,
         artifact=packets.pull_request(repository="thisisjun786/codex-relay-workflow",
                                       number=107, head_sha=HEAD),
         evidence=["/state/crw/crw-149/evidence/suite.txt"],
@@ -75,7 +114,12 @@ def a_record(**overrides):
     base = {"relationId": RELATION, "parentTaskId": PARENT, "childTaskId": CHILD,
             "issue": ISSUE, "generation": 1, "criteriaDigest": DIGEST, "headSha": HEAD,
             "repository": "thisisjun786/codex-relay-workflow", "prNumber": 107,
-            "refusedPolicies": []}
+            "refusedPolicies": [], "relationRevision": REVISION, "relationStatus": "active",
+            "dispatchRequestId": DISPATCH, "mode": packets.LOOP, "workflow": "CXC Loop",
+            "tenureGeneration": 1, "tenureDispatchRequestId": DISPATCH,
+            "policy": {"model": "anthropic/claude-opus-5", "effort": "xhigh",
+                       "sandbox": {"type": "dangerFullAccess"}, "approval": "never"},
+            "callback": a_callback(), "refusedCallbackPolicies": []}
     base.update(overrides)
     return base
 
@@ -114,7 +158,7 @@ class WhatAnOccasionCannotDoWithout(unittest.TestCase):
     def test_a_resume_that_drops_the_workflow_is_refused(self):
         """No transport carries it, so an unstated workflow is dropped rather than deferred."""
         with self.assertRaises(packets.PacketRefused) as caught:
-            packets.policy(model="opus", effort="xhigh", workflow="")
+            packets.policy(model="opus", effort="xhigh", workflow="", mode=packets.LOOP)
         self.assertIn("workflow", caught.exception.detail)
 
     def test_a_progress_note_is_not_made_to_invent_a_head(self):
@@ -233,7 +277,7 @@ class ACorrectionArrivingTwice(unittest.TestCase):
             direction=envelope.PARENT_TO_CHILD, purpose="revision_request",
             relation_id=RELATION, sender=PARENT, recipient=CHILD, subject="evt-1",
             issue=ISSUE, generation=2, criteria_digest=DIGEST,
-            callback="parent task " + PARENT,
+            callback=a_callback(), body=CORRECTION_BODY, evidence=CORRECTION_EVIDENCE,
             artifact=packets.pull_request(repository="thisisjun786/codex-relay-workflow",
                                           number=107, head_sha=HEAD))
         base.update(overrides)
@@ -287,7 +331,7 @@ class TheSevenStatesOfAHandover(unittest.TestCase):
                              (packets.CRITERIA_VERDICT, "verdicts"),
                              (packets.PARENT_ACCEPTANCE, "verdicts"),
                              (packets.MERGE_LANDING, "merge_turns"),
-                             (packets.LINEAR_DONE, "sync_outbox")):
+                             (packets.LINEAR_DONE, "linear_issue_status")):
             ladder[name] = envelope.stage(envelope.YES, source=source)
         self.assertEqual(packets.unsupported_promotions(ladder), [])
 
@@ -305,8 +349,10 @@ class WhetherTheChildActuallyArmedAnything(unittest.TestCase):
 
     def test_the_three_facts_start_unverified_rather_than_absent(self):
         """Nobody has looked is not the same as nothing is there."""
-        for name, fact in packets.unexamined(packets.LOOP).items():
-            self.assertEqual(fact["state"], packets.UNVERIFIED, name)
+        reading = packets.unexamined(packets.LOOP)
+        for name in packets.ACTIVATION_FACTS:
+            self.assertEqual(reading[name]["state"], packets.UNVERIFIED, name)
+        self.assertEqual(reading[packets.MODE], packets.LOOP)
 
     def test_an_answered_fact_names_the_record_that_answered_it(self):
         with self.assertRaises(packets.PacketRefused):
@@ -430,7 +476,7 @@ class WhichChildMessageThisActuallyIs(unittest.TestCase):
         would derive a second id and the recipient would owe two obligations where one fact
         happened. Taking only the outcome is what keeps the identity still.
         """
-        self.assertEqual(report.child_purpose("ready_for_review"), "completion")
+        self.assertEqual(report.child_purpose("ready_for_review"), "review_ready")
         self.assertEqual(
             len(inspect.signature(report.child_purpose).parameters), 1,
             "a second input is a second thing that can move the message id")
@@ -456,9 +502,11 @@ class TheWholeRoundTrip(unittest.TestCase):
 
     def test_the_round_trip_stays_on_one_task_one_pull_request_and_one_callback(self):
         record = a_record()
-        callback = "parent task " + PARENT
+        callback = a_callback()
 
-        assignment = an_assignment(callback=callback)
+        # The first message is written before the child exists, and is taken up once
+        # registration has bound its dispatch to this relationship.
+        assignment = a_first_assignment(callback=callback)
         self.accepted(assignment, record)
 
         candidate = packets.pull_request(
@@ -474,7 +522,8 @@ class TheWholeRoundTrip(unittest.TestCase):
             direction=envelope.PARENT_TO_CHILD, purpose="revision_request",
             relation_id=RELATION, sender=PARENT, recipient=CHILD, subject="evt-1",
             issue=ISSUE, generation=2, criteria_digest=DIGEST, callback=callback,
-            artifact=candidate)
+            artifact=candidate, relation_revision=REVISION, body=CORRECTION_BODY,
+            evidence=CORRECTION_EVIDENCE)
         self.accepted(correction, record)
 
         # The same child, the same pull request, a new head. Nothing here creates a second
@@ -486,7 +535,7 @@ class TheWholeRoundTrip(unittest.TestCase):
         self.accepted(again, record)
         self.assertEqual(again["envelope"]["recipient"]["taskId"],
                          assignment["envelope"]["sender"]["taskId"])
-        self.assertEqual(again["envelope"]["relationId"], assignment["envelope"]["relationId"])
+        self.assertEqual(again["envelope"]["relationId"], correction["envelope"]["relationId"])
 
         # And the report from before the correction is not reusable at the new head, which is
         # the reading that would otherwise hand the parent a readiness claim about a commit
@@ -499,7 +548,7 @@ class TheWholeRoundTrip(unittest.TestCase):
         acceptance = packets.compose(
             direction=envelope.PARENT_TO_CHILD, purpose="acceptance", relation_id=RELATION,
             sender=PARENT, recipient=CHILD, subject="evt-1", issue=ISSUE,
-            criteria_digest=DIGEST, artifact=packets.pull_request(
+            criteria_digest=DIGEST, relation_revision=REVISION, artifact=packets.pull_request(
                 repository="thisisjun786/codex-relay-workflow", number=107, head_sha=moved))
         self.accepted(acceptance, record)
         self.assertEqual(acceptance["envelope"]["kind"], envelope.NOTIFICATION)
@@ -517,7 +566,7 @@ class TheWholeRoundTrip(unittest.TestCase):
                              (packets.CRITERIA_VERDICT, "verdicts"),
                              (packets.PARENT_ACCEPTANCE, "verdicts"),
                              (packets.MERGE_LANDING, "merge_turns"),
-                             (packets.LINEAR_DONE, "sync_outbox")):
+                             (packets.LINEAR_DONE, "linear_issue_status")):
             with self.subTest(state=name):
                 self.assertEqual(packets.unsupported_promotions(ladder), [])
                 ladder[name] = envelope.stage(envelope.YES, source=source)
@@ -542,7 +591,7 @@ class TheWholeRoundTrip(unittest.TestCase):
         self.accepted(packets.compose(
             direction=envelope.PARENT_TO_CHILD, purpose="acceptance", relation_id=RELATION,
             sender=PARENT, recipient=CHILD, subject="evt-1", issue=ISSUE,
-            criteria_digest=DIGEST, artifact=artifact), record)
+            criteria_digest=DIGEST, artifact=artifact, relation_revision=REVISION), record)
 
 
 class APacketNobodyConstructed(unittest.TestCase):
@@ -732,7 +781,7 @@ class WhatMakesTwoPacketsTheSameInstruction(unittest.TestCase):
             direction=envelope.PARENT_TO_CHILD, purpose="revision_request",
             relation_id=RELATION, sender=PARENT, recipient=CHILD, subject="evt-1",
             issue=ISSUE, generation=2, criteria_digest=DIGEST,
-            callback="parent task " + PARENT,
+            callback=a_callback(), body=CORRECTION_BODY, evidence=CORRECTION_EVIDENCE,
             artifact=packets.pull_request(repository="thisisjun786/codex-relay-workflow",
                                           number=107, head_sha=HEAD))
         base.update(overrides)
@@ -744,7 +793,7 @@ class WhatMakesTwoPacketsTheSameInstruction(unittest.TestCase):
 
     def test_a_different_callback_under_one_id_is_a_collision(self):
         first = self.correction()
-        second = self.correction(callback="some other task")
+        second = self.correction(callback=a_callback(task_id="some other task"))
         self.assertEqual(packets.repeat(second, self.answered(first))["state"],
                          packets.COLLISION)
 
@@ -773,7 +822,7 @@ class WhatMakesTwoPacketsTheSameInstruction(unittest.TestCase):
         base = self.correction()
         for field, changed in ((packets.ISSUE, "CRW-999"), (packets.GENERATION, 7),
                                (packets.CRITERIA_DIGEST, "1" * 64),
-                               (packets.CALLBACK, "elsewhere")):
+                               (packets.CALLBACK, a_callback(model=LEFT_PARENT_PAIR[0]))):
             with self.subTest(field=field):
                 other = self.correction(**{
                     {packets.ISSUE: "issue", packets.GENERATION: "generation",

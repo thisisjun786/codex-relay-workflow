@@ -226,6 +226,10 @@ class TheMapNamesEveryTestThatSpendsRealTime(unittest.TestCase):
 #     production SQL into this module and fail it on an unrelated query edit.
 
 SUMMARIES = {
+    # packet-check reading the receiver's own store: the command and --receiver, false from
+    # either alone. main reads it to apply the service's declared role policy before the
+    # snapshot; test_store_reception.py runs the check with and without each.
+    ("cli.py", None, "_receives_against_the_store", "function"): ((False,), (), ()),
     # Replay equality folds entries, digest, source and mode; public tests independently
     # vary each input and assert that a stored set is preserved on refusal.
     ("criteria.py", None, "_same_registration", "function"): ((False,), (), ()),
@@ -236,6 +240,18 @@ SUMMARIES = {
     ("envelope.py", None, "is_absent", "function"): ((False,), (), ()),
     ("marker.py", None, "named", "function"): ((False,), (), ()),
     ("marker.py", None, "same_identity", "function"): ((False,), (), ()),
+    # A first assignment is a parent-to-child assignment whose recipient is a stated absence,
+    # so the false side is reachable from any one of the three inputs alone: another direction,
+    # another purpose, or a named recipient. reception reads it to choose which comparisons
+    # apply, and test_reception_findings.py varies each by building the packets themselves.
+    ("packets.py", None, "_first_assignment", "function"): ((False,), (), ()),
+    # A refusal list the reading holds and cannot read: present and not a list of text pairs.
+    # An absent key returns False before the list is looked at, which is the path this rule
+    # cannot reduce; the true side is reachable from the one input alone. test_reception_
+    # findings.py and test_store_reception.py hand reception readings of each shape, absent,
+    # null, empty, and lists of good and bad pairs.
+    ("packets.py", None, "_refusals_unreadable", "function"):
+        ((True,), (("return: False", 1),), ()),
     ("receipts.py", None, "deliverable", "function"): ((False,), (), ()),
     ("scope.py", None, "is_within", "function"):
         ((True,), (("return: path.startswith('/')", 1),), ()),
@@ -279,6 +295,9 @@ FOLDS_BEYOND_ITS_PATHS = (
     ("manifest.py", None, "_is_access_failure", "function"),
     ("marker.py", None, "valid_assignment", "function"),
     ("marker.py", None, "valid_segment", "function"),
+    # Whether the reception ledger changed: a first answer, an upgrade of a non-accepted one,
+    # or an accepted assignment's mode written once, folded through the answer's state.
+    ("receiver.py", None, "record_answer", "function"),
     ("reconcile.py", None, "_is_current", "function"),
     ("report.py", None, "_may_have_reached", "function"),
     ("scope.py", None, "acquire", "function"),
@@ -330,6 +349,10 @@ UNRESOLVED_READS = (
      "reached through GeneratorExp/Call"),
     ("test_guard_property.py", "test_marker_commands_are_exempt_from_the_store_selection_refusal",
      "_reads_no_selected_store", "reached through assertIs"),
+    # A filter, not a measurement: the type sweep skips a field holding a stated absence, and
+    # what it asserts is the disposition of every other field.
+    ("test_reception_findings.py", "test_a_compared_field_of_another_shape_never_ends_accepted",
+     "is_absent", "no enclosing assertion"),
     ("test_service.py", "holder", "lock_is_held", "no enclosing assertion"),
 )
 

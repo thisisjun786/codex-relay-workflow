@@ -22,6 +22,7 @@ import math
 import os
 import pwd
 import signal
+import stat
 import time
 import uuid
 from contextlib import contextmanager
@@ -446,19 +447,42 @@ class LaunchPolicy:
         would send the next launch back to whatever the calling shell happened to carry, which
         is the failure this record exists to end - so corruption is reported and absence is
         not inferred from it.
+
+        Read as a regular file of text or not at all. A path that is there and cannot be read
+        that way is unreadable, never absent: a link to nothing, a FIFO or other non-regular
+        file (opened without blocking, so a pipe cannot hold the reader), or bytes that are
+        not UTF-8. The receive check reads this too, and a link to nothing read as absence let
+        a shell naming an older policy judge a callback the declared one refuses.
         """
+        def unreadable(why):
+            return {"path": None, "declaredAt": None, "declaredBy": None, "unreadable": why}
+
         try:
-            raw = self.path.read_text(encoding="utf-8")
+            descriptor = os.open(self.path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
         except FileNotFoundError:
+            if os.path.lexists(self.path):
+                return unreadable(f"the launch declaration {self.path} is a link to nothing")
             return {"path": None, "declaredAt": None, "declaredBy": None, "unreadable": None}
         except OSError as error:
-            return {"path": None, "declaredAt": None, "declaredBy": None,
-                    "unreadable": f"the launch declaration could not be read: {error}"}
+            return unreadable(f"the launch declaration could not be read: {error}")
         try:
-            data = json.loads(raw)
-        except ValueError as error:
-            return {"path": None, "declaredAt": None, "declaredBy": None,
-                    "unreadable": f"the launch declaration is not readable JSON: {error}"}
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                return unreadable(f"the launch declaration {self.path} is not a regular file")
+            with os.fdopen(descriptor, "rb") as handle:
+                descriptor = None
+                raw = handle.read()
+        except OSError as error:
+            return unreadable(f"the launch declaration could not be read: {error}")
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (ValueError, RecursionError) as error:
+            # UnicodeDecodeError is a ValueError. RecursionError: nested deeper than the
+            # decoder descends, which leaves the declaration unreadable in the same way invalid
+            # JSON does.
+            return unreadable(f"the launch declaration is not readable JSON: {error}")
         declared = data.get("path") if isinstance(data, dict) else None
         if not isinstance(declared, str) or not declared.strip():
             return {"path": None, "declaredAt": None, "declaredBy": None,
