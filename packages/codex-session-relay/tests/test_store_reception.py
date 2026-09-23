@@ -247,7 +247,8 @@ class TheReceiversOwnReading(StoreReception):
                     "criteriaDigest": self.digest(), "callback": self.a_callback(),
                     "policy": {"model": CHILD_MODEL, "effort": CHILD_EFFORT,
                                "sandbox": {"type": "workspaceWrite"}, "approval": "never"},
-                    "refusedPolicies": []}
+                    "refusedPolicies": [], "tenureGeneration": 1,
+                    "tenureDispatchRequestId": "dispatch-1"}
         code, answer = self.packet_check(assignment, record=agreeing)
         self.assertEqual((code, answer["disposition"]), (0, packets.ACCEPTED), answer)
         for held in ([7], None, [{"model": 7, "effort": CHILD_EFFORT}]):
@@ -580,6 +581,13 @@ class TheControlsThatMustNotPassTheReceiveStep(StoreReception):
                                                  observation=self.observed())
                 self.assertEqual(code, cli.EXIT_REFUSED, answer)
 
+    def test_text_that_cannot_be_encoded_is_refused_as_a_packet(self):
+        relationship = self.registered()
+        one = self.correction(relationship, generation=1)
+        one["envelope"]["subject"] = "\ud800"
+        code, answer = self.packet_check(one, receiver_id=CHILD, observation=self.observed())
+        self.assertEqual(code, cli.EXIT_REFUSED, answer)
+
     def test_a_non_pull_request_audit_passes_without_being_asked_for_a_head(self):
         relationship = self.registered()
         audit = packets.locator(path="/state/crw/crw-149/evidence/audit.md", digest="9" * 64)
@@ -846,6 +854,23 @@ class AFirstAssignmentThroughCreateAndRegister(StoreReception):
             receiver_id=CHILD, observation=self.observed(), ledger=ledger)
         self.assertNotEqual(answer["disposition"], packets.ACCEPTED, answer)
         self.assertFalse(answer["act"], answer)
+
+    def test_a_policy_packet_whose_tenure_is_unread_is_not_accepted(self):
+        # The policy is read against, or defines, the mode and workflow of the current
+        # tenure. With the tenure unread, an assignment accepted here could not be recorded
+        # for it, so it is unavailable rather than acted on.
+        relationship = self.registered()
+        ledger = os.path.join(self.tmp, "child-ledger.json")
+        self.store.db.execute("DELETE FROM journal WHERE kind = 'relationship_registered'"
+                              " AND subject = ?", (relationship["relationshipId"],))
+        _code, answer = self.packet_check(self.first_assignment(dispatch="dispatch-1",
+                                                                issue=ISSUE),
+                                          receiver_id=CHILD, ledger=ledger)
+        self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
+        self.assertIn("tenureGeneration", self.gap_fields(answer))
+        self.assertFalse(answer["act"], answer)
+        with open(ledger, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["assignments"], {})
 
     def test_a_packet_from_an_earlier_tenure_of_an_unscoped_relationship_is_not_accepted(self):
         relationship = self.registered(project=None)

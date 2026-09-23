@@ -142,7 +142,8 @@ def a_record(**overrides):
                                           "sandbox": {"type": "dangerFullAccess"},
                                           "approval": "never"},
               "callback": a_callback(), "mode": "loop", "workflow": "CXC Loop",
-              "refusedPolicies": []}
+              "refusedPolicies": [], "tenureGeneration": 1,
+              "tenureDispatchRequestId": DISPATCH}
     record.update(overrides)
     return record
 
@@ -490,6 +491,9 @@ def _read_keys(direction, purpose):
         keys.add("callback")
     if packets.POLICY in required:
         keys.update(("policy", "refusedPolicies", "mode", "workflow"))
+        if direction in (P2C, C2P):
+            # A policy is held to the current tenure, which the reading has to name.
+            keys.update((packets.TENURE_GENERATION, packets.TENURE_DISPATCH))
     if purpose == "assignment":
         # An assignment defines the mode and the workflow where none is held.
         keys.discard("mode")
@@ -541,7 +545,8 @@ class RequiredFieldSweep(_Reading):
                     self.assertTrue(answer["gaps"])
 
 
-WRONG_SHAPES = ([], 7, "x", {}, True)
+# A lone surrogate is a string JSON can carry and UTF-8 cannot encode.
+WRONG_SHAPES = ([], 7, "x", {}, True, "\ud800")
 
 
 class NoShapeEscapesAsAHostFailure(_Reading):

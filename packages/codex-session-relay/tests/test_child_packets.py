@@ -116,6 +116,7 @@ def a_record(**overrides):
             "repository": "thisisjun786/codex-relay-workflow", "prNumber": 107,
             "refusedPolicies": [], "relationRevision": REVISION, "relationStatus": "active",
             "dispatchRequestId": DISPATCH, "mode": packets.LOOP, "workflow": "CXC Loop",
+            "tenureGeneration": 1, "tenureDispatchRequestId": DISPATCH,
             "policy": {"model": "anthropic/claude-opus-5", "effort": "xhigh",
                        "sandbox": {"type": "dangerFullAccess"}, "approval": "never"},
             "callback": a_callback()}
