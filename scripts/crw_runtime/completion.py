@@ -360,7 +360,9 @@ SESSION_MISMATCH = "session_mismatch"
 
 # The items that start a sampling. Met before any answer when reading newest-first, one of these
 # means the transcript does not yet show this Stop's answer.
-INPUT_ITEMS = ("HookPrompt", "UserMessage")
+HOOK_PROMPT = "HookPrompt"
+USER_MESSAGE = "UserMessage"
+INPUT_ITEMS = (HOOK_PROMPT, USER_MESSAGE)
 # Every line the scan can act on names the turn and one of these, so the rest are never parsed.
 SCAN_TOKENS = (b"AgentMessage", b"HookPrompt", b"UserMessage", b"task_started")
 
@@ -1312,7 +1314,7 @@ def event_identity(stop, started=None):
     for index, entry in enumerate(chronological[:-1]):
         if entry[0] != "answer" or chronological[index + 1][0] != "input":
             continue
-        earlier_active = any(prior[0] == "input" and prior[1] == "HookPrompt"
+        earlier_active = any(prior[0] == "input" and prior[1] == HOOK_PROMPT
                              for prior in chronological[:index])
         if entry[2] == said and earlier_active == active:
             identity["reason"] = ANSWER_TEXT_AMBIGUOUS
