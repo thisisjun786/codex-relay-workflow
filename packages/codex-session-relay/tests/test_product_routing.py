@@ -502,6 +502,32 @@ class Projects(ProductRoutingCase):
         self.assertIn("payload.members", cancelled["reasons"][0])
         self.assertEqual("GMX", self.router.registry("gamma-kit")["team"])
 
+    def test_a_pending_create_whose_members_or_components_are_not_the_goals_is_cancelled(self):
+        self.router.set_policy(POLICY)
+        self.gamma("cache", "stale", "g1")
+        self.gamma("queue", "lost", "g2")
+        (proposal,) = self.router.show("gamma-kit")["projects"]
+        (row,) = self.router.port.publications(proposal["faultId"], kind=projects.KIND)
+        strangers = [self.route(occurrenceKey=f"a{n}", symptom=f"s{n}")["faultId"]
+                     for n in range(2)]
+        for tampered, reason in ((dict(row["payload"], members=strangers), "held defect(s)"),
+                                 (dict(row["payload"], components=["unrelated"]),
+                                  "the create covers")):
+            with self.subTest(reason=reason):
+                with self.store.transaction() as db:
+                    db.execute("UPDATE fault_publication_payloads SET payload = ?"
+                               " WHERE publication_id = ?",
+                               (json.dumps(tampered), row["publication_id"]))
+                problems = projects._issuable(self.store.db,
+                                              self.router.port.get(proposal["faultId"]),
+                                              tampered)
+                self.assertIn(reason, " ".join(problems))
+        token = self.ledger.claim(row["publication_id"], owner="holder")["claimToken"]
+        with self.assertRaises(faults.FaultRefused):
+            self.ledger.operation(row["publication_id"], claim_token=token)
+        self.holder.run()
+        self.assertEqual({}, self.linear.projects)
+
     def test_an_existing_suitable_project_is_reused(self):
         self.router.set_policy(POLICY)
         self.router.bind(binding("gamma-kit", "project", "proj-gmk-cache",

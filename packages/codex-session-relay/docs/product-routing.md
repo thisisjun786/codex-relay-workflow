@@ -188,7 +188,9 @@ its whole shape, whoever queues it through the ledger: refused when queued, and 
 issue, if it is not the closed set of names and lists the check, the confirmation and the binding
 read. It is issued only from the `project_needed` record routing proposed for that product,
 workspace and goal: the same payload queued on any other record is cancelled, so one goal never
-gets two projects. A change of registry runs the same checks on the creates it revises. Issue, file or error counts
+gets two projects. Its members count only as routes of that product and workspace, read from
+routing's rows, and the components it names must be components those members have, covering
+every member that counts. A change of registry runs the same checks on the creates it revises. Issue, file or error counts
 alone never create one, and a single defect goes into its product's existing suitable project.
 
 The proposal is a `project_needed` record of the product, recorded at notice under the scope

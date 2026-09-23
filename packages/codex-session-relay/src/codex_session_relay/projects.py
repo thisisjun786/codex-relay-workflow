@@ -89,10 +89,19 @@ def eligibility(db, payload) -> list:
     if policy is None or not policy["enabled"]:
         return ["no explicit project creation policy is enabled"]
     members = []
+    # What the create's members are, read from routing's rows rather than from the payload: a
+    # member counts only as a route of this product and workspace, and the components the
+    # create names must be components its members have, covering every member that counts.
+    listed, counted = set(), set()
     for fault_id in payload["members"]:
-        route = db.execute("SELECT stage, target, goal FROM incident_routes WHERE fault_id = ?",
-                           (fault_id,)).fetchone()
-        if route is None or route["stage"] != products.STAGE_HELD:
+        route = db.execute("SELECT stage, target, goal, product_key, workspace"
+                           "  FROM incident_routes WHERE fault_id = ?", (fault_id,)).fetchone()
+        if route is None or (route["product_key"], route["workspace"]) != (
+                payload["product"], payload["workspace"]):
+            continue
+        latest = _latest_incident(db, fault_id)
+        listed.add(latest.get("component"))
+        if route["stage"] != products.STAGE_HELD:
             continue
         if json.loads(route["target"]).get("hold") != products.NO_PROJECT:
             continue
@@ -100,14 +109,19 @@ def eligibility(db, payload) -> list:
             continue
         # Sharing a goal means sharing its completion criteria too: a member whose incident
         # declares other criteria is another contract that happens to use the same key.
-        if _declared_criteria(db, fault_id) != payload.get("criteria"):
+        if (latest.get("goal") or {}).get("criteria") != payload.get("criteria"):
             continue
         members.append(fault_id)
+        counted.add(latest.get("component"))
     problems = []
     if len(members) < policy["minIndependentFixes"]:
         problems.append(f"{len(members)} held defect(s) still share goal {payload['goal']}"
                         f" and its criteria;"
                         f" the policy needs {policy['minIndependentFixes']}")
+    named = set(payload["components"])
+    if not counted <= named or not named <= listed:
+        problems.append(f"the create covers {sorted(named)}, but its members' components are"
+                        f" {sorted(c for c in listed if c)}")
     # Every defect now held for want of a project under this goal, not only the members the
     # create was queued with: one arriving since then with other criteria makes the goal two
     # contracts, and a project carrying either would decide between them without anybody.
@@ -187,10 +201,14 @@ def _proposal_problems(db, fault, payload) -> list:
 
 def _declared_criteria(db, fault_id):
     """The completion criteria the newest stored incident of a route declares for its goal."""
+    return (_latest_incident(db, fault_id).get("goal") or {}).get("criteria")
+
+
+def _latest_incident(db, fault_id) -> dict:
+    """The newest stored incident of a route, or an empty one."""
     latest = db.execute("SELECT record FROM route_incidents WHERE fault_id = ?"
                         " ORDER BY recorded_seq DESC LIMIT 1", (fault_id,)).fetchone()
-    return (((json.loads(latest["record"]) if latest else {}).get("goal") or {})
-            .get("criteria"))
+    return json.loads(latest["record"]) if latest else {}
 
 
 # Registered per process at import, as the ledger's seam requires. Empty when registered; the

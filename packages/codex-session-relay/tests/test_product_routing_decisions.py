@@ -972,7 +972,8 @@ class ProjectEligibility(RouteRows):
         self.payload = {"product": "alpha-notes", "goal": "offline_sync",
                         "criteria": "edits made offline survive reconnect",
                         "members": ["c" * 32, "d" * 32], "components": ["cache", "queue"],
-                        "team": ALPHA["team"], "familyLabel": ALPHA["familyLabel"]}
+                        "team": ALPHA["team"], "familyLabel": ALPHA["familyLabel"],
+                        "workspace": "example-ws"}
 
     def upsert(self, fault_id, criteria="edits made offline survive reconnect", **fields):
         """A member route with the incident behind it, which declares the goal's criteria."""
@@ -982,7 +983,8 @@ class ProjectEligibility(RouteRows):
         goal = fields.get("goal", "offline_sync")
         with self.store.transaction() as db:
             routes.store_incident(db, self.clock, fault_id, incident(
-                occurrenceKey=f"{fault_id[:4]}:{goal}", goal={"key": goal, "criteria": criteria}))
+                occurrenceKey=f"{fault_id[:4]}:{goal}", goal={"key": goal, "criteria": criteria},
+                component={"c" * 32: "cache", "d" * 32: "queue"}.get(fault_id, "editor")))
 
     def policy(self, enabled=True):
         self.router.set_policy({"schema": "routing-policy/1", "policy": "project_creation",
@@ -1026,6 +1028,19 @@ class ProjectEligibility(RouteRows):
             with self.subTest(bad=bad):
                 self.assertTrue(projects._validate(bad))
 
+    def test_members_count_only_as_this_products_routes_and_components_are_theirs(self):
+        self.policy()
+        self.upsert("c" * 32)
+        self.upsert("d" * 32)
+        self.assertEqual([], self.problems())
+        self.payload["components"] = ["unrelated"]
+        self.assertIn("the create covers ['unrelated']", " ".join(self.problems()))
+        self.payload["components"] = ["cache", "queue", "unrelated"]
+        self.assertTrue(self.problems())
+        self.payload["components"] = ["cache", "queue"]
+        self.upsert("d" * 32, product="beta-meter")
+        self.assertIn("1 held defect(s)", " ".join(self.problems()))
+
     def test_members_that_declare_other_criteria_for_the_goal_do_not_count(self):
         self.policy()
         self.upsert("c" * 32)
@@ -1047,8 +1062,16 @@ class ProjectEligibility(RouteRows):
         self.policy()
         self.upsert("c" * 32)
         self.upsert("d" * 32)
-        self.router.bind(binding("alpha-notes", "project", "proj-aln-cache",
-                                 components=["cache"]))
+        # The predicate reads the binding table; written directly, because binding through the
+        # router would also decide these ledger-less fixture routes again.
+        read = products.read_binding(binding("alpha-notes", "project", "proj-aln-cache",
+                                             components=["cache"]),
+                                     self.router.registry("alpha-notes"))
+        with self.store.transaction() as db:
+            db.execute("INSERT INTO product_bindings (product_key, kind, ref, record,"
+                       "  observed_at, recorded_at) VALUES (?,?,?,?,?,?)",
+                       (read["product"], read["kind"], read["ref"], products.canonical(read),
+                        read["observedAt"], self.clock.iso()))
         self.assertIn("proj-aln-cache", " ".join(self.problems()))
 
 
