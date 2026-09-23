@@ -29,6 +29,12 @@ It never exits 2. The host reads exit 2 as the blocking code and takes stderr as
 prompt, and argparse exits 2 on any usage error, so nothing here parses arguments and nothing
 here writes to stderr.
 
+It answers each Stop event once. A turn can end several times, and each end is its own event;
+two registrations answering one end, or one end delivered twice, is one event handled twice. The
+first invocation to create the event's accepted record asks the guard, and every other one leaves
+a row saying it was a duplicate. An invocation that cannot tell which event it is answers as it
+always did and says so. See event_identity() and docs/runtime-install.md.
+
 It never answers one question with another question's reading. "the guard released" and "the
 guard could not be asked" are different values, and so are "the runtime refused the request" and
 "the runtime rejected the call before it ran".
@@ -37,6 +43,7 @@ Rules: skills/crw-run/references/hook-contract.md.
 """
 
 import errno
+import hashlib
 import json
 import os
 import re
@@ -127,6 +134,60 @@ JOURNAL_NAME = re.compile(r"^[0-9a-f]{32}\.json$")
 # something and could not make sense of it. Getting this wrong sends an operator to the wrong
 # repair, and getting the pre-read part wrong is worse than that -- see read_settings.
 DECODE_FAILURES = (UnicodeDecodeError, ValueError)
+
+# ----------------------------------------------------------------- which Stop event this is
+#
+# CRW-212. A Stop EVENT is one end of one sampling sequence, and a turn can have several: every
+# continuation a hook asks for, and every waiting message the host appends, makes the turn end
+# again. Two registrations answering one Stop, or one Stop delivered twice, is one event handled
+# twice. The payload cannot tell those apart -- an isolated Codex 0.154.0 run produced two Stops of
+# one turn with byte-identical payloads -- so the identity is read from what the host recorded in
+# the transcript before it ran the hook: the answer item that ended this sampling.
+
+RECORD_VERSION = 2
+LEDGER_DIRECTORY = "accepted"
+LEDGER_NAME = re.compile(r"^[0-9a-f]{64}\.json$")
+OUTCOME_NAME = re.compile(r"^[0-9a-f]{64}\.outcome\.json$")
+OUTCOME_SUFFIX = ".outcome.json"
+LEDGER_VERSION = 1
+EVENT_KEY_TAG = "crw-stop-event/1"
+# Bounded so the scan stays inside the margin the packaged launcher keeps over the guard budget:
+# the launcher waits the budget plus two seconds, and this is at most three quarters of one.
+SCAN_CHUNK_BYTES = 1 << 16
+SCAN_MAX_BYTES = 8 << 20
+SCAN_MAX_SECONDS = 0.75
+
+ACCEPTED = "accepted"
+DUPLICATE = "duplicate"
+UNESTABLISHED = "unestablished"
+UNCLAIMABLE = "unclaimable"
+CLAIM_FAILED = "claim_failed"
+ACCEPTANCES = (ACCEPTED, DUPLICATE, UNESTABLISHED, UNCLAIMABLE, CLAIM_FAILED)
+
+DUPLICATE_INVOCATION = "duplicate_invocation"
+# What faults_only leaves out of the journal. Only journal() reads this: the guard fields and the
+# hook output still follow ANSWERED, so a duplicate never carries a verdict nobody asked for.
+QUIET = (GUARD_ANSWERED, DUPLICATE_INVOCATION)
+
+IDENTITY_FIELDS_INCOMPLETE = "identity_fields_incomplete"
+TRANSCRIPT_PATH_MISSING = "transcript_path_missing"
+TRANSCRIPT_PATH_RELATIVE = "transcript_path_relative"
+TRANSCRIPT_ABSENT = "transcript_absent"
+TRANSCRIPT_UNREACHABLE = "transcript_unreachable"
+TRANSCRIPT_NOT_REGULAR = "transcript_not_regular"
+SCAN_BOUND_EXCEEDED = "scan_bound_exceeded"
+SCAN_TIMED_OUT = "scan_timed_out"
+NO_ANSWER_ITEM_FOR_TURN = "no_answer_item_for_turn"
+ANSWER_ITEM_UNIDENTIFIED = "answer_item_unidentified"
+ANSWER_PRECEDES_LATEST_INPUT = "answer_precedes_latest_input"
+ANSWER_TEXT_MISMATCH = "answer_text_mismatch"
+SESSION_MISMATCH = "session_mismatch"
+
+# The items that start a sampling. Met before any answer when reading newest-first, one of these
+# means the transcript does not yet show this Stop's answer.
+INPUT_ITEMS = ("HookPrompt", "UserMessage")
+# Every line the scan can act on names the turn and one of these, so the rest are never parsed.
+SCAN_TOKENS = (b"AgentMessage", b"HookPrompt", b"UserMessage", b"task_started")
 
 
 def now():
@@ -542,21 +603,273 @@ def hook_output(verdict):
     return json.dumps({"decision": BLOCK, "reason": answer["reason"], "continue": True})
 
 
+# ----------------------------------------------------------------- which Stop event this is
+
+
+def _transcript_refusal(path):
+    """None for a regular file, else why the transcript will not be opened.
+
+    Settled with lstat before any open, for the reason read_settings settles its own path first: a
+    named pipe would block this process on open until the host killed it, and a Stop killed
+    mid-adapter releases with nothing recorded.
+    """
+    try:
+        found = os.lstat(path)
+    except FileNotFoundError:
+        return TRANSCRIPT_ABSENT
+    except (OSError, ValueError):
+        return TRANSCRIPT_UNREACHABLE
+    if stat_module.S_ISLNK(found.st_mode):
+        try:
+            found = os.stat(path)
+        except FileNotFoundError:
+            return TRANSCRIPT_ABSENT
+        except (OSError, ValueError):
+            return TRANSCRIPT_UNREACHABLE
+    if not stat_module.S_ISREG(found.st_mode):
+        return TRANSCRIPT_NOT_REGULAR
+    return None
+
+
+def _answer_text(item):
+    parts = item.get("content")
+    if not isinstance(parts, list):
+        return None
+    return "".join(part["text"] for part in parts
+                   if isinstance(part, dict) and part.get("type") == "Text"
+                   and isinstance(part.get("text"), str))
+
+
+def _newest_answer(handle, turn, identity, started):
+    """The newest answer item recorded for this turn, read backwards from the end, or a reason.
+
+    Only whole lines count. The first piece of each chunk is carried into the next read, and a last
+    line without its newline is one the host is still writing: it does not parse and is skipped.
+    """
+    token = turn.encode("utf-8", "surrogatepass")
+    position = os.fstat(handle).st_size
+    carry = b""
+    while position > 0:
+        if identity["scannedBytes"] >= SCAN_MAX_BYTES:
+            return None, SCAN_BOUND_EXCEEDED
+        if time.monotonic() - started > SCAN_MAX_SECONDS:
+            return None, SCAN_TIMED_OUT
+        size = min(SCAN_CHUNK_BYTES, position)
+        position -= size
+        os.lseek(handle, position, os.SEEK_SET)
+        chunk = b""
+        while len(chunk) < size:
+            piece = os.read(handle, size - len(chunk))
+            if not piece:
+                break
+            chunk += piece
+        identity["scannedBytes"] += len(chunk)
+        lines = (chunk + carry).split(b"\n")
+        carry = lines.pop(0) if position > 0 else b""
+        for line in reversed(lines):
+            identity["scannedLines"] += 1
+            if token not in line or not any(mark in line for mark in SCAN_TOKENS):
+                continue
+            try:
+                row = json.loads(line.decode("utf-8"))
+            except ValueError:
+                identity["skippedLines"] += 1
+                continue
+            if not isinstance(row, dict) or row.get("type") != "event_msg":
+                continue
+            body = row.get("payload")
+            if not isinstance(body, dict) or body.get("turn_id") != turn:
+                continue
+            if body.get("type") == "task_started":
+                return None, NO_ANSWER_ITEM_FOR_TURN
+            item = body.get("item")
+            if body.get("type") != "item_completed" or not isinstance(item, dict):
+                continue
+            if item.get("type") in INPUT_ITEMS:
+                return None, ANSWER_PRECEDES_LATEST_INPUT
+            if item.get("type") == "AgentMessage":
+                return (item, body.get("thread_id")), None
+    return None, NO_ANSWER_ITEM_FOR_TURN
+
+
+def event_identity(stop, started=None):
+    """Which Stop event this invocation answers, as (key, identity).
+
+    The key is None when the identity could not be established, and identity["reason"] says why.
+    An established event is (session_id, turn_id, stop_hook_active, answer item id): the newest
+    answer the host recorded for the turn, provided its text is the one the payload reports, its
+    thread is the delivered session, and no newer input for the turn follows it. The key is a
+    SHA-256 over those four values, so no host value becomes a path and nothing is minted here.
+    """
+    started = time.monotonic() if started is None else started
+    identity = {"established": False, "reason": None, "answerItem": None,
+                "transcriptPath": None, "scannedBytes": 0, "scannedLines": 0, "skippedLines": 0}
+    session, turn = stop.get("session_id"), stop.get("turn_id")
+    active, said = stop.get("stop_hook_active"), stop.get("last_assistant_message")
+    if not (isinstance(session, str) and session and isinstance(turn, str) and turn
+            and isinstance(active, bool) and isinstance(said, str)):
+        identity["reason"] = IDENTITY_FIELDS_INCOMPLETE
+        return None, identity
+    path = stop.get("transcript_path")
+    if not isinstance(path, str) or not path:
+        identity["reason"] = TRANSCRIPT_PATH_MISSING
+        return None, identity
+    identity["transcriptPath"] = path
+    if not os.path.isabs(path):
+        identity["reason"] = TRANSCRIPT_PATH_RELATIVE
+        return None, identity
+    refused = _transcript_refusal(path)
+    if refused is not None:
+        identity["reason"] = refused
+        return None, identity
+    try:
+        handle = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+                         | getattr(os, "O_NOCTTY", 0))
+    except FileNotFoundError:
+        identity["reason"] = TRANSCRIPT_ABSENT
+        return None, identity
+    except (OSError, ValueError):
+        identity["reason"] = TRANSCRIPT_UNREACHABLE
+        return None, identity
+    try:
+        if not stat_module.S_ISREG(os.fstat(handle).st_mode):
+            answer, reason = None, TRANSCRIPT_NOT_REGULAR
+        else:
+            answer, reason = _newest_answer(handle, turn, identity, started)
+    except OSError:
+        answer, reason = None, TRANSCRIPT_UNREACHABLE
+    finally:
+        os.close(handle)
+    if answer is None:
+        identity["reason"] = reason
+        return None, identity
+    item, thread = answer
+    item_id = item.get("id")
+    if not isinstance(item_id, str) or not item_id:
+        identity["reason"] = ANSWER_ITEM_UNIDENTIFIED
+        return None, identity
+    identity["answerItem"] = item_id
+    if thread is not None and thread != session:
+        identity["reason"] = SESSION_MISMATCH
+        return None, identity
+    if _answer_text(item) != said:
+        identity["reason"] = ANSWER_TEXT_MISMATCH
+        return None, identity
+    identity["established"] = True
+    key = hashlib.sha256(json.dumps([EVENT_KEY_TAG, session, turn, active, item_id],
+                                    separators=(",", ":")).encode("ascii")).hexdigest()
+    return key, identity
+
+
+def new_slot():
+    """Where this invocation's row will go, chosen before anything names it."""
+    return datetime.now(timezone.utc).strftime("%Y%m%d"), uuid.uuid4().hex
+
+
+def slot_name(slot):
+    return slot[0] + "/" + slot[1] + ".json"
+
+
+def _write_whole(handle, document):
+    payload = (json.dumps(document, sort_keys=True, default=str) + "\n").encode("utf-8")
+    written = 0
+    while written < len(payload):
+        written += os.write(handle, payload[written:])
+
+
+def claim_event(config, key, identity, stop, slot):
+    """Create this event's accepted record, or learn that another invocation already has.
+
+    Returns (acceptance, acceptedAs). Creating a file that must not exist is the whole mechanism:
+    two registrations firing in the same instant get one owner. The record is never rewritten, and
+    a short write leaves it where it is, because removing it would open the event to a second
+    acceptance. Written under every journalPolicy: this is state, not a record of an invocation.
+    """
+    root = config.get("journalRoot")
+    if not root:
+        return UNCLAIMABLE, None
+    directory = Path(root).expanduser() / LEDGER_DIRECTORY
+    named = LEDGER_DIRECTORY + "/" + key + ".json"
+    try:
+        # Its own step, so a path that exists as something other than a directory reads as a
+        # failed claim and never as the FileExistsError below, which means "already accepted".
+        directory.mkdir(parents=True, exist_ok=True)
+    except (OSError, ValueError):
+        return CLAIM_FAILED, None
+    try:
+        handle = os.open(str(directory / (key + ".json")),
+                         os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        return DUPLICATE, named
+    except (OSError, ValueError):
+        return CLAIM_FAILED, None
+    try:
+        _write_whole(handle, {"ledgerVersion": LEDGER_VERSION, "eventKey": key,
+                              "sessionId": stop.get("session_id"),
+                              "turnId": stop.get("turn_id"),
+                              "stopHookActive": stop.get("stop_hook_active"),
+                              "answerItem": identity.get("answerItem"), "claimedAt": now(),
+                              "claimedBy": {"pid": os.getpid(), "attemptRow": slot_name(slot)}})
+    except (OSError, ValueError):
+        pass
+    finally:
+        os.close(handle)
+    return ACCEPTED, named
+
+
+def record_outcome(config, key, record, row):
+    """What the accepted event was answered with, as a second create-once file beside its claim.
+
+    Written after the row, naming it (row is its position under the journal root, or None when the
+    policy wrote none). A claim with no outcome is an event whose owner died before answering, and
+    a reading of the journal can say so instead of passing it. Unlike the claim, a short write is
+    removed: its absence already says "outcome unrecorded", and a torn file would say less.
+    """
+    root = config.get("journalRoot")
+    if not root or not key:
+        return None
+    target = Path(root).expanduser() / LEDGER_DIRECTORY / (key + OUTCOME_SUFFIX)
+    try:
+        handle = os.open(str(target), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except (OSError, ValueError):
+        return None
+    try:
+        _write_whole(handle, {"ledgerVersion": LEDGER_VERSION, "eventKey": key,
+                              "adapterOutcome": record.get("adapterOutcome"),
+                              "guardDecision": record.get("guardDecision"),
+                              "guardState": record.get("guardState"),
+                              "held": record.get("held"), "attemptRow": row, "at": now()})
+    except (OSError, ValueError):
+        os.close(handle)
+        try:
+            os.unlink(str(target))
+        except OSError:
+            pass
+        return None
+    os.close(handle)
+    return LEDGER_DIRECTORY + "/" + key + OUTCOME_SUFFIX
+
+
 # ----------------------------------------------------------------- this hook's own record
 
 
-def journal(config, record):
-    """Append one record of this invocation, under a name nothing else can take."""
+def journal(config, record, slot=None):
+    """Append one record of this invocation, under a name nothing else can take.
+
+    The name is the slot run() chose when it started, so an accepted record that names this row
+    names the day it is actually under, even when the invocation crosses midnight.
+    """
     policy = config.get("journalPolicy") or EVERY_INVOCATION
     if policy == NO_JOURNAL:
         return None
-    if policy == FAULTS_ONLY and record.get("adapterOutcome") in ANSWERED:
+    if policy == FAULTS_ONLY and record.get("adapterOutcome") in QUIET:
         return None
     root = config.get("journalRoot")
     if not root:
         return None
-    directory = Path(root).expanduser() / datetime.now(timezone.utc).strftime("%Y%m%d")
-    target = directory / (uuid.uuid4().hex + ".json")
+    day, name = slot or new_slot()
+    directory = Path(root).expanduser() / day
+    target = directory / (name + ".json")
     try:
         directory.mkdir(parents=True, exist_ok=True)
         handle = os.open(str(target), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -579,11 +892,11 @@ def journal(config, record):
     return str(target)
 
 
-def _release(config, record, outcome, detail, started):
+def _release(config, record, outcome, detail, started, slot=None):
     record["adapterOutcome"] = outcome
     record["detail"] = detail
     record["elapsedMs"] = round((time.monotonic() - started) * 1000)
-    record["journalledAs"] = journal(config, record)
+    record["journalledAs"] = journal(config, record, slot)
     return None
 
 
@@ -594,11 +907,17 @@ def run(payload, codex_home=None, environ=None, settings=None):
     except the one where the guard itself decided to hold.
     """
     started = time.monotonic()
-    record = {"recordVersion": 1, "event": EVENT, "at": now(),
+    slot = new_slot()
+    record = {"recordVersion": RECORD_VERSION, "event": EVENT, "at": now(),
               "adapterOutcome": None, "processEnding": None, "stdoutReading": None,
               "guardState": None, "guardDecision": None, "guardMode": None,
-              "assignmentId": None, "guardRecordedAs": None, "held": False}
+              "assignmentId": None, "guardRecordedAs": None, "held": False,
+              "eventKey": None, "eventIdentity": None, "identityScanMs": None,
+              "acceptance": None, "acceptedAs": None, "guardInvoked": False}
     config = {}
+    # The event whose accepted record this invocation created, if any. Whatever happens after
+    # that, this invocation owes the event an outcome record.
+    claimed = None
     try:
         # The settings are read FIRST, before the payload is looked at, because they are what
         # says where a record goes: reading them second means a payload this hook could not parse
@@ -607,14 +926,34 @@ def run(payload, codex_home=None, environ=None, settings=None):
         record["configuration"] = str(path)
         config, failed, detail = read_settings(path)
         if failed is not None:
-            return _release(config or {}, record, failed, detail, started)
+            return _release(config or {}, record, failed, detail, started, slot)
         stop, payload_failed, payload_detail = stop_input(payload)
         if payload_failed is not None:
-            return _release(config, record, payload_failed, payload_detail, started)
+            return _release(config, record, payload_failed, payload_detail, started, slot)
         record["sessionId"] = stop.get("session_id")
         record["turnId"] = stop.get("turn_id")
         record["stopHookActive"] = stop.get("stop_hook_active")
         record["guardMode"] = config.get("mode")
+        scanning = time.monotonic()
+        key, identity = event_identity(stop, scanning)
+        record["identityScanMs"] = round((time.monotonic() - scanning) * 1000)
+        record["eventKey"] = key
+        record["eventIdentity"] = identity
+        if key is None:
+            # Not knowing which event this is means not knowing it was answered, so it is asked
+            # about exactly as before and never deduplicated.
+            record["acceptance"] = UNESTABLISHED
+        else:
+            acceptance, accepted_as = claim_event(config, key, identity, stop, slot)
+            record["acceptance"] = acceptance
+            record["acceptedAs"] = accepted_as
+            if acceptance == DUPLICATE:
+                return _release(config, record, DUPLICATE_INVOCATION,
+                                "this Stop event already has its accepted record, so the guard"
+                                " was not asked again", started, slot)
+            if acceptance == ACCEPTED:
+                claimed = key
+        record["guardInvoked"] = True
         ending = invoke_guard(config, payload)
         said, value = read_guard_stdout(ending.get("stdout"))
         record["processEnding"] = ending.get("ending")
@@ -637,16 +976,26 @@ def run(payload, codex_home=None, environ=None, settings=None):
         record["detail"] = ending.get("detail")
         record["held"] = answer is not None
         record["elapsedMs"] = round((time.monotonic() - started) * 1000)
-        record["journalledAs"] = journal(config, record)
+        record["journalledAs"] = journal(config, record, slot)
+        if claimed is not None:
+            record_outcome(config, claimed, record,
+                           slot_name(slot) if record["journalledAs"] else None)
         return answer
     except BaseException as error:  # noqa: BLE001 - a detector that dies must still release
         record["adapterOutcome"] = ADAPTER_FAULTED
         record["fault"] = type(error).__name__ + ": " + str(error)
         record["elapsedMs"] = round((time.monotonic() - started) * 1000)
+        written = None
         try:
-            journal(config or {}, record)
+            written = journal(config or {}, record, slot)
         except BaseException:
             pass
+        if claimed is not None:
+            try:
+                record_outcome(config or {}, claimed, record,
+                               slot_name(slot) if written else None)
+            except BaseException:
+                pass
         return None
 
 

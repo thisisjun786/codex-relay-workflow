@@ -98,9 +98,12 @@ def settings(directory, **overrides):
 
 
 def journalled(directory):
+    """Every row under the journal: day directories and 32-hex names only, the shapes a row takes.
+    The accepted records beside them under accepted/ are not rows."""
     root = Path(directory) / "journal"
     return [json.loads(entry.read_text(encoding="utf-8"))
-            for day in sorted(root.glob("*")) for entry in sorted(day.glob("*.json"))]
+            for day in sorted(root.glob("*")) if completion.JOURNAL_DAY.match(day.name)
+            for entry in sorted(day.glob("*.json")) if completion.JOURNAL_NAME.match(entry.name)]
 
 
 def register(directory, **overrides):

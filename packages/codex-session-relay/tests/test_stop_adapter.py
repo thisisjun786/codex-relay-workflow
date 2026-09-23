@@ -8,10 +8,13 @@ where the settings said and readable only by its owner.
 
 import json
 import os
+import re
+import shutil
 import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -134,6 +137,233 @@ class StopAdapterTests(unittest.TestCase):
             written = json.loads(record.read_text(encoding="utf-8"))
             self.assertEqual(written["adapterOutcome"], stopadapter.GUARD_UNREACHABLE)
             self.assertFalse(written["held"])
+
+
+# ----------------------------------------------------------------- one accepted record per Stop event
+#
+# CRW-212. Everything below runs the adapter the way the packaged launcher does, as a program:
+# [interpreter, stopadapter.py, settings] with the host's payload on stdin. The oracles are files
+# (the stub guard's call log, the rows, the accepted records) rather than module attributes, so a
+# copy of this adapter that predates event identity fails these on an assertion about behaviour
+# rather than on a missing name.
+
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "stop_event_r1.json"
+
+
+def r1():
+    """Three Stops of one turn from an isolated Codex 0.154.0 run, each seen by two registrations.
+
+    Derived, not copied: only the transcript lines that carry identity are kept and every path is a
+    placeholder. Stops 2 and 3 arrived with byte-identical payloads; only the transcript tells them
+    apart, which is the case a payload digest or a (session, turn) key gets wrong.
+    """
+    return json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+
+def counting_guard(directory, *, decision="release", die_first=False):
+    """A stub runtime that appends one line per call, so 'asked once' is a count of lines."""
+    body = [
+        "import json, os, sys",
+        "raw = sys.stdin.buffer.read()",
+        "calls = %r" % str(directory / "guard-calls"),
+        "with open(calls, 'a', encoding='utf-8') as log:",
+        "    log.write(json.dumps(json.loads(raw.decode('utf-8'))) + '\\n')",
+    ]
+    if die_first:
+        # The owner of a claim dying before it can record an outcome: the adapter is this stub's
+        # parent, and the first call ends it with SIGKILL, the way a host deadline would.
+        body += ["if sum(1 for _ in open(calls)) == 1:", "    os.kill(os.getppid(), 9)",
+                 "    raise SystemExit(0)"]
+    if decision == "block":
+        body.append("sys.stdout.write(json.dumps({'decision': 'block', 'state': 'declared',"
+                    " 'hook_output': {'decision': 'block', 'reason': 'verify the child',"
+                    " 'continue': True}}))")
+    else:
+        body.append("sys.stdout.write(json.dumps({'decision': 'release', 'state': 'unmanaged',"
+                    " 'hook_output': {}}))")
+    path = directory / "relay"
+    path.write_text("#!/usr/bin/env python3\n" + "\n".join(body) + "\n", encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def guard_calls(directory):
+    try:
+        return [json.loads(line) for line in (directory / "guard-calls").read_text().splitlines()]
+    except FileNotFoundError:
+        return []
+
+
+def write_transcript(path, lines):
+    path.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+
+
+def stop_payload(stop, transcript, cwd):
+    payload = dict(stop["payload"])
+    payload["transcript_path"] = str(transcript)
+    payload["cwd"] = str(cwd)
+    return json.dumps(payload).encode("utf-8")
+
+
+def fire(settings_path, payload):
+    """One invocation through the entry point the launcher runs."""
+    return subprocess.run([sys.executable, str(Path(stopadapter.__file__).resolve()),
+                           str(settings_path)],
+                          input=payload, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          timeout=60)
+
+
+def fire_together(settings_path, payload, count=2):
+    """Several invocations of one Stop, started before any of them is handed its payload."""
+    started = [subprocess.Popen([sys.executable, str(Path(stopadapter.__file__).resolve()),
+                                 str(settings_path)],
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE) for _ in range(count)]
+    answers = [None] * count
+    barrier = threading.Barrier(count)
+
+    def feed(index):
+        barrier.wait()
+        answers[index] = started[index].communicate(payload, timeout=60)
+
+    threads = [threading.Thread(target=feed, args=(index,)) for index in range(count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    return [(process.returncode, out, err) for process, (out, err) in zip(started, answers)]
+
+
+def rows(home):
+    found = []
+    journal = home / "journal"
+    for day in sorted(journal.iterdir()) if journal.is_dir() else []:
+        if day.is_dir() and re.match(r"^[0-9]{8}$", day.name):
+            for entry in sorted(day.iterdir()):
+                if re.match(r"^[0-9a-f]{32}\.json$", entry.name):
+                    found.append(json.loads(entry.read_text(encoding="utf-8")))
+    return found
+
+
+def ledger(home):
+    directory = home / "journal" / "accepted"
+    names = sorted(p.name for p in directory.iterdir()) if directory.is_dir() else []
+    return ([n for n in names if re.match(r"^[0-9a-f]{64}\.json$", n)],
+            [n for n in names if re.match(r"^[0-9a-f]{64}\.outcome\.json$", n)])
+
+
+class StopEventAcceptanceTests(unittest.TestCase):
+    """The same Stop is accepted once; two Stops of one turn are two events."""
+
+    def setUp(self):
+        raw = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, raw, True)
+        self.home = Path(raw)
+        self.transcript = self.home / "rollout.jsonl"
+        self.fixture = r1()
+
+    def arrange(self, *, decision="release", die_first=False, **kwargs):
+        return settings(self.home, counting_guard(self.home, decision=decision,
+                                                  die_first=die_first), **kwargs)
+
+    def at_stop(self, index):
+        stop = self.fixture["stops"][index]
+        write_transcript(self.transcript, self.fixture["transcriptLines"][:stop["linesAtStop"]])
+        return stop_payload(stop, self.transcript, self.home)
+
+    def test_the_same_stop_replayed_is_accepted_once_and_asked_about_once(self):
+        path = self.arrange()
+        payload = self.at_stop(0)
+        first, second = fire(path, payload), fire(path, payload)
+        self.assertEqual((first.returncode, second.returncode), (0, 0))
+        self.assertEqual((first.stderr, second.stderr), (b"", b""))
+        self.assertEqual(len(guard_calls(self.home)), 1,
+                         "a replayed Stop event asked the guard again")
+        written = rows(self.home)
+        self.assertEqual(len(written), 2, "every invocation still leaves a row")
+        self.assertEqual(sorted(str(r.get("acceptance")) for r in written),
+                         ["accepted", "duplicate"])
+        claims, outcomes = ledger(self.home)
+        self.assertEqual((len(claims), len(outcomes)), (1, 1))
+
+    def test_two_registrations_answering_one_stop_at_once_accept_it_once(self):
+        payload = self.at_stop(0)
+        for round_number in range(10):
+            with self.subTest(round=round_number):
+                journal = self.home / "journal"
+                shutil.rmtree(journal, True)
+                (self.home / "guard-calls").unlink(missing_ok=True)
+                path = self.arrange()
+                answers = fire_together(path, payload)
+                self.assertEqual([code for code, _o, _e in answers], [0, 0])
+                self.assertEqual(len(guard_calls(self.home)), 1,
+                                 "two registrations on one Stop both asked the guard")
+                self.assertEqual(sorted(str(r.get("acceptance")) for r in rows(self.home)),
+                                 ["accepted", "duplicate"])
+                self.assertEqual(len(ledger(self.home)[0]), 1)
+
+    def test_distinct_stops_of_one_turn_are_each_accepted_and_answered(self):
+        """The positive control. The guard holds on every call, so each event's hold must reach
+        the host from exactly one of its two registrations: a continuation is never suppressed."""
+        path = self.arrange(decision="block")
+        stops = self.fixture["stops"]
+        self.assertEqual(stops[2]["rawSha256"], stops[4]["rawSha256"],
+                         "the fixture's Stops 2 and 3 arrived with byte-identical payloads")
+        for index in range(0, 6, 2):
+            payload = self.at_stop(index)
+            answers = fire_together(path, payload)
+            held = [json.loads(out) for _code, out, _err in answers if out]
+            self.assertEqual(len(held), 1, "exactly one registration answers each event")
+            self.assertEqual(held[0]["decision"], "block")
+        self.assertEqual(len(guard_calls(self.home)), 3)
+        claims, outcomes = ledger(self.home)
+        self.assertEqual((len(claims), len(outcomes)), (3, 3))
+        written = rows(self.home)
+        self.assertEqual(sorted(str(r.get("acceptance")) for r in written),
+                         ["accepted"] * 3 + ["duplicate"] * 3)
+        self.assertEqual(len({r.get("eventKey") for r in written}), 3)
+        self.assertEqual({r.get("turnId") for r in written}, {stops[0]["payload"]["turn_id"]})
+
+    def test_an_identity_it_cannot_establish_is_asked_about_every_time(self):
+        path = self.arrange()
+        payload = json.dumps({"session_id": "s", "turn_id": "t", "stop_hook_active": False,
+                              "last_assistant_message": "done"}).encode("utf-8")
+        fire(path, payload)
+        fire(path, payload)
+        self.assertEqual(len(guard_calls(self.home)), 2)
+        written = rows(self.home)
+        self.assertEqual([r.get("acceptance") for r in written], ["unestablished"] * 2)
+        self.assertEqual({(r.get("eventIdentity") or {}).get("reason") for r in written},
+                         {"transcript_path_missing"})
+        self.assertEqual(ledger(self.home), ([], []))
+
+    def test_a_claim_whose_owner_died_is_not_answered_twice(self):
+        path = self.arrange(die_first=True)
+        payload = self.at_stop(0)
+        killed = fire(path, payload)
+        self.assertEqual(killed.returncode, -9)
+        again = fire(path, payload)
+        self.assertEqual(again.returncode, 0)
+        self.assertEqual(again.stdout, b"")
+        self.assertEqual(len(guard_calls(self.home)), 1)
+        claims, outcomes = ledger(self.home)
+        self.assertEqual((len(claims), len(outcomes)), (1, 0),
+                         "the claim stays and names no outcome")
+        self.assertEqual([r.get("acceptance") for r in rows(self.home)], ["duplicate"])
+
+    def test_a_newer_input_with_no_answer_leaves_the_identity_unestablished(self):
+        """A transcript whose newest item for the turn is a continuation prompt does not show this
+        Stop's answer; taking the previous answer would merge two events."""
+        path = self.arrange()
+        stop = self.fixture["stops"][2]
+        lines = self.fixture["transcriptLines"][:stop["linesAtStop"] - 1]
+        self.assertIn("HookPrompt", lines[-1])
+        write_transcript(self.transcript, lines)
+        fire(path, stop_payload(stop, self.transcript, self.home))
+        written = rows(self.home)
+        self.assertEqual((written[0].get("eventIdentity") or {}).get("reason"),
+                         "answer_precedes_latest_input")
+        self.assertEqual(len(guard_calls(self.home)), 1)
 
 
 if __name__ == "__main__":

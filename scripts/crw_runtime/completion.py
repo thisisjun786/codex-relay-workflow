@@ -305,6 +305,60 @@ DECISIONS = (BLOCK, RELEASE)
 JOURNAL_NAME = re.compile(r"^[0-9a-f]{32}\.json$")
 JOURNAL_DAY = re.compile(r"^[0-9]{8}$")
 
+# ----------------------------------------------------------------- which Stop event this is
+#
+# CRW-212. A Stop EVENT is one end of one sampling sequence, and a turn can have several: every
+# continuation a hook asks for, and every waiting message the host appends, makes the turn end
+# again. Two registrations answering one Stop, or one Stop delivered twice, is one event handled
+# twice. The payload cannot tell those apart -- an isolated Codex 0.154.0 run produced two Stops of
+# one turn with byte-identical payloads -- so the identity is read from what the host recorded in
+# the transcript before it ran the hook: the answer item that ended this sampling.
+
+RECORD_VERSION = 2
+LEDGER_DIRECTORY = "accepted"
+LEDGER_NAME = re.compile(r"^[0-9a-f]{64}\.json$")
+OUTCOME_NAME = re.compile(r"^[0-9a-f]{64}\.outcome\.json$")
+OUTCOME_SUFFIX = ".outcome.json"
+LEDGER_VERSION = 1
+EVENT_KEY_TAG = "crw-stop-event/1"
+# Bounded so the scan stays inside the margin the packaged launcher keeps over the guard budget:
+# the launcher waits the budget plus two seconds, and this is at most three quarters of one.
+SCAN_CHUNK_BYTES = 1 << 16
+SCAN_MAX_BYTES = 8 << 20
+SCAN_MAX_SECONDS = 0.75
+
+ACCEPTED = "accepted"
+DUPLICATE = "duplicate"
+UNESTABLISHED = "unestablished"
+UNCLAIMABLE = "unclaimable"
+CLAIM_FAILED = "claim_failed"
+ACCEPTANCES = (ACCEPTED, DUPLICATE, UNESTABLISHED, UNCLAIMABLE, CLAIM_FAILED)
+
+DUPLICATE_INVOCATION = "duplicate_invocation"
+# What faults_only leaves out of the journal. Only journal() reads this: the guard fields and the
+# hook output still follow ANSWERED, so a duplicate never carries a verdict nobody asked for.
+QUIET = (GUARD_ANSWERED, DUPLICATE_INVOCATION)
+
+IDENTITY_FIELDS_INCOMPLETE = "identity_fields_incomplete"
+TRANSCRIPT_PATH_MISSING = "transcript_path_missing"
+TRANSCRIPT_PATH_RELATIVE = "transcript_path_relative"
+TRANSCRIPT_ABSENT = "transcript_absent"
+TRANSCRIPT_UNREACHABLE = "transcript_unreachable"
+TRANSCRIPT_NOT_REGULAR = "transcript_not_regular"
+SCAN_BOUND_EXCEEDED = "scan_bound_exceeded"
+SCAN_TIMED_OUT = "scan_timed_out"
+NO_ANSWER_ITEM_FOR_TURN = "no_answer_item_for_turn"
+ANSWER_ITEM_UNIDENTIFIED = "answer_item_unidentified"
+ANSWER_PRECEDES_LATEST_INPUT = "answer_precedes_latest_input"
+ANSWER_TEXT_MISMATCH = "answer_text_mismatch"
+SESSION_MISMATCH = "session_mismatch"
+
+# The items that start a sampling. Met before any answer when reading newest-first, one of these
+# means the transcript does not yet show this Stop's answer.
+INPUT_ITEMS = ("HookPrompt", "UserMessage")
+# Every line the scan can act on names the turn and one of these, so the rest are never parsed.
+SCAN_TOKENS = (b"AgentMessage", b"HookPrompt", b"UserMessage", b"task_started")
+
 # The answers a configuration write gives about the file it found. The same shape hooks.install
 # uses, in this module's own words rather than its words, so an answer about these settings can
 # never be read as an answer about the hook file. The reason for the shape is the same one: a
@@ -1046,10 +1100,257 @@ def duplicate_complaints(document, event, command, timeout):
             " Edit or remove that registration first"]
 
 
+# ------------------------------------------------------------------ which Stop event this is
+
+
+def _transcript_refusal(path):
+    """None for a regular file, else why the transcript will not be opened.
+
+    Settled with lstat before any open, for the reason read_settings settles its own path first: a
+    named pipe would block this process on open until the host killed it, and a Stop killed
+    mid-adapter releases with nothing recorded.
+    """
+    try:
+        found = os.lstat(path)
+    except FileNotFoundError:
+        return TRANSCRIPT_ABSENT
+    except (OSError, ValueError):
+        return TRANSCRIPT_UNREACHABLE
+    if stat.S_ISLNK(found.st_mode):
+        try:
+            found = os.stat(path)
+        except FileNotFoundError:
+            return TRANSCRIPT_ABSENT
+        except (OSError, ValueError):
+            return TRANSCRIPT_UNREACHABLE
+    if not stat.S_ISREG(found.st_mode):
+        return TRANSCRIPT_NOT_REGULAR
+    return None
+
+
+def _answer_text(item):
+    parts = item.get("content")
+    if not isinstance(parts, list):
+        return None
+    return "".join(part["text"] for part in parts
+                   if isinstance(part, dict) and part.get("type") == "Text"
+                   and isinstance(part.get("text"), str))
+
+
+def _newest_answer(handle, turn, identity, started):
+    """The newest answer item recorded for this turn, read backwards from the end, or a reason.
+
+    Only whole lines count. The first piece of each chunk is carried into the next read, and a last
+    line without its newline is one the host is still writing: it does not parse and is skipped.
+    """
+    token = turn.encode("utf-8", "surrogatepass")
+    position = os.fstat(handle).st_size
+    carry = b""
+    while position > 0:
+        if identity["scannedBytes"] >= SCAN_MAX_BYTES:
+            return None, SCAN_BOUND_EXCEEDED
+        if time.monotonic() - started > SCAN_MAX_SECONDS:
+            return None, SCAN_TIMED_OUT
+        size = min(SCAN_CHUNK_BYTES, position)
+        position -= size
+        os.lseek(handle, position, os.SEEK_SET)
+        chunk = b""
+        while len(chunk) < size:
+            piece = os.read(handle, size - len(chunk))
+            if not piece:
+                break
+            chunk += piece
+        identity["scannedBytes"] += len(chunk)
+        lines = (chunk + carry).split(b"\n")
+        carry = lines.pop(0) if position > 0 else b""
+        for line in reversed(lines):
+            identity["scannedLines"] += 1
+            if token not in line or not any(mark in line for mark in SCAN_TOKENS):
+                continue
+            try:
+                row = json.loads(line.decode("utf-8"))
+            except ValueError:
+                identity["skippedLines"] += 1
+                continue
+            if not isinstance(row, dict) or row.get("type") != "event_msg":
+                continue
+            body = row.get("payload")
+            if not isinstance(body, dict) or body.get("turn_id") != turn:
+                continue
+            if body.get("type") == "task_started":
+                return None, NO_ANSWER_ITEM_FOR_TURN
+            item = body.get("item")
+            if body.get("type") != "item_completed" or not isinstance(item, dict):
+                continue
+            if item.get("type") in INPUT_ITEMS:
+                return None, ANSWER_PRECEDES_LATEST_INPUT
+            if item.get("type") == "AgentMessage":
+                return (item, body.get("thread_id")), None
+    return None, NO_ANSWER_ITEM_FOR_TURN
+
+
+def event_identity(stop, started=None):
+    """Which Stop event this invocation answers, as (key, identity).
+
+    The key is None when the identity could not be established, and identity["reason"] says why.
+    An established event is (session_id, turn_id, stop_hook_active, answer item id): the newest
+    answer the host recorded for the turn, provided its text is the one the payload reports, its
+    thread is the delivered session, and no newer input for the turn follows it. The key is a
+    SHA-256 over those four values, so no host value becomes a path and nothing is minted here.
+    """
+    started = time.monotonic() if started is None else started
+    identity = {"established": False, "reason": None, "answerItem": None,
+                "transcriptPath": None, "scannedBytes": 0, "scannedLines": 0, "skippedLines": 0}
+    session, turn = stop.get("session_id"), stop.get("turn_id")
+    active, said = stop.get("stop_hook_active"), stop.get("last_assistant_message")
+    if not (isinstance(session, str) and session and isinstance(turn, str) and turn
+            and isinstance(active, bool) and isinstance(said, str)):
+        identity["reason"] = IDENTITY_FIELDS_INCOMPLETE
+        return None, identity
+    path = stop.get("transcript_path")
+    if not isinstance(path, str) or not path:
+        identity["reason"] = TRANSCRIPT_PATH_MISSING
+        return None, identity
+    identity["transcriptPath"] = path
+    if not os.path.isabs(path):
+        identity["reason"] = TRANSCRIPT_PATH_RELATIVE
+        return None, identity
+    refused = _transcript_refusal(path)
+    if refused is not None:
+        identity["reason"] = refused
+        return None, identity
+    try:
+        handle = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+                         | getattr(os, "O_NOCTTY", 0))
+    except FileNotFoundError:
+        identity["reason"] = TRANSCRIPT_ABSENT
+        return None, identity
+    except (OSError, ValueError):
+        identity["reason"] = TRANSCRIPT_UNREACHABLE
+        return None, identity
+    try:
+        if not stat.S_ISREG(os.fstat(handle).st_mode):
+            answer, reason = None, TRANSCRIPT_NOT_REGULAR
+        else:
+            answer, reason = _newest_answer(handle, turn, identity, started)
+    except OSError:
+        answer, reason = None, TRANSCRIPT_UNREACHABLE
+    finally:
+        os.close(handle)
+    if answer is None:
+        identity["reason"] = reason
+        return None, identity
+    item, thread = answer
+    item_id = item.get("id")
+    if not isinstance(item_id, str) or not item_id:
+        identity["reason"] = ANSWER_ITEM_UNIDENTIFIED
+        return None, identity
+    identity["answerItem"] = item_id
+    if thread is not None and thread != session:
+        identity["reason"] = SESSION_MISMATCH
+        return None, identity
+    if _answer_text(item) != said:
+        identity["reason"] = ANSWER_TEXT_MISMATCH
+        return None, identity
+    identity["established"] = True
+    key = hashlib.sha256(json.dumps([EVENT_KEY_TAG, session, turn, active, item_id],
+                                    separators=(",", ":")).encode("ascii")).hexdigest()
+    return key, identity
+
+
+def new_slot():
+    """Where this invocation's row will go, chosen before anything names it."""
+    return datetime.now(timezone.utc).strftime("%Y%m%d"), uuid.uuid4().hex
+
+
+def slot_name(slot):
+    return slot[0] + "/" + slot[1] + ".json"
+
+
+def _write_whole(handle, document):
+    payload = (json.dumps(document, sort_keys=True, default=str) + "\n").encode("utf-8")
+    written = 0
+    while written < len(payload):
+        written += os.write(handle, payload[written:])
+
+
+def claim_event(config, key, identity, stop, slot):
+    """Create this event's accepted record, or learn that another invocation already has.
+
+    Returns (acceptance, acceptedAs). Creating a file that must not exist is the whole mechanism:
+    two registrations firing in the same instant get one owner. The record is never rewritten, and
+    a short write leaves it where it is, because removing it would open the event to a second
+    acceptance. Written under every journalPolicy: this is state, not a record of an invocation.
+    """
+    root = config.get("journalRoot")
+    if not root:
+        return UNCLAIMABLE, None
+    directory = Path(root).expanduser() / LEDGER_DIRECTORY
+    named = LEDGER_DIRECTORY + "/" + key + ".json"
+    try:
+        # Its own step, so a path that exists as something other than a directory reads as a
+        # failed claim and never as the FileExistsError below, which means "already accepted".
+        directory.mkdir(parents=True, exist_ok=True)
+    except (OSError, ValueError):
+        return CLAIM_FAILED, None
+    try:
+        handle = os.open(str(directory / (key + ".json")),
+                         os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        return DUPLICATE, named
+    except (OSError, ValueError):
+        return CLAIM_FAILED, None
+    try:
+        _write_whole(handle, {"ledgerVersion": LEDGER_VERSION, "eventKey": key,
+                              "sessionId": stop.get("session_id"),
+                              "turnId": stop.get("turn_id"),
+                              "stopHookActive": stop.get("stop_hook_active"),
+                              "answerItem": identity.get("answerItem"), "claimedAt": now(),
+                              "claimedBy": {"pid": os.getpid(), "attemptRow": slot_name(slot)}})
+    except (OSError, ValueError):
+        pass
+    finally:
+        os.close(handle)
+    return ACCEPTED, named
+
+
+def record_outcome(config, key, record, row):
+    """What the accepted event was answered with, as a second create-once file beside its claim.
+
+    Written after the row, naming it (row is its position under the journal root, or None when the
+    policy wrote none). A claim with no outcome is an event whose owner died before answering, and
+    a reading of the journal can say so instead of passing it. Unlike the claim, a short write is
+    removed: its absence already says "outcome unrecorded", and a torn file would say less.
+    """
+    root = config.get("journalRoot")
+    if not root or not key:
+        return None
+    target = Path(root).expanduser() / LEDGER_DIRECTORY / (key + OUTCOME_SUFFIX)
+    try:
+        handle = os.open(str(target), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except (OSError, ValueError):
+        return None
+    try:
+        _write_whole(handle, {"ledgerVersion": LEDGER_VERSION, "eventKey": key,
+                              "adapterOutcome": record.get("adapterOutcome"),
+                              "guardDecision": record.get("guardDecision"),
+                              "guardState": record.get("guardState"),
+                              "held": record.get("held"), "attemptRow": row, "at": now()})
+    except (OSError, ValueError):
+        os.close(handle)
+        try:
+            os.unlink(str(target))
+        except OSError:
+            pass
+        return None
+    os.close(handle)
+    return LEDGER_DIRECTORY + "/" + key + OUTCOME_SUFFIX
+
+
 # ------------------------------------------------------------------ this hook's own record
 
 
-def journal(config, record):
+def journal(config, record, slot=None):
     """Append one record of this invocation, under a name nothing else can take.
 
     Create-once with a random name rather than one built from the delivered identity: a session
@@ -1063,13 +1364,16 @@ def journal(config, record):
     policy = config.get("journalPolicy") or EVERY_INVOCATION
     if policy == NO_JOURNAL:
         return None
-    if policy == FAULTS_ONLY and record.get("adapterOutcome") in ANSWERED:
+    if policy == FAULTS_ONLY and record.get("adapterOutcome") in QUIET:
         return None
     root = config.get("journalRoot")
     if not root:
         return None
-    directory = Path(root).expanduser() / datetime.now(timezone.utc).strftime("%Y%m%d")
-    target = directory / (uuid.uuid4().hex + ".json")
+    # The slot run() chose when it started, so an accepted record naming this row names the day
+    # the row is actually under, even when the invocation crosses midnight.
+    day, name = slot or new_slot()
+    directory = Path(root).expanduser() / day
+    target = directory / (name + ".json")
     try:
         directory.mkdir(parents=True, exist_ok=True)
         handle = os.open(str(target), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -1100,11 +1404,17 @@ def run(payload, codex_home=None, environ=None, settings=None):
     release, except the one where the guard itself decided to hold.
     """
     started = time.monotonic()
-    record = {"recordVersion": 1, "event": EVENT, "at": now(),
+    slot = new_slot()
+    record = {"recordVersion": RECORD_VERSION, "event": EVENT, "at": now(),
               "adapterOutcome": None, "processEnding": None, "stdoutReading": None,
               "guardState": None, "guardDecision": None, "guardMode": None,
-              "assignmentId": None, "guardRecordedAs": None, "held": False}
+              "assignmentId": None, "guardRecordedAs": None, "held": False,
+              "eventKey": None, "eventIdentity": None, "identityScanMs": None,
+              "acceptance": None, "acceptedAs": None, "guardInvoked": False}
     config = {}
+    # The event whose accepted record this invocation created, if any. Whatever happens after
+    # that, this invocation owes the event an outcome record.
+    claimed = None
     try:
         # The settings are read FIRST, before the payload is looked at. They are what says where
         # a record goes, so reading them second meant a payload this hook could not parse was
@@ -1114,14 +1424,34 @@ def run(payload, codex_home=None, environ=None, settings=None):
         record["configuration"] = str(path)
         config, failed, detail, _found = read_configuration(path)
         if failed is not None:
-            return _release(config or {}, record, failed, detail, started)
+            return _release(config or {}, record, failed, detail, started, slot)
         stop, payload_failed, payload_detail = stop_input(payload)
         if payload_failed is not None:
-            return _release(config, record, payload_failed, payload_detail, started)
+            return _release(config, record, payload_failed, payload_detail, started, slot)
         record["sessionId"] = stop.get("session_id")
         record["turnId"] = stop.get("turn_id")
         record["stopHookActive"] = stop.get("stop_hook_active")
         record["guardMode"] = config.get("mode")
+        scanning = time.monotonic()
+        key, identity = event_identity(stop, scanning)
+        record["identityScanMs"] = round((time.monotonic() - scanning) * 1000)
+        record["eventKey"] = key
+        record["eventIdentity"] = identity
+        if key is None:
+            # Not knowing which event this is means not knowing it was answered, so it is asked
+            # about exactly as before and never deduplicated.
+            record["acceptance"] = UNESTABLISHED
+        else:
+            acceptance, accepted_as = claim_event(config, key, identity, stop, slot)
+            record["acceptance"] = acceptance
+            record["acceptedAs"] = accepted_as
+            if acceptance == DUPLICATE:
+                return _release(config, record, DUPLICATE_INVOCATION,
+                                "this Stop event already has its accepted record, so the guard"
+                                " was not asked again", started, slot)
+            if acceptance == ACCEPTED:
+                claimed = key
+        record["guardInvoked"] = True
         ending = invoke_guard(config, payload)
         said, value = read_guard_stdout(ending.get("stdout"))
         record["processEnding"] = ending.get("ending")
@@ -1144,25 +1474,222 @@ def run(payload, codex_home=None, environ=None, settings=None):
         record["detail"] = ending.get("detail")
         record["held"] = answer is not None
         record["elapsedMs"] = round((time.monotonic() - started) * 1000)
-        record["journalledAs"] = journal(config, record)
+        record["journalledAs"] = journal(config, record, slot)
+        if claimed is not None:
+            record_outcome(config, claimed, record,
+                           slot_name(slot) if record["journalledAs"] else None)
         return answer
     except BaseException as error:  # noqa: BLE001 - a detector that dies must still release
         record["adapterOutcome"] = ADAPTER_FAULTED
         record["fault"] = type(error).__name__ + ": " + str(error)
         record["elapsedMs"] = round((time.monotonic() - started) * 1000)
+        written = None
         try:
-            journal(config or {}, record)
+            written = journal(config or {}, record, slot)
         except BaseException:
             pass
+        if claimed is not None:
+            try:
+                record_outcome(config or {}, claimed, record,
+                               slot_name(slot) if written else None)
+            except BaseException:
+                pass
         return None
 
 
-def _release(config, record, outcome, detail, started):
+def _release(config, record, outcome, detail, started, slot=None):
     record["adapterOutcome"] = outcome
     record["detail"] = detail
     record["elapsedMs"] = round((time.monotonic() - started) * 1000)
-    record["journalledAs"] = journal(config, record)
+    record["journalledAs"] = journal(config, record, slot)
     return None
+
+
+# ------------------------------------------------------------------ reading the journal per Stop event
+
+
+PER_EVENT_PREDICATE = "one accepted record per Stop event (CRW-212)"
+SUPERSEDED_PREDICATE = ("exactly one row per (session, turn); superseded by CRW-212 because a"
+                        " continuation is a new Stop event in the same turn")
+TRUE, FALSE, UNREADABLE_VERDICT = "TRUE", "FALSE", "UNREADABLE"
+
+
+def _within(value, since, until):
+    if not isinstance(value, str):
+        return since is None and until is None
+    return (since is None or value >= since) and (until is None or value < until)
+
+
+def _read_json(path):
+    try:
+        return json.loads(Path(path).read_bytes().decode("utf-8")), True
+    except (OSError, ValueError):
+        return None, False
+
+
+def stop_events(roots, since=None, until=None, session=None, turn=None):
+    """Whether every Stop event recorded under these journal roots was accepted exactly once.
+
+    Read-only. One verdict, ordered FALSE > UNREADABLE > TRUE:
+
+    FALSE when an event was accepted more than once -- claims for one key in two distinct roots,
+    several accepted rows for one key, an accepted row whose claim is not there (acceptance that
+    happened outside the ledger), or a duplicate row that asked the guard anyway. On one working
+    root a replay never reads FALSE: the claim is create-once.
+
+    UNREADABLE when the reading cannot vouch for what it read -- a listing that failed, a row or
+    an accepted record that does not parse or names another key, an outcome with no claim, a claim
+    with no outcome (its owner died before answering), or nothing to judge at all.
+
+    Invocations whose identity was never established (and those that could not claim) are counted
+    beside the verdict and never judged: nothing says which event they were. Rows written before
+    event identity existed (recordVersion 1) are counted as legacy for the same reason. The old
+    per-(session, turn) reading is reported too, labelled as superseded, so the two can be put
+    side by side.
+
+    Roots are deduplicated by the (device, inode) they reach, so one root spelled twice is read
+    once and cannot read FALSE against itself.
+    """
+    answer = {"predicate": PER_EVENT_PREDICATE, "verdict": None, "roots": [],
+              "window": {"since": since, "until": until, "session": session, "turn": turn},
+              "events": 0, "eventsWithMoreThanOneAcceptance": [], "duplicateInvocations": 0,
+              "unjudgedInvocations": {}, "legacyRows": 0, "acceptedWithoutOutcome": [],
+              "outcomesWithoutClaim": [], "acceptedRowsWithoutLedger": [],
+              "guardAskedOnDuplicate": [], "ledgerUnreadable": [], "rowsUnreadable": 0,
+              "foreignLedgerEntries": [], "turnsWithMoreThanOneEvent": 0,
+              "supersededPerTurn": {"predicate": SUPERSEDED_PREDICATE, "pairs": 0,
+                                    "pairsWithMoreThanOneRow": 0}}
+    listing_failed = False
+    reached = set()
+    claims, outcomes, accepted_rows, pairs = {}, {}, {}, {}
+    for spelled in roots:
+        root = Path(os.path.abspath(str(Path(spelled).expanduser())))
+        entry = {"root": str(root), "state": None}
+        answer["roots"].append(entry)
+        try:
+            found = os.stat(str(root))
+        except FileNotFoundError:
+            entry["state"] = "absent"
+            continue
+        except (OSError, ValueError) as error:
+            entry["state"], entry["detail"] = "unreadable", str(error)
+            listing_failed = True
+            continue
+        identity = (found.st_dev, found.st_ino)
+        if identity in reached:
+            entry["state"] = "same_root_as_another_spelling"
+            continue
+        reached.add(identity)
+        entry["state"] = "read"
+        try:
+            days = sorted(e.name for e in os.scandir(str(root))
+                          if e.is_dir() and JOURNAL_DAY.match(e.name))
+            ledger = (sorted(e.name for e in os.scandir(str(root / LEDGER_DIRECTORY)))
+                      if (root / LEDGER_DIRECTORY).is_dir() else [])
+        except OSError as error:
+            entry["state"], entry["detail"] = "unreadable", str(error)
+            listing_failed = True
+            continue
+        for day in days:
+            try:
+                names = sorted(e.name for e in os.scandir(str(root / day))
+                               if e.is_file() and JOURNAL_NAME.match(e.name))
+            except OSError as error:
+                entry["state"], entry["detail"] = "unreadable", str(error)
+                listing_failed = True
+                break
+            for name in names:
+                row, readable = _read_json(root / day / name)
+                if not readable or not isinstance(row, dict):
+                    answer["rowsUnreadable"] += 1
+                    continue
+                if not _within(row.get("at"), since, until):
+                    continue
+                if session is not None and row.get("sessionId") != session:
+                    continue
+                if turn is not None and row.get("turnId") != turn:
+                    continue
+                where = str(root / day / name)
+                if row.get("sessionId") and row.get("turnId"):
+                    pair = (row["sessionId"], row["turnId"])
+                    pairs[pair] = pairs.get(pair, 0) + 1
+                if row.get("recordVersion") != RECORD_VERSION:
+                    answer["legacyRows"] += 1
+                    continue
+                acceptance, key = row.get("acceptance"), row.get("eventKey")
+                if acceptance == ACCEPTED and isinstance(key, str):
+                    accepted_rows.setdefault(key, []).append(where)
+                    if not (root / LEDGER_DIRECTORY / (key + ".json")).is_file():
+                        answer["acceptedRowsWithoutLedger"].append(where)
+                elif acceptance == DUPLICATE:
+                    answer["duplicateInvocations"] += 1
+                    if row.get("guardInvoked"):
+                        answer["guardAskedOnDuplicate"].append(where)
+                elif acceptance in (UNESTABLISHED, UNCLAIMABLE, CLAIM_FAILED):
+                    reason = ((row.get("eventIdentity") or {}).get("reason")
+                              if acceptance == UNESTABLISHED else None)
+                    label = acceptance + (":" + reason if reason else "")
+                    counts = answer["unjudgedInvocations"]
+                    counts[label] = counts.get(label, 0) + 1
+        for name in ledger:
+            path = root / LEDGER_DIRECTORY / name
+            if OUTCOME_NAME.match(name):
+                body, readable = _read_json(path)
+                key = name[:-len(OUTCOME_SUFFIX)]
+                if not readable or not isinstance(body, dict) or body.get("eventKey") != key:
+                    answer["ledgerUnreadable"].append(str(path))
+                    continue
+                outcomes.setdefault(key, []).append(str(root))
+            elif LEDGER_NAME.match(name):
+                body, readable = _read_json(path)
+                key = name[:-len(".json")]
+                if (not readable or not isinstance(body, dict) or body.get("eventKey") != key
+                        or not body.get("sessionId") or not body.get("turnId")):
+                    answer["ledgerUnreadable"].append(str(path))
+                    continue
+                if not _within(body.get("claimedAt"), since, until):
+                    continue
+                if session is not None and body.get("sessionId") != session:
+                    continue
+                if turn is not None and body.get("turnId") != turn:
+                    continue
+                claims.setdefault(key, []).append((str(root), body.get("sessionId"),
+                                                   body.get("turnId")))
+            else:
+                answer["foreignLedgerEntries"].append(str(path))
+    events_per_turn = {}
+    for key, held in claims.items():
+        if len(held) > 1 or len(accepted_rows.get(key, [])) > 1:
+            answer["eventsWithMoreThanOneAcceptance"].append(key)
+        if not outcomes.get(key):
+            answer["acceptedWithoutOutcome"].append(key)
+        pair = (held[0][1], held[0][2])
+        events_per_turn[pair] = events_per_turn.get(pair, 0) + 1
+    for key, rows in accepted_rows.items():
+        if key not in claims and len(rows) > 1:
+            answer["eventsWithMoreThanOneAcceptance"].append(key)
+    windowed = since is not None or until is not None or session is not None or turn is not None
+    for key in outcomes:
+        if key not in claims and not windowed:
+            answer["outcomesWithoutClaim"].append(key)
+    answer["events"] = len(claims)
+    answer["turnsWithMoreThanOneEvent"] = sum(1 for n in events_per_turn.values() if n > 1)
+    answer["supersededPerTurn"]["pairs"] = len(pairs)
+    answer["supersededPerTurn"]["pairsWithMoreThanOneRow"] = sum(1 for n in pairs.values()
+                                                                if n > 1)
+    for field in ("eventsWithMoreThanOneAcceptance", "acceptedWithoutOutcome",
+                  "outcomesWithoutClaim"):
+        answer[field] = sorted(set(answer[field]))
+    if (answer["eventsWithMoreThanOneAcceptance"] or answer["acceptedRowsWithoutLedger"]
+            or answer["guardAskedOnDuplicate"]):
+        answer["verdict"] = FALSE
+    elif (listing_failed or answer["ledgerUnreadable"] or answer["rowsUnreadable"]
+          or answer["outcomesWithoutClaim"] or answer["acceptedWithoutOutcome"]
+          or not claims):
+        answer["verdict"] = UNREADABLE_VERDICT
+    else:
+        answer["verdict"] = TRUE
+    return answer
 
 
 # ------------------------------------------------------------------ installing the settings
