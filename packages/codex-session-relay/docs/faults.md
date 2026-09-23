@@ -61,8 +61,10 @@ a path that reaches the outcome without passing through that function is a defec
     `set_project` is cancelled before issue, and every confirmation re-checks the target. With no
     project its product owns, an owned issue is unlinked - awaiting a target - and never
     reported linked; nor is it reported linked while a `set_project` to another project is issued
-    or uncertain, because that write may still land (`_moving_elsewhere()`). Enforced by `_relink()` and `_unlink()` through `_link_to_target()`, and the
-    built-in `set_project` pre-issue check.
+    or uncertain, because that write may still land (`_moving_elsewhere()`, which reads at most
+    one row). A target returning to the project the issue already sits in cancels every unsent
+    `set_project` at once. Enforced by `_relink()` and `_unlink()` through `_link_to_target()`,
+    and the built-in `set_project` pre-issue check.
 12. **Budgets hold, never drop, and never starve another product.** A budget is decided per
     candidate inside the selection query of `next()` and of `reserve_notifications()`, and
     candidates are taken round-robin by product. Enforced by `consume()` and `_open_budget()`.
@@ -71,19 +73,26 @@ a path that reaches the outcome without passing through that function is a defec
 14. **Every read is bounded and every rotation reaches the end.** An existence question asks the
     live supersession rule about a bounded number of deliveries per call, keeps its verdicts,
     and answers undetermined - clearing nothing - until a later call has judged them all.
-    Enforced by `bounded()`, `faultsweep._rotation()` and `faultsweep._first_current()`.
+    Re-pointing unsent writes and releasing lapsed leases take at most 100 rows per call and
+    report what remains; cancelling a fault's unissued writes is set-based. Enforced by
+    `bounded()`, `faultsweep._rotation()`, `faultsweep._first_current()`, `_repoint_where()`,
+    `expire_leases()` and `_cancel_where()`.
 15. **One notification path.** Eligibility and budget are decided at reservation, a lapsed
     reservation is uncertain, caller-raised decisions use the same path, and candidates are taken
-    least recently examined first, so one withheld or held never hides the ones behind it,
-    whatever the caller's cadence.
+    least recently examined first, by an examination sequence that never ties (a time would, for
+    calls at one instant), so one withheld or held never hides the ones behind it, whatever the
+    caller's cadence.
     Enforced by `reserve_notifications()`.
 16. **Waiting is never a fault, an overtaken obligation is not current, and no sweep contradicts
     itself.** Paused, archived, busy and waiting recipients are never collected; a superseded
     delivery and an anchor the scheduler no longer reads (a paused assignment, a generation it
     moved past) are not collected and clear what they raised; no source emits an active and a
-    clear for one fault in one sweep. Enforced by `faultsweep.sweep()`, whose delivery sources and
-    `still_present()` ask `faultsweep._current()` (the send path's own
-    `delivery.supersession_reason()`) and whose anchor source reads the scheduler's own predicate.
+    clear for one fault in one sweep; and a sweep judges recovery only for faults its rows can
+    speak for - the ones its own observations resolve to, its own workspace's, and those with no
+    workspace - never another workspace's. Enforced by `faultsweep.sweep()`, whose delivery sources
+    and `still_present()` ask `faultsweep._current()` (the send path's own
+    `delivery.supersession_reason()`), whose anchor source reads the scheduler's own predicate,
+    and whose `recovered()` asks `faultsweep._judged_here()`.
 17. **Nothing malformed reaches the store.** Enforced by `read_observation()`.
 
 ### Identity
@@ -158,11 +167,14 @@ a path that reaches the outcome without passing through that function is a defec
   `set_target()` for it records the owner (so that call is not a no-op even when team and
   project are unchanged).
 - `set_target(*, product, workspace=None, project=None, team, project_ref)` returns
-  `{scopeKey, team, projectRef, changed, backfilled, relinked, relinkPending}`. Values unchanged
-  on a target this product already owns write nothing. A change re-points only pending and failed writes whose target differs (an
-  uncertain write stays where it may have landed) and queues `set_project` for issues this
-  scope's faults own whose linked project differs, at most 100 per call; `relink(*, limit)`
-  continues the rest.
+  `{scopeKey, team, projectRef, changed, backfilled, backfillPending, relinked, relinkPending}`.
+  Values unchanged on a target this product already owns write nothing. A change re-points only
+  pending and failed writes whose target differs (an uncertain write stays where it may have
+  landed), at most 100 per call with `backfillPending` counting the rest, and queues
+  `set_project` for issues this scope's faults own whose linked project differs, at most 100 per
+  call. `relink(*, limit)` continues both and returns
+  `{relinked, relinkPending, backfilled, backfillPending}`. A write not yet re-pointed is never
+  issued against the old target: `operation()` re-checks the current owned target first.
 - `targets(product=None, *, limit, after=None)` lists them.
 - An issue create is neither offered nor claimable while its scope's target has no
   `project_ref`: no issue is created without a project, and the fault waits as awaiting target.
@@ -402,7 +414,8 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
   is not cleared and a `presence_undetermined` gap names it.
 - Every automatically collected incident carries a `facts` evidence item: what was expected, what
   happened, the impact, what the reading cannot see, the subject (event, relationship, generation,
-  turn) where its source holds them, and the installation - package version and the location of
+  turn) where its source holds them - the delivery, retry and refusal sources read generation and
+  turn from the delivery's event - and the installation - package version and the location of
   the installed copy. The revision it was installed from is held by the runtime installer's
   record, which the relay does not read, so it is stated as an observation limit rather than
   guessed. First and latest occurrence are the ledger's own `first_seen_at` and `last_seen_at`.
@@ -434,7 +447,8 @@ follow it too.
   own; there is one notification path.
 - `reserve_notifications(*, owner, limit)` atomically takes eligible ones - round-robin by
   product, a spent product excluded inside the query, least recently examined first, every
-  candidate examined and not taken stamped as examined - consumes their budget and leases them, each with a stable `deliveryKey` the deliverer must pass to its transport as
+  candidate examined stamped with the next examination sequence number
+  (`fault_notifications.examined_seq`) - consumes their budget and leases them, each with a stable `deliveryKey` the deliverer must pass to its transport as
   the idempotency key. `ack_notification(id, *, token, ref)` records delivery and is accepted for
   the current token whatever has happened to eligibility since; `fail_notification(id, *, token,
   error)` returns it to pending with the error, when the deliverer knows nothing was sent. A lease
@@ -731,7 +745,9 @@ Handing out a create operation marks the row `issued`. From there:
 - a publication carries the CYCLE it was queued in, so a fault that reopens while a comment is
   waiting does not make that comment describe a cycle it was never about;
 - a lease expiring on it moves it to `uncertain`, while a lease expiring on a merely `claimed`
-  row — one that never reached the connector — is safely released;
+  row — one that never reached the connector — is safely released. `expire_leases()` takes at
+  most 100 lapsed leases per call, oldest first, and returns `{released, uncertain, more}`; a
+  lapsed row waiting for a later call is still refused by `claim()`;
 - nothing but `reconcile` leaves `uncertain`. The caller reports what it observed: the marker
   found confirms the row against the issue that already exists; the marker absent moves it back
   to `pending` for one further create only when the caller attests that it looked AND somebody
@@ -769,6 +785,14 @@ holds more rows than one page no page is ever the whole source, and a rule that 
 one would have stopped clearing anything exactly when a store got busy. An existence
 query is exact however large the source is, and a class this cannot ask about is still
 never cleared by absence.
+
+The store's source rows carry no workspace: they are this relay's own, and a sweep records what
+it derives under the workspace of its scope (none, for the daemon and `fault-sweep`). A fault of a
+derived class recorded under another workspace - by a caller, for another tenant's relay - is
+therefore neither cleared nor held open by this store's rows. Recovery judges the faults the
+sweep's own observations resolve to through `canonical_id()` (so a fault moved to another
+workspace is still judged under its id), faults in the sweep's workspace, and faults recorded
+with none (`faultsweep._judged_here()`).
 
 The pass counts only what was NEWLY recorded, so a steady-state failure read again on every tick
 does not hold the loop at its fastest cadence forever. One refused observation is one
@@ -840,7 +864,7 @@ ledger.adopt(fault_id, *, external_ref, scope)
 ledger.move(fault_id, *, scope)
 ledger.set_target(*, product, workspace=None, project=None, team, project_ref=None)
 ledger.targets(product=None, *, limit=20, after=None)
-ledger.relink(*, limit=100)
+ledger.relink(*, limit=100)              -> relinked, relinkPending, backfilled, backfillPending
 ledger.get(fault_id)                       # carries linkState and linkedProject
 ledger.snapshot(*, product=None, fault_class=None, scope_key=None, state=None,
                 limit=20, after=None)      -> faults, next
@@ -870,7 +894,7 @@ ledger.complete(publication_id, *, readback=None, claim_token=None, external_ref
                 project_ref=None, observed=None)
 ledger.fail(publication_id, *, claim_token, error, ended=False)
 ledger.cancel(publication_id, *, reason)
-ledger.expire_leases()
+ledger.expire_leases()                   -> released, uncertain, more (at most 100 per call)
 ledger.retry(publication_id)
 
 ledger.budget(product, kind)

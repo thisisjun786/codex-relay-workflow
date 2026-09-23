@@ -853,7 +853,8 @@ class FaultLedger:
                 "  LEFT JOIN fault_target_projects p ON p.scope_key = t.scope_key"
                 " WHERE t.scope_key = ?", (key,)).fetchone()
             answer = {"scopeKey": key, "product": product, "team": team, "projectRef": project_ref,
-                      "changed": False, "backfilled": 0, "relinked": 0, "relinkPending": 0}
+                      "changed": False, "backfilled": 0, "backfillPending": 0, "relinked": 0,
+                      "relinkPending": 0}
             if (current is not None and current["product"] == product
                     and current["tracker_ref"] == team and current["project_ref"] == project_ref):
                 return answer
@@ -867,11 +868,8 @@ class FaultLedger:
                 "   product = excluded.product, project_ref = excluded.project_ref,"
                 "   recorded_at = excluded.recorded_at", (key, product, project_ref, now))
             answer["changed"] = True
-            faults_here = [row["fault_id"] for row in db.execute(
-                "SELECT fault_id FROM fault_ledger WHERE scope_key = ? AND product = ?",
-                (key, product))]
-            for identifier in faults_here:
-                answer["backfilled"] += self._repoint(db, identifier, now)
+            answer["backfilled"], answer["backfillPending"] = self._repoint_where(
+                db, now, scope_key=key)
             answer["relinked"], answer["relinkPending"] = self._relink_where(
                 db, now, scope_key=key, limit=RELINK_PER_CALL)
         return answer
@@ -894,34 +892,51 @@ class FaultLedger:
         return dict(row) if row else None
 
     def _repoint(self, db, identifier, now) -> int:
-        """Point this fault's unsent target-bound writes at its product's current target.
+        """Point this fault's unsent target-bound writes at its product's current target."""
+        return self._repoint_where(db, now, fault_id=identifier)[0]
+
+    def _repoint_where(self, db, now, *, scope_key=None, fault_id=None, limit=RELINK_PER_CALL):
+        """Point unsent target-bound writes at their product's current target: a bounded batch.
 
         Pending and failed only. An uncertain write may already have landed at its old target,
-        and a claimed one is re-checked by operation() before it is issued.
+        and a claimed one is re-checked by operation() before it is issued. That re-check is also
+        why a batch is enough: a write this has not reached yet is re-pointed when it is offered
+        and never issued against a target its scope has left; relink() continues the rest.
+        Returns (re-pointed, still to re-point). The current target is read the way
+        _owned_target() reads it: owned by the fault's product, on a key no other product carries.
         """
-        fault = db.execute("SELECT product, scope_key FROM fault_ledger WHERE fault_id = ?",
-                           (identifier,)).fetchone()
-        target, _ = self._owned_target(db, fault["product"], fault["scope_key"])
-        team = target["team"] if target else None
-        project = target["projectRef"] if target else None
-        changed = 0
-        for row in db.execute(
-                "SELECT p.publication_id, p.kind, p.tracker_ref, pp.project_ref"
-                "  FROM fault_publications p LEFT JOIN fault_publication_payloads pp"
-                "    ON pp.publication_id = p.publication_id"
-                " WHERE p.fault_id = ? AND p.state IN (?,?)",
-                (identifier, PENDING, FAILED)).fetchall():
-            spec = KINDS.get(row["kind"])
-            if spec is None or spec["target"] is None:
-                continue
-            wanted_project = project if spec["target"] == "team+project" else None
-            if row["tracker_ref"] == team and row["project_ref"] == wanted_project:
-                continue
+        targeted = [name for name, spec in KINDS.items() if spec["target"]]
+        projected = [name for name, spec in KINDS.items() if spec["target"] == "team+project"]
+
+        def listed(values):
+            return "(" + ",".join("?" * len(values)) + ")"
+
+        owned = ("(tp.product = f.product AND NOT EXISTS (SELECT 1 FROM fault_ledger o"
+                 "  WHERE o.scope_key = f.scope_key AND o.product != f.product))")
+        team = "(CASE WHEN " + owned + " THEN t.tracker_ref END)"
+        project = ("(CASE WHEN p.kind IN " + listed(projected) + " AND " + owned
+                   + " THEN tp.project_ref END)")
+        base = (
+            " FROM fault_publications p JOIN fault_ledger f ON f.fault_id = p.fault_id"
+            "  LEFT JOIN fault_targets t ON t.scope_key = f.scope_key"
+            "  LEFT JOIN fault_target_projects tp ON tp.scope_key = f.scope_key"
+            "  LEFT JOIN fault_publication_payloads pp ON pp.publication_id = p.publication_id"
+            " WHERE p.state IN (?,?) AND p.kind IN " + listed(targeted)
+            + (" AND f.scope_key = ?" if scope_key is not None else "")
+            + (" AND f.fault_id = ?" if fault_id is not None else "")
+            + " AND (p.tracker_ref IS NOT " + team + " OR pp.project_ref IS NOT " + project + ")")
+        where = (PENDING, FAILED, *targeted,
+                 *(() if scope_key is None else (scope_key,)),
+                 *(() if fault_id is None else (fault_id,)), *projected)
+        rows = db.execute("SELECT p.publication_id, " + team + " AS team, " + project
+                          + " AS project" + base + " ORDER BY p.rowid LIMIT ?",
+                          (*projected, *where, limit)).fetchall()
+        for row in rows:
             db.execute("UPDATE fault_publications SET tracker_ref = ?, updated_at = ?"
-                       " WHERE publication_id = ?", (team, now, row["publication_id"]))
-            _payload_set(db, row["publication_id"], now, project_ref=wanted_project)
-            changed += 1
-        return changed
+                       " WHERE publication_id = ?", (row["team"], now, row["publication_id"]))
+            _payload_set(db, row["publication_id"], now, project_ref=row["project"])
+        pending = db.execute("SELECT COUNT(*) AS n" + base, where).fetchone()["n"]
+        return len(rows), pending
 
     def _rescope(self, db, row, scope, now) -> int:
         """Invariant 10: every scope change re-points unsent writes and relinks an owned issue."""
@@ -1195,12 +1210,8 @@ class FaultLedger:
             )
             if state == WITHDRAWN:
                 # Invariant 5: nothing landed, so nothing is owed. Its unissued writes go too.
-                for pending in db.execute(
-                        "SELECT * FROM fault_publications WHERE fault_id = ?"
-                        " AND state IN (?,?,?)",
-                        (identifier, PENDING, FAILED, CLAIMED)).fetchall():
-                    self._cancel(db, pending, "the fault was withdrawn before anything landed",
-                                 now_iso)
+                self._cancel_where(db, identifier,
+                                   "the fault was withdrawn before anything landed", now_iso)
             publication = adopted
             if trigger_key is not None:
                 publication = self._enqueue(db, identifier, trigger_key, now_iso,
@@ -1784,23 +1795,21 @@ class FaultLedger:
 
         Such a write may still land, so no earlier readback proves where the issue is.
         """
-        for row in db.execute(
-                "SELECT pp.payload FROM fault_publications p"
-                "  LEFT JOIN fault_publication_payloads pp ON pp.publication_id = p.publication_id"
-                " WHERE p.fault_id = ? AND p.kind = ? AND p.state IN (?,?)"
-                "   AND p.trigger_key LIKE 'update:set_project:%'",
-                (identifier, UPDATE_RECORD, ISSUED, UNCERTAIN)).fetchall():
-            if _json(row["payload"]).get("value") != project_ref:
-                return True
-        return False
+        return db.execute(
+            "SELECT 1 FROM fault_publications p"
+            "  LEFT JOIN fault_publication_payloads pp ON pp.publication_id = p.publication_id"
+            " WHERE p.fault_id = ? AND p.kind = ? AND p.state IN (?,?)"
+            "   AND p.trigger_key LIKE 'update:set_project:%'"
+            "   AND (CASE WHEN json_valid(pp.payload)"
+            "        THEN json_extract(pp.payload, '$.value') END) IS NOT ?"
+            " LIMIT 1",
+            (identifier, UPDATE_RECORD, ISSUED, UNCERTAIN, project_ref)).fetchone() is not None
 
     def _cancel_stale_relinks(self, db, identifier, reason, now):
         """Cancel every unissued set_project of this fault; issued and uncertain ones stay."""
-        for stale in db.execute(
-                "SELECT p.* FROM fault_publications p WHERE p.fault_id = ? AND p.kind = ?"
-                " AND p.trigger_key LIKE 'update:set_project:%' AND p.state IN (?,?,?)",
-                (identifier, UPDATE_RECORD, PENDING, FAILED, CLAIMED)).fetchall():
-            self._cancel(db, stale, reason, now)
+        self._cancel_where(db, identifier, reason, now,
+                           extra=" AND p.kind = ? AND p.trigger_key LIKE 'update:set_project:%'",
+                           params=(UPDATE_RECORD,))
 
     def _relink(self, db, identifier, project_ref, now, *, force=False):
         """Invariant 11: queue the write that puts the owned issue in project_ref.
@@ -1827,8 +1836,7 @@ class FaultLedger:
                               (identifier,)).fetchone()
         if link["observed_project_ref"] == project_ref and not force:
             moving = self._moving_elsewhere(db, identifier, project_ref)
-            if moving:
-                self._cancel_stale_relinks(db, identifier, "superseded by a later target", now)
+            self._cancel_stale_relinks(db, identifier, "superseded by a later target", now)
             db.execute("UPDATE fault_links SET project_ref = ?, state = ?, updated_at = ?"
                        " WHERE fault_id = ?",
                        (project_ref, UNLINKED if moving else LINKED, now, identifier))
@@ -1923,8 +1931,10 @@ class FaultLedger:
         limit = _bounded(limit, "limit")
         now = self.clock.iso()
         with self.store.transaction() as db:
+            backfilled, backfill_pending = self._repoint_where(db, now, limit=limit)
             done, pending = self._relink_where(db, now, limit=limit)
-        return {"relinked": done, "relinkPending": pending}
+        return {"relinked": done, "relinkPending": pending, "backfilled": backfilled,
+                "backfillPending": backfill_pending}
 
     # ------------------------------------------------------------------ reads
 
@@ -2664,6 +2674,36 @@ class FaultLedger:
             (CANCELLED, reason, now,
              row["attempts"] - (1 if row["state"] == CLAIMED else 0), row["publication_id"]))
 
+    def _cancel_where(self, db, identifier, reason, now, *, extra="", params=()):
+        """_cancel() for every unissued write of one fault matching extra, set-based.
+
+        The same outcome as calling _cancel() on each - a claimed one gives back its current
+        claim's unit and ends that attempt, and nothing earlier is refunded - in three
+        statements, so no number of writes is read into this process. extra and params narrow
+        the writes, over the alias p.
+        """
+        chosen = ("SELECT p.publication_id FROM fault_publications p WHERE p.fault_id = ?"
+                  " AND p.state = ?" + extra)
+        claimed = (identifier, CLAIMED, *params)
+        current = ("SELECT MAX(a.attempt_id) FROM fault_publication_attempts a"
+                   " WHERE a.publication_id IN (" + chosen + ") GROUP BY a.publication_id")
+        db.execute(
+            "DELETE FROM fault_budget_uses"
+            " WHERE product = (SELECT product FROM fault_ledger WHERE fault_id = ?)"
+            "   AND ref IN (SELECT a.publication_id || ':' || a.attempt_id"
+            "                 FROM fault_publication_attempts a"
+            "                WHERE a.attempt_id IN (" + current + "))", (identifier, *claimed))
+        db.execute("UPDATE fault_publication_attempts SET outcome = 'cancelled', ended = 1,"
+                   "  ended_at = ? WHERE attempt_id IN (" + current + ")", (now, *claimed))
+        return db.execute(
+            "UPDATE fault_publications SET state = ?, claim_token = NULL, lease_owner = NULL,"
+            "  lease_until = NULL, last_error = ?, updated_at = ?,"
+            "  attempts = attempts - (CASE WHEN state = ? THEN 1 ELSE 0 END)"
+            " WHERE publication_id IN (SELECT p.publication_id FROM fault_publications p"
+            "   WHERE p.fault_id = ? AND p.state IN (?,?,?)" + extra + ")",
+            (CANCELLED, reason, now, CLAIMED, identifier, PENDING, FAILED, CLAIMED,
+             *params)).rowcount
+
     def _refund(self, db, row, outcome, now=None):
         """Give back the CURRENT claim's unit and end its attempt row; nothing earlier."""
         fault = db.execute("SELECT product FROM fault_ledger WHERE fault_id = ?",
@@ -2696,10 +2736,13 @@ class FaultLedger:
         stamp = self.clock.iso()
         released = uncertain = 0
         with self.store.transaction() as db:
+            # A bounded batch, oldest lease first; a later call takes the rest. A lapsed row
+            # waiting its turn is still refused by claim() and still reconciled as issued.
             for row in db.execute(
                     "SELECT * FROM fault_publications WHERE state IN (?,?)"
-                    " AND lease_until IS NOT NULL AND lease_until <= ?",
-                    (CLAIMED, ISSUED, moment)).fetchall():
+                    " AND lease_until IS NOT NULL AND lease_until <= ?"
+                    " ORDER BY lease_until, rowid LIMIT ?",
+                    (CLAIMED, ISSUED, moment, RELINK_PER_CALL)).fetchall():
                 if row["state"] == CLAIMED:
                     # Never issued, so nothing reached the connector: released like every other
                     # unissued claim, with its own unit and attempt given back. Keeping them let
@@ -2719,7 +2762,11 @@ class FaultLedger:
                     self._notify(db, row["fault_id"], DECISION, row["cycle"], stamp,
                                  reason=f"write:{row['publication_id']}:{UNCERTAIN}")
                     uncertain += 1
-        return {"released": released, "uncertain": uncertain}
+            more = db.execute(
+                "SELECT 1 FROM fault_publications WHERE state IN (?,?)"
+                " AND lease_until IS NOT NULL AND lease_until <= ? LIMIT 1",
+                (CLAIMED, ISSUED, moment)).fetchone() is not None
+        return {"released": released, "uncertain": uncertain, "more": more}
 
     def retry(self, publication) -> dict:
         """An operator's decision to offer a failed write again. Never reaches uncertain."""
@@ -2902,16 +2949,21 @@ class FaultLedger:
             candidates = db.execute(
                 "SELECT * FROM (SELECT n.*, n.rowid AS seq,"
                 "   ROW_NUMBER() OVER (PARTITION BY n.product"
-                "                      ORDER BY COALESCE(n.examined_at, 0), n.rowid) AS turn"
+                "                      ORDER BY COALESCE(n.examined_seq, 0), n.rowid) AS turn"
                 "  FROM fault_notifications n WHERE n.state = ?"
                 "   AND " + self._open_budget("n.product", "'" + NOTIFICATION + "'") + ")"
-                " ORDER BY turn, COALESCE(examined_at, 0), seq LIMIT ?",
+                " ORDER BY turn, COALESCE(examined_seq, 0), seq LIMIT ?",
                 (PENDING, moment, limit * 4)).fetchall()
+            # A sequence rather than a time: two examinations never tie, so however fast or
+            # slow the calls, the ones examined last are examined last again.
+            examined = db.execute("SELECT COALESCE(MAX(examined_seq), 0) AS n"
+                                  " FROM fault_notifications").fetchone()["n"]
             for row in candidates:
                 if len(reserved) >= limit:
                     break
-                db.execute("UPDATE fault_notifications SET examined_at = ?"
-                           " WHERE notification_id = ?", (moment, row["notification_id"]))
+                examined += 1
+                db.execute("UPDATE fault_notifications SET examined_seq = ?"
+                           " WHERE notification_id = ?", (examined, row["notification_id"]))
                 if not self._eligibility(db, row["fault_id"], moment)["eligible"]:
                     withheld += 1
                     continue

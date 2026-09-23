@@ -315,7 +315,7 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None,
     after, until, _ = _rotation(store, cursor, "SELECT MAX(event_id) FROM deliveries")
     rows = [] if until is None else store.all(
         "SELECT d.event_id, d.relationship_id, d.recipient_task_id, d.state, d.hold_reason,"
-        "       d.attempt_count,"
+        "       d.attempt_count, e.execution_generation AS generation, e.turn_id AS turn,"
         # The latest SETTLED attempt. An attempt row is written in_flight, carrying a
         # provisional held_uncertain state, before the transport call is made; reading it
         # then named a send still in progress as the cause of the hold.
@@ -325,7 +325,7 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None,
         "       (SELECT a.state FROM attempts a WHERE a.event_id = d.event_id"
         "          AND a.internal_state = 'settled'"
         "         ORDER BY a.attempt_no DESC LIMIT 1) AS last_state"
-        "  FROM deliveries d"
+        "  FROM deliveries d LEFT JOIN events e ON e.event_id = d.event_id"
         # Held deliveries only. A delivery that is retrying before any hold is set is read
         # from its attempt rows by retry_faults, one occurrence per settled failure.
         " WHERE d.hold_reason IS NOT NULL AND d.state NOT IN (?,?,?)"
@@ -362,7 +362,8 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None,
                         f" the last settled attempt ended {row['last_state']}"),
                 impact="the recipient is not given this delivery while the hold stands",
                 limits=["read from settled attempts only; one still in flight is not counted"],
-                event=row["event_id"], relationship=row["relationship_id"])],
+                event=row["event_id"], relationship=row["relationship_id"],
+                generation=row["generation"], turn=row["turn"])],
         ))
     return _page(observations, rows, "event_id", after, limit, until)
 
@@ -388,8 +389,10 @@ def retry_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> di
     rows = [] if until is None else store.all(
         "SELECT a.rowid AS seq, a.request_id, a.state AS attempt_state, a.event_id,"
         "       d.relationship_id, d.recipient_task_id, d.state AS delivery_state,"
-        "       d.hold_reason, d.attempt_count"
+        "       d.hold_reason, d.attempt_count, e.execution_generation AS generation,"
+        "       e.turn_id AS turn"
         "  FROM attempts a JOIN deliveries d ON d.event_id = a.event_id"
+        "  LEFT JOIN events e ON e.event_id = a.event_id"
         " WHERE d.state NOT IN (?,?,?)"
         # SETTLED attempts only. delivery.py inserts the row in_flight with a provisional
         # held_uncertain state before the transport call returns, so three healthy sends
@@ -428,7 +431,8 @@ def retry_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> di
             actual=f"the attempt ended {row['attempt_state']}",
             impact="the delivery is retried and has not reached its recipient",
             limits=["one occurrence per settled failed attempt; attempts in flight are not read"],
-            event=row["event_id"], relationship=row["relationship_id"])],
+            event=row["event_id"], relationship=row["relationship_id"],
+            generation=row["generation"], turn=row["turn"])],
     ) for row in rows if _current(store, row["event_id"], current)]
     return _page(observations, rows, "seq", after, limit, until)
 
@@ -598,8 +602,10 @@ def refusal_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> 
         "SELECT j.seq, j.subject AS event_id, j.at, " + _REASON.format(t="j") + " AS reason,"
         "       CASE WHEN json_valid(j.detail) THEN json_extract(j.detail, '$.detail') END"
         "         AS refusal_detail,"
-        "       d.relationship_id, d.recipient_task_id, d.state"
+        "       d.relationship_id, d.recipient_task_id, d.state,"
+        "       e.execution_generation AS generation, e.turn_id AS turn"
         "  FROM journal j JOIN deliveries d ON d.event_id = j.subject"
+        "  LEFT JOIN events e ON e.event_id = j.subject"
         " WHERE j.kind = 'delivery_withheld' AND j.seq > ? AND j.seq <= ?"
         "   AND d.state NOT IN (?,?,?)"
         "   AND " + _NOT_SUPERSEDED.format(d="d") +
@@ -626,7 +632,8 @@ def refusal_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> 
             actual=f"refused before any transport call: {row['reason']}",
             impact="the delivery is withheld and the recipient is not given it",
             limits=["only the delivery's current refusal streak is counted"],
-            event=row["event_id"], relationship=row["relationship_id"])],
+            event=row["event_id"], relationship=row["relationship_id"],
+            generation=row["generation"], turn=row["turn"])],
     ) for row in rows if _current(store, row["event_id"], current)]
     return _page(observations, rows, "seq", after, limit, until)
 
@@ -1005,8 +1012,13 @@ def recovered(store, derived, *, product, scope, limit=SWEEP_LIMIT, complete=DER
          until, limit),
     )
     clears, undetermined = [], []
+    workspace = (scope or {}).get("workspace")
+    ledger = faults.FaultLedger(store, None)
     for row in rows:
-        present = still_present(store, row["fault_class"], json.loads(row["signature"]))
+        signature = json.loads(row["signature"])
+        if not _judged_here(ledger, product, row, signature, workspace):
+            continue
+        present = still_present(store, row["fault_class"], signature)
         if present is UNDETERMINED:
             undetermined.append({"gap": "presence_undetermined", "faultId": row["fault_id"],
                                  "reason": f"more than {PRESENT_CHECKS} deliveries to judge; the"
@@ -1034,6 +1046,27 @@ def recovered(store, derived, *, product, scope, limit=SWEEP_LIMIT, complete=DER
         ))
     page = _page(clears, rows, "fault_id", after, limit, until)
     return {"clears": clears, "cursor": page["cursor"], "undetermined": undetermined}
+
+
+def _judged_here(ledger, product, row, signature, workspace) -> bool:
+    """Whether this sweep's source rows speak for this fault at all.
+
+    This store's rows carry no workspace: they are the relay's own, and a sweep records what
+    it derives under the workspace of its scope. A fault of a derived class recorded under
+    another workspace - by a caller, for another tenant's relay - is not one these rows can
+    show present or absent, so this sweep neither clears it nor holds it open. It judges the
+    faults its own observations resolve to (canonical_id, so a fault moved out of this
+    workspace keeps being judged under its id), faults in its own workspace, and faults
+    recorded with none.
+    """
+    try:
+        stored = json.loads(row["scope"]).get("workspace")
+    except (AttributeError, TypeError, ValueError):
+        stored = None
+    if stored is None or stored == workspace:
+        return True
+    return ledger.canonical_id(product, row["fault_class"], signature,
+                               workspace=workspace) == row["fault_id"]
 
 
 def still_present(store, fault_class, signature) -> dict:

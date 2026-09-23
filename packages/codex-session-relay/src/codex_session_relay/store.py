@@ -1267,12 +1267,13 @@ CREATE TABLE IF NOT EXISTS fault_notifications (
     updated_at      TEXT NOT NULL,
     delivered_at    TEXT,
     ack_ref         TEXT,
-    -- When reservation last examined this notification. Candidates are taken least recently
-    -- examined first, so one withheld or held at the head of the queue cannot hide the
-    -- eligible ones behind it, whatever the caller's cadence.
-    examined_at     REAL
+    -- The order in which reservation last examined this notification: a sequence, never a
+    -- time, so no two tie. Candidates are taken least recently examined first, so one withheld
+    -- or held at the head of the queue cannot hide the eligible ones behind it.
+    examined_seq    INTEGER
 );
 CREATE INDEX IF NOT EXISTS fault_notifications_state ON fault_notifications (state, product);
+CREATE INDEX IF NOT EXISTS fault_notifications_examined ON fault_notifications (examined_seq);
 
 -- Deliveries the send path's own rule (delivery.supersession_reason) found overtaken, as the
 -- fault sweep read them. Every such answer is permanent - a later generation, an answered or

@@ -745,11 +745,11 @@ class Publication(LedgerCase):
         job = self.ledger.next()[0]["publication_id"]
         claim = self.ledger.claim(job, owner="operator")
         self.clock.advance(faults.LEASE_SECONDS + 1)
-        self.assertEqual({"released": 1, "uncertain": 0}, self.ledger.expire_leases())
+        self.assertEqual({"released": 1, "uncertain": 0, "more": False}, self.ledger.expire_leases())
         claim = self.ledger.claim(job, owner="operator")
         self.ledger.operation(job, claim_token=claim["claimToken"])
         self.clock.advance(faults.LEASE_SECONDS + 1)
-        self.assertEqual({"released": 0, "uncertain": 1}, self.ledger.expire_leases())
+        self.assertEqual({"released": 0, "uncertain": 1, "more": False}, self.ledger.expire_leases())
         self.assertEqual([], self.ledger.next())
 
     def test_an_uncertain_write_is_confirmed_from_what_was_observed(self):

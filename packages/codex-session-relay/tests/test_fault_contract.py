@@ -1303,6 +1303,221 @@ class EveryCollectedIncidentStatesItsFacts(RelayTestCase):
             self.assertIn(faultsweep.INSTALLATION_LIMIT, facts[0]["limits"])
 
 
+class BoundsHoldAndFactsNameTheirTurn(ContractCase):
+    """Final review round three (criterion 1, invariants 14 and 15).
+
+    A collected delivery incident names the generation and turn its event carries; re-pointing
+    and the outstanding-write question read a bounded number of rows however many a scope or a
+    fault holds; and two examinations of a notification never tie, so one examined at the same
+    instant as those ahead of it is still reached.
+    """
+
+    def rows_read(self, action):
+        """How many rows the store handed this process while action ran."""
+        import sqlite3
+
+        counted = [0]
+
+        def counting(cursor, row):
+            counted[0] += 1
+            return sqlite3.Row(cursor, row)
+
+        self.store.db.row_factory = counting
+        try:
+            action()
+        finally:
+            self.store.db.row_factory = sqlite3.Row
+        return counted[0]
+
+    def test_a_delivery_incident_names_its_generation_and_turn(self):
+        self.register()
+        current = self.store.one("SELECT relationship_id, execution_generation"
+                                 " FROM relationships")
+        relationship, generation = current["relationship_id"], current["execution_generation"]
+        with self.store.transaction() as db:
+            for event, state, attempts, hold in (
+                    ("held", "withheld_pre_send", 6, "attempt_cap"),
+                    ("retried", "queued", 1, None),
+                    ("refused", "withheld_pre_send", 0, None)):
+                # An execution-only outcome of the current generation: never overtaken.
+                db.execute(
+                    "INSERT INTO events (event_id, relationship_id, execution_generation,"
+                    " revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status,"
+                    " receipt, first_seen_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (event, relationship, generation, "h-" + event, "failed", "child",
+                     "child-thread", "turn-" + event, "failed", "{}", "t", "t"))
+                db.execute(
+                    "INSERT INTO deliveries (event_id, relationship_id, kind,"
+                    " recipient_task_id, recipient_thread_id, state, attempt_count,"
+                    " hold_reason, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (event, relationship, "completion", "p", "p", state, attempts, hold,
+                     "t", "t"))
+            db.execute(
+                "INSERT INTO attempts (request_id, event_id, attempt_no, kind, internal_state,"
+                " state, sent_at, observed_at) VALUES (?,?,?,?,?,?,?,?)",
+                ("req-retried", "retried", 1, "completion", "settled", "withheld_pre_send",
+                 self.clock.now(), "t"))
+            self.store.journal("delivery_withheld", "refused",
+                               {"reason": "settings_incomplete", "detail": "no"}, at="t")
+        batch = faultsweep.sweep(self.store)
+        named = {}
+        for entry in batch["observations"]:
+            for item in entry["evidence"]:
+                subject = item["observed"] if item["kind"] == "facts" else {}
+                if subject.get("event") in ("held", "retried", "refused"):
+                    named[(entry["faultClass"], subject["event"])] = (
+                        subject.get("generation"), subject.get("turn"))
+        self.assertEqual({
+            ("delivery_stalled", "held"): (generation, "turn-held"),
+            ("delivery_stalled", "retried"): (generation, "turn-retried"),
+            ("delivery_refused", "refused"): (generation, "turn-refused"),
+        }, named)
+
+    def test_a_target_change_re_points_a_bounded_batch_and_relink_finishes_it(self):
+        extra = 7
+        count = faults.RELINK_PER_CALL + extra
+        for n in range(count):
+            self.ledger.record(observation(f"k{n}", signature={"relationship": f"r{n}",
+                                                                "turn": "t"}))
+        answer = self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM,
+                                        project_ref="P2")
+        self.assertEqual((faults.RELINK_PER_CALL, extra),
+                         (answer["backfilled"], answer.get("backfillPending")))
+        rest = self.ledger.relink()
+        self.assertEqual((extra, 0), (rest.get("backfilled"), rest.get("backfillPending")))
+        where = self.store.all(
+            "SELECT pp.project_ref AS project, COUNT(*) AS n FROM fault_publications p"
+            "  JOIN fault_publication_payloads pp ON pp.publication_id = p.publication_id"
+            " WHERE p.kind = ? AND p.state = ? GROUP BY pp.project_ref",
+            (faults.OPEN_RECORD, faults.PENDING))
+        self.assertEqual([("P2", count)], [(row["project"], row["n"]) for row in where])
+
+    def test_the_outstanding_write_question_reads_one_row_however_many_were_issued(self):
+        identifier, pub = self.opened()
+        self.publish(pub)
+        self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM, project_ref="P2")
+        stamp = self.clock.iso()
+        issued = 1200
+        with self.store.transaction() as db:
+            for n in range(issued):
+                publication = f"seeded-{n:04d}"
+                db.execute(
+                    "INSERT INTO fault_publications (publication_id, fault_id, kind,"
+                    " trigger_key, tracker_ref, summary, identity_digest, state, created_at,"
+                    " updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (publication, identifier, faults.UPDATE_RECORD,
+                     f"update:set_project:P-{n}:r{n}", TEAM, "relink", "digest",
+                     faults.ISSUED, stamp, stamp))
+                db.execute(
+                    "INSERT INTO fault_publication_payloads (publication_id, project_ref,"
+                    " payload, updated_at) VALUES (?,?,?,?)",
+                    (publication, None, json.dumps({"op": "set_project", "value": f"P-{n}"}),
+                     stamp))
+        read = self.rows_read(lambda: self.ledger.set_target(
+            product=PRODUCT, project="CRW", team=TEAM, project_ref=PROJECT))
+        self.assertLess(read, 100, f"{read} rows read to ask whether one write is outstanding")
+        self.assertEqual(faults.UNLINKED,
+                         capability(self, self.ledger, "get")(identifier).get("linkState"),
+                         "an issued write to another project may still land")
+
+    def test_notifications_examined_at_one_instant_are_still_reached_in_turn(self):
+        raise_ = capability(self, self.ledger, "raise_notification")
+        capability(self, self.ledger, "set_limit")(PRODUCT, "notification", max_count=50,
+                                                   window=3600)
+        self.register()
+        registered = self.store.one("SELECT relationship_id, issue_key FROM relationships")
+        relationship = registered["relationship_id"]
+        # Its parent's contact is unmeasured, so every notification it governs is withheld.
+        for n in range(4):
+            raise_(self.ledger.record(observation(
+                f"w{n}", severity=faults.NOTICE,
+                signature={"relationship": relationship, "turn": f"t{n}"}))["faultId"],
+                reason="classification")
+        # Governed through its issue until that issue is no longer the relationship's.
+        free = self.ledger.record(observation(
+            "free", severity=faults.NOTICE, signature={"relationship": "r-free", "turn": "t"},
+            scope={"projectKey": "CRW", "issueKey": registered["issue_key"]}))["faultId"]
+        raise_(free, reason="classification")
+        first = self.ledger.reserve_notifications(owner="w", limit=2)
+        self.assertEqual(([], 5), (first["reserved"], first["withheld"]),
+                         "all five examined at one instant")
+        with self.store.transaction() as db:
+            db.execute("UPDATE relationships SET issue_key = 'CRW-OTHER'")
+        reserved = []
+        for _ in range(2):
+            # The clock does not move: every earlier examination happened at this instant.
+            reserved += self.ledger.reserve_notifications(owner="w", limit=1)["reserved"]
+        self.assertEqual([free], [entry["faultId"] for entry in reserved])
+
+    def test_lapsed_leases_are_released_in_bounded_batches(self):
+        capability(self, self.ledger, "set_limit")(PRODUCT, "open_record", max_count=500,
+                                                   window=3600)
+        extra = 3
+        for n in range(faults.RELINK_PER_CALL + extra):
+            _, pub = self.opened(f"k{n}", signature={"relationship": f"r{n}", "turn": "t"})
+            self.ledger.claim(pub, owner="writer-A")
+        self.clock.advance(faults.LEASE_SECONDS + 1)
+        first = self.ledger.expire_leases()
+        self.assertEqual((faults.RELINK_PER_CALL, True), (first["released"], first.get("more")))
+        rest = self.ledger.expire_leases()
+        self.assertEqual((extra, False), (rest["released"], rest.get("more")))
+
+    def test_a_target_returning_to_where_the_issue_is_cancels_the_unsent_relink(self):
+        identifier, pub = self.opened()
+        self.publish(pub)
+        self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM, project_ref="P2")
+        self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM, project_ref=PROJECT)
+        unsent = [entry["payload"]["value"] for entry in capability(
+            self, self.ledger, "publications")(identifier, kind="update_record")
+            if entry["state"] in (faults.PENDING, faults.FAILED, faults.CLAIMED)]
+        self.assertEqual([], unsent, "the issue already sits in the project the scope targets")
+        self.assertEqual(faults.LINKED,
+                         capability(self, self.ledger, "get")(identifier).get("linkState"))
+
+
+class ASweepJudgesOnlyWhatItsRowsCanShow(RelayTestCase):
+    """PR #142 hosted review (invariants 9 and 16): this store's rows carry no workspace, so a
+    sweep neither clears nor holds open a fault recorded under another workspace; it judges the
+    faults its own observations resolve to."""
+
+    def setUp(self):
+        super().setUp()
+        self.ledger = faults.FaultLedger(self.store, self.clock)
+
+    def stalled(self, workspace, key):
+        scope = {"projectKey": "CRW", **({"workspace": workspace} if workspace else {})}
+        return self.ledger.record(faults.observation(
+            product=PRODUCT, fault_class="delivery_stalled", severity=faults.BROKEN,
+            signature={"recipient": "p", "attemptState": None}, occurrence_key=key,
+            scope=scope, detail="held", evidence=[{"kind": "row", "ref": "deliveries"}],
+        ))["faultId"]
+
+    def swept(self):
+        faultsweep.record_all(self.ledger, faultsweep.sweep(self.store), store=self.store)
+
+    def test_another_workspaces_fault_is_left_to_that_workspace(self):
+        own = self.stalled(None, "own:1")
+        other = self.stalled("ws-B", "other:1")
+        self.assertNotEqual(own, other)
+        self.swept()
+        self.assertIsNotNone(self.ledger.get(own)["cleared_at"],
+                             "this store's own fault clears once its rows are gone")
+        self.assertIsNone(self.ledger.get(other)["cleared_at"],
+                          "no row of this store speaks for another workspace's relay")
+
+    def test_a_fault_moved_out_of_this_workspace_is_still_judged_under_its_id(self):
+        own = self.stalled("unassigned", "own:1")
+        capability(self, self.ledger, "move")(own, scope={"projectKey": "CRW",
+                                                          "workspace": "ws-B"})
+        with self.store.transaction() as db:
+            self.assertEqual("ws-B", json.loads(db.execute(
+                "SELECT scope FROM fault_ledger WHERE fault_id = ?", (own,)).fetchone()[
+                "scope"])["workspace"])
+        faultsweep.record_all(self.ledger, faultsweep.sweep(
+            self.store, scope={"workspace": "unassigned"}), store=self.store)
+        self.assertIsNotNone(self.ledger.get(own)["cleared_at"])
+
+
 class LegacyScopeKeys(ContractCase):
     """Invariants 7 and 8 against a store written before products were restricted."""
 
