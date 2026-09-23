@@ -219,7 +219,18 @@ def _newest_retired_bridge_record(host):
         found = [Path(item.path) for item in scanning if item.name.startswith(stem)]
     if not found:
         return None, None
-    newest = max(found, key=lambda path: inventory.archive_order(path, stem))
+    # Every name has to be one retire() writes before any of them is chosen. An entry whose name
+    # cannot be placed may be the newest, and stepping over it to an older archive can restore a
+    # record from before the policy, which starts a bridge that checks no role.
+    unplaced = sorted(path.name for path in found if inventory.archive_key(path, stem) is None)
+    if unplaced:
+        return None, ("entries under " + str(home / stem) + "* carry names this tool does not"
+                      " write (" + ", ".join(unplaced) + "), so which retired bridge record is"
+                      " newest, and whether it named an execution policy, was not established. An"
+                      " older archive may predate the policy, and a record rebuilt from it would"
+                      " start a bridge that checks no role. Rename or remove those entries and"
+                      " rerun")
+    newest = max(found, key=lambda path: inventory.archive_key(path, stem))
     reading_ = bridgerecord.read_json_without_blocking(newest, "the retired bridge record",
                                                        follow=False)
     why = None

@@ -729,6 +729,23 @@ def archive_order(path, stem):
         return ("", -1)
 
 
+# The name retire() gives an archive: a UTC stamp, and a zero-padded collision suffix after it.
+_ARCHIVE_NAME = re.compile(r"(\d{8}T\d{6}Z)(?:-(\d{3,}))?")
+
+
+def archive_key(path, stem):
+    """The order of an archive named the way retire() names one, or None for any other name.
+
+    archive_order ranks a name it cannot parse below every other, so a selector built on it steps
+    over that entry to an older one. Where the choice decides what gets restored, a name nobody
+    can place is a question left unanswered, and the selector refuses on it instead.
+    """
+    matched = _ARCHIVE_NAME.fullmatch(str(Path(path).name)[len(stem):])
+    if matched is None:
+        return None
+    return matched.group(1), int(matched.group(2) or 0)
+
+
 def archives(home, stem):
     """Every archive carrying this stem, in order, or an OSError saying why it could not be read.
 

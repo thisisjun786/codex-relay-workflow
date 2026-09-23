@@ -821,6 +821,40 @@ class ARecordedPolicySurvivesTheTransition(TransitionCase):
     def test_a_newest_archive_that_became_a_pipe_refuses(self):
         self._refuses_with_newest_archive_replaced(os.mkfifo)
 
+    def test_an_archive_name_this_tool_does_not_write_refuses_the_rebuild(self):
+        """Devin, PR #137: a name archive_order could not parse ranked below every valid one.
+
+        The rebuild stepped over it to an older archive, and an older archive can predate the
+        policy: the record rebuilt from it starts a bridge that checks no role.
+        """
+        import importlib
+        sys.path.insert(0, str(ROOT / "scripts"))
+        steps = importlib.import_module("crw_transition.steps")
+        from crw_runtime import bridgerecord
+        home = self.host.home
+        policy = self.host.root / "execution-policy.json"
+        policy.write_text(json.dumps({"roles": {
+            "child": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}}}),
+            encoding="utf-8")
+        reference = {"path": str(policy),
+                     "digest": hashlib.sha256(policy.read_bytes()).hexdigest()}
+        bridge = str(self.host.destination / "current" / "bin" / "codex-thread-bridge")
+        older = bridgerecord.document(command=bridge, name="codex-thread-bridge",
+                                      owner=bridgerecord.OWNER_PLUGIN)
+        newer = bridgerecord.document(command=bridge, name="codex-thread-bridge",
+                                      owner=bridgerecord.OWNER_PLUGIN, execution_policy=reference)
+        stem = bridgerecord.RECORD_NAME + ".superseded-"
+        (home / (stem + "20200101T000000Z")).write_text(json.dumps(older), encoding="utf-8")
+        (home / (stem + "20210101T000000Z-x1")).write_text(json.dumps(newer), encoding="utf-8")
+        host = {"codexHome": str(home), "destination": str(self.host.destination),
+                "mcp": {"record": None, "registration": None, "recordOwner": None,
+                        "recordPath": str(home / bridgerecord.RECORD_NAME)}}
+        answer = steps.mcp_record_install(host, {}, apply=True)
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer, indent=2)[:2000])
+        self.assertIn("20210101T000000Z-x1", json.dumps(answer))
+        self.assertFalse((home / bridgerecord.RECORD_NAME).exists(),
+                         "no policy-free record is installed in its place")
+
     def test_a_newest_archive_that_became_a_directory_refuses(self):
         self._refuses_with_newest_archive_replaced(lambda path: path.mkdir())
 

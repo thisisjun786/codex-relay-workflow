@@ -267,6 +267,9 @@ record never names a policy, so nothing is invented for a manual install.
 The newest archive has to read as a record for that carry-forward. When it cannot be read, or is
 not a regular file at all, the rebuild is refused rather than taken from an older archive, because
 an older one can predate the policy.
+Every entry under the stem also has to carry a name `retire` writes, a UTC stamp with an optional
+zero-padded collision suffix. An entry whose name cannot be placed in that order might be the
+newest, so it refuses the rebuild by name instead of being ranked below the others.
 
 The file the carried reference names is read too, the way the launcher reads it at every start: it
 has to open as a regular file whose bytes hash to the recorded digest. A policy edited or removed
