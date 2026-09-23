@@ -1837,7 +1837,9 @@ def cmd_fault_stage(services, args) -> dict:
 def cmd_fault_policy(services, args) -> dict:
     """Read a product's suppression policies, or change one prospectively (with a reason)."""
     if args.fault_class is None:
-        return {"product": args.product, "policies": services.faults.policies(args.product)}
+        page = services.faults.policies(args.product, **_page(args))
+        return {"product": args.product, "policies": page["policies"], "next": page["next"]}
+    _no_paging(args, "--fault-class")
     if args.severity is None or args.reason is None:
         raise SystemExit2("changing a policy names --fault-class, --severity and --reason",
                           EXIT_USAGE)
@@ -1849,12 +1851,33 @@ def cmd_fault_policy(services, args) -> dict:
 def cmd_fault_limit(services, args) -> dict:
     """Read a product's write budgets, or set one kind's."""
     if args.kind is None:
-        return {"product": args.product, "limits": services.faults.limits(args.product)}
+        page = services.faults.limits(args.product, **_page(args))
+        return {"product": args.product, "limits": page["limits"], "next": page["next"]}
+    _no_paging(args, "--kind")
     if args.max_count is None or args.window is None:
         raise SystemExit2("setting a budget names --kind, --max-count and --window",
                           EXIT_USAGE)
     return services.faults.set_limit(args.product, args.kind, max_count=args.max_count,
                                      window=args.window)
+
+
+def _page(args) -> dict:
+    """A listing's page size and cursor, the size validated before it reaches the ledger."""
+    return {"limit": _positive(20 if args.limit is None else args.limit, "--limit"),
+            "after": args.after}
+
+
+def _no_paging(args, selector):
+    """Paging options list; beside a change they would be ignored, so they are refused."""
+    given = [flag for flag, value in (("--limit", args.limit), ("--after", args.after))
+             if value is not None]
+    if given:
+        from .errors import RefusalReason
+        from .faults import FaultRefused
+
+        raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                           f"{', '.join(given)} page a listing and would be ignored beside"
+                           f" {selector}")
 
 
 def cmd_fault_attention(services, args) -> dict:
@@ -4272,6 +4295,8 @@ def build_parser() -> argparse.ArgumentParser:
     fault_policy.add_argument("--threshold", type=int)
     fault_policy.add_argument("--window", type=float, help="seconds")
     fault_policy.add_argument("--reason")
+    fault_policy.add_argument("--limit", type=int, help="classes per page when listing")
+    fault_policy.add_argument("--after", help="continue a listing from the next it returned")
     fault_policy.set_defaults(handler=cmd_fault_policy)
 
     fault_limit = subparsers.add_parser("fault-limit")
@@ -4279,6 +4304,8 @@ def build_parser() -> argparse.ArgumentParser:
     fault_limit.add_argument("--kind")
     fault_limit.add_argument("--max-count", type=int)
     fault_limit.add_argument("--window", type=float, help="seconds")
+    fault_limit.add_argument("--limit", type=int, help="budgets per page when listing")
+    fault_limit.add_argument("--after", help="continue a listing from the next it returned")
     fault_limit.set_defaults(handler=cmd_fault_limit)
 
     subparsers.add_parser("fault-attention").set_defaults(handler=cmd_fault_attention)

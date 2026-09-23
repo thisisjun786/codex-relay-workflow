@@ -145,6 +145,8 @@ RENDERED_OCCURRENCES = 3
 # What an operator listing shows. Both bound a query, and both are refused below 1.
 SHOWN_PER_PAGE = 20
 SHOWN_PER_FAULT = 20
+# How many product and kind pairs queue_state() shows budgets for; more are reported truncated.
+BUDGETS_SHOWN = 500
 
 # One observation is enough for something that is not being performed at all; three inside the
 # window for something working badly, because once may be weather; a notice is recorded for an
@@ -189,6 +191,17 @@ def _bounded(value, name, ceiling=1000):
 # second copy cannot drift from it.
 def bounded(value, name, ceiling=1000):
     return _bounded(value, name, ceiling)
+
+
+def _cursor_name(after):
+    """A name cursor: None starts at the beginning, anything else is the last name a page
+    returned. One that is not a non-blank string is refused rather than read as a position."""
+    if after is None:
+        return ""
+    if not _named(after):
+        raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                           f"after is the name the last page returned, not {after!r}")
+    return after
 
 
 def _named(value):
@@ -1397,15 +1410,21 @@ class FaultLedger:
                 "threshold": threshold, "window": window, "reason": reason,
                 "previous": dict(previous) if previous else None}
 
-    def policies(self, product) -> list:
+    def policies(self, product, *, limit=SHOWN_PER_PAGE, after=None) -> dict:
+        """One page of this product's suppression policies: at most limit classes, each with
+        every severity, in class order; next is the class to pass as after for the rest."""
         _check_product(product)
+        limit = _bounded(limit, "limit")
+        after = _cursor_name(after)
+        names = sorted(name for name in CLASS_POLICY if name > after)
         with self.store.transaction() as db:
-            return [
+            policies = [
                 {"product": product, "faultClass": name, "severity": severity,
                  **{key: value for key, value in self._policy(db, product, name, severity).items()
                     if key in ("threshold", "window", "publish", "source", "overrideReason",
                                "clears")}}
-                for name in sorted(CLASS_POLICY) for severity in SEVERITIES]
+                for name in names[:limit] for severity in SEVERITIES]
+        return {"policies": policies, "next": names[limit - 1] if len(names) > limit else None}
 
     def _suppression(self, db, identifier, policy, now) -> dict:
         """Whether this fault has earned a Linear record, counted inside the window."""
@@ -1783,6 +1802,12 @@ class FaultLedger:
         if kind == OPEN_RECORD:
             raise FaultRefused(RefusalReason.FAULT_STATE_CONFLICT,
                                "only suppression opens a fault's issue; queue() never creates one")
+        if kind == UPDATE_RECORD:
+            # One entry point for updates on the owned issue: request_update() keys each on the
+            # issue and puts every set_project through the link's revision, which is what lets
+            # a readback be trusted. A second route with a free-form trigger bypassed both.
+            raise FaultRefused(RefusalReason.FAULT_STATE_CONFLICT,
+                               "update_record is queued through request_update(), never queue()")
         if not _named(trigger) or "|" in trigger:
             raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
                                "a trigger is a non-blank string without '|'")
@@ -1829,12 +1854,14 @@ class FaultLedger:
         """Is an issued or uncertain set_project to ANOTHER project outstanding for this fault?
 
         Such a write may still land, so no earlier readback proves where the issue is.
+        A set_project is recognised by what it does - its payload's op - never by its trigger
+        key, so no route that queues one can hide it from this question.
         """
         return db.execute(
             "SELECT 1 FROM fault_publications p"
             "  LEFT JOIN fault_publication_payloads pp ON pp.publication_id = p.publication_id"
             " WHERE p.fault_id = ? AND p.kind = ? AND p.state IN (?,?)"
-            "   AND p.trigger_key LIKE 'update:set_project:%'"
+            "   AND " + _SET_PROJECT.format(pp="pp") +
             "   AND (CASE WHEN json_valid(pp.payload)"
             "        THEN json_extract(pp.payload, '$.value') END) IS NOT ?"
             " LIMIT 1",
@@ -1842,9 +1869,12 @@ class FaultLedger:
 
     def _cancel_stale_relinks(self, db, identifier, reason, now):
         """Cancel every unissued set_project of this fault; issued and uncertain ones stay."""
-        self._cancel_where(db, identifier, reason, now,
-                           extra=" AND p.kind = ? AND p.trigger_key LIKE 'update:set_project:%'",
-                           params=(UPDATE_RECORD,))
+        self._cancel_where(
+            db, identifier, reason, now,
+            extra=(" AND p.kind = ? AND EXISTS (SELECT 1 FROM fault_publication_payloads sp"
+                   "  WHERE sp.publication_id = p.publication_id AND "
+                   + _SET_PROJECT.format(pp="sp") + ")"),
+            params=(UPDATE_RECORD,))
 
     def _relink(self, db, identifier, project_ref, now, *, force=False):
         """Invariant 11: queue the write that puts the owned issue in project_ref.
@@ -1957,7 +1987,7 @@ class FaultLedger:
             "                LEFT JOIN fault_publication_payloads opp"
             "                  ON opp.publication_id = op.publication_id"
             "               WHERE op.fault_id = f.fault_id AND op.kind = ? AND op.state IN (?,?)"
-            "                 AND op.trigger_key LIKE 'update:set_project:%'"
+            "                 AND " + _SET_PROJECT.format(pp="opp") +
             "                 AND (CASE WHEN json_valid(opp.payload)"
             "                      THEN json_extract(opp.payload, '$.value') END)"
             "                     IS NOT p.project_ref))))"
@@ -2093,16 +2123,23 @@ class FaultLedger:
                                {"maxCount": max_count, "window": window}, at=now)
         return {"product": product, "kind": kind, "maxCount": max_count, "window": float(window)}
 
-    def limits(self, product) -> list:
-        """Every kind's budget for this product: the kinds this process registered, and any
-        kind a limit was stored for, whether or not this process loaded its module."""
+    def limits(self, product, *, limit=SHOWN_PER_PAGE, after=None) -> dict:
+        """One page of this product's budgets, in kind order: the kinds this process registered
+        and any kind a limit was stored for, whether or not this process loaded its module.
+        next is the kind to pass as after for the rest; the stored kinds are read a page at a
+        time, however many a product holds."""
         _check_product(product)
+        limit = _bounded(limit, "limit")
+        after = _cursor_name(after)
         moment = self.clock.now()
         with self.store.transaction() as db:
             stored = {row["kind"] for row in db.execute(
-                "SELECT kind FROM fault_limits WHERE product = ?", (product,))}
-            kinds = sorted(set(KINDS) | {NOTIFICATION} | stored)
-            return [self._budget(db, product, kind, moment) for kind in kinds]
+                "SELECT kind FROM fault_limits WHERE product = ? AND kind > ?"
+                " ORDER BY kind LIMIT ?", (product, after, limit + 1))}
+            known = {kind for kind in set(KINDS) | {NOTIFICATION} if kind > after}
+            kinds = sorted(stored | known)[:limit + 1]
+            page = [self._budget(db, product, kind, moment) for kind in kinds[:limit]]
+        return {"limits": page, "next": kinds[limit - 1] if len(kinds) > limit else None}
 
     # ------------------------------------------------------------------ selection (7a)
 
@@ -2135,15 +2172,6 @@ class FaultLedger:
             + f" ELSE {default_window} END)) < COALESCE("
             + lookup.format(col="max_count") + ", CASE " + kind_sql + " " + counts
             + f" ELSE {default_count} END)")
-
-    def _spent(self, db, moment) -> dict:
-        pairs = db.execute(
-            "SELECT DISTINCT f.product, p.kind FROM fault_publications p"
-            "  JOIN fault_ledger f ON f.fault_id = p.fault_id WHERE p.state = ? LIMIT 500",
-            (PENDING,)).fetchall()
-        return {(row["product"], row["kind"]): self._budget(db, row["product"], row["kind"],
-                                                           moment)["remaining"]
-                for row in pairs}
 
     def next(self, *, limit=4, now=None) -> list:
         """The writes a caller may act on now, fairly across products.
@@ -2225,10 +2253,17 @@ class FaultLedger:
                              "reason": self._held_reason(db, row, moment) or "budget_spent"})
                 if len(held) >= limit:
                     break
-            budgets = [self._budget(db, product, kind, moment)
-                       for (product, kind) in self._spent(db, moment)]
+            # The budgets of the product and kind pairs that have pending writes, a bounded
+            # number of them, saying so when there are more rather than looking complete.
+            pairs = db.execute(
+                "SELECT DISTINCT f.product, p.kind FROM fault_publications p"
+                "  JOIN fault_ledger f ON f.fault_id = p.fault_id WHERE p.state = ? LIMIT ?",
+                (PENDING, BUDGETS_SHOWN + 1)).fetchall()
+            budgets = [self._budget(db, row["product"], row["kind"], moment)
+                       for row in pairs[:BUDGETS_SHOWN]]
             return {"ready": [self._publication_view(db, row) for row in ready],
-                    "held": held, "budgets": budgets}
+                    "held": held, "budgets": budgets,
+                    "budgetsTruncated": len(pairs) > BUDGETS_SHOWN}
 
     def _held_reason(self, db, row, moment):
         spec = KINDS.get(row["kind"])
@@ -3126,6 +3161,11 @@ def _exists(db, identifier):
 # "attempt 1" names two claims - an update by number rewrote the earlier one's history too.
 CURRENT_ATTEMPT = ("attempt_id = (SELECT MAX(attempt_id) FROM fault_publication_attempts"
                    " WHERE publication_id = ?)")
+
+# SQL: the payload row {pp} belongs to a set_project write. Recognised by what the write does,
+# never by its trigger key, which is whatever the route that queued it chose.
+_SET_PROJECT = ("(CASE WHEN json_valid({pp}.payload)"
+                " THEN json_extract({pp}.payload, '$.op') END) = 'set_project'")
 
 SLOT_ISSUE = "issue"
 SLOT_CREATE = "create"

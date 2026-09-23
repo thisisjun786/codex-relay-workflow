@@ -66,7 +66,8 @@ a path that reaches the outcome without passing through that function is a defec
     project its product owns, an owned issue is unlinked - awaiting a target - and never
     reported linked; nor is it reported linked while a `set_project` to another project is issued
     or uncertain, because that write may still land (`_moving_elsewhere()`, which reads at most
-    one row). Link state is decided when read, against the product's current owned target
+    one row). A `set_project` is recognised by its payload's `op`, never by its trigger, and
+    `update_record` is queued only through `request_update()`. Link state is decided when read, against the product's current owned target
     (`_link_state()` for `get()` and `snapshot()`, the same rule in `attention()`), so an issue a
     bounded relink batch has not reached yet is never reported linked. A target returning to the
     project the issue already sits in cancels every unsent `set_project` at once. Enforced by `_relink()` and `_unlink()` through `_link_to_target()`,
@@ -81,7 +82,9 @@ a path that reaches the outcome without passing through that function is a defec
     and answers undetermined - clearing nothing - until a later call has judged them all.
     Re-pointing unsent writes and releasing lapsed leases take at most 100 rows per call and
     report what remains - a repeated `set_target()` with an unchanged target too, writing
-    nothing; cancelling a fault's unissued writes is set-based. Enforced by
+    nothing; cancelling a fault's unissued writes is set-based; `limits()` and `policies()` are
+    read a page at a time with a `next` cursor, and `queue_state()` says when its budgets are
+    truncated. Enforced by
     `bounded()`, `faultsweep._rotation()`, `faultsweep._first_current()`, `_repoint_where()`,
     `expire_leases()` and `_cancel_where()`.
 15. **One notification path.** Eligibility and budget are decided at reservation, a lapsed
@@ -91,7 +94,9 @@ a path that reaches the outcome without passing through that function is a defec
     caller's cadence.
     Enforced by `reserve_notifications()`.
 16. **Waiting is never a fault, an overtaken obligation is not current, and no sweep contradicts
-    itself.** Paused, archived, busy and waiting recipients are never collected; a superseded
+    itself.** Paused, archived, busy and waiting recipients are never collected - an attempt
+    answered `deferred_busy` and a delivery held at `busy_cap` are a recipient mid-turn, and a
+    fault one raised reads as absent and clears; a superseded
     delivery and an anchor the scheduler no longer reads (a paused assignment, a generation it
     moved past) are not collected and clear what they raised; no source emits an active and a
     clear for one fault in one sweep; and a sweep judges recovery only for faults its rows can
@@ -319,7 +324,9 @@ publication (`external_ref`) and never becomes the fault's issue:
   fault, including one suppression never opened: it is an explicit caller act, and the rule that
   a fix or resolve on a never-opened fault queues nothing governs only the ledger's own
   remediation writes. The one exception is the issue create, which only suppression opens
-  (`queue(kind="open_record")` is refused with `fault_state_conflict`). A class whose only
+  (`queue(kind="open_record")` is refused with `fault_state_conflict`), and so is the built-in
+  `update_record`, whose one entry point is `request_update()`: it keys each update on the issue
+  and puts every `set_project` through the link's revision. A class whose only
   writes are another kind is recorded at a severity that never files and queued explicitly. CRW-206's
   project create is `creates=True, target="team", evidence="block"`; the
   issue-create project rule applies to issue creates only.
@@ -373,8 +380,9 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
 
 - One sliding window per product and kind. Defaults per hour: `open_record` 5,
   `append_comment` 20, `update_record` 20, `notification` 10, any other kind 20.
-  `set_limit(product, kind, *, max_count, window)` and `limits(product)`, which lists the kinds
-  this process registered and every kind a limit was stored for, loaded here or not.
+  `set_limit(product, kind, *, max_count, window)` and `limits(product, *, limit=20, after=None)`,
+  one page in kind order of the kinds this process registered and every kind a limit was stored
+  for, loaded here or not, as `{limits, next}`; pass `next` as `after` for the rest.
 - `budget(product, kind)` returns `{limit, window, used, remaining, source}`.
   `consume(product, kind, *, ref)` returns `{consumed, remaining, reason}`; one ref is consumed
   once; a spent budget answers `consumed: false, reason: budget_spent`. Any caller may use it.
@@ -484,7 +492,8 @@ follow it too.
 
 ### Policy
 
-`policies(product)` and `set_policy(product, fault_class, severity, *, threshold=None,
+`policies(product, *, limit=20, after=None)` - one page of at most `limit` classes, each with every
+severity, as `{policies, next}` - and `set_policy(product, fault_class, severity, *, threshold=None,
 window=None, reason)`. A degraded threshold and window can be adjusted; a broken fault files at
 once and a notice never files, and changing either is refused with `fault_policy_fixed`. A change
 is prospective: it decides the next occurrence recorded, and it is journaled with the value it
@@ -900,7 +909,7 @@ ledger.progress(fault_id)
 ledger.resolve(fault_id)
 ledger.prune(fault_id, *, keep)
 ledger.set_policy(product, fault_class, severity, *, threshold=None, window=None, reason)
-ledger.policies(product)
+ledger.policies(product, *, limit=20, after=None)   -> policies, next
 
 ledger.queue(fault_id, *, kind, trigger, payload=None)
 ledger.request_update(fault_id, *, op, value)
@@ -908,7 +917,7 @@ ledger.publication(publication_id)
 ledger.publications(fault_id, *, kind=None, state=None, limit=20, after=None)
 ledger.attempts(publication_id, *, limit=20)
 ledger.next(*, limit=4)                    # fair across products
-ledger.queue_state(*, limit=20)            -> ready, held (with reasons), budgets
+ledger.queue_state(*, limit=20)            -> ready, held (with reasons), budgets, budgetsTruncated
 ledger.claim(publication_id, *, owner, takeover=False)   -> claimToken
 ledger.operation(publication_id, *, claim_token)
 ledger.reconcile(publication_id, observed_text=None, *, searched=False, observed=None,
@@ -923,7 +932,7 @@ ledger.retry(publication_id)
 ledger.budget(product, kind)
 ledger.consume(product, kind, *, ref)
 ledger.set_limit(product, kind, *, max_count, window)
-ledger.limits(product)
+ledger.limits(product, *, limit=20, after=None)     -> limits, next
 
 ledger.attention()
 ledger.raise_notification(fault_id, *, reason, ref=None)
@@ -982,8 +991,9 @@ fault-cancel      --publication <id> --reason <text>
 fault-retry       --publication <id>
 fault-relink      [--limit <n>]
 fault-policy      --product <p> [--fault-class <c> --severity <s> --reason <text>
-                  [--threshold <n>] [--window <seconds>]]
+                  [--threshold <n>] [--window <seconds>]] [--limit <n>] [--after <next>]
 fault-limit       --product <p> [--kind <kind> --max-count <n> --window <seconds>]
+                  [--limit <n>] [--after <next>]
 fault-attention
 fault-notifications          [--notification-state <state>] [--limit <n>] [--after <next>]
 fault-notification-raise     --fault <id> --reason <text> [--ref <ref>]

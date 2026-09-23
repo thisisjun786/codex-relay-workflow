@@ -31,7 +31,8 @@ from pathlib import Path
 from . import __version__, faults
 from . import settings as settings_module
 from .errors import RefusalReason
-from .policy import RetryPolicy
+from .policy import BUSY_CAP, RetryPolicy
+from .transport import DEFERRED_BUSY
 
 SWEEP_LIMIT = 32
 # How many deliveries one existence question asks the live supersession rule about. Verdicts are
@@ -66,6 +67,13 @@ ESTABLISHED = (REPORTED, UNREPORTED, "in_progress", "unmanaged")
 
 # A delivery that is nowhere any more, so an unmoving row in one of these is not a fault.
 SETTLED_DELIVERY = ("dispatched", "inbox_only", "superseded")
+# A recipient that is mid-turn is waiting, never failing. An attempt the transport answered
+# deferred_busy, and a delivery held at busy_cap because its recipient stayed busy, are the relay
+# waiting for a long turn to end - which criterion 1 says is never a fault on its own. Neither is
+# collected, and still_present() answers a busy attempt state absent, so a fault one raised
+# before this rule is cleared by recovery.
+BUSY_ATTEMPT = DEFERRED_BUSY
+BUSY_HOLD = BUSY_CAP
 # How many attempts make a delivery one that is RETRYING rather than one in flight. A first
 # attempt is ordinary; a second means the first did not land.
 RETRYING_ATTEMPTS = 2
@@ -328,11 +336,11 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None,
         "  FROM deliveries d LEFT JOIN events e ON e.event_id = d.event_id"
         # Held deliveries only. A delivery that is retrying before any hold is set is read
         # from its attempt rows by retry_faults, one occurrence per settled failure.
-        " WHERE d.hold_reason IS NOT NULL AND d.state NOT IN (?,?,?)"
+        " WHERE d.hold_reason IS NOT NULL AND d.hold_reason != ? AND d.state NOT IN (?,?,?)"
         "   AND " + _NOT_SUPERSEDED.format(d="d") +
         "   AND d.event_id > ? AND d.event_id <= ?"
         " ORDER BY d.event_id LIMIT ?",
-        (*SETTLED_DELIVERY, after or "", until, limit),
+        (BUSY_HOLD, *SETTLED_DELIVERY, after or "", until, limit),
     )
     observations = []
     cache = {}
@@ -399,17 +407,18 @@ def retry_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> di
         # observed mid-flight used to reach the degraded threshold. A reconciled uncertain
         # outcome is settled too, and stays eligible: nobody could establish that it landed.
         "   AND a.internal_state = 'settled'"
-        "   AND a.state IS NOT NULL AND a.state NOT IN (?,?)"
+        "   AND a.state IS NOT NULL AND a.state NOT IN (?,?,?)"
         "   AND " + _NOT_SUPERSEDED.format(d="d") +
         "   AND a.rowid > ? AND a.rowid <= ?"
         " ORDER BY a.rowid LIMIT ?",
-        (*SETTLED_DELIVERY, "dispatched", "inbox_only", after or 0, until, limit),
+        (*SETTLED_DELIVERY, "dispatched", "inbox_only", BUSY_ATTEMPT, after or 0, until, limit),
     )
     cache = {}
     current = {}
     observations = [faults.observation(
         product=product, fault_class="delivery_stalled",
-        severity=faults.BROKEN if row["hold_reason"] else faults.DEGRADED,
+        severity=(faults.BROKEN if row["hold_reason"] and row["hold_reason"] != BUSY_HOLD
+                  else faults.DEGRADED),
         # The attempt's own classified state, never the delivery's hold reason. That reason
         # is set when a delivery gives up and it is MUTABLE: deriving identity from it meant
         # that the moment a retrying delivery hit its cap, every historical attempt re-derived
@@ -1076,6 +1085,9 @@ def still_present(store, fault_class, signature) -> dict:
     from a class this cannot ask about - which is never cleared by absence at all.
     """
     if fault_class == "delivery_stalled":
+        if signature.get("attemptState") == BUSY_ATTEMPT:
+            # Waiting on a busy recipient is never a fault (BUSY_ATTEMPT above).
+            return None
         # Both shapes that derive this class, because either one still produces the fault.
         # The hold-reason page keys on the delivery's LATEST attempt state, which is NULL when
         # a delivery was refused before any attempt; the retry page keys on ANY attempt in

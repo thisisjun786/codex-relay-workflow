@@ -1584,7 +1584,7 @@ class RepointingNeverDependsOnTheCallingProcess(ContractCase):
                                                    window=3600)
         faults.KINDS.pop("external_kind_limit")
         listed = {entry["kind"]: entry["limit"]
-                  for entry in capability(self, self.ledger, "limits")(PRODUCT)}
+                  for entry in capability(self, self.ledger, "limits")(PRODUCT)["limits"]}
         self.assertEqual(3, listed.get("external_kind_limit"))
 
     def test_a_repeated_move_still_reports_what_is_left(self):
@@ -1683,6 +1683,134 @@ class EveryIssueIsReadAgainstTheCurrentTarget(ContractCase):
             if entry["state"] == faults.PENDING]
         self.assertEqual([PROJECT], queued, "the issue behind the waiting ones is relinked")
         self.assertEqual(0, answer["relinkPending"])
+
+
+class ABusyRecipientIsWaiting(RelayTestCase):
+    """Final review round seven (criterion 1, invariant 16).
+
+    A recipient that is mid-turn is waiting, never failing: busy attempts and a busy_cap hold
+    are not collected, a fault a busy attempt raised before is cleared by recovery, and a real
+    failure beside them is still collected.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.register()
+        self.relationship = self.store.one("SELECT relationship_id FROM relationships")[
+            "relationship_id"]
+        self.ledger = faults.FaultLedger(self.store, self.clock)
+
+    def delivery(self, event, *, hold=None, attempts=("deferred_busy",) * 3):
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id,"
+                " recipient_thread_id, state, attempt_count, hold_reason, created_at,"
+                " updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (event, self.relationship, "completion", "parent", "parent", "deferred_busy",
+                 len(attempts), hold, "t", "t"))
+            for number, state in enumerate(attempts, 1):
+                db.execute(
+                    "INSERT INTO attempts (request_id, event_id, attempt_no, kind,"
+                    " internal_state, state, observed_at) VALUES (?,?,?,?,?,?,?)",
+                    (f"{event}-{number}", event, number, "completion", "settled", state, "t"))
+
+    def stalled(self):
+        return [entry for entry in faultsweep.sweep(self.store)["observations"]
+                if entry["faultClass"] == "delivery_stalled" and not entry["cleared"]]
+
+    def test_busy_attempts_and_a_busy_cap_hold_are_never_collected(self):
+        self.delivery("e-busy")
+        self.delivery("e-cap", hold="busy_cap")
+        self.assertEqual([], self.stalled())
+
+    def test_a_real_failure_beside_busy_attempts_is_still_collected(self):
+        self.delivery("e-mixed", attempts=("withheld_pre_send", "deferred_busy"))
+        self.assertEqual(["withheld_pre_send"],
+                         [entry["signature"]["attemptState"] for entry in self.stalled()])
+
+    def test_a_fault_a_busy_attempt_raised_before_is_cleared(self):
+        self.delivery("e-busy")
+        identifier = self.ledger.record(faults.observation(
+            product=PRODUCT, fault_class="delivery_stalled", severity=faults.DEGRADED,
+            signature={"recipient": "parent", "attemptState": "deferred_busy"},
+            occurrence_key="attempt:e-busy-1", scope={"projectKey": "CRW"}, detail="busy",
+            evidence=[{"kind": "row", "ref": "attempts"}]))["faultId"]
+        faultsweep.record_all(self.ledger, faultsweep.sweep(self.store), store=self.store)
+        self.assertIsNotNone(self.ledger.get(identifier)["cleared_at"])
+
+
+class EveryRouteToAProjectWriteIsSeen(ContractCase):
+    """Final review round seven (invariant 11, the project-linkage correction).
+
+    A write that may still move the issue to another project keeps it unlinked however it was
+    queued: set_project is recognised by its payload, and update_record has one entry point.
+    """
+
+    def test_update_record_is_queued_only_through_request_update(self):
+        identifier, pub = self.opened()
+        self.publish(pub)
+        with self.assertRaises(faults.FaultRefused):
+            capability(self, self.ledger, "queue")(
+                identifier, kind="update_record", trigger="manual",
+                payload={"op": "set_project", "value": "P2"})
+
+    def test_a_project_write_is_recognised_by_its_payload_whatever_its_trigger(self):
+        identifier, pub = self.opened()
+        self.publish(pub)
+        stamp = self.clock.iso()
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO fault_publications (publication_id, fault_id, kind, trigger_key,"
+                " tracker_ref, summary, identity_digest, state, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?)",
+                ("manual-1", identifier, faults.UPDATE_RECORD, "manual", TEAM, "relink",
+                 "digest", faults.ISSUED, stamp, stamp))
+            db.execute(
+                "INSERT INTO fault_publication_payloads (publication_id, project_ref, payload,"
+                " updated_at) VALUES (?,?,?,?)",
+                ("manual-1", None, json.dumps({"op": "set_project", "value": "P2"}), stamp))
+        self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM, project_ref="P2")
+        self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM, project_ref=PROJECT)
+        self.assertEqual(faults.UNLINKED,
+                         capability(self, self.ledger, "get")(identifier).get("linkState"),
+                         "an issued write to P2 may still land, whatever its trigger")
+
+
+class ListingsArePaged(ContractCase):
+    """Final review round seven (invariant 14): every public listing is read a page at a time."""
+
+    def test_limits_are_read_a_page_at_a_time(self):
+        self.assertIn("after", inspect.signature(self.ledger.limits).parameters,
+                      "limits() takes no cursor")
+        for n in range(30):
+            self.ledger.set_limit(PRODUCT, f"extension_{n:02d}", max_count=1, window=3600)
+        seen, after = [], None
+        for _ in range(20):
+            page = self.ledger.limits(PRODUCT, limit=7, after=after)
+            self.assertLessEqual(len(page["limits"]), 7)
+            seen += [entry["kind"] for entry in page["limits"]]
+            after = page["next"]
+            if after is None:
+                break
+        self.assertEqual(sorted({f"extension_{n:02d}" for n in range(30)} | set(faults.KINDS)
+                                | {faults.NOTIFICATION}), seen)
+
+    def test_policies_are_read_a_page_at_a_time(self):
+        self.assertIn("after", inspect.signature(self.ledger.policies).parameters,
+                      "policies() takes no cursor")
+        seen, after = [], None
+        for _ in range(len(faults.CLASS_POLICY) + 1):
+            page = self.ledger.policies(PRODUCT, limit=2, after=after)
+            self.assertLessEqual(len({entry["faultClass"] for entry in page["policies"]}), 2)
+            seen += [(entry["faultClass"], entry["severity"]) for entry in page["policies"]]
+            after = page["next"]
+            if after is None:
+                break
+        self.assertEqual([(name, severity) for name in sorted(faults.CLASS_POLICY)
+                          for severity in faults.SEVERITIES], seen)
+
+    def test_queue_state_says_when_its_budgets_are_not_all_of_them(self):
+        self.assertIs(False, self.ledger.queue_state().get("budgetsTruncated"))
 
 
 class LegacyScopeKeys(ContractCase):

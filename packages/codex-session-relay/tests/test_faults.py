@@ -1242,6 +1242,27 @@ class CommandLine(RelayTestCase):
                 self.assertEqual(cli.EXIT_REFUSED, code, (single, extra, refusal))
                 self.assertIn(extra[0], refusal["detail"])
 
+    def test_budget_and_policy_listings_page_and_refuse_paging_beside_a_change(self):
+        from codex_session_relay import cli
+
+        code, first = self.invoke("fault-limit", "--product", "crw", "--limit", "1")
+        self.assertEqual(0, code)
+        self.assertEqual(1, len(first["limits"]))
+        code, rest = self.invoke("fault-limit", "--product", "crw", "--after", first["next"])
+        self.assertEqual(0, code)
+        self.assertNotIn(first["limits"][0]["kind"], [entry["kind"] for entry in rest["limits"]])
+        code, policies = self.invoke("fault-policy", "--product", "crw", "--limit", "1")
+        self.assertEqual(0, code)
+        self.assertEqual(1, len({entry["faultClass"] for entry in policies["policies"]}))
+        self.assertIsNotNone(policies["next"])
+        code, refusal = self.invoke("fault-limit", "--product", "crw", "--kind", "open_record",
+                                    "--max-count", "3", "--window", "60", "--after", "x")
+        self.assertEqual(cli.EXIT_REFUSED, code, refusal)
+        code, refusal = self.invoke("fault-policy", "--product", "crw", "--fault-class",
+                                    "report_omitted", "--severity", "broken", "--reason", "r",
+                                    "--limit", "5")
+        self.assertEqual(cli.EXIT_REFUSED, code, refusal)
+
 
 class TheFaultPathReachesNoNetwork(unittest.TestCase):
     """Asserted from the source, because a boundary nobody checks is a boundary that moves."""
