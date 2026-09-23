@@ -242,14 +242,20 @@ the connection is also asked which file it opened, through `PRAGMA database_list
 descriptor is checked again after the read. A store moved before, during or after the read is
 refused rather than answered, and `doctor` withdraws what a moved read had already published.
 
-That question is the first statement on every connection, including `doctor`'s write probe,
-which asks it before beginning its transaction. The first statement that touches the file creates
-the log beside whichever name SQLite opened, so a query or transaction on a moved name would leave
-a stray `-wal` behind even when the answer is refused. The question itself creates no file.
+Nothing that could create a file runs first. The first statement that touches the file creates the
+log beside whichever name SQLite opened, so a query or transaction on a moved name leaves a stray
+`-wal` behind even when the answer is refused, and on SQLite 3.38.5 and older so does
+`PRAGMA database_list` itself. So every connection, including `doctor`'s write probe, asks the
+descriptor again as soon as it is open - a readlink, which creates nothing - and asks SQLite which
+file it opened before any query or transaction.
 
-One limit remains, and no check on this side can observe it: a different file swapped ONTO the
-expected pathname inside SQLite's own resolve-then-open. The checks are observations rather than
-locks. What they remove is every move of this store, which is the reachable case.
+Two limits remain. One no check on this side can observe: a different file swapped ONTO the
+expected pathname inside SQLite's own resolve-then-open. The other is a rename landing after the
+descriptor's post-connect answer, which nothing checks before the next statement: SQLite keeps any
+log beside the validated name, a read's closing check withdraws its answer, and on SQLite 3.38.5
+and older the write probe can report writable a file that has just moved. The checks are
+observations rather than locks; what they remove is every move of this store that happened before
+they asked.
 
 And a store that is present but will not state its identity is not a store that is absent:
 `doctor` reports it as present and unidentified, and the lifecycle commands treat it as
