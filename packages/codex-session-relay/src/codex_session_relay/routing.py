@@ -72,7 +72,9 @@ class ProductRouter:
                             f"{product!r} is not a registered product; register it first")
         binding = products.read_binding(record, registry)
         now = self.clock.iso()
-        with self.store.transaction() as db:
+        # One transaction with the decisions it settles: a binding whose consequences were
+        # refused is not left behind as a snapshot routing never acted on.
+        with self.store.composing() as db:
             db.execute(
                 "INSERT INTO product_bindings (product_key, kind, ref, record, observed_at,"
                 "  recorded_at) VALUES (?,?,?,?,?,?)"
@@ -80,7 +82,8 @@ class ProductRouter:
                 "   observed_at = excluded.observed_at, recorded_at = excluded.recorded_at",
                 (binding["product"], binding["kind"], binding["ref"],
                  products.canonical(binding), binding["observedAt"], now))
-        return {**binding, "redecided": intake.redecide(self, binding["product"])}
+            redecided = intake.redecide(self, binding["product"])
+        return {**binding, "redecided": redecided}
 
     def bindings(self, product) -> list:
         rows = self.store.all(
@@ -141,12 +144,13 @@ class ProductRouter:
         return intake.intake(self, record)
 
     def classify(self, fault_id, record) -> dict:
-        self.port.ready("route-classify")
+        """Refuses before the ledger when the classified product does not watch a stored
+        incident's surface, as an intake from that surface would have been."""
         return intake.classify(self, fault_id, record)
 
-    def reconcile(self, *, product=None, limit=50) -> dict:
+    def reconcile(self, *, product=None, limit=50, after=None) -> dict:
         self.port.ready("route-reconcile")
-        return intake.reconcile(self, product=product, limit=limit)
+        return intake.reconcile(self, product=product, limit=limit, after=after)
 
     def evaluate_projects(self, product) -> dict:
         self.port.ready("route-projects")

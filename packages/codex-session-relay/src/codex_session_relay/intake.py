@@ -104,6 +104,9 @@ def _forward(router, route, incident) -> dict:
     classification = route["classification"]
     registry = router.registry(classification["product"])
     applied = _classified(incident, classification)
+    # The product it was classified into decides what is collected, exactly as for an intake
+    # that named it: a surface it does not watch is refused, not filed through the side door.
+    _watched(registry, applied)
     answer = file(router, applied, registry, placement.workspace_for(applied, registry))
     return {**answer, "forwardedFrom": route["fault_id"]}
 
@@ -158,7 +161,8 @@ def file(router, incident, registry, workspace, *, hold=None, cause_fault=None) 
                     "stage": products.STAGE_FILED, "project": kept["project"],
                     "owner": kept["owner"], "hold": None, "relate": kept["relate"],
                     "reason": "filed earlier; the ledger's record carries this occurrence"}
-    obligations = _obligations(decision, existing, cause_fault)
+    obligations = _obligations(decision, existing, cause_fault,
+                               labels=placement.issue_labels(incident))
     target = routes.target(decision, registry, incident, obligations=obligations,
                            cause=cause_fault)
     first = port.get(fault_id) is None
@@ -188,7 +192,10 @@ def file(router, incident, registry, workspace, *, hold=None, cause_fault=None) 
         if getattr(refusal.reason, "value", None) not in OWNER_REFUSALS:
             raise
         # The fault already files its own record, or lives in another workspace: holding it
-        # for a decision keeps both records from existing for one defect.
+        # for a decision keeps both records from existing for one defect. The occurrence is
+        # recorded where the fault already is: a record() that named no project, or another
+        # one, would move its scope and re-point its unsent writes on the way to a hold.
+        kept = _stored((port.get(fault_id) or {}).get("scope")).get("projectKey")
         decision = {**decision, "disposition": products.HELD, "stage": products.STAGE_HELD,
                     "hold": products.OWNER_FOUND_AFTER_CREATE, "project": None,
                     "reason": f"{decision['owner']} owns this, but {refusal}"}
@@ -197,8 +204,9 @@ def file(router, incident, registry, workspace, *, hold=None, cause_fault=None) 
             result = port.record(port.observation(
                 product=product, workspace=workspace, fault_class=fault_class,
                 severity=incident["severity"], signature=signature,
-                occurrence_key=incident["occurrenceKey"], observed_at=incident["observedAt"],
-                detail=placement.detail_text(incident), evidence=incident["evidence"]))
+                occurrence_key=incident["occurrenceKey"], project=kept,
+                observed_at=incident["observedAt"], detail=placement.detail_text(incident),
+                evidence=incident["evidence"]))
             _save(db, router, fault_id, product, workspace, decision, target, incident)
     discharge(router, fault_id)
     if decision["stage"] == products.STAGE_HELD:
@@ -218,21 +226,39 @@ def _save(db, router, fault_id, product, workspace, decision, target, incident):
     routes.store_incident(db, router.clock, fault_id, incident)
 
 
-def _obligations(decision, existing, cause_fault):
-    """What this route still owes once its fault owns an issue, merged with what it owed."""
+def _obligations(decision, existing, cause_fault, *, labels=()):
+    """What this route still owes once its fault owns an issue, merged with what it owed.
+
+    An issue the fault creates owes its repository label, which the ledger's create does not
+    carry; an issue it adopts is somebody else's and keeps the labels it has, so an adopted
+    route owes none and an open label obligation from before the adoption is dropped.
+    """
     owed = list((existing or {}).get("target", {}).get("obligations") or [])
+    if decision.get("owner"):
+        owed = [o for o in owed if not (o["kind"] == "add_label" and o["state"] == "open")]
     wanted = []
     if decision["disposition"] == products.REOPEN:
-        wanted.append({"kind": "reopen", "toIssue": None, "toFault": None, "state": "open"})
+        wanted.append(_owed("reopen"))
+    if decision["disposition"] in (products.NEW_ISSUE, products.FOLLOW_UP) and not decision.get(
+            "owner"):
+        wanted.extend(_owed("add_label", label=label) for label in labels)
     for issue in decision.get("relate") or []:
-        wanted.append({"kind": "add_relation", "toIssue": issue, "toFault": None,
-                       "state": "open"})
+        wanted.append(_owed("add_relation", to_issue=issue))
     if cause_fault:
-        wanted.append({"kind": "add_relation", "toIssue": None, "toFault": cause_fault,
-                       "state": "open"})
-    keys = {(o["kind"], o["toIssue"], o["toFault"]) for o in owed}
-    owed.extend(o for o in wanted if (o["kind"], o["toIssue"], o["toFault"]) not in keys)
+        wanted.append(_owed("add_relation", to_fault=cause_fault))
+    keys = {_owed_key(o) for o in owed}
+    owed.extend(o for o in wanted if _owed_key(o) not in keys)
     return owed
+
+
+def _owed(kind, *, to_issue=None, to_fault=None, label=None):
+    return {"kind": kind, "toIssue": to_issue, "toFault": to_fault, "label": label,
+            "state": "open"}
+
+
+def _owed_key(obligation):
+    return (obligation["kind"], obligation["toIssue"], obligation["toFault"],
+            obligation.get("label"))
 
 
 def _held(router, fault_id, decision, incident, product):
@@ -266,6 +292,10 @@ def discharge(router, fault_id) -> list:
                 if owned != target["owner"]:
                     continue
                 port.update(fault_id, op="reopen", value=None)
+            elif obligation["kind"] == "add_label":
+                if target["owner"]:
+                    continue
+                port.update(fault_id, op="add_label", value=obligation["label"])
             else:
                 other = obligation["toIssue"] or (
                     (port.get(obligation["toFault"]) or {}).get("external_ref")
@@ -321,7 +351,8 @@ def _again(router, route, registry, bindings):
             current["project"], current["owner"], current["hold"]):
         return None
     target = routes.target(decision, registry, incident,
-                           obligations=_obligations(decision, route, current.get("cause")),
+                           obligations=_obligations(decision, route, current.get("cause"),
+                                                    labels=placement.issue_labels(incident)),
                            cause=current.get("cause"))
     place = scope(route["workspace"], decision["project"])
     try:
@@ -389,7 +420,12 @@ def classify(router, fault_id, record) -> dict:
     stored = routes.incidents(router.store, fault_id)
     if not stored:
         products.refuse(RefusalReason.ROUTE_STATE_CONFLICT, f"{fault_id} keeps no incident")
+    for incident in stored:
+        # Every replayed incident must be one the classified product collects: classifying
+        # into a product that does not watch the surface would file it through the side door.
+        _watched(registry, _classified(incident, classification))
     port = router.port
+    port.ready("route-classify")
     with router.store.composing() as db:
         successor = None
         for incident in stored:
@@ -411,20 +447,32 @@ def classify(router, fault_id, record) -> dict:
             "changed": True}
 
 
-def reconcile(router, *, product=None, limit=50) -> dict:
-    """Discharge obligations whose ends now own issues, and bind projects that were created."""
+def reconcile_route(router, route) -> dict:
+    """What one filed route owes now: its obligations, or the project its proposal created."""
     from . import projects
 
-    queued, bound, after, seen = [], [], None, 0
+    if route["stage"] != products.STAGE_FILED:
+        return {"queued": [], "bound": []}
+    if route["disposition"] == products.PROJECT_PROPOSAL:
+        return {"queued": [], "bound": projects.bind_confirmed(router, route)}
+    if any(o["state"] == "open" for o in route["target"]["obligations"]):
+        return {"queued": discharge(router, route["fault_id"]), "bound": []}
+    return {"queued": [], "bound": []}
+
+
+def reconcile(router, *, product=None, limit=50, after=None) -> dict:
+    """Discharge obligations whose ends now own issues, and bind projects that were created,
+    over at most limit filed routes after the cursor; pass next back as after to continue."""
+    queued, bound, seen = [], [], 0
+    limit = min(max(int(limit), 1), 5000)
     while seen < limit:
         page = routes.listing(router.store, product=product, stages=(products.STAGE_FILED,),
                               limit=min(100, limit - seen), after=after)
         for route in page["routes"]:
             seen += 1
-            if route["disposition"] == products.PROJECT_PROPOSAL:
-                bound.extend(projects.bind_confirmed(router, route))
-            elif any(o["state"] == "open" for o in route["target"]["obligations"]):
-                queued.extend(discharge(router, route["fault_id"]))
+            done = reconcile_route(router, route)
+            queued.extend(done["queued"])
+            bound.extend(done["bound"])
         after = page["next"]
         if after is None:
             break

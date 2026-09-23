@@ -703,6 +703,20 @@ class RoutingBeforeBinding(RelayTestCase):
         return {table: self.store.one(f"SELECT COUNT(*) AS n FROM {table}")["n"]
                 for table in self.TABLES}
 
+    def pending_route(self, fault_id="e" * 32, **fields):
+        """A pending-classification route as intake leaves it, written directly: on this
+        checkout no ledger path can write one."""
+        from codex_session_relay import routes
+
+        with self.store.transaction() as db:
+            routes.upsert(db, self.clock, fault_id=fault_id, product=products.UNCLASSIFIED,
+                          workspace="example-ws", disposition=products.PENDING_CLASSIFICATION,
+                          stage=products.STAGE_PENDING, target=routes.plain_target(),
+                          origin=products.OBSERVED, claimed_severity="broken")
+            routes.store_incident(db, self.clock, fault_id, products.read_incident(
+                self.raw(product=None, repository="example-org/nobody", **fields)))
+        return fault_id
+
     def raw(self, **fields):
         record = {"schema": "product-incident/1", "product": "alpha-notes",
                   "surface": "dev_run", "phase": "development", "component": "editor",
@@ -711,6 +725,7 @@ class RoutingBeforeBinding(RelayTestCase):
         return record
 
     def test_every_ledger_backed_path_refuses_before_writing(self):
+        pending = self.pending_route()
         before = self.counts()
         reading = {"schema": "completion-reading/1", "product": "alpha-notes",
                    "subject": "ALN-3", "claims": {"linearDone": True},
@@ -719,7 +734,7 @@ class RoutingBeforeBinding(RelayTestCase):
             "intake": lambda: self.router.intake(self.raw()),
             "pending intake": lambda: self.router.intake(self.raw(
                 product=None, repository="example-org/nobody")),
-            "classify": lambda: self.router.classify("f" * 32, {"product": "alpha-notes",
+            "classify": lambda: self.router.classify(pending, {"product": "alpha-notes",
                                                                "by": "operator"}),
             "reconcile": lambda: self.router.reconcile(),
             "show": lambda: self.router.show(attention=True),
@@ -903,6 +918,99 @@ class ProjectEligibility(RouteRows):
         self.router.bind(binding("alpha-notes", "project", "proj-aln-cache",
                                  components=["cache"]))
         self.assertIn("proj-aln-cache", " ".join(self.problems()))
+
+
+class FoldedReviewFindings(RouteRows):
+    """What the intermediate review of the ledger-backed paths found, held on this checkout."""
+
+    def setUp(self):
+        super().setUp()
+        self.router = ProductRouter(self.store, self.clock)
+        self.router.register_product(ALPHA)
+        self.router.register_product(BETA)
+
+    def count(self, table):
+        return self.store.one(f"SELECT COUNT(*) AS n FROM {table}")["n"]
+
+    def test_a_binding_whose_decisions_were_refused_is_not_kept(self):
+        from codex_session_relay import routes
+
+        self.upsert("a" * 32, product="alpha-notes")
+        with self.store.transaction() as db:
+            routes.store_incident(db, self.clock, "a" * 32, incident())
+        before = self.count("product_bindings")
+        with self.assertRaises(products.RouteRefused) as caught:
+            self.router.bind(binding("alpha-notes", "project", "proj-aln-editor",
+                                     components=["editor"]))
+        self.assertEqual(RefusalReason.ROUTE_LEDGER_PENDING, caught.exception.reason)
+        self.assertEqual(before, self.count("product_bindings"))
+        self.assertEqual(products.STAGE_HELD, routes.get(self.store, "a" * 32)["stage"])
+
+    def test_classifying_into_a_product_that_does_not_watch_the_surface_is_refused(self):
+        pending = RoutingBeforeBinding.pending_route(self)
+        before = {t: self.count(t) for t in ("incident_routes", "route_incidents")}
+        with self.assertRaises(products.RouteRefused) as caught:
+            self.router.classify(pending, {"product": "beta-meter", "by": "operator"})
+        self.assertEqual(RefusalReason.ROUTE_SURFACE_UNWATCHED, caught.exception.reason)
+        self.assertEqual(before, {t: self.count(t) for t in before})
+
+    raw = RoutingBeforeBinding.raw
+
+    def test_a_project_readback_must_show_the_team_it_was_made_in(self):
+        from codex_session_relay import projects
+
+        expected = {"payload": {"team": "GMK"}}
+        self.assertTrue(projects._confirm(expected, None))
+        self.assertTrue(projects._confirm(expected, "a readback with the block"))
+        self.assertTrue(projects._confirm(expected, {"name": "offline"}))
+        self.assertTrue(projects._confirm(expected, {"team": "ALN"}))
+        self.assertEqual([], projects._confirm(expected, {"team": "GMK"}))
+
+    def test_a_created_issue_owes_its_repository_label_and_an_adopted_one_does_not(self):
+        from codex_session_relay import intake
+
+        labels = ["example-org/alpha-notes"]
+        new = intake._obligations({"disposition": products.NEW_ISSUE, "owner": None},
+                                  None, None, labels=labels)
+        self.assertEqual([("add_label", "example-org/alpha-notes")],
+                         [(o["kind"], o["label"]) for o in new])
+        owned = intake._obligations({"disposition": products.ACCUMULATE, "owner": "ALN-7"},
+                                    {"target": {"obligations": new}}, None, labels=labels)
+        self.assertEqual([], owned)
+
+    def test_reconcile_reaches_past_its_first_page(self):
+        from codex_session_relay import intake, routes
+
+        for n in range(120):
+            self.upsert(f"{n:032d}", stage=products.STAGE_FILED,
+                        disposition=products.NEW_ISSUE,
+                        target=routes.plain_target(team="ALN", project="proj-aln-editor"))
+        read, after, pages = 0, None, 0
+        while True:
+            page = intake.reconcile(self.router, limit=50, after=after)
+            read, after, pages = read + page["read"], page["next"], pages + 1
+            if after is None:
+                break
+        self.assertEqual((120, 3), (read, pages))
+
+    def test_a_reading_a_closed_round_recorded_is_recognised_when_handed_in_again(self):
+        from codex_session_relay import routes
+
+        with self.store.transaction() as db:
+            routes.store_incident(db, self.clock, "c" * 32, {"occurrenceKey": "reading:r1"})
+        self.assertEqual("c" * 32, completion._replayed(self.store, ["c" * 32], "reading:r1"))
+        self.assertIsNone(completion._replayed(self.store, ["c" * 32], "reading:r2"))
+
+
+class ClosurePending(Completion):
+    def test_a_passing_reading_without_closure_evidence_is_not_reported_consistent(self):
+        answer = self.evaluate(self.reading(), open_mismatches=["acceptance"])
+        self.assertEqual(completion.CLOSURE_PENDING, answer["verdict"])
+        closed = self.evaluate(self.reading(evidence={"acceptance": {
+            "fix": {"ref": "PR#31", "source": "github"},
+            "verification": {"ref": "suite#4", "source": "ci"}}}),
+            open_mismatches=["acceptance"])
+        self.assertEqual(completion.CONSISTENT, closed["verdict"])
 
 if __name__ == "__main__":
     unittest.main()

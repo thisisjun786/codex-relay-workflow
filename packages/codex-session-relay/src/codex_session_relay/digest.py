@@ -1,8 +1,9 @@
 """The digest: what changed in routed records since the last digest, for a midpoint check.
 
-Nothing here runs on a clock or calls a model. Somebody asks for a digest; it first discharges
-what routes owe (the obligations of confirmed writes, the projects a confirmed create made), then
-compares every route with the snapshot it last reported and answers only the difference:
+Nothing here runs on a clock or calls a model. Somebody asks for a digest; for each route of the
+page it reads, it first discharges what the route owes (the obligations of confirmed writes, the
+project a confirmed create made), then compares the route with the snapshot it last reported and
+answers only the difference:
 
 - a new severe record, whether the ledger raised its severity or a pending incident claimed it;
 - a new decision somebody has to make - a pending classification, a hold, an issue whose project
@@ -40,7 +41,7 @@ def digest(router, *, limit=500, after=None) -> dict:
     port = router.port
     port.ready("route-digest")
     limit = min(max(int(limit), 1), 5000)
-    reconciled = intake.reconcile(router, limit=limit)
+    linked, bound = [], []
     severe, decisions, resolutions, routine = [], [], [], {}
     read, cursor = 0, after
     while read < limit:
@@ -51,6 +52,13 @@ def digest(router, *, limit=500, after=None) -> dict:
                 if route["stage"] == products.STAGE_SUPERSEDED:
                     # Its incidents live on under the product it was classified into.
                     continue
+                # Reconciled inside the digest's own paging, so every route the digest reaches
+                # is also discharged, however many routes come before it.
+                done = intake.reconcile_route(router, route)
+                linked.extend(done["queued"])
+                bound.extend(done["bound"])
+                if done["queued"] or done["bound"]:
+                    route = routes.get(router.store, route["fault_id"])
                 now = routes.snapshot(route, port.get(route["fault_id"]))
                 before = route["reported"]
                 if now == before:
@@ -81,11 +89,10 @@ def digest(router, *, limit=500, after=None) -> dict:
         cursor = page["next"]
         if cursor is None:
             break
-    changed = bool(severe or decisions or resolutions or routine or reconciled["queued"]
-                   or reconciled["bound"])
+    changed = bool(severe or decisions or resolutions or routine or linked or bound)
     return {"quiet": not changed, "severe": severe, "decisions": decisions,
             "resolutions": resolutions, "routine": routine,
-            "linked": reconciled["queued"], "projectsBound": reconciled["bound"],
+            "linked": linked, "projectsBound": bound,
             "read": read, "next": cursor,
             "limits": "routing's rows and the ledger's state in this store only. A queued write"
                       " is not an issue anybody has written; pass next as after to continue."}

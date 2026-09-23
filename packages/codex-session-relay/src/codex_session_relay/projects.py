@@ -43,10 +43,18 @@ def _validate(payload) -> list:
 
 
 def _confirm(expected, observed) -> list:
-    """The ledger reads this write's block; what a project readback must also show is its team."""
+    """The ledger reads this write's block; a project readback must also show its team.
+
+    Required, not merely compared: a confirmation that cannot say which team the project was
+    made in would bind it to this product on faith, and every member defect would follow it.
+    The holder passes the created project's team as the observed fields it read back.
+    """
     payload = (expected or {}).get("payload") or {}
-    if isinstance(observed, dict) and observed.get("team") not in (None, payload.get("team")):
-        return [f"the project was created in {observed.get('team')!r}, not {payload.get('team')!r}"]
+    team = observed.get("team") if isinstance(observed, dict) else None
+    if not team:
+        return ["the readback does not show which team the project was created in"]
+    if team != payload.get("team"):
+        return [f"the project was created in {team!r}, not {payload.get('team')!r}"]
     return []
 
 

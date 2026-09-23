@@ -90,7 +90,9 @@ different from its target, the ledger keeps the issue and repairs the link on th
 A family label, a team or a relation never stands in for the project.
 
 Labels follow the operating model: an issue carries the repository label of the repository it is
-about, and the product-family label belongs on the project.
+about, and the product-family label belongs on the project. The ledger's create carries no label,
+so an issue routing creates owes its repository label as an update once the create confirms. An
+issue routing adopts belongs to someone else, and routing adds no label to it.
 
 ## Unclear ownership
 
@@ -157,11 +159,19 @@ module registers routing's fault classes and the `project_create` kind in the ho
 Without it the ledger refuses a `project_create` write as unregistered, so no process can skip
 the pre-issue check.
 
+Completing a `project_create` write takes the created project's id as the external reference,
+plus the fields read back from the project, which must include its `team`. A readback that
+does not show the team, or shows another one, is refused. Otherwise a project made somewhere
+else would be bound to the product on faith, and every member defect would follow it there.
+
 What a route owes after its fault owns an issue is discharged by `route-reconcile`. That covers
-the reopen of an adopted completed issue, the relation from a follow-up to the issue whose fix
-regressed, and the relation between a shared cause and the affected product's record. Each is
-queued once as the ledger's idempotent update, and only when both ends own issues. A create
-confirmed through the raw holder command is therefore still linked without another intake.
+the repository label of a created issue, the reopen of an adopted completed issue, the relation
+from a follow-up to the issue whose fix regressed, and the relation between a shared cause and
+the affected product's record. Each is queued once as the ledger's idempotent update, and only
+when both ends own issues. A create confirmed through the raw holder command is therefore still
+linked without another intake. `route-reconcile` reads at most `--limit` filed routes and
+answers `next`; passing it back as `--after` continues from there. The digest reconciles each
+route it reads.
 
 ## Completion checks
 
@@ -194,11 +204,18 @@ queue a reopen of the subject. A completion check never changes the subject's st
 round's first write is again a comment. After twenty closed rounds the check refuses, and the
 decision goes to a person.
 
+A reading that already failed on a closed round is recognised when it is handed in again. A retry
+of an old reading is old evidence, so it opens no round. Each round keeps its newest sixteen
+failing readings for that comparison.
+
 A mismatch closes only on evidence. A later reading can carry a fix reference and a verification
 reference; then the fix is recorded, a reverification that passed is recorded, and the record is
 resolved. An approved exception closes it the same way, with the exception as the fix. A
 requirement quietly dropped after a mismatch keeps it open. An unverified check is cleared by a
-later reading that establishes it either way. A legitimate Done produces no write at all.
+later reading that establishes it either way. A reading where every check now agrees, but an open
+mismatch still lacks its fix and verification references, answers `closure_pending` rather than
+`consistent`: nothing is wrong any more, and nothing is closed. A legitimate Done produces no
+write at all.
 
 Recurrence is read from the ledger. A defect the subject owns is recurring when it is open again
 after a fix in its current cycle, or open in a cycle after a resolution. The ledger has already
@@ -259,7 +276,7 @@ product-show      [--product <key>]
 route-policy      --record <json|@path>
 route-intake      --incident <json|@path>
 route-classify    --fault <id> --classification <json|@path>
-route-reconcile   [--product <key>] [--limit <n>]
+route-reconcile   [--product <key>] [--limit <n>] [--after <next>]
 route-show        [--product <key>] [--attention] [--limit <n>] [--after <next>]
 route-digest      [--limit <n>] [--after <next>]
 route-projects    --product <key>
@@ -267,7 +284,9 @@ completion-check  --reading <json|@path>
 ```
 
 `product-bind` also decides again every held route of the product, and every filed one whose
-fault owns no issue yet, from its latest stored incident; its answer lists what changed.
+fault owns no issue yet, from its latest stored incident. It does this in the same transaction as
+the binding, so a binding whose consequences were refused is not kept. Its answer lists what
+changed.
 
 Status: the registry, the decision and the completion verdicts do not depend on the ledger. The
 paths that record, adopt, target, move, update or queue go through `ledger_port.py`, which binds

@@ -1675,7 +1675,7 @@ def cmd_route_classify(services, args) -> dict:
 
 
 def cmd_route_reconcile(services, args) -> dict:
-    return services.router.reconcile(product=args.product, limit=args.limit)
+    return services.router.reconcile(product=args.product, limit=args.limit, after=args.after)
 
 
 def cmd_route_show(services, args) -> dict:
@@ -3946,6 +3946,7 @@ def build_parser() -> argparse.ArgumentParser:
     route_reconcile = subparsers.add_parser("route-reconcile")
     route_reconcile.add_argument("--product")
     route_reconcile.add_argument("--limit", type=int, default=50)
+    route_reconcile.add_argument("--after", type=int)
     route_reconcile.set_defaults(handler=cmd_route_reconcile)
 
     route_show = subparsers.add_parser("route-show")

@@ -50,6 +50,9 @@ EXCEPTED = "excepted"
 EXCEPTION_UNVERIFIED = "exception_unverified"
 NOT_APPLICABLE = "not_applicable"
 REQUIREMENT_CHANGED = "requirement_changed_without_approval"
+# The overall verdict when every check now agrees but an open mismatch still lacks the fix and
+# verification references that would close it: nothing is wrong any more, and nothing is closed.
+CLOSURE_PENDING = "closure_pending"
 # The verdicts that keep a subject flagged. A claimed exception nobody could verify and a
 # requirement dropped after a mismatch both leave the mismatch where it was.
 OPEN_VERDICTS = (MISMATCH, EXCEPTION_UNVERIFIED, REQUIREMENT_CHANGED)
@@ -200,8 +203,11 @@ def evaluate(reading, context) -> dict:
         recurrences.append({"check": "recurrence", "verdict": UNVERIFIED, "faultId": None,
                             "reason": context["recurrenceUnknown"]})
     verdicts = {entry["verdict"] for entry in checks + recurrences}
+    pending = any(not entry["closure"]["ready"] for entry in checks if "closure" in entry)
     if verdicts & set(OPEN_VERDICTS):
         overall = MISMATCH
+    elif pending:
+        overall = CLOSURE_PENDING
     elif UNVERIFIED in verdicts:
         overall = UNVERIFIED
     else:
@@ -234,19 +240,22 @@ def _signature(reading, check, round_=1):
 
 
 def _mismatch_round(port, product, workspace, reading, check):
-    """(fault id, row, signature) of the mismatch record this reading belongs to.
+    """(fault id, row, signature, closed) of the mismatch record this reading belongs to, with
+    the ids of the rounds already closed.
 
     The newest round, unless that one was resolved: a mismatch found again after its closure
     starts the next round. Were it the same record coming back, the ledger's rule for a resolved
     fault that recurs would queue a reopen of the subject, and a completion check changes no
     state of the subject, ever; the new round's first write is a comment, as the first was.
     """
+    closed = []
     for round_ in range(1, MAX_ROUNDS + 1):
         signature = _signature(reading, check, round_)
         fault_id = port.fault_id(product, workspace, products.MISMATCH, signature)
         row = port.get(fault_id)
         if row is None or row.get("state") != ledger_port.RESOLVED:
-            return fault_id, row, signature
+            return fault_id, row, signature, closed
+        closed.append(fault_id)
     products.refuse(RefusalReason.ROUTE_STATE_CONFLICT,
                     f"{check} of {reading['subject']} was closed {MAX_ROUNDS} times and found"
                     f" wrong again; that is a decision for somebody, not another round")
@@ -341,12 +350,12 @@ def check(router, record) -> dict:
     workspace = registry["workspace"]
     records = {}
     for name in products.CHECKS:
-        mismatch, mismatch_row, mismatch_signature = _mismatch_round(port, product, workspace,
-                                                                     reading, name)
+        mismatch, mismatch_row, mismatch_signature, closed = _mismatch_round(
+            port, product, workspace, reading, name)
         unverified = port.fault_id(product, workspace, products.UNVERIFIED,
                                    _signature(reading, name))
         records[name] = {"mismatch": mismatch, "mismatchRow": mismatch_row,
-                         "mismatchSignature": mismatch_signature,
+                         "mismatchSignature": mismatch_signature, "closed": closed,
                          "unverified": unverified, "unverifiedRow": port.get(unverified)}
     open_ = [name for name, entry in records.items()
              if (entry["mismatchRow"] or {}).get("state") in ledger_port.ACTIVE]
@@ -369,7 +378,12 @@ def check(router, record) -> dict:
                             detail=_detail(reading, entry),
                             evidence=_evidence(reading, name, key))
             owner = routes.plain_target(team=team, project=project, owner=reading["subject"])
-            if verdict in OPEN_VERDICTS:
+            replayed = _replayed(router.store, ids["closed"], key)
+            if verdict in OPEN_VERDICTS and replayed:
+                # A reading an earlier round already recorded, handed in again after that round
+                # closed. Old evidence is not a new failure, so it opens nothing.
+                written.append({"check": name, "faultId": replayed, "recorded": "replayed"})
+            elif verdict in OPEN_VERDICTS:
                 adopt = None
                 if ids["mismatchRow"] is None:
                     adopt = {"externalRef": reading["subject"], "scope": scope}
@@ -381,6 +395,11 @@ def check(router, record) -> dict:
                               stage=products.STAGE_FILED, target=owner,
                               origin=reading["origin"], claimed_severity="degraded",
                               detail=entry["reason"])
+                # Kept on the round's route, so the same reading handed in again after this
+                # round closes is recognised rather than opening the next one.
+                routes.store_incident(db, router.clock, ids["mismatch"], {
+                    "occurrenceKey": key, "subject": reading["subject"], "check": name,
+                    "verdict": verdict, "observedAt": reading["observedAt"]})
                 written.append({"check": name, "faultId": ids["mismatch"], "recorded": verdict})
             if verdict == UNVERIFIED:
                 port.record(port.observation(fault_class=products.UNVERIFIED, severity="notice",
@@ -419,3 +438,11 @@ def _close(port, fault_id, row, closure, key):
         port.record_fix(fault_id, ref=fix, detail="closure of a completion mismatch")
     port.record_reverification(fault_id, detail="completion reading", **verification)
     port.resolve(fault_id)
+
+
+def _replayed(store, closed, key):
+    """The closed round that already recorded this reading, or None."""
+    for fault_id in closed:
+        if any(kept.get("occurrenceKey") == key for kept in routes.incidents(store, fault_id)):
+            return fault_id
+    return None
