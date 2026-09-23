@@ -225,7 +225,7 @@ class TheReceiversOwnReading(StoreReception):
                   "childTaskId": CHILD, "issue": ISSUE, "generation": 1,
                   "criteriaDigest": self.digest(), "relationRevision": self.revision(
                       relationship), "relationStatus": "active", "repository": REPOSITORY,
-                  "prNumber": 107, "headSha": HEAD}
+                  "prNumber": 107, "headSha": HEAD, "dispatchRequestId": "dispatch-1"}
         code, answer = self.packet_check(one, record=record)
         self.assertEqual(code, 0)
         self.assertEqual(answer["recordSource"], "supplied")
@@ -763,6 +763,58 @@ class WhatTheStoreCannotAnswer(StoreReception):
                                           observation=self.observed())
         self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
         self.assertEqual(self.gap_fields(answer), [packets.CRITERIA_DIGEST])
+
+    def test_a_current_generation_no_dispatch_opened_leaves_the_tenure_unread(self):
+        # Which dispatch opened the current generation is what says which tenure a packet
+        # belongs to. Unread, nothing is accepted and no assignment is recorded against it.
+        relationship = self.registered()
+        ledger = os.path.join(self.tmp, "child-ledger.json")
+        self.store.db.execute("DELETE FROM generations WHERE relationship_id = ?",
+                              (relationship["relationshipId"],))
+        _code, answer = self.packet_check(self.correction(relationship, generation=1),
+                                          receiver_id=CHILD, observation=self.observed(),
+                                          ledger=ledger)
+        self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
+        self.assertIn(packets.DISPATCH_REQUEST, self.gap_fields(answer))
+        self.assertFalse(answer["act"], answer)
+        late = packets.compose(
+            direction=P2C, purpose="assignment", relation_id=relationship["relationshipId"],
+            sender=PARENT, recipient=CHILD, subject="late-assignment", issue=ISSUE,
+            relation_revision=self.revision(relationship), criteria_digest=self.digest(),
+            policy_record=self.a_policy(), callback=self.a_callback(), body=BODY)
+        _code, answer = self.packet_check(late, receiver_id=CHILD, ledger=ledger)
+        self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
+        with open(ledger, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["assignments"], {})
+
+    def test_a_ledger_entry_missing_a_field_is_damaged_not_defaulted(self):
+        # An applied correction whose ledger entry lost "applied" must not come back to be
+        # done again; the ledger is refused as damaged instead.
+        relationship = self.registered()
+        one = self.correction(relationship, generation=1)
+        rid, message = relationship["relationshipId"], one["envelope"]["messageId"]
+        base = os.path.join(self.tmp, "base-ledger.json")
+        self.packet_check(self.first_assignment(dispatch="dispatch-1", issue=ISSUE),
+                          receiver_id=CHILD, ledger=base)
+        self.packet_check(one, receiver_id=CHILD, observation=self.observed(), ledger=base)
+        code, _recorded = self.packet_check(one, receiver_id=CHILD, ledger=base, applied=True)
+        self.assertEqual(code, 0)
+        with open(base, encoding="utf-8") as handle:
+            good = json.load(handle)
+        cuts = [("answered", message, name) for name in ("applied", "toldToAct",
+                                                         "disposition", "contentDigest")]
+        cuts += [("assignments", rid, name) for name in ("mode", "workflow", "messageId",
+                                                         "dispatchRequestId")]
+        for number, (part, key, name) in enumerate(cuts, 1):
+            with self.subTest(part=part, field=name):
+                damaged = json.loads(json.dumps(good))
+                del damaged[part][key][name]
+                ledger = os.path.join(self.tmp, "cut-%d.json" % number)
+                with open(ledger, "w", encoding="utf-8") as handle:
+                    json.dump(damaged, handle)
+                code, answer = self.packet_check(one, receiver_id=CHILD,
+                                                 observation=self.observed(), ledger=ledger)
+                self.assertEqual(code, cli.EXIT_USAGE, answer)
 
     def test_a_store_that_is_not_there_is_not_created_and_answers_nothing(self):
         missing = os.path.join(self.tmp, "nowhere")
