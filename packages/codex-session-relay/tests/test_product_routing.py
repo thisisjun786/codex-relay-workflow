@@ -307,7 +307,13 @@ class ControlGroups(ProductRoutingCase):
         self.assertEqual("mismatch", answer["verdict"])
         (entry,) = answer["recorded"]
         self.holder.run()
-        self.assertEqual({}, self.linear.issues)  # no new issue, and no state change
+        # No new issue and no state change: the subject is only read back in the project it is
+        # bound in, as every owned issue is.
+        self.assertEqual(["ALN-9"], list(self.linear.issues))
+        subject = self.linear.issues["ALN-9"]
+        self.assertEqual(("done", "proj-aln-editor", [], []),
+                         (subject["state"], subject["project"], subject["relations"],
+                          subject["labels"]))
         self.assertEqual(["ALN-9"], [c["issue"] for c in self.linear.comments])
         attention = self.router.show(attention=True)["routes"]
         self.assertIn(entry["faultId"], [r["faultId"] for r in attention])
@@ -321,6 +327,25 @@ class ControlGroups(ProductRoutingCase):
         self.assertNotEqual(entry["faultId"], again["recorded"][0]["faultId"])
         self.holder.run()
         self.assertNotIn("open", [i["state"] for i in self.linear.issues.values()])
+
+    def test_a_completion_mismatch_links_its_subject_and_leaves_attention_once_resolved(self):
+        # Nothing was filed for proj-aln-editor before this check, so it is the first to target
+        # that scope: the adopted subject reads back in its project like any owned issue, and
+        # the route waits on the mismatch, not on a link that can never complete.
+        answer = self.router.check_completion(reading("ALN-9", observed={"acceptance": "absent"}))
+        (entry,) = answer["recorded"]
+        self.holder.run()
+        self.assertEqual("linked", self.router.port.get(entry["faultId"])["linkState"])
+        shown = {r["faultId"]: r["attention"] for r in self.router.show(attention=True)["routes"]}
+        self.assertEqual("completion_mismatch_open", shown[entry["faultId"]])
+        subject = self.linear.issues["ALN-9"]
+        self.assertEqual(("done", "proj-aln-editor"), (subject["state"], subject["project"]))
+        self.router.check_completion(reading("ALN-9", observedAt="later", evidence={
+            "acceptance": {"fix": {"ref": "PR#44", "source": "github"},
+                           "verification": {"ref": "suite#9", "source": "ci"}}}))
+        self.assertEqual("resolved", self.router.port.get(entry["faultId"])["state"])
+        self.assertNotIn(entry["faultId"],
+                         [r["faultId"] for r in self.router.show(attention=True)["routes"]])
 
     def test_a_recurrence_is_found_behind_a_long_remediation_history(self):
         self.router.bind(binding("alpha-notes", "issue", "ALN-12", components=["editor"],
@@ -1127,7 +1152,12 @@ class PlanAuditScenarios(ProductRoutingCase):
         self.assertEqual(["observed", "observed", "open", "open"], states)
         self.holder.run()
         self.assertEqual(["ALN-9"], sorted({c["issue"] for c in self.linear.comments}))
-        self.assertNotIn("ALN-9", self.linear.issues)  # no update ever reached the subject
+        # No update beyond reading the subject back in its own project: still done, nothing
+        # reopened, related or labelled.
+        subject = self.linear.issues["ALN-9"]
+        self.assertEqual(("done", "proj-aln-editor", [], []),
+                         (subject["state"], subject["project"], subject["relations"],
+                          subject["labels"]))
 
     def test_a_goal_that_qualifies_again_revives_its_cancelled_create_with_the_new_members(self):
         self.router.set_policy(POLICY)

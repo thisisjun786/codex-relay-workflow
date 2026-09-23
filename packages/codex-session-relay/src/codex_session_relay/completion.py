@@ -431,6 +431,13 @@ def _record_reading(router, reading) -> dict:
                 adopt = None
                 if ids["mismatchRow"] is None:
                     adopt = {"externalRef": reading["subject"], "scope": scope}
+                if project:
+                    # The scope's owned target, as intake sets it before any record: the
+                    # adopted subject is linked only by reading back in the project its scope
+                    # targets, so without one it stood unlinked for good, and the route waited
+                    # on a link that could never complete instead of on the mismatch.
+                    port.ensure_target(product=product, workspace=workspace, project=project,
+                                       team=team, project_ref=project)
                 port.record(port.observation(fault_class=products.MISMATCH, severity="degraded",
                                              signature=ids["mismatchSignature"], **observed),
                             adopt=adopt)

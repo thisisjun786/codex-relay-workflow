@@ -280,7 +280,12 @@ its own degraded threshold for `completion_mismatch` waits for that many reading
 class. Until then the mismatch is recorded, the subject's adoption is stored, and
 `route-show --attention` and the digest list it as `completion_mismatch_open`. The answer
 reports each recorded mismatch's ledger state (`observed` recorded, `open` filed). Completion
-checks queue no update of any kind. A mismatch found again after its record was
+checks queue no state update: no reopen, relation or label. The adopted subject is still read
+back in its project like every owned issue. The check sets the scope's owned target in the same
+transaction, as intake does: the subject's bound project, or the product's triage project when
+the subject has none. The ledger's project write and readback then link the subject there.
+Without that target the subject stood unlinked for good, and the route waited on a link that
+could never complete instead of on the mismatch. A mismatch found again after its record was
 resolved starts a new round, a new record for the same subject and check adopted the same way.
 Were it the old record coming back, the ledger's rule for a resolved fault that recurs would
 queue a reopen of the subject. A completion check never changes the subject's state, so the new
