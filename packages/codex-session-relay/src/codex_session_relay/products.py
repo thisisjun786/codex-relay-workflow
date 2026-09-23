@@ -52,7 +52,10 @@ MAX_TEXT = 600
 
 # Fault classes this module defines. They are registered with the ledger through ledger_port,
 # which is the only module allowed to reach it; each names what clears it, because a class
-# nothing can clear never closes.
+# nothing can clear never closes. Only the completion mismatch sets its own threshold: one
+# reading that looked for the evidence and did not find it is the whole proof, so it is recorded
+# at degraded and files on that first reading, where a product defect at degraded waits for the
+# ledger's repetition rule. Nothing records it at another severity.
 DEFECT = "product_defect"
 EXPECTED_STATE = "product_expected"
 PENDING = "unclassified_incident"
@@ -70,7 +73,8 @@ CLASSES = {
               "clears": "classification into a registered product, which re-files every stored"
                         " incident there"},
     MISMATCH: {"component": "completion",
-               "clears": "the evidence the completion lacked being observed and reverified"},
+               "clears": "the evidence the completion lacked being observed and reverified",
+               "threshold": 1},
     UNVERIFIED: {"component": "completion",
                  "clears": "a later reading that establishes the check either way"},
     PROJECT_NEEDED: {"component": "planning",

@@ -27,7 +27,7 @@ from .products import RouteRefused
 MODULE_FUNCTIONS = {
     "observation": ("product", "fault_class", "severity", "signature", "occurrence_key", "scope",
                     "observed_at", "detail", "evidence", "cleared"),
-    "register_class": ("component", "clears"),
+    "register_class": ("component", "clears", "threshold"),
     "register_kind": ("creates", "requires_issue", "target", "evidence", "confirm", "validate",
                       "pre_issue"),
     "target_key": ("workspace", "project"),
@@ -59,6 +59,14 @@ LEDGER_METHODS = {
     "record_reverification": ("method", "ref", "outcome", "detail"),
     "resolve": (),
 }
+
+# The ledger's fault states, named once for routing. A fault in one of ACTIVE is still being
+# worked on; resolved and withdrawn are the two ways one ends.
+OBSERVED, OPEN, FIX_PENDING, RESOLVED, WITHDRAWN = (
+    faults.OBSERVED, faults.OPEN, faults.FIX_PENDING, faults.RESOLVED, faults.WITHDRAWN)
+ACTIVE = (OBSERVED, OPEN, FIX_PENDING)
+ENDED = (RESOLVED, WITHDRAWN)
+FIX = faults.FIX
 
 # The port's own surface, one name per capability. A test holds every one of them to the gate.
 CAPABILITIES = (
@@ -127,6 +135,27 @@ def register_kind(name, **declaration) -> list:
     return gaps
 
 
+def register_classes(classes) -> list:
+    """Register routing's fault classes in this process, at import, when the contract is
+    present. Like a kind, a class is a process-level declaration the ledger consults on every
+    record; the answer is what the contract still lacks, empty once registered."""
+    gaps = missing()
+    if not gaps:
+        for name, declaration in classes.items():
+            faults.register_class(name, component=declaration["component"],
+                                  clears=declaration["clears"],
+                                  threshold=declaration.get("threshold"))
+    return gaps
+
+
+def _rows(answer, key):
+    """A listing's rows. The contract names what a listing returns, not whether it arrives
+    wrapped; routing reads rows in one place so a wrapper change is one edit."""
+    if isinstance(answer, dict):
+        return list(answer.get(key) or [])
+    return list(answer or [])
+
+
 class LedgerPort:
     """Routing's view of the fault ledger, bound only to the corrected contract."""
 
@@ -146,6 +175,12 @@ class LedgerPort:
             )
         return self._ledger
 
+    def ready(self, capability):
+        """Refuse now, naming the routing path, when the contract is absent. For a path that
+        would otherwise answer from routing's own rows alone and look complete without the
+        ledger state it exists to show."""
+        self._require(capability)
+
     # ------------------------------------------------------------------ identity and records
 
     def fault_id(self, product, workspace, fault_class, signature):
@@ -156,9 +191,13 @@ class LedgerPort:
     def observation(self, *, product, workspace, fault_class, severity, signature,
                     occurrence_key, project=None, observed_at=None, detail="", evidence=(),
                     cleared=False):
-        """One fault-observation/1. The workspace and project travel in the scope."""
+        """One fault-observation/1. The workspace and project travel in the scope; a fault
+        recorded without a workspace (CRW's own, for one) is observed without one, which is the
+        only way to reach its id, and the contract refuses a present but empty one."""
         self._require("observation")
-        scope = {"workspace": workspace}
+        scope = {}
+        if workspace:
+            scope["workspace"] = workspace
         if project:
             scope["projectKey"] = project
         return faults.observation(product=product, fault_class=fault_class, severity=severity,
@@ -233,8 +272,9 @@ class LedgerPort:
         return self._require("publication").publication(publication_id)
 
     def publications(self, fault_id, *, kind=None, state=None, limit=20, after=None):
-        return self._require("publications").publications(fault_id, kind=kind, state=state,
-                                                          limit=limit, after=after)
+        """The fault's writes as a list of rows, whatever wrapper the ledger returns them in."""
+        return _rows(self._require("publications").publications(
+            fault_id, kind=kind, state=state, limit=limit, after=after), "publications")
 
     def cancel(self, publication_id, *, reason):
         return self._require("cancel").cancel(publication_id, reason=reason)
