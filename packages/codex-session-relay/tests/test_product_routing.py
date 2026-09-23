@@ -1134,6 +1134,49 @@ class TransactionBoundaries(ProductRoutingCase):
         self.assertEqual([True], seen)
 
 
+class Replays(ProductRoutingCase):
+    """Whether an occurrence is new is the ledger's answer, and routing follows it."""
+
+    def gamma(self, key, goal):
+        return self.route(product="gamma-kit", repository="example-org/gamma-kit",
+                          surface="real_use", phase="in_use", component="cache",
+                          symptom="stale", occurrenceKey=key,
+                          goal={"key": goal, "criteria": "edits survive reconnect"})
+
+    def test_an_occurrence_handed_in_again_changes_nothing(self):
+        first = self.gamma("k1", "goal_a")
+        self.gamma("k2", "goal_b")
+        before = routes.get(self.store, first["faultId"])
+        count = self.router.port.get(first["faultId"])["occurrence_count"]
+        again = self.gamma("k1", "goal_a")
+        self.assertIs(False, again["recorded"])
+        after = routes.get(self.store, first["faultId"])
+        self.assertEqual(("goal_b", before["target"]), (after["goal"], after["target"]))
+        self.assertEqual(["k1", "k2"], [i["occurrenceKey"]
+                                        for i in routes.incidents(self.store, first["faultId"])])
+        self.assertEqual(count, self.router.port.get(first["faultId"])["occurrence_count"])
+        # A key routing's own rows have pruned is still the ledger's to judge.
+        for n in range(3, 3 + routes.MAX_STORED_INCIDENTS):
+            self.gamma(f"k{n}", "goal_b")
+        self.gamma("k1", "goal_a")
+        kept = [i["occurrenceKey"] for i in routes.incidents(self.store, first["faultId"])]
+        self.assertNotIn("k1", kept)
+        self.assertEqual("goal_b", routes.get(self.store, first["faultId"])["goal"])
+
+    def test_a_familiar_key_in_a_new_episode_is_new_input(self):
+        first = self.gamma("k1", "goal_a")
+        port = self.router.port
+        port.record(port.observation(product="gamma-kit", workspace=WORKSPACE,
+                                     fault_class=products.DEFECT, severity="notice",
+                                     signature={"component": "cache", "symptom": "stale"},
+                                     occurrence_key="clear-1", cleared=True))
+        again = self.gamma("k1", "goal_c")
+        self.assertIs(True, again["recorded"])
+        self.assertEqual("goal_c", routes.get(self.store, first["faultId"])["goal"])
+        newest = routes.incidents(self.store, first["faultId"])[-1]
+        self.assertEqual(("k1", "goal_c"), (newest["occurrenceKey"], newest["goal"]["key"]))
+
+
 class TheContractIsBound(unittest.TestCase):
     """The live binding proof: on this checkout the corrected ledger contract is present, every
     function, keyword and refusal value the port relies on included, so nothing refuses by name

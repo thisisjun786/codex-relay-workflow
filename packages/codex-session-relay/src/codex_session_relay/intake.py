@@ -7,6 +7,7 @@ refuses before it writes anything.
 """
 
 import json
+from contextlib import contextmanager
 
 from . import ledger_port, placement, products, routes
 from .errors import RefusalReason, RelayError
@@ -27,6 +28,47 @@ def _stored(value):
     if isinstance(value, str):
         return json.loads(value) if value else {}
     return dict(value or {})
+
+
+class _Replayed(Exception):
+    """The ledger said this occurrence was already recorded; carries its answer."""
+
+
+@contextmanager
+def _attempt(db):
+    """A savepoint around one occurrence's ledger calls and routing's rows.
+
+    The ledger decides whether an occurrence is new, from a timeline it never prunes and per
+    episode; but record() applies the caller's scope and adoption before it answers. An
+    occurrence it already had is not new input, so everything this attempt did is rolled back:
+    a replay moves no scope, adopts nothing, and stores neither its payload nor its goal. A
+    refusal rolls back the same way.
+    """
+    db.execute("SAVEPOINT route_occurrence")
+    try:
+        yield
+    except BaseException:
+        db.execute("ROLLBACK TO route_occurrence")
+        db.execute("RELEASE route_occurrence")
+        raise
+    db.execute("RELEASE route_occurrence")
+
+
+def _replayed(result, route):
+    """Raise _Replayed when the ledger did not record this occurrence and routing already has
+    the route it would have changed."""
+    if route is not None and result.get("recorded") is not True:
+        raise _Replayed(result)
+
+
+def _unchanged(route, answer):
+    """What a replayed occurrence answers: the route as it stands."""
+    target = route["target"]
+    return {**answer, "disposition": route["disposition"], "stage": route["stage"],
+            "project": target["project"], "owner": target["owner"], "hold": target["hold"],
+            "unverifiedCause": target.get("unverifiedCause"), "recorded": False,
+            "publication": None,
+            "reason": "the ledger already recorded this occurrence; nothing changed"}
 
 
 def intake(router, record) -> dict:
@@ -82,19 +124,24 @@ def _unresolved(router, incident, workspace, why) -> dict:
     route = routes.get(router.store, fault_id)
     if route is not None and route["stage"] == products.STAGE_SUPERSEDED:
         return _forward(router, route, incident)
-    with router.store.composing() as db:
-        port.record(port.observation(
-            product=products.UNCLASSIFIED, workspace=workspace, fault_class=products.PENDING,
-            severity="notice", signature=signature, occurrence_key=incident["occurrenceKey"],
-            observed_at=incident["observedAt"], detail=placement.detail_text(incident),
-            evidence=incident["evidence"]))
-        routes.upsert(db, router.clock, fault_id=fault_id, product=products.UNCLASSIFIED,
-                      workspace=workspace, disposition=products.PENDING_CLASSIFICATION,
-                      stage=products.STAGE_PENDING,
-                      target=routes.target({}, None, incident), origin=incident["origin"],
-                      claimed_severity=incident["severity"],
-                      goal=(incident["goal"] or {}).get("key"), detail=why)
-        routes.store_incident(db, router.clock, fault_id, incident)
+    try:
+        with router.store.composing() as db, _attempt(db):
+            _replayed(port.record(port.observation(
+                product=products.UNCLASSIFIED, workspace=workspace,
+                fault_class=products.PENDING, severity="notice", signature=signature,
+                occurrence_key=incident["occurrenceKey"], observed_at=incident["observedAt"],
+                detail=placement.detail_text(incident), evidence=incident["evidence"])), route)
+            routes.upsert(db, router.clock, fault_id=fault_id, product=products.UNCLASSIFIED,
+                          workspace=workspace, disposition=products.PENDING_CLASSIFICATION,
+                          stage=products.STAGE_PENDING,
+                          target=routes.target({}, None, incident), origin=incident["origin"],
+                          claimed_severity=incident["severity"],
+                          goal=(incident["goal"] or {}).get("key"), detail=why)
+            routes.store_incident(db, router.clock, fault_id, incident, replace=True)
+    except _Replayed:
+        return _unchanged(route, {"faultId": fault_id, "product": None,
+                                  "workspace": workspace})
+    with router.store.composing():
         if incident["severity"] == "broken":
             # A severe incident nobody can place is a decision for somebody, not an issue in
             # whichever team sorts first. The digest raises the same decision for every
@@ -219,8 +266,9 @@ def file(router, incident, registry, workspace, *, cause_fault=None,
     adopt = None
     if decision["owner"] and first:
         adopt = {"externalRef": decision["owner"], "scope": scope(workspace, decision["project"])}
+    unchanged = {"faultId": fault_id, "product": product, "workspace": workspace}
     try:
-        with router.store.composing() as db:
+        with router.store.composing() as db, _attempt(db):
             # The one call that can refuse on the ledger's own terms goes first, before this
             # attempt has written anything, so a refusal leaves nothing behind even when this
             # runs inside a caller's composed transaction.
@@ -237,7 +285,10 @@ def file(router, incident, registry, workspace, *, cause_fault=None,
                 occurrence_key=incident["occurrenceKey"], project=decision["project"],
                 observed_at=incident["observedAt"], detail=placement.detail_text(incident),
                 evidence=incident["evidence"]), adopt=adopt)
+            _replayed(result, existing)
             _save(db, router, fault_id, product, workspace, decision, target, incident)
+    except _Replayed:
+        return _unchanged(existing, unchanged)
     except RelayError as refusal:
         if getattr(refusal.reason, "value", None) not in OWNER_REFUSALS:
             raise
@@ -251,14 +302,18 @@ def file(router, incident, registry, workspace, *, cause_fault=None,
                     "reason": f"{decision['owner']} owns this, but {refusal}"}
         target = routes.target(decision, registry, incident, obligations=(), cause=cause_fault,
                                unverified_cause=claim)
-        with router.store.composing() as db:
-            result = port.record(port.observation(
-                product=product, workspace=workspace, fault_class=fault_class,
-                severity=incident["severity"], signature=signature,
-                occurrence_key=incident["occurrenceKey"], project=kept,
-                observed_at=incident["observedAt"], detail=placement.detail_text(incident),
-                evidence=incident["evidence"]))
-            _save(db, router, fault_id, product, workspace, decision, target, incident)
+        try:
+            with router.store.composing() as db, _attempt(db):
+                result = port.record(port.observation(
+                    product=product, workspace=workspace, fault_class=fault_class,
+                    severity=incident["severity"], signature=signature,
+                    occurrence_key=incident["occurrenceKey"], project=kept,
+                    observed_at=incident["observedAt"], detail=placement.detail_text(incident),
+                    evidence=incident["evidence"]))
+                _replayed(result, existing)
+                _save(db, router, fault_id, product, workspace, decision, target, incident)
+        except _Replayed:
+            return _unchanged(existing, unchanged)
     discharge(router, fault_id)
     if decision["stage"] == products.STAGE_HELD:
         _held(router, fault_id, decision, incident, product)
@@ -273,11 +328,13 @@ def file(router, incident, registry, workspace, *, cause_fault=None,
 
 
 def _save(db, router, fault_id, product, workspace, decision, target, incident):
+    """Routing's rows for an occurrence the ledger has just recorded as new: its decision, and
+    the incident as the route's newest input, even under a key a past episode used."""
     routes.upsert(db, router.clock, fault_id=fault_id, product=product, workspace=workspace,
                   disposition=decision["disposition"], stage=decision["stage"], target=target,
                   origin=incident["origin"], claimed_severity=incident["severity"],
                   goal=(incident["goal"] or {}).get("key"), detail=decision["reason"])
-    routes.store_incident(db, router.clock, fault_id, incident)
+    routes.store_incident(db, router.clock, fault_id, incident, replace=True)
 
 
 def _obligations(decision, existing, cause_fault, *, labels=()):

@@ -348,7 +348,7 @@ read.
 | `product_bindings` | projects and issues as read back from Linear |
 | `routing_policy` | the explicit project creation policy and its basis |
 | `incident_routes` | per routed fault: disposition, stage, target, hold, origin, the highest severity any source claimed, classification, the last reported snapshot |
-| `route_incidents` | the newest incidents per route, the input redecide and classification replay read; an occurrence key already stored is not stored again |
+| `route_incidents` | the newest incidents per route, the input redecide and classification replay read; only an occurrence the ledger recorded as new is stored, as the newest, a familiar key in a new episode included |
 
 ## Commands
 
@@ -383,6 +383,12 @@ the registry read inside its own transaction. The redecision stores any change t
 placement, its disposition or its related issues, so a completed issue bound late makes a filed
 route the follow-up it is. An obligation not yet queued that the new decision contradicts is
 dropped: a route that is no longer a follow-up does not write the relation it was going to.
+
+Whether an occurrence is new is the ledger's answer, from a timeline it never prunes and per
+episode. An occurrence it already recorded changes nothing routing keeps: the attempt is rolled
+back, so it moves no scope, adopts nothing, and stores neither its payload nor its goal, even
+under a key routing's own rows have pruned. One the ledger records as new becomes the route's
+newest input, a familiar key after a clear included.
 
 Status: the registry, the decision and the completion verdicts do not depend on the ledger. The
 paths that record, adopt, target, move, update or queue go through `ledger_port.py`, which binds

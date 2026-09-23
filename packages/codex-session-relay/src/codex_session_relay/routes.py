@@ -195,21 +195,26 @@ def _incident_id(fault_id, key):
     return sha256_hex(f"{fault_id}|{key}")[:32]
 
 
-def store_incident(db, clock, fault_id, incident, *, keep=MAX_STORED_INCIDENTS):
+def store_incident(db, clock, fault_id, incident, *, keep=MAX_STORED_INCIDENTS, replace=False):
     """Keep this incident as the route's newest input; drop the oldest past the bound.
 
     keep=None keeps every one. A completion mismatch round keeps every failing reading it
     recorded, because recognising a reading handed in again must not depend on how many others
     came after it; each is one small row, and a round ends when its mismatch is closed.
 
-    An occurrence key already stored is a no-op, as it is for the ledger: an old incident
-    handed in again is not new input, and must not become the one a later decision reads.
+    replace=True is for an occurrence the ledger has just recorded as new: it becomes the
+    newest input even when its key was stored before, since a clear opens an episode in which
+    the ledger counts a familiar key again. Otherwise a key already stored is a no-op. Whether
+    an occurrence is new is the ledger's answer, never this table's: intake stores nothing for
+    one the ledger says it already had, a pruned key included.
     """
     incident_id = _incident_id(fault_id, incident["occurrenceKey"])
     seq = db.execute("SELECT COALESCE(MAX(recorded_seq), 0) + 1 AS n FROM route_incidents"
                      " WHERE fault_id = ?", (fault_id,)).fetchone()["n"]
-    db.execute("INSERT OR IGNORE INTO route_incidents (incident_id, fault_id, record,"
-               "  recorded_at, recorded_seq) VALUES (?,?,?,?,?)",
+    db.execute("INSERT INTO route_incidents (incident_id, fault_id, record, recorded_at,"
+               "  recorded_seq) VALUES (?,?,?,?,?) ON CONFLICT(incident_id) DO "
+               + ("UPDATE SET record = excluded.record, recorded_at = excluded.recorded_at,"
+                  "   recorded_seq = excluded.recorded_seq" if replace else "NOTHING"),
                (incident_id, fault_id, products.canonical(incident), clock.iso(), seq))
     if keep is not None:
         db.execute("DELETE FROM route_incidents WHERE fault_id = ? AND incident_id NOT IN"
