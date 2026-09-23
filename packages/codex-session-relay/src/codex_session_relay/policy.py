@@ -34,6 +34,14 @@ class RetryPolicy:
     max_turn_reads_per_tick: int = 8
     min_relationship_share: int = 2
     max_sends_per_parent_per_tick: int = 2
+    # The automatic supervisor pass (CRW-215). Projects are re-derived per tick, so their count
+    # is capped as well as the sends: a store with many projects must not make one tick long.
+    max_supervisor_projects_per_tick: int = 4
+    max_supervisor_sends_per_tick: int = 2
+    # How long after the relay settles a turn an omission derived from the store waits before
+    # it is owed (omitted.classify). Long enough for the parent - or the child, steered - to
+    # answer it first; every tick inside it stages nothing for that turn.
+    omission_grace_seconds: float = 300.0
     # Supervision cadence. A worker is bounded by segment_seconds; the supervisor replaces it,
     # which is what carries an assignment past any single process lifetime.
     segment_seconds: float = 3600.0
