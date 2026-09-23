@@ -61,7 +61,11 @@ REOPENED = "relationship_tenure_reopened"
 # named in SQL is an sqlite3.Error; a column read by name from a row whose table lacks it is an
 # IndexError from sqlite3.Row, and a record built from such a row a KeyError. All three mean
 # the same thing here - the store could not be read - and none may escape as a host failure.
-STORE_FAULTS = (sqlite3.Error, IndexError, KeyError)
+# And a value of the wrong shape in a column SQLite does not type strictly - a string in an
+# INTEGER column compared with the journal's integer, a number where a task id belongs - raises
+# TypeError, ValueError or AttributeError from the reader's own arithmetic. Those are the same
+# answer: this store could not be read, and the reading comes back unavailable.
+STORE_FAULTS = (sqlite3.Error, IndexError, KeyError, TypeError, ValueError, AttributeError)
 
 # What an observation may carry: the facts a forge or a filesystem answers and the store does
 # not. Anything else in one is refused, so an observation cannot smuggle a relationship field.

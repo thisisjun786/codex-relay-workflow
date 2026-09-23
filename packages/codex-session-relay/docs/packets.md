@@ -148,7 +148,8 @@ around by creating a second child.
 
 `packet-check --receiver <task id>` builds the record from the relay store instead of taking
 it from a file. It opens the store read-only and never creates or migrates one; a store it
-cannot open or read - including one missing a table or column the reading names - gives a
+cannot open or read - including one missing a table or column the reading names, or holding a
+value of the wrong shape where the reading computes with it - gives a
 record holding only the receiver's own id, so every other field is a gap. Each field in the
 answer's `provenance` names what answered it.
 
