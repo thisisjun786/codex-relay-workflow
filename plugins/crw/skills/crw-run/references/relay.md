@@ -1008,10 +1008,9 @@ codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
 With `--receiver` the record is built from the store: the receiver's own relationship row
 (its relation, the other task, the issue, whether it is still live, the current generation and
 the dispatch that opened it), the project link's revision while that link is live and still
-joins the relationship's two tasks, the registered criteria digest, the
-recorded settings of the child (its model, effort, sandbox and approval) and of the parent
-being answered, the role policy's verdict on
-them, and the execution mode from the receiver's own ledger. The answer says
+joins the relationship's two tasks, the registered criteria digest, the recorded settings of
+the child (its model, effort, sandbox and approval) and of the parent being answered, the role
+policy's verdict on them, and the execution mode from the receiver's own ledger. The answer says
 `recordSource: store` and gives each field's `provenance`. The pull request head is a forge
 reading the store does not hold; it comes only from `--observation`, a JSON file with its own
 `source`, and without one the head is a gap. The ledger is how a repeat is applied once: `act`
