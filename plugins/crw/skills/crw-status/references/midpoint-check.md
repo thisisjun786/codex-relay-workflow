@@ -145,10 +145,12 @@ where two levels disagree, and four of them recur:
   the pull request moved after it, and the summary everybody is reading is no longer true.
 - A tracked item sits outside the project it belongs to: an issue read back with no project or the
   wrong one, or an incident the relay's product routing held because no single product, owner or
-  project could be chosen. The record and the plan disagree about where the work lives. Where an
-  existing rule settles it, it is internal coordination; where it needs a choice between products
-  or projects, it is a decision for Jun. Routine accumulation under records that already exist is
-  summarized in one line rather than listed.
+  project could be chosen (`route-show --attention` lists those, with the issues whose project
+  link reads back incomplete). The record and the plan disagree about where the work lives. Where
+  an existing rule settles it, it is internal coordination; where it needs a choice between
+  products or projects, it is a decision for Jun. Routine accumulation under records that already
+  exist is summarized in one line rather than listed; `route-digest` answers only what changed
+  since the last check.
 
 Report those as the main blockers, before the per-project detail. Then split what is waiting into
 three: a normal dependency wait, which is nobody's failure and needs only its reason; the questions

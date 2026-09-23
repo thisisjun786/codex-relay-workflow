@@ -131,12 +131,37 @@ names this request. Creation needs no suitable project for the members' componen
 completion criteria. Issue, file or error counts alone never create one, and a single defect goes
 into its product's existing suitable project.
 
-The create is a ledger publication of routing's own `project_create` kind. It gets the ledger's
-single-create, uncertain, reconcile and readback rules unchanged. Two evaluations of the same goal
-converge on one record and one write. Immediately before the write is issued, the kind re-checks
-the policy and the bindings. A suitable project bound meanwhile cancels the write while it is
-still unissued. When the create confirms, the project is bound and its member defects move into
-it in the same transaction.
+The proposal is a `project_needed` record of the product, recorded at notice under the scope
+`__projects__` (a target with the product's team and no project), so it can never file an issue
+itself. The create is queued on it explicitly as a ledger publication of routing's own
+`project_create` kind, under the trigger `need:<goal>:r<n>`, where n counts that record's earlier
+creates; a goal that qualifies again after a cancelled create gets its own write. The kind gets
+the ledger's single-create, uncertain, reconcile and readback rules unchanged, and two
+evaluations of the same goal converge on one record and one write.
+
+Immediately before the write is issued, the kind's pre-issue check recomputes the whole predicate
+from this store inside the ledger's own transaction: the policy still enabled, enough members
+still held for want of a project under that goal, and no active project bound meanwhile that
+covers a member's component. Any failure cancels the unissued write and nothing is created.
+
+When the create confirms, `route-reconcile` (which every digest runs first) binds the created
+project, and binding decides the held members again, so they move into it, all in one
+transaction. The proposal records which project it became and stops asking for attention.
+
+### Holder protocol
+
+Routing writes nothing to Linear. The credential holder performs every write with the ledger's own
+holder commands (`fault-next`, `fault-claim`, `fault-operation`, `fault-complete`, `fault-fail`,
+`fault-reconcile`) and passes `--kind-module codex_session_relay.projects` to each. Importing that
+module registers routing's fault classes and the `project_create` kind in the holder's process.
+Without it the ledger refuses a `project_create` write as unregistered, so no process can skip
+the pre-issue check.
+
+What a route owes after its fault owns an issue is discharged by `route-reconcile`. That covers
+the reopen of an adopted completed issue, the relation from a follow-up to the issue whose fix
+regressed, and the relation between a shared cause and the affected product's record. Each is
+queued once as the ledger's idempotent update, and only when both ends own issues. A create
+confirmed through the raw holder command is therefore still linked without another intake.
 
 ## Completion checks
 
@@ -157,18 +182,50 @@ from Linear: the follow-up is a different, open issue of the product that lists 
 this check among what it took over. An approved scope reduction counts only with the approval and
 its reference. Anything else is **exception_unverified**.
 
-A mismatch files as a re-verification demand on the subject issue itself and changes no state. It
-closes only when a fix reference and a verification reference arrive, or through an approved
-exception. A requirement quietly dropped after a mismatch keeps it open. A legitimate Done
-produces no write at all.
+The subject must be an issue bound to the product as read back, because a mismatch is filed as a
+re-verification demand on the subject issue itself. It is a `completion_mismatch` record,
+one per subject and check, adopted by the subject issue and recorded at degraded. The class
+declares a threshold of one, since a reading that looked for the evidence and did not find it is
+the whole proof. Its first write is therefore a comment on the subject, never a new issue, and
+completion checks queue no update of any kind. A mismatch found again after its record was
+resolved starts a new round, a new record for the same subject and check adopted the same way.
+Were it the old record coming back, the ledger's rule for a resolved fault that recurs would
+queue a reopen of the subject. A completion check never changes the subject's state, so the new
+round's first write is again a comment. After twenty closed rounds the check refuses, and the
+decision goes to a person.
+
+A mismatch closes only on evidence. A later reading can carry a fix reference and a verification
+reference; then the fix is recorded, a reverification that passed is recorded, and the record is
+resolved. An approved exception closes it the same way, with the exception as the fix. A
+requirement quietly dropped after a mismatch keeps it open. An unverified check is cleared by a
+later reading that establishes it either way. A legitimate Done produces no write at all.
+
+Recurrence is read from the ledger. A defect the subject owns is recurring when it is open again
+after a fix in its current cycle, or open in a cycle after a resolution. The ledger has already
+commented on it, so the check reports the recurrence and never files it again. A check reads at
+most a thousand of the product's defect records; past that, recurrence is unverified.
 
 ## Reporting
 
-`route-show --attention` lists what needs somebody: pending classifications, holds, issues whose
-project link is incomplete, and open completion mismatches. `route-digest` answers a midpoint
-check with the state that changed since the last digest: new severe records, new decisions,
-resolutions, and routine accumulation summarized per product. It is quiet when nothing changed
-and does no work of its own between events.
+`route-show --attention` lists what needs somebody. Each route waits on at most one decision,
+named the same way everywhere:
+
+| Decision | When |
+| --- | --- |
+| `awaiting_classification` | a pending-classification record |
+| `held_<hold>` | a held route, with its hold |
+| `link_incomplete` | the owned issue's project link reads back unlinked |
+| `completion_mismatch_open` | an open completion mismatch |
+| `project_proposed` | a project proposal whose project is not bound yet |
+
+`route-digest` answers a midpoint check. It first runs `route-reconcile`, then compares every
+route with the snapshot it last reported and answers only what changed. That covers new severe
+records, new decisions, resolutions of records that owned an issue, and routine accumulation
+summarized per product. Each new decision is also raised as a ledger notification under its
+decision name. The ledger keeps one notification per record and reason, so a decision is
+announced once however often digests run. A severe pending incident or a severe hold is raised
+at intake under the same name. Asked again with nothing changed, the digest answers quiet and
+writes nothing. It runs only when somebody asks, and it calls no model.
 
 ## What this does not claim
 
@@ -202,18 +259,20 @@ product-show      [--product <key>]
 route-policy      --record <json|@path>
 route-intake      --incident <json|@path>
 route-classify    --fault <id> --classification <json|@path>
-route-operation   --publication <id> --claim-token <token>
-route-complete    --publication <id> [--claim-token <token>] ...
 route-reconcile   [--product <key>] [--limit <n>]
 route-show        [--product <key>] [--attention] [--limit <n>] [--after <next>]
-route-digest      [--limit <n>]
+route-digest      [--limit <n>] [--after <next>]
 route-projects    --product <key>
 completion-check  --reading <json|@path>
 ```
 
-Status: this contract is written ahead of its implementation. The registry, the decision and the
-completion verdicts do not depend on the ledger and land first. The paths that record, adopt,
-target, move, update or queue go through `ledger_port.py`. That adapter binds to the corrected
-CRW-205 ledger contract, and every one of its methods refuses with `route_ledger_pending` until
-then. Nothing here is evidence about an installed runtime, a live service, or anything written to
-Linear.
+`product-bind` also decides again every held route of the product, and every filed one whose
+fault owns no issue yet, from its latest stored incident; its answer lists what changed.
+
+Status: the registry, the decision and the completion verdicts do not depend on the ledger. The
+paths that record, adopt, target, move, update or queue go through `ledger_port.py`, which binds
+only when CRW-205's corrected ledger contract is present, every function and keyword it passes
+included. Until then every route command except the registry ones refuses with
+`route_ledger_pending` before writing anything. An intake from a surface the product does not
+watch is refused first, since that check needs no ledger. Nothing here is evidence about an
+installed runtime, a live service, or anything written to Linear.
