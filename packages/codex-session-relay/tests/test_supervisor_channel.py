@@ -2555,3 +2555,67 @@ class WhatTheSeventhIndependentReviewFound(ChannelTestCase):
         self.assertFalse(answer.get("restated"))
         self.assertEqual(self.channel.get(message_id)["event_id"], first)
         self.assertEqual(len(self.adapter.sends), 1)
+
+
+
+class WhatTheEighthIndependentReviewFound(ChannelTestCase):
+    """A decision and the write it justifies share one lock, a token older than the send is not
+    the send's, and the transport instant is taken where the transport is decided."""
+
+    blocked = WhatTheSeventhIndependentReviewFound.blocked
+
+    def test_a_restatement_is_decided_and_written_under_one_lock(self):
+        """RED: stage() decided under its lock and _readdress wrote under a second one, so a
+        correction to the newer statement's report could land in between."""
+        first = self.blocked("the log at /logs/wrong.txt", attempt=1)
+        self.channel.stage(self.obligation(first))
+        self.clock.advance(5)
+        second = self.blocked("the log at /logs/right.txt", attempt=2)
+        seen = []
+        rewrite = self.channel._readdress
+
+        def watched(*args, **kwargs):
+            seen.append(self.store.db.in_transaction)
+            return rewrite(*args, **kwargs)
+
+        with mock.patch.object(self.channel, "_readdress", watched):
+            answer = self.channel.stage(self.obligation(second))
+        self.assertEqual(seen, [True], "the rewrite runs inside the lock its checks ran in")
+        self.assertTrue(answer["restated"])
+
+    def test_a_request_id_written_before_the_send_does_not_verify_it(self):
+        """RED: the id is derived from the message and the attempt number, so it can be written
+        into the recipient's thread first; a lost response then left only that copy to find."""
+        from codex_session_relay.identity import supervisor_request_id
+
+        _one, message_id = self.staged()
+        self.adapter.start_turn(SUPERVISOR, status="completed",
+                                text="written ahead: " + supervisor_request_id(message_id, 1))
+        self.clock.advance(5)
+        self.adapter.script("transport_unknown")
+        self.channel.attempt(message_id, self.adapter)
+        self.assertEqual(self.channel.get(message_id)["state"], HELD_UNCERTAIN)
+        self.clock.advance(5)
+        later = self.adapter.start_turn(SUPERVISOR, status="completed")
+        answer = self.read_back(message_id, later.turn_id)
+        self.assertEqual(answer["verified"], channel_module.TURN_PREDATES_SEND)
+        self.assertIn("before this attempt's transport started", answer["detail"])
+        self.assertEqual(self.channel.get(message_id)["state"], HELD_UNCERTAIN)
+
+    def test_the_transport_start_is_stamped_after_the_lock_and_the_hierarchy_check(self):
+        """RED: the instant was read before waiting for the lock, dating the start early."""
+        _one, message_id = self.staged()
+        asked = self.channel._hierarchy_in
+        after = []
+
+        def slow(db, message):
+            self.clock.advance(10)
+            after.append(self.clock.now())
+            return asked(db, message)
+
+        with mock.patch.object(self.channel, "_hierarchy_in", slow):
+            self.channel.attempt(message_id, self.adapter)
+        stamp = self.store.one(
+            "SELECT transport_started_at FROM supervisor_attempts WHERE message_id = ?",
+            (message_id,))["transport_started_at"]
+        self.assertGreaterEqual(channel_module._iso_time(stamp), after[-1])

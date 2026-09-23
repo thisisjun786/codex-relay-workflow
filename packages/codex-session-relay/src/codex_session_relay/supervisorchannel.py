@@ -661,6 +661,21 @@ class SupervisorChannel:
                     " reading of it, which disagrees with this one about what it is or where"
                     " it can be read. The staged message keeps the reading it froze; nothing"
                     " was written")
+            if existing is not None:
+                if _addressed_as(existing, resolution) and existing["event_id"] == event_id:
+                    return {"schema": VERSION, "staged": False, "messageId": message_id,
+                            "reason": "this fact is already staged; one obligation is one"
+                                      " message",
+                            "message": dict(existing)}
+                # The id is the FACT's and the endpoints are the hierarchy's, so a handover
+                # moves the second from under the first; and a block or decision the child has
+                # stated again since is restated the same way. Rewritten HERE, inside the lock
+                # every check above ran in: deciding under this lock and writing under a second
+                # one let a correction to the newer statement's report land in between, and the
+                # packet froze a report that no longer stood. _readdress's own lock joins this
+                # one, and its predicate still refuses a row an attempt may have sent.
+                return self._readdress(existing, packet, resolution, event_id=event_id,
+                                       submission_no=_submission_of(report))
             if existing is None:
                 decided = supervision.select(self.store, obligation, recipient=None)
                 if not decided["report"]:
@@ -689,20 +704,6 @@ class SupervisorChannel:
                     supervision.record_report(
                         self.store, obligation, at=at, messageId=message_id,
                         note="staged on the supervisor channel")
-        if existing is not None:
-            if _addressed_as(existing, resolution) and existing["event_id"] == event_id:
-                return {"schema": VERSION, "staged": False, "messageId": message_id,
-                        "reason": "this fact is already staged; one obligation is one message",
-                        "message": dict(existing)}
-            # The id is the FACT's and the endpoints are the hierarchy's, so a handover moves
-            # the second from under the first. Returning the row as it stands is what left a
-            # report staged for a supervisor who had stepped down: attempt() refuses it as
-            # drift, and the journal keeps a replacement from being produced. _readdress
-            # decides again inside its own write, so a claim committing after this read wins.
-            # And a block or decision the child has stated again since is restated the same way,
-            # in place and only while nothing has been sent.
-            return self._readdress(existing, packet, resolution, event_id=event_id,
-                                   submission_no=_submission_of(report))
         return {"schema": VERSION, "staged": staged, "messageId": message_id,
                 "reason": "staged" if staged else "another caller staged this fact first",
                 "message": dict(self.get(message_id)),
@@ -1173,7 +1174,6 @@ class SupervisorChannel:
         Returns None when the transport may start, else ("lapsed", detail) or ("moved",
         the refusal to raise).
         """
-        at = self.clock.iso()
         with self.store.transaction() as db:
             ours = db.execute(
                 "SELECT 1 FROM supervisor_messages WHERE message_id = ? AND state = ?"
@@ -1183,6 +1183,7 @@ class SupervisorChannel:
                 return ("lapsed", "this send's claim no longer holds the message, so its"
                                   " transport was not started")
             _live, moved = self._hierarchy_in(db, message_id)
+            at = self.clock.iso()
             if moved is not None:
                 claimed = db.execute(
                     "SELECT record FROM supervisor_attempts WHERE request_id = ?",
@@ -1219,9 +1220,13 @@ class SupervisorChannel:
                     " before its transport started: " + str(moved.detail) + ". Nothing was"
                     " sent, and the attempt is recorded as sending nothing, so staging it"
                     " again re-addresses it to whoever the linkage names then"))
+            # Taken AFTER the lock was granted and the hierarchy asked, not before: waiting for
+            # the lock and resolving can take seconds, and a stamp read before them dated the
+            # transport start earlier than it was - so a turn the transport steered, opened in
+            # that interval, passed the check that no turn may predate the send.
             db.execute(
                 "UPDATE supervisor_attempts SET transport_started_at = ? WHERE request_id = ?",
-                (at, request_id))
+                (self.clock.iso(), request_id))
         return None
 
     def _nothing_sent(self, message_id):
@@ -1811,6 +1816,27 @@ class SupervisorChannel:
                 detail = (str(read_turn_id) + " began before " + str(delivered["turnId"])
                           + ", the turn this message landed in, so it cannot be the turn"
                           " that read it")
+        if (verified == HOST_READ and delivered.get("turnId")
+                and delivered["turnId"] != read_turn_id
+                and delivered["turnId"] != (attempt["turn_id"] if attempt is not None else None)):
+            # And the turn the token is IN has to follow this attempt's transport start, unless
+            # it is the turn the transport itself reported delivering to - a steered turn is
+            # older than the send and the receipt says the bytes went there. Anywhere else, a
+            # token older than the send is not this send's: the request id is derived from the
+            # message and the attempt number, so it can be written into the recipient's thread
+            # before the send, and a lost response then left only that token to find.
+            landed = _began_before(self._turn_start(row, delivered["turnId"], adapter),
+                                   _iso_time(attempt["transport_started_at"]))
+            if landed is None:
+                verified = NO_HOST
+                detail = ("the turn this attempt's request id is in, " + str(delivered["turnId"])
+                          + ", has no start time the host would give, so whether it came after"
+                            " this send is not established")
+            elif landed:
+                verified = TURN_PREDATES_SEND
+                detail = ("this attempt's request id is in " + str(delivered["turnId"])
+                          + ", a turn that began before this attempt's transport started, so it"
+                            " was there before the send and is not evidence the send arrived")
         reconciled = None
         if uncertain and verified == HOST_READ:
             reconciled = {"from": HELD_UNCERTAIN, "by": "readback",

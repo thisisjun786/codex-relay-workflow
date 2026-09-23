@@ -202,8 +202,9 @@ records the transport's answer that way, and the transport-start write that find
 moved releases the message the same way. The one other way out is recovery, which takes the
 row from a claim whose lease expired with no receipt, and what it does depends on a durable
 fact. `transport_started_at` is stamped only by the claim holding the row, inside the write
-that checks it still does, and committed before the transport is called. An attempt with no
-stamp therefore sent nothing and never will - its owner's own transport-start write now finds
+that checks it still does, and committed before the transport is called. The stamp is taken as the last thing that write does, after the lock is granted and the
+hierarchy asked, because a time read before waiting for the lock dated the start early. An
+attempt with no stamp therefore sent nothing and never will - its owner's own transport-start write now finds
 the row is not its own - so recovery records it as sending nothing and queues the report again.
 An attempt with a stamp may have sent, so recovery moves the message to `held_uncertain`,
 because nothing observed what that send did.
@@ -267,6 +268,12 @@ not verify. `host_read` needs all of the following:
   token is IN is where the message landed, so a disagreement answers
   `transcript_turn_mismatch`. A turn the recipient opened afterwards is not expected to carry
   the token, and is the stronger reading anyway, because the sender never knew its id.
+- the turn the token is in does not certainly begin before this attempt's transport started,
+  unless it is the turn the transport itself reported - a steered turn is older than the send,
+  and the receipt says the bytes went there. The request id is derived from the message and
+  the attempt number, so a copy can be written into the thread ahead of the send; after a lost
+  response that copy was the only one to find, and it verified a readback. An older token
+  answers `turn_predates_send`, and an unknown start is not verified.
 
 Every answer to one readback has one shape - the first, a later one answered from the settled
 row, and one that lost the race to settle it - built from the stored row, with `recorded` and
@@ -475,7 +482,7 @@ A block or a decision goes up as its newest statement. Both are keyed on their g
 their cause, so the child stating the same one again - with its evidence corrected, say - raises
 the same obligation from a newer event. Staging composes from the newest event that raises it,
 whichever statement the caller held, and a message staged from an earlier statement and never
-sent is restated in place: same message, same journal entry, a `supervisor_message_restated`
+sent is restated in place, inside the same lock the staging checks ran in: same message, same journal entry, a `supervisor_message_restated`
 entry naming both events, and the recipient's own bounds kept. Once an attempt may have sent,
 the newer statement is the same fact said again and is not reported again; staging answers
 that, naming the newer event's own evidence. A completion is keyed on its event, so a corrected
