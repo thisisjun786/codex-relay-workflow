@@ -134,16 +134,21 @@ pull request is itself in that situation with `scripts/crw_runtime/components.js
   package never contacts a forge. What the check establishes is that the restated evidence is
   internally consistent and current: every declared required name present and successful on the
   candidate head at its highest submitted attempt, the base matching the last landing recorded
-  here, and the review paginated to the end with nothing unresolved.
+  here, and the review paginated to the end with nothing unresolved. When the turn names an
+  assignment, the head must also be the one its current work reports name: the latest
+  head-bearing submission of every event in the newest generation that names a head, read per
+  event because submission numbers count per event. Two different current heads are refused as
+  `revision_ambiguous` whichever event was resubmitted more often; one current head that is not
+  the candidate is refused as `merge_candidate_moved`.
   The merge-turn grant notice fills that flag in for its recipient, because the command it hands
   over is one a parent runs as written, and omitting `--required` declares that nothing is
   required. The names come from the candidate's own recorded handoff: the `requiredDeclared`
-  that `merge-evidence` read from the branch's effective rules, taken from the latest submission
-  of every report in the generation `merge-turn-check` will itself compare the head against. They
-  must all name the granted head, target and base and agree, and the notice names the report it
-  quotes. They are a proposal the caller restates, not a discovery: the check stores whatever
-  `--required` its caller passes. Where no such reading is recorded, the notice leaves a
-  placeholder and names the `merge-evidence` reading to take instead.
+  that `merge-evidence` read from the branch's effective rules, taken from the same current
+  reports `merge-turn-check` compares the head against (`report.current_reports` is the one
+  selection both read). They must all name the granted head, target and base and agree, and the
+  notice names the report it quotes. They are a proposal the caller restates, not a discovery:
+  the check stores whatever `--required` its caller passes. Where no such reading is recorded,
+  the notice leaves a placeholder and names the `merge-evidence` reading to take instead.
 - **A release restating a different reason is refused.** The first reason wins and a later
   notification restates it. Completion, failure, a resume and a duplicated notification all
   arrive as a release of one subject, so the second must not be a second release.

@@ -811,3 +811,76 @@ class TheNoticeDeclaresTheRequiredChecks(MergeTurnWakeTestCase):
         self.candidate(required=("other-gate",), name="two")
         _turn, _event, text = self.notice()
         self.assertNotRecorded(text, "disagree")
+
+
+class TheGateReadsEveryCurrentEvent(MergeTurnWakeTestCase):
+    """merge-turn-check compares the candidate with the current report of EVERY event (CRW-123).
+
+    Submission numbers count per event. The gate took one maximum across the generation and read
+    only rows at that number, so resubmitting one event hid every other event still at a lower
+    number: with two current reports naming different heads, the resubmitted event's head reached
+    merging and the other event's head was refused as moved. Which head passed depended on a
+    counter, not on what the reports say. The notice already read each event's own latest
+    head-bearing submission; the gate now reads the same selection.
+    """
+
+    # The report the notice reads, recorded the same way, so both readers see one fixture.
+    candidate = TheNoticeDeclaresTheRequiredChecks.candidate
+
+    def held(self, head):
+        claimed = self.claim(self.alpha, PROJECT_A, head)
+        self.assertEqual(claimed["state"], "holding")
+        self.answer_grant(claimed["turnId"], PARENT)
+        return claimed["turnId"]
+
+    def merge(self, turn, head):
+        return self.turns.begin_merge(
+            turn, actor=PARENT, head_sha=head, base_sha="base-0",
+            checks=run_checks(head), review=dict(GREEN), required=["dev-gate"])
+
+    def refusal(self, head):
+        turn = self.held(head)
+        with self.assertRaises(CoordinationError) as caught:
+            self.merge(turn, head)
+        self.assertEqual(self.turns.turn(turn)["state"], "holding")
+        return caught.exception
+
+    def two_events(self, *, resubmit_a):
+        a = self.candidate(head="head-a0" if resubmit_a else "head-a", name="a")
+        if resubmit_a:
+            self.candidate(head="head-a", event=a, submission_no=2)
+        self.candidate(head="head-b", name="b")
+
+    def test_two_current_events_naming_different_heads_are_ambiguous(self):
+        self.two_events(resubmit_a=False)
+        self.assertEqual(self.refusal("head-a").reason, RefusalReason.REVISION_AMBIGUOUS)
+
+    def test_resubmitting_one_event_does_not_let_its_head_merge(self):
+        # Event b's current report still names head-b; a is only on a higher counter.
+        self.two_events(resubmit_a=True)
+        self.assertEqual(self.refusal("head-a").reason, RefusalReason.REVISION_AMBIGUOUS)
+
+    def test_the_other_events_head_is_ambiguous_rather_than_moved(self):
+        self.two_events(resubmit_a=True)
+        self.assertEqual(self.refusal("head-b").reason, RefusalReason.REVISION_AMBIGUOUS)
+
+    def test_a_later_submission_naming_no_head_keeps_its_events_head(self):
+        a = self.candidate(head="head-a", name="a")
+        self.candidate(event=a, submission_no=2, head=None, required=None,
+                       pr_number=None, pr_url=None, pr_state=None)
+        answer = self.merge(self.held("head-a"), "head-a")
+        self.assertEqual((answer["state"], answer["headVerifiedAgainst"]), ("merging", "head-a"))
+
+    def test_an_events_earlier_head_is_history_not_a_second_candidate(self):
+        a = self.candidate(head="head-a0", name="a")
+        self.candidate(head="head-a", event=a, submission_no=2)
+        answer = self.merge(self.held("head-a"), "head-a")
+        self.assertEqual((answer["state"], answer["headVerifiedAgainst"]), ("merging", "head-a"))
+
+    def test_an_events_earlier_head_is_refused_as_moved(self):
+        a = self.candidate(head="head-a0", name="a")
+        self.candidate(head="head-a", event=a, submission_no=2)
+        refusal = self.refusal("head-a0")
+        self.assertEqual(refusal.reason, RefusalReason.MERGE_CANDIDATE_MOVED)
+        # The work report's refusal, not the turn's own candidate check.
+        self.assertIn("names head 'head-a'", refusal.detail)
