@@ -30,7 +30,7 @@ import json
 from .coordination import DOMAIN_MERGE_TARGET, Conflicts, Refusal, derive, exact
 from .errors import CoordinationError, RefusalReason
 from .identity import sha256_hex
-from . import mergeevidence
+from . import mergeevidence, report
 
 PROJECT = "project"
 PARENT = "parent"
@@ -1449,31 +1449,16 @@ class MergeTurn:
                 "relationship " + repr(row["relationship_id"]) + " belongs to project "
                 + repr(attachment.get("projectKey")) + ", not " + repr(row["project_key"]),
                 domain=DOMAIN_MERGE_TARGET, subject=row["target_key"], challenger=actor)
-        # The CURRENT submission only. work_reports retains every submission and generation,
-        # so distinct historical heads are ordinary evidence of revision rather than competing
-        # candidates; reading them all turned a normal correction into a permanent ambiguity
-        # that no candidate could ever pass.
-        newest = db.execute(
-            "SELECT MAX(execution_generation) AS generation FROM work_reports"
-            "  WHERE relationship_id = ? AND head_sha IS NOT NULL",
-            (row["relationship_id"],),
-        ).fetchone()
-        if newest is None or newest["generation"] is None:
-            return None, None
-        latest = db.execute(
-            "SELECT MAX(submission_no) AS submission FROM work_reports"
-            "  WHERE relationship_id = ? AND execution_generation = ? AND head_sha IS NOT NULL",
-            (row["relationship_id"], newest["generation"]),
-        ).fetchone()
-        heads = [
-            r["head_sha"] for r in db.execute(
-                "SELECT DISTINCT head_sha FROM work_reports"
-                "  WHERE relationship_id = ? AND head_sha IS NOT NULL"
-                "    AND execution_generation = ? AND submission_no = ?"
-                "  ORDER BY head_sha",
-                (row["relationship_id"], newest["generation"], latest["submission"]),
-            ).fetchall()
-        ]
+        # The CURRENT submission of every event only. work_reports retains every submission and
+        # generation, so distinct historical heads are ordinary evidence of revision rather than
+        # competing candidates; reading them all turned a normal correction into a permanent
+        # ambiguity that no candidate could ever pass. Current is decided per event, because
+        # submission numbers count per event: one maximum across the generation hid every event
+        # not resubmitted as often, and let a resubmitted event's head merge past another event's
+        # current report naming a different head. report.current_reports is that selection, the
+        # same one the grant notice proposes its required checks from.
+        _generation, current = report.current_reports(db, row["relationship_id"])
+        heads = sorted({r["head_sha"] for r in current})
         if not heads:
             return None, None
         if len(heads) > 1:
