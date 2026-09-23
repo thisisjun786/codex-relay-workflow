@@ -137,10 +137,18 @@ ACCEPTED_RECEIPT = "accepted"
 MANAGED_OBSERVED = "managed_start_observed"
 CREATION_STAGE = "creation"
 CREATION_ANSWER = "creation_"
+# Every retry of a request journals a result, so one request can hold many rows that are not
+# creation answers. The store's partial index CREATION_ANSWER_INDEX holds only creation-stage
+# managed rows, and the query below repeats its predicate word for word, which is what lets the
+# planner use it: the newest answer is one probe however many other rows the request journaled.
+# The CASE keeps a detail that is not JSON away from json_extract, which raises on it.
+CREATION_ANSWER_INDEX = "journal_managed_creation"
+_CREATION_ROW = (
+    "CASE WHEN kind = '" + MANAGED_OBSERVED + "' AND json_valid(detail)"
+    " THEN json_extract(detail, '$.stage') = '" + CREATION_STAGE + "' END")
 _CREATION_ANSWER_SQL = (
     "SELECT seq, detail FROM journal"
-    " WHERE subject = ? AND kind = '" + MANAGED_OBSERVED + "' AND json_valid(detail)"
-    "   AND json_extract(detail, '$.stage') = '" + CREATION_STAGE + "'"
+    " WHERE subject = ? AND " + _CREATION_ROW +
     " ORDER BY seq DESC LIMIT 1")
 
 
@@ -176,15 +184,40 @@ ACCEPTED_UNATTACHED = {
 }
 
 
-def _answer_facts(issue, status) -> tuple:
-    """(detail, actual, impact) for a managed start's answer, in the answer's own terms."""
+def _answer_facts(issue, status, child=None) -> tuple:
+    """(detail, actual, impact) for a managed start's answer, in the answer's own terms.
+
+    A child the answer names - one a partial creation left and the start retained, or the one
+    the registry recorded - is named, and said not to be attached. An unknown answer
+    establishes nothing about creation either way, named child or not, and says so; only a
+    definite answer that names no child is stated as the host reporting none.
+    """
     if status in ACCEPTED_UNATTACHED:
         actual = ACCEPTED_UNATTACHED[status]
         return (f"a managed start for {issue} was answered {status}: {actual}", actual,
                 f"a child the host created for {issue} is not attached to any assignment,"
                 " and no managed child is working on it")
-    return (f"a managed start for {issue} was answered {status} without publishing a child",
-            f"the host answered {status} and published no child",
+    if status == "unknown":
+        if _named(child):
+            actual = (f"the host answered unknown naming child {child}, so whether that child"
+                      " was created is not established; the relay retained it and did not"
+                      " attach it")
+            impact = (f"child {child}, if the host created it, is not attached to any"
+                      f" assignment, and no managed child is working on {issue}")
+        else:
+            actual = ("the host answered unknown, so whether it created a child for"
+                      f" {issue} is not established")
+            impact = (f"no attached child is working on {issue}, and any child the host did"
+                      " create is not attached")
+        return (f"a managed start for {issue} was answered unknown: {actual}", actual, impact)
+    if _named(child):
+        actual = (f"the host answered {status} after creating child {child}, which the relay"
+                  " retained and did not attach")
+        return (f"a managed start for {issue} was answered {status}: {actual}", actual,
+                f"child {child} is not attached to any assignment, and no managed child is"
+                f" working on {issue}")
+    return (f"a managed start for {issue} was answered {status} and the host reported no child",
+            f"the host answered {status} and reported no child",
             f"no child is working on {issue}")
 
 
@@ -435,9 +468,9 @@ def _revision_from(data, unknown) -> dict:
     installs = (component.get("codex-session-relay") or {}).get("installs")         if isinstance(component.get("codex-session-relay"), dict) else None
     if not isinstance(installs, list):
         return unknown("the host record lists no codex-session-relay installs")
-    mine = [entry for entry in installs if isinstance(entry, dict)
-            and isinstance(entry.get("location"), str)
-            and os.path.realpath(entry["location"]) == os.path.realpath(PACKAGE_DIRECTORY)]
+    here = os.path.realpath(PACKAGE_DIRECTORY)
+    mine = [entry for entry in installs
+            if isinstance(entry, dict) and _resolved(entry.get("location")) == here]
     if not mine:
         return unknown(f"the host record has no install entry for {PACKAGE_DIRECTORY}")
     entry = mine[-1]
@@ -456,6 +489,18 @@ def _revision_from(data, unknown) -> dict:
     revision = {key: source[key] for key in _REVISION_KEYS}
     revision.update(environment=entry.get("environment"), integrity=entry.get("integrity"))
     return {"revision": revision, "record": None, "reason": None}
+
+
+def _resolved(location):
+    """The real path a recorded install location names, or None when it names none: not a
+    string, or one the filesystem cannot name (an embedded NUL, which realpath refuses). Such
+    an entry is never this copy, and it does not stop the other entries from being read."""
+    if not isinstance(location, str):
+        return None
+    try:
+        return os.path.realpath(location)
+    except (ValueError, OSError):
+        return None
 
 
 def installation() -> dict:
@@ -838,8 +883,8 @@ def managed_start_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=Non
     after, until, _ = _rotation(store, cursor,
                                 "SELECT MAX(request_id) FROM managed_start_requests")
     rows = [] if until is None else store.all(
-        "SELECT request_id, issue_key, receipt_status, workspace, revision, updated_at"
-        "  FROM managed_start_requests"
+        "SELECT request_id, issue_key, receipt_status, child_task_id, workspace, revision,"
+        "       updated_at FROM managed_start_requests"
         " WHERE state = 'create_armed' AND (receipt_status IS NULL OR receipt_status != ?)"
         "   AND request_id > ? AND request_id <= ?"
         " ORDER BY request_id LIMIT ?",
@@ -851,16 +896,20 @@ def managed_start_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=Non
         if status is None:
             continue
         evidence = [_evidence("row", f"managed_start_requests:{row['request_id']}", {
-            "receiptStatus": row["receipt_status"], "requestRevision": row["revision"],
-            "workspace": row["workspace"], "updatedAt": row["updated_at"],
+            "receiptStatus": row["receipt_status"], "childTaskId": row["child_task_id"],
+            "requestRevision": row["revision"], "workspace": row["workspace"],
+            "updatedAt": row["updated_at"],
         })]
+        child = row["child_task_id"]
         if answer is not None:
             evidence.append(_evidence("row", f"journal:{answer['seq']}", {
                 "kind": MANAGED_OBSERVED, "state": answer["state"], "stage": CREATION_STAGE,
                 "reason": answer["reason"], "retainedChildTaskId": answer["retainedChildTaskId"],
                 "standbyRecovery": answer["standbyRecovery"],
             }))
-        detail, actual, impact = _answer_facts(row["issue_key"], status)
+            if _named(answer["retainedChildTaskId"]):
+                child = answer["retainedChildTaskId"]
+        detail, actual, impact = _answer_facts(row["issue_key"], status, child)
         limits = ["the registry keeps only the latest receipt of an armed request"]
         if answer is not None:
             limits = ["read from the newest creation answer the managed start journaled; a start"

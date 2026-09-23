@@ -506,6 +506,14 @@ CREATE TABLE IF NOT EXISTS journal (
 -- whole journal.
 CREATE INDEX IF NOT EXISTS journal_kind ON journal (kind);
 CREATE INDEX IF NOT EXISTS journal_subject ON journal (subject);
+-- Only the creation-stage rows a managed start journals (faultsweep.CREATION_ANSWER_INDEX): the
+-- fault sweep reads a request's newest creation answer through it, one probe however many other
+-- rows the request's retries journaled; journal_subject walks every one of them. The query
+-- repeats this predicate word for word so the planner can use it. The CASE keeps a detail that
+-- is not JSON away from json_extract, which would otherwise fail the insert of that row.
+CREATE INDEX IF NOT EXISTS journal_managed_creation ON journal (subject)
+    WHERE CASE WHEN kind = 'managed_start_observed' AND json_valid(detail)
+               THEN json_extract(detail, '$.stage') = 'creation' END;
 
 CREATE TABLE IF NOT EXISTS store_challenge (
     nonce      TEXT PRIMARY KEY,

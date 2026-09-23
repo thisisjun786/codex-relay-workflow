@@ -419,7 +419,7 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
   because it says nothing about the settings that were refused; three refusals for one reason are
   repetition whatever waited between them. A streak that ended is never counted again. Signature
   `{relationship, errorCode}`, occurrence key `refused:<journal seq>`. `managed_start_failed`: the host
-  answered a managed start without publishing a child (broken; signature `{issueKey,
+  answered a managed start and the relay attached no child (broken; signature `{issueKey,
   receiptStatus}`, so a rejection and a partial start are different faults). The answer is read
   where it actually lives. `managed.ManagedStart` records a receipt only for an ACCEPTED creation,
   so for an armed request with no receipt the answer is the newest creation-stage row it
@@ -428,7 +428,14 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
   `creation_settings_unverified` is an answer after a create was attempted, and its suffix is the
   status. The last two come after the host ACCEPTED the creation - its receipt named an unusable
   identity, or settings that did not match the request - so the incident says a child may exist
-  that the relay could not attach, never that none was published. A recorded receipt that is not accepted still decides where one exists. Any other
+  that the relay could not attach, never that none was published. The incident states only what
+  the answer establishes: a child the answer names (the `retainedChildTaskId` a partial creation
+  left, or the registry's child) is named and said not to be attached; `unknown` says whether a
+  child was created is not established; only a definite answer that names no child is stated as
+  the host reporting none. A recorded receipt that is not accepted still decides where one
+  exists. The newest creation-stage row is found through the partial index
+  `journal_managed_creation`, which holds only those rows, so it is one probe however many rows
+  a request's retries journaled. Any other
   reason at that stage - a worker that cannot take the pair - means the host was not asked on
   that attempt, and is not a fault; nor is a request with no creation-stage row at all, which is
   a start still waiting for the host. Elapsed time decides nothing. The fault clears when the

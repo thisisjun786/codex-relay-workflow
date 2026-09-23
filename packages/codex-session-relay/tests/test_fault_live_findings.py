@@ -163,6 +163,80 @@ class ManagedStartFailuresReachTheLedger(ManagedStartFixture):
         self.assertIn("created", facts["actual"])
         self.assertIn("not attached", facts["impact"])
 
+    def test_a_failed_creation_that_left_a_child_names_it(self):
+        # A partial creation: the host created a child and the naming step failed, so the start
+        # retained that child. The incident names it instead of claiming none exists.
+        self.partial_creation(attempted_turn=True)
+        result = self.start.run(self.request)
+        self.assertEqual(result.get("retainedChildTaskId"), "child-new", result)
+        found = self.managed(self.swept())
+        facts = [item["observed"] for item in found[0]["evidence"] if item["kind"] == "facts"][0]
+        self.assertNotIn("published no child", facts["actual"])
+        self.assertIn("child-new", facts["actual"])
+        self.assertIn("not attached", facts["impact"])
+
+    def test_an_unknown_creation_does_not_claim_there_is_no_child(self):
+        self.host.creation_status = "unknown"
+        self.start.run(self.request)
+        facts = [item["observed"] for item in self.managed(self.swept())[0]["evidence"]
+                 if item["kind"] == "facts"][0]
+        self.assertNotIn("published no child", facts["actual"])
+        self.assertIn("not established", facts["actual"])
+
+    def test_an_answer_that_names_no_child_states_only_what_it_establishes(self):
+        # A receipt without a thread id: an unknown answer still establishes nothing about a
+        # child, and only a definite answer is the host reporting none.
+        real_create = self.host.create_thread
+
+        def anonymous(request, **kwargs):
+            receipt = real_create(request, **kwargs)
+            receipt.pop("threadId")
+            return receipt
+        self.host.create_thread = anonymous
+        self.host.creation_status = "unknown"
+        self.assertIsNone(self.start.run(self.request).get("retainedChildTaskId"))
+        facts = [item["observed"] for item in self.managed(self.swept())[0]["evidence"]
+                 if item["kind"] == "facts"][0]
+        self.assertIn("not established", facts["actual"])
+        self.assertNotIn("no child", facts["actual"])
+        _, actual, _ = faultsweep._answer_facts(ISSUE, "failed")
+        self.assertIn("reported no child", actual)
+
+    def test_the_creation_answer_is_found_without_reading_every_row_of_its_request(self):
+        # Every retry of a request journals a result, so one request can hold many rows that are
+        # not creation answers. Finding its creation answer must not read them all.
+        self.host.creation_status = "unknown"
+        self.start.run(self.request)
+        request = self.request["requestId"]
+
+        def steps():
+            count = [0]
+
+            def tick():
+                count[0] += 1
+                return 0
+            self.store.db.set_progress_handler(tick, 1)
+            try:
+                faultsweep._creation_answer(self.store, request)
+            finally:
+                self.store.db.set_progress_handler(None, 1)
+            return count[0]
+
+        def pad(n):
+            with self.store.transaction():
+                for _ in range(n):
+                    self.store.journal(faultsweep.MANAGED_OBSERVED, request,
+                                       {"state": "refused", "stage": "preflight",
+                                        "reason": "worker_policy_unconfigured"}, at="t")
+        pad(10)
+        few = steps()
+        pad(2000)
+        many = steps()
+        self.assertLess(many, few + 50, (few, many))
+        plan = " ".join(str(tuple(row)) for row in self.store.db.execute(
+            "EXPLAIN QUERY PLAN " + faultsweep._CREATION_ANSWER_SQL, (request,)))
+        self.assertIn(faultsweep.CREATION_ANSWER_INDEX, plan)
+
 
 SOURCE = {"repositoryCommit": "a" * 40, "repositoryTree": "b" * 40,
           "subdirectoryTree": "c" * 40, "workingTreeClean": True}
@@ -294,3 +368,14 @@ class OccurrencesStateTheInstalledRevision(RelayTestCase):
             "repositoryCommit"))
         self.assertIn("uncommitted changes", " ".join(facts["limits"]))
         self.assertNotIn(faultsweep.INSTALLATION_LIMIT, facts["limits"])
+
+    def test_a_location_the_filesystem_cannot_name_is_not_this_copy(self):
+        self.record([{"location": "/bad\u0000path/codex_session_relay", "source": SOURCE},
+                     {"location": self.package, "source": SOURCE}])
+        facts = self.facts()
+        self.assertEqual("a" * 40, (facts["installation"].get("revision") or {}).get(
+            "repositoryCommit"))
+        self.record([{"location": "/bad\u0000path/codex_session_relay", "source": SOURCE}])
+        facts = self.facts()
+        self.assertIsNone(facts["installation"].get("revision"))
+        self.assertIn(faultsweep.INSTALLATION_LIMIT, facts["limits"])
