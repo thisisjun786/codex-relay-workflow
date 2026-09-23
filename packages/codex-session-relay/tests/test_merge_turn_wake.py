@@ -748,6 +748,18 @@ class TheNoticeDeclaresTheRequiredChecks(MergeTurnWakeTestCase):
         self.assertNotRecorded(text, "disagree")
         self.assertNotIn("--required=optional-lint", text)
 
+    def test_a_later_submission_naming_no_head_does_not_drop_its_event(self):
+        # An event's reading is its latest submission that names a head. Counting a later
+        # headless submission as the latest dropped the event's dev-gate altogether, and the
+        # other event's smaller set was proposed as the whole.
+        first = self.candidate(required=("dev-gate",), name="one")
+        self.candidate(event=first, submission_no=2, head=None, required=None,
+                       pr_number=None, pr_url=None, pr_state=None)
+        self.candidate(required=("optional-lint",), name="two")
+        _turn, _event, text = self.notice()
+        self.assertNotRecorded(text, "disagree")
+        self.assertNotIn("--required=optional-lint", text)
+
     def test_a_reading_that_found_nothing_required_says_so(self):
         self.candidate(required=())
         _turn, _event, text = self.notice()
