@@ -156,7 +156,8 @@ answer's `provenance` names what answered it.
 |---|---|
 | the receiver's own role id | the receiver (`--receiver`) |
 | relationId, the other task, issue, relationStatus, generation | `relationships` |
-| dispatchRequestId | `generations`, the current generation; read for every parent-child packet, since it says which tenure the packet belongs to, so a reading without it (or not a dispatch id) is a gap |
+| dispatchRequestId | `generations`, the current generation; read for every parent-child packet, so a reading without it (or not a dispatch id) is a gap |
+| tenureGeneration, tenureDispatchRequestId | the registry's journal of registrations and the `generations` row that registration opened; read for every parent-child packet stating a policy, whose mode and workflow belong to the current tenure |
 | relationRevision | `scope_links` through the relationship's project link, only while that link is live, has no successor and still joins this relationship's two tasks (otherwise a gap); null when unscoped |
 | criteriaDigest | `canonical_criteria`, a managed set with one digest |
 | policy | `authorized_settings` of the child: model, effort, the sandbox policy with its declared defaults, and the approval policy |
@@ -189,7 +190,9 @@ does not end in a host error over what it was sent. That includes an artifact's 
 reading's refusal list that is null, not a list, or holds an entry that is not a model and
 effort pair of text is unread rather than taken as "none refused", and a part of a supplied
 reading this cannot compare with is refused by name. JSON nested deeper than it can be read,
-as a packet, a reading, an observation or a ledger, is refused as unusable input.
+as a packet, a reading, an observation or a ledger, is refused as unusable input, and so is
+a packet holding text that is not valid Unicode, such as a lone surrogate, which no reader
+could hash or render.
 
 The artifact head is a forge reading the store does not hold. It comes only from
 `--observation <file>`, a JSON object with its own `source` (and `observedAt` where known) and

@@ -528,7 +528,8 @@ def check(one, *, required=None) -> None:
         _check(one, required=required)
     except RelayError:
         raise
-    except (AttributeError, TypeError, KeyError, IndexError, RecursionError) as fault:
+    except (AttributeError, TypeError, KeyError, IndexError, RecursionError,
+            UnicodeError) as fault:
         raise PacketRefused(
             RefusalReason.MALFORMED_RECEIPT,
             "a part of this packet is not the shape relay-packet/1 declares, so it could not"
@@ -558,6 +559,15 @@ def _check(one, *, required=None) -> None:
             RefusalReason.MALFORMED_RECEIPT,
             "a packet is an object with an envelope and its typed data, not a "
             + type(one).__name__)
+    try:
+        # Every string JSON can carry is not text: a lone surrogate decodes from JSON and
+        # cannot be encoded again, so no reader could hash the packet or render it back.
+        json.dumps(one, ensure_ascii=False, default=str).encode("utf-8")
+    except UnicodeEncodeError as fault:
+        raise PacketRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "the packet holds text that is not valid Unicode (" + str(fault) + "), which no"
+            " reader can hash or render") from fault
     region = one.get("envelope")
     if not isinstance(region, dict):
         raise PacketRefused(
@@ -831,6 +841,7 @@ DISPATCH_REQUEST = "dispatchRequestId"
 # The generation the registration that began the current tenure opened. A tenure is one
 # registration of the child on the relationship; a returning registration reuses the id.
 TENURE_GENERATION = "tenureGeneration"
+TENURE_DISPATCH = "tenureDispatchRequestId"
 
 # The one record key whose PRESENT nothing is an answer rather than a gap. A relationship
 # registered without a project has no link and therefore no revision, and the store says so
@@ -877,7 +888,8 @@ def reception(one, record) -> dict:
             + type(record).__name__)
     try:
         return _reception(one, region, record, problems, gaps)
-    except (AttributeError, TypeError, KeyError, IndexError, RecursionError) as fault:
+    except (AttributeError, TypeError, KeyError, IndexError, RecursionError,
+            UnicodeError) as fault:
         # Total over the reading as check() is over the packet. A supplied reading can hold
         # anything JSON can, and a part of it this cannot read is refused by name rather
         # than ending packet-check as a host failure.
@@ -953,6 +965,25 @@ def _reception(one, region, record, problems, gaps) -> dict:
         _compare(problems, gaps, STALE_GENERATION, GENERATION,
                  one.get(GENERATION), record.get(GENERATION),
                  "this packet says it belongs to another generation than the current one")
+    if _present(one.get(POLICY)) is not None \
+            and region["direction"] in (envelope.PARENT_TO_CHILD, envelope.CHILD_TO_PARENT):
+        # A policy is read against - or, on an assignment, defines - the mode and workflow of
+        # the current tenure, so the tenure has to be read: the generation its registration
+        # opened and that generation's dispatch. Unread, an assignment accepted here could
+        # not be held for its tenure and the next packet could not be read against it.
+        tenure_generation = record.get(TENURE_GENERATION)
+        if isinstance(tenure_generation, bool) or not isinstance(tenure_generation, int) \
+                or tenure_generation < 1:
+            gaps.append(mismatch(UNREADABLE, TENURE_GENERATION, expected=None, found=None,
+                                 reason="the receiver could not read which registration began"
+                                        " the current tenure, so the mode and workflow this"
+                                        " policy is held to are unchecked"))
+        tenure_dispatch = record.get(TENURE_DISPATCH)
+        if not isinstance(tenure_dispatch, str) or not tenure_dispatch.strip():
+            gaps.append(mismatch(UNREADABLE, TENURE_DISPATCH, expected=None, found=None,
+                                 reason="the receiver could not read the dispatch that began"
+                                        " the current tenure, so an assignment could not be"
+                                        " held for it"))
     if not first and "relationRevision" in record and record["relationRevision"] is None \
             and one.get(GENERATION) is None and record.get(TENURE_GENERATION) != 1 \
             and region["direction"] in (envelope.PARENT_TO_CHILD, envelope.CHILD_TO_PARENT):

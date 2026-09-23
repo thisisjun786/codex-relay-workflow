@@ -50,7 +50,7 @@ LEDGER_VERSION = 1
 # a supersession, which reuses the relationship id. Revision generations open under their own
 # dispatches inside a tenure and do not begin one, so the mode and workflow the tenure's
 # accepted assignment gave hold through them.
-TENURE_DISPATCH = "tenureDispatchRequestId"
+TENURE_DISPATCH = packets.TENURE_DISPATCH
 # What the registry journals when a registration begins a tenure: the initial registration,
 # and a returning one with the generation it opened. A generation opened for a revision (or
 # with any reason) is journalled as generation_opened and begins nothing.
