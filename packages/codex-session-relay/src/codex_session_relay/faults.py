@@ -119,6 +119,9 @@ DEFAULT_LIMITS = {
 }
 DEFAULT_KIND_LIMIT = (20, 3600.0)
 RELINK_PER_CALL = 100
+# How long a notification found withheld at reservation waits before it is asked again, so a
+# withheld one at the head of the queue cannot hide every eligible one behind it.
+NOTIFICATION_RECHECK_SECONDS = 60.0
 HOLD_SECONDS = 30.0
 MAX_POLICY_THRESHOLD = 100
 MIN_POLICY_WINDOW = 60.0
@@ -935,9 +938,7 @@ class FaultLedger:
                    " WHERE fault_id = ?", (stored, key, now, row["fault_id"]))
         repointed = self._repoint(db, row["fault_id"], now)
         if row["external_ref"]:
-            target, _ = self._owned_target(db, row["product"], key)
-            if target and target["projectRef"]:
-                self._relink(db, row["fault_id"], target["projectRef"], now)
+            self._link_to_target(db, row["fault_id"], now)
         return repointed
 
     def move(self, identifier, *, scope) -> dict:
@@ -1285,11 +1286,9 @@ class FaultLedger:
         fault = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
                            (identifier,)).fetchone()
         publication = self._insert_publication(db, fault, APPEND_COMMENT, TRIGGER_OPEN, now)
-        target, _ = self._owned_target(db, fault["product"], fault["scope_key"])
-        if target and target["projectRef"]:
-            # Whether the adopted issue sits in this scope's project is read back like any
-            # other write, never assumed.
-            self._relink(db, identifier, target["projectRef"], now)
+        # Whether the adopted issue sits in this scope's project is read back like any other
+        # write, never assumed; with no project to be in it is unlinked, never linked.
+        self._link_to_target(db, identifier, now)
         return publication
 
     # ------------------------------------------------------------------ policy (B12)
@@ -1829,20 +1828,69 @@ class FaultLedger:
         return self._queue_update(db, identifier, "set_project", project_ref, now,
                                   trigger_key=f"update:set_project:{project_ref}:r{revision}")
 
+    def _unlink(self, db, identifier, now):
+        """Invariant 11 with no project to be in: the owned issue is not in its project.
+
+        A scope whose target names no project its product owns - removed, never set, or owned by
+        another product - leaves the owned issue with nowhere it belongs. Reported unlinked
+        (awaiting a target) rather than keeping whatever link it had, and any unsent relink to a
+        project the scope has left is cancelled. Setting a project again relinks the same issue.
+        """
+        fault = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
+                           (identifier,)).fetchone()
+        if not fault["external_ref"]:
+            return None
+        link = db.execute("SELECT * FROM fault_links WHERE fault_id = ?",
+                          (identifier,)).fetchone()
+        if link is None:
+            db.execute(
+                "INSERT INTO fault_links (fault_id, external_ref, project_ref,"
+                "  observed_project_ref, state, revision, updated_at) VALUES (?,?,?,?,?,0,?)",
+                (identifier, fault["external_ref"], None, None, UNLINKED, now))
+        else:
+            db.execute("UPDATE fault_links SET project_ref = NULL, state = ?, updated_at = ?"
+                       " WHERE fault_id = ?", (UNLINKED, now, identifier))
+        for stale in db.execute(
+                "SELECT p.* FROM fault_publications p WHERE p.fault_id = ? AND p.kind = ?"
+                " AND p.trigger_key LIKE 'update:set_project:%' AND p.state IN (?,?,?)",
+                (identifier, UPDATE_RECORD, PENDING, FAILED, CLAIMED)).fetchall():
+            self._cancel(db, stale, "the scope no longer targets a project", now)
+        return None
+
+    def _link_to_target(self, db, identifier, now):
+        """Relink the owned issue to its product's current project, or unlink it if none."""
+        fault = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
+                           (identifier,)).fetchone()
+        if not fault["external_ref"]:
+            return None
+        target, _ = self._owned_target(db, fault["product"], fault["scope_key"])
+        if target and target["projectRef"]:
+            return self._relink(db, identifier, target["projectRef"], now)
+        return self._unlink(db, identifier, now)
+
     def _relink_where(self, db, now, *, scope_key=None, limit=RELINK_PER_CALL):
-        """Relink owned issues whose link is not their product's current target project."""
+        """Relink owned issues whose link is not their product's current target project, and
+        unlink those whose scope no longer targets any project their product owns."""
         clause = " AND f.scope_key = ?" if scope_key is not None else ""
-        params = (scope_key,) if scope_key is not None else ()
+        params = (UNLINKED, scope_key) if scope_key is not None else (UNLINKED,)
         query = (
             "SELECT f.fault_id, p.project_ref FROM fault_ledger f"
-            "  JOIN fault_target_projects p ON p.scope_key = f.scope_key AND p.product = f.product"
+            "  LEFT JOIN fault_target_projects p"
+            "    ON p.scope_key = f.scope_key AND p.product = f.product"
             "  LEFT JOIN fault_links l ON l.fault_id = f.fault_id"
-            " WHERE f.external_ref IS NOT NULL AND p.project_ref IS NOT NULL"
-            "   AND (l.fault_id IS NULL OR l.project_ref IS NOT p.project_ref)" + clause)
+            " WHERE f.external_ref IS NOT NULL"
+            "   AND ((p.project_ref IS NOT NULL"
+            "         AND (l.fault_id IS NULL OR l.project_ref IS NOT p.project_ref))"
+            "        OR (p.project_ref IS NULL"
+            "            AND (l.fault_id IS NULL OR l.project_ref IS NOT NULL OR l.state != ?)))"
+            + clause)
         rows = db.execute(query + " ORDER BY f.rowid LIMIT ?", (*params, limit + 1)).fetchall()
         done = 0
         for row in rows[:limit]:
-            self._relink(db, row["fault_id"], row["project_ref"], now)
+            if row["project_ref"]:
+                self._relink(db, row["fault_id"], row["project_ref"], now)
+            else:
+                self._unlink(db, row["fault_id"], now)
             done += 1
         pending = db.execute("SELECT COUNT(*) AS n FROM (" + query + ")", params).fetchone()["n"]
         return done, pending
@@ -1979,6 +2027,29 @@ class FaultLedger:
         projected = [name for name, spec in KINDS.items() if spec["target"] == "team+project"]
         return creates, issue, targeted, projected
 
+    @staticmethod
+    def _open_budget(product_sql, kind_sql) -> str:
+        """SQL: this product and kind still have budget at the moment bound as its one parameter.
+
+        Decided per candidate row inside the selection, so no bounded list of spent pairs can
+        miss one: a pair past such a list was offered as ready and then refused at claim,
+        forever, while every eligible write behind it starved.
+        """
+        counts = " ".join(f"WHEN '{kind}' THEN {limit}"
+                          for kind, (limit, _window) in DEFAULT_LIMITS.items())
+        windows = " ".join(f"WHEN '{kind}' THEN {window}"
+                           for kind, (_limit, window) in DEFAULT_LIMITS.items())
+        default_count, default_window = DEFAULT_KIND_LIMIT
+        lookup = ("(SELECT {col} FROM fault_limits l WHERE l.product = " + product_sql
+                  + " AND l.kind = " + kind_sql + ")")
+        return (
+            "(SELECT COUNT(*) FROM fault_budget_uses u WHERE u.product = " + product_sql
+            + " AND u.kind = " + kind_sql + " AND u.used_ts > ? - COALESCE("
+            + lookup.format(col="window_seconds") + ", CASE " + kind_sql + " " + windows
+            + f" ELSE {default_window} END)) < COALESCE("
+            + lookup.format(col="max_count") + ", CASE " + kind_sql + " " + counts
+            + f" ELSE {default_count} END)")
+
     def _spent(self, db, moment) -> dict:
         pairs = db.execute(
             "SELECT DISTINCT f.product, p.kind FROM fault_publications p"
@@ -2002,8 +2073,7 @@ class FaultLedger:
             return [self._publication_view(db, row) for row in self._ready(db, moment, limit)]
 
     def _ready(self, db, moment, limit):
-        remaining = self._spent(db, moment)
-        spent = [f"{product}|{kind}" for (product, kind), left in remaining.items() if left <= 0]
+        remaining = {}
         kinds, issue, targeted, projected = self._selectable()
 
         def listed(values):
@@ -2018,7 +2088,7 @@ class FaultLedger:
             "    ON tp.scope_key = f.scope_key AND tp.product = f.product"
             " WHERE p.state = ? AND (p.next_attempt_at IS NULL OR p.next_attempt_at <= ?)"
             "   AND p.kind IN " + listed(kinds) +
-            "   AND (f.product || '|' || p.kind) NOT IN " + listed(spent) +
+            "   AND " + self._open_budget("f.product", "p.kind") +
             "   AND (p.kind NOT IN " + listed(issue) + " OR f.external_ref IS NOT NULL)"
             "   AND (p.kind != ? OR f.external_ref IS NULL)"
             "   AND (p.kind NOT IN " + listed(targeted) +
@@ -2028,12 +2098,14 @@ class FaultLedger:
             "                               AND o.product != f.product)))"
             "   AND (p.kind NOT IN " + listed(projected) + " OR tp.project_ref IS NOT NULL))"
             " ORDER BY turn, seq LIMIT ?")
-        rows = db.execute(query, (PENDING, moment, *kinds, *spent, *issue, OPEN_RECORD,
+        rows = db.execute(query, (PENDING, moment, *kinds, moment, *issue, OPEN_RECORD,
                                   *targeted, *projected, limit * 4)).fetchall()
         chosen = []
         for row in rows:
             pair = (row["fault_product"], row["kind"])
-            if remaining.get(pair, 1) <= 0:
+            if pair not in remaining:
+                remaining[pair] = self._budget(db, pair[0], pair[1], moment)["remaining"]
+            if remaining[pair] <= 0:
                 continue
             if row["kind"] == OPEN_RECORD:
                 # The query excludes these already; asked again through the one function that
@@ -2042,7 +2114,7 @@ class FaultLedger:
                                    (row["fault_id"],)).fetchone()
                 if _issue_slot(db, fault)[0] == SLOT_ISSUE:
                     continue
-            remaining[pair] = remaining.get(pair, 1) - 1
+            remaining[pair] -= 1
             chosen.append(row)
             if len(chosen) >= limit:
                 break
@@ -2464,7 +2536,9 @@ class FaultLedger:
         target, _ = self._owned_target(db, fault["product"], fault["scope_key"])
         wanted = target["projectRef"] if target else None
         link = db.execute("SELECT * FROM fault_links WHERE fault_id = ?", (identifier,)).fetchone()
-        state = LINKED if (wanted is None or observed_project == wanted) else UNLINKED
+        # With no current project owned by the fault's product there is nothing the issue could
+        # be linked TO, so any readback leaves it unlinked, awaiting a target.
+        state = LINKED if (wanted is not None and observed_project == wanted) else UNLINKED
         if link is None:
             db.execute(
                 "INSERT INTO fault_links (fault_id, external_ref, project_ref,"
@@ -2477,7 +2551,10 @@ class FaultLedger:
                 (reference, observed_project, state if link["project_ref"] in (None, wanted)
                  else UNLINKED, now, identifier))
         if state == UNLINKED:
-            self._relink(db, identifier, wanted, now)
+            if wanted is None:
+                self._unlink(db, identifier, now)
+            else:
+                self._relink(db, identifier, wanted, now)
 
     def fail(self, publication, *, claim_token, error, ended=False, now=None) -> dict:
         """This write did not report success. What may follow depends on whether it was issued.
@@ -2666,9 +2743,16 @@ class FaultLedger:
                      "budget_spent": "held", "awaiting_record": "awaitingRecord",
                      "scope_key_contested": "scopeKeyContested", "backing_off": "backingOff",
                      "kind_unregistered": "kindUnregistered", "issue_owned": "issueOwned"}
+            classified = 0
             for row in db.execute("SELECT * FROM fault_publications WHERE state = ?"
                                   " ORDER BY rowid LIMIT 1000", (PENDING,)).fetchall():
                 pending[names[self._held_reason(db, row, moment)]] += 1
+                classified += 1
+            # Classified up to a bound, counted without one: a larger queue is not reported as
+            # smaller than it is.
+            pending["unclassified"] = db.execute(
+                "SELECT COUNT(*) AS n FROM fault_publications WHERE state = ?",
+                (PENDING,)).fetchone()["n"] - classified
             unlinked = db.execute("SELECT COUNT(*) AS n FROM fault_links WHERE state = ?",
                                   (UNLINKED,)).fetchone()["n"]
             notifications = {state: db.execute(
@@ -2782,11 +2866,23 @@ class FaultLedger:
         reserved, withheld, held = [], 0, 0
         with self.store.transaction() as db:
             self._lapse_notifications(db, moment, stamp)
-            for row in db.execute("SELECT * FROM fault_notifications WHERE state = ?"
-                                  " ORDER BY rowid LIMIT ?", (PENDING, limit * 4)).fetchall():
+            # Round-robin by product, a spent product excluded inside the query, and a withheld
+            # notification asked again only after a short delay: the three ways a fixed head of
+            # the queue used to hide every eligible notification behind it.
+            candidates = db.execute(
+                "SELECT * FROM (SELECT n.*, n.rowid AS seq,"
+                "   ROW_NUMBER() OVER (PARTITION BY n.product ORDER BY n.rowid) AS turn"
+                "  FROM fault_notifications n WHERE n.state = ?"
+                "   AND (n.recheck_at IS NULL OR n.recheck_at <= ?)"
+                "   AND " + self._open_budget("n.product", "'" + NOTIFICATION + "'") + ")"
+                " ORDER BY turn, seq LIMIT ?", (PENDING, moment, moment, limit * 4)).fetchall()
+            for row in candidates:
                 if len(reserved) >= limit:
                     break
                 if not self._eligibility(db, row["fault_id"], moment)["eligible"]:
+                    db.execute("UPDATE fault_notifications SET recheck_at = ?"
+                               " WHERE notification_id = ?",
+                               (moment + NOTIFICATION_RECHECK_SECONDS, row["notification_id"]))
                     withheld += 1
                     continue
                 used = self._consume(db, row["product"], NOTIFICATION,

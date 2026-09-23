@@ -1040,6 +1040,212 @@ class ClaimsAreChargedOnceEachAndStaleRelinksNeverIssue(ContractCase):
         self.assertEqual(faults.CANCELLED, capability(self, self.ledger, "publication")(relink[0])["state"])
 
 
+class NoProjectMeansUnlinked(ContractCase):
+    """Final review round one, blocker 1 (invariants 10 and 11, the project-linkage correction).
+
+    With no project its product owns, an owned issue has nowhere it belongs: it is unlinked,
+    awaiting a target, and never reported linked. Setting a project again relinks the same issue.
+    """
+
+    def link_state(self, identifier):
+        return capability(self, self.ledger, "get")(identifier).get("linkState")
+
+    def test_removing_the_project_unlinks_and_a_new_project_relinks_the_same_issue(self):
+        identifier, pub = self.opened()
+        self.publish(pub)
+        self.assertEqual(faults.LINKED, self.link_state(identifier))
+        self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM, project_ref=None)
+        self.assertEqual(faults.UNLINKED, self.link_state(identifier))
+        self.assertEqual(1, capability(self, self.ledger, "attention")()["unlinked"])
+        self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM, project_ref="P2")
+        self.assertEqual(["P2"], [
+            entry["payload"]["value"]
+            for entry in capability(self, self.ledger, "publications")(identifier,
+                                                                     kind="update_record")
+            if entry["state"] == faults.PENDING])
+
+    def test_a_move_to_a_scope_without_a_project_unlinks(self):
+        identifier, pub = self.opened()
+        self.publish(pub)
+        self.ledger.set_target(product=PRODUCT, project="OPS", team=TEAM)
+        capability(self, self.ledger, "move")(identifier, scope={"projectKey": "OPS"})
+        self.assertEqual(faults.UNLINKED, self.link_state(identifier))
+
+    def test_a_create_confirmed_after_the_project_was_removed_is_not_linked(self):
+        identifier, pub = self.opened()
+        claim, operation = self.created(pub)
+        self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM, project_ref=None)
+        self.ledger.complete(pub, claim_token=claim["claimToken"],
+                             readback="issue body\n\n" + operation["block"] + "\n",
+                             external_ref="REL-1", project_ref=PROJECT)
+        self.assertEqual(faults.UNLINKED, self.link_state(identifier))
+
+
+class SelectionIsFairPastWhatItCannotTake(ContractCase):
+    """Final review round one, blockers 2 and 3 (invariants 12 and 15): what cannot be taken now
+    - a spent budget, a withheld notification - never hides what can be taken behind it."""
+
+    def notice(self, relationship, product=PRODUCT, turn="t"):
+        return self.ledger.record(observation(
+            f"{relationship}:{turn}", product=product, severity=faults.NOTICE,
+            signature={"relationship": relationship, "turn": turn}))["faultId"]
+
+    def test_a_capped_product_does_not_hold_another_products_notification(self):
+        raise_ = capability(self, self.ledger, "raise_notification")
+        capability(self, self.ledger, "set_limit")(PRODUCT, "notification", max_count=1,
+                                                   window=3600)
+        for n in range(5):
+            raise_(self.notice(f"r{n}"), reason="classification")
+        self.assertEqual(1, len(self.ledger.reserve_notifications(owner="w", limit=1)["reserved"]))
+        other = self.notice("r-ops", product="ops")
+        raise_(other, reason="classification")
+        reserved = self.ledger.reserve_notifications(owner="w", limit=1)["reserved"]
+        self.assertEqual([other], [entry["faultId"] for entry in reserved])
+
+    def test_withheld_notifications_at_the_head_do_not_hide_the_next(self):
+        raise_ = capability(self, self.ledger, "raise_notification")
+        self.register()
+        relationship = self.store.one("SELECT relationship_id FROM relationships")[
+            "relationship_id"]
+        with self.store.transaction() as db:
+            db.execute("UPDATE relationships SET status = 'paused'")
+        for n in range(4):
+            raise_(self.notice(relationship, turn=f"t{n}"), reason="classification")
+        free = self.notice("r-free")
+        raise_(free, reason="classification")
+        self.ledger.reserve_notifications(owner="w", limit=1)
+        reserved = self.ledger.reserve_notifications(owner="w", limit=1)["reserved"]
+        self.assertEqual([free], [entry["faultId"] for entry in reserved])
+
+    def test_many_spent_products_do_not_starve_an_open_one(self):
+        count = 501
+        with self.store.transaction() as db:
+            for n in range(count + 1):
+                product = f"p{n:03d}"
+                db.execute("INSERT INTO fault_targets (scope_key, tracker_ref, recorded_at)"
+                           " VALUES (?,?,?)", (product + ":CRW", TEAM, "t"))
+                db.execute("INSERT INTO fault_target_projects (scope_key, product, project_ref,"
+                           " recorded_at) VALUES (?,?,?,?)", (product + ":CRW", product, PROJECT, "t"))
+                if n < count:
+                    db.execute("INSERT INTO fault_limits (product, kind, max_count,"
+                               " window_seconds, updated_at) VALUES (?,?,?,?,?)",
+                               (product, "open_record", 1, 3600.0, "t"))
+                    db.execute("INSERT INTO fault_budget_uses (product, kind, ref, used_at,"
+                               " used_ts) VALUES (?,?,?,?,?)",
+                               (product, "open_record", "spent", "t", self.clock.now()))
+        for n in range(count + 1):
+            self.ledger.record(observation(f"k{n}", product=f"p{n:03d}"))
+        ready = self.ledger.next(limit=1)
+        self.assertEqual([f"p{count:03d}"], [
+            capability(self, self.ledger, "get")(entry["fault_id"])["product"]
+            for entry in ready])
+
+
+class ExistenceQuestionsAreBounded(RelayTestCase):
+    """Final review round one, blocker 4 (invariant 14): asking whether a fault's source still
+    produces it judged every overtaken delivery in one call. Now one call judges a bounded number,
+    keeps its verdicts, and a later call continues; an absence is only ever established over all
+    of them."""
+
+    def setUp(self):
+        super().setUp()
+        self.assertTrue(hasattr(faultsweep, "UNDETERMINED"),
+                        "an existence question has no bound to answer against")
+        self.register()
+        self.relationship = self.store.one("SELECT relationship_id FROM relationships")[
+            "relationship_id"]
+
+    def delivery(self, event, generation):
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO events (event_id, relationship_id, execution_generation,"
+                " revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status,"
+                " receipt, first_seen_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (event, self.relationship, generation, "h-" + event, "ready_for_review",
+                 "child", "child-thread", "turn-" + event, "completed", "{}", "t", "t"))
+            db.execute(
+                "INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id,"
+                " recipient_thread_id, state, attempt_count, hold_reason, created_at,"
+                " updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (event, self.relationship, "completion", "p", "p", "withheld_pre_send", 6,
+                 "attempt_cap", "t", "t"))
+
+    def test_one_question_judges_a_bounded_number_and_the_next_continues(self):
+        from unittest import mock
+
+        from codex_session_relay import delivery
+
+        with self.store.transaction() as db:
+            db.execute("UPDATE relationships SET execution_generation = 2")
+        overtaken = faultsweep.PRESENT_CHECKS * 2 + 3
+        for n in range(overtaken):
+            self.delivery(f"old-{n:04d}", 1)
+        calls = []
+        original = delivery.supersession_reason
+
+        def counted(db, event_id):
+            calls.append(event_id)
+            return original(db, event_id)
+
+        signature = {"recipient": "p", "attemptState": None}
+        answers = []
+        with mock.patch.object(delivery, "supersession_reason", counted):
+            for _ in range(3):
+                before = len(calls)
+                answers.append(faultsweep.still_present(self.store, "delivery_stalled",
+                                                        signature))
+                self.assertLessEqual(len(calls) - before, faultsweep.PRESENT_CHECKS)
+        self.assertEqual([faultsweep.UNDETERMINED, faultsweep.UNDETERMINED, None], answers)
+        self.assertEqual(overtaken, len(set(calls)))
+        self.delivery("new", 2)
+        self.assertTrue(faultsweep.still_present(self.store, "delivery_stalled", signature))
+        self.assertIsNot(faultsweep.UNDETERMINED,
+                         faultsweep.still_present(self.store, "delivery_stalled", signature))
+
+
+class EveryCollectedIncidentStatesItsFacts(RelayTestCase):
+    """Final review round one, blocker 5 (criterion 1): each automatically collected incident
+    records what was expected, what happened, the impact, what the reading cannot see, and the
+    installation it was seen under - the revision being a stated limit the relay cannot know."""
+
+    def test_each_collected_observation_carries_its_facts(self):
+        from codex_session_relay import __version__
+
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id,"
+                " recipient_thread_id, state, attempt_count, hold_reason, created_at,"
+                " updated_at) VALUES ('held', 'rel-1', 'completion', 'p1', 'p1',"
+                " 'withheld_pre_send', 6, 'attempt_cap', 't', 't')")
+            db.execute(
+                "INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id,"
+                " recipient_thread_id, state, attempt_count, created_at, updated_at)"
+                " VALUES ('refused', 'rel-2', 'completion', 'p2', 'p2', 'withheld_pre_send', 0,"
+                " 't', 't')")
+            self.store.journal("delivery_withheld", "refused",
+                               {"reason": "settings_incomplete", "detail": "no"}, at="t")
+            db.execute(
+                "INSERT INTO managed_start_requests (request_id, issue_key,"
+                " request_fingerprint, fingerprint_version, workspace, marker_root,"
+                " socket_identity, create_request_id, dispatch_request_id, state, revision,"
+                " receipt_status, created_at, updated_at)"
+                " VALUES ('req-1', 'CRW-9', 'fp', 'v1', '/w', '/m', 'sock', 'c', 'd',"
+                " 'create_armed', 2, 'failed', 't', 't')")
+        batch = faultsweep.sweep(self.store, readings=[{
+            "schema": faultsweep.OBSERVATION_SCHEMA, "relationshipId": "rel-3",
+            "selectors": {"turn": "t1"}, "reportingState": "unreported"}])
+        active = [entry for entry in batch["observations"] if not entry["cleared"]]
+        self.assertEqual({"delivery_stalled", "delivery_refused", "managed_start_failed",
+                          "report_omitted"}, {entry["faultClass"] for entry in active})
+        for entry in active:
+            facts = [item["observed"] for item in entry["evidence"] if item["kind"] == "facts"]
+            self.assertEqual(1, len(facts), entry["faultClass"])
+            for field in ("expected", "actual", "impact"):
+                self.assertTrue(facts[0].get(field), (entry["faultClass"], field))
+            self.assertEqual(__version__, facts[0]["installation"]["version"])
+            self.assertIn(faultsweep.INSTALLATION_LIMIT, facts[0]["limits"])
+
+
 class LegacyScopeKeys(ContractCase):
     """Invariants 7 and 8 against a store written before products were restricted."""
 

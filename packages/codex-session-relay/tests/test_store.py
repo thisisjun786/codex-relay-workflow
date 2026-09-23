@@ -24,7 +24,7 @@ EXPECTED_TABLES = {
     "fault_publications", "fault_targets", "fault_cursors", "fault_target_projects",
     "fault_publication_payloads", "fault_links", "fault_adoptions", "fault_aliases",
     "fault_publication_attempts", "fault_budget_uses", "fault_limits", "fault_notifications",
-    "fault_policies",
+    "fault_policies", "fault_overtaken_deliveries",
 }
 
 

@@ -32,9 +32,11 @@ a path that reaches the outcome without passing through that function is a defec
 2. **An issued create is never repeated on a guess.** Handing out an operation marks it issued; a
    lapse or failure after that makes it uncertain; only `reconcile()` with an attested end of the
    request frees it. Enforced by `operation()` and `reconcile()`.
-3. **Transitions belong to the claim.** Operation, completion and failure need the current claim
-   token; the first claimant is the writer and another needs a recorded takeover. Enforced by
-   `_claimed()`.
+3. **Transitions belong to the claim.** Operation, completion and failure of a claimed or issued
+   write need the current claim token; the first claimant is the writer and another needs a
+   recorded takeover. Enforced by `_claimed()`. An uncertain write has no live claim and so no
+   token: it leaves uncertain only on a readback that finds its block - `complete()` without a
+   token, or `reconcile()` - or on an attested end of its request (invariant 2).
 4. **Only unissued writes are cancelled, and cancelling spends nothing earlier.** Pending, failed
    and claimed-not-issued rows only; a claimed one refunds its own attempt and budget. Enforced by
    `_cancel()`, the only path that cancels: `cancel()` is its public form, and adoption,
@@ -56,17 +58,23 @@ a path that reaches the outcome without passing through that function is a defec
 10. **One rescope step.** Every scope change re-points unsent writes, keeps uncertain ones, and
     relinks an owned issue. Enforced by `_rescope()` for `record()`, `move()` and `adopt()`.
 11. **The issue ends on the current project.** Each relink increments the link revision, a stale
-    `set_project` is cancelled before issue, and every confirmation re-checks the target.
-    Enforced by `_relink()` and the built-in `set_project` pre-issue check.
-12. **Budgets hold, never drop, and never starve another product.** Enforced by `consume()` and
-    `next()`.
+    `set_project` is cancelled before issue, and every confirmation re-checks the target. With no
+    project its product owns, an owned issue is unlinked - awaiting a target - and never
+    reported linked. Enforced by `_relink()` and `_unlink()` through `_link_to_target()`, and the
+    built-in `set_project` pre-issue check.
+12. **Budgets hold, never drop, and never starve another product.** A budget is decided per
+    candidate inside the selection query of `next()` and of `reserve_notifications()`, and
+    candidates are taken round-robin by product. Enforced by `consume()` and `_open_budget()`.
 13. **No process skips a kind's checks.** An unregistered kind is never offered, claimed or
     issued. Enforced by `_kind()`.
-14. **Every read is bounded and every rotation reaches the end.** Enforced by `bounded()` and
-    `faultsweep._rotation()`.
+14. **Every read is bounded and every rotation reaches the end.** An existence question asks the
+    live supersession rule about a bounded number of deliveries per call, keeps its verdicts,
+    and answers undetermined - clearing nothing - until a later call has judged them all.
+    Enforced by `bounded()`, `faultsweep._rotation()` and `faultsweep._first_current()`.
 15. **One notification path.** Eligibility and budget are decided at reservation, a lapsed
-    reservation is uncertain, and caller-raised decisions use the same path. Enforced by
-    `reserve_notifications()`.
+    reservation is uncertain, caller-raised decisions use the same path, and a withheld
+    notification is asked again only after a short delay, so it never hides the ones behind it.
+    Enforced by `reserve_notifications()`.
 16. **Waiting is never a fault, an overtaken obligation is not current, and no sweep contradicts
     itself.** Paused, archived, busy and waiting recipients are never collected; a superseded
     delivery and an anchor the scheduler no longer reads (a paused assignment, a generation it
@@ -170,6 +178,12 @@ a path that reaches the outcome without passing through that function is a defec
   its scope targets NOW. The readback must name a project. When that project differs from the
   current target, the create is still confirmed (the issue exists and the fault owns it), the
   link is recorded unlinked, and `set_project` for the current target is queued on the same
+  issue.
+- A scope with no project its product owns - removed, never set, or owned by another product -
+  leaves an owned issue unlinked, awaiting a target: `set_target(..., project_ref=None)` and
+  `relink()` unlink such issues (and cancel their unsent `set_project`), a move or adoption into
+  such a scope unlinks, and a readback confirmed while there is no current project records
+  unlinked. `attention()` counts them. Setting a project again queues `set_project` on the same
   issue.
 
 ### Owning an issue is not the same as a write having landed
@@ -333,9 +347,9 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
   re-pointed, or lapsed - gets its own unit and attempt back; nothing earlier is refunded. Every
   transition of a claim updates that claim's attempt row and no other, so earlier attempts keep
   their history.
-- `next(limit)` is fair across products: spent product and kind pairs are excluded inside the
-  query and the rest are taken round-robin by product, so a capped product never hides another's
-  work. `queue_state(limit)` returns `ready`, `held` with reasons, and `budgets`.
+- `next(limit)` is fair across products: each candidate's product and kind budget is decided
+  inside the selection query, and the rest are taken round-robin by product, so a capped product
+  never hides another's work however many products are capped. `queue_state(limit)` returns `ready`, `held` with reasons, and `budgets`.
 
 ### Collection
 
@@ -374,7 +388,17 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
   workspace, hashed assignment, child session and turn - and writes nothing. An observer error is
   a `managed_reading_failed` gap.
 - Every source is read in rotations bounded by its upper key at rotation start, and every
-  rotation reaches the end.
+  rotation reaches the end. Asking whether a derived fault's source still produces it judges at
+  most `PRESENT_CHECKS` deliveries against the send path's live rule per call; each overtaken
+  verdict is kept (`fault_overtaken_deliveries`, permanent like the supersession it records) and
+  excluded in SQL afterwards. Until every candidate is judged the answer is undetermined: the fault
+  is not cleared and a `presence_undetermined` gap names it.
+- Every automatically collected incident carries a `facts` evidence item: what was expected, what
+  happened, the impact, what the reading cannot see, the subject (event, relationship, generation,
+  turn) where its source holds them, and the installation - package version and the location of
+  the installed copy. The revision it was installed from is held by the runtime installer's
+  record, which the relay does not read, so it is stated as an observation limit rather than
+  guessed. First and latest occurrence are the ledger's own `first_seen_at` and `last_seen_at`.
 - `reading_faults(..., limit, after)` and `sweep(..., readings_after)` return
   `readingsNext`; more than 1000 readings are refused. `record_all` turns a refused
   observation into a gap and records the rest.
@@ -390,7 +414,8 @@ follow it too.
 ### Attention and notifications
 
 - `attention()` counts unsent writes - ready, awaiting target, held, claimed (live or lapsed
-  lease), failed, uncertain, awaiting record - and returns a warning; `status` shows it under
+  lease), failed, uncertain, awaiting record, and pending ones past its classification bound as
+  `unclassified` - and returns a warning; `status` shows it under
   `faults`, and a daemon tick carries it as a note on the tick where it appears or changes.
 - Notifications are `blocking` (a broken fault opened), `decision` (a write became uncertain
   or failed for good) and `resolved`. `notifications(*, limit)` lists pending ones with their
@@ -400,8 +425,9 @@ follow it too.
   example an incident awaiting classification, or an owner or project hold). It is idempotent per
   fault and reason and enters the same eligibility, budget and reservation path as the ledger's
   own; there is one notification path.
-- `reserve_notifications(*, owner, limit)` atomically takes eligible ones, consumes their budget
-  and leases them, each with a stable `deliveryKey` the deliverer must pass to its transport as
+- `reserve_notifications(*, owner, limit)` atomically takes eligible ones - round-robin by
+  product, a spent product excluded inside the query, and one found withheld asked again only
+  after `NOTIFICATION_RECHECK_SECONDS` - consumes their budget and leases them, each with a stable `deliveryKey` the deliverer must pass to its transport as
   the idempotency key. `ack_notification(id, *, token, ref)` records delivery and is accepted for
   the current token whatever has happened to eligibility since; `fail_notification(id, *, token,
   error)` returns it to pending with the error, when the deliverer knows nothing was sent. A lease
@@ -435,7 +461,7 @@ Refusals: `fault_adopt_conflict`, `fault_scope_conflict`, `fault_writer_conflict
 Tables, all new because this store has no migration path: `fault_target_projects`,
 `fault_publication_payloads`, `fault_links`, `fault_adoptions`, `fault_aliases`,
 `fault_publication_attempts`, `fault_budget_uses`, `fault_limits`, `fault_notifications`,
-`fault_policies`.
+`fault_policies`, `fault_overtaken_deliveries`.
 
 ## What a fault is
 
@@ -783,6 +809,7 @@ happened is the work the fix cycle exists for.
 | `fault_limits` | per-product budget overrides, per kind |
 | `fault_notifications` | blocking, decision and resolved notifications and their delivery state |
 | `fault_policies` | per-product suppression overrides, with the reason |
+| `fault_overtaken_deliveries` | deliveries the send path's rule was found to overtake, kept so an existence question stays bounded |
 
 ## Python API
 

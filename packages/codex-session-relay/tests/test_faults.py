@@ -410,8 +410,8 @@ class AnExistingStoreGainsTheFaultTables(RelayTestCase):
         self.addCleanup(reopened.close)
         names = {row[0] for row in reopened.all(
             "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'fault%'")}
-        # Seven from the first contract, ten from the corrected one; none of them altered.
-        self.assertEqual(17, len(names))
+        # Seven from the first contract, eleven from the corrected one; none of them altered.
+        self.assertEqual(18, len(names))
         ledger = faults.FaultLedger(reopened, self.clock)
         ledger.set_target(product="crw", project="CRW", team=TRACKER, project_ref="proj-CRW")
         answer = ledger.record(omission("upgrade"))

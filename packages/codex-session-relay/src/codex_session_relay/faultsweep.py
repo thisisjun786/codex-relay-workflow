@@ -1,7 +1,9 @@
 """Deriving fault observations from rows this store already holds.
 
-Reading only. Nothing here writes a fault: it answers what the store currently shows, and
-FaultLedger.record decides what that means for a fault. Keeping the two apart is what lets
+Reading only, apart from its own bookkeeping. Nothing here writes a fault or any row another
+module owns: it answers what the store currently shows, and FaultLedger.record decides what that
+means for a fault. The only rows it writes are its own - where each source's rotation stopped,
+and which deliveries the send path's rule has already been found to overtake. Keeping the two apart is what lets
 the same derivation run on a daemon tick, from an operator's command, and inside a test
 without any of them differing.
 
@@ -24,13 +26,20 @@ looked".
 """
 
 import json
+from pathlib import Path
 
-from . import faults
+from . import __version__, faults
 from . import settings as settings_module
 from .errors import RefusalReason
 from .policy import RetryPolicy
 
 SWEEP_LIMIT = 32
+# How many deliveries one existence question asks the live supersession rule about. Verdicts are
+# kept (fault_overtaken_deliveries), so a later sweep continues past the ones already judged.
+PRESENT_CHECKS = SWEEP_LIMIT * 4
+# The answer when that bound was reached before a current delivery or the end: not an absence,
+# so the fault is not cleared this sweep, and it is named as a gap rather than passed silently.
+UNDETERMINED = {"undetermined": True}
 # The most readings one call may be handed, reduced and paged. More is refused rather than
 # truncated: a caller that handed in more than it can see answered for has to page itself.
 MAX_READINGS = 1000
@@ -196,22 +205,42 @@ def _current(store, event_id, cache=None) -> bool:
 
 
 def _first_current(store, sql, params):
-    """The first delivery this query names that is still current, or None.
+    """The first delivery this query names that is still current, None, or UNDETERMINED.
 
-    Paged, so no single read is unbounded, and stopping at the first current one: an existence
-    question needs one answer, and a recipient whose every stuck delivery was overtaken has
-    none.
+    Every read is a bounded page, and one call asks the live rule about at most PRESENT_CHECKS
+    deliveries. Each overtaken verdict is kept, because every such answer is permanent, and
+    excluded in SQL from then on: so every call reads the source from its start - nothing can
+    slip in behind a cursor - while a later call still progresses past what an earlier one
+    judged. None is an absence established over every candidate; UNDETERMINED is not one.
     """
-    after = ""
-    while True:
-        rows = store.all(sql + " AND d.event_id > ? ORDER BY d.event_id LIMIT ?",
-                         (*params, after, SWEEP_LIMIT))
-        for row in rows:
-            if _current(store, row["event_id"]):
-                return row
-        if len(rows) < SWEEP_LIMIT:
-            return None
-        after = rows[-1]["event_id"]
+    from .delivery import supersession_reason
+
+    after, checked, overtaken = "", 0, []
+    try:
+        while True:
+            rows = store.all(
+                sql + " AND NOT EXISTS (SELECT 1 FROM fault_overtaken_deliveries o"
+                      "                  WHERE o.event_id = d.event_id)"
+                      " AND d.event_id > ? ORDER BY d.event_id LIMIT ?",
+                (*params, after, SWEEP_LIMIT))
+            for row in rows:
+                if checked >= PRESENT_CHECKS:
+                    return UNDETERMINED
+                checked += 1
+                reason = supersession_reason(store.db, row["event_id"])
+                if reason is None:
+                    return row
+                overtaken.append((row["event_id"], str(reason)))
+            if len(rows) < SWEEP_LIMIT:
+                return None
+            after = rows[-1]["event_id"]
+    finally:
+        if overtaken:
+            now = _now(store)
+            with store.transaction() as db:
+                db.executemany(
+                    "INSERT OR IGNORE INTO fault_overtaken_deliveries (event_id, reason, noted_at)"
+                    " VALUES (?,?,?)", [(event, reason, now) for event, reason in overtaken])
 
 
 def scope_of(store, relationship_id, base=None, cache=None) -> dict:
@@ -245,6 +274,26 @@ def scope_of(store, relationship_id, base=None, cache=None) -> dict:
 def _evidence(kind, ref, observed) -> dict:
     """Evidence as a SNAPSHOT. The rows below are all overwritten in place by their owners."""
     return {"kind": kind, "ref": ref, "observed": observed}
+
+
+# What this relay can say about the copy it runs from. The revision it was installed from is
+# held by the runtime installer's own record, which the relay does not read, so it is stated as
+# a limit of every observation rather than guessed.
+INSTALLATION = {"package": "codex-session-relay", "version": __version__,
+                "location": str(Path(__file__).resolve().parent)}
+INSTALLATION_LIMIT = ("the installed revision is not known to the relay; the package version and"
+                      " the location of the installed copy identify it")
+
+
+def _facts(*, expected, actual, impact, limits=(), **subject) -> dict:
+    """The incident as criterion 1 asks for it: what should have happened, what did, what it
+    costs, what this reading cannot see, and the installation it was seen under. The subject
+    fields (event, relationship, generation, turn) are given where the source holds them."""
+    observed = {"expected": expected, "actual": actual, "impact": impact,
+                "installation": INSTALLATION,
+                "limits": [*limits, INSTALLATION_LIMIT]}
+    observed.update({key: value for key, value in subject.items() if value is not None})
+    return _evidence("facts", "sweep", observed)
 
 
 def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None,
@@ -307,7 +356,13 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None,
                 "state": row["state"], "holdReason": row["hold_reason"],
                 "attemptCount": row["attempt_count"], "lastAttemptState": row["last_state"],
                 "relationship": row["relationship_id"],
-            })],
+            }), _facts(
+                expected=f"the delivery reaches {row['recipient_task_id']}",
+                actual=(f"held ({row['hold_reason']}) after {row['attempt_count']} attempts;"
+                        f" the last settled attempt ended {row['last_state']}"),
+                impact="the recipient is not given this delivery while the hold stands",
+                limits=["read from settled attempts only; one still in flight is not counted"],
+                event=row["event_id"], relationship=row["relationship_id"])],
         ))
     return _page(observations, rows, "event_id", after, limit, until)
 
@@ -368,7 +423,12 @@ def retry_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> di
             "attemptState": row["attempt_state"], "deliveryState": row["delivery_state"],
             "holdReason": row["hold_reason"], "attemptCount": row["attempt_count"],
             "event": row["event_id"],
-        })],
+        }), _facts(
+            expected=f"the attempt reaches {row['recipient_task_id']}",
+            actual=f"the attempt ended {row['attempt_state']}",
+            impact="the delivery is retried and has not reached its recipient",
+            limits=["one occurrence per settled failed attempt; attempts in flight are not read"],
+            event=row["event_id"], relationship=row["relationship_id"])],
     ) for row in rows if _current(store, row["event_id"], current)]
     return _page(observations, rows, "seq", after, limit, until)
 
@@ -399,7 +459,12 @@ def sync_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> dic
         evidence=[_evidence("row", f"sync_outbox:{row['sync_id']}", {
             "attempts": row["attempts"], "lastError": row["last_error"],
             "relationship": row["relationship_id"], "targetRef": row["target_ref"],
-        })],
+        }), _facts(
+            expected=f"the {row['target']} carries this write",
+            actual=f"the write gave up after {row['attempts']} attempts: {row['last_error']}",
+            impact=f"the {row['target']} is behind what the relay recorded",
+            limits=["only the last error of the job is kept"],
+            relationship=row["relationship_id"])],
     ) for row in rows]
     return _page(observations, rows, "sync_id", after, limit, until)
 
@@ -484,7 +549,16 @@ def observation_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None)
                 "turn": turn, "lastPolledAt": row["last_polled_at"],
                 "lastAttemptAt": row["last_attempt_at"], "lastError": row["last_error"],
                 "lastStatus": row["last_status"],
-            })],
+            }), _facts(
+                expected="the scheduler reads this anchor successfully",
+                actual=("no poll of this anchor has succeeded" if never else
+                        f"the most recent poll failed: {row['last_error']}"),
+                impact="a turn ending on this anchor is not observed, so its outcome is not"
+                       " delivered",
+                limits=["a poll row keeps only its latest attempt, so earlier failures are not"
+                        " counted"],
+                relationship=row["relationship_id"],
+                generation=row["execution_generation"], turn=turn)],
         ))
     return _page(observations, rows, "anchor", after, limit, until)
 
@@ -547,7 +621,12 @@ def refusal_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> 
             "event": row["event_id"], "reason": row["reason"],
             "detail": row["refusal_detail"] if isinstance(row["refusal_detail"], str) else None,
             "deliveryState": row["state"], "at": row["at"],
-        })],
+        }), _facts(
+            expected="the recorded settings pass the check made before sending",
+            actual=f"refused before any transport call: {row['reason']}",
+            impact="the delivery is withheld and the recipient is not given it",
+            limits=["only the delivery's current refusal streak is counted"],
+            event=row["event_id"], relationship=row["relationship_id"])],
     ) for row in rows if _current(store, row["event_id"], current)]
     return _page(observations, rows, "seq", after, limit, until)
 
@@ -578,9 +657,13 @@ def managed_start_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=Non
         detail=f"a managed start for {row['issue_key']} was answered"
                f" {row['receipt_status']} without publishing a child",
         evidence=[_evidence("row", f"managed_start_requests:{row['request_id']}", {
-            "receiptStatus": row["receipt_status"], "revision": row["revision"],
+            "receiptStatus": row["receipt_status"], "requestRevision": row["revision"],
             "workspace": row["workspace"], "updatedAt": row["updated_at"],
-        })],
+        }), _facts(
+            expected=f"the host publishes a child for {row['issue_key']}",
+            actual=f"the host answered {row['receipt_status']} and published no child",
+            impact=f"no child is working on {row['issue_key']}",
+            limits=["the registry keeps only the latest receipt of an armed request"])],
     ) for row in rows]
     return _page(observations, rows, "request_id", after, limit, until)
 
@@ -759,7 +842,13 @@ def reading_faults(readings, *, product, scope, store=None, limit=SWEEP_LIMIT,
                 evidence=[_evidence("reading", OBSERVATION_SCHEMA, {
                     "reportingState": state, "reason": reading.get("reason"),
                     "executionGeneration": reading.get("executionGeneration"),
-                })],
+                }), _facts(
+                    expected="an admitted turn settles with its report",
+                    actual="the turn settled without a report",
+                    impact="the level above is not told what the turn produced",
+                    limits=["read through the CRW-180 reporting projection"],
+                    relationship=relationship,
+                    generation=reading.get("executionGeneration"), turn=turn)],
             ))
         elif state == REPORTED:
             observations.append(faults.observation(
@@ -778,7 +867,12 @@ def reading_faults(readings, *, product, scope, store=None, limit=SWEEP_LIMIT,
                 scope=placed,
                 detail="nothing was established about whether this turn owed a report",
                 evidence=[_evidence("reading", OBSERVATION_SCHEMA, {
-                    "reportingState": state, "reason": reading.get("reason")})],
+                    "reportingState": state, "reason": reading.get("reason")}), _facts(
+                    expected="whether this turn owed a report is established",
+                    actual=f"unmeasured: {reading.get('reason')}",
+                    impact="nobody can say whether a report is owed for this turn",
+                    limits=["a notice: recorded, never filed"],
+                    relationship=relationship, turn=turn)],
             ))
         elif state not in ESTABLISHED:
             # Well formed, and carrying a state this cannot interpret. Absorbing it would let
@@ -863,6 +957,7 @@ def sweep(store, *, product="crw", scope=None, readings=(), limit=SWEEP_LIMIT,
     observations = [entry for entry in observations
                     if not (entry["cleared"] and _identity(entry) in active)]
     clears = [entry for entry in recovery["clears"] if _identity(entry) not in active]
+    gaps.extend(recovery["undetermined"])
     positions = {name: page["cursor"] for name, page in by_class.items()}
     positions["recovered"] = recovery["cursor"]
     if managed is not None:
@@ -909,9 +1004,15 @@ def recovered(store, derived, *, product, scope, limit=SWEEP_LIMIT, complete=DER
         (product, faults.OBSERVED, faults.OPEN, faults.FIX_PENDING, *DERIVED, after or "",
          until, limit),
     )
-    clears = []
+    clears, undetermined = [], []
     for row in rows:
-        if still_present(store, row["fault_class"], json.loads(row["signature"])):
+        present = still_present(store, row["fault_class"], json.loads(row["signature"]))
+        if present is UNDETERMINED:
+            undetermined.append({"gap": "presence_undetermined", "faultId": row["fault_id"],
+                                 "reason": f"more than {PRESENT_CHECKS} deliveries to judge; the"
+                                           f" next sweep continues and nothing is cleared yet"})
+            continue
+        if present:
             continue
         last = store.one(
             "SELECT occurrence_id FROM fault_occurrences"
@@ -932,7 +1033,7 @@ def recovered(store, derived, *, product, scope, limit=SWEEP_LIMIT, complete=DER
             evidence=[_evidence("sweep", row["fault_class"], {"derived": False})],
         ))
     page = _page(clears, rows, "fault_id", after, limit, until)
-    return {"clears": clears, "cursor": page["cursor"]}
+    return {"clears": clears, "cursor": page["cursor"], "undetermined": undetermined}
 
 
 def still_present(store, fault_class, signature) -> dict:

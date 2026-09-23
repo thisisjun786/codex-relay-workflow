@@ -1266,9 +1266,24 @@ CREATE TABLE IF NOT EXISTS fault_notifications (
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL,
     delivered_at    TEXT,
-    ack_ref         TEXT
+    ack_ref         TEXT,
+    -- A pending notification found withheld at reservation is asked again only after this
+    -- moment, so a withheld one at the head of the queue cannot hide the eligible ones behind it.
+    recheck_at      REAL
 );
 CREATE INDEX IF NOT EXISTS fault_notifications_state ON fault_notifications (state, product);
+
+-- Deliveries the send path's own rule (delivery.supersession_reason) found overtaken, as the
+-- fault sweep read them. Every such answer is permanent - a later generation, an answered or
+-- replaced revision, a regranted merge turn never come back - so a verdict is recorded once and
+-- excluded in SQL afterwards. That is what bounds the sweep's existence question: each call asks
+-- the live rule about a bounded number of deliveries it has not judged before, instead of all of
+-- them. Written only by the fault sweep, and never read as delivery state.
+CREATE TABLE IF NOT EXISTS fault_overtaken_deliveries (
+    event_id TEXT PRIMARY KEY,
+    reason   TEXT NOT NULL,
+    noted_at TEXT NOT NULL
+);
 
 -- A product's adjustment of a class's suppression, prospective and journaled.
 CREATE TABLE IF NOT EXISTS fault_policies (
