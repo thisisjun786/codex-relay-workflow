@@ -3189,9 +3189,27 @@ def _apply_launch_policy(service, environ) -> dict | None:
 
 
 def _receives_against_the_store(args) -> bool:
-    """packet-check reading the receiver's own store, which judges pairs by the role policy."""
+    """packet-check reading the receiver's own store, which judges pairs by the role policy.
+
+    Not with --applied: that records in the receiver's own ledger that it acted, and reads no
+    store and judges no pair. Held to the policy, a declaration changed after the work was done
+    refused the record, and every replay then asked for the work again.
+    """
     return (getattr(args, "handler", None) is cmd_packet_check
-            and bool(getattr(args, "receiver", None)))
+            and bool(getattr(args, "receiver", None))
+            and not getattr(args, "applied", False))
+
+
+def _declaring_service(services):
+    """This store's service, for its launch declaration, built without the status probe.
+
+    The probe measures the store's identity by writing a probe file beside it. Resolving the
+    declaration needs only the declaration and the policy file it names, and the receive step
+    writes nothing but the receiver's own ledger.
+    """
+    from .service import RelayService
+
+    return RelayService(services.selection, socket_path=services.socket_path)
 
 
 def _supervise(services, service, args) -> dict:
@@ -5312,6 +5330,10 @@ def _reads_no_selected_store(args) -> bool:
         # It confirms the relationship against a store, so it is only marker-only when the caller
         # named which store rather than letting discovery guess one.
         return bool(getattr(args, "db_path", None))
+    if handler is cmd_packet_check:
+        # With --record it reads a supplied file and with --applied only the receiver's own
+        # ledger. Only the store-backed check opens the store a selection would choose.
+        return not _receives_against_the_store(args)
     return handler in MARKER_COMMANDS
 
 
@@ -5452,12 +5474,14 @@ def main(argv=None) -> int:
         # that environment alone, a shell without the variable made every role-bound packet
         # unavailable, and one naming another file judged pairs by a policy the relay does not
         # enforce. Nothing is written; a conflict or an unreadable declaration is refused.
+        refused = None
         if (getattr(args, "service_command", None) == "run"
-                and _launch_already_settled(args, os.environ) is None) \
-                or _receives_against_the_store(args):
+                and _launch_already_settled(args, os.environ) is None):
             refused = _apply_launch_policy(_service_for(services), os.environ)
-            if refused is not None:
-                raise PayloadExit(refused, EXIT_REFUSED)
+        elif _receives_against_the_store(args):
+            refused = _apply_launch_policy(_declaring_service(services), os.environ)
+        if refused is not None:
+            raise PayloadExit(refused, EXIT_REFUSED)
         # Taken here, before any role question and before the handler, for the same reason the
         # bridge builds its policy in its own main(): the snapshot is supposed to be this
         # PROCESS's, and a lazy first read made it the snapshot of whenever a role question

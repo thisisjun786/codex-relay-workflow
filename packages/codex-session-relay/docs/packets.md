@@ -190,7 +190,11 @@ any policy, exactly as a launch applies it; with none declared, the variable in 
 environment. A variable naming another file than the declaration, or a declaration that
 cannot be read, refuses the check as `launch_policy_conflict` or `launch_policy_unreadable`
 rather than choosing one. With neither, every role-bound packet is unavailable and the notes
-say what is missing. Nothing is written.
+say what is missing. Nothing is written. The declaration is what the service's next launch
+reads; a daemon already running keeps the policy it launched with until it restarts
+(`service status` reports both, the running one as `launchPolicy.runningDigest`), so in
+between the check judges by the declared policy and the daemon by its snapshot. `--record` and
+`--applied` read neither the store nor the policy, so neither is held to them.
 
 The relationship is chosen among the receiver's own rows: its one live relationship where it
 has exactly one, otherwise the row the packet names if it is one of the receiver's. A first
