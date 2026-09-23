@@ -1127,6 +1127,16 @@ class FinalReviewFindings(unittest.TestCase):
         attached = placement.defect_signature(incident(), attached="ALN-3")
         self.assertEqual(dict(plain, issue="ALN-3"), attached)
 
+    def test_a_standing_cause_claim_never_hides_a_missing_project_link(self):
+        from codex_session_relay import routes
+
+        now = {"stage": products.STAGE_FILED, "disposition": products.NEW_ISSUE, "hold": None,
+               "project": "proj-aln-editor", "state": "open", "linkState": "unlinked",
+               "unverifiedCause": {"product": "crw", "faultId": "0" * 32, "why": "unverified"}}
+        self.assertEqual(routes.LINK_INCOMPLETE, routes.attention(now))
+        self.assertEqual(routes.CAUSE_UNVERIFIED, routes.attention(dict(now, linkState="linked")))
+        self.assertIsNone(routes.attention(dict(now, linkState="linked", unverifiedCause=None)))
+
     def test_a_declared_product_whose_repository_another_product_claims_waits(self):
         registries = {r["product"]: r for r in (self.registry, products.read_registry(BETA))}
         product, why = placement.resolve_product(registries, incident(

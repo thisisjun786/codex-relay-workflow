@@ -45,8 +45,8 @@ a `source` and a flat `observed` object of scalar readings; at most sixteen entr
 bytes in all. Nested structure, long text or anything past the bound is refused, so an intake
 cannot become a copy of the conversation, file or personal data a source happened to hold.
 The signature an incident gives for a named cause is read the same way: a flat object of at
-most sixteen scalar fields and 1024 bytes, the shape every ledger signature has, kept exactly as
-given so it can be compared with the stored one.
+most sixteen scalar fields and 1024 bytes, the shape of the signatures routing and the ledger's
+own sweeps record. It is kept exactly as given so it can be compared with the stored one.
 
 `surface` is one of `dev_run`, `verification`, `user_report` and `real_use`. Each product's
 registry record says which of them are watched and how they are collected. An incident from a
@@ -119,7 +119,9 @@ an owner is a decision for Jun, never a Linear issue in an arbitrary team.
 `route-classify` names the product, and optionally the component, symptom or goal, from an
 operator or from a bounded model judgement recorded with who made it. The stored incidents are
 replayed under that product, the pending record is withdrawn, and later incidents with the same
-pending identity are forwarded to the classified product. Replay counts at most the sixteen newest
+pending identity are forwarded to the classified product. A replayed or forwarded incident goes
+through the cause it names exactly as an intake would, so classification never drops a shared
+cause. Replay counts at most the sixteen newest
 stored incidents, so the new record's occurrence count is a count of replayed observations.
 
 Identity carries the Linear workspace. A resolved product uses its registry workspace, and an
@@ -130,12 +132,18 @@ incident declaring another is refused. A pending incident uses the workspace it 
 
 When an incident names a cause in another product, typically a CRW fault that broke a product's
 run, the cause is verified first. The fault must exist, belong to the named product, and match
-the signature the incident gives for it. An unverified cause is held and merges nothing.
+the signature the incident gives for it. A cause also counts only incidents of its own origin: a
+simulated incident that names a real fault, or an observed one that names a fault recording
+simulated events, is unverified. A test can therefore never make a real fault recur, notify or
+reopen, and a real effect never counts toward a test fault.
 
-A cause also counts only incidents of its own origin. A simulated incident that names a real
-fault, or an observed one that names a fault recording simulated events, is held as unverified:
-it records nothing on the cause and owes no relation to it. A test can therefore never make a
-real fault recur, notify or reopen, and a real effect never counts toward a test fault.
+An unverified cause merges nothing. The named fault records no occurrence and no relation to it
+is owed. The affected product's defect is placed exactly as if it named no cause, and the claim
+is kept apart from that placement, on the defect's route, as a decision of its own:
+`cause_unverified`, raised at intake when the incident is severe and by the next digest
+otherwise. The claim stands until an incident for the same defect names a verified cause, which
+releases it and owes the relation. A later occurrence naming no cause, a binding that places or
+moves the defect, and a defect filed before the claim arrived all leave it standing.
 
 A verified cause produces two records in one transaction, linked once both own issues. The cause
 fault gains an occurrence at its own current severity, with evidence naming the affected product;
@@ -263,6 +271,7 @@ named the same way everywhere:
 | `awaiting_classification` | a pending-classification record |
 | `held_<hold>` | a held route, with its hold |
 | `link_incomplete` | the owned issue's project link reads back unlinked |
+| `cause_unverified` | a route whose defect named a cause nobody verified, once its hold and project link are settled |
 | `completion_mismatch_open` | an open completion mismatch |
 | `project_proposed` | a project proposal whose project is not bound yet |
 

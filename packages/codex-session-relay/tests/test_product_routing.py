@@ -445,7 +445,7 @@ class SimulatedAndObserved(ProductRoutingCase):
                        cause={"product": "crw", "faultId": real, "signature": real_signature}),
             self.route(occurrenceKey="real-1",
                        cause={"product": "crw", "faultId": fake, "signature": fake_signature})]
-        self.assertEqual(["cause_unverified"] * 2, [a["hold"] for a in crossed])
+        self.assertEqual([real, fake], [a["unverifiedCause"]["faultId"] for a in crossed])
         self.assertEqual(before, {f: self.router.port.get(f)["occurrence_count"]
                                   for f in (real, fake)})
         for answer in crossed:
@@ -456,7 +456,7 @@ class SimulatedAndObserved(ProductRoutingCase):
         matched = self.route(origin="simulated", occurrenceKey="sim-2",
                              cause={"product": "crw", "faultId": fake,
                                     "signature": fake_signature})
-        self.assertIsNone(matched["hold"])
+        self.assertEqual((None, None), (matched["hold"], matched["unverifiedCause"]))
         self.assertEqual(before[fake] + 1, self.router.port.get(fake)["occurrence_count"])
         self.assertEqual(before[real], self.router.port.get(real)["occurrence_count"])
 
@@ -534,11 +534,48 @@ class SharedCause(ProductRoutingCase):
             signature=signature, occurrence_key="crw-1", scope={"projectKey": "relay"}))
         return recorded["faultId"], signature
 
-    def test_an_unverified_cause_merges_nothing_and_holds(self):
+    def test_an_unverified_cause_merges_nothing_and_stands_apart_from_the_defect(self):
         answer = self.route(cause={"product": "crw", "faultId": "0" * 32})
-        self.assertEqual("cause_unverified", answer["hold"])
+        self.assertEqual(("new_issue", None), (answer["disposition"], answer["hold"]))
+        self.assertEqual("0" * 32, answer["unverifiedCause"]["faultId"])
         self.holder.run()
-        self.assertEqual({}, self.linear.issues)
+        (ref, issue), = self.issues_of("ALN").items()
+        self.assertEqual(([], {}), (issue["relations"], self.issues_of("CRW")))
+        (shown,) = self.router.show("alpha-notes", attention=True)["routes"]
+        self.assertEqual("cause_unverified", shown["attention"])
+
+    def test_an_unverified_cause_on_a_filed_defect_stands_until_a_verified_one(self):
+        first = self.route()
+        self.holder.run()
+        self.router.digest()
+        claimed = self.route(occurrenceKey="run-2", cause={"product": "crw", "faultId": "0" * 32})
+        self.assertEqual((first["faultId"], "filed"), (claimed["faultId"], claimed["stage"]))
+        self.assertEqual("0" * 32, claimed["unverifiedCause"]["faultId"])
+        decisions = [d["decision"] for d in self.router.digest()["decisions"]]
+        self.assertEqual(["cause_unverified"], decisions)
+        # An occurrence naming no cause says nothing about the claim, which stays standing.
+        plain = self.route(occurrenceKey="run-3")
+        self.assertEqual("0" * 32, plain["unverifiedCause"]["faultId"])
+        # A verified cause answers it: the claim is released and the relation is owed.
+        cause, signature = self.crw_fault()
+        verified = self.route(occurrenceKey="run-4",
+                              cause={"product": "crw", "faultId": cause, "signature": signature})
+        self.assertIsNone(verified["unverifiedCause"])
+        target = routes.get(self.store, first["faultId"])["target"]
+        self.assertEqual(cause, target["cause"])
+        self.assertIn(cause, [o["toFault"] for o in target["obligations"]])
+        self.assertEqual([], self.router.show("alpha-notes", attention=True)["routes"])
+
+    def test_a_binding_that_places_a_held_defect_keeps_its_unverified_cause(self):
+        held = self.route(product="gamma-kit", repository="example-org/gamma-kit",
+                          surface="real_use", phase="in_use", component="cache",
+                          symptom="stale", cause={"product": "crw", "faultId": "0" * 32})
+        self.assertEqual("no_project", held["hold"])
+        self.router.bind(binding("gamma-kit", "project", "proj-gmk-cache", components=["cache"]))
+        route = routes.get(self.store, held["faultId"])
+        self.assertEqual(("filed", "proj-gmk-cache"), (route["stage"],
+                                                       route["target"]["project"]))
+        self.assertEqual("0" * 32, route["target"]["unverifiedCause"]["faultId"])
 
     def test_a_verified_cause_links_the_two_records_and_keeps_each_severity(self):
         cause, signature = self.crw_fault()
@@ -576,6 +613,16 @@ class UnclearOwnership(ProductRoutingCase):
         self.assertEqual(moved["successor"], later["faultId"])
         self.holder.run()
         self.assertEqual(1, len(self.issues_of("ALN")))
+
+    def test_a_classified_incident_keeps_the_cause_it_named(self):
+        cause, signature = SharedCause.crw_fault(self)
+        before = self.router.port.get(cause)["occurrence_count"]
+        first = self.unknown(cause={"product": "crw", "faultId": cause, "signature": signature})
+        self.assertEqual(before, self.router.port.get(cause)["occurrence_count"])
+        moved = self.router.classify(first["faultId"], {"product": "alpha-notes",
+                                                        "by": "operator"})
+        self.assertEqual(before + 1, self.router.port.get(cause)["occurrence_count"])
+        self.assertEqual(cause, routes.get(self.store, moved["successor"])["target"]["cause"])
 
     def test_two_workspaces_never_share_a_pending_record(self):
         a = self.unknown(workspace="ws-a")

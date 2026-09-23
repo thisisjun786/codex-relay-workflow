@@ -14,12 +14,14 @@ from .identity import sha256_hex
 # latest input, and for a classification to replay what the pending record saw. Older ones are
 # dropped oldest first; the ledger still counts every occurrence it recorded.
 MAX_STORED_INCIDENTS = 16
-TARGET_KEYS = ("team", "project", "owner", "relate", "hold", "labels", "cause", "obligations")
+TARGET_KEYS = ("team", "project", "owner", "relate", "hold", "labels", "cause", "unverifiedCause",
+               "obligations")
 # The decisions a route can be waiting on, named once. Intake raises the severe ones at once,
 # the digest raises every new one, and route-show --attention lists them; one name per decision
 # keeps the ledger's per-fault-and-reason notification idempotence meaning one notice per
 # decision.
 AWAITING_CLASSIFICATION = "awaiting_classification"
+CAUSE_UNVERIFIED = products.CAUSE_UNVERIFIED
 LINK_INCOMPLETE = "link_incomplete"
 MISMATCH_OPEN = "completion_mismatch_open"
 PROJECT_PROPOSED = "project_proposed"
@@ -48,15 +50,19 @@ def get(store, fault_id):
     return _decode(store.one("SELECT * FROM incident_routes WHERE fault_id = ?", (fault_id,)))
 
 
-def target(decision, registry, incident, *, cause=None, obligations=()):
-    """What a route records about where its fault goes, in one shape."""
+def target(decision, registry, incident, *, cause=None, obligations=(), unverified_cause=None):
+    """What a route records about where its fault goes, in one shape.
+
+    cause is a verified cause fault the route is linked to; unverified_cause is a cause somebody
+    named that could not be verified, kept apart from the placement so no later placement
+    decision can overwrite it."""
     simulated = incident["origin"] == products.SIMULATED
     team = registry["testTarget"]["team"] if simulated and registry else (
         registry["team"] if registry else None)
     return {"team": team, "project": decision.get("project"), "owner": decision.get("owner"),
             "relate": list(decision.get("relate") or []), "hold": decision.get("hold"),
             "labels": [incident["repository"]] if incident["repository"] else [],
-            "cause": cause, "obligations": list(obligations)}
+            "cause": cause, "unverifiedCause": unverified_cause, "obligations": list(obligations)}
 
 
 def plain_target(**fields):
@@ -65,7 +71,7 @@ def plain_target(**fields):
     if unknown:
         raise ValueError(f"not target keys: {sorted(unknown)}")
     answer = {"team": None, "project": None, "owner": None, "relate": [], "hold": None,
-              "labels": [], "cause": None, "obligations": []}
+              "labels": [], "cause": None, "unverifiedCause": None, "obligations": []}
     answer.update(fields)
     return answer
 
@@ -75,6 +81,7 @@ def snapshot(route, row) -> dict:
     row = row or {}
     return {"stage": route["stage"], "disposition": route["disposition"],
             "hold": route["target"]["hold"], "project": route["target"]["project"],
+            "unverifiedCause": route["target"].get("unverifiedCause"),
             "claimedSeverity": route["claimed_severity"],
             "state": row.get("state"), "severity": row.get("severity"),
             "occurrenceCount": row.get("occurrence_count") or 0,
@@ -99,6 +106,11 @@ def attention(snapshot):
         return None
     if snapshot["linkState"] == "unlinked":
         return LINK_INCOMPLETE
+    if snapshot.get("unverifiedCause"):
+        # A decision about the cause, apart from the placement: named once the placement's
+        # hold and its issue's project link are settled, and until an incident for this defect
+        # names a verified cause.
+        return CAUSE_UNVERIFIED
     if (snapshot["disposition"] == products.COMPLETION_MISMATCH
             and snapshot["state"] in ledger_port.ACTIVE):
         return MISMATCH_OPEN

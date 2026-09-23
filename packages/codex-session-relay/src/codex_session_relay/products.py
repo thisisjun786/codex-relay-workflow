@@ -118,9 +118,11 @@ NO_PROJECT = "no_project"
 OWNER_PROJECT_MISSING = "owner_project_missing"
 AMBIGUOUS_OWNER = "ambiguous_owner"
 AMBIGUOUS_PROJECT = "ambiguous_project"
+# Not a hold: the decision a named cause nobody could verify stands as, apart from where the
+# defect itself is placed (routes.CAUSE_UNVERIFIED).
 CAUSE_UNVERIFIED = "cause_unverified"
 OWNER_FOUND_AFTER_CREATE = "owner_found_after_create"
-HOLDS = (NO_PROJECT, OWNER_PROJECT_MISSING, AMBIGUOUS_OWNER, AMBIGUOUS_PROJECT, CAUSE_UNVERIFIED,
+HOLDS = (NO_PROJECT, OWNER_PROJECT_MISSING, AMBIGUOUS_OWNER, AMBIGUOUS_PROJECT,
          OWNER_FOUND_AFTER_CREATE)
 
 

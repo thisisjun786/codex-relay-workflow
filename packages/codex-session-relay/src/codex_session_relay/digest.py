@@ -50,7 +50,8 @@ def _entry(route, now):
             "state": now["state"], "severity": now["severity"],
             "claimedSeverity": now["claimedSeverity"], "occurrences": now["occurrenceCount"],
             "issue": now["externalRef"], "project": target["project"], "owner": target["owner"],
-            "hold": target["hold"], "origin": route["origin"], "detail": route["detail"]}
+            "hold": target["hold"], "unverifiedCause": target.get("unverifiedCause"),
+            "origin": route["origin"], "detail": route["detail"]}
 
 
 def _severe(snapshot):

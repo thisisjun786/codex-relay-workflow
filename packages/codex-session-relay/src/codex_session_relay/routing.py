@@ -180,6 +180,7 @@ class ProductRouter:
             entry = {"faultId": route["fault_id"], "product": route["product_key"],
                      "workspace": route["workspace"], "disposition": route["disposition"],
                      "stage": route["stage"], "hold": target["hold"],
+                     "unverifiedCause": target.get("unverifiedCause"),
                      "project": target["project"], "owner": target["owner"],
                      "team": target["team"], "origin": route["origin"],
                      "classification": route["classification"],

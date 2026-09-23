@@ -40,8 +40,14 @@ def intake(router, record) -> dict:
     workspace = placement.workspace_for(incident, registry)
     if registry is None:
         return _unresolved(router, incident, workspace, why)
+    return _place(router, incident, registry, workspace)
+
+
+def _place(router, incident, registry, workspace) -> dict:
+    """File an incident of a known product, through its named cause when that is another
+    product's: an intake, a forwarded incident and a classification replay alike."""
     cause = incident["cause"]
-    if cause is not None and cause["product"] != product:
+    if cause is not None and cause["product"] != registry["product"]:
         return _shared_cause(router, incident, registry, workspace)
     return file(router, incident, registry, workspace)
 
@@ -108,17 +114,18 @@ def _forward(router, route, incident) -> dict:
     # The product it was classified into decides what is collected, exactly as for an intake
     # that named it: a surface it does not watch is refused, not filed through the side door.
     _watched(registry, applied)
-    answer = file(router, applied, registry, placement.workspace_for(applied, registry))
+    answer = _place(router, applied, registry, placement.workspace_for(applied, registry))
     return {**answer, "forwardedFrom": route["fault_id"]}
 
 
 def _shared_cause(router, incident, registry, workspace) -> dict:
     """A cause in another product: verified, it gains an occurrence at its own severity and the
-    affected product's defect is filed as usual and linked; unverified, nothing merges.
+    affected product's defect is filed as usual and linked; unverified, nothing merges and the
+    claim stands on the defect's route as a decision of its own.
 
     A cause counts only incidents of its own origin. A simulated incident naming a real fault,
-    or an observed one naming a simulated fault, is held unverified: it records nothing on the
-    cause and owes no relation to it, so a test can never make a real fault recur, notify or
+    or an observed one naming a simulated fault, is an unverified claim: it records nothing on
+    the cause and owes no relation to it, so a test can never make a real fault recur, notify or
     reopen, and a real effect never counts toward a test fault."""
     port = router.port
     cause = incident["cause"]
@@ -127,12 +134,12 @@ def _shared_cause(router, incident, registry, workspace) -> dict:
                 and (cause["signature"] is None
                      or _stored(row["signature"]) == cause["signature"]))
     if not verified:
-        return file(router, incident, registry, workspace, hold=products.CAUSE_UNVERIFIED)
+        return file(router, incident, registry, workspace, unverified_cause=_claim(
+            cause, "no fault of that product with that signature is recorded here"))
     theirs = _origin(row)
     if theirs != incident["origin"]:
-        return file(router, incident, registry, workspace, hold=products.CAUSE_UNVERIFIED,
-                    note=f"a {incident['origin']} incident never counts against a {theirs}"
-                         f" fault")
+        return file(router, incident, registry, workspace, unverified_cause=_claim(
+            cause, f"a {incident['origin']} incident never counts against a {theirs} fault"))
     placed = _stored(row.get("scope"))
     # One transaction: the cause's occurrence says a product was affected, and it stands only
     # together with that product's own filing. A filing that fails takes the occurrence back
@@ -149,6 +156,10 @@ def _shared_cause(router, incident, registry, workspace) -> dict:
         return file(router, incident, registry, workspace, cause_fault=cause["faultId"])
 
 
+def _claim(cause, why):
+    return {"product": cause["product"], "faultId": cause["faultId"], "why": why}
+
+
 def _origin(row):
     """Whether a ledger fault records simulated events. Routing puts the simulated mark into
     every simulated signature it builds, as part of identity; a fault without it is real."""
@@ -156,17 +167,18 @@ def _origin(row):
     return products.SIMULATED if signature.get("simulated") is True else products.OBSERVED
 
 
-def file(router, incident, registry, workspace, *, hold=None, cause_fault=None,
-         note=None) -> dict:
-    """Decide, then record: the one place a product incident becomes a ledger observation."""
+def file(router, incident, registry, workspace, *, cause_fault=None,
+         unverified_cause=None) -> dict:
+    """Decide, then record: the one place a product incident becomes a ledger observation.
+
+    cause_fault is a verified cause this incident links the defect to. unverified_cause is a
+    cause it named that could not be verified: the defect is placed exactly as if it named none,
+    and the claim stands on the route until an incident for this defect names a verified cause.
+    """
     port = router.port
     product = registry["product"]
     decision = placement.decide(incident, registry, router.bindings(product),
                                 router.run_issue(incident["context"]["run"]))
-    if hold is not None:
-        decision = {**decision, "disposition": products.HELD, "stage": products.STAGE_HELD,
-                    "hold": hold, "project": None, "owner": None,
-                    "reason": f"{hold}; " + (f"{note}; " if note else "") + decision["reason"]}
     observe = decision["disposition"] == products.OBSERVE
     fault_class = products.EXPECTED_STATE if observe else products.DEFECT
     signature = placement.defect_signature(
@@ -182,10 +194,15 @@ def file(router, incident, registry, workspace, *, hold=None, cause_fault=None,
                     "stage": products.STAGE_FILED, "project": kept["project"],
                     "owner": kept["owner"], "hold": None, "relate": kept["relate"],
                     "reason": "filed earlier; the ledger's record carries this occurrence"}
+    before = (existing or {}).get("target") or {}
+    # A verified cause releases a standing claim; an incident naming no cause leaves both the
+    # claim and the cause the route is already linked to as they are.
+    cause_fault = cause_fault or before.get("cause")
+    claim = unverified_cause or (None if cause_fault else before.get("unverifiedCause"))
     obligations = _obligations(decision, existing, cause_fault,
                                labels=placement.issue_labels(incident))
     target = routes.target(decision, registry, incident, obligations=obligations,
-                           cause=cause_fault)
+                           cause=cause_fault, unverified_cause=claim)
     first = port.get(fault_id) is None
     adopt = None
     if decision["owner"] and first:
@@ -220,7 +237,8 @@ def file(router, incident, registry, workspace, *, hold=None, cause_fault=None,
         decision = {**decision, "disposition": products.HELD, "stage": products.STAGE_HELD,
                     "hold": products.OWNER_FOUND_AFTER_CREATE, "project": None,
                     "reason": f"{decision['owner']} owns this, but {refusal}"}
-        target = routes.target(decision, registry, incident, obligations=(), cause=cause_fault)
+        target = routes.target(decision, registry, incident, obligations=(), cause=cause_fault,
+                               unverified_cause=claim)
         with router.store.composing() as db:
             result = port.record(port.observation(
                 product=product, workspace=workspace, fault_class=fault_class,
@@ -232,10 +250,13 @@ def file(router, incident, registry, workspace, *, hold=None, cause_fault=None,
     discharge(router, fault_id)
     if decision["stage"] == products.STAGE_HELD:
         _held(router, fault_id, decision, incident, product)
+    if unverified_cause is not None and incident["severity"] == "broken":
+        port.notify(fault_id, reason=routes.CAUSE_UNVERIFIED, ref=incident["occurrenceKey"])
     return {"faultId": fault_id, "product": product, "workspace": workspace,
             "disposition": decision["disposition"], "stage": decision["stage"],
             "project": decision["project"], "owner": decision["owner"],
-            "hold": decision["hold"], "recorded": result.get("recorded"),
+            "hold": decision["hold"], "unverifiedCause": claim,
+            "recorded": result.get("recorded"),
             "publication": result.get("publication"), "reason": decision["reason"]}
 
 
@@ -378,7 +399,8 @@ def _again(router, route, registry, bindings):
     target = routes.target(decision, registry, incident,
                            obligations=_obligations(decision, route, current.get("cause"),
                                                     labels=placement.issue_labels(incident)),
-                           cause=current.get("cause"))
+                           cause=current.get("cause"),
+                           unverified_cause=current.get("unverifiedCause"))
     place = scope(route["workspace"], decision["project"])
     try:
         with router.store.composing() as db:
@@ -455,8 +477,8 @@ def classify(router, fault_id, record) -> dict:
         successor = None
         for incident in stored:
             applied = _classified(incident, classification)
-            successor = file(router, applied, registry,
-                             placement.workspace_for(applied, registry))["faultId"]
+            successor = _place(router, applied, registry,
+                               placement.workspace_for(applied, registry))["faultId"]
         port.record(port.observation(
             product=products.UNCLASSIFIED, workspace=route["workspace"],
             fault_class=products.PENDING, severity="notice",
