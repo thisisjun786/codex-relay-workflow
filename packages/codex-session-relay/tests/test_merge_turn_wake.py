@@ -28,7 +28,7 @@ from codex_session_relay.mergeturn import (
     MERGE_TURN_GRANT_UNREADABLE, MERGE_TURN_REGRANTED, MergeTurn,
 )
 from codex_session_relay.models import Endpoint
-from codex_session_relay.transport import DISPATCHED, HELD_UNCERTAIN
+from codex_session_relay.transport import DISPATCHED, HELD_UNCERTAIN, SUPERSEDED
 
 from .support import CHILD, HOST, PARENT, DeliveryTestCase
 from .test_report_contract import a_handoff, a_report
@@ -596,6 +596,26 @@ class AGrantThatNoLongerAppliesOwesNothing(MergeTurnWakeTestCase):
             "UPDATE deliveries SET state = ? WHERE event_id = ?", (HELD_UNCERTAIN, event))
         self.answer_grant(turn, PARENT)
         self.assertEqual(self.status(event), ("grant_acknowledged", "grant_acknowledged"))
+
+    def test_an_answered_notice_the_send_path_suppressed_stays_acknowledged(self):
+        # The usual route to a suppressed grant: the parent answered first, and the next
+        # attempt declines to send. The row keeps its raw state and hold for reconciliation;
+        # what an operator reads is still that the grant was acknowledged.
+        turn = self.promoted()
+        event = self.wakes()[0]["event_id"]
+        self.answer_grant(turn, PARENT)
+        self.assertEqual(self.attempt(event)["sendAttempted"], "no")
+        self.assertEqual(self.delivery_row(event)["state"], SUPERSEDED)
+        self.assertEqual(self.status(event), ("grant_acknowledged", "grant_acknowledged"))
+
+    def test_a_regranted_notice_the_send_path_suppressed_keeps_its_reason(self):
+        turn = self.promoted()
+        event = self.wakes()[0]["event_id"]
+        self.turns.declare_ready(turn, actor=PARENT, ready=True, candidate_head="head-a2")
+        self.assertEqual(self.attempt(event)["sendAttempted"], "no")
+        self.assertEqual(self.delivery_row(event)["state"], SUPERSEDED)
+        expected = "superseded:" + MERGE_TURN_REGRANTED
+        self.assertEqual(self.status(event), (expected, expected))
 
 
 class TheNoticeDeclaresTheRequiredChecks(MergeTurnWakeTestCase):

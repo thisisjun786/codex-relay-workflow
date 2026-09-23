@@ -2047,14 +2047,14 @@ def _reported_state(row, ack, grant=None) -> str:
     A merge-turn grant is answered on its turn, never through an acks row, so without its turn's
     answer every delivered grant read dispatched_awaiting_ack for good - the acknowledged one,
     and one its turn had since replaced, returned or lost. That answer is passed in as grant and
-    decides before the delivery state does, in every state but superseded: a suppressed grant
-    already reports held:<reason> with the same reason. A parent can answer before the notice
-    is sent, since it reads its own claims on entry, so acknowledged is not a dispatched-only
-    answer either.
+    decides before the delivery state does, in every state. A parent can answer before the
+    notice is sent, since it reads its own claims on entry, and the send path then suppresses
+    the notice, so a suppressed row is exactly where an answered grant is reported most often;
+    its hold_reason stays on the row for whoever reconciles it.
     """
     if ack is not None and ack["verified"] == "verified" and ack["accepted"]:
         return "acknowledged"
-    if row["kind"] == MERGE_TURN_GRANT and row["state"] != SUPERSEDED:
+    if row["kind"] == MERGE_TURN_GRANT:
         from .mergeturn import MERGE_TURN_GRANT_ANSWERED
 
         if grant == MERGE_TURN_GRANT_ANSWERED:
@@ -2150,6 +2150,20 @@ def _phase(row, attempts, ack, failure=None, superseded=None, grant=None) -> str
         if ack["accepted"]:
             return "acknowledged"
         return "rejected"
+    if row["kind"] == MERGE_TURN_GRANT and grant is not None:
+        from .mergeturn import MERGE_TURN_GRANT_ANSWERED
+
+        # The grant's own turn has settled what this notice was for, whatever the delivery
+        # state: answered - possibly before the notice was even sent, since a parent reads its
+        # own claims on entry - or no longer applicable: regranted to another candidate, closed
+        # without being answered, gone, or unreadable. Asked before the state word, because the
+        # send path's suppression turns the row superseded and a delivered grant is never
+        # annotated at all (attempt() stops before the claim for a state that is not
+        # claimable). Either way the state alone reported a bare superseded or an
+        # acknowledgement nothing is waiting for; the row itself is left as it is.
+        if grant == MERGE_TURN_GRANT_ANSWERED:
+            return "grant_acknowledged"
+        return f"superseded:{grant}"
     if row["state"] == SUPERSEDED:
         return "superseded"
     if superseded is not None:
@@ -2157,19 +2171,6 @@ def _phase(row, attempts, ack, failure=None, superseded=None, grant=None) -> str
         # deliberately left alone so a lost response stays reconcilable, but reporting it as
         # awaiting_ack or outcome_unknown describes an obligation nothing can now meet.
         return f"superseded:{superseded['reason']}"
-    if row["kind"] == MERGE_TURN_GRANT and grant is not None:
-        from .mergeturn import MERGE_TURN_GRANT_ANSWERED
-
-        # The grant's own turn has settled what this notice was for, whatever the delivery
-        # state: answered - possibly before the notice was even sent, since a parent reads its
-        # own claims on entry - or no longer applicable: regranted to another candidate, closed
-        # without being answered, gone, or unreadable. A delivered grant is never annotated
-        # above, because attempt() stops before the claim for a state that is not claimable, so
-        # its turn's answer is the only place that says so - and without it every one of them
-        # reported an acknowledgement or a send that nothing is waiting for.
-        if grant == MERGE_TURN_GRANT_ANSWERED:
-            return "grant_acknowledged"
-        return f"superseded:{grant}"
     if row["state"] == INBOX_ONLY or row["hold_reason"] == PUSH_CHANNEL_CLOSED:
         return "channel_closed"
     if row["state"] == DISPATCHED:
