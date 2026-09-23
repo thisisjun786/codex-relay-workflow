@@ -954,6 +954,11 @@ class BridgeRecordPolicyTest(unittest.TestCase):
             "ignores the digest": (
                 "    if actual != digest:\n", "    if False:\n",
                 "digest no longer matches"),
+            "starts the bridge and then fails": (
+                "            os.execve(executable, [executable, *arguments], environment)\n",
+                "            __import__('subprocess').run([executable, *arguments], env=environment)\n"
+                "            raise SystemExit(2)\n",
+                "did not exit cleanly"),
         }
         for label, (old, new, reason) in variants.items():
             with self.subTest(label):
@@ -965,6 +970,30 @@ class BridgeRecordPolicyTest(unittest.TestCase):
                 self.assertNotEqual(status, 0, output)
                 self.assertEqual(emitted["outcome"], "launcher_predates_policy", output)
                 self.assertIn(str(launcher), emitted["detail"], output)
+                self.assertIn(reason, emitted["detail"], output)
+                self.assertFalse(self.record.exists(), output)
+
+    @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
+    def test_the_launcher_is_probed_with_the_command_the_package_declares(self):
+        """Run with another interpreter, a declaration Codex could not start would pass."""
+        cases = {
+            "a command that cannot run it": ("sh", "launcher_predates_policy",
+                                             "did not start a bridge"),
+            "a command that does not resolve": ("crw218-no-such-interpreter",
+                                                "launcher_not_established", "does not resolve"),
+        }
+        for label, (command, outcome, reason) in cases.items():
+            with self.subTest(label):
+                shutil.rmtree(self.home.codex_home / "plugins", ignore_errors=True)
+                launcher = self.install_package()
+                declaration = launcher.parent / "mcp.json"
+                document = json.loads(declaration.read_text(encoding="utf-8"))
+                document["mcpServers"]["codex-thread-bridge"]["command"] = command
+                declaration.write_text(json.dumps(document), encoding="utf-8")
+                self.enable("crw@crw")
+                status, emitted, output = self.register("--apply")
+                self.assertNotEqual(status, 0, output)
+                self.assertEqual(emitted["outcome"], outcome, output)
                 self.assertIn(reason, emitted["detail"], output)
                 self.assertFalse(self.record.exists(), output)
 

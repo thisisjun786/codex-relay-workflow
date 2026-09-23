@@ -4840,14 +4840,14 @@ def _write_probe_file(path, text):
         hostrecord.atomic_write(path, text)
 
 
-def _probe_launcher_once(launcher, root, policy, probe, recorded, proof, cwd):
-    """Run the launcher once against a record naming `recorded`; what the probe saw, or None."""
+def _probe_launcher_once(argv, root, policy, probe, recorded, proof, cwd):
+    """Start the declared server once against a record naming `recorded`; what the probe saw."""
     record = bridgerecord.document(
         command=sys.executable, arguments=[str(probe), str(proof), *_POLICY_VARIABLES],
         name=MCP_NAME, issue="probe", owner=bridgerecord.OWNER_PLUGIN,
         execution_policy={"path": str(policy), "digest": recorded})
     _write_probe_file(root / bridgerecord.RECORD_NAME, json.dumps(record))
-    done = subprocess.run([sys.executable, str(launcher)], cwd=str(cwd or root),
+    done = subprocess.run(list(argv), cwd=str(cwd or root),
                           env={"PATH": os.environ.get("PATH", ""), "CODEX_HOME": str(root)},
                           stdin=subprocess.DEVNULL, capture_output=True, text=True,
                           timeout=LAUNCHER_PROBE_SECONDS)
@@ -4855,11 +4855,12 @@ def _probe_launcher_once(launcher, root, policy, probe, recorded, proof, cwd):
     return done, seen
 
 
-def _launcher_honours_policy_records(launcher, *, cwd=None):
+def _launcher_honours_policy_records(argv, *, cwd=None):
     """Why a launcher cannot be trusted with a record naming a policy, or None when it can.
 
-    Asked by running it, the way Codex runs it at every thread start, against a throwaway
-    CODEX_HOME whose record names a probe instead of the bridge. What it declares proves nothing:
+    Asked by running it exactly as the package declares it -- its command, its arguments, its
+    working directory -- the way Codex starts it at every thread, against a throwaway CODEX_HOME
+    whose record names a probe instead of the bridge. What it declares proves nothing:
     a launcher can define the new record version and still refuse it, ignore the policy, or exec
     the bridge without the variables. So the three behaviours are observed together. A matching
     record has to start the probe with both variables naming the recorded file and digest, and a
@@ -4880,18 +4881,22 @@ def _launcher_honours_policy_records(launcher, *, cwd=None):
         probe = root / "probe.py"
         _write_probe_file(probe, _LAUNCHER_PROBE)
         try:
-            done, seen = _probe_launcher_once(launcher, root, policy, probe, digest,
+            done, seen = _probe_launcher_once(argv, root, policy, probe, digest,
                                               root / "accepted.json", cwd)
+            tail = (done.stderr or done.stdout or "").strip().splitlines()[-1:]
+            said = " (exit " + str(done.returncode) + (": " + tail[0][:300] if tail else "") + ")"
             if seen is None:
-                tail = (done.stderr or done.stdout or "").strip().splitlines()[-1:]
-                return ("it did not start a bridge from a version-" + str(
-                    bridgerecord.POLICY_RECORD_VERSION) + " record (exit " + str(done.returncode)
-                        + (": " + tail[0][:300] if tail else "") + ")")
+                return ("it did not start a bridge from a version-"
+                        + str(bridgerecord.POLICY_RECORD_VERSION) + " record" + said)
+            if done.returncode != 0:
+                # The bridge a launcher execs IS the server Codex talks to, so a launcher that
+                # starts one and then fails is not one Codex would be served by.
+                return "it started the bridge and then did not exit cleanly" + said
             wanted = {_POLICY_VARIABLES[0]: str(policy), _POLICY_VARIABLES[1]: digest}
             if seen != wanted:
                 return ("it started the bridge without handing it the recorded policy (the bridge"
                         " saw " + json.dumps(seen) + ")")
-            done, seen = _probe_launcher_once(launcher, root, policy, probe, "0" * 64,
+            done, seen = _probe_launcher_once(argv, root, policy, probe, "0" * 64,
                                               root / "mismatched.json", cwd)
             if seen is not None:
                 return ("it started the bridge under a policy whose digest no longer matches the"
@@ -4903,6 +4908,41 @@ def _launcher_honours_policy_records(launcher, *, cwd=None):
         return None
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
+
+
+def _declared_start(version, entry):
+    """(argv, cwd, launcher) for a declared MCP server as Codex would start it, or why not.
+
+    The command is the declaration's own: a bare name is looked up on PATH, a ./ path is taken
+    from the working directory, and the working directory is the package root or a ./ path under
+    it. Running something else -- this interpreter, say -- would ask a launcher Codex never runs.
+    """
+    if not isinstance(entry, dict):
+        return "the declaration is not an object"
+    command, arguments, cwd = entry.get("command"), entry.get("args", []), entry.get("cwd", ".")
+    if not isinstance(arguments, list) or not all(isinstance(word, str) for word in arguments):
+        return "its args are not a list of strings"
+    if cwd in (".", "./", "${PLUGIN_ROOT}"):
+        directory = version
+    elif isinstance(cwd, str) and text_prefix(cwd, "./", at="start"):
+        directory = version / cwd[2:]
+    else:
+        return "its cwd " + repr(cwd) + " is not the package root or a path under it"
+    if not isinstance(command, str) or not command.strip():
+        return "it names no command"
+    if text_prefix(command, "./", at="start"):
+        executable = directory / command[2:]
+        resolved = str(executable) if executable.is_file() else None
+    elif os.sep not in command:
+        resolved = shutil.which(command)
+    else:
+        resolved = command if os.path.isabs(command) and Path(command).is_file() else None
+    if resolved is None:
+        return "its command " + repr(command) + " does not resolve to a program here"
+    script = next((word for word in arguments if text_prefix(word, "./", at="start")), None)
+    if script is None:
+        return "no ./ argument names the launcher it runs"
+    return [resolved, *arguments], directory, directory / script[2:]
 
 
 def _policy_launcher_refusal(codex_home):
@@ -4988,18 +5028,16 @@ def _policy_launcher_refusal(codex_home):
     entry = servers.get(MCP_NAME)
     if entry is None:
         return None
-    arguments = entry.get("args") if isinstance(entry, dict) else None
-    script = next((word for word in (arguments if isinstance(arguments, list) else [])
-                   if isinstance(word, str) and text_prefix(word, "./", at="start")), None)
-    if not script:
+    declared = _declared_start(version, entry)
+    if isinstance(declared, str):
         return LAUNCHER_NOT_ESTABLISHED, (
-            "the cached crw package at " + str(version) + " declares " + MCP_NAME + " without a"
-            " launcher this command can find")
-    launcher = version / script[2:]
+            "the cached crw package at " + str(version) + " declares " + MCP_NAME + " in a way"
+            " this command cannot start: " + declared)
+    argv, cwd, launcher = declared
     # A regular file before it is run. A launcher that becomes a pipe after this is still bounded:
     # the probe gives it LAUNCHER_PROBE_SECONDS and then refuses.
     why = (None if launcher.is_file() else "it is not a regular file") \
-        or _launcher_honours_policy_records(launcher, cwd=version)
+        or _launcher_honours_policy_records(argv, cwd=cwd)
     if why is None:
         return None
     return LAUNCHER_PREDATES_POLICY, (
