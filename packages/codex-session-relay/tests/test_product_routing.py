@@ -469,6 +469,39 @@ class Projects(ProductRoutingCase):
         self.assertEqual("fault_observation_malformed", caught.exception.reason.value)
         self.assertEqual([], port.publications(fault, kind=projects.KIND))
 
+    def test_a_create_queued_on_a_fault_that_is_not_the_proposal_is_never_issued(self):
+        self.router.set_policy(POLICY)
+        self.gamma("cache", "stale", "g1")
+        self.gamma("queue", "lost", "g2")
+        (proposal,) = self.router.show("gamma-kit")["projects"]
+        (legit,) = self.router.port.publications(proposal["faultId"], kind=projects.KIND)
+        other = self.route()["faultId"]  # an alpha-notes defect, recorded
+        foreign = self.router.port.queue(other, kind=projects.KIND, trigger="copy",
+                                         payload=legit["payload"])
+        pid = foreign.get("publicationId") or foreign.get("publication_id")
+        token = self.ledger.claim(pid, owner="holder")["claimToken"]
+        with self.assertRaises(faults.FaultRefused) as caught:
+            self.ledger.operation(pid, claim_token=token)
+        self.assertIn("is not the project proposal routing made", str(caught.exception))
+        self.holder.run()
+        self.assertEqual(1, len(self.linear.projects))
+
+    def test_a_malformed_pending_create_is_cancelled_by_a_registry_change(self):
+        self.router.set_policy(POLICY)
+        self.gamma("cache", "stale", "g1")
+        self.gamma("queue", "lost", "g2")
+        (proposal,) = self.router.show("gamma-kit")["projects"]
+        (row,) = self.router.port.publications(proposal["faultId"], kind=projects.KIND)
+        # A payload an older validator let through, as it would sit in a store.
+        with self.store.transaction() as db:
+            db.execute("UPDATE fault_publication_payloads SET payload = ?"
+                       " WHERE publication_id = ?",
+                       (json.dumps(dict(row["payload"], members=2)), row["publication_id"]))
+        answer = self.router.register_product(dict(GAMMA, team="GMX"))
+        (cancelled,) = answer["projectsRevised"]["cancelled"]
+        self.assertIn("payload.members", cancelled["reasons"][0])
+        self.assertEqual("GMX", self.router.registry("gamma-kit")["team"])
+
     def test_an_existing_suitable_project_is_reused(self):
         self.router.set_policy(POLICY)
         self.router.bind(binding("gamma-kit", "project", "proj-gmk-cache",

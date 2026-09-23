@@ -186,7 +186,9 @@ check counts only members declaring the criteria the create carries, and cancels
 any defect held under the goal since declares other criteria. A create's payload is checked for
 its whole shape, whoever queues it through the ledger: refused when queued, and cancelled before
 issue, if it is not the closed set of names and lists the check, the confirmation and the binding
-read. Issue, file or error counts
+read. It is issued only from the `project_needed` record routing proposed for that product,
+workspace and goal: the same payload queued on any other record is cancelled, so one goal never
+gets two projects. A change of registry runs the same checks on the creates it revises. Issue, file or error counts
 alone never create one, and a single defect goes into its product's existing suitable project.
 
 The proposal is a `project_needed` record of the product, recorded at notice under the scope

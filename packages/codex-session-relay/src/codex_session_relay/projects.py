@@ -150,8 +150,39 @@ def _pre_issue(context):
     payload = context["publication"]["payload"]
     # A payload that is not a project create is cancelled, not evaluated: its shape was checked
     # when it was queued, and is checked again here rather than trusted.
-    problems = _validate(payload) or eligibility(context["db"], payload)
+    problems = _issuable(context["db"], context["fault"], payload)
     return {"cancel": "; ".join(problems)} if problems else None
+
+
+def _issuable(db, fault, payload) -> list:
+    """Why this create may not be issued now; empty when it may. Its shape first, then whose
+    it is, then whether its goal still qualifies."""
+    return (_validate(payload) or _proposal_problems(db, fault, payload)
+            or eligibility(db, payload))
+
+
+def _proposal_problems(db, fault, payload) -> list:
+    """Why the fault this create belongs to is not routing's proposal for the payload's goal.
+
+    The ledger's generic queue accepts the kind on any recorded fault, and a valid payload on
+    another fault would make a second project for one goal. A create is issued only from the
+    project_needed record of that product, workspace and goal that routing proposed."""
+    fault = fault or {}
+    signature = fault.get("signature")
+    signature = json.loads(signature) if isinstance(signature, str) else (signature or {})
+    scope = fault.get("scope")
+    scope = json.loads(scope) if isinstance(scope, str) else (scope or {})
+    ours = (fault.get("product") == payload["product"]
+            and fault.get("fault_class") == products.PROJECT_NEEDED
+            and signature == {"goal": payload["goal"]}
+            and scope.get("workspace") == payload["workspace"])
+    route = db.execute("SELECT disposition, goal FROM incident_routes WHERE fault_id = ?",
+                       (fault.get("fault_id"),)).fetchone() if ours else None
+    if route is None or route["disposition"] != products.PROJECT_PROPOSAL or (
+            route["goal"] != payload["goal"]):
+        return [f"{fault.get('fault_id')} is not the project proposal routing made for"
+                f" {payload['product']}'s goal {payload['goal']}"]
+    return []
 
 
 def _declared_criteria(db, fault_id):
@@ -273,10 +304,11 @@ def revise(router, product) -> dict:
         page = routes.listing(router.store, product=product, stages=(products.STAGE_FILED,),
                               dispositions=(products.PROJECT_PROPOSAL,), limit=100, after=after)
         for route in page["routes"]:
+            fault = port.get(route["fault_id"])
             for row in port.publications(route["fault_id"], kind=KIND, limit=100):
                 if row.get("state") not in REVISABLE:
                     continue
-                problems = eligibility(router.store.db, row.get("payload") or {})
+                problems = _issuable(router.store.db, fault, row.get("payload"))
                 if problems:
                     port.cancel(row["publication_id"], reason="; ".join(problems))
                     cancelled.append({"faultId": route["fault_id"],
