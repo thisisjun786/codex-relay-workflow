@@ -1036,7 +1036,9 @@ def _json_document(path, what) -> dict:
     try:
         with open(path, "r", encoding="utf-8") as handle:
             return json.load(handle)
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, RecursionError) as error:
+        # RecursionError: JSON nested deeper than the reader can descend is input it cannot
+        # read, the same answer as JSON it cannot parse, and not a failure of this host.
         raise SystemExit2(
             f"the {what} at {path!r} could not be read: {type(error).__name__}: {error}",
             EXIT_USAGE,

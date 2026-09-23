@@ -528,7 +528,7 @@ def check(one, *, required=None) -> None:
         _check(one, required=required)
     except RelayError:
         raise
-    except (AttributeError, TypeError, KeyError, IndexError) as fault:
+    except (AttributeError, TypeError, KeyError, IndexError, RecursionError) as fault:
         raise PacketRefused(
             RefusalReason.MALFORMED_RECEIPT,
             "a part of this packet is not the shape relay-packet/1 declares, so it could not"
@@ -817,6 +817,7 @@ WRONG_CALLBACK = "wrong_callback"
 STALE_CALLBACK = "stale_callback"
 STALE_POLICY = "stale_policy"
 WRONG_MODE = "wrong_mode"
+WRONG_WORKFLOW = "wrong_workflow"
 UNREADABLE = "unreadable"
 
 # The record keys this module reads beyond the task ids. relationStatus is the relationship
@@ -870,7 +871,7 @@ def reception(one, record) -> dict:
             + type(record).__name__)
     try:
         return _reception(one, region, record, problems, gaps)
-    except (AttributeError, TypeError, KeyError, IndexError) as fault:
+    except (AttributeError, TypeError, KeyError, IndexError, RecursionError) as fault:
         # Total over the reading as check() is over the packet. A supplied reading can hold
         # anything JSON can, and a part of it this cannot read is refused by name rather
         # than ending packet-check as a host failure.
@@ -937,6 +938,7 @@ def _reception(one, region, record, problems, gaps) -> dict:
     _callback_agreement(one, record, problems, gaps)
     _policy_agreement(one, record, problems, gaps)
     instructed = _mode_agreement(one, record, problems, gaps)
+    instructed += _workflow_agreement(one, record, problems, gaps)
     problems.extend(_settings_problems(one, record))
     gaps.extend(_settings_gaps(one, record))
     if problems:
@@ -1133,6 +1135,38 @@ def _mode_agreement(one, record, problems, gaps) -> list:
     return []
 
 
+def _workflow_agreement(one, record, problems, gaps) -> list:
+    """The workflow a packet's policy states against the one the receiver's assignment gave.
+
+    The same rule as the mode, for the same reason: no transport or store carries the
+    workflow, so the receiver's reading is the workflow of the assignment it accepted. An
+    assignment defines it only where none is held; every other packet stating a policy is
+    compared (wrong_workflow), or left a gap where the receiver holds none. A resume that
+    keeps the mode and names another workflow would otherwise hand the receiver a procedure
+    its accepted assignment never established.
+    """
+    if _present(one.get(POLICY)) is None:
+        return []
+    stated = one[POLICY].get("workflow")
+    held = record.get("workflow")
+    region = one["envelope"]
+    if _present(held) is None:
+        if (region.get("direction") == envelope.PARENT_TO_CHILD
+                and region.get("purpose") == "assignment"):
+            return [{"field": "workflow", "value": stated,
+                     "source": "packet: the assignment defines the workflow where none is"
+                               " held"}]
+        gaps.append(mismatch(UNREADABLE, "workflow", expected=None, found=stated,
+                             reason="the receiver holds no reading of the workflow its"
+                                    " assignment gave, so a workflow this packet states is"
+                                    " unchecked"))
+        return []
+    _compare(problems, gaps, WRONG_WORKFLOW, "policy.workflow", stated, held,
+             "the assignment this receiver accepted runs under another workflow, and no later"
+             " packet replaces it")
+    return []
+
+
 def _compare(problems, gaps, kind, field, found, expected, reason) -> None:
     """One field against the record, with a record that cannot answer kept separate.
 
@@ -1239,10 +1273,20 @@ def _settings_gaps(one, record) -> list:
 
 
 def _refusals_unreadable(record) -> bool:
-    """A refusal list that is there and is not a list of objects: not read as "none"."""
-    held = record.get("refusedPolicies")
-    return held is not None and (not isinstance(held, list)
-                                 or any(not isinstance(pair, dict) for pair in held))
+    """A refusal list the reading holds and cannot read: not read as "none refused".
+
+    Present as null, not a list, or holding an entry that is not a model and effort pair of
+    text. An empty list is a reading - nothing refused - and an absent key is handled as an
+    absence by _settings_gaps.
+    """
+    if "refusedPolicies" not in record:
+        return False
+    held = record["refusedPolicies"]
+    return not isinstance(held, list) or any(
+        not isinstance(pair, dict)
+        or not all(isinstance(pair.get(name), str) and pair[name].strip()
+                   for name in ("model", "effort"))
+        for pair in held)
 
 
 # --------------------------------------------------------------------- a message arriving twice

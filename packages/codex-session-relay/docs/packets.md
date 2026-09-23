@@ -111,7 +111,8 @@ nothing.
 - **refused** - a field contradicted it. The mismatch names the field, both values and why it
   matters: `wrong_sender`, `wrong_recipient`, `wrong_relation`, `superseded_relation`,
   `wrong_issue`, `stale_generation`, `stale_criteria_digest`, `stale_head`, `wrong_callback`,
-  `stale_callback`, `stale_policy`, `wrong_mode`, `refused_settings`, `message_collision`.
+  `stale_callback`, `stale_policy`, `wrong_mode`, `wrong_workflow`, `refused_settings`,
+  `message_collision`.
 - **unavailable** - the record could not answer. This is neither of the others. A receiver
   that could not check the generation has not checked it, and folding that into acceptance is
   how an unverifiable instruction becomes an applied one.
@@ -129,6 +130,10 @@ mode only where the receiver holds no reading yet; every other packet carrying a
 activation reading, and any assignment where a reading exists, is compared and refused as
 `wrong_mode` on a difference, or left a gap where there is no reading. So no packet can
 redefine a mode the receiver already holds.
+The workflow follows the same rule, because no transport or store carries it either: the
+receiver's reading is the workflow its accepted assignment gave, an assignment defines it only
+where none is held, and every other packet stating a policy is compared (`wrong_workflow`) or
+left a gap. A resume that keeps the mode and names another workflow is refused.
 
 `refused_settings` is worth naming separately. A model and effort pair the record holds as
 refused for this role is a settings answer, not a provider failure, and it is not worked
@@ -176,9 +181,10 @@ unavailable. The packet's own side is shape-checked first: a packet that is not 
 relay-packet/1 declares, in any part it carries, is refused as a packet, and `packet-check`
 does not end in a host error over what it was sent. That includes an artifact's identity
 (repository and head, or path and digest, all text) and the region's compared fields. A
-reading's refusal list that is not a list of model and effort pairs is unread rather than
-taken as "none refused", and a part of a supplied reading this cannot compare with is refused
-by name.
+reading's refusal list that is null, not a list, or holds an entry that is not a model and
+effort pair of text is unread rather than taken as "none refused", and a part of a supplied
+reading this cannot compare with is refused by name. JSON nested deeper than it can be read,
+as a packet, a reading, an observation or a ledger, is refused as unusable input.
 
 The artifact head is a forge reading the store does not hold. It comes only from
 `--observation <file>`, a JSON object with its own `source` (and `observedAt` where known) and
@@ -202,7 +208,9 @@ compared, so no packet can write an entry the next check would refuse.
 Being told and acting are two records. A check records the answer; only the receiver says it
 acted, afterwards, with `packet-check --packet <file> --receiver <id> --ledger <file> --applied`,
 which reads no store and is refused unless this ledger answered this very packet (same id, same
-content) as accepted. `act` is true when today's answer is accepted and no application is
+content) as accepted and the last check of it said `act`: an answer that was held, as on a
+paused relationship, told the receiver not to act, so it has nothing applied to record. `act`
+is true when today's answer is accepted and no application is
 recorded. So a receiver that checked and then stopped before acting gets the instruction back
 on the next arrival rather than losing it, and a correction applied once is not applied again.
 Nothing is acted on while the relationship is paused: the packet is current and accepted, but

@@ -240,11 +240,13 @@ SUMMARIES = {
     # another purpose, or a named recipient. reception reads it to choose which comparisons
     # apply, and test_reception_findings.py varies each by building the packets themselves.
     ("packets.py", None, "_first_assignment", "function"): ((False,), (), ()),
-    # A refusal list the reading holds and cannot read: present and not a list of objects.
-    # The false side is reachable from the one input alone - an absent list, or a list of
-    # pairs - and test_reception_findings.py and test_store_reception.py hand reception
-    # readings of each shape.
-    ("packets.py", None, "_refusals_unreadable", "function"): ((False,), (), ()),
+    # A refusal list the reading holds and cannot read: present and not a list of text pairs.
+    # An absent key returns False before the list is looked at, which is the path this rule
+    # cannot reduce; the true side is reachable from the one input alone. test_reception_
+    # findings.py and test_store_reception.py hand reception readings of each shape, absent,
+    # null, empty, and lists of good and bad pairs.
+    ("packets.py", None, "_refusals_unreadable", "function"):
+        ((True,), (("return: False", 1),), ()),
     ("receipts.py", None, "deliverable", "function"): ((False,), (), ()),
     ("scope.py", None, "is_within", "function"):
         ((True,), (("return: path.startswith('/')", 1),), ()),

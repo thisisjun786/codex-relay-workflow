@@ -229,9 +229,10 @@ def _read_store(connection, fields, sources, notes, *, receiver, role, sender_ro
     if entry and entry.get(packets.MODE):
         answer(packets.MODE, entry[packets.MODE],
                "ledger: assignment " + str(entry.get("messageId")))
+        answer("workflow", entry["workflow"], "ledger: assignment " + str(entry.get("messageId")))
     elif ledger is not None:
         notes.append("the reception ledger holds no accepted assignment for " + rid
-                     + ", so the mode is unread")
+                     + ", so the mode and the workflow are unread")
 
 
 def _opened_by(rows, row):
@@ -506,7 +507,7 @@ def load_ledger(path, receiver) -> dict:
         return empty_ledger(receiver)
     try:
         ledger = json.loads(target.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as fault:
+    except (OSError, ValueError, RecursionError) as fault:
         raise LedgerUnusable("the reception ledger at " + str(target) + " could not be read: "
                              + type(fault).__name__ + ": " + str(fault)) from fault
     if not isinstance(ledger, dict) or ledger.get("version") != LEDGER_VERSION or not \
@@ -535,6 +536,9 @@ def _entry_problem(ledger):
                 or not isinstance(entry.get("applied", False), bool):
             return ("answered entry " + repr(identifier) + " is not a content digest, a"
                     " disposition and whether it was applied")
+        if not isinstance(entry.get("act", False), bool):
+            return ("answered entry " + repr(identifier) + " is not a content digest, a"
+                    " disposition and whether it was applied")
     for relationship, entry in ledger["assignments"].items():
         # The mode it holds is read as the mode of an accepted assignment, so the entry has to
         # be able to name that assignment: an execution mode, a workflow and a message id,
@@ -556,21 +560,28 @@ def record_answer(ledger, packet, answer) -> bool:
     never downgrades one; a collision writes nothing. An accepted assignment records the mode
     and workflow it gave, once, for the relationship the receiver read - never overwritten, so
     no later packet can redefine it. Nothing here says the answer was acted on: a first answer
-    is recorded as not applied, and only record_applied changes that.
+    is recorded as not applied, and only record_applied changes that. What every check told
+    the receiver - act or not - is kept as the entry's act, because an application may be
+    recorded only after a check said to act (a held or refused answer did not).
     """
     changed = False
     identifier = answer.get("messageId")
     state = (answer.get("repeat") or {}).get("state")
     accepted = answer.get("disposition") == packets.ACCEPTED
+    told = answer.get("act") is True
     if state == packets.FIRST:
         ledger["answered"][identifier] = {"contentDigest": answer["repeat"]["contentDigest"],
                                           "disposition": answer["disposition"],
-                                          "applied": False}
+                                          "applied": False, "act": told}
         changed = True
-    elif state == packets.REPLAY and accepted and \
-            ledger["answered"][identifier].get("disposition") != packets.ACCEPTED:
-        ledger["answered"][identifier]["disposition"] = packets.ACCEPTED
-        changed = True
+    elif state == packets.REPLAY:
+        entry = ledger["answered"][identifier]
+        if accepted and entry.get("disposition") != packets.ACCEPTED:
+            entry["disposition"] = packets.ACCEPTED
+            changed = True
+        if entry.get("act", False) is not told:
+            entry["act"] = told
+            changed = True
     region = packet["envelope"]
     relationship = (answer.get("record") or {}).get("relationId")
     if accepted and state in (packets.FIRST, packets.REPLAY) \
@@ -611,6 +622,11 @@ def record_applied(ledger, packet) -> dict:
             "message " + str(identifier) + " was answered " + str(entry.get("disposition"))
             + ", so there was nothing to act on and nothing to record as applied")
     before = entry.get("applied") is True
+    if not before and entry.get("act") is not True:
+        raise NotApplicable(
+            "the last check of message " + str(identifier) + " did not say act (it was held,"
+            " for example while the relationship was paused), so there is nothing acted on to"
+            " record; check it again and record it applied only after a check says act")
     entry["applied"] = True
     return {"messageId": identifier, "contentDigest": repeated["contentDigest"],
             "applied": True, "alreadyApplied": before}
