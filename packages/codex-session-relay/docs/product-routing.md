@@ -391,6 +391,10 @@ changed.
 `--limit` is a positive whole number, and `--after` a non-negative whole number inside SQLite's
 rowid range, normally the `next` a listing returned. Anything else is refused before any work,
 because a bound on what a command reads is a bound on what it writes.
+A `--limit` above what the command reads at once, 1000 routes for `route-show` and 5000 for
+`route-reconcile` and `route-digest`, is cut to that ceiling, the same rule as the ledger's own
+bounds. Nothing is skipped: the `next` in the answer continues the listing, and the proposals
+`route-digest` checks move through their rotation.
 
 `route-intake`, `route-classify`, `completion-check` and `route-projects` each run in one
 transaction from their first read to their last write. The registry, bindings, run owner and ledger records a decision

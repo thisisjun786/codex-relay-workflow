@@ -534,11 +534,14 @@ def canonical(value) -> str:
 
 
 def read_page(limit, after, *, ceiling) -> tuple:
-    """(limit, after) of a caller's page: a positive whole number, at most the ceiling, and no
-    cursor or a non-negative whole number inside SQLite's rowid range. Refused rather than
-    clamped, because a bound on what is read is a bound on what is written too, and a nonsense
-    one is no permission to do one. A cursor in range is only a position: one no listing
-    returned starts the page at that rowid and reads nothing it should not."""
+    """(limit, after) of a caller's page: a positive whole number, and no cursor or a
+    non-negative whole number inside SQLite's rowid range. Anything else is refused rather than
+    repaired, because a bound on what is read is a bound on what is written too, and a nonsense
+    one is no permission to do one. A limit above the ceiling is cut to the ceiling, the rule
+    the ledger's own faults.bounded applies: every caller continues from where it stopped, by
+    the next it returns or by rotating what it read, so a larger ask is only a slower one. A
+    cursor in range is only a position: one no listing returned starts the page at that rowid
+    and reads nothing it should not."""
     if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
         malformed(f"limit is a positive whole number, not {limit!r}")
     if after is not None and (isinstance(after, bool) or not isinstance(after, int)
