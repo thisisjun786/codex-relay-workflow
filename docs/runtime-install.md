@@ -1235,8 +1235,10 @@ variables naming the recorded file and digest and exit cleanly, and it has to re
 whose digest no longer matches, one naming a missing file and one naming a directory. The package is the one the Codex configuration enables as
 `crw@<marketplace>`, read from its single cached version; other plugins that happen to declare a
 server with the same name are not asked. When that selection cannot be
-made, because the configuration cannot be read, crw is registered from two marketplaces or more
-than one version is cached, the write is refused as `launcher_not_established`. The check reads
+made, because the configuration cannot be read, crw is registered from two marketplaces, more
+than one version is cached, or the plugin cache or the package's directory cannot be looked at,
+the write is refused as `launcher_not_established`. Only a cache that does not exist counts as
+nothing cached; one this run may not search is not read as empty. The check reads
 the cache, which is not proof of what a running App Server loaded, so the order on a host is:
 install the runtime, update the plugin package, restart Codex so it loads the package, register,
 then start a new thread and read `get_capabilities`. An installed runtime older than the digest variable still

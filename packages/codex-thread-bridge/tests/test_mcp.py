@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -212,10 +213,13 @@ async def test_a_configured_policy_that_cannot_be_used_stops_the_server(fake_ser
 # ------------------------------------------------------------- started the way Codex Desktop starts it
 #
 # Codex Desktop spawns this server through the crw plugin's launcher, with the App Server's bare
-# environment and no execution-policy variable. These start it the same way: the repository's own
-# launcher, a record under a temporary CODEX_HOME, and nothing else set. The launcher is outside
-# this package, so a run of this suite without the repository around it skips here -- and
-# scripts/ci/packages.py fails any skipped case, so the repository's own run never skips.
+# environment: no CODEX_HOME and no execution-policy variable. These start it the same way: the
+# repository's own launcher, copied to where an installation puts it under a temporary Codex home
+# and started from the package root the declaration names, so it has to find its record from its
+# own location. HOME is somewhere else, so a launcher that fell back to the user's home would find
+# no record rather than a real one. The launcher is outside this package, so a run of this suite
+# without the repository around it skips here -- and scripts/ci/packages.py fails any skipped
+# case, so the repository's own run never skips.
 
 LAUNCHER = Path(__file__).resolve().parents[3] / "plugins" / "crw" / "wiring" / "crw_bridge_mcp.py"
 CHILD = {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}
@@ -227,7 +231,12 @@ def launched_by_the_plugin(tmp_path, socket, *, policy=ROLE_POLICY):
     if not LAUNCHER.is_file():
         pytest.skip("the crw plugin launcher is not beside this package: " + str(LAUNCHER))
     home = tmp_path / "codex-home"
-    home.mkdir()
+    package = home / "plugins" / "cache" / "crw" / "crw" / "0.0.0"
+    (package / "wiring").mkdir(parents=True)
+    shutil.copyfile(LAUNCHER, package / "wiring" / LAUNCHER.name)
+    # What makes the directory six levels up a Codex home to the launcher, rather than only a
+    # directory that happens to be there.
+    (home / "config.toml").write_text("", encoding="utf-8")
     record = {"recordVersion": 1, "owner": "plugin", "serverName": "codex-thread-bridge",
               "bridgeExecutable": sys.executable,
               "args": ["-m", "codex_thread_bridge.server", "--socket", str(socket),
@@ -240,10 +249,12 @@ def launched_by_the_plugin(tmp_path, socket, *, policy=ROLE_POLICY):
         digest = hashlib.sha256(data).hexdigest()
         record.update(recordVersion=2, executionPolicy={"path": str(path), "digest": digest})
     (home / "crw-bridge-mcp.json").write_text(json.dumps(record))
-    # Only what the host hands a plugin server. The SDK adds its own short default list (HOME,
-    # PATH and the like), which carries no execution-policy variable either.
-    parameters = StdioServerParameters(command=sys.executable, args=[str(LAUNCHER)],
-                                       env={"CODEX_HOME": str(home)})
+    # Only what the host hands a plugin server: the SDK's own short list (HOME, PATH and the
+    # like), which carries neither CODEX_HOME nor an execution-policy variable, with HOME moved.
+    user_home = tmp_path / "user-home"
+    user_home.mkdir()
+    parameters = StdioServerParameters(command=sys.executable, args=["./wiring/" + LAUNCHER.name],
+                                       cwd=str(package), env={"HOME": str(user_home)})
     return parameters, digest
 
 

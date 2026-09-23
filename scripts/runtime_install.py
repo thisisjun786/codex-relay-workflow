@@ -16,6 +16,7 @@ import json
 import os
 import shutil
 import socket
+import stat as stat_module
 import subprocess
 import sys
 import tempfile
@@ -4702,6 +4703,36 @@ def _other_bridge_tables(configuration, name, wanted):
                                                            (wanted or {}).get("bridgeExecutable")))
 
 
+def _plugin_cache_state(codex_home):
+    """(state, detail) for <CODEX_HOME>/plugins/cache: whether there is a cache to look in.
+
+    ABSENT only when nothing exists at that path. Everything else that stops this run from looking,
+    a directory on the way it may not search, a link it cannot resolve, a file where the directory
+    belongs, is UNREADABLE: the same partition reading.observe draws for a file, because "the check
+    failed" and "there is nothing there" are different answers. Path.is_dir() gives both the same
+    one, and a cache read as absent is a package nobody asked -- a plugins directory without search
+    permission let a version-2 record through beside a launcher that could not start it.
+    """
+    cache = Path(codex_home) / "plugins" / "cache"
+    try:
+        found = os.lstat(str(cache))
+    except FileNotFoundError:
+        return reading.ABSENT, "nothing exists at " + str(cache)
+    except (OSError, ValueError) as error:
+        return reading.UNREADABLE, (str(cache) + " could not be looked at ("
+                                    + type(error).__name__ + ": " + str(error) + ")")
+    if stat_module.S_ISLNK(found.st_mode):
+        try:
+            found = os.stat(str(cache))
+        except OSError as error:
+            return reading.UNREADABLE, (str(cache) + " is a symbolic link whose target could not"
+                                        " be resolved (" + type(error).__name__ + ": "
+                                        + str(error) + ")")
+    if not stat_module.S_ISDIR(found.st_mode):
+        return reading.UNREADABLE, str(cache) + " is not a directory"
+    return reading.PRESENT, str(cache)
+
+
 def _plugin_declared_servers(codex_home):
     """The servers an installed plugin package declares here, or None when that is unreadable.
 
@@ -4710,11 +4741,15 @@ def _plugin_declared_servers(codex_home):
     how a second bridge arrives.
 
     An absent cache directory is a real answer: nothing is installed, so nothing is declared, and
-    the ordinary manual install this command exists for goes on working untouched.
+    the ordinary manual install this command exists for goes on working untouched. A cache or a
+    manifest this run cannot look at is not absent, and answers None.
     """
-    cache = Path(codex_home) / "plugins" / "cache"
-    if not cache.is_dir():
+    state, _ = _plugin_cache_state(codex_home)
+    if state == reading.ABSENT:
         return set()
+    if state != reading.PRESENT:
+        return None
+    cache = Path(codex_home) / "plugins" / "cache"
     declared, unreadable = set(), False
 
     def _children(directory):
@@ -4735,7 +4770,13 @@ def _plugin_declared_servers(codex_home):
         return None
     for version in versions:
         manifest_path = version / ".codex-plugin" / "plugin.json"
-        if not manifest_path.is_file():
+        # observe, not is_file(): a version directory without a manifest is not a package, but
+        # a manifest this run may not look at is a package nobody asked.
+        found = reading.observe(manifest_path, "a cached plugin manifest")
+        if found is not None and found.state == reading.ABSENT:
+            continue
+        if found is not None:
+            unreadable = True
             continue
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -5002,13 +5043,22 @@ def _policy_launcher_refusal(codex_home):
     entry in the Codex configuration names its marketplace, and the cache holds its versions
     under <marketplace>/crw/<version>. No registered crw, a disabled one, or none cached means no
     crw launcher starts, so the record is inert and allowed. A configuration that cannot be read,
-    crw registered from more than one marketplace, more than one cached version, or a package
-    that cannot be read refuses rather than guesses. What the cache holds is not proof of what a
-    running App Server loaded; see plugin-packaging.md.
+    crw registered from more than one marketplace, more than one cached version, or a cache or
+    package that cannot be looked at refuses rather than guesses. "None cached" is established
+    absence only; a cache this run may not search is not it. What the cache holds is not proof of
+    what a running App Server loaded; see plugin-packaging.md.
     """
-    cache = Path(codex_home) / "plugins" / "cache"
-    if not cache.is_dir():
+    cache_state, cache_detail = _plugin_cache_state(codex_home)
+    if cache_state == reading.ABSENT:
         return None
+    if cache_state != reading.PRESENT:
+        # Decided here, before the configuration is read. The transition's reader asks
+        # Path.is_dir() about the same directory, which raises on one interpreter and answers
+        # False on another, and neither is this refusal.
+        return LAUNCHER_NOT_ESTABLISHED, (
+            "the plugin cache could not be looked at (" + cache_detail + "), so whether it holds"
+            " a crw package whose launcher would refuse this record was not established")
+    cache = Path(codex_home) / "plugins" / "cache"
     from crw_transition import inventory
     plugin = inventory.read_plugin(codex_home)
     if plugin["configEntry"] == reading.ABSENT:

@@ -1061,6 +1061,31 @@ class BridgeRecordPolicyTest(unittest.TestCase):
                 self.assertIn(reason, emitted["detail"], output)
 
     @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
+    def test_a_cache_this_run_may_not_search_is_refused_and_not_read_as_empty(self):
+        """Review of 1c3f7a13: is_dir() answered False for a plugins directory it could not search.
+
+        That read as "nothing cached", the record was written, and once access came back the
+        enabled package's older launcher refused it on every new thread.
+        """
+        if os.geteuid() == 0:
+            self.skipTest("root searches a directory whatever its mode")
+        for closed in ("plugins", "plugins/cache"):
+            with self.subTest(closed):
+                shutil.rmtree(self.home.codex_home / "plugins", ignore_errors=True)
+                self.install_package(launcher_text=self.older_launcher())
+                self.enable("crw@crw")
+                directory = self.home.codex_home / closed
+                directory.chmod(0)
+                try:
+                    status, emitted, output = self.register("--apply")
+                finally:
+                    directory.chmod(0o755)
+                self.assertNotEqual(status, 0, output)
+                self.assertEqual(emitted.get("outcome"), "launcher_not_established", output)
+                self.assertIn("Permission", emitted.get("detail", ""), output)
+                self.assertFalse(self.record.exists(), output)
+
+    @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
     def test_the_launcher_this_package_ships_accepts_the_write(self):
         self.install_package()
         self.enable("crw@crw")
@@ -1853,6 +1878,24 @@ class RegisterMcpDoesNotShadowADeclaredServer(unittest.TestCase):
         self.assertNotEqual(emitted.get("outcome"), "internal_error")
         self.assertIn("could not be read", emitted["detail"])
         self.assertEqual(self.config(), before)
+
+    def test_a_cache_or_manifest_this_run_may_not_look_at_is_not_read_as_declaring_nothing(self):
+        """The same partition as the policy guard: a failed look is not an empty cache."""
+        if os.geteuid() == 0:
+            self.skipTest("root searches a directory whatever its mode")
+        cache = self.install_plugin()
+        for closed in (self.home.codex_home / "plugins", cache / ".codex-plugin"):
+            with self.subTest(str(closed.relative_to(self.home.codex_home))):
+                before = self.config()
+                closed.chmod(0)
+                try:
+                    status, emitted, output = self.register("--apply")
+                finally:
+                    closed.chmod(0o755)
+                self.assertEqual(status, 1, output)
+                self.assertIn("could not be read", emitted.get("detail", ""), output)
+                self.assertEqual(self.config(), before)
+                self.assertNotIn("[mcp_servers.codex-thread-bridge]", self.config())
 
 
 # ------------------------------------------------- the declaration that outlives the cache
