@@ -2,9 +2,10 @@
 
 Two relations carry messages in this workflow. A parent and its child exchange a completion
 and a correction, and that pair has a queue, a receipt, an acknowledgement and a verdict. A
-supervisor and a parent exchange instructions and reports, and that pair has none of those -
-linkage records that an instruction EXISTS and OPS-7.4 says out loud that the relay carries no
-supervisor or peer message channel.
+supervisor and a parent exchange instructions and reports, and that pair has less than that:
+linkage records that an instruction EXISTS, and a report upward is a staged message and the
+recipient's own readback. Neither has an acknowledgement or a verdict, and the peer relation
+has no channel at all.
 
 Writing one envelope for both is therefore not a way to pretend the second pair has the first
 pair's machinery. It is the opposite: one place that says which facts identify a message, what
@@ -205,9 +206,12 @@ STATES = (YES, NO, CONDITIONAL, UNMEASURED, IMPOSSIBLE)
 # The two halves of the table differ because the directions differ. A child's completion is
 # acknowledged: ack.acknowledge exists for exactly that message. A parent's revision request is
 # NOT - acknowledge refuses a revision delivery, and what shows a correction was applied is the
-# completion receipt of the generation it opened. The supervisor direction has no channel at
-# all, so its upper stages are impossible rather than merely unmeasured, and saying so is the
-# whole reason this table is data instead of a paragraph somebody has to remember.
+# completion receipt of the generation it opened. A report upward is transported and read back
+# and nothing more, and a directive downward is recorded rather than sent, so each of those two
+# keeps impossible exactly where it has no mechanism. Saying so is the whole reason this table
+# is data instead of a paragraph somebody has to remember: when a channel appears the table
+# changes and check_reach starts enforcing the new truth, rather than a sentence somewhere
+# quietly going out of date.
 REACH_SOURCES = {
     CHILD_TO_PARENT: {
         TRANSPORT_ACCEPTED: "attempts", RECEIVED: "acks", AGREED: "acks",
@@ -222,7 +226,8 @@ REACH_SOURCES = {
         APPLIED: None, VERIFIED: None,
     },
     PARENT_TO_SUPERVISOR: {
-        TRANSPORT_ACCEPTED: None, RECEIVED: None, AGREED: None, APPLIED: None, VERIFIED: None,
+        TRANSPORT_ACCEPTED: "supervisor_attempts", RECEIVED: "supervisor_readbacks",
+        AGREED: None, APPLIED: None, VERIFIED: None,
     },
 }
 
@@ -232,10 +237,11 @@ NO_MECHANISM = {
     CHILD_TO_PARENT: "",
     PARENT_TO_CHILD: "a revision request carries no acknowledgement; the completion receipt of"
                      " the generation it opened is what shows it was applied",
-    SUPERVISOR_TO_PARENT: "the relay carries no supervisor message channel, so nothing"
-                          " transports, applies or verifies this one",
-    PARENT_TO_SUPERVISOR: "the relay carries no supervisor message channel, so nothing here"
-                          " records that a supervisor received, agreed, applied or verified",
+    SUPERVISOR_TO_PARENT: "a directive is recorded rather than sent, so nothing transports,"
+                          " applies or verifies this one",
+    PARENT_TO_SUPERVISOR: "a report upward is transported and read back, and nothing here"
+                          " records that a supervisor agreed, applied or verified anything;"
+                          " what became of it is read from the Linear record, confirmed",
 }
 
 
