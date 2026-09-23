@@ -377,9 +377,11 @@ because a bound on what a command reads is a bound on what it writes.
 `route-intake`, `route-classify` and `completion-check` each run in one transaction from their
 first read to their last write. The registry, bindings, run owner and ledger records a decision
 is made from are the ones it commits with; a binding another process commits meanwhile is either
-seen or waits, and then decides the route again itself. That redecision stores any change to the
-route's placement, its disposition or its related issues, so a completed issue bound late makes a
-filed route the follow-up it is.
+seen or waits, and then decides the route again itself. `product-bind` checks a binding against
+the registry read inside its own transaction. The redecision stores any change to the route's
+placement, its disposition or its related issues, so a completed issue bound late makes a filed
+route the follow-up it is. An obligation not yet queued that the new decision contradicts is
+dropped: a route that is no longer a follow-up does not write the relation it was going to.
 
 Status: the registry, the decision and the completion verdicts do not depend on the ledger. The
 paths that record, adopt, target, move, update or queue go through `ledger_port.py`, which binds

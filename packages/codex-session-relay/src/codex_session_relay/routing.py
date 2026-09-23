@@ -107,15 +107,17 @@ class ProductRouter:
         stored incident. A product nothing was routed for yet touches no ledger at all.
         """
         product = record.get("product") if isinstance(record, dict) else None
-        registry = self.registry(product) if isinstance(product, str) else None
-        if registry is None:
-            products.refuse(RefusalReason.ROUTE_PRODUCT_UNKNOWN,
-                            f"{product!r} is not a registered product; register it first")
-        binding = products.read_binding(record, registry)
         now = self.clock.iso()
         # One transaction with the decisions it settles: a binding whose consequences were
-        # refused is not left behind as a snapshot routing never acted on.
+        # refused is not left behind as a snapshot routing never acted on. The registry it is
+        # checked against is read inside it too, so a test target changed meanwhile is the one
+        # the binding is checked against or waits for this binding.
         with self.store.composing() as db:
+            registry = self.registry(product) if isinstance(product, str) else None
+            if registry is None:
+                products.refuse(RefusalReason.ROUTE_PRODUCT_UNKNOWN,
+                                f"{product!r} is not a registered product; register it first")
+            binding = products.read_binding(record, registry)
             db.execute(
                 "INSERT INTO product_bindings (product_key, kind, ref, record, observed_at,"
                 "  recorded_at) VALUES (?,?,?,?,?,?)"

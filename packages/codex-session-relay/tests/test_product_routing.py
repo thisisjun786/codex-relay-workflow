@@ -1090,6 +1090,30 @@ class TransactionBoundaries(ProductRoutingCase):
         self.assertEqual(("follow_up", ["BTM-5"]), (route["disposition"],
                                                     route["target"]["relate"]))
         self.assertIn("BTM-5", [o["toIssue"] for o in route["target"]["obligations"]])
+        # Bound again as not done, BTM-5 no longer closed PR#77: a new issue again, and the
+        # relation it was going to write, never queued, is not owed any more.
+        self.router.bind(binding("beta-meter", "issue", "BTM-5", state="open",
+                                 components=["billing"], symptoms=["refund_lost"],
+                                 fixRef="PR#77"))
+        route = routes.get(self.store, answer["faultId"])
+        self.assertEqual(("new_issue", []), (route["disposition"], route["target"]["relate"]))
+        self.assertNotIn("BTM-5", [o["toIssue"] for o in route["target"]["obligations"]])
+        self.assertIn("add_label", [o["kind"] for o in route["target"]["obligations"]])
+
+    def test_a_binding_is_checked_against_the_registry_it_commits_with(self):
+        from unittest import mock
+
+        seen = []
+        real = products.read_binding
+
+        def read_binding(*args, **kwargs):
+            seen.append(self.store.in_transaction)
+            return real(*args, **kwargs)
+
+        with mock.patch.object(products, "read_binding", read_binding):
+            self.router.bind(binding("alpha-notes", "issue", "TST-5", test=True,
+                                     components=["editor"], project="proj-test"))
+        self.assertEqual([True], seen)
 
 
 class TheContractIsBound(unittest.TestCase):

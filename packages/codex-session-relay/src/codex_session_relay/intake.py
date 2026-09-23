@@ -286,15 +286,29 @@ def _obligations(decision, existing, cause_fault, *, labels=()):
     An issue the fault creates owes its repository label, which the ledger's create does not
     carry; an issue it adopts is somebody else's and keeps the labels it has, so an adopted
     route owes none and an open label obligation from before the adoption is dropped.
+
+    More generally an obligation still open, never queued, is dropped when the current decision
+    contradicts it: a route decided again from a follow-up to a new issue no longer owes the
+    relation to the issue it was going to follow, and must not write it; a reopen belongs only
+    to a reopen. One already queued or done is history and stays.
     """
     owed = list((existing or {}).get("target", {}).get("obligations") or [])
-    if decision.get("owner"):
-        owed = [o for o in owed if not (o["kind"] == "add_label" and o["state"] == "open")]
+    labelled = decision["disposition"] in (products.NEW_ISSUE, products.FOLLOW_UP) and not (
+        decision.get("owner"))
+    related = set(decision.get("relate") or [])
+
+    def contradicted(obligation):
+        if obligation["kind"] == "add_label":
+            return not labelled
+        if obligation["kind"] == "reopen":
+            return decision["disposition"] != products.REOPEN
+        return obligation["toIssue"] is not None and obligation["toIssue"] not in related
+
+    owed = [o for o in owed if o["state"] != "open" or not contradicted(o)]
     wanted = []
     if decision["disposition"] == products.REOPEN:
         wanted.append(_owed("reopen"))
-    if decision["disposition"] in (products.NEW_ISSUE, products.FOLLOW_UP) and not decision.get(
-            "owner"):
+    if labelled:
         wanted.extend(_owed("add_label", label=label) for label in labels)
     for issue in decision.get("relate") or []:
         wanted.append(_owed("add_relation", to_issue=issue))
