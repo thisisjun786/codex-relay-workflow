@@ -738,6 +738,16 @@ class TheNoticeDeclaresTheRequiredChecks(MergeTurnWakeTestCase):
         self.assertEqual(self.check_command(text, "success").required, ["dev-gate"])
         self.assertNotIn("old-gate", text)
 
+    def test_every_current_event_counts_whatever_its_submission_number(self):
+        # Submission numbers count per event. One event resubmitted with a smaller set must not
+        # hide another event's first submission that still declares dev-gate (Devin, PR #138).
+        resubmitted = self.candidate(required=("dev-gate",), name="one")
+        self.candidate(required=("optional-lint",), event=resubmitted, submission_no=2)
+        self.candidate(required=("dev-gate",), name="two")
+        _turn, _event, text = self.notice()
+        self.assertNotRecorded(text, "disagree")
+        self.assertNotIn("--required=optional-lint", text)
+
     def test_a_reading_that_found_nothing_required_says_so(self):
         self.candidate(required=())
         _turn, _event, text = self.notice()

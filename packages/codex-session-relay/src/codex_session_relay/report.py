@@ -663,12 +663,15 @@ def required_for_candidate(store, *, relationship_id, repository, base_ref, head
     are proposed to the parent, never enforced here; merge-turn-check still stores whatever
     --required its caller declares.
 
-    The report is chosen by the rule mergeturn._relationship_refusal applies at the merge itself -
-    the newest generation that names a head, then that generation's latest submission - so the
-    notice cannot propose a reading the check would then refuse as another candidate's. Every
-    narrowing below answers "not recorded" rather than guessing. A wrong set proposed with
-    confidence is worse than an empty one the parent is told to fill, because the command it
-    sits in is the one a parent runs as written.
+    The readings are those of the newest generation that names a head, the generation
+    mergeturn._relationship_refusal compares the merge against, and within it the latest
+    head-bearing submission of EVERY event. Submission numbers count per event, so one maximum
+    taken across the generation kept only the event that happened to be resubmitted most: a
+    second event still declaring dev-gate at its first submission was dropped, and the notice
+    proposed the first event's smaller set as if it were the whole. All of those readings must
+    name the candidate and agree. Every narrowing below answers "not recorded" rather than
+    guessing. A wrong set proposed with confidence is worse than an empty one the parent is told
+    to fill, because the command it sits in is the one a parent runs as written.
 
     Returns {"required": [names], "eventId", "submissionNo"}, or {"required": None, "reason"}.
     An empty list is a reading that found nothing required, which is not the same answer as None.
@@ -687,20 +690,18 @@ def required_for_candidate(store, *, relationship_id, repository, base_ref, head
     )
     if newest is None or newest["generation"] is None:
         return absent("no work report on this assignment names a head")
-    latest = store.one(
-        "SELECT MAX(submission_no) AS submission FROM work_reports"
-        "  WHERE relationship_id = ? AND execution_generation = ? AND head_sha IS NOT NULL",
-        (relationship_id, newest["generation"]),
-    )
     rows = store.all(
         "SELECT w.event_id, w.submission_no, w.head_sha, w.repository, w.base_ref,"
         "       h.required_declared"
         "  FROM work_reports w LEFT JOIN work_report_handoffs h"
         "    ON h.event_id = w.event_id AND h.submission_no = w.submission_no"
-        " WHERE w.relationship_id = ? AND w.execution_generation = ? AND w.submission_no = ?"
-        "   AND w.head_sha IS NOT NULL"
+        " WHERE w.relationship_id = ? AND w.execution_generation = ? AND w.head_sha IS NOT NULL"
+        # Each event's own latest head-bearing submission; an event id fixes its relationship
+        # and generation, so the correlation needs nothing else.
+        "   AND w.submission_no = (SELECT MAX(l.submission_no) FROM work_reports l"
+        "                           WHERE l.event_id = w.event_id AND l.head_sha IS NOT NULL)"
         " ORDER BY w.event_id",
-        (relationship_id, newest["generation"], latest["submission"]),
+        (relationship_id, newest["generation"]),
     )
     heads = sorted({row["head_sha"] for row in rows})
     if heads != [head_sha]:
