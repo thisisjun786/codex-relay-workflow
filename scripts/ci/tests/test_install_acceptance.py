@@ -5244,10 +5244,12 @@ TRIAL_ANSWERS = {
 }
 
 # What the relay own predicate requires of a recipient settings document, supplied in full so
-# the preflight passes for the reason it exists rather than by being skipped.
+# the preflight passes for the reason it exists rather than by being skipped. environments is a
+# list, as the host reports it: the predicate types it (CRW-215), and the {} this used to hold
+# passed only because it did not.
 RECIPIENT_SETTINGS = {"sandbox": {"type": "readOnly"}, "approvalPolicy": "never",
                       "cwd": "/tmp", "runtimeWorkspaceRoots": ["/tmp"], "model": "a-model",
-                      "reasoningEffort": "low", "environments": {}}
+                      "reasoningEffort": "low", "environments": []}
 
 
 def delivering_relay(root, *, doctor=True):

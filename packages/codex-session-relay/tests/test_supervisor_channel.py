@@ -57,6 +57,20 @@ class _Reader:
         return self.answer
 
 
+# The program every rendered line starts with: this relay's own executable (F3), never a bare
+# name a later reader's PATH resolves. Lines are found by it and parsed after it.
+PROGRAM = channel_module.relay_program()
+PROGRAM_LINE = shlex.join(PROGRAM)
+
+
+def relay_args(line):
+    """A rendered line's arguments after the program that runs this relay."""
+    argv = shlex.split(line)
+    if argv[:len(PROGRAM)] != list(PROGRAM):
+        raise AssertionError("not a line that runs this relay: " + line)
+    return argv[len(PROGRAM):]
+
+
 class ChannelTestCase(RelayTestCase):
     """One assignment, under a project, under an initiative, with a host for all three."""
 
@@ -1131,8 +1145,8 @@ class WhatTheFourthReviewRoundFound(ChannelTestCase):
 
         _one, message_id, _record = self.delivered()
         argv = self._rendered_readback(self.bytes_of(message_id))
-        self.assertEqual(argv[0], "codex-session-relay")
-        args = cli.build_parser().parse_args(argv[1:])
+        self.assertEqual(argv[:len(PROGRAM)], list(PROGRAM))
+        args = cli.build_parser().parse_args(argv[len(PROGRAM):])
         self.assertEqual(args.command, "supervisor-read")
         self.assertTrue(args.socket, "--socket is global and has to be on the line itself")
         self.assertEqual(args.message, message_id)
@@ -1181,7 +1195,7 @@ class WhatTheFourthReviewRoundFound(ChannelTestCase):
     def _rendered_readback(message):
         """The invocation as it stands in the bytes, split the way a POSIX shell splits it."""
         for line in message.splitlines():
-            if (line.strip().startswith("codex-session-relay ")
+            if (line.strip().startswith(PROGRAM_LINE + " ")
                     and " supervisor-read " in line):
                 return shlex.split(line)
         raise AssertionError("the message carries no readback line")
@@ -1389,8 +1403,7 @@ class WhatTheFifthReviewRoundFound(ChannelTestCase):
         channel = self.build_channel(state_directory=selectors["state"])
         staged = channel.stage(supervision.from_observation(reading), reading=reading)
         pointer = channel.show(staged["messageId"])["stagedFrom"]["recheck"]
-        argv = shlex.split(pointer)
-        args = cli.build_parser().parse_args(argv[1:])
+        args = cli.build_parser().parse_args(relay_args(pointer))
         self.assertEqual(
             (args.state, args.marker_root, args.workspace, args.assignment, args.session,
              args.turn),
@@ -1405,16 +1418,14 @@ class WhatTheFifthReviewRoundFound(ChannelTestCase):
         packet = json.loads(self.channel.get(message_id)["packet"])
         lines = list(packet[packets.EVIDENCE])
         lines += [line.strip() for line in self.bytes_of(message_id).splitlines()
-                  if line.strip().startswith("codex-session-relay ")]
+                  if line.strip().startswith(PROGRAM_LINE + " ")]
         lines += [line.split("Full record: ", 1)[1]
                   for line in self.bytes_of(message_id).splitlines()
                   if line.startswith("Full record: ")]
         lines += self.channel._evidence({}, {"projectKey": "a project, spaced"})
         commands = set()
         for line in lines:
-            argv = shlex.split(line)
-            self.assertEqual(argv[0], "codex-session-relay", line)
-            commands.add(cli.build_parser().parse_args(argv[1:]).command)
+            commands.add(cli.build_parser().parse_args(relay_args(line)).command)
         self.assertEqual(commands, {"show", "supervisor-read", "supervisor-show",
                                     "supervisor-standing"})
 
@@ -2303,12 +2314,11 @@ class EveryLineSelectsTheStoreItWasWrittenFrom(ChannelTestCase):
         """
         from codex_session_relay import cli
 
-        argv = shlex.split(line)
-        self.assertEqual(argv[0], "codex-session-relay", line)
+        rest = relay_args(line)
         filled = {channel_module.SOCKET_PLACEHOLDER: os.path.join(self.tmp, self.SOCKET),
                   channel_module.TURN_PLACEHOLDER: turn,
                   channel_module.PROOF_PLACEHOLDER: proof}
-        args = cli.build_parser().parse_args([filled.get(one) or one for one in argv[1:]])
+        args = cli.build_parser().parse_args([filled.get(one) or one for one in rest])
         services = cli.Services(args)
         try:
             self.assertEqual(os.path.realpath(services.selection.db_path),
@@ -2329,7 +2339,7 @@ class EveryLineSelectsTheStoreItWasWrittenFrom(ChannelTestCase):
         written = self.bytes_of(message_id)
         lines = list(json.loads(self.channel.get(message_id)["packet"])[packets.EVIDENCE])
         lines += [line.strip() for line in written.splitlines()
-                  if line.strip().startswith("codex-session-relay ")]
+                  if line.strip().startswith(PROGRAM_LINE + " ")]
         lines += [line.split("Full record: ", 1)[1] for line in written.splitlines()
                   if line.startswith("Full record: ")]
         turn = record["turnId"]
@@ -2361,7 +2371,7 @@ class EveryLineSelectsTheStoreItWasWrittenFrom(ChannelTestCase):
         finally:
             services.close()
         argv = WhatTheFourthReviewRoundFound._rendered_readback(written)
-        args = cli.build_parser().parse_args(argv[1:])
+        args = cli.build_parser().parse_args(argv[len(PROGRAM):])
         self.assertEqual(args.socket, canonical_socket(socket))
         self.assertEqual(os.path.realpath(args.state),
                          os.path.realpath(os.path.dirname(self.store.path)))

@@ -66,6 +66,15 @@ prints it as `stagedFrom.recheck` beside the frozen `stagedFrom.reading`, and th
 allowed to disagree. A second, different reading of an omission that is already staged is
 refused as `contradictory_observation`, because one message keeps one reading.
 
+An omission's envelope says what it is in its basis. The envelope has no purpose of its own for a
+turn that ended without reporting - it travels as `blocked`, the purpose that asks the level
+above to look - and with no revision its basis used to read unknown, so the one line a supervisor
+reads first said a block. The live run showed the cost: the real supervisor summarised a
+deliberately omitted report as the issue being blocked (CRW-215 live finding F4). The basis now
+names it - `unreported: turn <id> ended without a report, reading <reason>, generation <n>` -
+so the delivered bytes carry the obligation kind, the reason the reading gave and the generation,
+and `supervisor-show` still carries the whole frozen reading.
+
 ### Every line it writes selects the store it was written from
 
 Every command line the channel writes for a later step - the evidence pointer in the packet,
@@ -80,6 +89,21 @@ canonicalised - that is the host the recipient's thread is on - and keeps
 `reporting-show` recheck carries the reading's own `--state`, the selection that produced the
 reading, and staging refuses a reading taken against any other store than the one it is staged
 in - so that line selects this store as well, and the packet and its recheck read one record.
+
+Every such line also names the relay that wrote it. It used to start with the bare program name,
+which left a later reader's PATH to choose, and on the live host PATH named a relay installed
+before this channel existed, so the rendered readback failed with
+`invalid choice: 'supervisor-read'` (CRW-215 live finding F3). `relay_program()` renders the
+console script installed beside the writing interpreter, found through the real path of its
+environment so that the service's worker and a parent's CLI started through a `current` link
+write the same bytes - a staged packet is compared byte for byte where its transport starts -
+and the interpreter running the module where no console script is installed. A line is therefore
+runnable as rendered with no PATH at all, for as long as that installation exists. After it is
+replaced and removed, a line already delivered names an executable that is gone and fails as
+rendered; its arguments still apply, and whoever runs them names the relay that now reads the
+store. Nothing re-points a delivered line.
+`tests/test_supervisor_live_findings.py` runs one rendered line as a real process with PATH
+pointing nowhere.
 
 **status_response is deliberately absent, and that is the one named gap in this contract.**
 `BODY` is a dispatch instruction checked against DISPATCH-TASK-01, so requiring it of an answer
@@ -223,6 +247,22 @@ own final receipt exists (it goes upward as its own fact), not when a later turn
 microsecond), and not inside `omission_grace_seconds` after the settlement (300 by
 default), which gives the parent, or the child it steers, the chance to answer first. A
 reading that owes nothing raises no obligation and is not a gap.
+
+How soon an omission is owed depends on when the relay settles the turn, and that is not the
+grace. A turn that ended with no receipt has no staged event to find it by, so the daemon reaches
+it through its scan of admitted turns, which reads at most `share - 1` rows of
+`generation_turns` - the whole table, every relationship's rows - on each visit to one
+relationship. With `max_turn_reads_per_tick` 8 and `min_relationship_share` 2 that is four
+relationships a tick and one row a visit, and an admission written after a pass fixed its last
+row waits for the next pass. Measured on the live host on 2026-09-23, with 27 rows and 20 active
+relationships (about 100 seconds a row): two turns that ended at about 16:56 UTC settled at 17:36
+and 17:38, one that ended at about 17:05 settled at 18:24, and its omission was owed at 18:29 -
+about 83 minutes after the turn ended, of which the grace is 5. A turn that carried a receipt
+settled within 90 seconds, because its staged event puts it in the ring directly. The scan belongs
+to the observation pass and not to this channel; making it cheaper - reading one relationship's
+own admissions through an index, or serving eligible admissions before rotating - is the named
+follow-up "supervisor omission latency", and until then an omission's wake is bounded by that scan
+rather than by its grace.
 
 The readers still read different sources, and where the marker and the store disagree about
 the assignment itself each answers from its own. A marker that never received
@@ -559,7 +599,8 @@ is its own check. Supplying the option proves an argument was supplied, not that
 reachable.
 
 The line the message itself renders is this one with everything the relay already knows filled
-in - the store directory and the socket included - leaving two placeholders, `YOUR_TURN_ID`
+in - the program that runs this relay (see every line it writes selects the store it was written
+from), the store directory and the socket included - leaving two placeholders, `YOUR_TURN_ID`
 and `YOUR_PROOF`, and a third, `YOUR_RELAY_SOCKET`, only when it was rendered without a socket.
 It asks the recipient to record that the report reached its thread, and says that a readback
 never records that anybody read, agreed to or acted on anything. Every command a report
@@ -586,6 +627,47 @@ skipped by every later attempt, so recording it as a hold would mean recovering 
 never released the report. A busy one is deferred with a backoff that grows and a cap that is
 counted in the journal, because the attempt counter only moves inside the claim a busy
 recipient never reaches.
+
+A supervisor the host has unloaded is loaded, not skipped. Its pair is the user's own selection,
+so it is never transmitted: a resume can apply what it transmits while the host materializes a
+thread, which would restore a model the user has since changed. That used to mean it was never
+sent to either - the delivery gate refused an unloaded record-based recipient before the
+transport, and the live host unloads an idle thread within about a minute, so a report waited
+until somebody else loaded the supervisor (CRW-215 live finding F1). The transport now resumes
+such a recipient, loaded or not, with nothing requested - `{threadId, excludeTurns}`, the
+bridge's own nothing-requested form - so an unloaded thread loads under its own persisted state
+and a loaded one reports it, and that answer is compared with the recorded authorization before
+any turn. The model, the effort, the whole sandbox policy, the approval policy, the cwd and the
+environment selection must equal the record. A difference refuses as
+`settings_differ_after_load`, retry-safe and with no turn started, and since nothing was
+transmitted that could have caused it, the remedy is to re-record the supervisor from a reading
+the user stands behind. The workspace roots are the one relaxation: a load restores only what the
+host persists, and on the live host it brought the supervisor back with its roots reduced to its
+cwd while every other field held (CRW-215 live finding F2), so after such a resume the roots - at
+the top level and in each environment - may be narrower than recorded, never wider.
+"Narrower" is a question about lists of paths and agreement is a question about values, so both
+sides are held to the shapes the comparison reads. The recorder refuses as `settings_mistyped`
+roots that are not a list of text, and environments that are not a list of objects with a text
+id, a text cwd and roots that are absent (they default to the cwd) or a list of text - null is
+neither; and it refuses as `unsupported_sandbox_type` a sandbox any of whose declared fields does
+not hold its declared default's type - a flag that is not a boolean, `writableRoots` that are
+not a list of text. A record holding its roots as the text "/a/bc" used to pass and was compared
+as its characters, so a host root "/" read as one it names. A host answer of any other shape is a
+refusal before any turn on both resume routes (`setting_unobservable`, or a difference for an
+unreadable sandbox), where it used to raise and be recorded as an unknown outcome. Every
+comparison between the record and the answer is made on JSON values, where 0 and false differ;
+Python's equality said they agreed. A key the pinned contract does not declare - in the sandbox
+policy or in an environment, which is compared whole - and the permission profile, which is the
+host's own value carried whole, have no type to hold them to and are compared exactly; a
+recorded profile the answer does not report, or reports as null, is a refusal like any other
+absent answer. What this verifies is the record's host settings, the fields the resume contract
+defines: the sandbox, the approval policy, the cwd, the roots, the model, the effort, the
+environments and the permission profile. The relay's own keys in a record (`citedRole`,
+`citedException`) are checked by the role policy, and any other top-level key is neither
+transmitted nor compared. A parent's or a child's pair, which policy derived, is
+resumed exactly as before, carrying its settings. The bridge's own tool path still refuses the unloaded case, because it reads no binding and does not
+load a thread without transmitting, so an operator message to an unloaded supervisor through it
+still waits for the host to load that thread.
 
 `supervisor-stage` refuses `--event` with `--observation` and `--project` with `--recipient`
 rather than ignoring the one it cannot use.
@@ -724,7 +806,8 @@ budget however far apart ticks are. So every rule above holds
 for it unchanged: one obligation is one message and one wake, what goes out is re-derived where
 the transport starts (I-247), the recipient's budget is shared with parent-child traffic and
 spent only at the transport start, a paused, archived or unreachable supervisor is withheld
-rather than woken and keeps the obligation, and a message another caller has claimed is left
+rather than woken and keeps the obligation, an unloaded one is loaded with nothing transmitted
+and compared with its record before any turn, and a message another caller has claimed is left
 alone. It is bounded like the daemon's other passes, by `max_supervisor_projects_per_tick` and
 `max_supervisor_sends_per_tick`, project keys are read a page at a time, and a project whose
 messages have all gone out costs reads and no write. Within a project it reads the project's
@@ -755,3 +838,12 @@ that host. It is not an installed runtime, an activated service, or any report r
 supervisor on any machine. Whether a real parent stages and sends a report, a real supervisor
 thread receives it, and a real supervisor reads it back is the live round trip, which is run
 after installation and is not shown by this source or its CI.
+
+It has been run once, on the installed runtime at b19b3fd2 (CRW-215, second live window): a
+completion and a deliberately omitted report went up on the daemon's own ticks, reached a real
+supervisor task, and were read back `recipient_opened` from a later turn of that supervisor's
+own. It got there only past the four limits this revision addresses - an unloaded supervisor
+never sent to (F1), a load that narrowed the roots (F2), a rendered line PATH resolved to another
+relay (F3), an omission delivered as a block (F4) - and it measured the latency bound recorded
+above. What this revision changes is source and fake-host evidence until it is installed and
+those live steps are run again.

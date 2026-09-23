@@ -279,9 +279,15 @@ records `echoIndependence: "not_established"` and no report calls those settings
 preserved.
 
 And where the pair was not compared against the role's declared pair, a `notLoaded` thread is not
-resumed at all. That covers a `supervisor`, whose pair is the one the policy deliberately does not
-derive, and any request citing an exception, since an exception exists to skip that comparison.
-Transmitting such a pair could restore a value the user has since changed.
+resumed with that pair at all. That covers a `supervisor`, whose pair is the one the policy
+deliberately does not derive, and any request citing an exception, since an exception exists to
+skip that comparison. Transmitting such a pair could restore a value the user has since changed.
+The relay's own transport therefore transmits nothing to such a recipient, loaded or not: it
+resumes it with nothing requested, which loads an unloaded thread under its own state, and
+compares what the host reports with the record before any turn, refusing a difference as
+`settings_differ_after_load`. The workspace roots, which a load does not restore, may come back
+narrower than recorded and never wider. The bridge's tool path below still refuses the unloaded
+case, because it reads no binding and does not load a thread without transmitting.
 
 This guard is only as good as what the sender says, and the bridge is explicit about where that
 stops. It reads no scope binding, so on a send that names no role it cannot tell an unnamed

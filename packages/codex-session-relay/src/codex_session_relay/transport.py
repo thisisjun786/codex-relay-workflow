@@ -24,6 +24,10 @@ SETTINGS_REFUSALS = (
     "setting_unobservable",
     "environments_unknown",
     "unverifiable_permission_profile",
+    # A thread loaded by a resume that transmitted nothing is not what the record says (a pair
+    # no policy derived is never transmitted; see settings.TaskSettings.settings_free_resume).
+    # Decided from that resume's response before any turn/start, so nothing was sent either.
+    "settings_differ_after_load",
 )
 
 ACCEPTED = "accepted"

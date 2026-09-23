@@ -295,9 +295,10 @@ one that is usually skipped.
 
    The wake must also cover the load state the wait will end up in, which is not the one it is
    adjudicated in. An idle recipient and one the host reports `notLoaded` are not woken the same
-   way: a resume into an unloaded task must derive its pair from the role's declared pair, which
-   [the relay reference](relay.md) states and for which a record-based or exception-authorized
-   pair is refused. Adjudication happens while the parent is still loaded, so a loaded wake is
+   way: a resume into an unloaded task transmits a pair only where it derives from the role's
+   declared pair, which [the relay reference](relay.md) states, and a record-based or
+   exception-authorized pair is never transmitted - that recipient is loaded by a resume that
+   requests nothing and compared with its record before any turn. Adjudication happens while the parent is still loaded, so a loaded wake is
    both the easiest evidence to have and the wrong evidence to rely on — a wait long enough to be
    worth making ends in eviction, and the event that arrives then takes the route nobody proved.
    Matching the state observed during adjudication would therefore pass fact 5 on evidence the
@@ -309,11 +310,12 @@ one that is usually skipped.
    tying the parent's new turn id to the delivery record that named it.
 
    A probe stands in for this parent only where it matches in the dimension that decides the
-   unloaded route: the role it is bound as, and where its pair comes from. The relay derives an
-   unloaded resume's pair from the role's declared pair and refuses a record-based or
-   exception-authorized one, so an ordinary parent-role probe waking from `notLoaded` says
-   nothing about a parent running under a named exception — that parent's delivery is refused at
-   exactly the moment the probe's succeeded. Where nothing can match it, because an
+   unloaded route: the role it is bound as, and where its pair comes from. The relay transmits an
+   unloaded resume's pair only where it derives from the role's declared pair, and loads a
+   record-based or exception-authorized one with nothing transmitted and compares it instead, so
+   an ordinary parent-role probe waking from `notLoaded` says nothing about a parent running
+   under a named exception — that parent's delivery takes the other route, and can be refused on
+   a comparison the probe never faced, at exactly the moment the probe's succeeded. Where nothing can match it, because an
    exception-authorized pair has no ordinary equivalent to probe with, the parent has no
    non-circular evidence for its own unloaded route: it records fact 5 `unmeasured` with the
    provenance that made it so and keeps `active-observation`.
