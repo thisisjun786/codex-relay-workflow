@@ -119,9 +119,6 @@ DEFAULT_LIMITS = {
 }
 DEFAULT_KIND_LIMIT = (20, 3600.0)
 RELINK_PER_CALL = 100
-# How long a notification found withheld at reservation waits before it is asked again, so a
-# withheld one at the head of the queue cannot hide every eligible one behind it.
-NOTIFICATION_RECHECK_SECONDS = 60.0
 HOLD_SECONDS = 30.0
 MAX_POLICY_THRESHOLD = 100
 MIN_POLICY_WINDOW = 60.0
@@ -1782,12 +1779,38 @@ class FaultLedger:
         return self._insert_publication(db, fault, UPDATE_RECORD, trigger_key, now,
                                         payload={"op": op, "value": value})
 
+    def _moving_elsewhere(self, db, identifier, project_ref):
+        """Is an issued or uncertain set_project to ANOTHER project outstanding for this fault?
+
+        Such a write may still land, so no earlier readback proves where the issue is.
+        """
+        for row in db.execute(
+                "SELECT pp.payload FROM fault_publications p"
+                "  LEFT JOIN fault_publication_payloads pp ON pp.publication_id = p.publication_id"
+                " WHERE p.fault_id = ? AND p.kind = ? AND p.state IN (?,?)"
+                "   AND p.trigger_key LIKE 'update:set_project:%'",
+                (identifier, UPDATE_RECORD, ISSUED, UNCERTAIN)).fetchall():
+            if _json(row["payload"]).get("value") != project_ref:
+                return True
+        return False
+
+    def _cancel_stale_relinks(self, db, identifier, reason, now):
+        """Cancel every unissued set_project of this fault; issued and uncertain ones stay."""
+        for stale in db.execute(
+                "SELECT p.* FROM fault_publications p WHERE p.fault_id = ? AND p.kind = ?"
+                " AND p.trigger_key LIKE 'update:set_project:%' AND p.state IN (?,?,?)",
+                (identifier, UPDATE_RECORD, PENDING, FAILED, CLAIMED)).fetchall():
+            self._cancel(db, stale, reason, now)
+
     def _relink(self, db, identifier, project_ref, now, *, force=False):
         """Invariant 11: queue the write that puts the owned issue in project_ref.
 
         Each relink increments the link's revision, which is part of the write's identity, and
         cancels any earlier set_project that has not been issued. One already read back in that
-        project needs nothing.
+        project needs nothing - unless a write to another project is issued or uncertain: that
+        write may still land, so the old readback proves nothing. The issue then stays unlinked
+        and no second write is queued; the outstanding write's own readback decides, and a
+        repair is queued on the same issue from there.
         """
         fault = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
                            (identifier,)).fetchone()
@@ -1803,8 +1826,12 @@ class FaultLedger:
             link = db.execute("SELECT * FROM fault_links WHERE fault_id = ?",
                               (identifier,)).fetchone()
         if link["observed_project_ref"] == project_ref and not force:
+            moving = self._moving_elsewhere(db, identifier, project_ref)
+            if moving:
+                self._cancel_stale_relinks(db, identifier, "superseded by a later target", now)
             db.execute("UPDATE fault_links SET project_ref = ?, state = ?, updated_at = ?"
-                       " WHERE fault_id = ?", (project_ref, LINKED, now, identifier))
+                       " WHERE fault_id = ?",
+                       (project_ref, UNLINKED if moving else LINKED, now, identifier))
             return None
         if link["project_ref"] == project_ref and link["state"] == UNLINKED and not force:
             live = db.execute(
@@ -1816,11 +1843,7 @@ class FaultLedger:
                  f"update:set_project:{project_ref}:r{link['revision']}")).fetchone()
             if live is not None:
                 return None
-        for stale in db.execute(
-                "SELECT p.* FROM fault_publications p WHERE p.fault_id = ? AND p.kind = ?"
-                " AND p.trigger_key LIKE 'update:set_project:%' AND p.state IN (?,?,?)",
-                (identifier, UPDATE_RECORD, PENDING, FAILED, CLAIMED)).fetchall():
-            self._cancel(db, stale, "superseded by a later target", now)
+        self._cancel_stale_relinks(db, identifier, "superseded by a later target", now)
         revision = link["revision"] + 1
         db.execute(
             "UPDATE fault_links SET project_ref = ?, state = ?, revision = ?, updated_at = ?"
@@ -1850,11 +1873,7 @@ class FaultLedger:
         else:
             db.execute("UPDATE fault_links SET project_ref = NULL, state = ?, updated_at = ?"
                        " WHERE fault_id = ?", (UNLINKED, now, identifier))
-        for stale in db.execute(
-                "SELECT p.* FROM fault_publications p WHERE p.fault_id = ? AND p.kind = ?"
-                " AND p.trigger_key LIKE 'update:set_project:%' AND p.state IN (?,?,?)",
-                (identifier, UPDATE_RECORD, PENDING, FAILED, CLAIMED)).fetchall():
-            self._cancel(db, stale, "the scope no longer targets a project", now)
+        self._cancel_stale_relinks(db, identifier, "the scope no longer targets a project", now)
         return None
 
     def _link_to_target(self, db, identifier, now):
@@ -1872,7 +1891,8 @@ class FaultLedger:
         """Relink owned issues whose link is not their product's current target project, and
         unlink those whose scope no longer targets any project their product owns."""
         clause = " AND f.scope_key = ?" if scope_key is not None else ""
-        params = (UNLINKED, scope_key) if scope_key is not None else (UNLINKED,)
+        params = (UNLINKED, UNLINKED, scope_key) if scope_key is not None else (UNLINKED,
+                                                                                  UNLINKED)
         query = (
             "SELECT f.fault_id, p.project_ref FROM fault_ledger f"
             "  LEFT JOIN fault_target_projects p"
@@ -1880,7 +1900,10 @@ class FaultLedger:
             "  LEFT JOIN fault_links l ON l.fault_id = f.fault_id"
             " WHERE f.external_ref IS NOT NULL"
             "   AND ((p.project_ref IS NOT NULL"
-            "         AND (l.fault_id IS NULL OR l.project_ref IS NOT p.project_ref))"
+            "         AND (l.fault_id IS NULL OR l.project_ref IS NOT p.project_ref"
+            # Unlinked while a conflicting write was outstanding, with a readback that already
+            # matches: asked again, so it is linked once that write has been settled.
+            "              OR (l.state = ? AND l.observed_project_ref IS p.project_ref)))"
             "        OR (p.project_ref IS NULL"
             "            AND (l.fault_id IS NULL OR l.project_ref IS NOT NULL OR l.state != ?)))"
             + clause)
@@ -2298,6 +2321,9 @@ class FaultLedger:
                         f" discarded and nothing was issued")
                 if isinstance(answer, dict) and "cancel" in answer:
                     self._cancel(db, row, str(answer["cancel"]), now)
+                    if row["kind"] == UPDATE_RECORD:
+                        # A cancelled relink may have been what kept the link unlinked.
+                        self._link_to_target(db, row["fault_id"], now)
                     outcome = (RefusalReason.FAULT_NOT_CLAIMABLE,
                                f"cancelled before issue: {answer['cancel']}")
                 elif isinstance(answer, dict) and "hold" in answer:
@@ -2538,7 +2564,8 @@ class FaultLedger:
         link = db.execute("SELECT * FROM fault_links WHERE fault_id = ?", (identifier,)).fetchone()
         # With no current project owned by the fault's product there is nothing the issue could
         # be linked TO, so any readback leaves it unlinked, awaiting a target.
-        state = LINKED if (wanted is not None and observed_project == wanted) else UNLINKED
+        state = LINKED if (wanted is not None and observed_project == wanted
+                           and not self._moving_elsewhere(db, identifier, wanted)) else UNLINKED
         if link is None:
             db.execute(
                 "INSERT INTO fault_links (fault_id, external_ref, project_ref,"
@@ -2616,6 +2643,8 @@ class FaultLedger:
         with self.store.transaction() as db:
             row = self._publication_row(db, publication)
             self._cancel(db, row, reason, now)
+            if row["kind"] == UPDATE_RECORD:
+                self._link_to_target(db, row["fault_id"], now)
         return {"publicationId": publication, "state": CANCELLED, "reason": reason}
 
     def _cancel(self, db, row, reason, now):
@@ -2866,23 +2895,24 @@ class FaultLedger:
         reserved, withheld, held = [], 0, 0
         with self.store.transaction() as db:
             self._lapse_notifications(db, moment, stamp)
-            # Round-robin by product, a spent product excluded inside the query, and a withheld
-            # notification asked again only after a short delay: the three ways a fixed head of
-            # the queue used to hide every eligible notification behind it.
+            # Round-robin by product, a spent product excluded inside the query, and the least
+            # recently examined first: every candidate examined and not taken is stamped, so a
+            # later call - however long after - reaches the ones behind it. A fixed head of the
+            # queue used to hide every eligible notification behind it.
             candidates = db.execute(
                 "SELECT * FROM (SELECT n.*, n.rowid AS seq,"
-                "   ROW_NUMBER() OVER (PARTITION BY n.product ORDER BY n.rowid) AS turn"
+                "   ROW_NUMBER() OVER (PARTITION BY n.product"
+                "                      ORDER BY COALESCE(n.examined_at, 0), n.rowid) AS turn"
                 "  FROM fault_notifications n WHERE n.state = ?"
-                "   AND (n.recheck_at IS NULL OR n.recheck_at <= ?)"
                 "   AND " + self._open_budget("n.product", "'" + NOTIFICATION + "'") + ")"
-                " ORDER BY turn, seq LIMIT ?", (PENDING, moment, moment, limit * 4)).fetchall()
+                " ORDER BY turn, COALESCE(examined_at, 0), seq LIMIT ?",
+                (PENDING, moment, limit * 4)).fetchall()
             for row in candidates:
                 if len(reserved) >= limit:
                     break
+                db.execute("UPDATE fault_notifications SET examined_at = ?"
+                           " WHERE notification_id = ?", (moment, row["notification_id"]))
                 if not self._eligibility(db, row["fault_id"], moment)["eligible"]:
-                    db.execute("UPDATE fault_notifications SET recheck_at = ?"
-                               " WHERE notification_id = ?",
-                               (moment + NOTIFICATION_RECHECK_SECONDS, row["notification_id"]))
                     withheld += 1
                     continue
                 used = self._consume(db, row["product"], NOTIFICATION,

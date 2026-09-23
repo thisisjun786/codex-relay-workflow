@@ -1267,9 +1267,10 @@ CREATE TABLE IF NOT EXISTS fault_notifications (
     updated_at      TEXT NOT NULL,
     delivered_at    TEXT,
     ack_ref         TEXT,
-    -- A pending notification found withheld at reservation is asked again only after this
-    -- moment, so a withheld one at the head of the queue cannot hide the eligible ones behind it.
-    recheck_at      REAL
+    -- When reservation last examined this notification. Candidates are taken least recently
+    -- examined first, so one withheld or held at the head of the queue cannot hide the
+    -- eligible ones behind it, whatever the caller's cadence.
+    examined_at     REAL
 );
 CREATE INDEX IF NOT EXISTS fault_notifications_state ON fault_notifications (state, product);
 

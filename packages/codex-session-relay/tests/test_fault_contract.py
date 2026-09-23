@@ -1141,6 +1141,63 @@ class SelectionIsFairPastWhatItCannotTake(ContractCase):
             for entry in ready])
 
 
+class NothingOutstandingHidesTheTruth(ContractCase):
+    """Final review round two (invariants 11 and 15).
+
+    A readback proves where an issue is only while no write to another project may still land;
+    and every pending notification is examined in turn, whatever the caller's cadence.
+    """
+
+    def updates(self, identifier, state):
+        return [entry for entry in capability(self, self.ledger, "publications")(
+            identifier, kind="update_record") if entry["state"] == state]
+
+    def test_an_outstanding_write_to_another_project_keeps_the_issue_unlinked(self):
+        identifier, pub = self.opened()
+        self.publish(pub)
+        self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM, project_ref="P2")
+        relink = self.updates(identifier, faults.PENDING)[0]["publication_id"]
+        claim = self.ledger.claim(relink, owner="writer-A")
+        self.ledger.operation(relink, claim_token=claim["claimToken"])
+        self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM, project_ref=PROJECT)
+        get = capability(self, self.ledger, "get")
+        self.assertEqual(faults.UNLINKED, get(identifier).get("linkState"),
+                         "the write to P2 may still land, so the old readback proves nothing")
+        self.assertEqual([], self.updates(identifier, faults.PENDING),
+                         "no second write while the first may still land")
+        self.ledger.fail(relink, claim_token=claim["claimToken"], error="response lost")
+        self.assertEqual(1, capability(self, self.ledger, "attention")()["unlinked"])
+        landed = {"issue": "REL-1", "projectId": "P2"}
+        self.assertEqual("present", self.ledger.reconcile(relink, observed=landed)["outcome"])
+        self.ledger.complete(relink, observed=landed)
+        self.assertEqual(faults.UNLINKED, get(identifier).get("linkState"))
+        self.assertEqual([PROJECT], [entry["payload"]["value"]
+                                     for entry in self.updates(identifier, faults.PENDING)],
+                         "the issue landed in P2 and is repaired on the same issue")
+
+    def test_withheld_notifications_do_not_hide_a_later_one_at_any_cadence(self):
+        raise_ = capability(self, self.ledger, "raise_notification")
+        self.register()
+        relationship = self.store.one("SELECT relationship_id FROM relationships")[
+            "relationship_id"]
+        with self.store.transaction() as db:
+            db.execute("UPDATE relationships SET status = 'paused'")
+        for n in range(4):
+            raise_(self.ledger.record(observation(
+                f"w{n}", severity=faults.NOTICE,
+                signature={"relationship": relationship, "turn": f"t{n}"}))["faultId"],
+                reason="classification")
+        free = self.ledger.record(observation(
+            "free", severity=faults.NOTICE,
+            signature={"relationship": "r-free", "turn": "t"}))["faultId"]
+        raise_(free, reason="classification")
+        reserved = []
+        for _ in range(2):
+            reserved += self.ledger.reserve_notifications(owner="w", limit=1)["reserved"]
+            self.clock.advance(61)
+        self.assertEqual([free], [entry["faultId"] for entry in reserved])
+
+
 class ExistenceQuestionsAreBounded(RelayTestCase):
     """Final review round one, blocker 4 (invariant 14): asking whether a fault's source still
     produces it judged every overtaken delivery in one call. Now one call judges a bounded number,

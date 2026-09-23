@@ -60,7 +60,8 @@ a path that reaches the outcome without passing through that function is a defec
 11. **The issue ends on the current project.** Each relink increments the link revision, a stale
     `set_project` is cancelled before issue, and every confirmation re-checks the target. With no
     project its product owns, an owned issue is unlinked - awaiting a target - and never
-    reported linked. Enforced by `_relink()` and `_unlink()` through `_link_to_target()`, and the
+    reported linked; nor is it reported linked while a `set_project` to another project is issued
+    or uncertain, because that write may still land (`_moving_elsewhere()`). Enforced by `_relink()` and `_unlink()` through `_link_to_target()`, and the
     built-in `set_project` pre-issue check.
 12. **Budgets hold, never drop, and never starve another product.** A budget is decided per
     candidate inside the selection query of `next()` and of `reserve_notifications()`, and
@@ -72,8 +73,9 @@ a path that reaches the outcome without passing through that function is a defec
     and answers undetermined - clearing nothing - until a later call has judged them all.
     Enforced by `bounded()`, `faultsweep._rotation()` and `faultsweep._first_current()`.
 15. **One notification path.** Eligibility and budget are decided at reservation, a lapsed
-    reservation is uncertain, caller-raised decisions use the same path, and a withheld
-    notification is asked again only after a short delay, so it never hides the ones behind it.
+    reservation is uncertain, caller-raised decisions use the same path, and candidates are taken
+    least recently examined first, so one withheld or held never hides the ones behind it,
+    whatever the caller's cadence.
     Enforced by `reserve_notifications()`.
 16. **Waiting is never a fault, an overtaken obligation is not current, and no sweep contradicts
     itself.** Paused, archived, busy and waiting recipients are never collected; a superseded
@@ -185,6 +187,11 @@ a path that reaches the outcome without passing through that function is a defec
   such a scope unlinks, and a readback confirmed while there is no current project records
   unlinked. `attention()` counts them. Setting a project again queues `set_project` on the same
   issue.
+- A readback proves where the issue is only while no `set_project` to another project is issued
+  or uncertain. While one is, the issue stays unlinked and no second write is queued: that
+  write's own readback (`complete()`, or `reconcile()` then `complete()`) decides, and a repair is
+  queued on the same issue from there. A stale relink cancelled before issue re-evaluates the
+  link, and `relink()` settles one whose readback already matches.
 
 ### Owning an issue is not the same as a write having landed
 
@@ -426,8 +433,8 @@ follow it too.
   fault and reason and enters the same eligibility, budget and reservation path as the ledger's
   own; there is one notification path.
 - `reserve_notifications(*, owner, limit)` atomically takes eligible ones - round-robin by
-  product, a spent product excluded inside the query, and one found withheld asked again only
-  after `NOTIFICATION_RECHECK_SECONDS` - consumes their budget and leases them, each with a stable `deliveryKey` the deliverer must pass to its transport as
+  product, a spent product excluded inside the query, least recently examined first, every
+  candidate examined and not taken stamped as examined - consumes their budget and leases them, each with a stable `deliveryKey` the deliverer must pass to its transport as
   the idempotency key. `ack_notification(id, *, token, ref)` records delivery and is accepted for
   the current token whatever has happened to eligibility since; `fail_notification(id, *, token,
   error)` returns it to pending with the error, when the deliverer knows nothing was sent. A lease
