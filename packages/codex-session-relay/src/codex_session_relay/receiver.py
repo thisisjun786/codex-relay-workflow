@@ -45,6 +45,14 @@ from .sync import CONFIRMED
 
 LEDGER_VERSION = 1
 
+# The record key naming the dispatch whose registration began the current tenure. A tenure is
+# one registration of the child on the relationship: the initial one, or a returning one after
+# a supersession, which reuses the relationship id. Revision generations open under their own
+# dispatches inside a tenure and do not begin one, so the mode and workflow the tenure's
+# accepted assignment gave hold through them.
+TENURE_DISPATCH = "tenureDispatchRequestId"
+TENURE_REASONS = ("initial_assignment",)  # and NULL, which a returning registration writes
+
 # What a store that is not the shape this reader expects raises. A missing table or column
 # named in SQL is an sqlite3.Error; a column read by name from a row whose table lacks it is an
 # IndexError from sqlite3.Row, and a record built from such a row a KeyError. All three mean
@@ -225,21 +233,29 @@ def _read_store(connection, fields, sources, notes, *, receiver, role, sender_ro
     _read_link(rows, rid, row, answer, notes)
     _read_criteria(rows, connection, rid, answer, notes)
     _read_settings(rows, row, answer, notes)
+    begun = rows.one("SELECT dispatch_request_id FROM generations WHERE relationship_id = ?"
+                     " AND execution_generation <= ? AND (reason IS NULL OR reason IN (%s))"
+                     " ORDER BY execution_generation DESC LIMIT 1"
+                     % ",".join("?" * len(TENURE_REASONS)),
+                     (rid, row["execution_generation"], *TENURE_REASONS))
+    tenure = None if begun is None else begun["dispatch_request_id"]
+    if tenure is not None:
+        answer(TENURE_DISPATCH, tenure,
+               "generations (the registration that began the current tenure)")
     entry = ((ledger or {}).get("assignments") or {}).get(rid)
-    opened = fields.get(packets.DISPATCH_REQUEST)
-    if entry and entry.get(packets.MODE) and opened is not None \
-            and entry.get("dispatchRequestId") == opened:
-        # Only the tenure the current generation's dispatch opened. A returning registration
-        # reuses the relationship id under a later generation, and the mode and workflow of
-        # the earlier tenure are not this one's.
+    if entry and entry.get(packets.MODE) and tenure is not None \
+            and entry.get("dispatchRequestId") == tenure:
+        # Only the current tenure's. A returning registration reuses the relationship id, and
+        # the mode and workflow of the earlier tenure are not this one's; a revision generation
+        # inside the tenure keeps them.
         answer(packets.MODE, entry[packets.MODE],
                "ledger: assignment " + str(entry.get("messageId")))
         answer("workflow", entry["workflow"], "ledger: assignment " + str(entry.get("messageId")))
     elif entry:
         notes.append("the reception ledger's assignment for " + rid + " was accepted under"
-                     " dispatch " + str(entry.get("dispatchRequestId")) + ", not the one that"
-                     " opened the current generation, so this tenure's mode and workflow are"
-                     " unread")
+                     " dispatch " + str(entry.get("dispatchRequestId")) + ", not the one whose"
+                     " registration began the current tenure, so this tenure's mode and"
+                     " workflow are unread")
     elif ledger is not None:
         notes.append("the reception ledger holds no accepted assignment for " + rid
                      + ", so the mode and the workflow are unread")
@@ -553,6 +569,12 @@ def _entry_problem(ledger):
                 or not isinstance(entry.get("toldToAct"), bool):
             return ("answered entry " + repr(identifier) + " is not a content digest, a"
                     " disposition, whether a check said act and whether it was applied")
+        if entry["applied"] and (not entry["toldToAct"]
+                                 or entry["disposition"] != packets.ACCEPTED):
+            # No writer produces this: applied is recorded only for an accepted packet some
+            # check said to act on. Read, it would count work never asked for as done.
+            return ("answered entry " + repr(identifier) + " says applied for a packet it"
+                    " does not hold as accepted and told to act on")
     for relationship, entry in ledger["assignments"].items():
         # The mode it holds is read as the mode of an accepted assignment, so the entry has to
         # be able to name that assignment: an execution mode, a workflow and a message id,
@@ -602,7 +624,7 @@ def record_answer(ledger, packet, answer) -> bool:
             changed = True
     region = packet["envelope"]
     relationship = (answer.get("record") or {}).get("relationId")
-    dispatch = (answer.get("record") or {}).get(packets.DISPATCH_REQUEST)
+    dispatch = (answer.get("record") or {}).get(TENURE_DISPATCH)
     recorded = ledger["assignments"].get(relationship) if relationship else None
     if accepted and state in (packets.FIRST, packets.REPLAY) \
             and region.get("direction") == envelope.PARENT_TO_CHILD \

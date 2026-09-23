@@ -197,18 +197,22 @@ and read by nothing else. It names its receiver and a version, and a ledger nami
 receiver is refused rather than read. It keeps each answered message id beside the content
 digest and disposition it got, whether any check told the receiver to act on it, whether the
 receiver has recorded acting on it, and, once an assignment is accepted, the mode and workflow
-that assignment gave, for the tenure whose dispatch opened the current generation. A
-returning registration reuses the relationship id under a generation a new dispatch opened;
-the earlier tenure's mode and workflow are then unread, and the new tenure's assignment
-defines and replaces them. Writes happen under a lock
+that assignment gave, for the current tenure. A tenure is one registration of the child on
+the relationship - the initial one, or a returning one after a supersession, which reuses the
+relationship id - and is identified by the dispatch of the generation that registration
+opened. Revision generations open under their own dispatches inside a tenure, so the mode and
+workflow hold through a correction; a returning registration begins a new tenure, the
+earlier one's mode and workflow are then unread, and the new tenure's assignment defines and
+replaces them. Writes happen under a lock
 on a sidecar file, in a directory created if it is missing, and replace the ledger atomically,
 with the directory synced after the rename. A ledger with an entry that is not one - an
 answer missing its digest, disposition, whether a check said act or whether it was applied, or
 an assignment that cannot name the accepted assignment its mode came from (an execution mode,
 the workflow, the message id and the dispatch it was accepted under) - is refused as damaged
 rather than read through; a missing field is never read as its harmless default, because a
-lost "applied" would hand a finished correction back to be done again. What reaches the
-ledger cannot be damaged in
+lost "applied" would hand a finished correction back to be done again. An entry no writer
+could produce - applied for a packet not held as accepted, or never told to act on - is
+damaged too. What reaches the ledger cannot be damaged in
 that way: a policy whose model, effort or workflow is not text is refused before anything is
 compared, so no packet can write an entry the next check would refuse.
 
