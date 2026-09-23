@@ -5075,6 +5075,9 @@ def _policy_launcher_refusal(codex_home):
             "the Codex configuration registers crw from more than one marketplace ("
             + ", ".join(plugin["entryKeys"]) + "), so which package would start this record is"
             " ambiguous")
+    # Only an explicit false stands the package down. Codex's PluginConfig defaults enabled to
+    # true, so an entry that omits it is loaded, and its launcher is the one that would start
+    # this record.
     if plugin["enabled"] is False:
         return None
     package = cache / str(plugin["marketplace"]) / inventory.PLUGIN_NAME

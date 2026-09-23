@@ -1032,6 +1032,22 @@ class BridgeRecordPolicyTest(unittest.TestCase):
                 self.assertEqual(emitted["outcome"], bridgerecord.WOULD_CREATE, output)
 
     @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
+    def test_an_entry_that_omits_enabled_is_loaded_and_its_launcher_is_asked(self):
+        """Codex's PluginConfig defaults enabled to true, so this entry's launcher starts the record.
+
+        Pinned because standing the package down whenever enabled is not literally true was
+        proposed in review: it would write a version-2 record beside an older launcher Codex does
+        load, and every new thread would start without a bridge.
+        """
+        self.install_package(launcher_text=self.older_launcher())
+        (self.home.codex_home / "config.toml").write_text('[plugins."crw@crw"]\n',
+                                                           encoding="utf-8")
+        status, emitted, output = self.register("--apply")
+        self.assertNotEqual(status, 0, output)
+        self.assertEqual(emitted.get("outcome"), "launcher_predates_policy", output)
+        self.assertFalse(self.record.exists(), output)
+
+    @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
     def test_a_crw_selection_that_is_ambiguous_or_unreadable_is_refused_by_name(self):
         cases = {
             "two cached versions": (lambda: (self.install_package(),
