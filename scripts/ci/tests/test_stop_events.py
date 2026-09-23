@@ -919,15 +919,8 @@ class ReviewRoundFourControls(unittest.TestCase):
         self.assertEqual(answer["rowsUnreadable"], [str(path)])
 
 
-class ReviewRoundFiveControls(unittest.TestCase):
-    """Red-first controls for the fifth review round (CRW-212, PR #144).
-
-    The records of one event are written by one owner in one run, so every reference between them
-    resolves to the record it names and every value two of them carry agrees: the owner's slot and
-    pid in the host file and the claim, the outcome's slot and guard result against its accepted
-    row, the accepted row's place, and the claim a duplicate names. One value changed in any of
-    them, and the reading does not vouch for the event.
-    """
+class OneEventRecords:
+    """One real event's records, written through both registrations, for the classes below."""
 
     SLOT = "20000101/" + "0" * 32 + ".json"
 
@@ -960,6 +953,17 @@ class ReviewRoundFiveControls(unittest.TestCase):
         body = json.loads(path.read_text(encoding="utf-8"))
         change(body)
         path.write_text(json.dumps(body), encoding="utf-8")
+
+
+class ReviewRoundFiveControls(OneEventRecords, unittest.TestCase):
+    """Red-first controls for the fifth review round (CRW-212, PR #144).
+
+    The records of one event are written by one owner in one run, so every reference between them
+    resolves to the record it names and every value two of them carry agrees: the owner's slot and
+    pid in the host file and the claim, the outcome's slot and guard result against its accepted
+    row, the accepted row's place, and the claim a duplicate names. One value changed in any of
+    them, and the reading does not vouch for the event.
+    """
 
     def test_a_complete_event_reads_true(self):
         host, _records = self.one_event()
@@ -1014,7 +1018,7 @@ class ReviewRoundFiveControls(unittest.TestCase):
         self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
 
 
-class ReviewRoundSixControls(ReviewRoundFiveControls):
+class ReviewRoundSixControls(OneEventRecords, unittest.TestCase):
     """Red-first controls for the sixth review round and Devin's sixth (CRW-212, PR #144).
 
     Records that agree with each other can still describe something the adapter never writes. Each
@@ -1022,12 +1026,6 @@ class ReviewRoundSixControls(ReviewRoundFiveControls):
     holds exactly when it blocks; a duplicate or an unowned release asked nothing and carries no
     guard result; and the owner's policy decides whether its accepted row exists.
     """
-
-    def test_records_of_one_event_that_disagree_are_not_vouched_for(self):
-        pass
-
-    def test_a_duplicate_naming_a_claim_its_own_root_does_not_hold_is_not_vouched_for(self):
-        pass
 
     def test_values_the_runtime_cannot_write_are_not_vouched_for_even_when_they_agree(self):
         for field, value in (("adapterOutcome", "invented"), ("guardDecision", "nonsense")):

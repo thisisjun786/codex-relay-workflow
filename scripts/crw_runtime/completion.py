@@ -1713,8 +1713,10 @@ def _read_json(path):
 # The outcomes run() records before any guard is asked, and those that report asking one.
 BEFORE_THE_GUARD = (STDIN_UNREADABLE, STDIN_NOT_JSON, STDIN_NOT_OBJECT, CONFIG_ABSENT,
                     CONFIG_UNREADABLE, CONFIG_UNREACHABLE, CONFIG_MALFORMED)
-FROM_THE_GUARD = tuple(outcome for outcome in OUTCOMES
-                       if outcome not in BEFORE_THE_GUARD and outcome != ADAPTER_FAULTED)
+FROM_THE_GUARD = (GUARD_UNREACHABLE, GUARD_TIMED_OUT, GUARD_SIGNALLED, GUARD_REJECTED_THE_CALL,
+                  GUARD_REFUSED, GUARD_HOST_ERROR, GUARD_USAGE_ERROR, GUARD_ENDED_UNEXPECTEDLY,
+                  GUARD_SAID_NOTHING, GUARD_OUTPUT_UNREADABLE, GUARD_VERDICT_INCOMPLETE,
+                  GUARD_ANSWERED)
 # The outcomes each acceptance ends in, besides a fault. An invocation that never reached an
 # event (acceptance None) stopped at its input.
 OUTCOMES_OF = {None: BEFORE_THE_GUARD, UNESTABLISHED: FROM_THE_GUARD, ACCEPTED: FROM_THE_GUARD,
@@ -1774,10 +1776,6 @@ def _row_fields_written(row):
     return True
 
 
-SAID = (SAID_NOTHING, SAID_A_VERDICT, SAID_AN_ERROR_RECORD, SAID_SOMETHING_UNREADABLE)
-ENDINGS = (NOT_STARTED, EXITED, SIGNALLED, TIMED_OUT)
-
-
 def _outcome_follows(row):
     """Whether a guard outcome is the one outcome_of() reaches from the call the row records.
 
@@ -1785,7 +1783,7 @@ def _outcome_follows(row):
     so a verdict printed by a run that exited cleanly may have been answered or incomplete.
     """
     said, how = row.get("stdoutReading"), row.get("processEnding")
-    if said not in SAID or how not in ENDINGS:
+    if said not in STDOUT_READINGS or how not in PROCESS_ENDINGS:
         return False
     code, signal, errno_name = row.get("exitCode"), row.get("signal"), row.get("errno")
     # What invoke_guard() records with each ending: an exit code only from a process that exited,
