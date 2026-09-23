@@ -653,44 +653,34 @@ def _with_handoff(store, *records: dict) -> list:
     return list(records)
 
 
-def required_for_candidate(store, *, relationship_id, repository, base_ref, head_sha) -> dict:
-    """What the candidate's own merge-readiness reading found the target requires, or why nothing.
+def current_reports(db, relationship_id) -> tuple:
+    """The work reports an assignment currently stands on: (generation, rows), or (None, []).
 
-    The merge-turn grant notice fills merge-turn-check --required from this. The relay never
-    contacts a forge and the process rendering the notice has no checkout of the target, so the
-    one declared source it can read is the reading the child already took: merge-evidence records
-    the branch's effective rules as requiredDeclared in the handoff this module stores. The names
-    are proposed to the parent, never enforced here; merge-turn-check still stores whatever
-    --required its caller declares.
+    The generation is the newest one with a report that names a head, and the rows are, for
+    EVERY event of that generation, that event's own latest head-bearing submission. Earlier
+    submissions and generations stay in work_reports as history; they are not candidates.
 
-    The readings are those of the newest generation that names a head, the generation
-    mergeturn._relationship_refusal compares the merge against, and within it the latest
-    head-bearing submission of EVERY event. Submission numbers count per event, so one maximum
-    taken across the generation kept only the event that happened to be resubmitted most: a
-    second event still declaring dev-gate at its first submission was dropped, and the notice
-    proposed the first event's smaller set as if it were the whole. All of those readings must
-    name the candidate and agree. Every narrowing below answers "not recorded" rather than
-    guessing. A wrong set proposed with confidence is worse than an empty one the parent is told
-    to fill, because the command it sits in is the one a parent runs as written.
+    Submission numbers count per event (work_reports is keyed on event_id and submission_no), so
+    the latest submission has to be chosen per event. One maximum taken across the generation
+    keeps only the event that happened to be resubmitted most and silently drops every other
+    current event, which is how the merge gate once let one of two current heads through and
+    how the grant notice once proposed one event's smaller required set as the whole.
 
-    Returns {"required": [names], "eventId", "submissionNo"}, or {"required": None, "reason"}.
-    An empty list is a reading that found nothing required, which is not the same answer as None.
+    Both readers ask here: mergeturn._relationship_refusal compares the merge against these
+    heads, and required_for_candidate proposes the required checks from these readings. One
+    selection means the check and the notice cannot disagree about which reports are current.
+
+    db is a connection rather than a Store because the merge gate reads inside its own
+    transaction; this only runs SELECTs on whatever connection it is handed.
     """
-    def absent(reason):
-        return {"required": None, "reason": reason}
-
-    if not relationship_id:
-        return absent("the turn names no assignment")
-    if not head_sha:
-        return absent("the grant names no candidate head")
-    newest = store.one(
+    newest = db.execute(
         "SELECT MAX(execution_generation) AS generation FROM work_reports"
         "  WHERE relationship_id = ? AND head_sha IS NOT NULL",
         (relationship_id,),
-    )
+    ).fetchone()
     if newest is None or newest["generation"] is None:
-        return absent("no work report on this assignment names a head")
-    rows = store.all(
+        return None, []
+    rows = db.execute(
         "SELECT w.event_id, w.submission_no, w.head_sha, w.repository, w.base_ref,"
         "       h.required_declared"
         "  FROM work_reports w LEFT JOIN work_report_handoffs h"
@@ -702,7 +692,40 @@ def required_for_candidate(store, *, relationship_id, repository, base_ref, head
         "                           WHERE l.event_id = w.event_id AND l.head_sha IS NOT NULL)"
         " ORDER BY w.event_id",
         (relationship_id, newest["generation"]),
-    )
+    ).fetchall()
+    return newest["generation"], rows
+
+
+def required_for_candidate(store, *, relationship_id, repository, base_ref, head_sha) -> dict:
+    """What the candidate's own merge-readiness reading found the target requires, or why nothing.
+
+    The merge-turn grant notice fills merge-turn-check --required from this. The relay never
+    contacts a forge and the process rendering the notice has no checkout of the target, so the
+    one declared source it can read is the reading the child already took: merge-evidence records
+    the branch's effective rules as requiredDeclared in the handoff this module stores. The names
+    are proposed to the parent, never enforced here; merge-turn-check still stores whatever
+    --required its caller declares.
+
+    The readings are current_reports: the latest head-bearing submission of EVERY event of the
+    newest generation that names a head, the same rows mergeturn._relationship_refusal compares
+    the merge against. All of those readings must name the candidate and agree. Every narrowing
+    below answers "not recorded" rather than guessing. A wrong set proposed with confidence is
+    worse than an empty one the parent is told to fill, because the command it sits in is the one
+    a parent runs as written.
+
+    Returns {"required": [names], "eventId", "submissionNo"}, or {"required": None, "reason"}.
+    An empty list is a reading that found nothing required, which is not the same answer as None.
+    """
+    def absent(reason):
+        return {"required": None, "reason": reason}
+
+    if not relationship_id:
+        return absent("the turn names no assignment")
+    if not head_sha:
+        return absent("the grant names no candidate head")
+    generation, rows = current_reports(store.db, relationship_id)
+    if generation is None:
+        return absent("no work report on this assignment names a head")
     heads = sorted({row["head_sha"] for row in rows})
     if heads != [head_sha]:
         # repr, because a head is whatever the child's report stated and this reason is
