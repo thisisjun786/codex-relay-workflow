@@ -285,6 +285,8 @@ FOLDS_BEYOND_ITS_PATHS = (
     ("service.py", None, "send", "function"),
     # A compare-and-set's rowcount: true only when every observed field still matched.
     ("supervisorchannel.py", None, "_reschedule_in", "function"),
+    # The same kind of rowcount: true only when the never-sent row it rewrites still matched.
+    ("supervisorchannel.py", None, "_restate_in", "function"),
     ("transport.py", "TransportFacts", "retry_safe", "field"),
 )
 

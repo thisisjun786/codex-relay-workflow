@@ -113,6 +113,9 @@ READDRESSED = "supervisor_message_readdressed"
 RESTATED = "supervisor_message_restated"
 # The hold on a message whose event no longer raises the obligation it is for.
 SUPERSEDED_HOLD = "superseded_by_report"
+# How many times one attempt() call restates a message at its transport start and tries again
+# before it answers, rather than looping on an obligation that keeps moving.
+RESTATE_RETRIES = 2
 # What the reader of a message fills in. Each is one shell word, so the rendered line splits
 # into the argv it looks like, and none of them is a value this relay could know.
 SOCKET_PLACEHOLDER = "YOUR_RELAY_SOCKET"
@@ -311,12 +314,19 @@ class _NotClaimable(Exception):
     """Nothing to claim, for any reason. The caller does nothing and reports nothing."""
 
 
-class _Stale(_NotClaimable):
-    """A claim refused because the fact the packet was composed from moved since staging.
+def _settings_key(settings):
+    """What a send carries as its authorized settings, as one comparable value."""
+    data = getattr(settings, "data", settings)
+    return (json.dumps(data, sort_keys=True, default=repr),
+            bool(getattr(settings, "refuse_when_unloaded", False)))
 
-    "restage" - the event's work report was recorded or changed after the packet was composed
-    without it; staging again carries it. "obsolete" - the event no longer raises the obligation
-    the message is for at all, so the message is held rather than sent.
+
+class _Stale(_NotClaimable):
+    """A claim refused because nothing is owed through this message any more (I-247).
+
+    "obsolete" - its event raises another obligation or none, the obligation is discharged, or
+    an omitted turn has a receipt now; the message is held rather than sent. A message whose
+    obligation merely says something newer is restated in place instead, and never raises this.
     """
 
     def __init__(self, kind, detail):
@@ -477,50 +487,133 @@ class SupervisorChannel:
             "SELECT issue_key FROM relationships WHERE relationship_id = ?", (relationship_id,))
         return row["issue_key"] if row is not None else None
 
-    def _stale_in(self, db, message_id):
-        """Whether an event's message still describes what its event raises, asked in a write.
+    def _proposal_now(self, db, message_id) -> dict:
+        """I-247, the one check: what staging would stage for this message's obligation NOW.
 
-        None when it does. Else ("obsolete", detail) when the event now raises another
-        obligation, or ("restage", detail) when it raises the same one from a report other than
-        the one the packet was composed from, or when a NEWER event raises the same block or
-        decision - the child said it again, and I-246 sends the newest statement while nothing
-        has been sent. An omission has no event and is never stale here: its evidence is the
-        reading frozen on its own row.
+        A staged row is a proposal, not a commitment. Everything that decides what the level
+        above is told can move after staging - who supervises, a newer statement of the same
+        block or decision, the first or a corrected work report, a report that turns a block
+        into a decision, a confirmed Linear record, an omitted turn whose receipt arrives late -
+        so this re-derives the obligation's current content from the store and compares the row
+        with it. Called with the caller's write transaction open, by the claim and again by the
+        write that stamps the transport start: nothing is sent unless the row equals what this
+        answers inside the write that lets the transport start.
 
-        Asked by the claim and asked again by the transport-start write, because a report or a
-        restatement committing between those two writes left the claim's answer stale at the one
-        instant that decides what goes out.
+        It re-derives, in order: the live hierarchy (resolve(), through _hierarchy_in); the
+        obligation from the row's event and that event's current report, or from the reading
+        frozen on an omission's row; the newest event raising the same block or decision; the
+        current report of that event; whether the obligation is discharged, or an omitted turn
+        has a final receipt now; and the packet composed from all of it with the observation
+        time the row was staged with, compared byte for byte - so anything compose() reads that
+        is not named above cannot drift past it either.
+
+        Returns {"kind": None, "live": resolution} when the row IS the current proposal, else
+        "moved" with the refusal resolve() gave, "obsolete" with why nothing is owed through
+        this message any more, or "restated" with the current event, report and obligation.
         """
         from .report import read as read_work_report
 
-        row = db.execute(
-            "SELECT event_id, submission_no, obligation_id FROM supervisor_messages"
-            " WHERE message_id = ?", (message_id,)).fetchone()
-        if row is None or not row["event_id"]:
-            return None
-        report = read_work_report(self.store, row["event_id"])
-        raised = supervision.from_event(self.store, row["event_id"], report)
-        if raised is None or raised["obligationId"] != row["obligation_id"]:
-            return ("obsolete",
-                    "event " + repr(row["event_id"]) + " now raises "
-                    + (repr(raised["kind"]) + " obligation " + repr(raised["obligationId"])
-                       if raised is not None else "nothing")
-                    + ", not the one this message is for. The message is held rather than"
-                      " sent; staging the project again stages what the event raises now")
-        if _submission_of(report) != row["submission_no"]:
-            return ("restage",
-                    "the work report for event " + repr(row["event_id"]) + " is submission "
-                    + repr(_submission_of(report)) + " and this message was composed from "
-                    + repr(row["submission_no"]) + ". Nothing was sent; staging it again"
-                      " carries the report that stands")
-        newest = (self._latest_statement(raised).get("basis") or {}).get("eventId")
-        if newest and newest != row["event_id"]:
-            return ("restage",
-                    "event " + repr(newest) + " states this " + str(raised["kind"])
-                    + " again after event " + repr(row["event_id"]) + ", which this message"
-                      " was composed from. Nothing was sent; staging it again carries the"
-                      " newest statement")
-        return None
+        live, moved = self._hierarchy_in(db, message_id)
+        if moved is not None:
+            return {"kind": "moved", "refusal": moved}
+        row = db.execute("SELECT * FROM supervisor_messages WHERE message_id = ?",
+                         (message_id,)).fetchone()
+
+        def obsolete(detail):
+            return {"kind": "obsolete", "live": live,
+                    "detail": detail + ". Nothing is sent through this message; it is held as "
+                    + repr(SUPERSEDED_HOLD) + ", and staging the project stages what is owed now"}
+
+        staged = json.loads(row["packet"])
+        reading = json.loads(row["reading"]) if row["reading"] else None
+        event_id = row["event_id"]
+        report = None
+        if event_id:
+            report = read_work_report(self.store, event_id)
+            obligation = supervision.from_event(self.store, event_id, report)
+            if obligation is None or obligation["obligationId"] != row["obligation_id"]:
+                return obsolete(
+                    "event " + repr(event_id) + " now raises "
+                    + (repr(obligation["kind"]) + " obligation " + repr(obligation["obligationId"])
+                       if obligation is not None else "nothing")
+                    + ", not the one this message is for")
+            latest = self._latest_statement(obligation)
+            newest = (latest.get("basis") or {}).get("eventId")
+            if newest and newest != event_id:
+                obligation, event_id = latest, newest
+                report = read_work_report(self.store, event_id)
+        else:
+            obligation = supervision.from_observation(reading)
+            if obligation is None or obligation["obligationId"] != row["obligation_id"]:
+                return obsolete("the reading frozen on this message no longer raises its"
+                                " obligation")
+            answered = db.execute(
+                "SELECT event_id FROM events WHERE relationship_id = ? AND turn_id = ?"
+                "   AND stage = 'final' ORDER BY rowid DESC LIMIT 1",
+                (obligation["relationId"], obligation["subject"])).fetchone()
+            if answered is not None:
+                return obsolete(
+                    "turn " + repr(obligation["subject"]) + " has a final receipt, event "
+                    + repr(answered["event_id"]) + ", accepted after this omission was staged;"
+                    " the turn reported, and what that event raises goes up as its own fact")
+        if supervision.discharge_of(self.store, obligation)["standing"] == supervision.DISCHARGED:
+            return obsolete("the Linear record now confirms this obligation, so the level above"
+                            " already has it")
+        packet = self.compose(obligation, resolution=live, reading=reading,
+                              observed_at=staged["envelope"].get("observedAt"), report=report)
+        if (event_id == row["event_id"] and _submission_of(report) == row["submission_no"]
+                and packet == staged):
+            return {"kind": None, "live": live}
+        return {"kind": "restated", "live": live, "obligation": obligation, "reading": reading,
+                "report": report, "eventId": event_id, "submissionNo": _submission_of(report),
+                "detail": "message " + repr(message_id) + " was staged from event "
+                          + repr(row["event_id"]) + " submission " + repr(row["submission_no"])
+                          + " and what is owed now is event " + repr(event_id)
+                          + " submission " + repr(_submission_of(report))}
+
+    def _restate_in(self, db, message_id, current, *, claim=None) -> bool:
+        """Make a never-sent row the current proposal, in place, inside the caller's write.
+
+        Same message id, same journal entry: one obligation is still one message. Only a row
+        none of whose attempts can have put bytes anywhere is rewritten - the predicate is in
+        the write, as it is in _readdress - and with claim=(attempt, owner) only while that
+        claim still holds it, which then also releases it to queued. Returns whether it did.
+        """
+        row = db.execute("SELECT * FROM supervisor_messages WHERE message_id = ?",
+                         (message_id,)).fetchone()
+        at = self.clock.iso()
+        packet = self.compose(current["obligation"], resolution=current["live"],
+                              reading=current["reading"], observed_at=at,
+                              report=current["report"])
+        if claim is None:
+            held, released = "state IN (?,?,?)", ""
+            params = (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND)
+        else:
+            held = "state = ? AND attempt_count = ? AND lease_owner IS ?"
+            released = (", state = '" + QUEUED + "', next_eligible_at = NULL,"
+                        " lease_owner = NULL, lease_until = NULL")
+            params = (SENDING, claim[0], claim[1])
+        cursor = db.execute(
+            "UPDATE supervisor_messages SET packet = ?, event_id = ?, submission_no = ?,"
+            " updated_at = ?" + released
+            + " WHERE message_id = ? AND " + held
+            + "   AND packet = ? AND event_id IS ? AND submission_no IS ?"
+            "   AND NOT EXISTS (SELECT 1 FROM supervisor_attempts a"
+            "                    WHERE a.message_id = supervisor_messages.message_id"
+            "                      AND (a.send_attempted <> 'no' OR a.retry_safe = 0))",
+            (json.dumps(packet, ensure_ascii=False, sort_keys=True), current["eventId"],
+             current["submissionNo"], at, message_id) + params
+            + (row["packet"], row["event_id"], row["submission_no"]))
+        if cursor.rowcount != 1:
+            return False
+        self.store.journal(
+            RESTATED, message_id,
+            {"fromEvent": row["event_id"], "toEvent": current["eventId"],
+             "fromSubmission": row["submission_no"], "toSubmission": current["submissionNo"],
+             "at": "claim" if claim is None else "transport_start",
+             "reason": "what the obligation says moved after staging and nothing had been"
+                       " sent, so the message now carries what is owed now"}, at=at)
+        return True
 
     def _hierarchy_in(self, db, message_id):
         """Whether the hierarchy a staged row names is still the live one, asked in a write.
@@ -1122,7 +1215,8 @@ class SupervisorChannel:
             (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now, limit),
         )
 
-    def attempt(self, message_id, adapter, *, now=None, owner: str = "relay"):
+    def attempt(self, message_id, adapter, *, now=None, owner: str = "relay",
+                _restated: int = 0):
         """One attempt at one staged message, through the same host rules a delivery obeys.
 
         None means nothing was sent and nothing is wrong: a busy recipient, a backoff still
@@ -1205,11 +1299,24 @@ class SupervisorChannel:
         except _NotClaimable:
             return None
         refused = self._start_transport(message_id, attempt_no, request_id, owner, recipient,
-                                        now)
+                                        now, settings=settings,
+                                        runtime_status=observation.runtime_status)
         if refused is not None:
             kind, detail = refused
             if kind == "moved":
                 raise detail
+            if kind == "restated":
+                # Voided and restated at the transport start, with nothing sent. Attempted again
+                # now, so one call sends what is owed rather than asking its caller to come back;
+                # bounded, because an obligation restated on every attempt would otherwise loop.
+                if _restated >= RESTATE_RETRIES:
+                    raise DeliveryRefused(
+                        RefusalReason.SUPERSEDED_REVISION,
+                        str(detail) + ". It was restated at its transport start "
+                        + str(_restated + 1) + " times in one call and nothing was sent; send"
+                        " it again once what it reports has settled")
+                return self.attempt(message_id, adapter, now=now, owner=owner,
+                                    _restated=_restated + 1)
             return None
         try:
             receipt = adapter.send_message(request_id, recipient, message, settings)
@@ -1239,7 +1346,7 @@ class SupervisorChannel:
         return {**record, "messageState": self.get(message_id)["state"]}
 
     def _start_transport(self, message_id, attempt_no, request_id, owner, recipient,
-                         now=None):
+                         now=None, *, settings=None, runtime_status=None):
         """Stamp the instant the transport starts, under the lock that decides it may.
 
         A report goes to whoever supervises at its transport instant, and this write IS that
@@ -1271,7 +1378,12 @@ class SupervisorChannel:
             if ours is None:
                 return ("lapsed", "this send's claim no longer holds the message, so its"
                                   " transport was not started")
-            _live, moved = self._hierarchy_in(db, message_id)
+            # I-247, the one check, asked again in the write that lets the transport start: the
+            # claim's answer is stale by the time this write is granted, and a handover, a first
+            # or corrected report, a restatement or a supersession committing in between was
+            # otherwise sent as the proposal the claim saw.
+            current = self._proposal_now(db, message_id)
+            moved = current.get("refusal") if current["kind"] == "moved" else None
             at = self.clock.iso()
             if moved is not None:
                 record = {"requestId": request_id, "messageId": message_id,
@@ -1304,40 +1416,71 @@ class SupervisorChannel:
                     " before its transport started: " + str(moved.detail) + ". Nothing was"
                     " sent, and the attempt is recorded as sending nothing, so staging it"
                     " again re-addresses it to whoever the linkage names then"))
-            # And the fact is still the one the packet was composed from, asked again here for
-            # the reason the hierarchy is: the claim's answer is stale by the time this write is
-            # granted. A first report, or a restatement, committing in between otherwise went
-            # out as the packet composed without it, and a block the report turned into a
-            # decision woke the supervisor twice - once for the stale block, once for the
-            # decision staged after it.
-            stale = self._stale_in(db, message_id)
-            if stale is not None:
-                kind, detail = stale
+            if current["kind"] in ("obsolete", "restated"):
+                kind, detail = current["kind"], current["detail"]
                 record = {"requestId": request_id, "messageId": message_id,
                           "attemptNo": attempt_no, "deliveryState": WITHHELD_PRE_SEND,
                           "sendAttempted": "no", "retrySafe": True,
-                          "reason": "the fact moved between the claim and the transport",
-                          "refusal": RefusalReason.SUPERSEDED_REVISION.value,
-                          "stale": kind, "detail": detail}
+                          "reason": "what is owed moved between the claim and the transport",
+                          "proposal": kind, "detail": detail}
                 db.execute(
                     "UPDATE supervisor_attempts SET state = ?, send_attempted = 'no',"
                     " retry_safe = 1, record = ?, observed_at = ? WHERE request_id = ?",
                     (WITHHELD_PRE_SEND, json.dumps(record, sort_keys=True), at, request_id))
-                # Queued again under this claim's own state, attempt and lease owner; an event
-                # that raises another obligation now holds the message, as the claim would have.
+                if kind == "restated":
+                    # Voided, and made the current proposal in the same write: this attempt is
+                    # recorded as sending nothing, so the row is never-sent and may be restated.
+                    self._restate_in(db, message_id, current, claim=(attempt_no, owner))
+                    self.store.journal(
+                        "supervisor_message_withheld", message_id,
+                        {"requestId": request_id, "proposal": kind, "detail": detail,
+                         "reason": "restated at the transport start; nothing was sent"}, at=at)
+                    return ("restated", detail)
+                # Nothing is owed through this message any more; held, as the claim holds it.
                 db.execute(
                     "UPDATE supervisor_messages SET state = ?, next_eligible_at = NULL,"
                     " hold_reason = ?, lease_owner = NULL, lease_until = NULL, updated_at = ?"
                     " WHERE message_id = ? AND state = ? AND attempt_count = ?"
                     "   AND lease_owner IS ?",
-                    (QUEUED, SUPERSEDED_HOLD if kind == "obsolete" else None, at, message_id,
-                     SENDING, attempt_no, owner))
+                    (QUEUED, SUPERSEDED_HOLD, at, message_id, SENDING, attempt_no, owner))
                 self.store.journal(
-                    "supervisor_message_superseded" if kind == "obsolete"
-                    else "supervisor_message_withheld", message_id,
-                    {"requestId": request_id, "stale": kind, "detail": detail,
-                     "reason": "the fact moved between the claim and the transport"}, at=at)
+                    "supervisor_message_superseded", message_id,
+                    {"requestId": request_id, "detail": detail}, at=at)
                 return ("moved", DeliveryRefused(RefusalReason.SUPERSEDED_REVISION, detail))
+            # And the settings the send is about to carry are still the authorized ones. They
+            # were established before the claim, and a user transition committing since then
+            # was otherwise sent through under the settings it had just replaced. Asked through
+            # the same gate, so a record withdrawn or refused meanwhile is a change too. Nothing
+            # is wrong with the message: it is queued again, and the next attempt reads the
+            # settings as they stand.
+            if settings is not None:
+                try:
+                    changed = (_settings_key(self._settings_for(recipient, runtime_status))
+                               != _settings_key(settings))
+                    why = ("the recipient's authorized settings changed after this send read"
+                           " them and before its transport started")
+                except DeliveryRefused as refusal:
+                    changed, why = True, ("the recipient's authorized settings stopped"
+                                          " standing before this send's transport started: "
+                                          + str(refusal.detail))
+                if changed:
+                    record = {"requestId": request_id, "messageId": message_id,
+                              "attemptNo": attempt_no, "deliveryState": WITHHELD_PRE_SEND,
+                              "sendAttempted": "no", "retrySafe": True, "reason": why}
+                    db.execute(
+                        "UPDATE supervisor_attempts SET state = ?, send_attempted = 'no',"
+                        " retry_safe = 1, record = ?, observed_at = ? WHERE request_id = ?",
+                        (WITHHELD_PRE_SEND, json.dumps(record, sort_keys=True), at, request_id))
+                    db.execute(
+                        "UPDATE supervisor_messages SET state = ?, next_eligible_at = NULL,"
+                        " lease_owner = NULL, lease_until = NULL, updated_at = ?"
+                        " WHERE message_id = ? AND state = ? AND attempt_count = ?"
+                        "   AND lease_owner IS ?",
+                        (QUEUED, at, message_id, SENDING, attempt_no, owner))
+                    self.store.journal(
+                        "supervisor_message_withheld", message_id,
+                        {"requestId": request_id, "reason": why}, at=at)
+                    return ("settings", why)
             # The instant, and the send it spends, are taken AFTER the lock was granted and the
             # hierarchy asked, not before: waiting for the lock and resolving can take seconds,
             # and a stamp read before them dated the transport start earlier than it was - so a
@@ -1527,18 +1670,19 @@ class SupervisorChannel:
         another initiative or a drifting edge through, each of which resolve() refuses.
         """
         with self.store.transaction() as db:
-            live, moved = self._hierarchy_in(db, message_id)
-            if moved is not None or not _same_hierarchy(live, resolution):
+            # I-247: the row is a proposal. What is owed now is re-derived inside this write, and
+            # the row is claimed only as that - restated in place first when the obligation says
+            # something newer, so the bytes rendered below are the current content.
+            current = self._proposal_now(db, message_id)
+            if current["kind"] == "moved" or not _same_hierarchy(current["live"], resolution):
                 # Moved since the caller read it, or no longer resolvable at all. Nothing is
                 # claimed, and the next attempt's own reading says which.
                 raise _NotClaimable()
-            # And the fact is still the one the packet was composed from. A work report
-            # recorded after staging - the first one, which the freeze does not refuse - left
-            # a packet composed without it; and one that changed what the event raises left a
-            # message about an obligation that no longer exists.
-            stale = self._stale_in(db, message_id)
-            if stale is not None:
-                raise _Stale(*stale)
+            if current["kind"] == "obsolete":
+                raise _Stale("obsolete", current["detail"])
+            if current["kind"] == "restated" and not self._restate_in(db, message_id, current):
+                raise _NotClaimable()
+            live = current["live"]
             cursor = db.execute(
                 "UPDATE supervisor_messages"
                 "   SET state = ?, lease_owner = ?, lease_until = ?,"

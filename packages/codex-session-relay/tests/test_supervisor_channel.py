@@ -2727,9 +2727,14 @@ class WhatTheTenthIndependentReviewFound(ChannelTestCase):
         """RED (Devin PRRT_kwDOUcYZMM6lD3QZ): charged at the instant attempt() started."""
         _one, message_id = self.staged()
         settings = self.channel._settings_for
+        calls = []
 
         def slow_host_checks(task_id, runtime_status=None):
-            self.clock.advance(10)
+            # The host checks before the claim are the slow ones; the transport-start write
+            # asks the same gate again, from the store, and takes no time here.
+            if not calls:
+                self.clock.advance(10)
+            calls.append(task_id)
             return settings(task_id, runtime_status)
 
         started = self.clock.now()
@@ -2795,8 +2800,8 @@ class WhatTheEleventhIndependentReviewFound(ChannelTestCase):
         self.assertEqual(len(self.adapter.sends), 1, "one wake, for the decision")
 
     def test_a_report_recorded_after_its_completion_was_staged_is_carried(self):
-        """RED: the first report was refused; now it is recorded, the stale packet is not sent,
-        and staging again carries the report."""
+        """RED: the first report was refused. Now it is recorded, and the send carries it: the
+        claim finds the staged row is not what is owed now and restates it in place (I-247)."""
         path = self.artifact("out.txt", "the deliverable")
         payload = self.ready_payload(self.relationship, [path])
         self.accept(payload)
@@ -2805,17 +2810,14 @@ class WhatTheEleventhIndependentReviewFound(ChannelTestCase):
         self.assertIsNone(json.loads(self.channel.get(message_id)["packet"]).get(packets.ARTIFACT))
 
         self.assertTrue(self.recorded(lambda: self.report_naming(event_id, 10)))
-        self.assertRefused(RefusalReason.SUPERSEDED_REVISION, self.channel.attempt, message_id,
-                           self.adapter)
-        self.assertIsNone(self.channel.get(message_id)["hold_reason"])
-        self.assertEqual(self.adapter.sends, [])
-
-        self.assertTrue(self.channel.stage(self.obligation(event_id))["restated"])
-        self.assertEqual(self.packet_pr(message_id), 10)
         self.assertEqual(self.channel.attempt(message_id, self.adapter)["deliveryState"],
                          DISPATCHED)
-
-    # ---------------------------------------------------------- the send budget
+        self.assertEqual(self.packet_pr(message_id), 10)
+        self.assertEqual(self.channel.get(message_id)["submission_no"], 1)
+        self.assertEqual(len(self.adapter.sends), 1)
+        restated = self.store.all("SELECT detail FROM journal WHERE kind = ?",
+                                  (channel_module.RESTATED,))
+        self.assertEqual([json.loads(one["detail"])["at"] for one in restated], ["claim"])
 
     def test_two_claims_that_never_sent_leave_no_send_time_behind(self):
         """RED: A reserved and stranded, B reserved, A given back, B cancelled by a handover:
@@ -2885,20 +2887,29 @@ class WhatTheTwelfthIndependentReviewFound(ChannelTestCase):
             " WHERE message_id = ? ORDER BY attempt_no DESC LIMIT 1", (message_id,))
 
     def claimed_then(self, happen):
+        """Run happen() once, after the first claim commits and before its transport start."""
         claim = self.channel._claim
+        fired = []
 
         def claimed_then_something_committed(*args, **kwargs):
             claimed = claim(*args, **kwargs)
-            happen()
+            if not fired:
+                fired.append(True)
+                happen()
             return claimed
 
         return mock.patch.object(self.channel, "_claim", claimed_then_something_committed)
 
-    # ------------------------------------------- a report between claim and transport
+    def attempts(self, message_id):
+        return [tuple(one) for one in self.store.all(
+            "SELECT attempt_no, send_attempted, transport_started_at IS NOT NULL"
+            "  FROM supervisor_attempts WHERE message_id = ? ORDER BY attempt_no",
+            (message_id,))]
 
     def test_a_report_recorded_between_the_claim_and_the_transport_start_is_not_sent_stale(self):
         """RED: the transport-start write re-read the hierarchy only, so a packet composed before
-        the first report went out without it, and staging could never carry it afterwards."""
+        the first report went out without it, and staging could never carry it afterwards. Now
+        that attempt is voided, the message restated, and the report goes out in the same call."""
         path = self.artifact("out.txt", "the deliverable")
         payload = self.ready_payload(self.relationship, [path])
         self.accept(payload)
@@ -2907,20 +2918,16 @@ class WhatTheTwelfthIndependentReviewFound(ChannelTestCase):
 
         with self.claimed_then(lambda: self.assertTrue(
                 self.recorded(lambda: self.report_naming(event_id, 10)))):
-            self.assertRefused(RefusalReason.SUPERSEDED_REVISION, self.channel.attempt,
-                               message_id, self.adapter)
-        self.assertEqual(self.adapter.sends, [])
-        attempt = self.attempt_row(message_id)
-        self.assertEqual((attempt["send_attempted"], attempt["retry_safe"],
-                          attempt["transport_started_at"]), ("no", 1, None))
-        row = self.channel.get(message_id)
-        self.assertEqual((row["state"], row["hold_reason"]), (QUEUED, None))
-
-        self.assertTrue(self.channel.stage(self.obligation(event_id))["restated"])
+            record = self.channel.attempt(message_id, self.adapter)
+        self.assertEqual(record["deliveryState"], DISPATCHED)
+        self.assertEqual(self.attempts(message_id), [(1, "no", 0), (2, "yes", 1)])
+        self.assertEqual(len(self.adapter.sends), 1, "one wake, carrying the report")
         self.assertEqual(self.packet_pr(message_id), 10)
-        self.assertEqual(self.channel.attempt(message_id, self.adapter)["deliveryState"],
-                         DISPATCHED)
-        self.assertEqual(len(self.adapter.sends), 1)
+        self.assertIn("codex-relay-workflow #10 at", self.bytes_of(message_id))
+        restated = self.store.all("SELECT detail FROM journal WHERE kind = ?",
+                                  (channel_module.RESTATED,))
+        self.assertEqual([json.loads(one["detail"])["at"] for one in restated],
+                         ["transport_start"])
 
     def test_a_block_that_became_a_decision_before_its_transport_started_wakes_once(self):
         """RED: the stale block went out, then the decision the report raised went out as well -
@@ -2963,16 +2970,11 @@ class WhatTheTwelfthIndependentReviewFound(ChannelTestCase):
         self.clock.advance(5)
         second = self.blocked("the log at /logs/right.txt", attempt=2)
 
-        refusal = self.assertRefused(RefusalReason.SUPERSEDED_REVISION, self.channel.attempt,
-                                     message_id, self.adapter)
-        self.assertIn(second, refusal.detail)
-        self.assertEqual(self.adapter.sends, [])
-
-        self.assertTrue(self.channel.stage(self.obligation(first))["restated"])
-        self.assertEqual(self.channel.get(message_id)["event_id"], second)
         self.assertEqual(self.channel.attempt(message_id, self.adapter)["deliveryState"],
                          DISPATCHED)
+        self.assertEqual(self.channel.get(message_id)["event_id"], second)
         self.assertIn("show --event " + second, self.bytes_of(message_id))
+        self.assertNotIn("show --event " + first, self.bytes_of(message_id))
         self.assertEqual(len(self.adapter.sends), 1)
 
     def test_a_block_stated_again_between_the_claim_and_the_transport_start_is_not_sent(self):
@@ -2987,13 +2989,100 @@ class WhatTheTwelfthIndependentReviewFound(ChannelTestCase):
             second.append(self.blocked("the log at /logs/right.txt", attempt=2))
 
         with self.claimed_then(stated_again):
-            self.assertRefused(RefusalReason.SUPERSEDED_REVISION, self.channel.attempt,
-                               message_id, self.adapter)
-        self.assertEqual(self.adapter.sends, [])
-        self.assertEqual(self.attempt_row(message_id)["send_attempted"], "no")
+            record = self.channel.attempt(message_id, self.adapter)
+        self.assertEqual(record["deliveryState"], DISPATCHED)
+        self.assertEqual(self.attempts(message_id), [(1, "no", 0), (2, "yes", 1)])
+        self.assertIn("show --event " + second[0], self.bytes_of(message_id))
+        self.assertNotIn("show --event " + first, self.bytes_of(message_id))
+        self.assertEqual(len(self.adapter.sends), 1)
 
-        self.assertTrue(self.channel.stage(self.obligation(first))["restated"])
+
+class WhatTheThirteenthIndependentReviewFound(ChannelTestCase):
+    """The settings a send carries are the ones authorized at its transport instant."""
+
+    staged = WhatTheSecondReviewRoundFound.staged
+
+    def test_settings_changed_between_the_claim_and_the_transport_start_are_not_sent(self):
+        """RED: the settings read before the claim went out although a user transition had
+        replaced them before the transport started."""
+        from codex_session_relay.registry import load_settings
+
+        self.channel = self.build_channel(
+            settings=lambda task, runtime=None: load_settings(self.store, task))
+        _one, message_id = self.staged()
+        claim = self.channel._claim
+
+        def claimed_then_the_user_moved_the_supervisor(*args, **kwargs):
+            claimed = claim(*args, **kwargs)
+            record_settings(self.store, self.clock, SUPERVISOR,
+                            task_settings("/changed-after-gate"), source="user_transition")
+            return claimed
+
+        with mock.patch.object(self.channel, "_claim",
+                               claimed_then_the_user_moved_the_supervisor):
+            self.assertIsNone(self.channel.attempt(message_id, self.adapter))
+        self.assertEqual(self.adapter.sends, [])
+        attempt = self.store.one(
+            "SELECT send_attempted, retry_safe, transport_started_at FROM supervisor_attempts"
+            " WHERE message_id = ?", (message_id,))
+        self.assertEqual(tuple(attempt), ("no", 1, None))
+        row = self.channel.get(message_id)
+        self.assertEqual((row["state"], row["hold_reason"]), (QUEUED, None))
+
         self.assertEqual(self.channel.attempt(message_id, self.adapter)["deliveryState"],
                          DISPATCHED)
-        self.assertIn("show --event " + second[0], self.bytes_of(message_id))
+        self.assertEqual(self.adapter.settings_seen[-1][1].data["cwd"], "/changed-after-gate")
         self.assertEqual(len(self.adapter.sends), 1)
+
+
+class TheStagedRowIsAProposal(ChannelTestCase):
+    """I-247: what goes out is re-derived where the transport starts, for every writer that can
+    change an obligation after staging - not only the ones a review happened to find."""
+
+    observation = WhatTheThirdReviewRoundFound.observation
+
+    def test_an_obligation_discharged_after_staging_is_not_sent(self):
+        """RED: the Linear record confirmed the completion after it was staged, and the report
+        still woke the supervisor about a fact the record it reads already has."""
+        from codex_session_relay.sync import SyncOutbox, render_block
+
+        one, message_id = self.staged()
+        event_id = one["basis"]["eventId"]
+        row = self.store.one("SELECT * FROM events WHERE event_id = ?", (event_id,))
+        outbox = SyncOutbox(self.store, self.clock)
+        document = "https://linear.app/example/document/coordination-000000000000"
+        outbox.set_target(self.rid, "coordination_document", document)
+        with self.store.transaction() as db:
+            ruling = outbox.enqueue_in(
+                db, relationship_id=self.rid, issue_key="REL-1", subject_kind="verdict",
+                summary="ruled", event_id=event_id, generation=row["execution_generation"],
+                revision=row["revision_hash"], verdict="verified", criteria_digest="digest-a")
+        claim = outbox.claim(ruling, owner="test")
+        stored = self.store.one("SELECT * FROM sync_outbox WHERE sync_id = ?", (ruling,))
+        outbox.complete(ruling, claim_token=claim["claimToken"], target_ref=document,
+                        readback=render_block(stored), external_ref="linear-doc-1")
+
+        refusal = self.assertRefused(RefusalReason.SUPERSEDED_REVISION, self.channel.attempt,
+                                     message_id, self.adapter)
+        self.assertIn("Linear record", refusal.detail)
+        self.assertEqual(self.channel.get(message_id)["hold_reason"],
+                         channel_module.SUPERSEDED_HOLD)
+        self.assertEqual(self.adapter.sends, [])
+
+    def test_an_omission_whose_turn_reported_after_staging_is_not_sent(self):
+        """RED: the turn's own receipt arrived after its omission was staged, and both the
+        omission and the completion that receipt raised would wake the supervisor."""
+        turn = self.assigned_turn()
+        base = self.observation()
+        reading = dict(base, selectors=dict(base["selectors"], turn=turn.turn_id))
+        message_id = self.channel.stage(supervision.from_observation(reading),
+                                        reading=reading)["messageId"]
+        path = self.artifact("out.txt", "the deliverable")
+        self.accept(self.ready_payload(self.relationship, [path], turn=turn))
+
+        refusal = self.assertRefused(RefusalReason.SUPERSEDED_REVISION, self.channel.attempt,
+                                     message_id, self.adapter)
+        self.assertIn("final receipt", refusal.detail)
+        self.assertEqual(self.channel.get(message_id)["hold_reason"],
+                         channel_module.SUPERSEDED_HOLD)
+        self.assertEqual(self.adapter.sends, [])

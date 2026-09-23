@@ -924,8 +924,10 @@ Once a message is staged upward from a work report, that report no longer change
 refuses a correction to it, in place or as a new submission, because the staged message froze
 its pull request and points at it for evidence. Stage after the report is final. A message
 staged from the event before any report existed froze nothing, so the first report is still
-recorded; the send then refuses the stale packet as `superseded_revision` and staging again
-carries the report, or stages the decision it turned the block into.
+recorded; the send restates the message to the report that stands and sends that, and when the
+report turned the block into a decision, the block is held and staging the project stages the
+decision. Whatever a send carries is re-derived where its transport starts, so a staged message
+never goes out stale.
 
 ```bash
 # Freeze what is owed upward as a message. Staging is not sending.

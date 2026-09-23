@@ -156,15 +156,11 @@ pull request while its evidence reads another.
 
 A message staged from its event before any report existed froze no report, so the first report
 on that event is recorded. Refusing it lost the report outright: a block staged from its outcome
-could never be told it was a decision only the user can make. The claim asks, inside its own
-write, whether the event still raises what the message is for from the report the packet was
-composed from, and the write that stamps the transport start asks again, because a report
-committing between those two writes is otherwise sent as the packet composed without it. A
-packet composed without the report that now stands is refused as `superseded_revision` with
-nothing sent - at the transport start the attempt is recorded as sending nothing - and staging
-again restates it in place with that
-report, journalled as `supervisor_message_restated` with both submissions. An event that now
-raises a different obligation - the block that turned out to be a decision - holds its old
+could never be told it was a decision only the user can make. What goes out is decided again
+where the transport starts (see a staged row is a proposal, below): a packet composed without
+the report that now stands is restated in place and sent as that report, journalled as
+`supervisor_message_restated` with both submissions. An event that now raises a different
+obligation - the block that turned out to be a decision - holds its old
 message as `superseded_by_report`, and the new obligation is staged as its own message. That
 hold is terminal, and can be: a `ready_for_review` event accepts only a DONE or NOOP report, so
 a completion stays a completion, and a block's obligation id includes the report's status once
@@ -178,6 +174,47 @@ turn passes every other check. Otherwise staging refuses as `contradictory_obser
 `supervisor-stage --project` indexes the readings it is given by the obligation each raises,
 and an obligation whose readings disagree about what it is or where it can be read is refused
 by name under `refused` rather than staged with one of them.
+
+### A staged row is a proposal
+
+A staged row is a proposal, not a commitment. Transport start re-derives the obligation's
+CURRENT content inside the same write that lets the transport start, and sends only if the
+staged row equals it; otherwise the attempt is voided, recorded with its reason, and the row is
+restated or held. Stale bytes never go out, and one obligation never wakes anybody twice. One
+function asks it, `_proposal_now`, and it asks what staging would stage for this obligation
+now:
+
+- who it is for: the live hierarchy, through `resolve()`;
+- what it is: the obligation the row's event raises from that event's current work report, or
+  the one the reading frozen on an omission's row raises;
+- which statement: the newest event raising the same block or decision, and that event's
+  current report;
+- whether it is still owed: a confirmed Linear record discharges it, and a final receipt for
+  an omitted turn means the turn reported;
+- the bytes: the packet composed from all of that with the observation time the row was staged
+  with, compared with the row byte for byte, so anything composition reads that the list above
+  does not name cannot drift past it either.
+
+The claim asks it inside its write and the write that stamps `transport_started_at` asks it
+again; that write is the last one before the bytes go out, and nothing reaches the transport
+without passing it. What it answers decides one of three things. When the hierarchy moved,
+nothing is sent, the attempt is recorded as sending nothing, and staging again re-addresses the
+report (below). When nothing is owed through this message any more - the event now raises
+another obligation or none, the record discharges it, the omitted turn reported - nothing is
+sent, the message is held as `superseded_by_report`, and the send refuses as
+`superseded_revision`. When the obligation says something newer, the never-sent row is
+restated in place - same message id, same journal entry, `supervisor_message_restated` naming
+both events and submissions - in the claim before its bytes are rendered, or at the transport
+start with the voided attempt recorded as sending nothing, after which the same call claims it
+again, at most twice, and sends what is owed now.
+
+The writers that can change an obligation after staging are the ones it reads: `report.record`
+(a first, corrected or kind-changing work report), the receipt intake (a newer statement of the
+same block or decision, or a final receipt for an omitted turn), the linkage (a handover, an
+archived assignment, a project re-linked, a contested edge) and the sync outbox confirming a
+verdict. The authorized settings the send carries are asked again in the same write too: a
+change since the claim sends nothing and queues the message, and the next attempt reads them as
+they stand.
 
 ### When the hierarchy moves under a staged report
 
@@ -223,7 +260,7 @@ which task a report is for is decided where it is staged.
 A message leaves `sending` only through the claim that holds it: this message, this attempt
 number and this lease owner, all three in the predicate of the write that moves it. `_settle`
 records the transport's answer that way, and the transport-start write that finds the hierarchy
-moved, the fact the packet was composed from moved, or the send budget spent, releases the
+moved, the fact the packet was composed from moved, the settings changed, or the send budget spent, releases the
 message the same way. The one other way out is
 recovery, which takes the
 row from a claim whose lease expired with no receipt, and what it does depends on a durable
@@ -529,12 +566,11 @@ the newer statement is the same fact said again and is not reported again; stagi
 that, naming the newer event's own evidence. A completion is keyed on its event, so a corrected
 completion is always its own message.
 
-A send never goes out as an older statement either. The claim asks for the newest event that
-raises the message's block or decision, and the transport-start write asks again; a message
-staged from an earlier statement is refused there as `superseded_revision`, with nothing sent
-and the attempt recorded as sending nothing, and staging again restates it. Without that, a
-restatement accepted after staging and before the send went nowhere: the older statement was
-sent, and the newer one was then answered as a fact already reported.
+A send never goes out as an older statement either. The transport start re-derives the newest
+statement (see a staged row is a proposal), and a message staged from an earlier one is
+restated in place and sent as the newer one. Without that, a restatement accepted after staging
+and before the send went nowhere: the older statement was sent, and the newer one was then
+answered as a fact already reported.
 
 A report still owed for an archived assignment has nobody to go to. `resolve()` finds the
 project by walking up the edge the assignment holds on its issue, and archiving the assignment
