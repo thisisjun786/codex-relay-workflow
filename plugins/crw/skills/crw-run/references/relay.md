@@ -918,7 +918,7 @@ already sent stays with the task it went to and is listed under `refused` as
 
 A send whose response never came back is held as `held_uncertain` and is never resent. The
 supervisor's `supervisor-read` can still settle it, and does only when its transcript holds
-that attempt's request id; `supervisor-show` then records how it was settled.
+that attempt's delivery token - its request id and a random part drawn when the send was claimed - in a turn that began no earlier than the transport; `supervisor-show` then records how it was settled.
 
 Once a completion is staged upward, its work report no longer changes: the relay refuses a
 correction to it, in place or as a new submission, because the staged message froze that
@@ -951,7 +951,7 @@ so quoting the message back does not produce it. That is the whole of what it ru
 nothing authenticates the caller and nothing establishes that the named turn produced it.
 
 A verified readback says a bounded scan of at most 200 of the recipient's items found that
-attempt's request id, and that the host can read the named turn on the recipient's thread and
+attempt's delivery token, and that the host can read the named turn on the recipient's thread and
 it carries a start time which is not CERTAINLY earlier than the send. That comparison applies
 to every candidate, including the turn the attempt names, because a send can steer an existing
 turn rather than open one. Where the readback names the turn the send itself opened, the

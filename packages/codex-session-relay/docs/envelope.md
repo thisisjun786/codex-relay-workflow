@@ -105,10 +105,10 @@ That a supervisor agreed to anything, acted on it, or confirmed it. No row in th
 so: `deliveries` holds one recipient per event and serves the registered parent-child pair, and
 `ack.acknowledge` records a parent acknowledging a child completion. What CAN now be said is
 narrower than it sounds - [the supervisor channel](supervisor-channel.md) stages a report, sends
-it and records a readback, which together say this attempt's request id is in the recipient's
+it and records a readback, which together say this attempt's delivery token is in the recipient's
 thread, in a turn the host names, and the turn the readback names is real there and did not
 begin before the send. That is arrival, not reading, and it is not the whole message either: the
-scan looks for the request id alone, so it does not show the rest of the bytes arrived intact.
+scan looks for that token alone - the request id and a random part drawn inside the claim - so it does not show the rest of the bytes arrived intact.
 For the turn the send opened it needs nothing from the supervisor at all.
 Convergence still means one fact yields one obligation, not that a second wake was prevented
 somewhere else.

@@ -962,7 +962,11 @@ class DeliveryService:
             # is decided here too, by the one predicate the supervisor channel's claim also
             # calls: the two share this recipient's budget, and a bound only one of its
             # writers re-checks inside its write is a bound the other one does not obey.
-            if reserve_send(db, self.policy, recipient, now) is not None:
+            #
+            # Charged at the later of the caller's instant and the clock inside this write. The
+            # caller read its instant before the host checks, and a charge dated that early let
+            # the gap and the hourly window lapse before the transport even started.
+            if reserve_send(db, self.policy, recipient, max(now, self.clock.now())) is not None:
                 raise _Paced()
         return attempt_no, request_id, message
 

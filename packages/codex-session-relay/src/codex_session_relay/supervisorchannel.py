@@ -1476,14 +1476,19 @@ class SupervisorChannel:
             # transport that send nothing - the hierarchy moving before the transport starts,
             # a lease recovered before it started - and a slot spent on a send that never
             # happened took one of the recipient's hourly sends and set its gap for nothing.
-            window = int(now // 3600) * 3600
+            #
+            # Charged at the later of the caller's instant and the clock inside this write: the
+            # caller read its instant before the host checks, and a charge dated that early let
+            # the gap and the hourly window lapse before the transport even started.
+            charged = max(now, self.clock.now())
+            window = int(charged // 3600) * 3600
             prior = db.execute(
                 "SELECT sends, last_send_at FROM recipient_rate"
                 " WHERE recipient_task_id = ? AND window_start = ?",
                 (recipient, window)).fetchone()
-            if reserve_send(db, self.policy, recipient, now) is not None:
+            if reserve_send(db, self.policy, recipient, charged) is not None:
                 raise _Paced()
-            reservation = {"recipient": recipient, "window": window, "at": now,
+            reservation = {"recipient": recipient, "window": window, "at": charged,
                            "priorSends": prior["sends"] if prior is not None else 0,
                            "priorLastSendAt": prior["last_send_at"] if prior is not None
                            else None}
@@ -1854,6 +1859,33 @@ class SupervisorChannel:
                 detail = ("this attempt's delivery token is in " + str(delivered["turnId"])
                           + ", a turn that began before this attempt's transport started, so it"
                             " was there before the send and is not evidence the send arrived")
+        if verified == HOST_READ and uncertain:
+            # Settling a send nobody heard back from is the one verdict that turns an unknown
+            # outcome into read, so it takes no benefit of the doubt: the turn the token is in -
+            # the named turn included - must not begin before this attempt's transport started,
+            # measured without the precision allowance every other chronology here gets. With
+            # it, a token placed in a turn half a second ahead of the transport - which only a
+            # holder of this store can do, since the token is drawn inside the claim - settled a
+            # send whose bytes never arrived. A genuine turn the host dates just before the stamp
+            # does not settle it either, and that report stays held for manual settlement.
+            holder = delivered.get("turnId")
+            began = _host_time(read_turn.started_at if read_turn is not None
+                               and holder == read_turn_id
+                               else self._turn_start(row, holder, adapter))
+            started = _iso_time(attempt["transport_started_at"])
+            if began is None or started is None:
+                verified = NO_HOST
+                detail = ("the turn this attempt's delivery token is in, " + str(holder)
+                          + ", has no start time the host would give, so whether it followed"
+                            " this send is not established, and an uncertain send is settled"
+                            " only when it is")
+            elif began < started:
+                verified = TURN_PREDATES_SEND
+                detail = ("this attempt's delivery token is in " + str(holder) + ", which"
+                          " began before this attempt's transport started. A send nobody heard"
+                          " back from is settled only on a token in a turn that began at or"
+                          " after that instant, without the allowance a turn's start is"
+                          " otherwise given")
         reconciled = None
         if uncertain and verified == HOST_READ:
             reconciled = {"from": HELD_UNCERTAIN, "by": "readback",

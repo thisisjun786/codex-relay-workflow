@@ -116,6 +116,11 @@ carried by the envelope alone until somebody decides what an answer cannot do wi
    A claim refused on the budget is deferred by the same gap the preflight would have applied,
    in both queues. It is never recorded as a failure and never held, because nothing about the
    message or the recipient is wrong: another send simply got there first.
+   A claim charges the budget at the later of its caller's instant and the clock read inside
+   the claim. The caller reads its instant before the host checks, and a charge dated that early
+   let the gap and the hourly window lapse before the transport had even started. A claim that
+   never reaches its transport gives what it charged back (see who moves a message out of
+   sending).
 4. Within one recipient the oldest claimable message is claimed first, and an older message
    that is IN FLIGHT blocks the one behind it too - that is the moment ordering matters most.
    It is still weaker than arrival order, deliberately: an older message that is held, inside
@@ -330,7 +335,12 @@ made the one check that could prove this attempt's delivery token reached the re
 unreachable. It is verified against THAT attempt, the one numbered by the message's attempt
 count, found by its number because a late receipt may have been recorded on it. Verified means a
 real turn on the recipient's thread that did not begin before the send, and that attempt's
-delivery token in the recipient's own transcript. Only then does the readback settle it
+delivery token in the recipient's own transcript, in a turn - the named one included - that
+began no earlier than the transport, measured without the precision allowance the other
+chronologies get. Settling is the one verdict that turns an unknown outcome into `read`, so it
+takes no benefit of the doubt: a token placed half a second ahead of the transport does not
+settle it, and a genuine turn the host dates just before the stamp leaves the report held for
+manual settlement. Only then does the readback settle it
 to `read`, with a `supervisor_message_reconciled` journal entry and a `reconciled` field on
 the readback saying so. The answer alone never settles it; an unverified readback is recorded
 and the message stays `held_uncertain`. With no receipt the attempt keeps `held_uncertain`,

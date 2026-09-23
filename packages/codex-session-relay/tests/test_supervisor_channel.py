@@ -2681,3 +2681,66 @@ class WhatTheNinthIndependentReviewFound(ChannelTestCase):
         answer = self.channel.stage(self.obligation(first))
         self.assertTrue(answer.get("restated"))
         self.assertEqual(self.channel.get(message_id)["event_id"], second)
+
+
+
+class WhatTheTenthIndependentReviewFound(ChannelTestCase):
+    """Settling a send nobody heard back from takes no benefit of the doubt, and a send is charged
+    to the recipient's budget when its claim commits, not when its caller started looking."""
+
+    queued_delivery = WhatTheFifthReviewRoundFound.queued_delivery
+
+    def last_send(self):
+        return self.store.one(
+            "SELECT MAX(last_send_at) AS last FROM recipient_rate WHERE recipient_task_id = ?",
+            (SUPERVISOR,))["last"]
+
+    def test_a_token_placed_ahead_of_the_transport_does_not_settle_a_lost_send(self):
+        """RED: placed in the named turn half a second before the transport, inside the
+        precision allowance, the token settled a send whose bytes never arrived."""
+        _one, message_id = self.staged()
+        claim = self.channel._claim
+        placed = []
+
+        def claimed_then_token_placed(*args, **kwargs):
+            claimed = claim(*args, **kwargs)
+            token = self.store.one(
+                "SELECT delivery_token FROM supervisor_attempts WHERE message_id = ?",
+                (message_id,))["delivery_token"]
+            placed.append(self.adapter.start_turn(SUPERVISOR, status="completed",
+                                                  text="placed: " + token))
+            self.clock.advance(0.5)
+            return claimed
+
+        self.adapter.script("transport_unknown")
+        with mock.patch.object(self.channel, "_claim", claimed_then_token_placed):
+            self.channel.attempt(message_id, self.adapter)
+        self.assertEqual(self.channel.get(message_id)["state"], HELD_UNCERTAIN)
+        self.clock.advance(5)
+        answer = self.read_back(message_id, placed[0].turn_id)
+        self.assertNotEqual(answer["verified"], channel_module.HOST_READ)
+        self.assertEqual(self.channel.get(message_id)["state"], HELD_UNCERTAIN)
+
+    def test_a_report_claim_charges_the_send_budget_when_it_claims(self):
+        """RED (Devin PRRT_kwDOUcYZMM6lD3QZ): charged at the instant attempt() started."""
+        _one, message_id = self.staged()
+        settings = self.channel._settings_for
+
+        def slow_host_checks(task_id, runtime_status=None):
+            self.clock.advance(10)
+            return settings(task_id, runtime_status)
+
+        started = self.clock.now()
+        with mock.patch.object(self.channel, "_settings_for", slow_host_checks):
+            self.channel.attempt(message_id, self.adapter)
+        self.assertEqual(self.last_send(), started + 10)
+
+    def test_a_delivery_claim_charges_the_send_budget_when_it_claims(self):
+        """RED: the parent-child claim charged the instant its caller read too."""
+        one, _message_id = self.staged()
+        event_id = one["basis"]["eventId"]
+        service = self.queued_delivery(event_id)
+        read_at = self.clock.now()
+        self.clock.advance(10)
+        service._claim(event_id, now=read_at, owner="slow host checks", recipient=SUPERVISOR)
+        self.assertEqual(self.last_send(), read_at + 10)
