@@ -953,14 +953,18 @@ def cmd_packet_check(services, args) -> dict:
     With --record the reading is SUPPLIED, and the answer says so. A caller that handed it an
     agreeing record has proved only that the two files agree; what it closes is the case where
     nobody compared them at all.
+
+    With --receiver, --ledger and --applied it checks nothing: it records in the receiver's
+    ledger that the receiver has acted on a packet the ledger answered accepted, which is what
+    turns act off for that packet's replays.
     """
     one = _json_document(args.packet, "relay-packet/1 message")
     if args.receiver is not None:
         return _packet_check_store(services, args, one)
-    if args.observation or args.ledger:
+    if args.observation or args.ledger or args.applied:
         raise SystemExit2(
-            "--observation and --ledger belong to the store reading (--receiver); a supplied"
-            " record answers for itself", EXIT_USAGE)
+            "--observation, --ledger and --applied belong to the store reading (--receiver); a"
+            " supplied record answers for itself", EXIT_USAGE)
     record = _json_document(args.record, "receiver's own reading")
     answer = packets.reception(one, record)
     answer["recordSource"] = "supplied"
@@ -976,6 +980,8 @@ def cmd_packet_check(services, args) -> dict:
 
 def _packet_check_store(services, args, one) -> dict:
     """The receive step: the packet against the receiver's own store reading."""
+    if args.applied:
+        return _packet_applied(args, one)
     observed = None
     if args.observation:
         observed = receiver.observation(_json_document(args.observation, "observation"))
@@ -998,6 +1004,26 @@ def _packet_check_store(services, args, one) -> dict:
     finally:
         if connection is not None:
             connection.close()
+
+
+def _packet_applied(args, one) -> dict:
+    """After acting: record in the receiver's own ledger that this accepted packet was applied."""
+    if not args.ledger:
+        raise SystemExit2("--applied records what you did in your own reception ledger; name it"
+                          " with --ledger", EXIT_USAGE)
+    if args.observation:
+        raise SystemExit2("--applied reads nothing; an observation belongs to the check that"
+                          " came before it", EXIT_USAGE)
+    with receiver.ledger_lock(args.ledger):
+        try:
+            ledger = receiver.load_ledger(args.ledger, args.receiver)
+            recorded = receiver.record_applied(ledger, one)
+        except (receiver.LedgerUnusable, receiver.NotApplicable) as refused:
+            raise SystemExit2(str(refused), EXIT_USAGE) from refused
+        if not recorded["alreadyApplied"]:
+            receiver.save_ledger(args.ledger, ledger)
+    recorded.update(receiver=args.receiver, ledger=args.ledger)
+    return recorded
 
 
 def _json_document(path, what) -> dict:
@@ -3762,6 +3788,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="with --receiver: your own reception ledger, created if absent."
                              " It tells a repeat from a first arrival and holds the mode your"
                              " accepted assignment gave; without it act is always false")
+    packet.add_argument("--applied", action="store_true",
+                        help="with --receiver and --ledger, after you acted on an accepted"
+                             " packet: record it applied in your ledger, so its replays say"
+                             " act false. Until then a replay of it says act true. Reads no"
+                             " store")
     packet.set_defaults(handler=cmd_packet_check)
 
     settle = subparsers.add_parser("linkage-settle")

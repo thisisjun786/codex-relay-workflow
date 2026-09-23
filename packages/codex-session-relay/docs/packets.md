@@ -138,15 +138,16 @@ around by creating a second child.
 
 `packet-check --receiver <task id>` builds the record from the relay store instead of taking
 it from a file. It opens the store read-only and never creates or migrates one; a store it
-cannot open or read gives a record holding only the receiver's own id, so every other field is
-a gap. Each field in the answer's `provenance` names what answered it.
+cannot open or read - including one missing a table or column the reading names - gives a
+record holding only the receiver's own id, so every other field is a gap. Each field in the
+answer's `provenance` names what answered it.
 
 | Record key | Answered by |
 |---|---|
 | the receiver's own role id | the receiver (`--receiver`) |
 | relationId, the other task, issue, relationStatus, generation | `relationships` |
 | dispatchRequestId | `generations`, the current generation |
-| relationRevision | `scope_links` through the relationship's project link; null when unscoped |
+| relationRevision | `scope_links` through the relationship's project link, only while that link is live, has no successor and still joins this relationship's two tasks (otherwise a gap); null when unscoped |
 | criteriaDigest | `canonical_criteria`, a managed set with one digest |
 | policy | `authorized_settings` of the child |
 | callback | the relationship's parent and its `authorized_settings` |
@@ -168,15 +169,25 @@ observed path and digest and is never asked for a head.
 **The reception ledger** (`--ledger <file>`) is the receiver's own file, written by this command
 and read by nothing else. It names its receiver and a version, and a ledger naming another
 receiver is refused rather than read. It keeps each answered message id beside the content
-digest and disposition it got, and, once an assignment is accepted, the mode and workflow that
-assignment gave. Writes happen under a lock on a sidecar file and replace the ledger
-atomically. A message arriving again with the same content is a `replay`: the answer is today's
-reading, with `previousDisposition` beside it, and `act` is true only when today's answer is
-accepted and the earlier one was not, which is the one case where the instruction has not been
-applied yet. The same id asking for something else is a `message_collision` and is refused.
-A stored disposition is upgraded to accepted and never downgraded. Without a ledger the answer
-says `repeat: unchecked` and `act` is false whatever the disposition, because a repeat cannot be
-told from a first arrival.
+digest and disposition it got, whether the receiver has recorded acting on it, and, once an
+assignment is accepted, the mode and workflow that assignment gave. Writes happen under a lock
+on a sidecar file, in a directory created if it is missing, and replace the ledger atomically.
+
+Being told and acting are two records. A check records the answer; only the receiver says it
+acted, afterwards, with `packet-check --packet <file> --receiver <id> --ledger <file> --applied`,
+which reads no store and is refused unless this ledger answered this very packet (same id, same
+content) as accepted. `act` is true when today's answer is accepted and no application is
+recorded. So a receiver that checked and then stopped before acting gets the instruction back
+on the next arrival rather than losing it, and a correction applied once is not applied again.
+The window between acting and recording is the receiver's own: after a restart it reads its
+own work to see whether the instruction is already in it, and records the application instead
+of acting twice.
+
+A message arriving again with the same content is a `replay`: the answer is today's reading,
+with `previousDisposition` and `applied` beside it. The same id asking for something else is a
+`message_collision` and is refused. A stored disposition is upgraded to accepted and never
+downgraded. Without a ledger the answer says `repeat: unchecked` and `act` is false whatever
+the disposition, because a repeat cannot be told from a first arrival.
 
 **Why this step is the boundary.** No relay code path carries a parent-child packet. The relay
 renders its own messages from stored rows and checks their currency when they are acknowledged

@@ -1135,7 +1135,8 @@ def repeat(one, answered) -> dict:
     mine = content_digest(one)
     if str(prior.get("contentDigest")) == mine:
         return {"state": REPLAY, "messageId": identifier, "contentDigest": mine,
-                "disposition": prior.get("disposition"), "answeredDigest": mine,
+                "disposition": prior.get("disposition"), "applied": prior.get("applied") is True,
+                "answeredDigest": mine,
                 "reason": "this id was answered already and asks for the same thing, so it is"
                           " not acted on twice"}
     return {"state": COLLISION, "messageId": identifier, "contentDigest": mine,
@@ -1157,9 +1158,13 @@ def settle_repeat(answer, repeated) -> dict:
     before let an accepted correction come back accepted after its generation had moved on or
     after its record had become unreadable, which is exactly the reading this check exists to
     refuse. So the current disposition is kept, the earlier one is reported beside it, and act
-    says whether this is the one arrival that still has to be applied: a first acceptance, or an
-    acceptance where the earlier answer was not one. With no record of earlier answers
-    (repeated is None) nothing can be told apart from a first arrival, so nothing is acted on.
+    says whether the instruction still has to be applied: it is accepted today and the receiver
+    has not recorded applying it. An accepted answer is not an applied one. A receiver that
+    checked and then stopped before acting gets the instruction back only as a replay, and
+    answering that replay "already accepted, do not act" lost it; so act stays true until the
+    receiver records the application (receiver.record_applied). With no record of earlier
+    answers (repeated is None) nothing can be told apart from a first arrival, so nothing is
+    acted on.
     """
     settled = dict(answer)
     accepted = settled["disposition"] == ACCEPTED
@@ -1171,14 +1176,17 @@ def settle_repeat(answer, repeated) -> dict:
         return settled
     state = repeated["state"]
     if state == FIRST:
-        settled["repeat"] = {"state": FIRST, "contentDigest": repeated["contentDigest"]}
+        settled["repeat"] = {"state": FIRST, "contentDigest": repeated["contentDigest"],
+                             "applied": False}
         settled["act"] = accepted
         return settled
     previous = repeated.get("disposition")
     if state == REPLAY:
+        applied = repeated.get("applied") is True
         settled["repeat"] = {"state": REPLAY, "contentDigest": repeated["contentDigest"],
-                             "previousDisposition": previous, "reason": repeated["reason"]}
-        settled["act"] = accepted and previous != ACCEPTED
+                             "previousDisposition": previous, "applied": applied,
+                             "reason": repeated["reason"]}
+        settled["act"] = accepted and not applied
         return settled
     settled["mismatches"] = list(settled["mismatches"]) + [mismatch(
         COLLISION_MISMATCH, "messageId", expected=repeated.get("answeredDigest"),

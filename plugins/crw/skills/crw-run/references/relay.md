@@ -588,7 +588,9 @@ store reading, exactly as a child checks what it receives
       --receiver <own task id> --ledger <own reception ledger> --observation <forge reading>
 
 The observation is where you read the pull request's repository, number and head, with its
-source; the store never holds a head. Then:
+source; the store never holds a head. Go on only where the answer is accepted and `act` is
+true, and once the steps below have run, record that you acted on it with the same
+`packet-check` and `--applied`, so a report arriving again is not acted on twice. Then:
 
     codex-session-relay --state "$RELAY_STATE" claim     --event <id> --turn <own turn>
     codex-session-relay --state "$RELAY_STATE" ack-proof --event <id> --turn <own turn>
@@ -997,18 +999,23 @@ codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
 
 # Offline, against a reading you supply yourself. The answer says recordSource: supplied.
 codex-session-relay packet-check --packet <file> --record <file>
+
+# After you acted on an accepted packet: record it applied in your ledger. Reads no store.
+codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
+  --receiver <your task id> --ledger <your reception ledger> --applied
 ```
 
 With `--receiver` the record is built from the store: the receiver's own relationship row
 (its relation, the other task, the issue, whether it is still live, the current generation and
-the dispatch that opened it), the project link's revision, the registered criteria digest, the
+the dispatch that opened it), the project link's revision while that link is live and still
+joins the relationship's two tasks, the registered criteria digest, the
 recorded settings of the child and of the parent being answered, the role policy's verdict on
 them, and the execution mode from the receiver's own ledger. The answer says
 `recordSource: store` and gives each field's `provenance`. The pull request head is a forge
 reading the store does not hold; it comes only from `--observation`, a JSON file with its own
 `source`, and without one the head is a gap. The ledger is how a repeat is applied once: `act`
-is true only for a first acceptance or one that upgrades an earlier non-acceptance, and without
-a ledger it is always false.
+is true while today's answer is accepted and the ledger holds no application for that packet,
+`--applied` records one after the receiver acted, and without a ledger `act` is always false.
 
 `--record` is the offline form: the reading the receiver did for ITSELF, supplied as a file.
 The answer says `recordSource: supplied`, and that qualifier is the honest part: handing it an

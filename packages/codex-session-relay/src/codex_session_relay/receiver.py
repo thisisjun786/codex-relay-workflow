@@ -17,6 +17,10 @@ comes only from an observation the caller supplies with its own source. The work
 held by no store at all, so it comes from the receiver's own reception ledger: the mode of the
 assignment it accepted.
 
+The ledger also keeps what the receiver did, separately from what it was told. An answer is
+recorded when it is given; that it was acted on is recorded only when the receiver says so
+(record_applied), so a receiver that stops between the two gets the instruction back.
+
 The packet selects and never answers. Its relation id may choose among relationships the
 receiver already holds; it is never copied into the record, and its subject is only the key
 under which the handover states are read.
@@ -33,12 +37,18 @@ from pathlib import Path
 from . import envelope, packets, rolepolicy, transport
 from .criteria import CriteriaService
 from .errors import AckRefused, RefusalReason, RelayError
-from .linkage import Linkage
+from .linkage import LIVE as LINK_LIVE, Linkage
 from .mergeturn import LANDED
 from .registry import LIVE, load_settings
 from .sync import CONFIRMED
 
 LEDGER_VERSION = 1
+
+# What a store that is not the shape this reader expects raises. A missing table or column
+# named in SQL is an sqlite3.Error; a column read by name from a row whose table lacks it is an
+# IndexError from sqlite3.Row, and a record built from such a row a KeyError. All three mean
+# the same thing here - the store could not be read - and none may escape as a host failure.
+STORE_FAULTS = (sqlite3.Error, IndexError, KeyError)
 
 # What an observation may carry: the facts a forge or a filesystem answers and the store does
 # not. Anything else in one is refused, so an observation cannot smuggle a relationship field.
@@ -57,6 +67,10 @@ class ReceptionRefused(RelayError):
 
 class LedgerUnusable(Exception):
     """A reception ledger that is not this receiver's, or not one at all. Never read through."""
+
+
+class NotApplicable(Exception):
+    """An application the ledger cannot record: nothing accepted was answered for this packet."""
 
 
 class _Rows:
@@ -146,7 +160,7 @@ def read(connection, *, receiver, packet, observation=None, ledger=None) -> dict
         with _snapshot(connection):
             _read_store(connection, fields, sources, notes, receiver=receiver, role=role,
                         sender_role=sender_role, region=region, ledger=ledger)
-    except sqlite3.Error as fault:
+    except STORE_FAULTS as fault:
         # A partial reading is not a reading: nothing the store answered before it failed is
         # kept, so no field can agree on the strength of half a snapshot.
         notes.append("the store could not be read: " + type(fault).__name__ + ": " + str(fault))
@@ -223,11 +237,24 @@ def _read_link(rows, rid, row, answer, notes):
         notes.append("the relationship is scoped to " + str(attachment.get("projectKey"))
                      + " but no execution link joins it, so its revision is unread")
         return
-    answer("relationRevision", link["revision"], "scope_links " + link["linkId"])
+    # The revision answers for this relationship only while the link is live, has no successor
+    # and still joins this relationship's two tasks. Otherwise it is some other tenure's
+    # revision, and quoting it would let a packet agree with a link that has moved on.
+    if link["status"] not in LINK_LIVE or link["supersededBy"]:
+        notes.append("the execution link " + link["linkId"] + " is " + str(link["status"])
+                     + (", superseded by " + str(link["supersededBy"])
+                        if link["supersededBy"] else "")
+                     + ", so it no longer answers for this relationship and its revision is"
+                       " unread")
+        return
     if link["lower"]["taskId"] != row["child_task_id"] or \
             link["upper"]["taskId"] != row["parent_task_id"]:
-        notes.append("the link now joins other tasks than this relationship's, so it has been"
-                     " handed over")
+        notes.append("the execution link " + link["linkId"] + " now joins "
+                     + str(link["upper"]["taskId"]) + " and " + str(link["lower"]["taskId"])
+                     + ", not this relationship's tasks, so it has been handed over and its"
+                       " revision is unread")
+        return
+    answer("relationRevision", link["revision"], "scope_links " + link["linkId"])
 
 
 def _read_criteria(rows, connection, rid, answer, notes):
@@ -321,7 +348,7 @@ def ladder(connection, *, relationship_id, subject, observation=None) -> dict:
                 _verdict(rows, subject)
             states[packets.MERGE_LANDING] = _landing(rows, relationship_id, observation or {})
             sync = _coordination(rows, relationship_id, subject)
-    except sqlite3.Error as fault:
+    except STORE_FAULTS as fault:
         detail = "the store could not be read: " + type(fault).__name__
         for name in packets.PROGRESSION:
             if name not in (packets.READ, packets.LINEAR_DONE):
@@ -440,6 +467,9 @@ def empty_ledger(receiver) -> dict:
 @contextmanager
 def ledger_lock(path):
     """An exclusive lock on the ledger's sidecar, held across its read, decision and write."""
+    # The sidecar lives beside the ledger, so the directory a first ledger will be written to
+    # has to exist before the lock can be taken, not only before the save.
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(str(path) + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)
@@ -477,7 +507,8 @@ def record_answer(ledger, packet, answer) -> bool:
     A first answer is recorded; a replay only upgrades a non-accepted answer to accepted and
     never downgrades one; a collision writes nothing. An accepted assignment records the mode
     and workflow it gave, once, for the relationship the receiver read - never overwritten, so
-    no later packet can redefine it.
+    no later packet can redefine it. Nothing here says the answer was acted on: a first answer
+    is recorded as not applied, and only record_applied changes that.
     """
     changed = False
     identifier = answer.get("messageId")
@@ -485,7 +516,8 @@ def record_answer(ledger, packet, answer) -> bool:
     accepted = answer.get("disposition") == packets.ACCEPTED
     if state == packets.FIRST:
         ledger["answered"][identifier] = {"contentDigest": answer["repeat"]["contentDigest"],
-                                          "disposition": answer["disposition"]}
+                                          "disposition": answer["disposition"],
+                                          "applied": False}
         changed = True
     elif state == packets.REPLAY and accepted and \
             ledger["answered"][identifier].get("disposition") != packets.ACCEPTED:
@@ -504,6 +536,36 @@ def record_answer(ledger, packet, answer) -> bool:
             "dispatchRequestId": answer["record"].get(packets.DISPATCH_REQUEST)}
         changed = True
     return changed
+
+
+def record_applied(ledger, packet) -> dict:
+    """Record that the receiver has acted on a packet its ledger answered accepted.
+
+    This is the receiver's own statement, made after it acted, and it reads no store: whether
+    the instruction was applied is a fact about the receiver, and today's reading has already
+    been given. It is refused unless this ledger answered this very packet - same id, same
+    content - as accepted, so an application cannot be recorded for a packet never checked,
+    for one that was refused or unavailable, or for a different packet reusing the id.
+    """
+    packets.check(packet)
+    repeated = packets.repeat(packet, ledger["answered"])
+    identifier = repeated["messageId"]
+    if repeated["state"] == packets.FIRST:
+        raise NotApplicable(
+            "message " + str(identifier) + " was never checked against this ledger, so there is"
+            " no accepted answer to record as applied; run the check first")
+    if repeated["state"] == packets.COLLISION:
+        raise NotApplicable("message " + str(identifier) + " cannot be recorded as applied: "
+                            + repeated["reason"])
+    entry = ledger["answered"][identifier]
+    if entry.get("disposition") != packets.ACCEPTED:
+        raise NotApplicable(
+            "message " + str(identifier) + " was answered " + str(entry.get("disposition"))
+            + ", so there was nothing to act on and nothing to record as applied")
+    before = entry.get("applied") is True
+    entry["applied"] = True
+    return {"messageId": identifier, "contentDigest": repeated["contentDigest"],
+            "applied": True, "alreadyApplied": before}
 
 
 def save_ledger(path, ledger) -> None:

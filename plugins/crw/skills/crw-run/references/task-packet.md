@@ -197,7 +197,8 @@ Execution:
 - [Only when a relay holds this assignment:] before acting on the assignment, correction or
   resume packet you received, run the store-backed `packet-check` described in
   [the typed form these fields travel in](#the-typed-form-these-fields-travel-in) with your
-  own task id and reception ledger, and act only on an accepted answer whose `act` is true.
+  own task id and reception ledger, act only on an accepted answer whose `act` is true, and
+  once you have acted, record it with the same command and `--applied`.
 - [Only when a relay holds this assignment:] emit your completion receipt for this
   generation over the actual deliverable paths, from inside your own turn, against
   the shared state directory. Offline that receipt is STAGED until an independent
@@ -384,6 +385,10 @@ its own task id and its own reception ledger:
 ```bash
 codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
   --receiver <your task id> --ledger <your reception ledger> [--observation <file>]
+
+# After acting on it, and only then:
+codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
+  --receiver <your task id> --ledger <your reception ledger> --applied
 ```
 
 It gets one of three answers. Accepted, where every field its own store reading could answer
@@ -400,10 +405,14 @@ request head is never a store fact, so it comes only from an observation file na
 it was read.
 
 A correction arriving twice is applied once. The ledger keeps each answered message id beside
-the content it asked for, so a repeat is answered from today's reading with the earlier
-disposition beside it and is not acted on again, while one id asking for something different
-is refused as a collision. The ledger also keeps the mode the accepted assignment gave, which
-is how a later resume or report is checked against it.
+the content it asked for and whether you recorded acting on it, so a repeat is answered from
+today's reading with the earlier disposition beside it, while one id asking for something
+different is refused as a collision. An accepted answer is not an applied one: `act` stays
+true on a repeat until you record the application with `--applied`, so a check you made just
+before a restart does not lose the instruction. If you stopped after acting but before
+recording it, read your own work first; where the instruction is already in it, record it
+applied instead of acting again. The ledger also keeps the mode the accepted assignment gave,
+which is how a later resume or report is checked against it.
 
 This step is the reception boundary because no relay code carries these packets: they arrive
 inside prompts. The same fact is its limit. A receiver that skips the step has checked
