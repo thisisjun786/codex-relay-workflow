@@ -1477,6 +1477,71 @@ class WhatTheStoreCannotAnswer(StoreReception):
                 self.assertIn(repr(key), answer.get("detail", ""))
 
 
+class TheRolePolicyTheServiceDeclares(StoreReception):
+    """The receive step judges pairs by the policy the store's service declares.
+
+    packet-check runs in whatever shell the receiver has, and that shell need not carry the
+    variable the service was launched with. Read from the environment alone, every role-bound
+    packet came back unavailable there, however well it agreed, and the receiver judged pairs
+    by a different file than the relay enforces wherever the two differed.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.policy_file = os.environ[rolepolicy.ENVIRONMENT_VARIABLE]
+        self.registered()
+        self.assignment = self.first_assignment(dispatch="dispatch-1", issue=ISSUE)
+
+    def declare(self, path):
+        from codex_session_relay.service import LAUNCH_POLICY, LaunchPolicy
+        LaunchPolicy(Path(self.state) / LAUNCH_POLICY).write(path=path, actor="test")
+
+    def environment_names(self, path):
+        previous = os.environ.get(rolepolicy.ENVIRONMENT_VARIABLE)
+
+        def restore():
+            if previous is None:
+                os.environ.pop(rolepolicy.ENVIRONMENT_VARIABLE, None)
+            else:
+                os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = previous
+            rolepolicy.reset()
+
+        self.addCleanup(restore)
+        if path is None:
+            os.environ.pop(rolepolicy.ENVIRONMENT_VARIABLE, None)
+        else:
+            os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = path
+        rolepolicy.reset()
+
+    def test_a_check_run_without_the_variable_reads_the_declared_policy(self):
+        self.declare(self.policy_file)
+        self.environment_names(None)
+        code, answer = self.packet_check(self.assignment, receiver_id=CHILD)
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(answer["disposition"], packets.ACCEPTED, answer)
+        self.assertTrue(answer["provenance"]["refusedPolicies"].startswith("rolepolicy "),
+                        answer)
+
+    def test_a_variable_naming_another_file_than_the_declaration_is_refused_as_that(self):
+        self.declare(self.policy_file)
+        other = Path(self.tmp) / "other-policy"
+        other.mkdir()
+        self.environment_names(write_policy(other))
+        code, answer = self.packet_check(self.assignment, receiver_id=CHILD)
+        self.assertEqual(code, cli.EXIT_REFUSED, answer)
+        self.assertEqual(answer.get("reason"), "launch_policy_conflict", answer)
+
+    def test_with_no_policy_declared_or_set_a_bound_packet_is_unavailable_and_says_why(self):
+        self.environment_names(None)
+        code, answer = self.packet_check(self.assignment, receiver_id=CHILD)
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
+        self.assertIn(packets.POLICY, self.gap_fields(answer))
+        self.assertFalse(answer["act"], answer)
+        self.assertTrue(any(rolepolicy.ENVIRONMENT_VARIABLE in note for note in answer["notes"]),
+                        answer["notes"])
+
+
 class TheSevenStatesAsTheStoreHoldsThem(StoreReception):
     def setUp(self):
         super().setUp()
