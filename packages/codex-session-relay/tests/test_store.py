@@ -1280,6 +1280,12 @@ class DescriptorIdentity(unittest.TestCase):
         own connect is not counted. The leg gets a real connection, of a subclass that only adds
         the restore, so everything else it does to the connection - row_factory included -
         behaves as it does unpatched.
+
+        Every statement the leg runs on that connection is also recorded. Whether a statement
+        leaves a file depends on the SQLite build: on 3.38.5 and older even `PRAGMA
+        database_list` reads the schema and creates the moved name's log, while newer builds
+        answer it without touching the file. "Ran nothing" is the form of "left nothing behind"
+        that holds on every build, including the one this suite happens to run on.
         """
         from codex_session_relay import store as store_module
 
@@ -1288,7 +1294,7 @@ class DescriptorIdentity(unittest.TestCase):
         writer.write_challenge(actor="writer")
         moved = os.path.join(self.tmp, "moved.sqlite3")
         real = store_module.sqlite3.connect
-        state = {"calls": 0, "moved": False, "restored": False}
+        state = {"calls": 0, "moved": False, "restored": False, "statements": []}
 
         def restore():
             if state["moved"] and not state["restored"]:
@@ -1299,6 +1305,7 @@ class DescriptorIdentity(unittest.TestCase):
             """The leg's connection, which puts the file back after its first statement."""
 
             def execute(self, *args, **kwargs):
+                state["statements"].append(args[0] if args else kwargs.get("sql"))
                 try:
                     return super().execute(*args, **kwargs)
                 finally:
@@ -1494,6 +1501,8 @@ class DescriptorIdentity(unittest.TestCase):
             self.sidecars_of_the_moved_name(), [],
             "the write probe started a transaction on a name it had not checked",
         )
+        self.assertEqual(
+            state["statements"], [], "a statement ran on a connection to a moved name")
         self.assertFalse(report["access"]["dbWritable"], report)
         self.assertRefusedTheMove(report["access"]["detail"])
 
@@ -1512,6 +1521,8 @@ class DescriptorIdentity(unittest.TestCase):
             self.sidecars_of_the_moved_name(), [],
             "the probe read a name it had not checked",
         )
+        self.assertEqual(
+            state["statements"], [], "a statement ran on a connection to a moved name")
         self.assertFalse(report["access"]["dbReadable"], report)
         self.assertIsNone(report["store"]["storeId"], report)
         self.assertRefusedTheMove(report["access"]["detail"])
@@ -1527,6 +1538,8 @@ class DescriptorIdentity(unittest.TestCase):
             self.sidecars_of_the_moved_name(), [],
             "the caller's statement ran on a name that had not been checked",
         )
+        self.assertEqual(
+            state["statements"], [], "a statement ran on a connection to a moved name")
         self.assertFalse(answer["readable"], answer)
         self.assertEqual(answer["rows"], [])
         self.assertRefusedTheMove(answer["detail"])
@@ -1540,6 +1553,8 @@ class DescriptorIdentity(unittest.TestCase):
             self.sidecars_of_the_moved_name(), [],
             "the nonce was looked up on a name that had not been checked",
         )
+        self.assertEqual(
+            state["statements"], [], "a statement ran on a connection to a moved name")
         self.assertFalse(answer["found"], answer)
         self.assertFalse(answer["readable"], answer)
         self.assertRefusedTheMove(answer["detail"])
