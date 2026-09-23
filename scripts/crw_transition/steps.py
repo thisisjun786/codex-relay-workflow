@@ -195,7 +195,63 @@ def _retired_record(host):
             return document
     return None
 
-def bridge_command(host):
+
+def _newest_retired_bridge_record(host):
+    """(record, refusal): the newest retired bridge record, read once, or why it cannot be.
+
+    _retired_record steps over an archive it cannot read and answers with an older one. For the
+    executable and its arguments that is the recovery this module has always made. For an
+    execution policy it is not: an older archive can predate the policy, and rebuilding from it
+    installs a record that starts a bridge checking no role while the run reports success. So a
+    rebuild that takes its identity from the archives uses this instead: the newest entry under
+    the stem, whatever it is, read exactly once through a descriptor opened without blocking and
+    without following a link, and that one reading supplies the executable, the arguments and
+    the policy. Anything else -- a pipe, a directory, a link, an entry that vanished between the
+    listing and the read, a record that does not read as one -- is a refusal. (None, None) means
+    nothing was ever retired.
+    """
+    home = Path(host["codexHome"])
+    stem = bridgerecord.RECORD_NAME + ".superseded-"
+    # Every entry under the stem. inventory.archives lists regular files only, so a newest
+    # archive that became a pipe, a directory or a dangling link would not be the newest there,
+    # and the older record behind it would be read as though it were.
+    with os.scandir(str(home)) as scanning:
+        found = [Path(item.path) for item in scanning if item.name.startswith(stem)]
+    if not found:
+        return None, None
+    # Every name has to be one retire() writes before any of them is chosen. An entry whose name
+    # cannot be placed may be the newest, and stepping over it to an older archive can restore a
+    # record from before the policy, which starts a bridge that checks no role.
+    unplaced = sorted(path.name for path in found if inventory.archive_key(path, stem) is None)
+    if unplaced:
+        return None, ("entries under " + str(home / stem) + "* carry names this tool does not"
+                      " write (" + ", ".join(unplaced) + "), so which retired bridge record is"
+                      " newest, and whether it named an execution policy, was not established. An"
+                      " older archive may predate the policy, and a record rebuilt from it would"
+                      " start a bridge that checks no role. Rename or remove those entries and"
+                      " rerun")
+    newest = max(found, key=lambda path: inventory.archive_key(path, stem))
+    reading_ = bridgerecord.read_json_without_blocking(newest, "the retired bridge record",
+                                                       follow=False)
+    why = None
+    if not reading_.usable or reading_.state == reading.ABSENT:
+        why = str(reading_.state) + (": " + str(reading_.detail) if reading_.detail else "")
+    else:
+        wrong = bridgerecord.complaints(reading_.value)
+        if wrong:
+            why = bridgerecord.MALFORMED + ": " + "; ".join(wrong)
+    if why is None:
+        return reading_.value, None
+    return None, ("the newest retired bridge record, " + str(newest) + ", could not be read ("
+                  + why + "), so whether it named an execution policy was not established. An"
+                  " older archive may predate the policy, and a record rebuilt from it would start"
+                  " a bridge that checks no role. Repair or remove that entry and rerun")
+
+
+_UNREAD = object()
+
+
+def bridge_command(host, *, retired=_UNREAD):
     """The bridge the plugin record will name: what the host already used, or the pointer path."""
     record = (host["mcp"].get("record") or {})
     named = record.get("bridgeExecutable")
@@ -211,7 +267,8 @@ def bridge_command(host):
         # had already answered, and preflight then compared the live record with the invention
         # and refused, leaving the hook and the skill links unable to follow.
         return named
-    retired = _retired_record(host)
+    if retired is _UNREAD:
+        retired = _retired_record(host)
     if retired and retired.get("bridgeExecutable"):
         return retired["bridgeExecutable"]
     destination = host.get("destination")
@@ -320,7 +377,7 @@ def declared_policy(root, name=None):
     name = name or inventory.SERVER_NAME
     manifest_path = Path(root) / ".codex-plugin" / "plugin.json"
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = json.loads(reading.regular_text(manifest_path))
     except (OSError, ValueError) as error:
         return None, (str(manifest_path) + " could not be read (" + type(error).__name__ + ": "
                       + str(error) + ")")
@@ -341,7 +398,7 @@ def declared_policy(root, name=None):
                       " string, it is " + type(named).__name__)
     path = Path(root) / _relative(named)
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
+        document = json.loads(reading.regular_text(path))
     except (OSError, ValueError) as error:
         return None, (str(path) + " is declared and could not be read (" + type(error).__name__
                       + ": " + str(error) + ")")
@@ -609,11 +666,17 @@ def _shape(words):
 
 
 def _plugin_checker(repo_root):
-    """This repository's own packaging check, loaded as a module for its manifest rules."""
+    """This repository's own packaging check, loaded as a module for its manifest rules.
+
+    Compiled from source read through a descriptor judged a regular file. The transition asks it
+    while it holds the bridge ownership lock, and an import opens the file by path, so a pipe put
+    there would hold that open and the lock with it.
+    """
     path = Path(repo_root) / "scripts" / "ci" / "plugin.py"
-    spec = importlib.util.spec_from_file_location("crw_ci_plugin", path)
+    spec = importlib.util.spec_from_loader("crw_ci_plugin", loader=None, origin=str(path))
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module.__file__ = str(path)
+    exec(compile(reading.regular_text(path), str(path), "exec"), module.__dict__)  # noqa: S102
     return module
 
 
@@ -627,7 +690,7 @@ def _declared(root, repo_root):
     events, servers, unread = {}, {}, []
     manifest_path = Path(root) / ".codex-plugin" / "plugin.json"
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = json.loads(reading.regular_text(manifest_path))
     except (OSError, ValueError) as error:
         return events, servers, [str(manifest_path) + " could not be read ("
                                  + type(error).__name__ + ": " + str(error) + ")"]
@@ -639,7 +702,7 @@ def _declared(root, repo_root):
     for relative in hook_paths:
         path = Path(root) / _relative(relative)
         try:
-            document = json.loads(path.read_text(encoding="utf-8"))
+            document = json.loads(reading.regular_text(path))
         except (OSError, ValueError) as error:
             unread.append(str(path) + " is declared and could not be read ("
                           + type(error).__name__ + ": " + str(error) + ")")
@@ -687,7 +750,7 @@ def _declared(root, repo_root):
     if isinstance(named, str) and named.strip():
         path = Path(root) / _relative(named)
         try:
-            document = json.loads(path.read_text(encoding="utf-8"))
+            document = json.loads(reading.regular_text(path))
         except (OSError, ValueError) as error:
             unread.append(str(path) + " is declared and could not be read ("
                           + type(error).__name__ + ": " + str(error) + ")")
@@ -817,7 +880,7 @@ def launcher_complaints(repo_root, cache_version):
         cached, mine = Path(cache_version) / script, ours / script
         try:
             same = mine.is_file() and cached.is_file() \
-                and cached.read_bytes() == mine.read_bytes()
+                and reading.regular_bytes(cached) == reading.regular_bytes(mine)
         except OSError as error:
             found.append(str(cached) + " could not be read to compare with the launcher this"
                          " checkout ships (" + type(error).__name__ + ": " + str(error) + ")")
@@ -1701,9 +1764,19 @@ def mcp_table_standdown(host, options, *, apply=False):
 
 
 def mcp_record_install(host, options, *, apply=False):
+    registration = host["mcp"].get("registration") or {}
+    live = host["mcp"].get("record") or {}
+    # With no live registration and no live plugin record, the archives are the only source of
+    # this record's identity, including its execution policy, so they are read once and strictly.
+    rebuilding = not registration and bridgerecord.owner_of(live) != bridgerecord.OWNER_PLUGIN
     try:
-        command = bridge_command(host)
-        retired = _retired_record(host)
+        if rebuilding:
+            retired, unreadable = _newest_retired_bridge_record(host)
+            if unreadable:
+                return _answer("mcp record install", REFUSED, unreadable)
+        else:
+            retired = _retired_record(host)
+        command = bridge_command(host, retired=retired)
     except OSError as error:
         # The archives are where a custom executable and its arguments survive an interrupted
         # run, so a listing this cannot do is not an empty one: writing the pointer default here
@@ -1714,21 +1787,51 @@ def mcp_record_install(host, options, *, apply=False):
                        " arguments survive, so nothing was written")
     if not command:
         return _answer("mcp record install", REFUSED, "no bridge executable could be named")
-    registration = host["mcp"].get("registration") or {}
     # After the table is removed the registration is gone, so an interrupted run would rebuild the
     # record with no arguments. The retired record is where they survive.
     # "args" absent and "args" empty are different answers: falling back on an empty live list
     # restored historical arguments the current registration had deliberately dropped.
     if registration:
         arguments = list(registration.get("args") or [])
+    elif bridgerecord.owner_of(live) == bridgerecord.OWNER_PLUGIN:
+        # A live plugin record already names what the plugin starts, its arguments included, the
+        # way it supplies the executable and the policy. Taking them from an archive, or none,
+        # made a rerun refuse its own record as differing.
+        arguments = list(live.get("args") or [])
     elif retired is not None:
         arguments = list(retired.get("args") or [])
     else:
         arguments = []
+    # The execution policy a plugin-owned record names is carried forward the same way, because a
+    # record rebuilt without it starts a bridge that checks no role and says nothing. From the live
+    # record when it is the plugin's; otherwise, with no live registration, from the newest retired
+    # record when that one was the plugin's -- a disable retires it and a later transition rebuilds
+    # it. A user-owned record never carries one, so nothing is invented for a manual install.
+    if bridgerecord.owner_of(live) == bridgerecord.OWNER_PLUGIN:
+        policy = live.get(bridgerecord.POLICY_FIELD)
+    elif rebuilding and retired is not None \
+            and bridgerecord.owner_of(retired) == bridgerecord.OWNER_PLUGIN:
+        policy = retired.get(bridgerecord.POLICY_FIELD)
+    else:
+        policy = None
+    if policy is not None:
+        # Carried only while the launcher would accept it. A policy file edited or removed since
+        # it was recorded -- after a disable retired the record, or under a live one -- gives a
+        # record every new thread's launcher refuses, so writing or confirming it would report an
+        # outage as settled. Dropping the reference instead would start a bridge that checks no
+        # role and says nothing, so this refuses and names the repair.
+        stale = bridgerecord.policy_file_complaints(policy)
+        if stale:
+            return _answer("mcp record install", REFUSED,
+                           "; ".join(stale) + ". The launcher refuses to start the bridge on a"
+                           " record naming this policy, so nothing was written. Restore the"
+                           " file, or register the policy as it now stands with runtime_install.py"
+                           " register-mcp --owner plugin --execution-policy <file> --apply, moving"
+                           " a live record that names the old one aside first")
     try:
         wanted = bridgerecord.document(command=command, arguments=arguments,
                                        name=inventory.SERVER_NAME, issue="CRW-115",
-                                       owner=bridgerecord.OWNER_PLUGIN)
+                                       owner=bridgerecord.OWNER_PLUGIN, execution_policy=policy)
     except ValueError as error:
         return _answer("mcp record install", REFUSED, str(error))
     if not apply and host["mcp"]["recordOwner"] in (None, bridgerecord.OWNER_USER):

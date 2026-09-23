@@ -13,10 +13,19 @@ have written the configuration entry.
 One owner registers this server. The configuration entry and this record are the two owners,
 they are refused against each other, and the record carries the owner so the launcher can
 stand down at run time as well.
+
+A plugin-owned record may also name the host's execution policy. The launcher Codex spawns
+inherits the App Server's bare environment, so without this the bridge it starts can read no
+policy at all and checks no role. The record names the FILE and the digest register-mcp read it
+under, and never what the file says: the bridge still parses the policy itself, and the digest is
+what lets the launcher and the bridge refuse a file that changed after it was registered.
 """
 
+import hashlib
 import json
 import os
+import re
+import stat as stat_module
 from pathlib import Path
 
 from . import hostrecord, reading
@@ -26,6 +35,15 @@ from . import hostrecord, reading
 # the settings a Stop hook reads.
 RECORD_NAME = "crw-bridge-mcp.json"
 RECORD_VERSION = 1
+# A record that names an execution policy is its own version rather than version 1 with one more
+# key. A launcher that implements only version 1 refuses a version it does not read; handed an
+# extra key under the old number it would start the bridge without the policy and say nothing,
+# which is the silent presence-only start this field exists to end.
+POLICY_RECORD_VERSION = 2
+RECORD_VERSIONS = (RECORD_VERSION, POLICY_RECORD_VERSION)
+POLICY_FIELD = "executionPolicy"
+POLICY_KEYS = ("digest", "path")
+_DIGEST = re.compile(r"[0-9a-f]{64}")
 
 OWNER_USER = "user"
 OWNER_PLUGIN = "plugin"
@@ -39,6 +57,9 @@ WOULD_CREATE = "record_would_create"
 CREATED = "record_created"
 CHANGED_UNDERNEATH = "record_changed_underneath"
 APPLIED_UNVERIFIED = "record_applied_unverified"
+# The record is, or would be, the one wanted, and the policy file it names no longer hashes to
+# the digest it records. Not settled: the launcher refuses such a record at every start.
+POLICY_CHANGED = "record_policy_changed"
 # The outcomes that mean the record now says what this run asked it to, or would with --apply.
 SETTLED = (UNCHANGED, CREATED, WOULD_CREATE)
 
@@ -59,7 +80,88 @@ def record_path(codex_home=None, environ=None):
     return Path(home).expanduser() / RECORD_NAME
 
 
-def document(*, command, arguments=None, name=None, issue=None, owner=OWNER_PLUGIN):
+def policy_path_complaints(path):
+    """Why a string cannot name the policy file the bridge will open, or an empty list.
+
+    Padding is refused rather than trimmed. The bridge strips the variable it reads, so a path
+    recorded with a trailing space would be checked here as one file and opened there as another.
+    A control character has no business in a path and cannot cross an environment at all.
+    """
+    if not isinstance(path, str) or not path:
+        return ["the execution policy path must be a non-empty string"]
+    wrong = []
+    if path != path.strip():
+        wrong.append("the execution policy path " + repr(path) + " has leading or trailing"
+                     " whitespace, which the bridge would strip and so open a different file")
+    if any(ord(character) < 32 or ord(character) == 127 for character in path):
+        wrong.append("the execution policy path " + repr(path) + " contains a control character")
+    if not os.path.isabs(path):
+        wrong.append("the execution policy path " + repr(path) + " must be absolute, because the"
+                     " packaged launcher runs from the installed package directory")
+    try:
+        os.fsencode(path)
+    except UnicodeError:
+        wrong.append("the execution policy path " + repr(path) + " cannot be encoded as a file"
+                     " name on this system")
+    return wrong
+
+
+def policy_complaints(reference):
+    """What is wrong with an executionPolicy reference, field by field."""
+    if not isinstance(reference, dict):
+        return [POLICY_FIELD + " must be an object naming path and digest"]
+    if sorted(reference) != sorted(POLICY_KEYS):
+        return [POLICY_FIELD + " must have exactly the keys " + ", ".join(POLICY_KEYS)
+                + ", found " + ", ".join(sorted(map(str, reference)))]
+    wrong = policy_path_complaints(reference.get("path"))
+    digest = reference.get("digest")
+    if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
+        wrong.append(POLICY_FIELD + " digest must be 64 lowercase hexadecimal characters")
+    return wrong
+
+
+def policy_file_complaints(reference):
+    """Why the packaged launcher would refuse this reference as its file now stands, or [].
+
+    The launcher's own two questions, asked before a record naming the reference is written or
+    confirmed: the path opens as a regular file, and its bytes hash to the recorded digest. A
+    record that fails either starts no bridge on any new thread, so writing one and reporting it
+    settled is an outage reported as success. Opened without blocking and judged on that
+    descriptor, as the launcher does. The contents are not parsed again: bytes that hash to the
+    recorded digest are the bytes register-mcp parsed when it recorded it, and the installed
+    bridge parses them again at every start.
+    """
+    wrong = policy_complaints(reference)
+    if wrong:
+        return wrong
+    path, recorded = reference["path"], reference["digest"]
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    except OSError as error:
+        return ["the execution policy " + path + " could not be opened ("
+                + type(error).__name__ + ": " + str(error) + ")"]
+    try:
+        if not stat_module.S_ISREG(os.fstat(descriptor).st_mode):
+            return ["the execution policy " + path + " is not a regular file"]
+        digest = hashlib.sha256()
+        while True:
+            chunk = os.read(descriptor, 1 << 16)
+            if not chunk:
+                break
+            digest.update(chunk)
+    except OSError as error:
+        return ["the execution policy " + path + " could not be read ("
+                + type(error).__name__ + ": " + str(error) + ")"]
+    finally:
+        os.close(descriptor)
+    if digest.hexdigest() != recorded:
+        return ["the execution policy " + path + " now hashes to " + digest.hexdigest()
+                + ", not the recorded " + recorded]
+    return []
+
+
+def document(*, command, arguments=None, name=None, issue=None, owner=OWNER_PLUGIN,
+             execution_policy=None):
     """The record, built once so the writer and the launcher cannot disagree about its shape."""
     if owner not in OWNERS:
         raise ValueError("owner must be one of " + ", ".join(OWNERS) + ", not " + repr(owner))
@@ -75,7 +177,17 @@ def document(*, command, arguments=None, name=None, issue=None, owner=OWNER_PLUG
         raise ValueError("the bridge executable must be an absolute path when owner is "
                          + OWNER_PLUGIN + ", because the packaged launcher runs from the"
                          " installed package directory")
-    return {
+    if execution_policy is not None:
+        if owner != OWNER_PLUGIN:
+            # The launcher stands down for a user-owned record before it reads anything else, so
+            # a policy written there would be read by nothing while looking like it applied.
+            raise ValueError("an execution policy is carried only by a " + OWNER_PLUGIN
+                             + "-owned record; a " + owner + "-owned registration is started"
+                             " by its Codex configuration entry, which never reads this record")
+        wrong = policy_complaints(execution_policy)
+        if wrong:
+            raise ValueError("; ".join(wrong))
+    record = {
         "recordVersion": RECORD_VERSION,
         "owner": owner,
         "serverName": name,
@@ -83,6 +195,10 @@ def document(*, command, arguments=None, name=None, issue=None, owner=OWNER_PLUG
         "args": [str(word) for word in (arguments or [])],
         "installedBy": issue,
     }
+    if execution_policy is not None:
+        record["recordVersion"] = POLICY_RECORD_VERSION
+        record[POLICY_FIELD] = {key: execution_policy[key] for key in POLICY_KEYS}
+    return record
 
 
 def complaints(found):
@@ -90,9 +206,10 @@ def complaints(found):
     if not isinstance(found, dict):
         return ["the record is a " + type(found).__name__ + ", not an object"]
     wrong = []
-    if found.get("recordVersion") != RECORD_VERSION:
-        wrong.append("recordVersion must be " + str(RECORD_VERSION) + ", found "
-                     + repr(found.get("recordVersion")))
+    version = found.get("recordVersion")
+    if version not in RECORD_VERSIONS:
+        wrong.append("recordVersion must be one of " + ", ".join(map(str, RECORD_VERSIONS))
+                     + ", found " + repr(version))
     if found.get("owner") not in OWNERS:
         wrong.append("owner must be one of " + ", ".join(OWNERS) + ", found "
                      + repr(found.get("owner")))
@@ -108,12 +225,21 @@ def complaints(found):
     if arguments is not None and (not isinstance(arguments, list)
                                   or not all(isinstance(word, str) for word in arguments)):
         wrong.append("args must be a list of strings when it is present at all")
+    if version == RECORD_VERSION and POLICY_FIELD in found:
+        # Refused rather than ignored, for the reason the version exists: the launcher of this
+        # version would start the bridge without it.
+        wrong.append("a version " + str(RECORD_VERSION) + " record names no " + POLICY_FIELD
+                     + "; a record that names one is version " + str(POLICY_RECORD_VERSION))
+    if version == POLICY_RECORD_VERSION:
+        if found.get("owner") != OWNER_PLUGIN:
+            wrong.append("only a " + OWNER_PLUGIN + "-owned record names an execution policy")
+        wrong.extend(policy_complaints(found.get(POLICY_FIELD)))
     return wrong
 
 
 def read(path):
     """Absent, unreadable and unusable stay three answers, because they are three repairs."""
-    found = reading.read_json(path, "the bridge MCP record")
+    found = read_json_without_blocking(path, "the bridge MCP record")
     if not found.usable:
         return None, found.state, found.detail
     if found.state == reading.ABSENT:
@@ -122,6 +248,41 @@ def read(path):
     if wrong:
         return None, MALFORMED, "; ".join(wrong)
     return found.value, None, None
+
+
+def read_json_without_blocking(path, what, *, follow=True):
+    """reading.read_json, through a descriptor opened without blocking.
+
+    read_json looks at the path and then opens it, and a FIFO put there in between blocks that
+    open until something writes to it -- inside a lock, for the writers of this record. Opened
+    here first, with O_NONBLOCK, the descriptor is what read_json judges and reads, so there is
+    no interval left. An open that fails is classified by looking at the path, never by opening
+    it again: absence, a dangling link and an access error each keep their own answer. follow
+    False refuses a symbolic link outright, for an archive that has to be the file itself.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+    if not follow:
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(str(path), flags)
+    except (OSError, ValueError) as error:
+        # Classified without opening anything again. Handing the path back to read_json would
+        # open it a second time, blocking, and a FIFO put there in between would hold the caller
+        # -- the interval this function exists to remove.
+        if not follow and os.path.islink(str(path)):
+            return reading.Reading(state=reading.UNREADABLE, source=path,
+                                   detail="a symbolic link, where the file itself is required")
+        settled = reading.observe(path, what)
+        if settled is not None:
+            return settled
+        # observe found a regular file where the open had just failed: the path changed between
+        # the two looks. Named rather than read, so a rerun decides against it as it then stands.
+        return reading.failure(error, source=path, what=what,
+                               detail="the file changed while it was being read")
+    try:
+        return reading.read_json(path, what, descriptor=descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def owner_of(found):
@@ -136,7 +297,11 @@ def owner_of(found):
 # starts. installedBy is evidence about who wrote the record and changes nothing about what
 # Codex spawns, so a rerun that only carries a different issue is the same registration and
 # has to stay idempotent rather than refuse.
-IDENTITY = ("owner", "serverName", "bridgeExecutable", "args")
+#
+# The execution policy is part of what it starts: the same executable under another policy file,
+# or under the same file with other contents, is a bridge that checks something else. So a
+# changed policy is a different registration, refused like a changed executable.
+IDENTITY = ("owner", "serverName", "bridgeExecutable", "args", POLICY_FIELD)
 
 
 def identity(found):
@@ -146,6 +311,20 @@ def identity(found):
 def same_registration(found, wanted):
     """Whether these two records describe the same registration."""
     return isinstance(found, dict) and identity(found) == identity(wanted)
+
+
+# The repair for a record whose policy reference no longer describes the file: there is no
+# command that rewrites a record, so it goes aside and is registered again.
+_POLICY_REPAIR = ("move {path} aside by hand (or retire it with plugin_transition.py disable,"
+                  " which also retires the Stop settings), then run register-mcp again. Threads"
+                  " started in between find no record and start no bridge; threads already"
+                  " running keep the bridge they spawned")
+
+
+def _policy_now(wanted):
+    """policy_file_complaints for the policy a record names, or [] when it names none."""
+    reference = wanted.get(POLICY_FIELD) if isinstance(wanted, dict) else None
+    return [] if reference is None else policy_file_complaints(reference)
 
 
 def outcome_for(wanted, found):
@@ -171,19 +350,42 @@ def write(path, wanted, *, apply=False):
 
     Decided twice and acted on once. The first reading answers the caller; the second happens
     under the lock, and a file that moved in between is refused rather than written over.
+
+    A record that names a policy is settled only against the policy as it stands when the
+    answer is given. The digest was taken before this was called, and the policy file is not
+    under this lock, so an edit in between would leave a record every new thread's launcher
+    refuses. So the file is asked twice more under the lock. Immediately before the write: a
+    mismatch writes nothing, which keeps the path as it was found (absent, the only state a
+    write starts from), and answers POLICY_CHANGED. After the write, with the written record read
+    back: a mismatch in that last interval answers POLICY_CHANGED too, and the record stays where
+    it is with the move-aside repair named, which is the rule a written record that cannot be
+    read back already follows. It is never removed: every writer of this record in this
+    repository holds the ownership lock (ownership_lock_path) while it writes, moves or removes
+    it, and a removal by path after a look cannot exclude a writer that does not, such as an
+    editor, whose file it would delete. The launcher refuses the stale digest at every start, so
+    the record left behind fails visibly. An already-installed record whose policy no longer
+    matches is answered the same way and left as it is.
     """
     path = Path(path)
     unusable = complaints(wanted)
     if unusable:
         return {"record": str(path), "outcome": MALFORMED, "applied": False, "wrote": False,
                 "detail": "; ".join(unusable), "complaints": unusable}
-    found = reading.read_json(path, "the bridge MCP record")
+    found = read_json_without_blocking(path, "the bridge MCP record")
     outcome = outcome_for(wanted, found)
     answer = {"record": str(path), "outcome": outcome, "applied": False, "wrote": False}
     if not found.usable:
         answer["reading"] = found.refusal()
         return answer
     if outcome == UNCHANGED:
+        stale = _policy_now(wanted)
+        if stale:
+            answer["outcome"] = POLICY_CHANGED
+            answer["detail"] = ("this record is already installed, and " + "; ".join(stale)
+                                + ", so the launcher refuses to start the bridge from it. The"
+                                " record was left as it was")
+            answer["repair"] = _POLICY_REPAIR.format(path=path)
+            return answer
         answer["detail"] = "this record is already installed"
         return answer
     if outcome == DIFFERS:
@@ -193,19 +395,53 @@ def write(path, wanted, *, apply=False):
             field for field in set(wanted) | set(found.value)
             if found.value.get(field) != wanted.get(field)) \
             if isinstance(found.value, dict) else None
+        if POLICY_FIELD in (answer["differingFields"] or []):
+            # The one difference an operator produces in the ordinary course of things: the policy
+            # file was edited, or a policy is being added to a record written before this field
+            # existed. Named with its repair, because there is no command that rewrites it.
+            answer["repair"] = _POLICY_REPAIR.format(path=path)
         return answer
     if not apply:
         answer["detail"] = "would write this record; nothing was written"
         return answer
     with hostrecord.Locked(path):
-        again = reading.read_json(path, "the bridge MCP record")
+        again = read_json_without_blocking(path, "the bridge MCP record")
         if outcome_for(wanted, again) != outcome:
             answer["outcome"] = CHANGED_UNDERNEATH
             answer["detail"] = ("the record changed after it was read, so nothing was written;"
                                 " rerun to decide against the file as it now stands")
             return answer
+        stale = _policy_now(wanted)
+        if stale:
+            answer["outcome"] = POLICY_CHANGED
+            answer["detail"] = ("the execution policy changed after it was read: "
+                                + "; ".join(stale) + ". A record naming it would start no bridge,"
+                                " so nothing was written")
+            answer["repair"] = "run register-mcp again against the file as it now stands"
+            return answer
         hostrecord.atomic_write(path, json.dumps(wanted, indent=2, sort_keys=True) + "\n")
-        back = reading.read_json(path, "the bridge MCP record")
+        back = read_json_without_blocking(path, "the bridge MCP record")
+        stale = _policy_now(wanted) if back.usable and back.value == wanted else []
+        if stale:
+            # What is there now, read again rather than assumed: a writer that takes no lock can
+            # have replaced the record since the read-back, and the answer says only what it saw.
+            now = read_json_without_blocking(path, "the bridge MCP record")
+    if stale:
+        answer["outcome"] = POLICY_CHANGED
+        answer["applied"] = True
+        answer["wrote"] = True
+        if now.usable and now.value == wanted:
+            there = ("When last read, the record this run wrote was in place, and the launcher"
+                     " refuses to start the bridge from it at every start")
+        else:
+            there = ("When last read, " + str(path) + " no longer held the record this run wrote ("
+                     + str(now.state) + ")")
+        answer["detail"] = ("the execution policy changed while this record was being written: "
+                            + "; ".join(stale) + ". " + there + ". This run removed nothing: a"
+                            " removal by path cannot exclude a writer that does not take the"
+                            " ownership lock, whose file it would delete")
+        answer["repair"] = _POLICY_REPAIR.format(path=path)
+        return answer
     answer["outcome"] = CREATED
     answer["applied"] = True
     answer["wrote"] = True

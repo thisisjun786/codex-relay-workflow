@@ -183,6 +183,16 @@ not carry, and each needs a step the installation cannot take for you.
    `python3 scripts/runtime_install.py hook --adapter completion --owner plugin --dest <destination> --apply`.
    Each refuses when the same surface is already registered the other way, because the
    two together would run two bridges, or two hooks on every Stop.
+
+   To have the bridge check role pairs, name the host's execution policy on the first of those two
+   commands with `--execution-policy <file>`. The record then names the file and its digest, the
+   launcher refuses to start the bridge when that file is gone or has changed, and the bridge reads
+   it through `CODEX_THREAD_BRIDGE_EXECUTION_POLICY`. When crw is enabled and its package is
+   already cached, register it only after that package ships a launcher reading that record and
+   Codex has loaded it: `register-mcp` refuses while the enabled package's cached launcher is
+   older, or while the cache cannot be looked at. With no crw package enabled or cached yet, the
+   record is written and waits, inert, for the package that will read it. See
+   [the execution policy the plugin bridge runs under](runtime-install.md#the-execution-policy-the-plugin-bridge-runs-under).
 3. Trust the hook. Until it is trusted nothing fires, and no command in this repository
    grants that: installing writes no trust, and a session without it runs the hook zero
    times and says so nowhere.
@@ -191,9 +201,10 @@ Step 3 is what makes an installed hook look broken while it is working exactly a
 installed. Steps 1 and 2 may run in either order; step 3 is last, because it is trust in
 the hook as it then stands.
 
-None of this starts a daemon. The server is a stdio process Codex spawns per session,
-the hook runs on a Stop and exits, and the completion hook installs in `observe` mode,
-which classifies and records and never holds a turn.
+None of this starts a daemon. The server is a stdio process Codex spawns per session (one per
+thread on Codex Desktop 0.154.0, observed), so a record written afterwards reaches the next thread
+and not one already running. The hook runs on a Stop and exits, and the completion hook installs
+in `observe` mode, which classifies and records and never holds a turn.
 
 The linked installation in [README](../README.md#install) still works and is
 unchanged. Both installations read the same source: `scripts/install.py` links the
