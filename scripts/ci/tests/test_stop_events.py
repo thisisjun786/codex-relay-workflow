@@ -1,0 +1,357 @@
+"""One accepted record per Stop event, through the paths a host actually runs (CRW-212).
+
+A Stop event is one end of one sampling sequence. Two registrations answering it, or one delivery
+of it repeated, is one event handled twice; a continuation that makes the turn end again is a new
+event. These cases drive the adapter only through the commands a host starts -- the plugin's
+declared hook command through a shell, and the user registration's scripts/completion_hook.py --
+with the payload on stdin, and they read the result from files: the stub guard's call log, the
+rows and the accepted records. Nothing touches a real Codex home, runtime or store.
+
+The Stops come from an isolated Codex 0.154.0 run (the derived fixture beside the relay's tests):
+three Stops of one turn, the second and third with byte-identical payloads, so a key built from
+the payload or from (session, turn) cannot tell them apart and these cases notice.
+
+The last class is the per-event verifier, completion.stop_events and scripts/stop_events.py, which
+replaces the per-(session, turn) count the CRW-116 check used.
+"""
+
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import unittest
+
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from crw_runtime import completion  # noqa: E402
+
+PACKAGED = ROOT / "packages" / "codex-session-relay" / "src" / "codex_session_relay" / "stopadapter.py"
+CHECKOUT = ROOT / "scripts" / "completion_hook.py"
+VERIFIER = ROOT / "scripts" / "stop_events.py"
+PLUGIN_ROOT = ROOT / "plugins" / "crw"
+DECLARATION = PLUGIN_ROOT / "wiring" / "hooks" / "stop-recording-completion.json"
+FIXTURE = ROOT / "packages" / "codex-session-relay" / "tests" / "fixtures" / "stop_event_r1.json"
+DAY = re.compile(r"^[0-9]{8}$")
+ROW = re.compile(r"^[0-9a-f]{32}\.json$")
+CLAIM = re.compile(r"^[0-9a-f]{64}\.json$")
+OUTCOME = re.compile(r"^[0-9a-f]{64}\.outcome\.json$")
+
+
+def declared_command():
+    document = json.loads(DECLARATION.read_text(encoding="utf-8"))
+    return document["hooks"]["Stop"][0]["hooks"][0]["command"]
+
+
+class Host:
+    """A temporary Codex home whose settings name the plugin as owner and a counting stub guard."""
+
+    def __init__(self, root, *, decision="release", die_first=False, journal=None):
+        self.root = root
+        self.codex_home = root / "codex"
+        self.codex_home.mkdir(parents=True, exist_ok=True)
+        self.journal = journal or (root / "journal")
+        self.calls = root / "guard-calls"
+        self.transcript = root / "rollout.jsonl"
+        relay = root / "relay"
+        body = ["import json, os, sys", "raw = sys.stdin.buffer.read()",
+                "calls = %r" % str(self.calls),
+                "with open(calls, 'a', encoding='utf-8') as log:",
+                "    log.write(json.dumps(json.loads(raw.decode('utf-8'))) + '\\n')"]
+        if die_first:
+            body += ["if sum(1 for _ in open(calls)) == 1:", "    os.kill(os.getppid(), 9)",
+                     "    raise SystemExit(0)"]
+        verdict = ({"decision": "block", "state": "declared",
+                    "hook_output": {"decision": "block", "reason": "verify the child",
+                                    "continue": True}}
+                   if decision == "block" else
+                   {"decision": "release", "state": "unmanaged", "hook_output": {}})
+        body.append("sys.stdout.write(%r)" % json.dumps(verdict))
+        relay.write_text("#!/usr/bin/env python3\n" + "\n".join(body) + "\n", encoding="utf-8")
+        relay.chmod(0o755)
+        document = {"configVersion": completion.CONFIG_VERSION, "event": "Stop",
+                    "relayExecutable": str(relay), "markerRoot": str(root / "marker"),
+                    "dbPath": None, "mode": "observe", "timeoutSeconds": 5,
+                    "journalRoot": str(self.journal),
+                    "journalPolicy": completion.EVERY_INVOCATION, "installedBy": "CRW-212",
+                    "isolationAssertedBy": None, "owner": "plugin",
+                    "adapterInterpreter": sys.executable, "adapterEntryPoint": str(PACKAGED)}
+        self.settings = self.codex_home / completion.CONFIG_NAME
+        self.settings.write_text(json.dumps(document, indent=2, sort_keys=True), encoding="utf-8")
+
+    def declared(self):
+        """The plugin's declared command, through a shell, the way the host runs it."""
+        environment = {"PATH": os.environ["PATH"], "CODEX_HOME": str(self.codex_home),
+                       "PLUGIN_ROOT": str(PLUGIN_ROOT)}
+        return (["/bin/sh", "-c", declared_command()], environment)
+
+    def checkout(self):
+        """The user registration's command, as the installer writes it."""
+        return ([sys.executable, str(CHECKOUT), str(self.settings)], dict(os.environ))
+
+    def calls_made(self):
+        try:
+            return len(self.calls.read_text(encoding="utf-8").splitlines())
+        except FileNotFoundError:
+            return 0
+
+    def rows(self):
+        found = []
+        if self.journal.is_dir():
+            for day in sorted(self.journal.iterdir()):
+                if day.is_dir() and DAY.match(day.name):
+                    for entry in sorted(day.iterdir()):
+                        if ROW.match(entry.name):
+                            found.append(json.loads(entry.read_text(encoding="utf-8")))
+        return found
+
+    def ledger(self):
+        directory = self.journal / "accepted"
+        names = sorted(p.name for p in directory.iterdir()) if directory.is_dir() else []
+        return ([n for n in names if CLAIM.match(n)], [n for n in names if OUTCOME.match(n)])
+
+    def acceptances(self):
+        return sorted(str(row.get("acceptance")) for row in self.rows())
+
+
+def fixture():
+    return json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+
+def at_stop(host, document, index):
+    stop = document["stops"][index]
+    lines = document["transcriptLines"][:stop["linesAtStop"]]
+    host.transcript.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+    payload = dict(stop["payload"])
+    payload["transcript_path"] = str(host.transcript)
+    payload["cwd"] = str(host.root)
+    return json.dumps(payload).encode("utf-8")
+
+
+def run_one(command, payload):
+    argv, environment = command
+    done = subprocess.run(argv, input=payload, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          env=environment, timeout=60)
+    return done.returncode, done.stdout, done.stderr
+
+
+def run_together(commands, payload):
+    """Every command started before any is handed the payload, then fed at one barrier."""
+    started = [subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, env=environment)
+               for argv, environment in commands]
+    answers = [None] * len(started)
+    barrier = threading.Barrier(len(started))
+
+    def feed(index):
+        barrier.wait()
+        answers[index] = started[index].communicate(payload, timeout=60)
+
+    threads = [threading.Thread(target=feed, args=(i,)) for i in range(len(started))]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    return [(process.returncode, out, err) for process, (out, err) in zip(started, answers)]
+
+
+class RealPathControls(unittest.TestCase):
+    """The negative controls are red on an adapter that answers every invocation."""
+
+    def setUp(self):
+        raw = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, raw, True)
+        self.base = Path(raw)
+        self.document = fixture()
+
+    def fresh(self, name, **kwargs):
+        root = self.base / name
+        root.mkdir()
+        return Host(root, **kwargs)
+
+    def assert_answered_once(self, host, answers):
+        for code, _out, err in answers:
+            self.assertEqual(code, 0)
+            self.assertEqual(err, b"")
+        self.assertEqual(host.calls_made(), 1, "one Stop event asked the guard more than once")
+        self.assertEqual(host.acceptances(), ["accepted", "duplicate"])
+        self.assertEqual(tuple(len(part) for part in host.ledger()), (1, 1))
+
+    def test_the_declared_hook_twice_on_one_stop_asks_once(self):
+        for round_number in range(10):
+            with self.subTest(round=round_number):
+                host = self.fresh("declared-%d" % round_number)
+                payload = at_stop(host, self.document, 0)
+                answers = run_together([host.declared(), host.declared()], payload)
+                self.assert_answered_once(host, answers)
+
+    def test_the_user_registration_replayed_asks_once(self):
+        host = self.fresh("replay")
+        payload = at_stop(host, self.document, 0)
+        answers = [run_one(host.checkout(), payload), run_one(host.checkout(), payload)]
+        self.assert_answered_once(host, answers)
+
+    def test_the_user_registration_twice_at_once_asks_once(self):
+        for round_number in range(10):
+            with self.subTest(round=round_number):
+                host = self.fresh("checkout-%d" % round_number)
+                payload = at_stop(host, self.document, 0)
+                answers = run_together([host.checkout(), host.checkout()], payload)
+                self.assert_answered_once(host, answers)
+
+    def test_the_plugin_and_the_user_registration_on_one_stop_ask_once(self):
+        """The shape the 2026-09-20 journal carried: both registrations answering every Stop.
+        The two are different copies of the adapter, so this is also the cross-copy claim."""
+        for round_number in range(10):
+            with self.subTest(round=round_number):
+                host = self.fresh("both-%d" % round_number)
+                payload = at_stop(host, self.document, 0)
+                answers = run_together([host.declared(), host.checkout()], payload)
+                self.assert_answered_once(host, answers)
+
+    def test_every_stop_of_one_turn_is_accepted_and_its_hold_reaches_the_host(self):
+        """The positive control, through both registrations. The guard holds on every call."""
+        host = self.fresh("positive", decision="block")
+        stops = self.document["stops"]
+        self.assertEqual(stops[2]["rawSha256"], stops[4]["rawSha256"])
+        for index in (0, 2, 4):
+            payload = at_stop(host, self.document, index)
+            answers = run_together([host.declared(), host.checkout()], payload)
+            held = [json.loads(out) for _code, out, _err in answers if out]
+            self.assertEqual([h["decision"] for h in held], ["block"],
+                             "each event is answered by exactly one registration")
+        self.assertEqual(host.calls_made(), 3)
+        self.assertEqual(tuple(len(part) for part in host.ledger()), (3, 3))
+        self.assertEqual(host.acceptances(), ["accepted"] * 3 + ["duplicate"] * 3)
+
+
+def verify(*roots, **window):
+    """The CLI, as an operator runs it, and the function it prints."""
+    argv = [sys.executable, str(VERIFIER)]
+    for root in roots:
+        argv += ["--journal-root", str(root)]
+    for name, value in window.items():
+        argv += ["--" + name, value]
+    done = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+    return done.returncode, json.loads(done.stdout)
+
+
+class VerifierTests(unittest.TestCase):
+    """completion.stop_events and scripts/stop_events.py over journals the real paths wrote."""
+
+    def setUp(self):
+        raw = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, raw, True)
+        self.base = Path(raw)
+        self.document = fixture()
+
+    def fresh(self, name, **kwargs):
+        root = self.base / name
+        root.mkdir()
+        return Host(root, **kwargs)
+
+    def turn_of_three(self, host):
+        for index in (0, 2, 4):
+            run_together([host.declared(), host.checkout()], at_stop(host, self.document, index))
+
+    def test_a_turn_of_three_stops_reads_true_where_the_old_count_read_duplicates(self):
+        host = self.fresh("positive")
+        self.turn_of_three(host)
+        code, answer = verify(host.journal)
+        self.assertEqual((code, answer["verdict"]), (0, "TRUE"))
+        self.assertEqual(answer["events"], 3)
+        self.assertEqual(answer["duplicateInvocations"], 3)
+        self.assertEqual(answer["turnsWithMoreThanOneEvent"], 1)
+        self.assertEqual(answer["supersededPerTurn"]["pairs"], 1)
+        self.assertEqual(answer["supersededPerTurn"]["pairsWithMoreThanOneRow"], 1,
+                         "the superseded per-turn count calls this one turn duplicated")
+        self.assertEqual(completion.stop_events([host.journal])["verdict"], "TRUE")
+
+    def test_an_event_whose_owner_died_before_answering_reads_unreadable(self):
+        host = self.fresh("died", die_first=True)
+        payload = at_stop(host, self.document, 0)
+        run_one(host.declared(), payload)
+        run_one(host.declared(), payload)
+        self.assertEqual(host.calls_made(), 1)
+        code, answer = verify(host.journal)
+        self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
+        self.assertEqual(len(answer["acceptedWithoutOutcome"]), 1)
+        self.assertEqual(answer["eventsWithMoreThanOneAcceptance"], [])
+
+    def test_one_event_accepted_in_two_journal_roots_reads_false_only_when_both_are_read(self):
+        """The per-root scope, stated and measured: two registrations writing to two roots each
+        accept the same Stop, and only a reading given both roots can see it."""
+        first, second = self.fresh("first"), self.fresh("second")
+        second.transcript = first.transcript
+        payload = at_stop(first, self.document, 0)
+        run_together([first.checkout(), second.checkout()], payload)
+        self.assertEqual((verify(first.journal)[0], verify(second.journal)[0]), (0, 0))
+        code, answer = verify(first.journal, second.journal)
+        self.assertEqual((code, answer["verdict"]), (1, "FALSE"))
+        self.assertEqual(len(answer["eventsWithMoreThanOneAcceptance"]), 1)
+
+    def test_one_root_spelled_twice_is_read_once(self):
+        host = self.fresh("spelled")
+        self.turn_of_three(host)
+        alias = self.base / "alias"
+        alias.symlink_to(host.journal)
+        code, answer = verify(host.journal, alias)
+        self.assertEqual((code, answer["verdict"]), (0, "TRUE"))
+        self.assertEqual(answer["roots"][1]["state"], "same_root_as_another_spelling")
+
+    def test_invocations_without_an_identity_are_counted_beside_the_verdict(self):
+        host = self.fresh("unjudged")
+        run_one(host.checkout(), at_stop(host, self.document, 0))
+        loose = json.dumps({"session_id": "s", "turn_id": "t", "stop_hook_active": False,
+                            "last_assistant_message": "done"}).encode("utf-8")
+        run_one(host.checkout(), loose)
+        run_one(host.checkout(), loose)
+        code, answer = verify(host.journal)
+        self.assertEqual((code, answer["verdict"]), (0, "TRUE"))
+        self.assertEqual(answer["unjudgedInvocations"], {"unestablished:transcript_path_missing": 2})
+
+    def test_rows_from_before_event_identity_are_legacy_and_never_judged(self):
+        host = self.fresh("legacy")
+        day = host.journal / "20260921"
+        day.mkdir(parents=True)
+        for index in range(2):
+            (day / ("%032x.json" % index)).write_text(json.dumps(
+                {"recordVersion": 1, "sessionId": "s", "turnId": "t", "at": "2026-09-21T00:00:00Z",
+                 "stopHookActive": bool(index)}), encoding="utf-8")
+        code, answer = verify(host.journal)
+        self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"), "nothing was judged")
+        self.assertEqual(answer["legacyRows"], 2)
+        self.assertEqual(answer["supersededPerTurn"]["pairsWithMoreThanOneRow"], 1)
+
+    def test_a_torn_accepted_record_reads_unreadable(self):
+        host = self.fresh("torn")
+        self.turn_of_three(host)
+        claim = host.journal / "accepted" / host.ledger()[0][0]
+        claim.write_text("", encoding="utf-8")
+        code, answer = verify(host.journal)
+        self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
+        self.assertEqual(answer["ledgerUnreadable"], [str(claim)])
+
+    def test_an_outcome_with_no_claim_reads_unreadable(self):
+        host = self.fresh("orphan")
+        self.turn_of_three(host)
+        key = "f" * 64
+        (host.journal / "accepted" / (key + ".outcome.json")).write_text(
+            json.dumps({"ledgerVersion": 1, "eventKey": key}), encoding="utf-8")
+        code, answer = verify(host.journal)
+        self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
+        self.assertEqual(answer["outcomesWithoutClaim"], [key])
+
+    def test_an_accepted_row_whose_claim_is_gone_reads_false(self):
+        """Acceptance that the ledger cannot account for is acceptance outside the ledger."""
+        host = self.fresh("gone")
+        self.turn_of_three(host)
+        (host.journal / "accepted" / host.ledger()[0][0]).unlink()
+        code, answer = verify(host.journal)
+        self.assertEqual((code, answer["verdict"]), (1, "FALSE"))
+        self.assertEqual(len(answer["acceptedRowsWithoutLedger"]), 1)

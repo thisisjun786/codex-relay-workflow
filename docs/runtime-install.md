@@ -1698,6 +1698,20 @@ with no outcome. The event stays accepted once; a later delivery of it is a dupl
 answered again. That is the adapter's ordinary failure direction, a release with the reason on
 record, and a reading of the journal names such events rather than passing them.
 
+### Reading it back
+
+`scripts/stop_events.py --journal-root <root>` reads the rows and the accepted records and answers
+one verdict. `FALSE` (exit 1) means an event was accepted more than once: claims for one key in
+two roots, two accepted rows for one key, an accepted row whose claim is missing, or a duplicate
+that asked the guard. `UNREADABLE` (exit 3) means the reading cannot vouch for what it read: a
+listing that failed, a record that does not parse or names another key, an outcome without its
+claim, a claim without its outcome, or nothing to judge. `TRUE` (exit 0) otherwise. Invocations
+whose identity was not established, and rows written by a runtime older than event identity, are
+counted beside the verdict and never judged. The superseded count of rows per (session, turn) is
+printed too, labelled as superseded, so the two readings can be compared. `--since`, `--until`,
+`--session` and `--turn` narrow the window, and `--journal-root` repeats for every root the
+host's registrations write to. The same reading is `completion.stop_events()`.
+
 ### Limits
 
 The guarantee holds within one journal root. Every registration the installer can produce on a
@@ -2018,8 +2032,19 @@ for directory in sorted(p for p in root.glob("*") if p.is_dir() and day.match(p.
         except (OSError, ValueError):
             unreadable += 1
 mine = [r for r in records if r.get("sessionId") == session and r.get("turnId") == turn]
+# A turn can end more than once, and each end is its own Stop event with its own accepted record.
+# Rows count invocations; the events are the distinct eventKeys the accepted rows name. A runtime
+# older than event identity writes rows without them, and those are counted apart, not guessed at.
+accepted = {r.get("eventKey") for r in mine if r.get("acceptance") == "accepted"}
 print(json.dumps({"recordsRead": len(records), "recordsUnreadable": unreadable,
-                  "recordsForThisTurn": len(mine), "record": mine[:1]}, indent=2))
+                  "recordsForThisTurn": len(mine),
+                  "acceptedEventsForThisTurn": len(accepted),
+                  "duplicatesForThisTurn": sum(r.get("acceptance") == "duplicate" for r in mine),
+                  "unidentifiedForThisTurn": sum(r.get("acceptance") in
+                                                 ("unestablished", "unclaimable", "claim_failed")
+                                                 for r in mine),
+                  "legacyRowsForThisTurn": sum(r.get("recordVersion") != 2 for r in mine),
+                  "record": mine[:1]}, indent=2))
 PY
 printf 'hook turn exit=%s\n' "$?" > <receipt>/hook.turn.exit; cat <receipt>/hook.turn.json
 
@@ -2243,11 +2268,18 @@ observed, and before a Stop has reached the hook the callback row is an absence.
 them is, is a failure of the thing they were asked about, and recording them as though the
 questions had been put is the one way this procedure can lie.
 
-`recordsForThisTurn` is the reading. One record naming the session and the turn that was ended
+`recordsForThisTurn` is the reading. A record naming the session and the turn that was ended
 is a callback this procedure can attribute; zero is not a smaller number of callbacks, it is a
 turn that did not reach the hook, and the row is unreadable for this run whatever the totals
 say. Do not record a total instead -- it is the answer to a question nobody asked here, and it
 is the one piece of this procedure another session can move.
+
+More than one record for the turn is not a duplicate by itself. A turn whose Stop was held ends
+again, and that second end is a second event: `acceptedEventsForThisTurn` counts them, and
+`duplicatesForThisTurn` counts invocations that found their event already accepted, which is
+what two registrations answering one Stop leave behind. Whether any event anywhere in the journal
+was accepted twice is the question `scripts/stop_events.py` answers; see [One accepted record per
+Stop event](#one-accepted-record-per-stop-event).
 
 Read `recordsUnreadable` before concluding. Zero matches beside a nonzero unreadable count is
 not an answer either: a record the hook had created but not finished writing is neither your
