@@ -322,6 +322,24 @@ class ControlGroups(ProductRoutingCase):
         self.holder.run()
         self.assertNotIn("open", [i["state"] for i in self.linear.issues.values()])
 
+    def test_a_recurrence_is_found_behind_a_long_remediation_history(self):
+        self.router.bind(binding("alpha-notes", "issue", "ALN-12", components=["editor"],
+                                 symptoms=["cursor_jump"], project="proj-aln-editor"))
+        first = self.route()
+        self.assertEqual(("accumulate", "ALN-12"), (first["disposition"], first["owner"]))
+        port = self.router.port
+        port.record_fix(first["faultId"], ref="PR-10")
+        for n in range(25):
+            port.record_reverification(first["faultId"], method="suite", ref=f"suite#{n}",
+                                       outcome="failed")
+        self.route(occurrenceKey="run-2")
+        self.assertEqual("open", port.get(first["faultId"])["state"])
+        answer = self.router.check_completion(reading("ALN-12"))
+        recurrences = answer["recurrences"]
+        self.assertEqual([(first["faultId"], "mismatch")],
+                         [(c["faultId"], c["verdict"]) for c in recurrences])
+        self.assertIn("PR-10", recurrences[0]["reason"])
+
     def test_a_closure_records_its_own_fix_after_an_earlier_one(self):
         first = self.router.check_completion(reading("ALN-9", observed={"acceptance": "absent"}))
         (entry,) = first["recorded"]

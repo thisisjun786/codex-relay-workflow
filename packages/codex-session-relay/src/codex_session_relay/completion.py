@@ -235,6 +235,8 @@ def evaluate(reading, context) -> dict:
 # Past it no recurrence can be ruled out, and the recurrence check reads unverified.
 RECURRENCE_SCAN = 1000
 RECURRENCE_PAGE = 100
+# The most remediations one ledger read returns (its ceiling), newest first.
+REMEDIATION_SCAN = 1000
 # How many resolved mismatch rounds of one subject and check a reading looks past. Each round is
 # its own record so the ledger's reopen-on-recurrence never reaches the subject; past this many,
 # the next round is somebody's decision.
@@ -286,6 +288,7 @@ def _recurrences(port, product, subject):
     a resolved one, reopened; this only reports it on the subject, and never files it again.
     """
     recurring, after, read = [], None, 0
+    unread = []
     while read < RECURRENCE_SCAN:
         page = port.list(product=product, fault_class=products.DEFECT, limit=RECURRENCE_PAGE,
                          after=after)
@@ -298,16 +301,28 @@ def _recurrences(port, product, subject):
                               "reason": f"came back after it was resolved (cycle"
                                         f" {row.get('cycle')})"})
                 continue
-            fixes = [r for r in port.remediations(row["fault_id"], limit=20)
+            # Every remediation the ledger will return in one read, newest last. The fix is
+            # found in it, or the read reaches back past the cycle's start, or it cannot tell.
+            history = port.remediations(row["fault_id"], limit=REMEDIATION_SCAN)
+            fixes = [r for r in history
                      if r.get("kind") == ledger_port.FIX and r.get("cycle") == row.get("cycle")]
             if fixes:
                 recurring.append({"faultId": row["fault_id"],
                               "reason": f"occurred again after the fix {fixes[-1]['ref']}"})
+            elif len(history) >= REMEDIATION_SCAN and history[0].get("cycle") == row.get("cycle"):
+                unread.append(row["fault_id"])
         after = page.get("next")
         if after is None:
-            return recurring, None
-    return recurring, (f"{product} has more than {RECURRENCE_SCAN} defect records; a recurrence"
-                   f" beyond them cannot be ruled out")
+            break
+    reasons = []
+    if after is not None:
+        reasons.append(f"{product} has more than {RECURRENCE_SCAN} defect records; a recurrence"
+                       f" beyond them cannot be ruled out")
+    if unread:
+        reasons.append(f"{len(unread)} of {subject}'s defects have more than {REMEDIATION_SCAN}"
+                       f" remediations in their current cycle; a fix before them cannot be"
+                       f" ruled out")
+    return recurring, ("; ".join(reasons) or None)
 
 
 def _detail(reading, entry):

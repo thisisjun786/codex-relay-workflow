@@ -201,14 +201,15 @@ def store_incident(db, clock, fault_id, incident, *, keep=MAX_STORED_INCIDENTS):
     keep=None keeps every one. A completion mismatch round keeps every failing reading it
     recorded, because recognising a reading handed in again must not depend on how many others
     came after it; each is one small row, and a round ends when its mismatch is closed.
+
+    An occurrence key already stored is a no-op, as it is for the ledger: an old incident
+    handed in again is not new input, and must not become the one a later decision reads.
     """
     incident_id = _incident_id(fault_id, incident["occurrenceKey"])
     seq = db.execute("SELECT COALESCE(MAX(recorded_seq), 0) + 1 AS n FROM route_incidents"
                      " WHERE fault_id = ?", (fault_id,)).fetchone()["n"]
-    db.execute("INSERT INTO route_incidents (incident_id, fault_id, record, recorded_at,"
-               "  recorded_seq) VALUES (?,?,?,?,?) ON CONFLICT(incident_id) DO UPDATE SET"
-               "   record = excluded.record, recorded_at = excluded.recorded_at,"
-               "   recorded_seq = excluded.recorded_seq",
+    db.execute("INSERT OR IGNORE INTO route_incidents (incident_id, fault_id, record,"
+               "  recorded_at, recorded_seq) VALUES (?,?,?,?,?)",
                (incident_id, fault_id, products.canonical(incident), clock.iso(), seq))
     if keep is not None:
         db.execute("DELETE FROM route_incidents WHERE fault_id = ? AND incident_id NOT IN"

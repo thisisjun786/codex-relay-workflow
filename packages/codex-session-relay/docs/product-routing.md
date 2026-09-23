@@ -291,7 +291,8 @@ wrong any more, and nothing is closed. A legitimate Done produces no write at al
 Recurrence is read from the ledger. A defect the subject owns is recurring when it is open again
 after a fix in its current cycle, or open in a cycle after a resolution. The ledger has already
 commented on it, so the check reports the recurrence and never files it again. A check reads at
-most a thousand of the product's defect records; past that, recurrence is unverified.
+most a thousand of the product's defect records, and for each of the subject's open defects the
+newest thousand remediations; past either, recurrence is unverified rather than ruled out.
 
 ## Reporting
 
@@ -347,7 +348,7 @@ read.
 | `product_bindings` | projects and issues as read back from Linear |
 | `routing_policy` | the explicit project creation policy and its basis |
 | `incident_routes` | per routed fault: disposition, stage, target, hold, origin, the highest severity any source claimed, classification, the last reported snapshot |
-| `route_incidents` | the newest incidents per route, the input redecide and classification replay read |
+| `route_incidents` | the newest incidents per route, the input redecide and classification replay read; an occurrence key already stored is not stored again |
 
 ## Commands
 

@@ -903,6 +903,14 @@ class RouteRows(RelayTestCase):
                                       incident(occurrenceKey=f"k{n}"))
         kept = [i["occurrenceKey"] for i in routes.incidents(self.store, "a" * 32)]
         self.assertEqual([f"k{n}" for n in range(4, routes.MAX_STORED_INCIDENTS + 4)], kept)
+        # An occurrence key already stored is not new input: handed in again, it stays where
+        # it was, and the newest input a later decision reads is still the newest one.
+        with self.store.transaction() as db:
+            routes.store_incident(db, self.clock, "a" * 32,
+                                  incident(occurrenceKey="k4", symptom="replayed"))
+        again = routes.incidents(self.store, "a" * 32)
+        self.assertEqual(kept, [i["occurrenceKey"] for i in again])
+        self.assertEqual("cursor_jump", again[0]["symptom"])
 
     def test_listing_pages_by_a_stable_cursor(self):
         from codex_session_relay import routes
