@@ -1224,10 +1224,14 @@ changed file fail visibly instead of being enforced unregistered.
 Two refusals protect the order of operations. `--execution-policy` is refused for `--owner user`,
 because a user-owned registration is started by its configuration entry and never reads the
 record. A version-2 record is also refused while the crw package this host loads ships a launcher
-that reads version 1 only (`launcher_predates_policy`): that launcher would refuse the record, and
-every thread started afterwards would have no bridge. The package is the one the Codex
-configuration enables as `crw@<marketplace>`, read from its single cached version; other plugins
-that happen to declare a server with the same name are not asked. When that selection cannot be
+that cannot be given one (`launcher_predates_policy`): that launcher would refuse the record, or
+start the bridge without the policy, and every thread started afterwards would be affected. What
+the launcher declares is not taken as evidence. It is run the way Codex runs it, against a
+throwaway CODEX_HOME whose record names a probe instead of the bridge, and it has to start that
+probe with both variables naming the recorded file and digest, and refuse a record whose digest
+no longer matches. The package is the one the Codex configuration enables as
+`crw@<marketplace>`, read from its single cached version; other plugins that happen to declare a
+server with the same name are not asked. When that selection cannot be
 made, because the configuration cannot be read, crw is registered from two marketplaces or more
 than one version is cached, the write is refused as `launcher_not_established`. The check reads
 the cache, which is not proof of what a running App Server loaded, so the order on a host is:

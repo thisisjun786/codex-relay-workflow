@@ -11,7 +11,6 @@ The components it installs need 3.11 or newer; that interpreter is resolved, not
 """
 
 import argparse
-import ast
 import hashlib
 import json
 import os
@@ -19,6 +18,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -4819,23 +4819,78 @@ def _execution_policy_reading(value):
                           " decides for itself"}, None
 
 
-def _implements_policy_records(launcher):
-    """Whether a launcher file declares the record version that carries an execution policy.
+# What the probe bridge does when a launcher starts it: write down the two variables it was handed.
+_LAUNCHER_PROBE = (
+    "import json, os, sys\n"
+    "names = sys.argv[2:]\n"
+    "open(sys.argv[1], 'w').write(json.dumps({name: os.environ.get(name) for name in names}))\n"
+)
+_POLICY_VARIABLES = ("CODEX_THREAD_BRIDGE_EXECUTION_POLICY",
+                     "CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST")
+LAUNCHER_PROBE_SECONDS = 20
 
-    Read with ast and never executed: this is a file in somebody's plugin cache, and whether it
-    implements a contract is a question about what it says, not something to run it to find out.
+
+def _launcher_honours_policy_records(launcher, *, cwd=None):
+    """Why a launcher cannot be trusted with a record naming a policy, or None when it can.
+
+    Asked by running it, the way Codex runs it at every thread start, against a throwaway
+    CODEX_HOME whose record names a probe instead of the bridge. What it declares proves nothing:
+    a launcher can define the new record version and still refuse it, ignore the policy, or exec
+    the bridge without the variables. So the three behaviours are observed together. A matching
+    record has to start the probe with both variables naming the recorded file and digest, and a
+    record whose digest no longer matches has to be refused without starting it. The launcher
+    executed is the one the enabled crw package ships, which Codex already executes on every
+    thread; nothing it could reach here is the host's.
     """
     try:
-        tree = ast.parse(Path(launcher).read_text(encoding="utf-8"))
-    except (OSError, ValueError, SyntaxError):
-        return False
-    for node in tree.body:
-        if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
-                and node.value.value == bridgerecord.POLICY_RECORD_VERSION
-                and any(isinstance(target, ast.Name) and target.id == "POLICY_RECORD_VERSION"
-                        for target in node.targets)):
-            return True
-    return False
+        scratch = tempfile.mkdtemp(prefix="crw-launcher-probe-")
+    except OSError as error:
+        return "its behaviour could not be probed: " + type(error).__name__ + ": " + str(error)
+    root = Path(scratch)
+    try:
+        policy = root / "execution-policy.json"
+        data = b'{"roles": {"child": {"model": "probe", "reasoningEffort": "probe"}}}\n'
+        policy.write_bytes(data)
+        digest = hashlib.sha256(data).hexdigest()
+        probe = root / "probe.py"
+        probe.write_text(_LAUNCHER_PROBE, encoding="utf-8")
+
+        def attempt(recorded, proof):
+            record = bridgerecord.document(
+                command=sys.executable, arguments=[str(probe), str(proof), *_POLICY_VARIABLES],
+                name=MCP_NAME, issue="probe", owner=bridgerecord.OWNER_PLUGIN,
+                execution_policy={"path": str(policy), "digest": recorded})
+            (root / bridgerecord.RECORD_NAME).write_text(json.dumps(record), encoding="utf-8")
+            done = subprocess.run([sys.executable, str(launcher)], cwd=str(cwd or root),
+                                  env={"PATH": os.environ.get("PATH", ""),
+                                       "CODEX_HOME": str(root)},
+                                  stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                  timeout=LAUNCHER_PROBE_SECONDS)
+            seen = json.loads(proof.read_text(encoding="utf-8")) if proof.exists() else None
+            return done, seen
+
+        try:
+            done, seen = attempt(digest, root / "accepted.json")
+            if seen is None:
+                tail = (done.stderr or done.stdout or "").strip().splitlines()[-1:]
+                return ("it did not start a bridge from a version-" + str(
+                    bridgerecord.POLICY_RECORD_VERSION) + " record (exit " + str(done.returncode)
+                        + (": " + tail[0][:300] if tail else "") + ")")
+            wanted = {_POLICY_VARIABLES[0]: str(policy), _POLICY_VARIABLES[1]: digest}
+            if seen != wanted:
+                return ("it started the bridge without handing it the recorded policy (the bridge"
+                        " saw " + json.dumps(seen) + ")")
+            done, seen = attempt("0" * 64, root / "mismatched.json")
+            if seen is not None:
+                return ("it started the bridge under a policy whose digest no longer matches the"
+                        " record")
+        except subprocess.TimeoutExpired:
+            return "it did not answer within " + str(LAUNCHER_PROBE_SECONDS) + " seconds"
+        except (OSError, ValueError) as error:
+            return "its behaviour could not be probed: " + type(error).__name__ + ": " + str(error)
+        return None
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 def _policy_launcher_refusal(codex_home):
@@ -4913,14 +4968,19 @@ def _policy_launcher_refusal(codex_home):
     arguments = entry.get("args") if isinstance(entry, dict) else None
     script = next((word for word in (arguments if isinstance(arguments, list) else [])
                    if isinstance(word, str) and text_prefix(word, "./", at="start")), None)
-    launcher = version / script[2:] if script else version
-    if script and _implements_policy_records(launcher):
+    if not script:
+        return LAUNCHER_NOT_ESTABLISHED, (
+            "the cached crw package at " + str(version) + " declares " + MCP_NAME + " without a"
+            " launcher this command can find")
+    launcher = version / script[2:]
+    why = _launcher_honours_policy_records(launcher, cwd=version)
+    if why is None:
         return None
     return LAUNCHER_PREDATES_POLICY, (
-        "the installed crw launcher " + str(launcher) + " reads record version "
-        + str(bridgerecord.RECORD_VERSION) + " only and would refuse this record, leaving every"
-        " thread started afterwards without a bridge. Update the plugin package first, restart"
-        " Codex so it loads it, then run this again")
+        "the installed crw launcher " + str(launcher) + " cannot be given a record naming an"
+        " execution policy: " + why + ". Writing it would leave every thread started afterwards"
+        " without a bridge. Update the plugin package first, restart Codex so it loads it, then"
+        " run this again")
 
 
 def _mcp_ownership(record_path, owner, configuration, name, wanted, codex_home=None):

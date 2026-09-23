@@ -46,6 +46,21 @@ POLICY = {"roles": {"parent": {"model": "devin/swe-2", "reasoningEffort": "max"}
 OTHER_POLICY = {"roles": {"parent": {"model": "devin/swe-2", "reasoningEffort": "max"},
                           "child": {"model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh"}}}
 
+# A launcher as it stood before record version 2, reduced to what it did with a record: stand down
+# for another owner, refuse any version but 1, and exec what the record names.
+V1_LAUNCHER = (
+    "import json, os, sys\n"
+    "from pathlib import Path\n"
+    "record = Path(os.environ['CODEX_HOME']) / 'crw-bridge-mcp.json'\n"
+    "document = json.loads(record.read_text())\n"
+    "if document.get('recordVersion') != 1:\n"
+    "    sys.stderr.write('crw bridge launcher: the record is version %r' %"
+    " document.get('recordVersion'))\n"
+    "    raise SystemExit(2)\n"
+    "executable = document['bridgeExecutable']\n"
+    "os.execv(executable, [executable, *document['args']])\n"
+)
+
 
 def write_policy(path, mapping=POLICY):
     data = json.dumps(mapping, indent=2).encode("utf-8")
@@ -670,11 +685,16 @@ class BridgeRecordPolicyTest(unittest.TestCase):
 
     @staticmethod
     def older_launcher():
-        """The shipped launcher less the one declaration a launcher from before version 2 lacks."""
+        """A launcher from before version 2: it reads the record and starts only version 1."""
+        return V1_LAUNCHER
+
+    @staticmethod
+    def shipped_launcher_with(old, new):
+        """The shipped launcher with one behaviour taken away, still declaring version 2."""
         shipped = BRIDGE_LAUNCHER.read_text(encoding="utf-8")
-        declaration = "POLICY_RECORD_VERSION = " + str(bridgerecord.POLICY_RECORD_VERSION) + "\n"
-        assert declaration in shipped
-        return shipped.replace(declaration, "")
+        assert shipped.count(old) == 1, old
+        assert "POLICY_RECORD_VERSION = " + str(bridgerecord.POLICY_RECORD_VERSION) in shipped
+        return shipped.replace(old, new)
 
     def test_the_record_names_the_file_and_its_digest_and_nothing_it_says(self):
         status, emitted, output = self.register("--apply")
@@ -835,6 +855,34 @@ class BridgeRecordPolicyTest(unittest.TestCase):
                 self.assertFalse(self.record.exists(), output)
         # A record without a policy is what that launcher reads, and it is not held up.
         self.assertEqual(self.register("--apply", policy=False)[0], 0)
+
+    @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
+    def test_a_launcher_that_only_declares_the_version_is_asked_what_it_does(self):
+        """A constant proves nothing; each missing behaviour is found by running it."""
+        variants = {
+            "accepts only version 1": (
+                "    if version not in (RECORD_VERSION, POLICY_RECORD_VERSION):\n",
+                "    if version != RECORD_VERSION:\n", "did not start a bridge"),
+            "drops the policy on exec": (
+                "            os.execve(executable, [executable, *arguments], environment)\n",
+                "            os.execv(executable, [executable, *arguments])\n",
+                "without handing it the recorded policy"),
+            "ignores the digest": (
+                "    if actual != digest:\n", "    if False:\n",
+                "digest no longer matches"),
+        }
+        for label, (old, new, reason) in variants.items():
+            with self.subTest(label):
+                shutil.rmtree(self.home.codex_home / "plugins", ignore_errors=True)
+                launcher = self.install_package(
+                    launcher_text=self.shipped_launcher_with(old, new))
+                self.enable("crw@crw")
+                status, emitted, output = self.register("--apply")
+                self.assertNotEqual(status, 0, output)
+                self.assertEqual(emitted["outcome"], "launcher_predates_policy", output)
+                self.assertIn(str(launcher), emitted["detail"], output)
+                self.assertIn(reason, emitted["detail"], output)
+                self.assertFalse(self.record.exists(), output)
 
     @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
     def test_the_enabled_crw_launcher_decides_and_unrelated_packages_do_not(self):
