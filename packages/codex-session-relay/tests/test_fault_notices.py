@@ -506,3 +506,46 @@ class WhatTheSecondAuditFound(NoticeCase):
         self.assertEqual(len(sent), 1)
         self.assertNotIn(SECRET, sent[0][2])
         self.assertIn("issue: " + ISSUE, sent[0][2], "the relationship's registered issue")
+
+
+class WhatTheThirdAuditFound(NoticeCase):
+    """Plan audit, round three: a value the registered hierarchy supplies - here the project
+    key - travels only as a plain identifier; one that is not is never sent, and not echoed."""
+
+    def setUp(self):
+        from . import test_supervisor_channel as channel_tests
+
+        with mock.patch.object(channel_tests, "PROJECT", "PRJ-1 token=" + SECRET):
+            super().setUp()
+
+    def test_a_project_key_that_is_not_an_identifier_is_never_sent(self):
+        fault = self.broken()
+        self.tick()
+        notification = self.notification(fault)
+        self.assertEqual(notification["state"], faults.PENDING)
+        self.assertIn("projectKey", notification["lastError"] or "")
+        self.assertNotIn(SECRET, notification["lastError"] or "")
+        self.assertEqual(self.upward(), [])
+        self.assertEqual(self.notice_rows(), [])
+        self.assertEqual(self.budget_used(), 0)
+        self.assertFalse(any(SECRET in one[2] for one in self.adapter.sends))
+
+
+class NoHierarchyValueTravelsAsFreeText(NoticeCase):
+    """The same rule for every value the registered hierarchy puts in a notice."""
+
+    def test_each_hierarchy_value_must_be_a_plain_identifier(self):
+        fault = self.broken()
+        self.measure_parent()
+        [one] = self.ledger.reserve_notifications(owner="t", limit=5)["reserved"]
+        notice = faults.notice_facts(self.store.db, one["notificationId"])
+        live = self.channel.resolve(self.rid)
+        self.channel.compose_notice(notice, resolution=live)
+        for field in ("projectKey", "sender", "recipient"):
+            with self.subTest(field=field):
+                with self.assertRaises(Exception) as refused:
+                    self.channel.compose_notice(
+                        notice, resolution={**live, field: live[field] + " token=" + SECRET})
+                self.assertIn(field, str(refused.exception))
+                self.assertNotIn(SECRET, str(refused.exception))
+        self.assertEqual(self.notification(fault)["state"], faults.RESERVED)

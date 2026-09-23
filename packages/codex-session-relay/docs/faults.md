@@ -954,7 +954,11 @@ resolved) or `fault_decision`, class, severity, state, product, the notification
 reason, the issue once published, the fault id - and points at `fault-show` on this store; the
 fault's recorded detail and evidence never travel, and neither do a caller's own words: a
 decision a caller raised says only that it was raised, and its words stay on the notification
-(`fault-notifications`). An issue is named only as an identifier (`TEAM-123` or a UUID,
+(`fault-notifications`). No free text travels at all: every value is the ledger's own, an issue
+identifier, a plain identifier from the registered hierarchy (the project key, the sender and
+recipient task ids, `unfit_hierarchy` - one that is not an identifier is not carried and the
+notice waits), or the relay's own program path, state directory and socket, which every report
+carries. An issue is named only as an identifier (`TEAM-123` or a UUID,
 `issue_reference`): the notice's issue is the one its relationship was registered for, never the
 observation's scope, and a published or adopted reference that is not an identifier is said to
 exist and left on the fault; a relationship whose issue is not an identifier leaves the

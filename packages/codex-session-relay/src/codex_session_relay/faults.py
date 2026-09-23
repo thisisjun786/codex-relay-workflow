@@ -3337,6 +3337,24 @@ def issue_reference(value):
     return value if isinstance(value, str) and ISSUE_REFERENCE.fullmatch(value) else None
 
 
+# What a notice may carry of the relay's registered hierarchy - the project key in its scope,
+# the sender and recipient task ids: a plain identifier (letters, digits, '.', '_', '-'), which a
+# UUID is too. No spaces, '=', ':', '/', quotes or other free text, so no log line and no
+# "token=..." travels in one. A value that is not one is not carried; the notice waits.
+HIERARCHY_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+NOTICE_HIERARCHY = ("projectKey", "sender", "recipient")
+
+
+def unfit_hierarchy(resolution):
+    """The first hierarchy value a notice would carry that is not a plain identifier, by name,
+    or None. The value itself is never echoed: it is what may not travel."""
+    for field in NOTICE_HIERARCHY:
+        value = (resolution or {}).get(field)
+        if not (isinstance(value, str) and HIERARCHY_IDENTIFIER.fullmatch(value)):
+            return field
+    return None
+
+
 def _notice_reason(raw):
     """The reason a notice may carry upward: only the ledger's own words, never a caller's.
 

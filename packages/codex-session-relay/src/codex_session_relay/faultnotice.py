@@ -112,6 +112,10 @@ class NoticeDeliverer:
             resolution = self.channel.resolve(relation)
         except DeliveryRefused as refusal:
             return _said(refusal)
+        unfit = faults.unfit_hierarchy(resolution)
+        if unfit is not None:
+            return ("the " + unfit + " the linkage names is not a plain identifier, so no notice"
+                    " can carry it; fault-show has the fault")
         # Ahead of its row in the recipient's queue, or - addressed to another recipient until
         # its next staging, or not staged yet - of any message to the recipient of now.
         same = row is not None and row["recipient_task_id"] == resolution["recipient"]

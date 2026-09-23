@@ -1578,6 +1578,8 @@ class SupervisorChannel:
         addressing it does. Its issue is the one that relationship was registered for, and only
         as an identifier (faults.issue_reference); without one nothing is composed.
         """
+        from . import faults
+
         purpose = NOTICE_PURPOSE.get(notice["kind"])
         if purpose is None:
             raise DeliveryRefused(
@@ -1590,6 +1592,13 @@ class SupervisorChannel:
                 RefusalReason.MALFORMED_RECEIPT,
                 "the issue fault " + repr(notice["faultId"]) + "'s relationship names is not an"
                 " issue identifier (TEAM-123 or a UUID), so no notice names it; nothing was"
+                " composed")
+        unfit = faults.unfit_hierarchy(resolution)
+        if unfit is not None:
+            raise DeliveryRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "the " + unfit + " the linkage names for fault " + repr(notice["faultId"])
+                + "'s notice is not a plain identifier, so no notice carries it; nothing was"
                 " composed")
         decision = None
         if envelope.kind_of(envelope.PARENT_TO_SUPERVISOR, purpose) == envelope.DECISION:
