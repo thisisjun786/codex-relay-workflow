@@ -869,7 +869,8 @@ reporting obligation is the Linear record the supervisor reads, confirmed, rathe
 having been written, sent or even read.
 
 Three commands make that readable rather than remembered. None of them sends anything and none
-wakes anybody; four more below do the sending, and there is no daemon behind any of them.
+wakes anybody; four more below do the sending, and the relay daemon runs the same staging and
+sending on its own tick.
 
 ```bash
 # Is this event news for the level above? A read: it sends, queues and records nothing.
@@ -979,9 +980,9 @@ landed. It does not say the turn answered, who computed the proof, or that anybo
 it discharges nothing: the obligation stands until Linear confirms. For the turn the send
 opened (`turnOrigin: relay_opened`, the ordinary case) a readback needs nothing from the
 supervisor, since that turn's id is already in the store, so it shows the report arrived
-rather than that it was read. Nothing here is automatic - there is no daemon behind these
-commands, so a report is expected to go out inside the parent's own turn, which is an
-instruction to the parent rather than something the relay enforces.
+rather than that it was read. Staging and sending are automatic - the relay daemon stages and
+sends what each project owes on its own tick - but the readback is not: only the supervisor,
+from a turn of its own, runs `supervisor-read`, and nothing reads back on its behalf.
 
 `linkage-directive` takes `--purpose` now, which derives the envelope pointer from the link and
 the digest rather than leaving it to be written by hand. A pointer belonging to another

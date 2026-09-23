@@ -518,6 +518,25 @@ class TheStoreRecordIsReportedNeverDropped(StoreOmissionCase):
         self.assertEqual((stored(claimed).get("state"), stored(claimed).get("reason")),
                          ("not_recorded", "no_store_recorded"))
 
+    def test_an_intent_that_is_not_an_object_is_reported_rather_than_crashing(self):
+        """Devin on 460d3bae: a non-object intent raised after the marker write."""
+        directory = marker.assignment_dir(self.markers, self.root, ASSIGNMENT)
+        (directory / "intent.json").write_text(json.dumps(["not", "an", "intent"]))
+        claimed = self.claim_through_cli()
+        self.assertEqual(stored(claimed).get("state"), "not_recorded")
+        disposed = self.declare_through_cli("in_progress")
+        self.assertEqual((stored(disposed).get("state"), stored(disposed).get("reason")),
+                         ("not_recorded", "no_store_recorded"))
+
+    def test_reporting_derive_creates_no_store_where_none_exists(self):
+        """Devin on 460d3bae: the read-only derivation created and migrated an empty store."""
+        elsewhere = Path(self.tmp) / "no-store-here"
+        code, derived = relay("--state", elsewhere, "reporting-derive", "--relationship", self.rid)
+        self.assertEqual(code, 0, derived)
+        self.assertEqual((derived.get("reportingState"), derived.get("reason")),
+                         ("unmeasured", "store_absent"))
+        self.assertFalse(any(elsewhere.glob("*.sqlite3")) if elsewhere.exists() else False)
+
     def test_both_records_mirror_what_the_marker_stands_on(self):
         self.claim_through_cli()
         first = self.declare_through_cli("in_progress")
@@ -529,3 +548,41 @@ class TheStoreRecordIsReportedNeverDropped(StoreOmissionCase):
         self.assertEqual(self.store.one(
             "SELECT outcome FROM turn_declarations WHERE turn_id = ?",
             (DISPATCH_TURN,))["outcome"], "in_progress")
+
+
+
+class AMarkerTheMarkerReaderCannotReadRecordsNoCapability(StoreOmissionCase):
+    """Review 3 on 7f14ebd9: the claim recorded the capability from a marker reporting-show
+    answers unmeasured about, and the daemon then woke the supervisor for that turn."""
+
+    def directory(self):
+        return marker.assignment_dir(self.markers, self.root, ASSIGNMENT)
+
+    def claim_then_let_the_turn_end_unreported(self):
+        claimed = self.claim_through_cli()
+        self.the_turn_ends()
+        self.tick(advance=self.grace + 1)
+        self.tick(advance=3600)
+        return claimed
+
+    def test_a_malformed_marker_fact_records_nothing_and_wakes_nobody(self):
+        relationship = self.directory() / "relationship.json"
+        fact = json.loads(relationship.read_text())
+        relationship.write_text(json.dumps({**fact, "executionGeneration": 0}))
+        claimed = self.claim_then_let_the_turn_end_unreported()
+        self.assertEqual((stored(claimed).get("state"), stored(claimed).get("reason")),
+                         ("not_recorded", "marker_malformed"))
+        self.assertEqual(self.store.all("SELECT session_id FROM reporting_sessions"), [])
+        self.assertEqual(self.omissions(), [])
+        self.assertEqual(self.upward(), [])
+
+    def test_an_unreadable_marker_fact_records_nothing_and_wakes_nobody(self):
+        attempts = self.directory() / "attempts"
+        attempts.mkdir(exist_ok=True)
+        (attempts / "1.json").write_bytes(b"\xff\xfe not text at all")
+        claimed = self.claim_then_let_the_turn_end_unreported()
+        self.assertEqual((stored(claimed).get("state"), stored(claimed).get("reason")),
+                         ("not_recorded", "marker_unreadable"))
+        self.assertEqual(self.store.all("SELECT session_id FROM reporting_sessions"), [])
+        self.assertEqual(self.omissions(), [])
+        self.assertEqual(self.upward(), [])

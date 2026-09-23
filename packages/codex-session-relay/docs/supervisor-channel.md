@@ -193,8 +193,10 @@ on (`declarations.py`):
 
 - `intent-claim` records in `reporting_sessions` that this session's relay writes its
   declarations into this store, with the marker root and workspace the claim used and the issue
-  the intent was declared for - only for a claim that correlates with an intent declared for
-  that workspace, the preconditions the marker reader checks before it reads a turn;
+  the intent was declared for - and only from a marker the marker reader could read at that
+  moment: every fact readable and the right shape, the claim standing and correlated with an
+  intent declared for that workspace. A marker `reporting-show` would answer `unmeasured` about
+  records nothing, and the session stays a legacy admission;
 - `intent-disposition` records the turn's declared outcome in `turn_declarations`,
   create-once like the marker file.
 
@@ -226,6 +228,13 @@ the claim recorded, and the Stop hook already reads that turn as `managed_unregi
 omission. A marker registration naming another generation than the store's is read by the
 marker reader as a receipt that cannot count, and by the store reader against the registration
 in this store; that direction wakes nobody.
+
+A marker that stops reading AFTER the claim - a fact rewritten out of shape, a file that can
+no longer be read - is one the store reader cannot see: the daemon reads no marker file. The
+store reader then answers from the registration and the declarations recorded here, which the
+marker's health does not change, while `reporting-show` answers `unmeasured`. The Stop hook
+releases a turn it cannot read the marker for rather than prompting the child to declare, so an
+omission derived then is a turn that really ended without a declaration.
 
 The cut-over is the claim record. A turn whose session has no `reporting_sessions` row -
 every child that claimed before its relay wrote here, or through a relay that does not - is a
@@ -701,8 +710,9 @@ child whose Stop hook never fired is derived where `reporting-show` answers `sto
 
 The relay daemon does, on every tick, with nobody asking. Its supervisor pass
 (`RelayDaemon._report_upward`) stages what each project owes - the same staging a parent runs
-by hand, restricted to obligations whose message is absent or still unsent - and attempts the
-claimable messages oldest first through `SupervisorChannel.attempt`. So every rule above holds
+by hand, restricted to obligations whose message is absent or still unsent - and attempts each
+recipient's oldest eligible message, oldest first, through `SupervisorChannel.attempt`, so one
+recipient's backlog cannot keep every other recipient's report unread. So every rule above holds
 for it unchanged: one obligation is one message and one wake, what goes out is re-derived where
 the transport starts (I-247), the recipient's budget is shared with parent-child traffic and
 spent only at the transport start, a paused, archived or unreachable supervisor is withheld

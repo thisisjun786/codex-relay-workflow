@@ -33,8 +33,13 @@ FAILED = "failed"
 
 
 def store_of(facts) -> str | None:
-    """The store the coordinator recorded for this assignment, or None."""
-    path = (facts.get("intent") or {}).get("dbPath") if isinstance(facts, dict) else None
+    """The store the coordinator recorded for this assignment, or None.
+
+    A marker whose intent is not an object names no store; reading it as one crashed the
+    command after its marker write and before it could say so.
+    """
+    declared = facts.get("intent") if isinstance(facts, dict) else None
+    path = declared.get("dbPath") if isinstance(declared, dict) else None
     return path if isinstance(path, str) and path.strip() else None
 
 

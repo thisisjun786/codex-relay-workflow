@@ -136,6 +136,9 @@ class RelayDaemon:
         # Optional too, and absent means the supervisor pass does not run. Given one, a parent
         # that never stages or sends still has its reports go up (CRW-215).
         self.supervisor_channel = supervisor_channel
+        # Where the supervisor pass's project rotation resumes. In memory on purpose: see
+        # _report_upward.
+        self._supervisor_rotation = 0
         self._last_refusal = None
 
     # ------------------------------------------------------------------ tick
@@ -930,11 +933,13 @@ class RelayDaemon:
         cap = self.policy.max_supervisor_projects_per_tick
         window = projects
         if len(projects) > cap:
-            # Rotated only when there is more than one tick's worth, so a store small enough
-            # to be read whole writes no cursor, and a quiet tick stays one that wrote nothing.
-            start = self._cursor("supervisor_projects", len(projects))
+            # Rotated only when there is more than one tick's worth, and in this process's
+            # memory rather than in discovery_cursors: a durable cursor was a write on every
+            # tick, owed or not, so a quiet tick was never one that wrote nothing. Losing the
+            # position on a restart costs nothing but where the next rotation starts.
+            start = self._supervisor_rotation % len(projects)
             window = [projects[(start + at) % len(projects)] for at in range(cap)]
-            self._advance_cursor("supervisor_projects", cap, len(projects))
+            self._supervisor_rotation = (start + cap) % len(projects)
         for project in window:
             try:
                 answer = channel.stage_unsent(project)
@@ -952,16 +957,26 @@ class RelayDaemon:
         budget = self.policy.max_supervisor_sends_per_tick
         if budget <= 0:
             return
-        # Oldest first, which is the per-recipient order the claim enforces anyway. A claim
-        # whose lease ran out is included, because attempting it is what recovers it: queued
-        # again when its transport never started, held uncertain when it may have.
+        # Each recipient's OLDEST eligible message, oldest first. The claim lets only that one go
+        # anyway, and reading every eligible row let one recipient's backlog - withheld again on
+        # every recheck - fill the whole window each tick, so a report to anybody else was never
+        # read at all. A claim whose lease ran out is eligible, because attempting it is what
+        # recovers it: queued again when its transport never started, held uncertain when it may
+        # have.
+        eligible = ("((%(m)s.state IN (?,?,?) AND %(m)s.hold_reason IS NULL"
+                    "  AND (%(m)s.next_eligible_at IS NULL OR %(m)s.next_eligible_at <= ?))"
+                    " OR (%(m)s.state = ? AND %(m)s.lease_until IS NOT NULL"
+                    "     AND %(m)s.lease_until <= ?))")
         rows = self.store.all(
-            "SELECT message_id, recipient_task_id FROM supervisor_messages"
-            " WHERE (state IN (?,?,?) AND hold_reason IS NULL"
-            "        AND (next_eligible_at IS NULL OR next_eligible_at <= ?))"
-            "    OR (state = ? AND lease_until IS NOT NULL AND lease_until <= ?)"
-            " ORDER BY staged_at, message_id LIMIT ?",
-            (*CLAIMABLE, now, SENDING, now, budget * 4))
+            "SELECT m.message_id, m.recipient_task_id FROM supervisor_messages m"
+            " WHERE " + eligible % {"m": "m"}
+            + "   AND NOT EXISTS (SELECT 1 FROM supervisor_messages o"
+              "                    WHERE o.recipient_task_id = m.recipient_task_id"
+              "                      AND " + eligible % {"m": "o"}
+            + "                      AND (o.staged_at < m.staged_at OR (o.staged_at ="
+              "                           m.staged_at AND o.message_id < m.message_id)))"
+              " ORDER BY m.staged_at, m.message_id LIMIT ?",
+            (*CLAIMABLE, now, SENDING, now, *CLAIMABLE, now, SENDING, now, budget * 4))
         struggling = set()
         attempted = 0
         for row in rows:

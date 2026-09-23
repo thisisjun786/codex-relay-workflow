@@ -277,3 +277,83 @@ class AReportWithNoAddresseeDoesNotHoldTheQueue(DaemonChannelCase):
         self.tick(advance=60)
         self.assertEqual(self.channel.get(stale)["state"], DISPATCHED)
         self.assertEqual(len(self.upward()), 1)
+
+class TwoSupervisorsOneStuck(DaemonChannelCase):
+    """Devin on 460d3bae: one recipient's backlog must not keep every other report unread.
+
+    A second project under a second supervisor. The first supervisor is archived and has more
+    staged reports than one tick reads; each is withheld and eligible again at every recheck.
+    """
+
+    SECOND = "01second-supervisor"
+    SECOND_PARENT = "01second-parent"
+    SECOND_CHILD = "01second-child"
+
+    def setUp(self):
+        super().setUp()
+        from codex_session_relay.models import Endpoint
+        from codex_session_relay.registry import record_settings
+
+        from .support import HOST, task_settings
+
+        for task, cwd in ((self.SECOND, "/second"), (self.SECOND_PARENT, "/second-parent"),
+                          (self.SECOND_CHILD, self.root)):
+            self.adapter.add_thread(task)
+            record_settings(self.store, self.clock, task, task_settings(cwd),
+                            source="creation_result")
+        self.linkage.register_supervision(
+            initiative_key="INI-2", project_key="PRJ-2",
+            supervisor=Endpoint(self.SECOND, HOST, cwd="/second", cxc_session="cxc-second"),
+            parent=Endpoint(self.SECOND_PARENT, HOST, cwd="/second-parent",
+                            cxc_session="cxc-second-parent"))
+        self.other = self.registry.register(
+            parent=Endpoint(self.SECOND_PARENT, HOST, cwd="/second-parent",
+                            cxc_session="cxc-second-parent"),
+            child=Endpoint(self.SECOND_CHILD, HOST, cwd=self.root, cxc_session="cxc-child-2"),
+            issue_key="REL-2", artifact_roots=[self.root],
+            allowed_recipients=[self.SECOND_PARENT], dispatch_request_id="dispatch-2",
+            dispatch_turn_id="turn-dispatch-2")
+        self.linkage.attach_issue(self.other["relationshipId"], "PRJ-2")
+
+    def complete_other(self):
+        from codex_session_relay.models import TurnRef
+
+        path = self.artifact("second.txt", "the other deliverable")
+        payload = self.ready_payload(self.other, [path],
+                                     turn=TurnRef(self.SECOND_CHILD, "turn-dispatch-2",
+                                                  "completed"))
+        self.accept(payload)
+        report_module.record(
+            self.store, self.clock, event_id=payload["eventId"],
+            repository="thisisjun786/codex-relay-workflow", cxc_status=cxc.DONE,
+            cxc_reason="every recorded criterion was proved", summary="the other work is done",
+            next_action="merge", evidence=["pytest passed"])
+
+    def test_a_stuck_recipients_backlog_does_not_starve_another_supervisor(self):
+        self.adapter.threads[SUPERVISOR].archived = True
+        backlog = self.daemon.policy.max_supervisor_sends_per_tick * 4 + 2
+        for number in range(backlog):
+            self.channel.stage(self.obligation(self.completed(text="deliverable %d" % number)))
+            self.clock.advance(1)
+        self.complete_other()
+        recheck = self.channel.policy.lifecycle_recheck_seconds + 1
+        for _ in range(3):
+            self.tick(advance=recheck)
+        to_second = [one for one in self.adapter.sends if one[1] == self.SECOND]
+        self.assertEqual(len(to_second), 1, "the second supervisor's report went up")
+        self.assertEqual(self.upward(), [], "the archived supervisor was not woken")
+
+    def test_rotating_projects_writes_nothing_on_a_quiet_tick(self):
+        """Devin on 460d3bae: the durable project cursor was a write on every tick."""
+        import dataclasses
+
+        self.daemon.policy = dataclasses.replace(self.daemon.policy,
+                                                 max_supervisor_projects_per_tick=1)
+        self.completed()
+        self.complete_other()
+        for _ in range(3):
+            self.tick(advance=60)
+        self.assertEqual(len(self.adapter.sends), 2, "both projects' reports went up in turn")
+        self.assertEqual(self.store.all(
+            "SELECT cursor FROM discovery_cursors WHERE listing = 'supervisor_projects'"), [],
+            "the rotation is kept in memory, so a quiet tick writes no cursor")

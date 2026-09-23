@@ -23,9 +23,12 @@ already knows - so for that turn, which is the ordinary case, a verified readbac
 of the supervisor's at all and shows arrival rather than reading. Which turn was named is
 recorded rather than averaged into one word.
 
-Nothing here wakes anybody on a timer. There is no daemon pass behind these methods: a report
-goes out inside the parent's own turn, and what discharges the obligation is still the Linear
-record the supervisor reads for itself, confirmed, exactly as supervision.discharge_of decides.
+Nothing here wakes anybody on a timer. The relay daemon's supervisor pass calls these methods on
+its own tick (RelayDaemon._report_upward): it stages what each project owes, omissions derived
+from this store included, and attempts the claimable messages, under exactly the rules a parent
+calling them by hand is held to, and a message goes out once, for an owed fact. What discharges
+the obligation is still the Linear record the supervisor reads for itself, confirmed, exactly as
+supervision.discharge_of decides.
 """
 
 import dataclasses

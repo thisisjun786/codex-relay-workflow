@@ -459,6 +459,15 @@ def cmd_reporting_derive(services, args) -> dict:
     """
     from . import omitted
 
+    if not services.selection.db_path.exists():
+        # Opening Services.store would create and migrate an empty store here, turning the
+        # absence this read should report into a database that says nothing happened.
+        return {"schema": omitted.SCHEMA, "source": omitted.STORE_SOURCE,
+                "reportingState": "unmeasured", "reason": "store_absent",
+                "relationshipId": args.relationship, "observedAt": services.clock.iso(),
+                "owed": False, "owedReason": omitted.NOT_AN_OMISSION,
+                "detail": "no relay store exists at " + str(services.selection.db_path)
+                          + "; nothing was created"}
     policy = services.supervisor_channel.policy
     return omitted.derive(
         services.store, args.relationship, state_directory=services.state_directory,
@@ -3113,13 +3122,22 @@ def cmd_intent_claim(services, args) -> dict:
     facts, unreadable = marker.read_assignment(directory)
     standing = next((claim for claim in facts.get("claims", [])
                      if intent.claimant(claim) == published["sessionId"]), None)
-    # Only the facts this record rests on: the intent (which store) and this session's claim.
-    needed = {"intent", "claims", "claims/" + published["sessionId"] + "/" + marker.CLAIM_FILE}
-    if needed & set(unreadable):
-        record = declarations.failure(
-            "marker_unreadable", "the marker could not be read back after the claim ("
-            + ", ".join(sorted(needed & set(unreadable))) + "), so what it stands on is"
-            " unknown", None)
+    # The record is made only from a marker the marker reader itself could read: every fact
+    # readable and the right shape, the claim standing and correlated, the intent declared for
+    # this workspace. A marker reporting-show would answer unmeasured about is not one the store
+    # may derive from, so the store stays silent - the legacy answer - rather than the two
+    # readers disagreeing about whether a turn can be classified at all.
+    if unreadable:
+        record = declarations.not_recorded(
+            "marker_unreadable", "the marker could not be read whole after the claim ("
+            + ", ".join(sorted(unreadable)) + "), so this session records nothing about how it"
+            " reports; running the claim again once the marker reads records it")
+    elif intent.malformed(facts):
+        # The marker reader answers unmeasured for a marker that is not the shape a fact must
+        # be, so nothing the store could derive from it is recorded either.
+        record = declarations.not_recorded(
+            "marker_malformed", "the marker's " + str(intent.malformed(facts)) + " is not the"
+            " shape a fact must be, so this session records nothing about how it reports")
     elif published["outcome"] == intent.CONFLICT or standing is None or (
             standing.get("dispatchRequestId") != args.dispatch_request_id):
         record = declarations.not_recorded(
@@ -3546,7 +3564,8 @@ def build_parser() -> argparse.ArgumentParser:
     reporting_derive = subparsers.add_parser(
         "reporting-derive",
         help="the reporting reading this store alone gives for one relationship's turn, from"
-             " the declarations its child's relay recorded here. Writes nothing")
+             " the declarations its child's relay recorded here. Records nothing, and creates"
+             " no store where none exists")
     reporting_derive.add_argument("--relationship", required=True)
     reporting_derive.add_argument(
         "--turn", help="the turn to read; the relationship's newest admitted turn by default")
