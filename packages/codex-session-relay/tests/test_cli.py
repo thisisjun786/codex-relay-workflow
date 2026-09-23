@@ -20,6 +20,7 @@ from .support import (
 # lives HERE because this module is already declared as one that spends real wall time,
 # and a second module doing it would be a fact about the suite nobody had written down.
 from .test_forge_evidence import HEAD, REQUIRED_DEV_GATE, job, pull, threads
+from .test_rolepolicy import PARENT_EFFORT, PARENT_MODEL
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -1236,7 +1237,7 @@ class WorkerPolicyRequirements(CliBase):
     """
 
     REQUIREMENTS = json.dumps(
-        [{"role": "parent", "model": "devin/swe-2", "reasoningEffort": "max"}]
+        [{"role": "parent", "model": PARENT_MODEL, "reasoningEffort": PARENT_EFFORT}]
     )
 
     def test_malformed_requirements_are_a_usage_error(self):
