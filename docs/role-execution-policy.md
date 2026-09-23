@@ -214,6 +214,9 @@ Four steps, and the order matters because each one is a separate fact.
 2. Set that variable for **every** process that asks a role question: the bridge MCP server, and
    the relay's daemon, CLI and Stop hook. They are separate processes with separate environments,
    and one that misses it refuses role-bound deliveries rather than skipping the check.
+   Codex gives the plugin-declared bridge no variable of its own; its launcher sets it from
+   the bridge record, see
+   [the execution policy the plugin bridge runs under](runtime-install.md#the-execution-policy-the-plugin-bridge-runs-under).
 3. Restart them. Each holds one snapshot, so an edit to the file changes nothing until it does.
 4. Read the result back rather than assuming it: `get_capabilities` reports the bridge's declared
    roles and its policy digest, and `relay doctor` reports the digest the relay resolved. The two

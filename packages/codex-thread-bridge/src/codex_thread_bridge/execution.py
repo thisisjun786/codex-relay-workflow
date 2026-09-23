@@ -47,6 +47,8 @@ not covered at all.
 
 import hashlib
 import json
+import os
+import stat
 from pathlib import Path
 from typing import NamedTuple
 
@@ -54,6 +56,11 @@ from . import roles
 from .roles import ROLE_MISMATCH, ROLE_UNKNOWN
 
 ENVIRONMENT_VARIABLE = "CODEX_THREAD_BRIDGE_EXECUTION_POLICY"
+# The digest the file was registered under, when whoever started this process knows one. The
+# plugin's launcher checks the file before it execs, and this closes the interval between that
+# check and the read below: the digest that counts is the digest of the bytes actually parsed.
+# It can only refuse. Leaving it unset changes nothing, and no value of it widens anything.
+DIGEST_VARIABLE = "CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST"
 
 SETTING_MISSING = "execution_setting_missing"
 SETTING_INVALID = "execution_setting_invalid"
@@ -367,24 +374,70 @@ class ExecutionPolicy:
 
     @classmethod
     def from_file(cls, path) -> "ExecutionPolicy":
+        """Read and parse the policy file, refusing anything that is not a regular file.
+
+        Opened without blocking and judged on the descriptor that is then read. Opening a FIFO for
+        reading blocks until something writes to it, so a path that is -- or is swapped to -- a
+        pipe would otherwise hang the server before it ever reported why, and a pipe is read
+        differently by every process that opens it in any case.
+        """
         path = Path(path)
         try:
-            raw = path.read_bytes()
+            descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        except (OSError, ValueError) as error:
+            raise ExecutionPolicyError(f"cannot read {path}: {error}") from error
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise ExecutionPolicyError(f"cannot read {path}: it is not a regular file")
+            with os.fdopen(descriptor, "rb") as handle:
+                descriptor = None
+                raw = handle.read()
         except OSError as error:
             raise ExecutionPolicyError(f"cannot read {path}: {error}") from error
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+        return cls.from_bytes(raw, path)
+
+    @classmethod
+    def from_bytes(cls, raw: bytes, source) -> "ExecutionPolicy":
+        """Parse bytes a caller already read from `source`, exactly as from_file parses a file.
+
+        For a caller that has to control how the file is opened -- the installer refuses a FIFO
+        rather than blocking on it -- and still wants this parser, its duplicate-key rule and its
+        digest rather than a second reading of the same document.
+        """
         try:
             data = json.loads(raw, object_pairs_hook=_no_duplicates)
         except ExecutionPolicyError:
             raise
         except ValueError as error:
-            raise ExecutionPolicyError(f"{path} is not valid JSON: {error}") from error
+            raise ExecutionPolicyError(f"{source} is not valid JSON: {error}") from error
         return cls.from_mapping(data, digest=hashlib.sha256(raw).hexdigest())
 
     @classmethod
     def from_environment(cls, environ) -> "ExecutionPolicy":
         """Read from this process's environment, which no tool argument can influence."""
         configured = (environ.get(ENVIRONMENT_VARIABLE) or "").strip()
-        return cls.from_file(configured) if configured else PRESENCE_ONLY
+        expected = (environ.get(DIGEST_VARIABLE) or "").strip()
+        if not configured:
+            if expected:
+                # A digest names a policy this process was started to enforce. Starting
+                # presence-only because the file's name went missing on the way here would be
+                # the silent downgrade the digest exists to make visible.
+                raise ExecutionPolicyError(
+                    f"{DIGEST_VARIABLE} expects a policy with digest {expected}, and "
+                    f"{ENVIRONMENT_VARIABLE} names no file"
+                )
+            return PRESENCE_ONLY
+        policy = cls.from_file(configured)
+        if expected and policy._digest != expected:
+            raise ExecutionPolicyError(
+                f"{configured} hashes to {policy._digest}, and this process was started "
+                f"expecting {expected}; it changed after it was registered, so it is refused "
+                "rather than enforced unregistered"
+            )
+        return policy
 
     def authorize(self, model, reasoning_effort, *, cwd=None, exception=None,
                   role=None) -> Execution:
