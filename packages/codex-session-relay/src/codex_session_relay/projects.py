@@ -82,10 +82,7 @@ def eligibility(db, payload) -> list:
             continue
         # Sharing a goal means sharing its completion criteria too: a member whose incident
         # declares other criteria is another contract that happens to use the same key.
-        latest = db.execute("SELECT record FROM route_incidents WHERE fault_id = ?"
-                            " ORDER BY recorded_seq DESC LIMIT 1", (fault_id,)).fetchone()
-        declared = ((json.loads(latest["record"]) if latest else {}).get("goal") or {})
-        if declared.get("criteria") != payload.get("criteria"):
+        if _declared_criteria(db, fault_id) != payload.get("criteria"):
             continue
         members.append(fault_id)
     problems = []
@@ -93,6 +90,21 @@ def eligibility(db, payload) -> list:
         problems.append(f"{len(members)} held defect(s) still share goal {payload['goal']}"
                         f" and its criteria;"
                         f" the policy needs {policy['minIndependentFixes']}")
+    # Every defect now held for want of a project under this goal, not only the members the
+    # create was queued with: one arriving since then with other criteria makes the goal two
+    # contracts, and a project carrying either would decide between them without anybody.
+    others = set()
+    for row in db.execute("SELECT fault_id, target FROM incident_routes WHERE product_key = ?"
+                          " AND stage = ? AND goal = ?",
+                          (payload["product"], products.STAGE_HELD, payload["goal"])).fetchall():
+        if json.loads(row["target"]).get("hold") != products.NO_PROJECT:
+            continue
+        criteria = _declared_criteria(db, row["fault_id"])
+        if criteria is not None and criteria != payload.get("criteria"):
+            others.add(criteria)
+    if others:
+        problems.append(f"held defects under {payload['goal']} now also declare"
+                        f" {sorted(others)}; a project needs one completion contract")
     if not payload.get("criteria"):
         problems.append("the goal declares no completion criteria")
     # A create carries the team and family label its product had when it was queued; a
@@ -119,6 +131,14 @@ def eligibility(db, payload) -> list:
 def _pre_issue(context):
     problems = eligibility(context["db"], context["publication"]["payload"])
     return {"cancel": "; ".join(problems)} if problems else None
+
+
+def _declared_criteria(db, fault_id):
+    """The completion criteria the newest stored incident of a route declares for its goal."""
+    latest = db.execute("SELECT record FROM route_incidents WHERE fault_id = ?"
+                        " ORDER BY recorded_seq DESC LIMIT 1", (fault_id,)).fetchone()
+    return (((json.loads(latest["record"]) if latest else {}).get("goal") or {})
+            .get("criteria"))
 
 
 # Registered per process at import, as the ledger's seam requires. Empty when registered; the

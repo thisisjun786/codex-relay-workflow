@@ -58,6 +58,8 @@ MAX_EVIDENCE_BYTES = 4096
 EVIDENCE_KEYS = ("kind", "ref", "source", "observed")
 MAX_SIGNATURE_FIELDS = 16
 MAX_SIGNATURE_BYTES = 1024
+# The largest cursor a listing can have returned: SQLite's rowid is a signed 64-bit integer.
+MAX_CURSOR = 2 ** 63 - 1
 
 # Fault classes this module defines. They are registered with the ledger through ledger_port,
 # which is the only module allowed to reach it; each names what clears it, because a class
@@ -531,6 +533,6 @@ def read_page(limit, after, *, ceiling) -> tuple:
     if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
         malformed(f"limit is a positive whole number, not {limit!r}")
     if after is not None and (isinstance(after, bool) or not isinstance(after, int)
-                              or after < 0):
+                              or not 0 <= after <= MAX_CURSOR):
         malformed(f"after is a cursor a listing returned, not {after!r}")
     return min(limit, ceiling), after

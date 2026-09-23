@@ -411,6 +411,23 @@ class Projects(ProductRoutingCase):
         self.holder.run()
         self.assertEqual({}, self.linear.projects)
 
+    def test_a_queued_create_is_cancelled_when_its_goal_gains_other_criteria(self):
+        self.router.set_policy(POLICY)
+        self.gamma("cache", "stale", "g1")
+        self.gamma("queue", "lost", "g2")
+        self.route(product="gamma-kit", repository="example-org/gamma-kit", surface="real_use",
+                   phase="in_use", component="sync", symptom="dropped", occurrenceKey="g3",
+                   goal={"key": "offline_sync", "criteria": "conflicts are surfaced"})
+        (row,) = [r for r in self.holder.pending() if r.get("kind") == projects.KIND]
+        pid = row.get("publicationId") or row.get("publication_id")
+        token = self.ledger.claim(pid, owner="holder")["claimToken"]
+        with self.assertRaises(faults.FaultRefused) as caught:
+            self.ledger.operation(pid, claim_token=token)
+        self.assertIn("a project needs one completion contract", str(caught.exception))
+        self.assertEqual("cancelled", self.ledger.publication(pid)["state"])
+        self.holder.run()
+        self.assertEqual({}, self.linear.projects)
+
     def test_settled_proposals_are_history_not_attention(self):
         self.router.set_policy(POLICY)
         self.gamma("cache", "stale", "g1")
@@ -714,6 +731,7 @@ class Reporting(ProductRoutingCase):
         for call in (lambda: self.router.digest(limit=0), lambda: self.router.digest(limit=True),
                      lambda: self.router.reconcile(limit=-1),
                      lambda: self.router.show(limit=0), lambda: self.router.show(after=-1),
+                     lambda: self.router.show(after=2 ** 63),
                      lambda: self.router.reconcile(after="x")):
             with self.subTest(call=call), self.assertRaises(products.RouteRefused) as caught:
                 call()

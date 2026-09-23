@@ -177,8 +177,9 @@ A project is created only under an explicitly configured `project_creation` poli
 names this request. Creation needs no suitable project for the members' components, plus at least
 `minIndependentFixes` (two or more) distinct held defects sharing one declared user goal with
 completion criteria. Sharing the goal means declaring the same criteria for it: defects that give
-one goal key different criteria are different contracts, so they make no project, and the pre-issue
-check counts only members declaring the criteria the create carries. Issue, file or error counts
+one goal key different criteria are different contracts, so they make no project. The pre-issue
+check counts only members declaring the criteria the create carries, and cancels the create when
+any defect held under the goal since declares other criteria. Issue, file or error counts
 alone never create one, and a single defect goes into its product's existing suitable project.
 
 The proposal is a `project_needed` record of the product, recorded at notice under the scope
