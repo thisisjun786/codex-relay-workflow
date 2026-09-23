@@ -239,12 +239,23 @@ class TheReceiversOwnReading(StoreReception):
                   "criteriaDigest": self.digest(), "relationRevision": self.revision(
                       relationship), "relationStatus": "active", "repository": REPOSITORY,
                   "prNumber": 107, "headSha": HEAD}
-        # An assignment reads the refusals; one that is not a pair is unread, not a crash.
+        # An assignment reads the refusals. Against a reading that otherwise agrees, one that
+        # is not a list of text pairs is unread - never a crash and never "none refused".
         assignment = self.first_assignment(dispatch="dispatch-1", issue=ISSUE)
-        code, answer = self.packet_check(assignment, record={
-            "childTaskId": CHILD, "parentTaskId": PARENT, "refusedPolicies": [7]})
-        self.assertEqual(code, 0, answer)
-        self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
+        agreeing = {"dispatchRequestId": "dispatch-1", "parentTaskId": PARENT,
+                    "childTaskId": CHILD, "issue": ISSUE, "relationStatus": "active",
+                    "criteriaDigest": self.digest(), "callback": self.a_callback(),
+                    "policy": {"model": CHILD_MODEL, "effort": CHILD_EFFORT,
+                               "sandbox": {"type": "workspaceWrite"}, "approval": "never"},
+                    "refusedPolicies": []}
+        code, answer = self.packet_check(assignment, record=agreeing)
+        self.assertEqual((code, answer["disposition"]), (0, packets.ACCEPTED), answer)
+        for held in ([7], None, [{"model": 7, "effort": CHILD_EFFORT}]):
+            with self.subTest(held=held):
+                code, answer = self.packet_check(assignment,
+                                                 record={**agreeing, "refusedPolicies": held})
+                self.assertEqual(code, 0, answer)
+                self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
         code, answer = self.packet_check(one, record={**record, "callback": 7})
         self.assertEqual(code, 0, answer)
         code, answer = self.packet_check(one, record=["not", "a", "reading"])
@@ -256,6 +267,30 @@ class TheReceiversOwnReading(StoreReception):
         code, answer = self.packet_check(numeric, record={**record, "headSha": 123})
         self.assertEqual(code, cli.EXIT_REFUSED, answer)
         self.assertIn("headSha", answer.get("detail", ""))
+
+    def test_json_nested_past_any_reading_is_refused_as_input_not_a_host_failure(self):
+        relationship = self.registered()
+        one = self.correction(relationship, generation=1)
+        deep = os.path.join(self.tmp, "deep.json")
+        with open(deep, "w", encoding="utf-8") as handle:
+            handle.write("[" * 200000 + "]" * 200000)
+        cases = {
+            "packet": ["--packet", deep, "--receiver", CHILD],
+            "record": ["--packet", self._write("packet", one), "--record", deep],
+            "observation": ["--packet", self._write("packet", one), "--receiver", CHILD,
+                            "--observation", deep],
+            "ledger": ["--packet", self._write("packet", one), "--receiver", CHILD,
+                       "--ledger", deep],
+        }
+        for what, args in cases.items():
+            with self.subTest(what=what):
+                printed = io.StringIO()
+                with contextlib.redirect_stdout(printed):
+                    try:
+                        code = cli.main(["--state", self.state, "packet-check"] + args)
+                    except SystemExit as stopped:
+                        code = stopped.code
+                self.assertEqual(code, cli.EXIT_USAGE, printed.getvalue()[:300])
 
 
 class TheControlsThatMustNotPassTheReceiveStep(StoreReception):
@@ -418,6 +453,31 @@ class TheControlsThatMustNotPassTheReceiveStep(StoreReception):
         self.assertTrue(resumed["act"], resumed)
         self.assertNotIn("actHeld", resumed)
 
+    def test_applied_is_recorded_only_after_a_check_said_act(self):
+        # A check that held act (paused) did not tell the receiver to act. Recording an
+        # application then would make the same packet, after the resume, say act false for
+        # work nobody did.
+        relationship = self.registered()
+        rid = relationship["relationshipId"]
+        ledger = os.path.join(self.tmp, "child-ledger.json")
+        self.registry.set_status(rid, "paused", actor=PARENT)
+        one = self.correction(relationship, generation=1)
+        _code, held = self.packet_check(one, receiver_id=CHILD, observation=self.observed(),
+                                        ledger=ledger)
+        self.assertFalse(held["act"], held)
+        code, refused = self.packet_check(one, receiver_id=CHILD, ledger=ledger, applied=True)
+        self.assertEqual(code, cli.EXIT_USAGE, refused)
+        self.registry.resume(rid, expect_generation=1, expect_artifact_roots=[self.root],
+                             expect_allowed_recipients=[PARENT, CHILD], actor=PARENT)
+        _code, resumed = self.packet_check(one, receiver_id=CHILD, observation=self.observed(),
+                                           ledger=ledger)
+        self.assertTrue(resumed["act"], resumed)
+        code, recorded = self.packet_check(one, receiver_id=CHILD, ledger=ledger, applied=True)
+        self.assertEqual(code, 0, recorded)
+        _code, after = self.packet_check(one, receiver_id=CHILD, observation=self.observed(),
+                                         ledger=ledger)
+        self.assertFalse(after["act"], after)
+
     def test_the_callback_pair_the_parent_left_is_refused(self):
         relationship = self.registered()
         one = self.correction(relationship, generation=1,
@@ -516,7 +576,8 @@ class AFirstAssignmentThroughCreateAndRegister(StoreReception):
         _code, after = self.packet_check(one, receiver_id=self.CREATED, ledger=ledger)
         self.assertEqual(after["disposition"], packets.ACCEPTED, after)
         self.assertTrue(after["act"])
-        self.assertEqual([entry["field"] for entry in after["instructed"]], [packets.MODE])
+        self.assertEqual([entry["field"] for entry in after["instructed"]],
+                         [packets.MODE, "workflow"])
         with open(ledger, encoding="utf-8") as handle:
             held = json.load(handle)
         self.assertEqual(list(held["assignments"].values())[0]["mode"], packets.LOOP)
@@ -564,7 +625,8 @@ class AFirstAssignmentThroughCreateAndRegister(StoreReception):
             artifact=packets.pull_request(repository=REPOSITORY, number=107, head_sha=HEAD))
         _code, answer = self.packet_check(resume, receiver_id=self.CREATED,
                                           observation=self.observed(), ledger=ledger)
-        self.assertEqual(self.kinds(answer), [packets.WRONG_MODE])
+        # This resume names another mode and another workflow, and each is refused by name.
+        self.assertEqual(self.kinds(answer), [packets.WRONG_MODE, packets.WRONG_WORKFLOW])
         self.assertEqual(answer["provenance"]["mode"],
                          "ledger: assignment " + first["messageId"])
 
@@ -586,6 +648,28 @@ class AFirstAssignmentThroughCreateAndRegister(StoreReception):
                                          receiver_id=self.CREATED, ledger=ledger)
         self.assertEqual(code, 0, answer)
         self.assertEqual(answer["disposition"], packets.ACCEPTED, answer)
+
+    def test_a_later_packet_cannot_replace_the_workflow_the_ledger_holds(self):
+        # Same mode, another workflow: the workflow is what no transport carries, so the one
+        # the accepted assignment gave is the receiver's reading, and a resume restates it.
+        relationship = self.registered(child=self.CREATED, issue="REL-FIRST",
+                                       dispatch="dispatch-first", turn="turn-first")
+        ledger = os.path.join(self.tmp, "created-ledger.json")
+        _code, first = self.packet_check(self.first_assignment(dispatch="dispatch-first"),
+                                         receiver_id=self.CREATED, ledger=ledger)
+        self.assertTrue(first["act"], first)
+        resume = packets.compose(
+            direction=P2C, purpose="resume", relation_id=relationship["relationshipId"],
+            sender=PARENT, recipient=self.CREATED, subject="resume-2", issue="REL-FIRST",
+            relation_revision=self.revision(relationship), callback=self.a_callback(),
+            policy_record=self.a_policy(workflow="CXC Loop under another procedure"),
+            artifact=packets.pull_request(repository=REPOSITORY, number=107, head_sha=HEAD))
+        _code, answer = self.packet_check(resume, receiver_id=self.CREATED,
+                                          observation=self.observed(), ledger=ledger)
+        self.assertEqual(answer["disposition"], packets.REFUSAL, answer)
+        self.assertEqual(self.kinds(answer), ["wrong_workflow"])
+        self.assertEqual(answer["provenance"].get("workflow"),
+                         "ledger: assignment " + first["messageId"])
 
 
 class WhatTheStoreCannotAnswer(StoreReception):

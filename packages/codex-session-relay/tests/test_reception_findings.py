@@ -141,7 +141,8 @@ def a_record(**overrides):
               "headSha": HEAD, "policy": {"model": CHILD_PAIR[0], "effort": CHILD_PAIR[1],
                                           "sandbox": {"type": "dangerFullAccess"},
                                           "approval": "never"},
-              "callback": a_callback(), "mode": "loop", "refusedPolicies": []}
+              "callback": a_callback(), "mode": "loop", "workflow": "CXC Loop",
+              "refusedPolicies": []}
     record.update(overrides)
     return record
 
@@ -302,11 +303,27 @@ class RB3CallbackAndPolicy(_Reading):
                 self.assertIn(field, detail)
 
     def test_a_refusal_list_of_another_shape_is_a_gap_not_none(self):
-        for held in ([7], {}, "x", 7, [{"model": "m", "effort": "e"}, 7]):
+        for held in (None, [7], {}, "x", 7, [{"model": "m", "effort": "e"}, 7], [{}],
+                     [{"model": 123, "effort": "xhigh"}], [{"model": " ", "effort": "x"}]):
             with self.subTest(held=held):
                 answer = self.received(self.assignment, a_record(refusedPolicies=held))
                 self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
                 self.assertIn("policy", self.gap_fields(answer))
+
+    def test_a_stated_workflow_is_compared_with_the_one_the_receiver_holds(self):
+        resume = lambda workflow: packets.compose(**packet_kwargs(  # noqa: E731
+            P2C, "resume", policy_record={**a_policy(), "workflow": workflow}))
+        answer = self.received(lambda: resume("CXC Loop under another procedure"),
+                               a_record(workflow="CXC Loop"))
+        self.assertEqual(answer["disposition"], packets.REFUSAL, answer)
+        self.assertEqual([(m["kind"], m["field"]) for m in answer["mismatches"]],
+                         [("wrong_workflow", "policy.workflow")])
+        held_none = {key: value for key, value in a_record().items() if key != "workflow"}
+        answer = self.received(lambda: resume("CXC Loop"), held_none)
+        self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
+        self.assertIn("workflow", self.gap_fields(answer))
+        answer = self.received(lambda: resume("CXC Loop"), a_record(workflow="CXC Loop"))
+        self.assertEqual(answer["disposition"], packets.ACCEPTED, answer)
 
 
     def test_the_pair_the_parent_left_is_refused_as_a_stale_callback(self):
@@ -470,9 +487,11 @@ def _read_keys(direction, purpose):
     if packets.CALLBACK in required:
         keys.add("callback")
     if packets.POLICY in required:
-        keys.update(("policy", "refusedPolicies", "mode"))
+        keys.update(("policy", "refusedPolicies", "mode", "workflow"))
     if purpose == "assignment":
-        keys.discard("mode")  # an assignment defines the mode where none is held
+        # An assignment defines the mode and the workflow where none is held.
+        keys.discard("mode")
+        keys.discard("workflow")
     return sorted(keys)
 
 

@@ -115,7 +115,7 @@ def a_record(**overrides):
             "issue": ISSUE, "generation": 1, "criteriaDigest": DIGEST, "headSha": HEAD,
             "repository": "thisisjun786/codex-relay-workflow", "prNumber": 107,
             "refusedPolicies": [], "relationRevision": REVISION, "relationStatus": "active",
-            "dispatchRequestId": DISPATCH, "mode": packets.LOOP,
+            "dispatchRequestId": DISPATCH, "mode": packets.LOOP, "workflow": "CXC Loop",
             "policy": {"model": "anthropic/claude-opus-5", "effort": "xhigh",
                        "sandbox": {"type": "dangerFullAccess"}, "approval": "never"},
             "callback": a_callback()}
