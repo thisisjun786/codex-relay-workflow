@@ -310,8 +310,11 @@ changed.
 
 Status: the registry, the decision and the completion verdicts do not depend on the ledger. The
 paths that record, adopt, target, move, update or queue go through `ledger_port.py`, which binds
-only when CRW-205's corrected ledger contract is present, every function and keyword it passes
-included. Until then every route command except the registry ones refuses with
+to CRW-205's corrected ledger contract, now present. The binding is checked, not assumed: every
+function, every keyword the port passes and every refusal value routing tells apart must exist,
+and a checkout where any is missing refuses every route command except the registry ones with
 `route_ledger_pending` before writing anything. An intake from a surface the product does not
-watch is refused first, since that check needs no ledger. Nothing here is evidence about an
-installed runtime, a live service, or anything written to Linear.
+watch is refused first, since that check needs no ledger. The scenarios in
+`tests/test_product_routing.py` run every path against the real ledger and a fake Linear target;
+nothing here is evidence about an installed runtime, a live service, or anything written to
+Linear.

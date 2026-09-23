@@ -131,6 +131,9 @@ What each one waits on:
 - `test_cli.py`, `test_management_cli.py` and `test_wp1_regressions.py` shell
   out to the command line.
 - `test_bridge_adapter.py` waits before asserting a transport worker is still alive.
+- `test_product_routing.py` runs the fault holder commands as a separate process, because a
+  publication kind is registered per process: only a process that did not import routing can
+  show that a holder without `--kind-module` is never offered a project create.
 - `test_dispositions.py` shells out to the command line, because the exit-code rule it pins is
   the part a polling coordinator reads first: an unreadable store must not exit 0, and only a
   real process exit can show that. The same runs prove the command leaves no database behind.
