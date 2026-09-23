@@ -668,12 +668,18 @@ class SupervisorChannel:
         """
         with self.store.transaction() as db:
             row = db.execute(
-                "SELECT hold_reason FROM supervisor_messages WHERE message_id = ?",
+                "SELECT hold_reason, obligation_kind FROM supervisor_messages WHERE message_id = ?",
                 (message_id,)).fetchone()
             if row is None or row["hold_reason"] != SUPERSEDED_HOLD:
                 return False
             current = self._proposal_now(db, message_id)
             if current["kind"] == "obsolete":
+                return False
+            if row["obligation_kind"] == NOTICE and current["kind"] == "moved":
+                # A parked notice whose fault is about another relationship now stays parked:
+                # released, it would be the oldest message to its former recipient and hold that
+                # task's later reports back while it can never be claimed. Its next staging
+                # re-addresses and releases it.
                 return False
             at = self.clock.iso()
             cursor = db.execute(
@@ -1388,18 +1394,21 @@ class SupervisorChannel:
 
         notice is what faults.notice_facts reads for a notification its deliverer has reserved.
         Addressed by resolve(), the one function that says who the level above is, from the
-        relationship the notification is about; a refusal there stages nothing and raises, and
-        the notification waits for it.
+        relationship the notification is about NOW (faults.anchor_relationship, read into the
+        notice); a refusal there, or no such relationship, stages nothing and raises, and the
+        notification waits for it.
 
-        The notification's own message is found by its obligation id, whatever relationship
-        it was first addressed from, so a notification is never staged twice. That row is
-        rewritten - restated, re-addressed, released from its park - only while none of its
-        attempts can have put bytes anywhere, and the predicate is in the write. One that may
-        have been sent is returned as it is: its bytes may be in the recipient's thread, and a
-        second message for the same notification would be a second wake.
+        The notification's own message is found by its obligation id, and its id is derived
+        from the fault and the notification's deliveryKey alone, so a notification is never
+        staged twice whatever relationship addresses it. That row is rewritten - restated,
+        re-addressed to the relationship and hierarchy of now, released from its park - only
+        while none of its attempts can have put bytes anywhere, and the predicate is in the
+        write. One that may have been sent is returned as it is: its bytes may be in the
+        recipient's thread, and a second message for the same notification would be a second
+        wake.
         """
         existing = self.notice_message(notice["notificationId"])
-        relation = existing["relationship_id"] if existing is not None else notice["relationshipId"]
+        relation = notice["relationshipId"]
         if not relation:
             raise DeliveryRefused(
                 RefusalReason.UNREGISTERED_SCOPE,
@@ -1441,7 +1450,7 @@ class SupervisorChannel:
                         "messageId": message_id, "message": dict(self.get(message_id)),
                         "recipient": resolution["recipient"], "sender": resolution["sender"]}
             frozen = json.loads(row["packet"])
-            moved = not _addressed_as(row, live)
+            moved = not _addressed_as(row, live) or row["relationship_id"] != relation
             if (packet == frozen and not moved and row["hold_reason"] is None):
                 return {"schema": VERSION, "staged": False, "messageId": row["message_id"],
                         "reason": "this notification is already staged; one notification is"
@@ -1449,18 +1458,18 @@ class SupervisorChannel:
                         "recipient": row["recipient_task_id"], "sender": row["sender_task_id"]}
             released = row["hold_reason"] in (PARKED_HOLD, UNADDRESSED_HOLD)
             cursor = db.execute(
-                "UPDATE supervisor_messages SET packet = ?, sender_task_id = ?,"
+                "UPDATE supervisor_messages SET packet = ?, relationship_id = ?, sender_task_id = ?,"
                 " recipient_task_id = ?, project_key = ?, hold_reason = CASE WHEN hold_reason"
                 " IN (?,?) THEN NULL ELSE hold_reason END, updated_at = ?"
                 " WHERE message_id = ? AND state IN (?,?,?) AND packet = ?"
-                "   AND sender_task_id = ? AND recipient_task_id = ?"
+                "   AND relationship_id = ? AND sender_task_id = ? AND recipient_task_id = ?"
                 "   AND NOT EXISTS (SELECT 1 FROM supervisor_attempts a"
                 "                    WHERE a.message_id = supervisor_messages.message_id"
                 "                      AND (a.send_attempted <> 'no' OR a.retry_safe = 0))",
-                (json.dumps(packet, ensure_ascii=False, sort_keys=True), live["sender"],
+                (json.dumps(packet, ensure_ascii=False, sort_keys=True), relation, live["sender"],
                  live["recipient"], live["projectKey"], PARKED_HOLD, UNADDRESSED_HOLD, at,
-                 row["message_id"], *CLAIMABLE, row["packet"], row["sender_task_id"],
-                 row["recipient_task_id"]))
+                 row["message_id"], *CLAIMABLE, row["packet"], row["relationship_id"],
+                 row["sender_task_id"], row["recipient_task_id"]))
             if cursor.rowcount != 1:
                 return {"schema": VERSION, "staged": False, "messageId": row["message_id"],
                         "reason": "this notification's message may already have gone, so it"
@@ -1469,8 +1478,11 @@ class SupervisorChannel:
             if moved:
                 self.store.journal(READDRESSED, row["message_id"],
                                    {"from": row["recipient_task_id"], "to": live["recipient"],
-                                    "reason": "the notice was never sent and the level above"
-                                              " moved, so it goes to the one there now"}, at=at)
+                                    "fromRelationship": row["relationship_id"],
+                                    "toRelationship": relation,
+                                    "reason": "the notice was never sent and what it is about"
+                                              " or the level above moved, so it goes to the one"
+                                              " there now"}, at=at)
             if packet != frozen:
                 self.store.journal(RESTATED, row["message_id"],
                                    {"at": "staging", "reason": "what the notification says"
@@ -1529,6 +1541,22 @@ class SupervisorChannel:
                        else "reserved under a lapsed lease")
                     + "; a notice goes out only while its notification is reserved, which is"
                       " where its eligibility and budget are decided"}
+        if notice["kind"] == faults.BLOCKING and notice["faultState"] == faults.WITHDRAWN:
+            return {"kind": "obsolete", "live": live,
+                    "detail": "fault " + repr(notice["faultId"]) + " withdrew - it cleared"
+                    " before anything about it landed - so its blocking notice is no longer a"
+                    " new serious block and does not go up"}
+        if notice["relationshipId"] != row["relationship_id"]:
+            # What the notification is about moved - ledger.move, an issue's relationship
+            # superseded - since this row was addressed. Not sent to the old hierarchy: nothing
+            # is claimed, and the next staging re-addresses it or it waits.
+            return {"kind": "moved", "refusal": DeliveryRefused(
+                RefusalReason.RELATION_OWNER_DRIFT if notice["relationshipId"]
+                else RefusalReason.UNREGISTERED_SCOPE,
+                "notification " + repr(row["obligation_id"]) + " was addressed from"
+                " relationship " + repr(row["relationship_id"]) + " and is about "
+                + (repr(notice["relationshipId"]) if notice["relationshipId"]
+                   else "no relationship") + " now")}
         staged = json.loads(row["packet"])
         packet = self.compose_notice(notice, resolution=live,
                                      observed_at=staged["envelope"].get("observedAt"),
@@ -1545,7 +1573,13 @@ class SupervisorChannel:
 
         What the fault is - class, severity, state, product, the notification's kind and
         reason, the issue once published - and where it is readable, on this store. Never the
-        fault's recorded detail or evidence.
+        fault's recorded detail or evidence, and never a caller's own words (faults.notice_facts
+        carries only the ledger's reasons).
+
+        Its envelope relation is the fault ("fault:<id>") and its subject the deliveryKey, so
+        its message id is the notification's own and does not move when the relationship
+        addressing it does (relation_id, which only supplies the issue when the fault's scope
+        names none).
         """
         purpose = NOTICE_PURPOSE.get(notice["kind"])
         if purpose is None:
@@ -1564,7 +1598,7 @@ class SupervisorChannel:
         return packets.compose(
             direction=envelope.PARENT_TO_SUPERVISOR,
             purpose=purpose,
-            relation_id=relation,
+            relation_id="fault:" + str(notice["faultId"]),
             sender=resolution["sender"],
             recipient=resolution["recipient"],
             subject=notice["deliveryKey"],

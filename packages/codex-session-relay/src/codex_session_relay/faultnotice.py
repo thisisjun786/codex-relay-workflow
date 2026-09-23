@@ -81,6 +81,14 @@ class NoticeDeliverer:
             return "whether it can be carried now could not be read: " + _said(error)
 
     def _waiting_for(self, notification, now):
+        # What the notification is about NOW, read on the store's own connection - never a
+        # transaction of its own: this is asked inside reserve_notifications' write, where a
+        # second BEGIN is refused. A staged message addressed from another relationship is
+        # re-addressed by the next staging when nothing of it was sent.
+        fault = self.store.one("SELECT signature, scope FROM fault_ledger WHERE fault_id = ?",
+                               (notification["faultId"],))
+        anchor = faults.anchor_relationship(self.store.db, fault) if fault is not None else None
+        relation = anchor["relationship_id"] if anchor is not None else None
         row = self.channel.notice_message(notification["notificationId"])
         if row is not None:
             if row["state"] in SENT:
@@ -94,15 +102,6 @@ class NoticeDeliverer:
             if row["next_eligible_at"] is not None and row["next_eligible_at"] > now:
                 return ("the supervisor channel rechecks the level above at "
                         + _at(row["next_eligible_at"]) + self._because(row["message_id"]))
-            relation = row["relationship_id"]
-        else:
-            # Reads on the store's own connection, never a transaction of its own: this is
-            # asked inside reserve_notifications' write, where a second BEGIN is refused.
-            fault = self.store.one("SELECT signature, scope FROM fault_ledger WHERE fault_id = ?",
-                                   (notification["faultId"],))
-            anchor = (faults.anchor_relationship(self.store.db, fault)
-                      if fault is not None else None)
-            relation = anchor["relationship_id"] if anchor is not None else None
         if not relation:
             return ("no relationship this store holds places fault " + notification["faultId"]
                     + " under a project, so there is no level above to tell")
@@ -110,7 +109,11 @@ class NoticeDeliverer:
             resolution = self.channel.resolve(relation)
         except DeliveryRefused as refusal:
             return _said(refusal)
-        ahead = self.channel.queued_ahead(resolution["recipient"], now=now, row=row)
+        # Ahead of its row in the recipient's queue, or - addressed to another recipient until
+        # its next staging, or not staged yet - of any message to the recipient of now.
+        same = row is not None and row["recipient_task_id"] == resolution["recipient"]
+        ahead = self.channel.queued_ahead(resolution["recipient"], now=now,
+                                          row=row if same else None)
         if ahead is not None:
             return ("an earlier report to " + resolution["recipient"] + " goes first: message "
                     + ahead)

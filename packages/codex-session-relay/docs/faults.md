@@ -45,7 +45,11 @@ a path that reaches the outcome without passing through that function is a defec
    call `_cancel()`, and withdrawal and `set_project` supersession call `_cancel_where()`, which
    gives each claimed row back its own current claim's unit and attempt, and nothing earlier.
 5. **A clear withdraws what nothing landed for.** Owning an issue is not a write having landed.
-   Enforced by `_landed()` inside `_transition()`.
+   Enforced by `_landed()` inside `_transition()`. So is a blocking notification nothing has
+   carried: it is withdrawn with its fault, because a block that cleared before anybody above
+   was told is not a new serious block, and raised again if its cause returns in the same cycle.
+   Enforced by `_void_withdrawn()` (at the withdrawal and wherever notifications are read or
+   settled) and `_notify()`, and at the transport start by `supervisorchannel._notice_now()`.
 6. **A cause that comes back is a new occurrence.** The first active observation after a clear
    opens an episode. Enforced by `record()`.
 7. **One product per scope key.** Every assignment of a scope key refuses a key another product's
@@ -99,6 +103,8 @@ a path that reaches the outcome without passing through that function is a defec
     `reconcile_notification(delivered=False)` give back that reservation's own budget unit and
     nothing earlier, and a deliverer's `deliverable` predicate is asked after eligibility and
     before any budget is spent, so a notification its transport cannot carry now is never reserved.
+    A notification is never settled as not delivered while the supervisor channel holds an attempt
+    of its message that may have sent.
     Enforced by `reserve_notifications()` and `_settle_notification()`.
 16. **Waiting is never a fault, an overtaken obligation is not current, and no sweep contradicts
     itself.** Paused, archived, busy and waiting recipients are never collected - an attempt
@@ -530,7 +536,9 @@ follow it too.
   (`notifications.reservedLapsed`) and warned about as uncertain before anything lapses it; `status` shows it under
   `faults`, and a daemon tick carries it as a note on the tick where it appears or changes.
 - Notifications are `blocking` (a broken fault opened), `decision` (a write became uncertain
-  or failed for good) and `resolved`. `notifications(*, limit)` lists pending ones with their
+  or failed for good) and `resolved`. A notification is `pending`, `reserved`, `uncertain` (a
+  lapsed reservation), `delivered`, or `withdrawn` - a blocking one of a fault that withdrew before
+  anything carried it (invariant 5), raised again if its cause returns. `notifications(*, limit)` lists pending ones with their
   eligibility: a paused, cancelled or archived relationship withholds one; a parent recipient
   that is uncontactable or unmeasured withholds one; a spent `notification` budget holds one.
 - `raise_notification(fault_id, *, reason, ref)` lets a caller raise its own decision (for
@@ -944,8 +952,14 @@ anchor eligibility reads): the project's parent sends and the initiative's super
 exactly as a report does. A notice says what the fault is - purpose `fault_notice` (blocking,
 resolved) or `fault_decision`, class, severity, state, product, the notification's kind and
 reason, the issue once published, the fault id - and points at `fault-show` on this store; the
-fault's recorded detail and evidence never travel. It is recomposed where its transport starts,
-so it states the fault as it stands then.
+fault's recorded detail and evidence never travel, and neither do a caller's own words: a
+decision a caller raised says only that it was raised, and its words stay on the notification
+(`fault-notifications`). It is recomposed where its transport starts, so it states the fault as
+it stands then. Its message id is derived from the fault and the `deliveryKey` alone, and it is
+addressed from the relationship the fault is about at that moment: a fault moved to an issue
+with no relationship is not sent to the hierarchy it left, it waits; moved to another, its
+never-sent message is re-addressed there. A blocking notice whose fault withdrew before it went
+does not go (invariant 5).
 
 Limits, stated rather than papered over:
 
@@ -955,11 +969,10 @@ Limits, stated rather than papered over:
   follow-up.
 - A notice the channel has capped (a busy or attempt cap) waits with the cap named, and needs
   the same act that releases a capped report.
-- Notifications are keyed per fault, kind and cycle, and a withdrawal keeps the cycle. A notice
-  sent after its fault withdrew says so; one already delivered is not followed by a notice that
-  the fault withdrew, and a fault that flaps within one cycle is told once. Whether a withdrawal
-  after a delivered blocking notice should itself go up is a criterion 7 decision this does not
-  make.
+- Notifications are keyed per fault, kind and cycle. A blocking notice already delivered is not
+  followed by one saying its fault later withdrew, and a fault that flaps within one cycle after
+  its blocking notice went is told once. Whether a withdrawal after a delivered blocking notice
+  should itself go up is a criterion 7 decision this does not make.
 - The pre-pass reads pending notifications a page at a time by age, and a reservation takes the
   least recently examined candidates, so under a large backlog of waiting notifications one that
   can go may wait a few ticks for both to reach it. It is latency, not loss: every candidate is

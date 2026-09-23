@@ -576,20 +576,23 @@ supervisor reads for itself, confirmed.
 ### A fault notification
 
 `stage_notice` freezes a notification the fault ledger reserved as one message of kind
-`fault_notification`: its obligation id is the notification id and its subject the notification's
-`deliveryKey`, so a second staging - another process, a restart, another relationship addressing
-it - finds the same row, and the store refuses a second one by a unique index
+`fault_notification`: its obligation id is the notification id, its subject the notification's
+`deliveryKey` and its envelope relation the fault (`fault:<id>`), so its message id is the
+notification's own. A second staging - another process, a restart, another relationship
+addressing it - finds the same row, and the store refuses a second one by a unique index
 (`supervisor_messages_one_notice`). It is addressed by `resolve()` from the relationship the
-notification is about, like a report. A row none of whose attempts can have sent is restated,
-re-addressed or released from its park by the next staging; one that may have been sent is
-returned as it is.
+notification is about now, like a report. A row none of whose attempts can have sent is
+restated, re-addressed (to another relationship too) or released from its park by the next
+staging; one that may have been sent is returned as it is.
 
 A notice is owed only while its notification is reserved under a live lease, because that
 reservation is where the ledger decided its eligibility and spent its budget. That is its I-247
 check (`_notice_now`, through `_proposal_now` at the claim and again where the transport starts):
 a notice whose notification is pending, uncertain, delivered or lapsed is held
-(`superseded_by_report`), never sent, and a reserved one is recomposed from what the ledger says
-now and restated if its fault moved. A notice whose attempt sent nothing is parked under the same
+(`superseded_by_report`), never sent, as is a blocking notice whose fault withdrew; one whose fault
+is about another relationship now is not claimed (and a parked one stays parked) until its next
+staging re-addresses it; and a reserved one is recomposed from what the ledger says now and
+restated if its fault moved. A notice whose attempt sent nothing is parked under the same
 hold (`park_notice`), so it is never the oldest message holding its recipient's later reports back,
 and the next reservation's staging releases it. Every other rule here holds unchanged: lifecycle
 withholding, the busy backoff and caps, the recipient's send budget, one head per recipient in

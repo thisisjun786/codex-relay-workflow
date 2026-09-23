@@ -1260,6 +1260,8 @@ class FaultLedger:
                 # Invariant 5: nothing landed, so nothing is owed. Its unissued writes go too.
                 self._cancel_where(db, identifier,
                                    "the fault was withdrawn before anything landed", now_iso)
+                # And so is its blocking notification nothing has carried yet.
+                self._void_withdrawn(db, now_iso)
             publication = adopted
             if trigger_key is not None:
                 publication = self._enqueue(db, identifier, trigger_key, now_iso,
@@ -3030,12 +3032,18 @@ class FaultLedger:
                            (identifier,)).fetchone()
         key = f"{identifier}|{kind}|{reason}" if reason else f"{identifier}|{kind}|{cycle}"
         notification = sha256_hex(key)[:ID_WIDTH]
+        # A notification withdrawn because its fault withdrew (_void_withdrawn) is raised again
+        # by the fault's recurrence in the same cycle: the recurrence is a new serious block,
+        # and a withdrawn row silently absorbing it would leave the level above untold.
         db.execute(
-            "INSERT OR IGNORE INTO fault_notifications (notification_id, fault_id, product,"
+            "INSERT INTO fault_notifications (notification_id, fault_id, product,"
             "  kind, reason, cycle, ref, state, created_at, updated_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            " VALUES (?,?,?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(notification_id) DO UPDATE SET state = excluded.state,"
+            "   last_error = NULL, updated_at = excluded.updated_at"
+            " WHERE fault_notifications.state = ?",
             (notification, identifier, fault["product"], kind, reason, cycle, ref, PENDING,
-             now, now))
+             now, now, WITHDRAWN))
         return notification
 
     def raise_notification(self, identifier, *, reason, ref=None) -> dict:
@@ -3077,6 +3085,24 @@ class FaultLedger:
     def _lapse_notifications(self, db, moment, stamp):
         db.execute("UPDATE fault_notifications SET state = ?, token = NULL, updated_at = ?"
                    " WHERE state = ? AND lease_until <= ?", (UNCERTAIN, stamp, RESERVED, moment))
+        self._void_withdrawn(db, stamp)
+
+    @staticmethod
+    def _void_withdrawn(db, stamp):
+        """Invariant 5 for notifications: a clear withdraws what nothing carried.
+
+        A pending blocking notification of a fault that withdrew - cleared before anything about
+        it landed - is withdrawn too: its block cleared before anybody above was told, so it is
+        no longer a new serious block (criterion 7). Set-based, and asked wherever the ledger
+        reads or settles notifications, so one raised before this rule existed is withdrawn on
+        the first read. A reserved one is stopped where its transport starts instead
+        (supervisorchannel._notice_now) and settles here as withdrawn; a recurrence raises it
+        again (_notify).
+        """
+        db.execute("UPDATE fault_notifications SET state = ?, updated_at = ?"
+                   " WHERE state = ? AND kind = ?"
+                   "   AND fault_id IN (SELECT fault_id FROM fault_ledger WHERE state = ?)",
+                   (WITHDRAWN, stamp, PENDING, BLOCKING, WITHDRAWN))
 
     def notifications(self, *, state=None, limit=SHOWN_PER_PAGE, after=None) -> dict:
         """Notifications in one state (pending by default), each with its delivery key and, for
@@ -3222,6 +3248,23 @@ class FaultLedger:
             elif row["state"] != RESERVED or row["token"] != token:
                 raise FaultRefused(RefusalReason.FAULT_CLAIM_STALE,
                                    "this reservation token is not the current one")
+            if not delivered:
+                # "Not delivered" is refused while the supervisor channel - the transport this
+                # store records - holds an attempt of this notification's message that may have
+                # sent: its answer, or a verified readback, settles it. Settling it as not sent
+                # would put it back to be sent again and give back a unit a real send spent.
+                sent = db.execute(
+                    "SELECT a.request_id FROM supervisor_messages m"
+                    " JOIN supervisor_attempts a ON a.message_id = m.message_id"
+                    " WHERE m.obligation_kind = 'fault_notification' AND m.obligation_id = ?"
+                    "   AND (a.send_attempted <> 'no' OR a.retry_safe = 0) LIMIT 1",
+                    (notification,)).fetchone()
+                if sent is not None:
+                    raise FaultRefused(
+                        RefusalReason.FAULT_STATE_CONFLICT,
+                        f"supervisor channel attempt {sent['request_id']} may have sent this"
+                        " notification, so it is not settled as not delivered: that send's"
+                        " answer, or a verified readback, settles it")
             if delivered:
                 db.execute("UPDATE fault_notifications SET state = ?, token = NULL,"
                            " delivered_at = ?, ack_ref = ?, updated_at = ?"
@@ -3235,9 +3278,14 @@ class FaultLedger:
                 db.execute("DELETE FROM fault_budget_uses WHERE product = ? AND kind = ?"
                            " AND ref = ?", (row["product"], NOTIFICATION,
                                            f"{notification}:{row['attempts']}"))
+                # Back to pending - or withdrawn, when it is a blocking notification of a fault
+                # that withdrew meanwhile (_void_withdrawn).
+                withdrew = row["kind"] == BLOCKING and db.execute(
+                    "SELECT 1 FROM fault_ledger WHERE fault_id = ? AND state = ?",
+                    (row["fault_id"], WITHDRAWN)).fetchone() is not None
                 db.execute("UPDATE fault_notifications SET state = ?, token = NULL,"
                            " last_error = ?, updated_at = ? WHERE notification_id = ?",
-                           (PENDING, ref, stamp, notification))
+                           (WITHDRAWN if withdrew else PENDING, ref, stamp, notification))
             fresh = db.execute("SELECT * FROM fault_notifications WHERE notification_id = ?",
                                (notification,)).fetchone()
         return _notification(fresh)
@@ -3277,9 +3325,23 @@ def anchor_relationship(db, fault):
     return row
 
 
-# The longest reason a notice carries upward. A raised reason is a caller's own words; the
-# notice says what it is about, and the rest is one fault-show away.
-NOTICE_REASON_CHARS = 200
+def _notice_reason(raw):
+    """The reason a notice may carry upward: only the ledger's own words, never a caller's.
+
+    A decision the ledger raised names a write of its own and that write's state. A decision a
+    caller raised carries the caller's free text, which can hold anything - a log line, a
+    credential - so the notice says only that a caller raised it; its words stay on the
+    notification (fault-notifications) on this store.
+    """
+    if not raw:
+        return None
+    if raw.startswith("raised:"):
+        return "raised by a caller (its words are on the notification: fault-notifications)"
+    parts = raw.split(":")
+    if (len(parts) == 3 and parts[0] == "write" and parts[1].isalnum()
+            and parts[2] in (UNCERTAIN, FAILED)):
+        return "write " + parts[1] + " is " + parts[2]
+    return None
 
 
 def notice_facts(db, notification):
@@ -3300,13 +3362,10 @@ def notice_facts(db, notification):
     if row is None:
         return None
     anchor = anchor_relationship(db, row)
-    reason = " ".join((row["reason"] or "").removeprefix("raised:").split())
-    if len(reason) > NOTICE_REASON_CHARS:
-        reason = reason[:NOTICE_REASON_CHARS - 1] + "…"
     return {
         "notificationId": row["notification_id"],
         "deliveryKey": f"relay-notification:{row['notification_id']}",
-        "faultId": row["fault_id"], "kind": row["kind"], "reason": reason or None,
+        "faultId": row["fault_id"], "kind": row["kind"], "reason": _notice_reason(row["reason"]),
         "cycle": row["cycle"], "state": row["state"], "leaseUntil": row["lease_until"],
         "attempts": row["attempts"], "product": row["product"],
         "faultClass": row["fault_class"], "severity": row["severity"],
