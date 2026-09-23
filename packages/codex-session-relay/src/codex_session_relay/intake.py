@@ -195,10 +195,11 @@ def file(router, incident, registry, workspace, *, cause_fault=None,
                     "owner": kept["owner"], "hold": None, "relate": kept["relate"],
                     "reason": "filed earlier; the ledger's record carries this occurrence"}
     before = (existing or {}).get("target") or {}
-    # A verified cause releases a standing claim; an incident naming no cause leaves both the
-    # claim and the cause the route is already linked to as they are.
-    cause_fault = cause_fault or before.get("cause")
+    # Only a cause this incident verified releases a standing claim. The cause the route is
+    # already linked to is carried, never read as an answer: an incident naming no cause leaves
+    # both the link and the claim as they are.
     claim = unverified_cause or (None if cause_fault else before.get("unverifiedCause"))
+    cause_fault = cause_fault or before.get("cause")
     obligations = _obligations(decision, existing, cause_fault,
                                labels=placement.issue_labels(incident))
     target = routes.target(decision, registry, incident, obligations=obligations,

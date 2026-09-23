@@ -566,6 +566,20 @@ class SharedCause(ProductRoutingCase):
         self.assertIn(cause, [o["toFault"] for o in target["obligations"]])
         self.assertEqual([], self.router.show("alpha-notes", attention=True)["routes"])
 
+    def test_a_linked_cause_never_answers_a_later_unverified_one(self):
+        cause, signature = self.crw_fault()
+        linked = self.route(cause={"product": "crw", "faultId": cause, "signature": signature})
+        claimed = self.route(occurrenceKey="run-2", cause={"product": "crw", "faultId": "0" * 32})
+        plain = self.route(occurrenceKey="run-3")
+        self.assertEqual({linked["faultId"]}, {claimed["faultId"], plain["faultId"]})
+        self.assertEqual("0" * 32, plain["unverifiedCause"]["faultId"])
+        target = routes.get(self.store, linked["faultId"])["target"]
+        self.assertEqual((cause, "0" * 32), (target["cause"], target["unverifiedCause"]["faultId"]))
+        # The cause verified again by a later incident is that incident's answer, and releases it.
+        again = self.route(occurrenceKey="run-4",
+                           cause={"product": "crw", "faultId": cause, "signature": signature})
+        self.assertIsNone(again["unverifiedCause"])
+
     def test_a_binding_that_places_a_held_defect_keeps_its_unverified_cause(self):
         held = self.route(product="gamma-kit", repository="example-org/gamma-kit",
                           surface="real_use", phase="in_use", component="cache",

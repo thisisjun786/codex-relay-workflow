@@ -143,7 +143,8 @@ is kept apart from that placement, on the defect's route, as a decision of its o
 `cause_unverified`, raised at intake when the incident is severe and by the next digest
 otherwise. The claim stands until an incident for the same defect names a verified cause, which
 releases it and owes the relation. A later occurrence naming no cause, a binding that places or
-moves the defect, and a defect filed before the claim arrived all leave it standing.
+moves the defect, a defect filed before the claim arrived, and a verified cause the route was
+already linked to all leave it standing: only the cause an incident verifies answers it.
 
 A verified cause produces two records in one transaction, linked once both own issues. The cause
 fault gains an occurrence at its own current severity, with evidence naming the affected product;
