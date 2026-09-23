@@ -113,14 +113,25 @@ whether to produce one.
 The packet and the evidence it points at are ONE fact, bound at staging and immutable after
 it. A completion's packet freezes its work report's pull request and decision, and its evidence
 pointer reads that event's report, so the message records the event and the report submission
-it was composed from. The report is read again under the staging lock and the obligation
-re-derived from it, and staging refuses as `superseded_revision` if either moved; once the
-message commits, `report.record` refuses to change that report at all, in place or as a new
-submission, because the packet would otherwise name one pull request while its evidence reads
-another. An omission's reading is checked against its obligation before anything is composed:
-the schema is `reporting-observation/1`, the state is `unreported`, and the relationship and
-the turn in its selectors are the obligation's, or staging refuses as
-`contradictory_observation`.
+it was composed from. The obligation handed in has to be the one its event raises in every
+field `supervision._obligation` derives - its id alone let a caller's copy with another
+generation or issue through - or staging refuses as `contradictory_observation`. Under the
+staging lock the report is read again and has to be the same report WHOLE, because a
+correction made in place keeps its submission number; the obligation is re-derived and compared
+field by field; and the packet is composed again from what the store now says and has to be
+the packet about to be frozen. Any difference refuses as `superseded_revision` with nothing
+written. Once the message commits, `report.record` refuses to change that report at all, in
+place or as a new submission, because the packet would otherwise name one pull request while
+its evidence reads another.
+
+An omission's reading is checked against its obligation before anything is composed: the
+schema is `reporting-observation/1`, the state is `unreported`, the relationship and the turn in
+its selectors are the obligation's, and the obligation the reading raises is the one handed in,
+field by field - the id omits the generation, so a reading from another generation of the same
+turn passes every other check. Otherwise staging refuses as `contradictory_observation`.
+`supervisor-stage --project` indexes the readings it is given by the obligation each raises,
+and an obligation whose readings disagree about what it is or where it can be read is refused
+by name under `refused` rather than staged with one of them.
 
 ### When the hierarchy moves under a staged report
 
@@ -142,12 +153,17 @@ bounds about that task, and the busy count restarts from the re-address.
 A report goes to whoever supervises at its TRANSPORT INSTANT, and the write that stamps that
 instant is where the question is asked last. It checks, under the lock, that the send's claim
 still holds the row, that the row still names the task the caller is about to send to, and that
-the hierarchy the message names is still the live one. The claim itself refuses a row whose
+the hierarchy the message names is still the live one - by asking `resolve()` itself inside that
+write, the same question the claim asks inside its own. A predicate written beside the resolver
+compared only the two owner bindings, and an assignment archived meanwhile, a project moved
+under another initiative or a drifting edge each passed it while `resolve()` refuses them. The claim itself refuses a row whose
 endpoints are not the ones its caller observed, so a re-address landing between the reads and
-the claim sends nothing, and the next attempt reads the row as it stands. A handover
-that committed after the claim and before that write finds nothing sent: the attempt is
-recorded as one that sent nothing, the send refuses as `relation_owner_drift`, and staging
-again re-addresses the report to the successor. A handover that commits after the stamp finds a
+the claim sends nothing, and the next attempt reads the row as it stands. A hierarchy
+that moved after the claim and before that write finds nothing sent: the attempt is recorded as
+one that sent nothing, the message goes back to `queued`, the send raises the refusal
+`resolve()` gave - `relation_owner_drift` for a handover, `unregistered_scope` for an assignment
+archived meanwhile - and staging again re-addresses the report to whoever the linkage names
+then. A handover that commits after the stamp finds a
 report already on its way to the supervisor who was live when it started, and that report stays
 with the task it went to: its attempts describe bytes that went there, and moving the row would
 have them describe a recipient they were never sent to. Staging it again refuses as
@@ -155,6 +171,28 @@ have them describe a recipient they were never sent to. Staging it again refuses
 reports it under `refused`; the successor has not been told through this channel, and the
 obligation stands until the Linear record confirms it. Sending never re-addresses anything;
 which task a report is for is decided where it is staged.
+
+### Who moves a message out of sending
+
+A message leaves `sending` only through the claim that holds it: this message, this attempt
+number and this lease owner, all three in the predicate of the write that moves it. `_settle`
+records the transport's answer that way, and the transport-start write that finds the hierarchy
+moved releases the message the same way. The one other way out is recovery: a lease that
+expired with no receipt moves the message to `held_uncertain`, because nothing observed what
+that send did.
+
+Once recovery has declared an attempt uncertain, nothing that attempt's late receipt says moves
+the message. The receipt is still recorded on its attempt row - the attempt history keeps what
+the transport said - and the `supervisor_message_attempted` journal entry says
+`messageMoved: false` and the state the message stayed in; `supervisor-send` answers the same
+beside the receipt as `messageState`. Only a verified readback moves `held_uncertain`. Matching
+`held_uncertain` in the settlement write let a late retry-safe refusal make the message
+claimable again, so a second attempt could wake the recipient while the first one's outcome was
+still unknown, and let a late success promote it without anybody reading anything back.
+
+Expiry alone ends nothing. A claim whose lease ran out and that nobody has recovered still
+holds the row, and its own receipt is still the best fact there is about its send, so it
+settles normally; whichever of the settlement and a recovery commits first decides.
 
 ### The readback, and exactly what it establishes
 
@@ -234,14 +272,17 @@ records nothing, and the answer is to ask again.
 
 A message held uncertain is read back as well. Its send's response was lost, or its sender died
 between the claim and the receipt, and nothing else reconciles this queue, so refusing it here
-made the one check that could prove the send arrived unreachable. It is verified against THAT
-attempt's request id: a real turn on the recipient's thread that did not begin before the send,
-and that request id in the recipient's own transcript. Only then does the readback settle it
+made the one check that could prove this attempt's request id reached the recipient's thread
+unreachable. It is verified against THAT attempt, the one numbered by the message's attempt
+count, found by its number because a late receipt may have been recorded on it. Verified means a
+real turn on the recipient's thread that did not begin before the send, and that attempt's
+request id in the recipient's own transcript. Only then does the readback settle it
 to `read`, with a `supervisor_message_reconciled` journal entry and a `reconciled` field on
 the readback saying so. The answer alone never settles it; an unverified readback is recorded
-and the message stays `held_uncertain`. The attempt keeps the transport state it had, so the
-reach ladder still reads `transport_accepted` as unmeasured - the transport never answered -
-while `received` is answered from the readback.
+and the message stays `held_uncertain`. With no receipt the attempt keeps `held_uncertain`,
+so the reach ladder reads `transport_accepted` as unmeasured - the transport never answered -
+while `received` is answered from the readback; a receipt that arrived after the recovery is
+what the attempt then says, and the ladder reads it.
 
 ### The five stages
 
@@ -371,13 +412,20 @@ row in `sending` with a lease nobody will settle. An expired lease moves it to
 `stranded()` lists such rows and is a READ: there is no sweep behind it, and a row is moved
 when `attempt()` or `read_back()` is called for that message again. The lease is re-checked
 inside that move, and a receipt that arrives after it is recorded on the attempt without moving
-a message its sender no longer owns.
+a message its sender no longer owns (see who moves a message out of sending, above).
 
 Staging decides whether anything is owed a second time under the write lock. The reading
 `supervision.select` takes before it can be overtaken by a `supervisor-report-recorded`
 committing in between, and the insert then stood beside a journal entry that already said the
 report existed. Under the lock, an obligation already reported or discharged refuses as
 `not_claimable` and nothing is written.
+
+A report still owed for an archived assignment has nobody to go to. `resolve()` finds the
+project by walking up the edge the assignment holds on its issue, and archiving the assignment
+releases that edge, so staging and sending refuse as `unregistered_scope` from then on. The
+obligation keeps standing and `supervisor-standing` keeps listing it; through this channel it
+goes out only if it is staged and sent before the assignment is archived. A superseded
+assignment is not affected, because its successor holds the edge.
 
 ## Who calls it today
 
@@ -389,7 +437,11 @@ supervisor answers with `supervisor-read` from a turn of its own. crw-run's rela
 states that as an instruction to the parent and the relay does not enforce it, so a parent that
 does not run the commands reports nothing through this channel. The reporting duty is carried
 by that instruction, which is weaker than an automatic one, and making it automatic is not part
-of this change.
+of this change. What IS independent of the parent is the obligation: it is derived from the
+event row the child's final receipt wrote, so a parent that never stages or sends leaves the
+report owed and unreported in `supervisor-standing --project`, across a restart, until somebody
+reports it or the Linear record confirms it. Nothing notices that on its own; it is visible to
+whoever asks.
 
 ## Scope of these claims
 

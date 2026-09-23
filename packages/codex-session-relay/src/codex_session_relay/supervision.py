@@ -16,10 +16,11 @@ compaction and a service replacement with nothing remembered in between.
 What this module will not claim: that a supervisor agreed to anything. It decides what is owed
 and nothing else - it opens no queue, reads no host and sends nothing. supervisorchannel.py is
 what carries a report upward and records the recipient's own readback, and even that stops at
-the message being read. The one discharge this can actually read is the Linear record the
-supervisor goes and reads for itself, and only when the synchronisation row says confirmed. A
-report whose Linear write failed leaves the obligation standing, which is the exact failure
-CRW-148 asks to be regression-tested, and a report that was read leaves it standing too.
+this attempt's request id being in the recipient's thread: arrival, not reading. The one
+discharge this can actually read is the Linear record the supervisor goes and reads for itself,
+and only when the synchronisation row says confirmed. A report whose Linear write failed
+leaves the obligation standing, which is the exact failure CRW-148 asks to be regression-tested,
+and a report that was read leaves it standing too.
 """
 
 import json
@@ -341,9 +342,9 @@ def discharge_of(store, obligation, *, target=sync.COORDINATION_DOCUMENT) -> dic
     """Whether the record the supervisor actually reads has this yet.
 
     There is no supervisor acknowledgement in this store and this does not pretend otherwise.
-    A readback on the supervisor channel says a message arrived where the recipient reads and
-    that the turn it names is real there - not that anybody read it - and it discharges
-    nothing. What discharges one is the Linear synchronisation row, which the
+    A readback on the supervisor channel says one attempt's request id is in the recipient's
+    thread and that the turn it names is real there - not that anybody read it - and it
+    discharges nothing. What discharges one is the Linear synchronisation row, which the
     supervisor reads for itself, and it counts only at confirmed - the state reached after a
     readback verified what was written.
 

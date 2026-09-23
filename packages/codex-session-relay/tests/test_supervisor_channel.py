@@ -15,6 +15,7 @@ the direction that matters: a send that cannot say what it is preserving does no
 """
 
 import json
+import os
 import shlex
 import unittest
 from contextlib import contextmanager
@@ -1463,7 +1464,6 @@ class WhatTheSixthReviewRoundFound(ChannelTestCase):
     def test_a_late_receipt_does_not_drag_a_settled_message_back(self):
         """The slow sender's own receipt is recorded; the message it no longer owns is not moved."""
         _one, message_id = self.staged()
-        before = self.channel.get(message_id)
         request_id, landed = self.died_after_delivering(message_id)
         self.clock.advance(self.channel.policy.lease_seconds + 1)
         self.read_back(message_id, landed)
@@ -1472,8 +1472,9 @@ class WhatTheSixthReviewRoundFound(ChannelTestCase):
         receipt = {"requestId": request_id, "operation": "send_message_to_thread",
                    "status": "accepted", "threadId": SUPERVISOR, "retrySafe": False,
                    "resumed": {"approvalPolicy": "never"}, "turnId": landed}
-        self.channel._settle(before, request_id, classify_operation_receipt(receipt),
-                             {"requestId": request_id}, self.clock.now())
+        self.channel._settle(message_id, 1, "relay", request_id,
+                             classify_operation_receipt(receipt), {"requestId": request_id},
+                             self.clock.now())
         self.assertEqual(self.channel.get(message_id)["state"], channel_module.READ)
         self.assertEqual(self.store.one(
             "SELECT state FROM supervisor_attempts WHERE request_id = ?",
@@ -1973,3 +1974,243 @@ class WhatTheEighthReviewRoundFound(ChannelTestCase):
         _one, message_id, _record = self.delivered()
         shown = self.channel.show(message_id)["attempts"][0]
         self.assertIsNotNone(shown["transportStartedAt"])
+
+
+class ASettlementBelongsToTheClaimThatMadeIt(ChannelTestCase):
+    """A message leaves sending only through the claim that holds it: this message, this attempt
+    and this lease owner. Once recovery has declared an attempt uncertain, nothing its late
+    receipt says moves the message; the receipt is recorded on the attempt, and only a verified
+    readback settles the message."""
+
+    def outlived_by_its_lease(self, message_id):
+        """attempt() whose transport outlives its lease, recovered before its receipt returns.
+
+        The transport is the real fake host, so whatever it was scripted to answer is what the
+        late receipt says. Recovery runs where a second worker would run it: after the send
+        started and before its answer is recorded.
+        """
+        deliver = self.adapter.send_message
+
+        def recovered_while_sending(request_id, thread_id, message, settings=None):
+            answer = deliver(request_id, thread_id, message, settings)
+            self.clock.advance(self.channel.policy.lease_seconds + 1)
+            recovered = self.channel._recover_if_stranded(
+                self.channel.get(message_id), self.clock.now())
+            self.assertEqual(recovered["state"], HELD_UNCERTAIN)
+            return answer
+
+        with mock.patch.object(self.adapter, "send_message", recovered_while_sending):
+            return self.channel.attempt(message_id, self.adapter)
+
+    def attempt_rows(self, message_id):
+        return [tuple(row) for row in self.store.all(
+            "SELECT attempt_no, state, send_attempted FROM supervisor_attempts"
+            " WHERE message_id = ? ORDER BY attempt_no", (message_id,))]
+
+    def test_a_late_refusal_after_recovery_does_not_reopen_the_send(self):
+        """RED: recovery declared attempt 1 unknown, and its retry-safe receipt made it claimable."""
+        _one, message_id = self.staged()
+        self.adapter.script("read_fail")
+        record = self.outlived_by_its_lease(message_id)
+        self.assertEqual(record["deliveryState"], WITHHELD_PRE_SEND)
+        self.assertEqual(self.channel.get(message_id)["state"], HELD_UNCERTAIN,
+                         "a late receipt does not undo the recovery's declaration")
+        self.assertEqual(record["messageState"], HELD_UNCERTAIN)
+        self.assertEqual(self.attempt_rows(message_id), [(1, WITHHELD_PRE_SEND, "no")],
+                         "the receipt is still recorded on its own attempt")
+        journal = json.loads(self.store.one(
+            "SELECT detail FROM journal WHERE kind = 'supervisor_message_attempted'")["detail"])
+        self.assertFalse(journal["messageMoved"])
+        self.assertEqual(journal["messageState"], HELD_UNCERTAIN)
+
+        self.clock.advance(3600)
+        self.assertIsNone(self.channel.attempt(message_id, self.adapter))
+        self.assertEqual(len(self.attempt_rows(message_id)), 1,
+                         "no second claim, so no second wake for one fact")
+
+    def test_a_late_success_after_recovery_is_not_a_silent_promotion(self):
+        """RED: the late dispatched receipt moved held_uncertain to dispatched by itself."""
+        _one, message_id = self.staged()
+        record = self.outlived_by_its_lease(message_id)
+        self.assertEqual(record["deliveryState"], DISPATCHED)
+        self.assertEqual(self.channel.get(message_id)["state"], HELD_UNCERTAIN,
+                         "only a verified readback settles an attempt declared uncertain")
+        self.assertEqual(self.attempt_rows(message_id), [(1, DISPATCHED, "yes")])
+
+        answer = self.read_back(message_id, record["turnId"])
+        self.assertEqual(answer["verified"], channel_module.HOST_READ)
+        self.assertEqual(answer["reconciled"]["requestId"], record["requestId"])
+        self.assertEqual(self.channel.get(message_id)["state"], channel_module.READ)
+
+    def test_the_claim_that_holds_the_message_settles_it(self):
+        """Positive control: the owning, unexpired sender settles normally."""
+        _one, message_id, record = self.delivered()
+        self.assertEqual(record["deliveryState"], DISPATCHED)
+        self.assertEqual(self.channel.get(message_id)["state"], DISPATCHED)
+
+    def test_an_expired_lease_nobody_recovered_still_belongs_to_its_claim(self):
+        """Positive control: expiry makes a claim recoverable; recovery, not the clock, ends it."""
+        _one, message_id = self.staged()
+        deliver = self.adapter.send_message
+
+        def slow(request_id, thread_id, message, settings=None):
+            answer = deliver(request_id, thread_id, message, settings)
+            self.clock.advance(self.channel.policy.lease_seconds + 1)
+            return answer
+
+        with mock.patch.object(self.adapter, "send_message", slow):
+            record = self.channel.attempt(message_id, self.adapter)
+        self.assertEqual(record["deliveryState"], DISPATCHED)
+        self.assertEqual(self.channel.get(message_id)["state"], DISPATCHED)
+
+
+class WhatTheFifthIndependentReviewFound(ChannelTestCase):
+    """The hierarchy a claim sends under is decided by resolve() inside the claim's own write, and
+    a staged packet is composed from exactly the fact its evidence reads."""
+
+    report_naming = WhatTheEighthReviewRoundFound.report_naming
+    completion_naming = WhatTheEighthReviewRoundFound.completion_naming
+    packet_pr = WhatTheEighthReviewRoundFound.packet_pr
+    committed_before_the_lock = WhatTheSixthReviewRoundFound.committed_before_the_lock
+    observation = WhatTheThirdReviewRoundFound.observation
+
+    # --------------------------------------------------------- the hierarchy at the claim
+
+    def test_an_assignment_archived_after_the_preflight_is_not_sent(self):
+        """RED: the claim compared the two owner bindings, which archiving leaves in place."""
+        _one, message_id = self.staged()
+        settings = self.channel._settings_for
+
+        def settings_then_archived(task_id, runtime_status=None):
+            answer = settings(task_id, runtime_status)
+            if self.registry.get(self.rid)["status"] != "archived":
+                self.registry.set_status(self.rid, "archived", actor="a test")
+            return answer
+
+        with mock.patch.object(self.channel, "_settings_for", settings_then_archived):
+            self.assertIsNone(self.channel.attempt(message_id, self.adapter))
+        self.assertEqual(self.adapter.sends, [])
+        self.assertEqual(self.store.all("SELECT request_id FROM supervisor_attempts"), [])
+        self.assertEqual(self.channel.get(message_id)["state"], QUEUED)
+
+    def test_an_assignment_archived_between_the_claim_and_the_transport_sends_nothing(self):
+        _one, message_id = self.staged()
+        claim = self.channel._claim
+
+        def claim_then_archive(*args, **kwargs):
+            claimed = claim(*args, **kwargs)
+            self.registry.set_status(self.rid, "archived", actor="a test")
+            return claimed
+
+        with mock.patch.object(self.channel, "_claim", claim_then_archive):
+            with self.assertRaises(DeliveryRefused) as caught:
+                self.channel.attempt(message_id, self.adapter)
+        self.assertEqual(caught.exception.reason, RefusalReason.UNREGISTERED_SCOPE,
+                         "the refusal resolve() gives, carried rather than renamed")
+        self.assertIn("Nothing was sent", caught.exception.detail)
+        self.assertEqual(self.adapter.sends, [])
+        attempt = self.store.one(
+            "SELECT send_attempted, retry_safe, transport_started_at FROM supervisor_attempts"
+            " WHERE message_id = ?", (message_id,))
+        self.assertEqual(tuple(attempt), ("no", 1, None))
+        self.assertEqual(self.channel.get(message_id)["state"], QUEUED)
+
+    # ------------------------------------------------ the packet and the fact it describes
+
+    def test_a_correction_in_place_before_the_staging_lock_refuses_the_stale_packet(self):
+        """RED: the lock compared submission numbers, and an in-place correction keeps its number."""
+        event_id = self.completion_naming(10)
+        one = self.obligation(event_id)
+        with self.committed_before_the_lock(
+                lambda: self.report_naming(event_id, 11, submission_no=1)):
+            refusal = self.assertRefused(
+                RefusalReason.SUPERSEDED_REVISION, self.channel.stage, one)
+        self.assertIn("changed while this was being staged", refusal.detail)
+        self.assertEqual(self.store.all("SELECT message_id FROM supervisor_messages"), [])
+        staged = self.channel.stage(self.obligation(event_id))
+        self.assertEqual(self.packet_pr(staged["messageId"]), 11)
+
+    def test_an_obligation_its_caller_altered_is_refused(self):
+        """RED: only the id and the detail were compared, and the packet is composed from the copy."""
+        event_id = self.completion_naming(10)
+        for field, value in (("executionGeneration", 99), ("issueKey", "OTHER-1")):
+            with self.subTest(field=field):
+                altered = dict(self.obligation(event_id), **{field: value})
+                refusal = self.assertRefused(
+                    RefusalReason.CONTRADICTORY_OBSERVATION, self.channel.stage, altered)
+                self.assertIn(field, refusal.detail)
+        self.assertEqual(self.store.all("SELECT message_id FROM supervisor_messages"), [])
+        self.assertEqual(self.store.all(
+            "SELECT seq FROM journal WHERE kind = ?", (supervision.JOURNAL_KIND,)), [])
+
+    def test_two_generations_of_one_omission_are_a_contradiction_not_a_choice(self):
+        """RED: the obligation came from the first reading and the evidence from the last."""
+        base = self.observation()
+        first = dict(base, executionGeneration=1)
+        second = dict(base, executionGeneration=2,
+                      selectors=dict(base["selectors"], assignment="asg-2"))
+        answer = self.channel.stage_standing(PROJECT, observations=[first, second])
+        self.assertEqual(answer["staged"], [])
+        self.assertEqual([one["reason"] for one in answer["refused"]],
+                         [RefusalReason.CONTRADICTORY_OBSERVATION.value])
+        self.assertEqual(self.store.all("SELECT message_id FROM supervisor_messages"), [])
+
+        refusal = self.assertRefused(
+            RefusalReason.CONTRADICTORY_OBSERVATION, self.channel.stage,
+            supervision.from_observation(first), reading=second)
+        self.assertIn("executionGeneration", refusal.detail)
+
+    def test_the_same_omission_read_twice_is_staged_once(self):
+        """Positive control: readings that agree are one reading."""
+        first = dict(self.observation(), executionGeneration=1)
+        answer = self.channel.stage_standing(PROJECT, observations=[first, dict(first)])
+        self.assertEqual(len(answer["staged"]), 1)
+        self.assertEqual(answer["refused"], [])
+
+
+class AParentThatNeverReports(ChannelTestCase):
+    """The negative control CRW-148 names: the parent omits the report on purpose.
+
+    The obligation is derived from the event row the child's final receipt wrote, so nothing
+    the parent does is needed for it to exist, and nothing the parent fails to do makes it go
+    away. What this does NOT show is that anything sends the report: nothing in the relay
+    stages or sends on its own, and an omitting parent is visible here only to whoever reads
+    the project's standing.
+    """
+
+    def standing(self):
+        from argparse import Namespace
+
+        from codex_session_relay import cli
+        from codex_session_relay.assignment import AssignmentView
+
+        linkage = Linkage(self.store, self.clock)
+        services = type("Services", (), {
+            "store": self.store, "linkage": linkage,
+            "assignments": AssignmentView(self.store, self.registry, self.clock,
+                                          linkage=linkage)})()
+        return cli.cmd_supervisor_standing(services, Namespace(project=PROJECT, observation=[]))
+
+    def test_a_parent_that_never_stages_or_sends_still_reads_the_report_as_owed(self):
+        from codex_session_relay.registry import Registry
+
+        event_id = self.completed()
+        # The parent runs nothing on this channel. A day passes and the relay restarts, so
+        # nothing in memory can be what keeps the obligation.
+        self.clock.advance(86400)
+        self.store.close()
+        self.store = Store(os.path.join(self.tmp, "state", "relay.sqlite3"))
+        self.addCleanup(self.store.close)
+        self.registry = Registry(self.store, self.clock)
+
+        owed = [one for one in self.standing()["standing"]
+                if (one.get("basis") or {}).get("eventId") == event_id]
+        self.assertEqual(len(owed), 1, "the completion is owed without anything the parent did")
+        self.assertEqual(owed[0]["kind"], supervision.COMPLETION)
+        self.assertEqual(owed[0]["decision"]["standing"], supervision.STANDING)
+        self.assertTrue(owed[0]["decision"]["report"], "and a report of it is still owed")
+        self.assertIsNone(owed[0]["decision"]["priorReport"],
+                          "and nothing says one was produced")
+        self.assertEqual(self.store.all("SELECT message_id FROM supervisor_messages"), [])
+        self.assertEqual(self.store.all(
+            "SELECT seq FROM journal WHERE kind = ?", (supervision.JOURNAL_KIND,)), [])
