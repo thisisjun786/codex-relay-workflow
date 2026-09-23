@@ -206,14 +206,15 @@ def _affected(port, cause_row, product, fault_id, incident):
     """The cause's occurrence saying this product was affected, recorded inside the product
     occurrence's own attempt and only once the ledger has recorded that occurrence as new: a
     replay of it counts nothing on the cause, a failed filing takes this back with it, and the
-    key carries the product fault's episode, so the same key after a clear counts again."""
+    key carries the affected fault and its episode, so two defects sharing a source key are two
+    effects, and the same key after a clear counts again."""
     placed = _stored(cause_row.get("scope"))
     episode = (port.get(fault_id) or {}).get("episode") or 1
     port.record(port.observation(
         product=cause_row["product"], workspace=placed.get("workspace"),
         fault_class=cause_row["fault_class"], severity=cause_row["severity"],
         signature=_stored(cause_row["signature"]),
-        occurrence_key=f"affected:{product}:{episode}:{incident['occurrenceKey']}",
+        occurrence_key=f"affected:{product}:{fault_id}:{episode}:{incident['occurrenceKey']}",
         project=placed.get("projectKey"), observed_at=incident["observedAt"],
         detail=f"{product} was affected by this fault", evidence=incident["evidence"]))
 

@@ -730,6 +730,10 @@ class SharedCause(ProductRoutingCase):
         self.assertIs(True, renewed["recorded"])
         self.assertEqual(first["faultId"], renewed["faultId"])
         self.assertEqual(count + 1, self.router.port.get(cause)["occurrence_count"])
+        # Another defect of the product, under the same source key, is another effect.
+        other = self.route(cause=named, symptom="scroll_lock")
+        self.assertNotEqual(first["faultId"], other["faultId"])
+        self.assertEqual(count + 2, self.router.port.get(cause)["occurrence_count"])
 
 
 class UnclearOwnership(ProductRoutingCase):
