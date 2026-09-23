@@ -1744,6 +1744,12 @@ GUARD_CALL_FIELDS = ("exitCode", "signal", "errno", "guardElapsedMs", "guardStde
 ANSWER_FIELDS = ("observation", "counters")
 IDENTITY_FIELDS = ("established", "reason", "answerItem", "transcriptPath", "scannedBytes",
                    "scannedLines")
+# Everything run() writes into a row, and what only its fault path adds: the fault itself, and the
+# journal's answer from a write that went nowhere before it. A row the journal did write is never
+# rewritten (the fault path's retry cannot create the slot again), so journalledAs reaches a file
+# only as None, and only beside a fault.
+ROW_KEYS = ROW_FIELDS + PAYLOAD_FIELDS + GUARD_CALL_FIELDS + ANSWER_FIELDS + ("detail",)
+FAULT_KEYS = ("fault", "journalledAs")
 
 
 def _row_fields_written(row):
@@ -1754,6 +1760,15 @@ def _row_fields_written(row):
     contradict them. Their absence is still a record run() did not write.
     """
     if any(field not in row for field in ROW_FIELDS) or row.get("event") != EVENT:
+        return False
+    # And nothing else: a field run() never puts on the row's path means run() did not write it.
+    faulted = row.get("adapterOutcome") == ADAPTER_FAULTED
+    if any(field not in ROW_KEYS + (FAULT_KEYS if faulted else ()) for field in row):
+        return False
+    if row.get("journalledAs") is not None:
+        return False
+    identity = row.get("eventIdentity")
+    if isinstance(identity, dict) and any(field not in IDENTITY_FIELDS for field in identity):
         return False
     # The types the adapter writes these in; their values are observations nothing else records.
     configuration = row.get("configuration")
@@ -1909,6 +1924,17 @@ def _guard_result_written(record):
 
 OUTCOME_FIELDS = ("ledgerVersion", "eventKey", "sessionId", "turnId", "journalPolicy",
                   "adapterOutcome", "guardDecision", "guardState", "held", "attemptRow", "at")
+# What claim_event() and _arbitrate() write, exactly: the claim names the host's ledger, the host's
+# file names the owner's journal root.
+CLAIM_FIELDS = ("ledgerVersion", "eventKey", "sessionId", "turnId", "stopHookActive",
+                "answerItem", "claimedAt", "claimedBy")
+CLAIMED_BY_FIELDS = ("pid", "attemptRow", "hostLedger")
+HOST_CLAIMED_BY_FIELDS = ("pid", "journalRoot", "attemptRow")
+
+
+def _fields_exactly(body, fields):
+    """Whether a record holds these fields and no others."""
+    return isinstance(body, dict) and set(body) == set(fields)
 
 
 def _ledger_shape(body, key, outcome):
@@ -1922,7 +1948,7 @@ def _ledger_shape(body, key, outcome):
     if outcome:
         # The owner's outcome: it got past its claim, so it asked the guard or faulted, and its
         # guard result is one run() writes.
-        return (all(field in body for field in OUTCOME_FIELDS)
+        return (_fields_exactly(body, OUTCOME_FIELDS)
                 and _stamp(body.get("at"))
                 and (body.get("adapterOutcome") in FROM_THE_GUARD
                      or body.get("adapterOutcome") == ADAPTER_FAULTED)
@@ -1930,7 +1956,8 @@ def _ledger_shape(body, key, outcome):
                 and _guard_result_written(body)
                 and (body.get("attemptRow") is None or _slot(body.get("attemptRow"))))
     claimed_by = body.get("claimedBy")
-    return (_stamp(body.get("claimedAt")) and isinstance(body.get("stopHookActive"), bool)
+    return (_fields_exactly(body, CLAIM_FIELDS) and _fields_exactly(claimed_by, CLAIMED_BY_FIELDS)
+            and _stamp(body.get("claimedAt")) and isinstance(body.get("stopHookActive"), bool)
             and isinstance(body.get("answerItem"), str) and bool(body.get("answerItem"))
             and isinstance(claimed_by, dict) and _slot(claimed_by.get("attemptRow"))
             and _is_count(claimed_by.get("pid"))
@@ -2026,7 +2053,9 @@ def _host_shape(body, key):
     if not _stamp(body.get("claimedAt")):
         return False
     claimed_by = body.get("claimedBy")
-    return (isinstance(body.get("stopHookActive"), bool) and isinstance(claimed_by, dict)
+    return (_fields_exactly(body, CLAIM_FIELDS)
+            and _fields_exactly(claimed_by, HOST_CLAIMED_BY_FIELDS)
+            and isinstance(body.get("stopHookActive"), bool)
             and _slot(claimed_by.get("attemptRow")) and _is_count(claimed_by.get("pid"))
             and "journalRoot" in claimed_by
             and (claimed_by.get("journalRoot") is None

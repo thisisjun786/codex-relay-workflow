@@ -1249,3 +1249,42 @@ class ReviewRoundNineControls(OneEventRecords, unittest.TestCase):
                 self.assertEqual(answer["unjudgedInvocations"], counted,
                                  "a row event_identity() cannot write was counted as one it wrote"
                                  if not written else "a row it writes was not counted")
+
+
+class ReviewRoundTenControls(OneEventRecords, unittest.TestCase):
+    """Red-first controls for the tenth review round (CRW-212, PR #144).
+
+    Each writer puts a fixed set of fields in its record: run() its row, with a fault and the
+    journal's answer only on the fault path; claim_event() and _arbitrate() their files;
+    record_outcome() the outcome; event_identity() the identity. A record carrying a field its
+    writer never puts on that path is not one it wrote, whatever the other fields say.
+    """
+
+    def test_a_field_its_writer_never_puts_there_is_not_vouched_for(self):
+        cases = [
+            ("accepted", (), "fault", "RuntimeError: impossible"),
+            ("duplicate", (), "fault", "RuntimeError: impossible"),
+            ("accepted", (), "journalledAs", None),
+            ("accepted", (), "unknownField", 1),
+            ("duplicate", (), "unknownField", None),
+            ("accepted", ("eventIdentity",), "unknownField", None),
+            ("claim", (), "adapterOutcome", "guard_answered"),
+            ("claim", ("claimedBy",), "journalRoot", None),
+            ("outcome", (), "fault", "RuntimeError: impossible"),
+            ("outcome", (), "answerItem", "m"),
+            ("host", (), "held", False),
+            ("host", ("claimedBy",), "hostLedger", "/x"),
+        ]
+        for which, inside, field, value in cases:
+            where = ".".join((which,) + inside + (field,))
+            with self.subTest(field=where):
+                host, records = self.one_event()
+                def change(body):
+                    target = body
+                    for part in inside:
+                        target = target[part]
+                    target[field] = value
+                self.change(records[which], change)
+                code, answer = verify(host.journal)
+                self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"),
+                                 where + "=" + repr(value) + " was vouched for")

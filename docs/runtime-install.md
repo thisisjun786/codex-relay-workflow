@@ -1855,9 +1855,11 @@ one key, an accepted row whose claim is missing, or a duplicate that asked the g
   hold or receipt on a record that got no answer, a hold without a block or a block without a
   hold, a fault that is not a prefix of `run()`'s order (asked, then the call, then an answer), a
   version that is not the integer the adapter writes, a time or day directory that is not a real
-  one in the adapter's format, a field in another type than the adapter writes it, an accepted row that did not ask the guard or names another
-  record, or any record whose own session, turn, `stop_hook_active` and answer item do not hash
-  to its key;
+  one in the adapter's format, a field the adapter does not write on that record's path (a fault or
+  the journal's answer on a row that did not fault, or any field outside the fixed set a claim, an
+  outcome, a host file or an identity is written with) or one in another type than it writes it, an
+  accepted row that did not ask the guard or names another record, or any record whose own
+  session, turn, `stop_hook_active` and answer item do not hash to its key;
 - a row that records something at a stage it did not reach, or leaves out what a stage it reached
   records: the payload's session, turn and flag come with the settings' mode or not at all, a
   release always says why, a guard call's detail is present exactly when its process neither
