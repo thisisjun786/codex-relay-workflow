@@ -883,9 +883,14 @@ def _assert_resubmission(db, event_id, submission_no) -> None:
     report, so a correction - in place or as a new submission - would leave a packet naming
     one pull request while its evidence reads another.
     """
+    # Only a message composed FROM a recorded report froze one. A message staged from the event
+    # before any report existed froze nothing, so the first report stays free: refusing it lost
+    # the report outright - a blocked turn staged before its report said it was a decision only
+    # the user can make could never say so. The channel refuses to send a packet whose report
+    # is no longer the one standing, and staging again carries the new one.
     frozen = db.execute(
         "SELECT message_id, submission_no FROM supervisor_messages WHERE event_id = ?"
-        " ORDER BY staged_at LIMIT 1",
+        "   AND submission_no IS NOT NULL ORDER BY staged_at LIMIT 1",
         (event_id,),
     ).fetchone()
     if frozen is not None:

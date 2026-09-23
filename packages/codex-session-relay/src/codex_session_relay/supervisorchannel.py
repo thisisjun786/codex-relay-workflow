@@ -111,6 +111,8 @@ READDRESSED = "supervisor_message_readdressed"
 # The journal kind a block or decision stated again before anything was sent writes. It does
 # not restart the busy count: the recipient did not change.
 RESTATED = "supervisor_message_restated"
+# The hold on a message whose event no longer raises the obligation it is for.
+SUPERSEDED_HOLD = "superseded_by_report"
 # What the reader of a message fills in. Each is one shell word, so the rendered line splits
 # into the argv it looks like, and none of them is a value this relay could know.
 SOCKET_PLACEHOLDER = "YOUR_RELAY_SOCKET"
@@ -309,6 +311,20 @@ class _NotClaimable(Exception):
     """Nothing to claim, for any reason. The caller does nothing and reports nothing."""
 
 
+class _Stale(_NotClaimable):
+    """A claim refused because the fact the packet was composed from moved since staging.
+
+    "restage" - the event's work report was recorded or changed after the packet was composed
+    without it; staging again carries it. "obsolete" - the event no longer raises the obligation
+    the message is for at all, so the message is held rather than sent.
+    """
+
+    def __init__(self, kind, detail):
+        super().__init__(detail)
+        self.kind = kind
+        self.detail = detail
+
+
 class _Paced(_NotClaimable):
     """A claim refused on the recipient's shared send budget, and on nothing else.
 
@@ -460,6 +476,38 @@ class SupervisorChannel:
         row = self.store.one(
             "SELECT issue_key FROM relationships WHERE relationship_id = ?", (relationship_id,))
         return row["issue_key"] if row is not None else None
+
+    def _stale_in(self, db, message_id):
+        """Whether an event's message still describes what its event raises, asked in a write.
+
+        None when it does. Else ("obsolete", detail) when the event now raises another
+        obligation, or ("restage", detail) when it raises the same one from a report other than
+        the one the packet was composed from. An omission has no event and is never stale here:
+        its evidence is the reading frozen on its own row.
+        """
+        from .report import read as read_work_report
+
+        row = db.execute(
+            "SELECT event_id, submission_no, obligation_id FROM supervisor_messages"
+            " WHERE message_id = ?", (message_id,)).fetchone()
+        if row is None or not row["event_id"]:
+            return None
+        report = read_work_report(self.store, row["event_id"])
+        raised = supervision.from_event(self.store, row["event_id"], report)
+        if raised is None or raised["obligationId"] != row["obligation_id"]:
+            return ("obsolete",
+                    "event " + repr(row["event_id"]) + " now raises "
+                    + (repr(raised["kind"]) + " obligation " + repr(raised["obligationId"])
+                       if raised is not None else "nothing")
+                    + ", not the one this message is for. The message is held rather than"
+                      " sent; staging the project again stages what the event raises now")
+        if _submission_of(report) != row["submission_no"]:
+            return ("restage",
+                    "the work report for event " + repr(row["event_id"]) + " is submission "
+                    + repr(_submission_of(report)) + " and this message was composed from "
+                    + repr(row["submission_no"]) + ". Nothing was sent; staging it again"
+                      " carries the report that stands")
+        return None
 
     def _hierarchy_in(self, db, message_id):
         """Whether the hierarchy a staged row names is still the live one, asked in a write.
@@ -667,7 +715,8 @@ class SupervisorChannel:
                     " it can be read. The staged message keeps the reading it froze; nothing"
                     " was written")
             if existing is not None:
-                if _addressed_as(existing, resolution) and existing["event_id"] == event_id:
+                if (_addressed_as(existing, resolution) and existing["event_id"] == event_id
+                        and existing["submission_no"] == _submission_of(report)):
                     return {"schema": VERSION, "staged": False, "messageId": message_id,
                             "reason": "this fact is already staged; one obligation is one"
                                       " message",
@@ -748,7 +797,8 @@ class SupervisorChannel:
         now_is = {"sender": resolution["sender"], "recipient": resolution["recipient"],
                   "projectKey": resolution["projectKey"]}
         moving = not _addressed_as(row, resolution)
-        restating = row["event_id"] != event_id
+        restating = (row["event_id"] != event_id
+                     or row["submission_no"] != submission_no)
         at = self.clock.iso()
         with self.store.composing() as db:
             # Re-resolved under this write too. A caller holding a reading from before a
@@ -765,7 +815,8 @@ class SupervisorChannel:
                 " project_key = ?, packet = ?, event_id = ?, submission_no = ?,"
                 " updated_at = ?" + released
                 + " WHERE message_id = ? AND sender_task_id = ? AND recipient_task_id = ?"
-                "   AND project_key IS ? AND event_id IS ? AND state IN (?,?,?)"
+                "   AND project_key IS ? AND event_id IS ? AND submission_no IS ?"
+                "   AND state IN (?,?,?)"
                 "   AND NOT EXISTS (SELECT 1 FROM supervisor_attempts a"
                 "                    WHERE a.message_id = supervisor_messages.message_id"
                 "                      AND (a.send_attempted <> 'no' OR a.retry_safe = 0))",
@@ -773,7 +824,8 @@ class SupervisorChannel:
                  json.dumps(packet, ensure_ascii=False, sort_keys=True), event_id,
                  submission_no, at) + ((QUEUED,) if moving else ())
                 + (message_id, was["sender"], was["recipient"], was["projectKey"],
-                   row["event_id"], QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND),
+                   row["event_id"], row["submission_no"], QUEUED, DEFERRED_BUSY,
+                   WITHHELD_PRE_SEND),
             )
             rewritten = cursor.rowcount == 1
             if rewritten and moving:
@@ -787,6 +839,7 @@ class SupervisorChannel:
                 self.store.journal(
                     RESTATED, message_id,
                     {"fromEvent": row["event_id"], "toEvent": event_id,
+                     "fromSubmission": row["submission_no"], "toSubmission": submission_no,
                      "reason": "the child stated this " + str(row["obligation_kind"])
                                + " again before anything was sent, so the message now"
                                  " carries that statement"}, at=at)
@@ -802,7 +855,8 @@ class SupervisorChannel:
                                " carries the newest statement"),
                     "message": dict(current),
                     "recipient": now_is["recipient"], "sender": now_is["sender"]}
-        if _addressed_as(current, resolution) and current["event_id"] == event_id:
+        if (_addressed_as(current, resolution) and current["event_id"] == event_id
+                and current["submission_no"] == submission_no):
             return {"schema": VERSION, "staged": False, "readdressed": False,
                     "restated": False, "messageId": message_id,
                     "reason": "another caller rewrote this message to the same thing first",
@@ -1125,9 +1179,20 @@ class SupervisorChannel:
         except _Paced:
             self._reschedule(row, now + self.policy.min_send_interval_seconds)
             return None
+        except _Stale as stale:
+            if stale.kind == "obsolete":
+                # A bound this channel chose, so a hold: the fact is gone, and nothing about
+                # the recipient could bring it back.
+                with self.store.transaction() as db:
+                    if self._reschedule_in(db, row, row["next_eligible_at"],
+                                           hold=SUPERSEDED_HOLD):
+                        self.store.journal("supervisor_message_superseded", message_id,
+                                           {"detail": stale.detail}, at=self.clock.iso())
+            raise DeliveryRefused(RefusalReason.SUPERSEDED_REVISION, stale.detail)
         except _NotClaimable:
             return None
-        refused = self._start_transport(message_id, attempt_no, request_id, owner, recipient)
+        refused = self._start_transport(message_id, attempt_no, request_id, owner, recipient,
+                                        now)
         if refused is not None:
             kind, detail = refused
             if kind == "moved":
@@ -1160,7 +1225,8 @@ class SupervisorChannel:
         # recovery put it.
         return {**record, "messageState": self.get(message_id)["state"]}
 
-    def _start_transport(self, message_id, attempt_no, request_id, owner, recipient):
+    def _start_transport(self, message_id, attempt_no, request_id, owner, recipient,
+                         now=None):
         """Stamp the instant the transport starts, under the lock that decides it may.
 
         A report goes to whoever supervises at its transport instant, and this write IS that
@@ -1180,8 +1246,9 @@ class SupervisorChannel:
         way as a handover: the attempt is recorded as one that sent nothing and the message
         goes back to queued, so nothing is stranded by the refusal.
 
-        Returns None when the transport may start, else ("lapsed", detail) or ("moved",
-        the refusal to raise).
+        Returns None when the transport may start, else ("lapsed", detail), ("moved", the
+        refusal to raise) or ("paced", the budget's reason) - the send the recipient's budget
+        refused here is deferred past the gap, never failed.
         """
         with self.store.transaction() as db:
             ours = db.execute(
@@ -1194,17 +1261,12 @@ class SupervisorChannel:
             _live, moved = self._hierarchy_in(db, message_id)
             at = self.clock.iso()
             if moved is not None:
-                claimed = db.execute(
-                    "SELECT record FROM supervisor_attempts WHERE request_id = ?",
-                    (request_id,)).fetchone()
-                released = self._release_reservation(
-                    db, claimed["record"] if claimed is not None else None)
                 record = {"requestId": request_id, "messageId": message_id,
                           "attemptNo": attempt_no, "deliveryState": WITHHELD_PRE_SEND,
                           "sendAttempted": "no", "retrySafe": True,
                           "reason": "the hierarchy moved between the claim and the transport",
                           "refusal": moved.reason.value if moved.reason else None,
-                          "detail": moved.detail, "reservationReleased": released}
+                          "detail": moved.detail}
                 db.execute(
                     "UPDATE supervisor_attempts SET state = ?, send_attempted = 'no',"
                     " retry_safe = 1, record = ?, observed_at = ? WHERE request_id = ?",
@@ -1229,10 +1291,40 @@ class SupervisorChannel:
                     " before its transport started: " + str(moved.detail) + ". Nothing was"
                     " sent, and the attempt is recorded as sending nothing, so staging it"
                     " again re-addresses it to whoever the linkage names then"))
-            # Taken AFTER the lock was granted and the hierarchy asked, not before: waiting for
-            # the lock and resolving can take seconds, and a stamp read before them dated the
-            # transport start earlier than it was - so a turn the transport steered, opened in
-            # that interval, passed the check that no turn may predate the send.
+            # The instant, and the send it spends, are taken AFTER the lock was granted and the
+            # hierarchy asked, not before: waiting for the lock and resolving can take seconds,
+            # and a stamp read before them dated the transport start earlier than it was - so a
+            # turn the transport steered, opened in that interval, passed the check that no turn
+            # may predate the send. The same instant is what the recipient's budget is charged
+            # at, so a slow host check cannot date a send early enough to lapse the gap.
+            # The later of the caller's instant and this clock: a caller's instant read before
+            # the host checks is stale, and one a caller set ahead is the time it means.
+            started = max(now if now is not None else self.clock.now(), self.clock.now())
+            paced = reserve_send(db, self.policy, recipient, started)
+            if paced is not None:
+                # Another send to this task got there first. Nothing was sent: the attempt says
+                # so, and the message is queued again past the gap, under this claim's own
+                # state, attempt and lease owner - deferred, never failed and never held.
+                record = {"requestId": request_id, "messageId": message_id,
+                          "attemptNo": attempt_no, "deliveryState": WITHHELD_PRE_SEND,
+                          "sendAttempted": "no", "retrySafe": True, "refusal": paced,
+                          "reason": "the recipient's send budget refused this send at its"
+                                    " transport start"}
+                db.execute(
+                    "UPDATE supervisor_attempts SET state = ?, send_attempted = 'no',"
+                    " retry_safe = 1, record = ?, observed_at = ? WHERE request_id = ?",
+                    (WITHHELD_PRE_SEND, json.dumps(record, sort_keys=True), at, request_id))
+                db.execute(
+                    "UPDATE supervisor_messages SET state = ?, next_eligible_at = ?,"
+                    " lease_owner = NULL, lease_until = NULL, updated_at = ?"
+                    " WHERE message_id = ? AND state = ? AND attempt_count = ?"
+                    "   AND lease_owner IS ?",
+                    (QUEUED, started + self.policy.min_send_interval_seconds, at, message_id,
+                     SENDING, attempt_no, owner))
+                self.store.journal(
+                    "supervisor_message_paced", message_id,
+                    {"requestId": request_id, "refusal": paced}, at=at)
+                return ("paced", paced)
             db.execute(
                 "UPDATE supervisor_attempts SET transport_started_at = ? WHERE request_id = ?",
                 (self.clock.iso(), request_id))
@@ -1259,9 +1351,10 @@ class SupervisorChannel:
         committed before the transport is called. So an attempt with no stamp, found by a
         recovery that has just taken the row from its expired claim, sent nothing and never
         will: that claim's own transport-start write now finds the row is not its own. That
-        attempt is recorded as one that sent nothing, its reserved send is given back, and the
-        message goes back to queued - holding it uncertain left a report that no readback could
-        ever settle, because there were no bytes anywhere to read back.
+        attempt is recorded as one that sent nothing - it spent no send either, because the
+        budget is spent in the same write as the stamp - and the message goes back to queued.
+        Holding it uncertain left a report that no readback could ever settle, because there
+        were no bytes anywhere to read back.
 
         An attempt WITH a stamp may have sent. Expiry does not authorize a resend: nothing
         observed what the transport did, and a lease prevents a second concurrent claimer and
@@ -1291,12 +1384,11 @@ class SupervisorChannel:
                     " WHERE message_id = ? AND state = ?" + expired,
                     (QUEUED, at, row["message_id"], SENDING, row["attempt_count"], now))
                 if cursor.rowcount == 1:
-                    released = self._release_reservation(db, attempt["record"])
                     record = {"requestId": attempt["request_id"],
                               "messageId": row["message_id"],
                               "attemptNo": row["attempt_count"],
                               "deliveryState": WITHHELD_PRE_SEND, "sendAttempted": "no",
-                              "retrySafe": True, "reservationReleased": released,
+                              "retrySafe": True,
                               "reason": "the claim's lease expired before its transport"
                                         " started, so nothing was sent"}
                     db.execute(
@@ -1308,7 +1400,7 @@ class SupervisorChannel:
                     self.store.journal(
                         "supervisor_message_released", row["message_id"],
                         {"attemptNo": row["attempt_count"], "leaseOwner": row["lease_owner"],
-                         "leaseUntil": row["lease_until"], "reservationReleased": released,
+                         "leaseUntil": row["lease_until"],
                          "reason": "the lease expired before the transport started, so"
                                    " nothing was sent and the report is queued again"}, at=at)
             else:
@@ -1393,6 +1485,13 @@ class SupervisorChannel:
                 # Moved since the caller read it, or no longer resolvable at all. Nothing is
                 # claimed, and the next attempt's own reading says which.
                 raise _NotClaimable()
+            # And the fact is still the one the packet was composed from. A work report
+            # recorded after staging - the first one, which the freeze does not refuse - left
+            # a packet composed without it; and one that changed what the event raises left a
+            # message about an obligation that no longer exists.
+            stale = self._stale_in(db, message_id)
+            if stale is not None:
+                raise _Stale(*stale)
             cursor = db.execute(
                 "UPDATE supervisor_messages"
                 "   SET state = ?, lease_owner = ?, lease_until = ?,"
@@ -1464,34 +1563,18 @@ class SupervisorChannel:
             # that is the readback's documented authority bound, not a gap in this binding.
             token = request_id + "." + secrets.token_hex(8)
             message = self.render(json.loads(row["packet"]), request_id, token)
-            # Spent in the SAME transaction as the claim, against the recipient rather than
-            # against this channel, and through the one predicate delivery's claim calls too.
-            # The bound limits how often one task is woken, so two queues feeding one task
-            # must not each get their own budget - which does mean a report can wait behind
-            # parent-child traffic to a task that is both a parent and a supervisor. That is
-            # the intended trade, said out loud. _rate_limited reads the same predicate before
-            # the host is read; two callers both pass that, so this is where it actually holds.
-            #
-            # And remembered on the attempt. This channel has exits between the claim and the
-            # transport that send nothing - the hierarchy moving before the transport starts,
-            # a lease recovered before it started - and a slot spent on a send that never
-            # happened took one of the recipient's hourly sends and set its gap for nothing.
-            #
-            # Charged at the later of the caller's instant and the clock inside this write: the
-            # caller read its instant before the host checks, and a charge dated that early let
-            # the gap and the hourly window lapse before the transport even started.
-            charged = max(now, self.clock.now())
-            window = int(charged // 3600) * 3600
-            prior = db.execute(
-                "SELECT sends, last_send_at FROM recipient_rate"
-                " WHERE recipient_task_id = ? AND window_start = ?",
-                (recipient, window)).fetchone()
-            if reserve_send(db, self.policy, recipient, charged) is not None:
+            # ASKED here and SPENT at the transport start. The budget is the recipient's, shared
+            # with parent-child deliveries through the one predicate both call, because the bound
+            # limits how often one task is woken - which does mean a report can wait behind
+            # parent-child traffic to a task that is both a parent and a supervisor, the intended
+            # trade. Asked inside the claim so a report the budget refuses is not claimed at all.
+            # Spent in the write that stamps the transport start, because between this claim and
+            # that write the channel has exits that send nothing - the hierarchy moving, a lease
+            # recovered before the transport started - and a send reserved here had to be given
+            # back on each of them, which could not be done exactly: two given back out of order
+            # left a send time behind that no send had, and the next real send waited for it.
+            if send_refusal(db, self.policy, recipient, now) is not None:
                 raise _Paced()
-            reservation = {"recipient": recipient, "window": window, "at": charged,
-                           "priorSends": prior["sends"] if prior is not None else 0,
-                           "priorLastSendAt": prior["last_send_at"] if prior is not None
-                           else None}
             at = self.clock.iso()
             db.execute(
                 "INSERT INTO supervisor_attempts (request_id, message_id, attempt_no, message,"
@@ -1499,40 +1582,11 @@ class SupervisorChannel:
                 " delivery_token) VALUES (?,?,?,?,?,?,0,NULL,?,?,?,?)",
                 (request_id, message_id, attempt_no, message, HELD_UNCERTAIN, "unknown",
                  json.dumps({"requestId": request_id, "messageId": message_id,
-                             "attemptNo": attempt_no, "deliveryState": HELD_UNCERTAIN,
-                             "reservation": reservation}, sort_keys=True),
+                             "attemptNo": attempt_no, "deliveryState": HELD_UNCERTAIN},
+                            sort_keys=True),
                  at, at, token),
             )
         return attempt_no, request_id, message
-
-    @staticmethod
-    def _release_reservation(db, record):
-        """Give back the send an attempt reserved, when that attempt is known to have sent nothing.
-
-        Called inside the write that establishes it sent nothing. Where nobody has reserved
-        since, the recipient's row goes back to exactly what it was - count and last send time.
-        Where somebody has, their send time stays, because it is theirs, and only this attempt's
-        count comes off: a plain decrement would otherwise hand the gap back over a send that
-        did happen. Returns how it was released, for the attempt's record.
-        """
-        if isinstance(record, str):
-            record = json.loads(record) if record else {}
-        reservation = (record or {}).get("reservation")
-        if not reservation:
-            return None
-        restored = db.execute(
-            "UPDATE recipient_rate SET sends = sends - 1, last_send_at = ?"
-            " WHERE recipient_task_id = ? AND window_start = ? AND sends = ?"
-            "   AND last_send_at = ?",
-            (reservation["priorLastSendAt"], reservation["recipient"], reservation["window"],
-             reservation["priorSends"] + 1, reservation["at"]))
-        if restored.rowcount == 1:
-            return "restored"
-        counted = db.execute(
-            "UPDATE recipient_rate SET sends = sends - 1"
-            " WHERE recipient_task_id = ? AND window_start = ? AND sends > 0",
-            (reservation["recipient"], reservation["window"]))
-        return "count_only" if counted.rowcount == 1 else "nothing_to_release"
 
     def _settle(self, message_id, attempt_no, owner, request_id, facts, record, now) -> None:
         """Record what the transport answered, and where that leaves the message.

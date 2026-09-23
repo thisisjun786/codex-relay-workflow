@@ -920,9 +920,12 @@ A send whose response never came back is held as `held_uncertain` and is never r
 supervisor's `supervisor-read` can still settle it, and does only when its transcript holds
 that attempt's delivery token - its request id and a random part drawn when the send was claimed - in a turn that began no earlier than the transport; `supervisor-show` then records how it was settled.
 
-Once a completion is staged upward, its work report no longer changes: the relay refuses a
-correction to it, in place or as a new submission, because the staged message froze that
-report's pull request and points at it for evidence. Stage after the report is final.
+Once a message is staged upward from a work report, that report no longer changes: the relay
+refuses a correction to it, in place or as a new submission, because the staged message froze
+its pull request and points at it for evidence. Stage after the report is final. A message
+staged from the event before any report existed froze nothing, so the first report is still
+recorded; the send then refuses the stale packet as `superseded_revision` and staging again
+carries the report, or stages the decision it turned the block into.
 
 ```bash
 # Freeze what is owed upward as a message. Staging is not sending.

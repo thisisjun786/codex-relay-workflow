@@ -105,10 +105,12 @@ carried by the envelope alone until somebody decides what an answer cannot do wi
    lock is shared in the same way within one adapter worker, which is where it lives; it is
    not a process-wide or durable lock.
    Both halves of the bound - the hourly count and the minimum gap between two sends - are
-   decided inside each claim's own transaction by ONE predicate, `delivery.reserve_send`,
-   which the parent-child claim and this channel's claim both call. A bound that only one of
-   its writers re-checks inside its write is a bound the other does not obey: a delivery
-   claimed straight after a report never re-read the gap, and the two woke one task inside it.
+   decided by ONE predicate inside the write that spends the send: `delivery.reserve_send`,
+   which the parent-child claim calls in its claim and this channel calls in the write that
+   stamps its transport start. This channel's claim asks the same predicate
+   (`delivery.send_refusal`) first and spends nothing. A bound that only one of its writers
+   re-checks inside its write is a bound the other does not obey: a delivery claimed straight
+   after a report never re-read the gap, and the two woke one task inside it.
    The gap is read across hour windows, because `last_send_at` lives on the hour's row and
    reading one hour let two sends a second apart straddle the boundary. Each sender also reads
    the same predicate before the host, and that is a preflight: two callers pass it at the
@@ -116,11 +118,12 @@ carried by the envelope alone until somebody decides what an answer cannot do wi
    A claim refused on the budget is deferred by the same gap the preflight would have applied,
    in both queues. It is never recorded as a failure and never held, because nothing about the
    message or the recipient is wrong: another send simply got there first.
-   A claim charges the budget at the later of its caller's instant and the clock read inside
-   the claim. The caller reads its instant before the host checks, and a charge dated that early
-   let the gap and the hourly window lapse before the transport had even started. A claim that
-   never reaches its transport gives what it charged back (see who moves a message out of
-   sending).
+   This channel charges the budget at the later of its caller's instant and the clock read
+   inside the transport-start write. The caller reads its instant before the host checks, and a
+   charge dated that early let the gap and the hourly window lapse before the transport had
+   even started. A send the budget refuses in that write is deferred the same way (see who
+   moves a message out of sending). The parent-child claim charges its own instant and sends
+   straight after the claim commits.
 4. Within one recipient the oldest claimable message is claimed first, and an older message
    that is IN FLIGHT blocks the one behind it too - that is the moment ordering matters most.
    It is still weaker than arrival order, deliberately: an older message that is held, inside
@@ -147,9 +150,22 @@ staging lock the report is read again and has to be the same report WHOLE, becau
 correction made in place keeps its submission number; the obligation is re-derived and compared
 field by field; and the packet is composed again from what the store now says and has to be
 the packet about to be frozen. Any difference refuses as `superseded_revision` with nothing
-written. Once the message commits, `report.record` refuses to change that report at all, in
-place or as a new submission, because the packet would otherwise name one pull request while
-its evidence reads another.
+written. Once a message composed from a report commits, `report.record` refuses to change that
+report at all, in place or as a new submission, because the packet would otherwise name one
+pull request while its evidence reads another.
+
+A message staged from its event before any report existed froze no report, so the first report
+on that event is recorded. Refusing it lost the report outright: a block staged from its outcome
+could never be told it was a decision only the user can make. The claim asks, inside its own
+write, whether the event still raises what the message is for from the report the packet was
+composed from. A packet composed without the report that now stands is refused as
+`superseded_revision` with nothing sent, and staging again restates it in place with that
+report, journalled as `supervisor_message_restated` with both submissions. An event that now
+raises a different obligation - the block that turned out to be a decision - holds its old
+message as `superseded_by_report`, and the new obligation is staged as its own message. That
+hold is terminal, and can be: a `ready_for_review` event accepts only a DONE or NOOP report, so
+a completion stays a completion, and a block's obligation id includes the report's status once
+it has one, so no correction brings back the id the report-less block had.
 
 An omission's reading is checked against its obligation before anything is composed: the
 schema is `reporting-observation/1`, the state is `unreported`, the relationship and the turn in
@@ -204,7 +220,8 @@ which task a report is for is decided where it is staged.
 A message leaves `sending` only through the claim that holds it: this message, this attempt
 number and this lease owner, all three in the predicate of the write that moves it. `_settle`
 records the transport's answer that way, and the transport-start write that finds the hierarchy
-moved releases the message the same way. The one other way out is recovery, which takes the
+moved, or the send budget spent, releases the message the same way. The one other way out is
+recovery, which takes the
 row from a claim whose lease expired with no receipt, and what it does depends on a durable
 fact. `transport_started_at` is stamped only by the claim holding the row, inside the write
 that checks it still does, and committed before the transport is called. The stamp is taken as the last thing that write does, after the lock is granted and the
@@ -214,13 +231,17 @@ the row is not its own - so recovery records it as sending nothing and queues th
 An attempt with a stamp may have sent, so recovery moves the message to `held_uncertain`,
 because nothing observed what that send did.
 
-Every exit between a claim and its transport gives back what the claim took. The claim spends
-one of the recipient's sends from the budget it shares with parent-child deliveries, and
-remembers on the attempt what the recipient's row held before; the transport-start refusal and
-the recovery of an attempt that never started both give that send back in the same write. Where
-nobody has reserved since, the row goes back to exactly what it was; where somebody has, their
-send time stays, because it is theirs, and only this attempt's count comes off. A claim that
-reaches its transport keeps what it spent, whatever the transport answers.
+No exit between a claim and its transport has anything to give back, because nothing before
+the transport start spends the recipient's budget. The claim only asks the budget it shares
+with parent-child deliveries; the transport-start write spends one send, in the same write as
+the stamp and after the lock and the hierarchy check. A hierarchy that moved, or a lease
+recovered before the transport started, therefore leaves the budget as it was. If the budget
+refuses in that write - a parent-child delivery spent it after this claim - the attempt is
+recorded as sending nothing, the message is queued again past the gap under this claim's own
+state, attempt and lease owner, and `supervisor_message_paced` is journalled: deferred, never
+failed and never held. Reserving at the claim and giving the send back on each exit could not
+be done exactly: two claims given back out of order left a send time behind with no send under
+it, and the next real send waited for it.
 
 Once recovery has declared an attempt uncertain, nothing that attempt's late receipt says moves
 the message. The receipt is still recorded on its attempt row - the attempt history keeps what
@@ -480,7 +501,8 @@ different way. The claim commits first, so a process that stops existing in betw
 row in `sending` with a lease nobody will settle. An expired lease moves it to
 `held_uncertain`, which authorises no resend, because nothing observed what that send did. A
 process that stopped between its claim and its transport start sent nothing, and the recovery
-queues that report again with the reserved send given back.
+queues that report again; it spent no send, because the budget is spent in the same write as
+the transport-start stamp.
 `stranded()` lists such rows and is a READ: there is no sweep behind it, and a row is moved
 when `attempt()` or `read_back()` is called for that message again. The lease is re-checked
 inside that move, and a receipt that arrives after it is recorded on the attempt without moving
@@ -509,6 +531,15 @@ releases that edge, so staging and sending refuse as `unregistered_scope` from t
 obligation keeps standing and `supervisor-standing` keeps listing it; through this channel it
 goes out only if it is staged and sent before the assignment is archived. A superseded
 assignment is not affected, because its successor holds the edge.
+
+A report goes through the socket its caller names, whatever host the supervisor is registered
+on - the rule parent-child delivery follows too. The relay records each endpoint's `hostId` for
+routing and audit and has no map from a host id to a socket, so the supervisor has to be
+reachable through the socket the sender uses, which today is the one App Server the relay runs
+against. A socket whose App Server does not know the recipient's thread reads its lifecycle as
+unknown, and the send is withheld with no hold, so the next attempt through a socket that can
+see the recipient sends it; nothing is recorded as sent, and a readback through such a socket
+cannot verify, because it needs the host to read the named turn on the recipient's thread.
 
 ## Who calls it today
 

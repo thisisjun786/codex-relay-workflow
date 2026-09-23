@@ -2472,7 +2472,9 @@ class WhatTheSeventhIndependentReviewFound(ChannelTestCase):
         self.assertEqual(len(self.adapter.sends), 1)
 
     def test_a_send_the_hierarchy_cancelled_gives_its_budget_back(self):
-        """RED (Devin PRRT_kwDOUcYZMM6lCxSt): the reserved send stayed spent on nothing."""
+        """RED (Devin PRRT_kwDOUcYZMM6lCxSt): the reserved send stayed spent on nothing. The
+        budget is now spent in the transport-start write, so a claim that never gets there
+        spends nothing."""
         _one, message_id = self.staged()
         claim = self.channel._claim
 
@@ -2486,8 +2488,10 @@ class WhatTheSeventhIndependentReviewFound(ChannelTestCase):
                                self.adapter)
         self.assertEqual(self.rate(), (0, None), "the recipient's row is as it was")
 
-    def test_giving_a_send_back_keeps_a_later_senders_time(self):
-        """A reservation made after this one is somebody else's send, and its time stays."""
+    def test_an_unsent_claim_leaves_a_later_senders_send_as_it_is(self):
+        """A send somebody else made after this claim is theirs, and stays spent."""
+        from codex_session_relay.delivery import reserve_send
+
         _one, message_id = self.staged()
         claim = self.channel._claim
         later = self.clock.now() + 1
@@ -2495,16 +2499,14 @@ class WhatTheSeventhIndependentReviewFound(ChannelTestCase):
         def claimed_then_another_sender_then_handed_over(*args, **kwargs):
             claimed = claim(*args, **kwargs)
             with self.store.transaction() as db:
-                db.execute(
-                    "UPDATE recipient_rate SET sends = sends + 1, last_send_at = ?"
-                    " WHERE recipient_task_id = ?", (later, SUPERVISOR))
+                self.assertIsNone(reserve_send(db, self.channel.policy, SUPERVISOR, later))
             self.hand_over()
             return claimed
 
         with mock.patch.object(self.channel, "_claim",
                                claimed_then_another_sender_then_handed_over):
-            self.assertRefused(RefusalReason.RELATION_OWNER_DRIFT, self.channel.attempt, message_id,
-                               self.adapter)
+            self.assertRefused(RefusalReason.RELATION_OWNER_DRIFT, self.channel.attempt,
+                               message_id, self.adapter)
         self.assertEqual(self.rate(), (1, later))
 
     # ------------------------------------------------------ the store a reading is from
@@ -2735,12 +2737,134 @@ class WhatTheTenthIndependentReviewFound(ChannelTestCase):
             self.channel.attempt(message_id, self.adapter)
         self.assertEqual(self.last_send(), started + 10)
 
-    def test_a_delivery_claim_charges_the_send_budget_when_it_claims(self):
-        """RED: the parent-child claim charged the instant its caller read too."""
-        one, _message_id = self.staged()
-        event_id = one["basis"]["eventId"]
-        service = self.queued_delivery(event_id)
-        read_at = self.clock.now()
-        self.clock.advance(10)
-        service._claim(event_id, now=read_at, owner="slow host checks", recipient=SUPERVISOR)
-        self.assertEqual(self.last_send(), read_at + 10)
+
+
+class WhatTheEleventhIndependentReviewFound(ChannelTestCase):
+    """A packet composed before its event's report existed froze nothing, is never sent stale, and
+    gives way to what the report says; and nothing spends the send budget before the transport
+    start, so nothing has to give it back."""
+
+    hand_over = WhatTheFifthReviewRoundFound.hand_over
+    rate = WhatTheSeventhIndependentReviewFound.rate
+    report_naming = WhatTheEighthReviewRoundFound.report_naming
+    packet_pr = WhatTheEighthReviewRoundFound.packet_pr
+
+    def recorded(self, record):
+        from codex_session_relay.errors import ReceiptRefused
+
+        try:
+            record()
+        except ReceiptRefused:
+            return False
+        return True
+
+    # -------------------------------------------------- a report after the staging
+
+    def test_a_decision_reported_after_its_block_was_staged_still_goes_up(self):
+        """RED: staged from the outcome before the report said it was a decision only the user
+        can make, the block froze a report that did not exist yet, and the decision could never
+        be recorded or sent."""
+        payload = self.execution_payload(self.relationship, "blocked_needs_input")
+        self.accept(payload)
+        event_id = payload["eventId"]
+        staged = self.channel.stage_standing(PROJECT)["staged"]
+        self.assertEqual([one["message"]["obligation_kind"] for one in staged],
+                         [supervision.BLOCKED])
+        blocked = staged[0]["messageId"]
+
+        self.assertTrue(self.recorded(lambda: report_module.record(
+            self.store, self.clock, event_id=event_id,
+            repository="thisisjun786/codex-relay-workflow", cxc_status="NEEDS_HUMAN",
+            cxc_reason="two readings of the criterion are defensible",
+            summary="which reading of the criterion is the agreed one",
+            next_action="ask the user", evidence=["both readings are in the review thread"])),
+            "the first report on a staged event is not a correction of anything")
+
+        refusal = self.assertRefused(RefusalReason.SUPERSEDED_REVISION, self.channel.attempt,
+                                     blocked, self.adapter)
+        self.assertIn("now raises", refusal.detail)
+        self.assertEqual(self.channel.get(blocked)["hold_reason"], channel_module.SUPERSEDED_HOLD)
+        self.assertEqual(self.adapter.sends, [])
+
+        again = self.channel.stage_standing(PROJECT)["staged"]
+        decision = [one["messageId"] for one in again
+                    if one["message"]["obligation_kind"] == supervision.DECISION]
+        self.assertEqual(len(decision), 1)
+        record = self.channel.attempt(decision[0], self.adapter)
+        self.assertEqual(record["deliveryState"], DISPATCHED)
+        self.assertEqual(len(self.adapter.sends), 1, "one wake, for the decision")
+
+    def test_a_report_recorded_after_its_completion_was_staged_is_carried(self):
+        """RED: the first report was refused; now it is recorded, the stale packet is not sent,
+        and staging again carries the report."""
+        path = self.artifact("out.txt", "the deliverable")
+        payload = self.ready_payload(self.relationship, [path])
+        self.accept(payload)
+        event_id = payload["eventId"]
+        message_id = self.channel.stage(self.obligation(event_id))["messageId"]
+        self.assertIsNone(json.loads(self.channel.get(message_id)["packet"]).get(packets.ARTIFACT))
+
+        self.assertTrue(self.recorded(lambda: self.report_naming(event_id, 10)))
+        self.assertRefused(RefusalReason.SUPERSEDED_REVISION, self.channel.attempt, message_id,
+                           self.adapter)
+        self.assertIsNone(self.channel.get(message_id)["hold_reason"])
+        self.assertEqual(self.adapter.sends, [])
+
+        self.assertTrue(self.channel.stage(self.obligation(event_id))["restated"])
+        self.assertEqual(self.packet_pr(message_id), 10)
+        self.assertEqual(self.channel.attempt(message_id, self.adapter)["deliveryState"],
+                         DISPATCHED)
+
+    # ---------------------------------------------------------- the send budget
+
+    def test_two_claims_that_never_sent_leave_no_send_time_behind(self):
+        """RED: A reserved and stranded, B reserved, A given back, B cancelled by a handover:
+        each gave back what it could, and B's time stayed behind with no send under it."""
+        _one, first = self.staged()
+        self.clock.advance(5)
+        _other, second = self.staged(text="a second deliverable")
+        self.channel._claim(first, now=self.clock.now(), owner="a worker that died",
+                            recipient=SUPERVISOR, resolution=self.channel.resolve(self.rid))
+        self.clock.advance(self.channel.policy.lease_seconds + 1)
+        claim = self.channel._claim
+
+        def claimed_then_first_recovered_then_handed_over(*args, **kwargs):
+            claimed = claim(*args, **kwargs)
+            self.channel._recover_if_stranded(self.channel.get(first), self.clock.now())
+            self.hand_over()
+            return claimed
+
+        with mock.patch.object(self.channel, "_claim",
+                               claimed_then_first_recovered_then_handed_over):
+            self.assertRefused(RefusalReason.RELATION_OWNER_DRIFT, self.channel.attempt, second,
+                               self.adapter)
+        self.assertEqual(self.rate(), (0, None), "no send happened, so no send time stands")
+        self.assertEqual(self.adapter.sends, [])
+
+    def test_a_send_the_budget_refuses_at_its_transport_start_is_deferred(self):
+        """The budget is spent where the transport starts, so a send another queue got in ahead
+        of is refused there: nothing sent, deferred past the gap, never failed or held."""
+        from codex_session_relay.delivery import reserve_send
+
+        _one, message_id = self.staged()
+        claim = self.channel._claim
+
+        def claimed_then_a_delivery_reserved(*args, **kwargs):
+            claimed = claim(*args, **kwargs)
+            with self.store.transaction() as db:
+                self.assertIsNone(reserve_send(db, self.channel.policy, SUPERVISOR,
+                                               self.clock.now()))
+            return claimed
+
+        with mock.patch.object(self.channel, "_claim", claimed_then_a_delivery_reserved):
+            self.assertIsNone(self.channel.attempt(message_id, self.adapter))
+        row = self.channel.get(message_id)
+        self.assertEqual((row["state"], row["hold_reason"]), (QUEUED, None))
+        self.assertEqual(row["next_eligible_at"],
+                         self.clock.now() + self.channel.policy.min_send_interval_seconds)
+        self.assertEqual(self.adapter.sends, [])
+        self.assertEqual(self.store.one(
+            "SELECT send_attempted FROM supervisor_attempts WHERE message_id = ?",
+            (message_id,))["send_attempted"], "no")
+        record = self.channel.attempt(message_id, self.adapter, now=row["next_eligible_at"])
+        self.assertEqual(record["deliveryState"], DISPATCHED)

@@ -996,11 +996,7 @@ class DeliveryService:
             # is decided here too, by the one predicate the supervisor channel's claim also
             # calls: the two share this recipient's budget, and a bound only one of its
             # writers re-checks inside its write is a bound the other one does not obey.
-            #
-            # Charged at the later of the caller's instant and the clock inside this write. The
-            # caller read its instant before the host checks, and a charge dated that early let
-            # the gap and the hourly window lapse before the transport even started.
-            if reserve_send(db, self.policy, recipient, max(now, self.clock.now())) is not None:
+            if reserve_send(db, self.policy, recipient, now) is not None:
                 raise _Paced()
         return attempt_no, request_id, message
 
@@ -1954,10 +1950,10 @@ def send_refusal(db, policy, recipient: str, now: float):
 def reserve_send(db, policy, recipient: str, now: float):
     """Spend one send of ``recipient``'s budget inside the caller's claim, or say why not.
 
-    Both claims call this inside their own BEGIN IMMEDIATE, so the read and the write are one
-    serialised step and the second of two racing claims reads the first one's send. A refusal
-    returns before anything is written; the caller raises, and its transaction takes the rest
-    of the claim back with it.
+    The delivery claim and the supervisor channel's transport-start write call this inside
+    their own BEGIN IMMEDIATE, so the read and the write are one serialised step and the second
+    of two racing senders reads the first one's send. A refusal returns before anything is
+    written, and the caller decides what its write does instead.
     """
     refused = send_refusal(db, policy, recipient, now)
     if refused is not None:
