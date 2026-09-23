@@ -10,6 +10,7 @@ skills, and that running it twice changes nothing the second time.
 """
 
 import errno
+import hashlib
 import importlib.util
 import json
 import os
@@ -611,6 +612,314 @@ class DisableAndRemoveKeepTheOperationalData(TransitionCase):
         host.call("remove", "--apply")
         code, _ = host.call("remove", "--apply")
         self.assertEqual(code, 0)
+
+
+@needs_reader
+class ARecordedPolicySurvivesTheTransition(TransitionCase):
+    """A plugin record that names the host's execution policy keeps naming it.
+
+    The transition rebuilds the plugin-owned bridge record, and it used to build it with no policy
+    field at all. On a host whose record names one, a rerun then refused its own record, and a
+    rebuild after a disable wrote a record that starts a bridge checking no role.
+    """
+
+    def with_policy(self, args=()):
+        host = self.ready()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:2000])
+        policy = host.root / "execution-policy.json"
+        policy.write_text(json.dumps({"roles": {
+            "child": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}}}),
+            encoding="utf-8")
+        # The repair register-mcp names for a record written before the field: move it aside,
+        # then register again with the policy.
+        record = host.home / "crw-bridge-mcp.json"
+        record.rename(record.with_name("crw-bridge-mcp.json.pre-policy"))
+        # "=" form, because an argument that starts with "--" would otherwise read as an option.
+        extra = ["--bridge-arg=" + value for value in args]
+        done = run([RUNTIME, "register-mcp", "--owner", "plugin", "--codex-home", host.home,
+                    "--bridge-command",
+                    host.destination / "current" / "bin" / "codex-thread-bridge",
+                    "--execution-policy", policy, *extra, "--apply"])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        reference = host.record()["executionPolicy"]
+        self.assertEqual(reference["path"], str(policy))
+        return host, reference
+
+    def test_a_rerun_keeps_the_arguments_a_live_plugin_record_names(self):
+        """Review of 3c603f93: the rerun took arguments from an archive or none, not the record.
+
+        register-mcp --owner plugin --bridge-arg writes a record the launcher starts; a transition
+        rerun then refused that record as differing on args, and preflight stopped on it.
+        """
+        host, reference = self.with_policy(args=("--socket", "/run/crw218/app-server.sock"))
+        before = (host.home / "crw-bridge-mcp.json").read_bytes()
+        self.assertEqual(host.record()["args"], ["--socket", "/run/crw218/app-server.sock"])
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:2000])
+        self.assertEqual(host.outcomes(answer)["mcp record install"], "already_done")
+        self.assertEqual((host.home / "crw-bridge-mcp.json").read_bytes(), before)
+
+    def test_a_rerun_on_a_host_whose_record_names_a_policy_changes_nothing(self):
+        host, reference = self.with_policy()
+        before = (host.home / "crw-bridge-mcp.json").read_bytes()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:2000])
+        self.assertEqual(host.outcomes(answer)["mcp record install"], "already_done")
+        self.assertEqual((host.home / "crw-bridge-mcp.json").read_bytes(), before)
+
+    def test_a_transition_after_a_disable_restores_the_policy_it_retired(self):
+        host, reference = self.with_policy()
+        code, answer = host.call("disable", "--apply")
+        self.assertEqual(code, 0, json.dumps(answer, indent=2)[:2000])
+        self.assertIsNone(host.record())
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:2000])
+        self.assertEqual(host.record()["executionPolicy"], reference)
+        self.assertEqual(host.record()["recordVersion"], 2)
+
+    def _rebuilt_after_disable_with(self, change, reason):
+        """Devin, PR #137: the rebuild carried the archived reference without asking the file.
+
+        The launcher hashes the file at every start and refuses a record whose digest no longer
+        matches, so a rebuilt stale reference is a record no new thread can start from, reported
+        as settled. Dropping the reference would start a bridge that checks no role instead.
+        """
+        host, reference = self.with_policy()
+        code, answer = host.call("disable", "--apply")
+        self.assertEqual(code, 0, json.dumps(answer, indent=2)[:2000])
+        change(Path(reference["path"]))
+        code, answer = host.transition("--apply")
+        results = json.dumps(answer["results"])
+        self.assertNotEqual(code, 0, results[:2000])
+        # Preflight asks the record step first, so the refusal lands before anything is removed.
+        self.assertEqual(host.outcomes(answer)["preflight"], "refused", results[:2000])
+        self.assertIn(reason, results)
+        self.assertIsNone(host.record())
+
+    def test_a_policy_edited_after_a_disable_is_not_restored_as_a_dead_record(self):
+        self._rebuilt_after_disable_with(
+            lambda policy: policy.write_text(json.dumps({"roles": {"child": {
+                "model": "anthropic/claude-opus-5-5", "reasoningEffort": "high"}}}),
+                encoding="utf-8"),
+            "now hashes to")
+
+    def test_a_policy_removed_after_a_disable_is_not_restored_as_a_dead_record(self):
+        self._rebuilt_after_disable_with(lambda policy: policy.unlink(), "could not be opened")
+
+    def test_a_live_record_whose_policy_was_edited_is_not_confirmed(self):
+        host, reference = self.with_policy()
+        before = (host.home / "crw-bridge-mcp.json").read_bytes()
+        Path(reference["path"]).write_text("{}", encoding="utf-8")
+        code, answer = host.transition("--apply")
+        results = json.dumps(answer["results"])
+        self.assertNotEqual(code, 0, results[:2000])
+        self.assertEqual(host.outcomes(answer)["preflight"], "refused", results[:2000])
+        self.assertIn("now hashes to", results)
+        self.assertEqual((host.home / "crw-bridge-mcp.json").read_bytes(), before)
+
+    def test_a_newest_archive_that_cannot_be_read_refuses_rather_than_dropping_the_policy(self):
+        """Stepping over it to an older archive would rebuild a record that checks no role."""
+        host, reference = self.with_policy()
+        code, answer = host.call("disable", "--apply")
+        self.assertEqual(code, 0, json.dumps(answer, indent=2)[:2000])
+        archives = sorted(host.home.glob("crw-bridge-mcp.json.superseded-*"))
+        self.assertTrue(archives)
+        newest = max(archives, key=lambda path: path.stat().st_mtime_ns)
+        document = json.loads(newest.read_text(encoding="utf-8"))
+        self.assertEqual(document["executionPolicy"], reference)
+        document["executionPolicy"]["digest"] = "not a digest"
+        newest.write_text(json.dumps(document), encoding="utf-8")
+        code, answer = host.transition("--apply")
+        self.assertNotEqual(code, 0, json.dumps(answer["results"], indent=2)[:2000])
+        self.assertIsNone(host.record())
+        self.assertIn("newest retired bridge record", json.dumps(answer["results"]))
+
+    def _refuses_with_newest_archive_replaced(self, replace):
+        host, reference = self.with_policy()
+        code, answer = host.call("disable", "--apply")
+        self.assertEqual(code, 0, json.dumps(answer, indent=2)[:2000])
+        archives = sorted(host.home.glob("crw-bridge-mcp.json.superseded-*"))
+        self.assertGreater(len(archives), 1, "an older readable archive has to be there to fall to")
+        newest = max(archives, key=lambda path: path.stat().st_mtime_ns)
+        self.assertEqual(json.loads(newest.read_text(encoding="utf-8"))["executionPolicy"],
+                         reference)
+        newest.unlink()
+        replace(newest)
+        code, answer = host.transition("--apply")
+        self.assertNotEqual(code, 0, json.dumps(answer["results"], indent=2)[:2000])
+        self.assertIsNone(host.record())
+        self.assertIn("newest retired bridge record", json.dumps(answer["results"]))
+
+    def test_a_rebuild_takes_its_whole_identity_from_one_reading_of_the_newest_archive(self):
+        """A listing that misses the newest archive for a moment must not supply the record.
+
+        The transition read the archives twice: once to choose the executable and arguments, once
+        to check the newest. An archive gone from the first listing and back for the second let
+        an older, policy-free record through. Here the legacy listing is made to miss it.
+        """
+        import importlib
+        sys.path.insert(0, str(ROOT / "scripts"))
+        steps = importlib.import_module("crw_transition.steps")
+        inventory = importlib.import_module("crw_transition.inventory")
+        from crw_runtime import bridgerecord
+        home = self.host.home
+        policy = self.host.root / "execution-policy.json"
+        policy.write_text(json.dumps({"roles": {
+            "child": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}}}),
+            encoding="utf-8")
+        reference = {"path": str(policy),
+                     "digest": hashlib.sha256(policy.read_bytes()).hexdigest()}
+        bridge = str(self.host.destination / "current" / "bin" / "codex-thread-bridge")
+        older = bridgerecord.document(command=bridge, name="codex-thread-bridge",
+                                      owner=bridgerecord.OWNER_PLUGIN)
+        newer = bridgerecord.document(command=bridge, name="codex-thread-bridge",
+                                      owner=bridgerecord.OWNER_PLUGIN, execution_policy=reference)
+        stem = bridgerecord.RECORD_NAME + ".superseded-"
+        (home / (stem + "20200101T000000Z")).write_text(json.dumps(older), encoding="utf-8")
+        (home / (stem + "20210101T000000Z")).write_text(json.dumps(newer), encoding="utf-8")
+        host = {"codexHome": str(home), "destination": str(self.host.destination),
+                "mcp": {"record": None, "registration": None, "recordOwner": None,
+                        "recordPath": str(home / bridgerecord.RECORD_NAME)}}
+        real = inventory.archives
+
+        def missing_the_newest(where, prefix):
+            return [path for path in real(where, prefix) if "20210101" not in path.name]
+
+        original = inventory.archives
+        inventory.archives = missing_the_newest
+        try:
+            answer = steps.mcp_record_install(host, {}, apply=False)
+        finally:
+            inventory.archives = original
+        self.assertEqual(answer["record"]["wanted"].get("executionPolicy"), reference,
+                         json.dumps(answer, indent=2)[:2000])
+
+    def test_a_policy_edited_while_the_rebuilt_record_is_written_is_refused(self):
+        """The transition writes through the same checks as register-mcp: nothing is written."""
+        import importlib
+        sys.path.insert(0, str(ROOT / "scripts"))
+        steps = importlib.import_module("crw_transition.steps")
+        from crw_runtime import bridgerecord, hostrecord
+        home = self.host.home
+        policy = self.host.root / "execution-policy.json"
+        policy.write_text(json.dumps({"roles": {
+            "child": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}}}),
+            encoding="utf-8")
+        reference = {"path": str(policy),
+                     "digest": hashlib.sha256(policy.read_bytes()).hexdigest()}
+        bridge = str(self.host.destination / "current" / "bin" / "codex-thread-bridge")
+        retired = bridgerecord.document(command=bridge, name="codex-thread-bridge",
+                                        owner=bridgerecord.OWNER_PLUGIN,
+                                        execution_policy=reference)
+        (home / (bridgerecord.RECORD_NAME + ".superseded-20210101T000000Z")).write_text(
+            json.dumps(retired), encoding="utf-8")
+        host = {"codexHome": str(home), "destination": str(self.host.destination),
+                "mcp": {"record": None, "registration": None, "recordOwner": None,
+                        "recordPath": str(home / bridgerecord.RECORD_NAME)}}
+        real = hostrecord.Locked.__enter__
+
+        def entered_then_edited(lock):
+            held = real(lock)
+            if lock.path.name.startswith(bridgerecord.RECORD_NAME):
+                policy.write_text("{}", encoding="utf-8")
+            return held
+
+        hostrecord.Locked.__enter__ = entered_then_edited
+        try:
+            answer = steps.mcp_record_install(host, {}, apply=True)
+        finally:
+            hostrecord.Locked.__enter__ = real
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer, indent=2)[:2000])
+        self.assertIn("now hashes to", json.dumps(answer))
+        self.assertFalse((home / bridgerecord.RECORD_NAME).exists())
+
+    def test_a_newest_archive_that_became_a_pipe_refuses(self):
+        self._refuses_with_newest_archive_replaced(os.mkfifo)
+
+    def test_an_archive_name_this_tool_does_not_write_refuses_the_rebuild(self):
+        """Devin, PR #137: a name archive_order could not parse ranked below every valid one.
+
+        The rebuild stepped over it to an older archive, and an older archive can predate the
+        policy: the record rebuilt from it starts a bridge that checks no role.
+        """
+        import importlib
+        sys.path.insert(0, str(ROOT / "scripts"))
+        steps = importlib.import_module("crw_transition.steps")
+        from crw_runtime import bridgerecord
+        home = self.host.home
+        policy = self.host.root / "execution-policy.json"
+        policy.write_text(json.dumps({"roles": {
+            "child": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}}}),
+            encoding="utf-8")
+        reference = {"path": str(policy),
+                     "digest": hashlib.sha256(policy.read_bytes()).hexdigest()}
+        bridge = str(self.host.destination / "current" / "bin" / "codex-thread-bridge")
+        older = bridgerecord.document(command=bridge, name="codex-thread-bridge",
+                                      owner=bridgerecord.OWNER_PLUGIN)
+        newer = bridgerecord.document(command=bridge, name="codex-thread-bridge",
+                                      owner=bridgerecord.OWNER_PLUGIN, execution_policy=reference)
+        stem = bridgerecord.RECORD_NAME + ".superseded-"
+        (home / (stem + "20200101T000000Z")).write_text(json.dumps(older), encoding="utf-8")
+        (home / (stem + "20210101T000000Z-x1")).write_text(json.dumps(newer), encoding="utf-8")
+        host = {"codexHome": str(home), "destination": str(self.host.destination),
+                "mcp": {"record": None, "registration": None, "recordOwner": None,
+                        "recordPath": str(home / bridgerecord.RECORD_NAME)}}
+        answer = steps.mcp_record_install(host, {}, apply=True)
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer, indent=2)[:2000])
+        self.assertIn("20210101T000000Z-x1", json.dumps(answer))
+        self.assertFalse((home / bridgerecord.RECORD_NAME).exists(),
+                         "no policy-free record is installed in its place")
+
+    def _rebuild_beside_a_policy_free_archive_named(self, name):
+        """A policy-bearing archive, a newer-looking policy-free one under name, and a rebuild."""
+        import importlib
+        sys.path.insert(0, str(ROOT / "scripts"))
+        steps = importlib.import_module("crw_transition.steps")
+        from crw_runtime import bridgerecord
+        home = self.host.home
+        policy = self.host.root / "execution-policy.json"
+        policy.write_text(json.dumps({"roles": {
+            "child": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}}}),
+            encoding="utf-8")
+        reference = {"path": str(policy),
+                     "digest": hashlib.sha256(policy.read_bytes()).hexdigest()}
+        bridge = str(self.host.destination / "current" / "bin" / "codex-thread-bridge")
+        bearing = bridgerecord.document(command=bridge, name="codex-thread-bridge",
+                                        owner=bridgerecord.OWNER_PLUGIN,
+                                        execution_policy=reference)
+        free = bridgerecord.document(command=bridge, name="codex-thread-bridge",
+                                     owner=bridgerecord.OWNER_PLUGIN)
+        stem = bridgerecord.RECORD_NAME + ".superseded-"
+        (home / (stem + "20210101T000000Z")).write_text(json.dumps(bearing), encoding="utf-8")
+        (home / (stem + name)).write_text(json.dumps(free), encoding="utf-8")
+        host = {"codexHome": str(home), "destination": str(self.host.destination),
+                "mcp": {"record": None, "registration": None, "recordOwner": None,
+                        "recordPath": str(home / bridgerecord.RECORD_NAME)}}
+        answer = steps.mcp_record_install(host, {}, apply=True)
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer, indent=2)[:2000])
+        self.assertIn(name, json.dumps(answer))
+        self.assertFalse((home / bridgerecord.RECORD_NAME).exists(),
+                         "no policy-free record is installed")
+
+    def test_an_archive_stamp_that_is_no_moment_refuses_the_rebuild(self):
+        """Review of e538bfa1: a stamp of the right shape that no clock produces was accepted.
+
+        retire() takes a stamp from the clock or from an archive already there, so a month 99 was
+        never written by it; ranked as the newest, it restored a record with no policy.
+        """
+        self._rebuild_beside_a_policy_free_archive_named("99999999T999999Z")
+
+    def test_an_archive_suffix_retire_never_writes_refuses_the_rebuild(self):
+        """Review of 829bed79: -000 is not a collision suffix retire() writes (it starts at -001)."""
+        self._rebuild_beside_a_policy_free_archive_named("20210101T000000Z-000")
+
+    def test_a_newest_archive_that_became_a_directory_refuses(self):
+        self._refuses_with_newest_archive_replaced(lambda path: path.mkdir())
+
+    def test_a_newest_archive_that_became_a_dangling_link_refuses(self):
+        self._refuses_with_newest_archive_replaced(
+            lambda path: path.symlink_to(path.with_name("nothing-here")))
 
 
 class SwapStateReportsWhatItRead(TransitionCase):
@@ -4133,9 +4442,6 @@ class InterruptionAfterEveryStepConverges(TransitionCase):
                                  + " did not converge to the same host")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 POLICY_TABLES = ('\n[mcp_servers.codex-thread-bridge.tools.create_thread]\n'
                  'approval_mode = "approve"\n'
@@ -4617,3 +4923,82 @@ class TheApprovalPolicySurvivesTheTransition(TransitionCase):
         found = self.declares(host, no_servers)
         self.assertEqual(found["state"], "ABSENT")
         self.assertIsNone(found["detail"])
+
+
+class ReadsUnderTheOwnershipLockDoNotBlock(unittest.TestCase):
+    """The transition's checks read the configuration, the cached package and this checkout's
+    packaging check while it holds the ownership lock.
+
+    A pipe there held an ordinary open, and the lock with it. Each check now reads through a
+    descriptor opened without blocking and judged a regular file. Bounded by a timeout, so a
+    regression fails instead of hanging.
+    """
+
+    def setUp(self):
+        import tempfile
+        base = Path(os.environ.get("CRW_TEST_TMPDIR") or "/var/tmp")
+        directory = tempfile.mkdtemp(dir=str(base), prefix="crw218-pipes-")
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        self.root = Path(directory) / "crw" / "0.4.0"
+        shutil.copytree(ROOT / "plugins" / "crw", self.root)
+
+    def pipe_at(self, relative):
+        path = self.root / relative
+        path.unlink()
+        os.mkfifo(path)
+
+    def bounded(self, argv):
+        try:
+            return subprocess.run(argv, capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            self.fail("blocked on a pipe in the cached package: " + " ".join(argv[-3:]))
+
+    def test_the_approval_policy_and_component_checks_refuse_a_pipe(self):
+        program = ("import sys\n"
+                   "sys.path.insert(0, sys.argv[1])\n"
+                   "from crw_transition import steps\n"
+                   "policy, why = steps.declared_policy(sys.argv[2])\n"
+                   "events, servers, unread = steps._declared(sys.argv[2], sys.argv[3])\n"
+                   "print(why is not None, bool(unread))\n")
+        self.pipe_at(".codex-plugin/plugin.json")
+        done = self.bounded([sys.executable, "-c", program, str(ROOT / "scripts"),
+                             str(self.root), str(ROOT)])
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.split(), ["True", "True"], done.stdout)
+
+    def test_the_payload_check_refuses_a_pipe(self):
+        self.pipe_at("wiring/mcp.json")
+        done = self.bounded([sys.executable, str(ROOT / "scripts" / "ci" / "plugin.py"),
+                             "--payload", str(self.root)])
+        self.assertNotEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("could not be read as a regular file", done.stdout + done.stderr)
+
+    def test_the_configuration_newline_check_refuses_a_pipe(self):
+        """Review of 834969b7: read_mcp re-read config.toml's bytes by path under the lock."""
+        config = self.root.parent.parent / "config.toml"
+        os.mkfifo(config)
+        program = ("import sys\n"
+                   "sys.path.insert(0, sys.argv[1])\n"
+                   "from crw_transition import inventory\n"
+                   "print(inventory.newline_spelling(sys.argv[2]))\n")
+        done = self.bounded([sys.executable, "-c", program, str(ROOT / "scripts"), str(config)])
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.split(), ["None"], done.stdout)
+
+    def test_the_approval_value_set_is_not_imported_from_a_pipe(self):
+        """Review of 834969b7: the checker's source was imported by path under the lock."""
+        checkout = self.root.parent.parent / "checkout"
+        (checkout / "scripts" / "ci").mkdir(parents=True)
+        os.mkfifo(checkout / "scripts" / "ci" / "plugin.py")
+        program = ("import sys\n"
+                   "sys.path.insert(0, sys.argv[1])\n"
+                   "from crw_transition import steps\n"
+                   "print(steps._approval_modes(sys.argv[2]))\n")
+        done = self.bounded([sys.executable, "-c", program, str(ROOT / "scripts"),
+                             str(checkout)])
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.split(), ["None"], done.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()

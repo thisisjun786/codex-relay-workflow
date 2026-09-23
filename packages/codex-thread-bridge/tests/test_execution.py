@@ -9,12 +9,18 @@ about an installed bridge or a live App Server.
 """
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 from conftest import EFFORT, EXECUTION, MODEL
 
 from codex_thread_bridge.execution import (
+    DIGEST_VARIABLE,
+    ENVIRONMENT_VARIABLE,
+    PRESENCE_ONLY,
     Execution,
     ExecutionPolicy,
     ExecutionPolicyError,
@@ -556,6 +562,86 @@ def test_the_digest_identifies_the_file_without_disclosing_it(tmp_path):
     assert str(path) not in json.dumps(receipt)
     assert "operator's note" not in json.dumps(receipt)
     assert receipt["exception"] is None and receipt["digest"] == summary["digest"]
+
+
+# ---------------------------------------------------------- the digest the file was registered under
+#
+# The plugin's launcher hands the bridge the digest register-mcp read the file under. Checking it
+# here closes the interval between the launcher's own check and this process's read: what counts is
+# the digest of the bytes actually parsed.
+
+
+def test_a_registered_digest_that_matches_the_file_loads_it(tmp_path):
+    path = tmp_path / "policy.json"
+    path.write_text(json.dumps(policy_for(tmp_path)))
+    digest = ExecutionPolicy.from_file(path).summary()["digest"]
+    policy = ExecutionPolicy.from_environment(
+        {ENVIRONMENT_VARIABLE: str(path), DIGEST_VARIABLE: digest}
+    )
+    assert policy.summary()["digest"] == digest
+
+
+def test_a_file_that_changed_after_it_was_registered_is_refused(tmp_path):
+    """Another VALID policy, so the refusal is the digest's and not the parser's."""
+    path = tmp_path / "policy.json"
+    path.write_text(json.dumps(policy_for(tmp_path)))
+    registered = ExecutionPolicy.from_file(path).summary()["digest"]
+    path.write_text(json.dumps({"allowed": [{"model": MODEL, "efforts": [EFFORT]}]}))
+    with pytest.raises(ExecutionPolicyError, match="changed after it was registered"):
+        ExecutionPolicy.from_environment(
+            {ENVIRONMENT_VARIABLE: str(path), DIGEST_VARIABLE: registered}
+        )
+
+
+@pytest.mark.parametrize("configured", [None, "", "   "])
+def test_a_digest_naming_no_file_is_refused_rather_than_read_as_no_policy(configured):
+    environ = {DIGEST_VARIABLE: "a" * 64}
+    if configured is not None:
+        environ[ENVIRONMENT_VARIABLE] = configured
+    with pytest.raises(ExecutionPolicyError, match="names no file"):
+        ExecutionPolicy.from_environment(environ)
+
+
+def test_without_a_digest_the_environment_reads_exactly_as_before(tmp_path):
+    path = tmp_path / "policy.json"
+    path.write_text(json.dumps(policy_for(tmp_path)))
+    assert ExecutionPolicy.from_environment({}) is PRESENCE_ONLY
+    assert ExecutionPolicy.from_environment({DIGEST_VARIABLE: "  "}) is PRESENCE_ONLY
+    unpinned = ExecutionPolicy.from_environment({ENVIRONMENT_VARIABLE: str(path)})
+    assert unpinned.summary() == ExecutionPolicy.from_file(path).summary()
+
+
+def test_bytes_a_caller_already_read_parse_exactly_as_the_file_does(tmp_path):
+    path = tmp_path / "policy.json"
+    path.write_text(json.dumps(policy_for(tmp_path)))
+    raw = path.read_bytes()
+    assert (ExecutionPolicy.from_bytes(raw, path).summary()
+            == ExecutionPolicy.from_file(path).summary())
+    with pytest.raises(ExecutionPolicyError, match="duplicate key 'allowed'"):
+        ExecutionPolicy.from_bytes(b'{"allowed": [], "allowed": []}', "somewhere")
+    with pytest.raises(ExecutionPolicyError, match="somewhere is not valid JSON"):
+        ExecutionPolicy.from_bytes(b"{ not json", "somewhere")
+
+
+def test_a_policy_path_that_is_not_a_regular_file_is_refused_without_blocking(tmp_path):
+    """Opening a FIFO for reading blocks until a writer arrives; loading must not wait for one."""
+    pipe = tmp_path / "policy.fifo"
+    os.mkfifo(pipe)
+    directory = tmp_path / "a-directory"
+    directory.mkdir()
+    for path in (pipe, directory):
+        done = subprocess.run(
+            [sys.executable, "-c",
+             "import sys\n"
+             "from codex_thread_bridge.execution import ExecutionPolicy, ExecutionPolicyError\n"
+             "try:\n"
+             "    ExecutionPolicy.from_file(sys.argv[1])\n"
+             "except ExecutionPolicyError as error:\n"
+             "    print(error)\n", str(path)],
+            capture_output=True, text=True, timeout=60,
+        )
+        assert done.returncode == 0, done.stderr
+        assert "not a regular file" in done.stdout, done.stdout
 
 
 def test_efforts_are_scoped_to_their_model(tmp_path):

@@ -343,6 +343,39 @@ def _observe_descriptor(descriptor, path, what):
     return None
 
 
+def open_regular(path):
+    """A descriptor on the regular file at path, opened without blocking, or an OSError.
+
+    The descriptor is judged rather than the path. observe() looks at the path first, and a pipe
+    swapped in after that look would hold an ordinary open until something wrote to it -- with the
+    caller still holding whatever lock it reads under. Opened with O_NONBLOCK the open returns at
+    once, and fstat on that descriptor refuses anything that is not a regular file. Links are
+    followed, as observe() follows them.
+    """
+    descriptor = os.open(str(path), os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        mode = os.fstat(descriptor).st_mode
+        if not stat_module.S_ISREG(mode):
+            raise OSError(errno.EINVAL, "this path became a " + _kind(mode)
+                          + " after it was looked at, and it is not read", str(path))
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
+def regular_bytes(path):
+    """The bytes of the regular file at path, from one descriptor open_regular judged."""
+    with os.fdopen(open_regular(path), "rb") as stream:
+        return stream.read()
+
+
+def regular_text(path):
+    """regular_bytes read as UTF-8 text with universal newlines, the way Path.read_text reads."""
+    with os.fdopen(open_regular(path), "r", encoding="utf-8") as stream:
+        return stream.read()
+
+
 def read_json(path, what, *, absent=None, shape=None, hold=False, descriptor=None):
     """Read one JSON record, returning a Reading rather than a sentinel.
 
@@ -379,7 +412,7 @@ def read_json(path, what, *, absent=None, shape=None, hold=False, descriptor=Non
             # a record containing CR or CRLF reaches json at a different offset without it, and
             # the line and column a malformed one reports are part of what an operator reads.
             if descriptor is None:
-                stream = open(str(path), "r", encoding="utf-8")
+                stream = os.fdopen(open_regular(path), "r", encoding="utf-8")
             else:
                 os.lseek(descriptor, 0, os.SEEK_SET)
                 stream = os.fdopen(os.dup(descriptor), "r", encoding="utf-8")
@@ -420,7 +453,10 @@ def read_text(path, what, *, absent=""):
         return settled
     try:
         with region(path, what):
-            value = Path(str(path)).read_text(encoding="utf-8")
+            # Through a descriptor judged as a regular file, never a second open by path: the
+            # configuration is read under the bridge ownership lock, among others.
+            with os.fdopen(open_regular(path), "r", encoding="utf-8") as stream:
+                value = stream.read()
     except Refused as refused:
         return refused.reading
     return Reading(value=value, state=PRESENT, source=path)

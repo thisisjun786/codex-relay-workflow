@@ -1178,6 +1178,107 @@ question is how the second bridge arrives.
 Writing the record is not registering a server. On a host with no plugin installed the record
 is inert, and the command says so rather than reporting an installation.
 
+### The execution policy the plugin bridge runs under
+
+Codex starts a plugin-declared server with the App Server's own environment. Measured on Codex
+Desktop 0.154.0 for Linux, that is `HOME LANG LOGNAME PATH SHELL USER` and nothing else. A bridge started that way reads no
+execution policy: `get_capabilities` reports `presence_only` with no roles, and a child created
+through the Desktop tools is never asked whether it runs its role's pair. `--execution-policy`
+gives the plugin-owned record the one fact that closes that gap:
+
+    python3 scripts/runtime_install.py register-mcp --owner plugin \
+        --bridge-command <destination>/current/bin/codex-thread-bridge \
+        --execution-policy /path/to/execution-policy.json --apply
+
+The record becomes version 2 and gains `executionPolicy`, with two fields: `path`, the file as
+given (expanded and made absolute, not resolved, like the relay's own launch declaration), and
+`digest`, the SHA-256 of the bytes this run read. It never carries what the file says. Before
+anything is written, the file goes through the bridge's own parser from this checkout, so a
+policy the bridge would refuse to start under is refused here instead, as
+`execution_policy_unreadable`. The output reports the mode and the declared role pairs, the same
+values `get_capabilities` discloses, and says which parser judged them: the installed runtime
+parses the file again every time it starts and decides for itself.
+
+At every start the packaged launcher reads the record and does one of two things. It refuses and
+exits 2, naming the record and the repair, when the file is missing, is not a regular file,
+cannot be read, or no longer hashes to `digest`, and also when its own environment already names a
+different policy file or digest. Otherwise it execs the bridge with
+`CODEX_THREAD_BRIDGE_EXECUTION_POLICY` set to `path` and
+`CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST` set to `digest`, and the bridge refuses to start if
+the bytes it parses hash to anything else. Refusing to start is the visible failure. The
+declaration marks the server not required, so the session continues without the bridge's tools,
+and it never continues with a bridge that checks no role. A version-1 record names no policy and
+starts exactly as it always did, with the environment the launcher was given.
+
+The policy is part of the registration's identity, so the only rerun that succeeds is an identical
+one. Any other difference is refused like any other conflict, and nothing is written: another file,
+the same file with other contents, a rerun that drops the flag, or adding a policy to a version-1
+record. The refusal names the repair. Move the record aside by hand, or retire it with
+`plugin_transition.py disable`, which also retires the Stop settings. Then run `register-mcp`
+again. Every edit to the policy file, including adding an exception, therefore has two
+consequences. The relay picks the edit up when its daemon restarts. The bridge record has to be
+moved aside and registered again, and a thread started in between has no bridge tools. That
+differs from the relay's launch declaration, which names only the file. The digest is what lets a
+changed file fail visibly instead of being enforced unregistered.
+
+A created record is reported only after the policy file has been hashed again, following the write,
+and still matched. The digest is taken before the write, and nothing locks the policy file, so the
+file is hashed twice more under the record's lock. Immediately before the write, a mismatch writes
+nothing: the run answers `record_policy_changed` with exit 1, and the host keeps no record, as
+before the run. After the write, with the record read back, a mismatch in that short interval gets
+the same answer and the move-aside repair, the record stays where it is, and the answer reports what
+was at the record path when it was last read. The launcher refuses its stale digest at every start,
+so what stays fails visibly. It is not removed. Every writer of the bridge record in this repository
+holds the ownership lock (`crw-mcp-ownership` beside the record) while it writes, moves or retires
+the record: `register-mcp`, the transition's bridge steps and `disable`. A removal by path cannot
+exclude a writer that does not take that lock, such as an editor, and would delete that writer's
+file. Every file `register-mcp` reads while it holds that lock (the record, the policy, the Codex
+configuration, the cached manifests and declarations, and the package the launcher probe copies) is
+read from one descriptor opened without blocking and judged as a regular file, never by a second
+open of the path, so a pipe put in place of any of them cannot hold the lock. The modules it would
+otherwise import while holding the lock, the configuration parser, the bridge's policy parser and
+the package selector, are imported before it takes it, because an import opens its source by path.
+The transition reads the same way while it holds the lock: the configuration, the record and its
+archives, and, in the checks it repeats before removing anything, the cached package's manifest,
+declarations, launchers and payload, and the source of this checkout's packaging check. Two waits
+under the lock are bounded instead: the payload check and the interpreter probe run as subprocesses
+with timeouts of 300 and 30 seconds. A `register-mcp` rerun after the file was edited hashes the new
+bytes and is refused as `record_differs` with the move-aside repair. The transition carries the
+recorded reference, so its preflight refuses a changed file, and its record step writes through the
+same function as `register-mcp`. An edit made after the last check is caught where every other one
+is: the launcher hashes the file at every start and refuses the record.
+
+Two refusals protect the order of operations. `--execution-policy` is refused for `--owner user`,
+because a user-owned registration is started by its configuration entry and never reads the
+record. A version-2 record is also refused while the crw package this host loads ships a launcher
+that cannot be given one (`launcher_predates_policy`): that launcher would refuse the record, or
+start the bridge without the policy, and every thread started afterwards would be affected. What
+the launcher declares is not taken as evidence. The package is copied into a throwaway Codex
+home under the same cache layout and started with its declared command, arguments and working
+directory and the environment the App Server gives a plugin server, with no `CODEX_HOME` and a
+`HOME` that is somewhere else, so it has to find its record the way it would in Desktop. The
+record there names a probe instead of the bridge. The launcher has to start that probe with both
+variables naming the recorded file and digest and exit cleanly, and it has to refuse a record
+whose digest no longer matches, one naming a missing file and one naming a directory. The package is the one the Codex configuration enables as
+`crw@<marketplace>`, read from its single cached version; other plugins that happen to declare a
+server with the same name are not asked. When that selection cannot be
+made, because the configuration cannot be read, crw is registered from two marketplaces, more
+than one version is cached, or the plugin cache or the package's directory cannot be looked at,
+the write is refused as `launcher_not_established`. Only a cache that does not exist counts as
+nothing cached; one this run may not search is not read as empty. The check reads
+the cache, which is not proof of what a running App Server loaded, so the order on a host is:
+install the runtime, update the plugin package, restart Codex so it loads the package, register,
+then start a new thread and read `get_capabilities`. An installed runtime older than the digest variable still
+reads the policy file, and the launcher's own digest check is then the only digest check.
+
+Codex starts the server once for each thread it loads. That was observed on Codex Desktop
+0.154.0: one App Server process with a separate bridge child per thread, and the child's start
+time matching the thread's creation to the second. A record written with `--apply` therefore takes
+effect for threads started afterwards, with no App Server restart, and a thread already running
+keeps the bridge it spawned. The launcher's own bytes arrive with a plugin package update, and
+picking that up follows Codex's plugin reload rule. Neither is established on a host until a new
+thread's `get_capabilities` reports the digest the record names.
+
 The property that fixes is a round trip, not three cases: **what the writer emits, the reader reads
 back unchanged, and a rerun then answers `LINKED`** — including values carrying backslashes, quotes,
 control characters and the three-quote sequence.
