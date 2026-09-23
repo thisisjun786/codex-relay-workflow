@@ -412,11 +412,20 @@ making its first policy registration as well, and step 8 says what that changes.
 
    `record_unchanged` means the record still names that policy and the file still hashes to the
    recorded digest, and, with crw enabled and one version cached, that the cached package's declared
-   server started a probe under such a record; nothing is written. Every bridge the host starts again during the add reads this record at that moment, so
-   settle any other answer first: a policy file edited since it was registered, for one, would make
-   every restarted bridge refuse to start.
-3. Run `python3 scripts/runtime_install.py hook --adapter completion --owner plugin --apply`, so the
-   fallback is current before the directory it backs up can disappear.
+   server started a probe under such a record; nothing is written. Every bridge the host starts
+   again during the add reads this record at that moment, so settle any other answer first: a
+   policy file edited since it was registered, for one, would make every restarted bridge refuse to
+   start. If the record is version 1 or absent, read step 8 now, because it decides what happens
+   around step 5.
+3. Run the completion hook installation again with the arguments its settings were written with,
+   `--dest` included, so the fallback is current before the directory it backs up can disappear:
+
+   ```sh
+   python3 scripts/runtime_install.py hook --adapter completion --owner plugin \
+       --dest <destination> --apply
+   ```
+
+   Add any other option those settings were written with, such as `--socket`.
 4. Probe the candidate before adding it, whatever its bytes. Install it into a throwaway Codex
    home and run the step 2 command against that home:
 
@@ -439,7 +448,8 @@ making its first policy registration as well, and step 8 says what that changes.
    `record_would_create`. Both of those answers were measured in throwaway homes, and neither run
    left a record behind.
 5. On a host that gates the bridge,
-   [check the candidate's declaration](#before-you-add-or-update-on-a-host-that-gates-the-bridge).
+   [check the candidate's declaration](#before-you-add-or-update-on-a-host-that-gates-the-bridge),
+   passing the version directory step 4's throwaway add reported as `--package`.
    Then run `codex plugin add crw@<marketplace>`, and re-trust the hook once if its command
    changed. At the measured replacement the host started bridges again inside this step, before the
    trust was given.
@@ -450,8 +460,9 @@ making its first policy registration as well, and step 8 says what that changes.
    - `get_capabilities` in a fresh task and in the tasks that were loaded during the add: its
      `executionPolicy.digest` is the digest the record names, and a bridge with no policy reports
      `presence_only`;
-   - every running bridge, host-wide, read from `/proc` the way the measured replacement was read.
-     This is an operator reading of your own processes, not a command this repository ships:
+   - every running bridge whose process you can read, from `/proc`, the way the measured
+     replacement was read. A process you may not read is skipped silently, so run it as the user the
+     App Server runs as. This is an operator reading, not a command this repository ships:
 
      ```sh
      python3 - <<'EOF'

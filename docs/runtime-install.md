@@ -1268,7 +1268,9 @@ the write is refused as `launcher_not_established`. Only a cache that does not e
 nothing cached; one this run may not search is not read as empty. The check reads
 the cache, which is not proof of what a running App Server loaded, so the order on a host is:
 install the runtime, update the plugin package, restart Codex so it loads the package, register,
-then start a new thread and read `get_capabilities`. A version-1 record already in place cannot take
+then start a new thread and read `get_capabilities`. The restart is how this order makes sure the
+package is loaded; at the one replacement measured, the App Server started bridges from the new
+package without one. A version-1 record already in place cannot take
 a policy; it is moved aside and the registration made again. A bridge started between the package
 update and the registration runs under the record as it is then: with the version-1 record still in
 place it checks no role, and with no record it does not start. Where this was measured the
