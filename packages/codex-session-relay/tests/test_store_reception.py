@@ -1043,6 +1043,10 @@ class AFirstAssignmentThroughCreateAndRegister(StoreReception):
                     "whole": deep,
                     "model": json.dumps(dict(data, model="deep-value-marker")),
                 }
+                if task == CHILD:
+                    # The one structured value the reading copies: bounded, so unread here.
+                    placements["sandbox"] = json.dumps(dict(data, sandbox=dict(
+                        data["sandbox"], extra="deep-value-marker")))
                 for placement, text in placements.items():
                     with self.subTest(task=task, depth=depth, placement=placement):
                         code, answer = self.checked_under(task, text.replace(marker, deep),
@@ -1057,10 +1061,10 @@ class AFirstAssignmentThroughCreateAndRegister(StoreReception):
     def test_deep_values_a_writer_records_are_read_wherever_they_parse(self):
         # The writer bounds what a reading answers with - the model, effort and approval are
         # text, the sandbox a policy object it can read - and nothing else. A value nested deep
-        # where it bounds nothing is a record it accepts, so the reading accepts it as well: a
-        # bound of its own turned a legal first assignment unavailable. Where the decoder
-        # stops descending, the settings are unread, and at that edge the answer is still an
-        # answer - compared and printed - never a host failure.
+        # under a key the reading never uses is a record it accepts, so the reading accepts it
+        # as well: a bound over the whole row turned a legal first assignment unavailable.
+        # Where the decoder stops descending, the settings are unread, and at that edge the
+        # answer is still an answer - compared and printed - never a host failure.
         self.registered()
         packet = self.first_assignment(dispatch="dispatch-1", issue=ISSUE)
         deep = "x"
@@ -1074,7 +1078,7 @@ class AFirstAssignmentThroughCreateAndRegister(StoreReception):
             legal = task_settings(cwd, model=model, reasoningEffort=effort)
             for placement, settings in (
                     ("creationMetadata", dict(legal, creationMetadata=deep)),
-                    ("sandbox", dict(legal, sandbox=dict(legal["sandbox"], extra=deep)))):
+                    ("sandbox", dict(legal, sandbox=dict(legal["sandbox"], extra=[["x"]])))):
                 with self.subTest(task=task, placement=placement):
                     record_settings(self.store, self.clock, task, settings,
                                     source="creation_result")
@@ -1089,29 +1093,50 @@ class AFirstAssignmentThroughCreateAndRegister(StoreReception):
         (original,) = self.store.db.execute(
             "SELECT settings FROM authorized_settings WHERE task_id = ?", (CHILD,)).fetchone()
         data = json.loads(original)
-        marker = '"deep-value-marker"'
-        shaped = json.dumps(dict(data, sandbox=dict(data["sandbox"], extra="deep-value-marker")))
 
-        def accepted(depth):
-            code, answer = self.checked_under(
-                CHILD, shaped.replace(marker, "[" * depth + '"x"' + "]" * depth), packet)
-            self.assertEqual(code, 0, (depth, answer))
+        # The deepest value this reader parses here, found rather than assumed, under a key the
+        # reading never uses (accepted up to the edge) and inside the sandbox it copies (the
+        # sandbox unread up to the edge). Past it the settings are unread. Every probe on the
+        # way is an answer; none is a host failure.
+        def unused(answer):
             if answer["disposition"] == packets.ACCEPTED:
                 return True
-            self.assertEqual(answer["disposition"], packets.UNAVAILABLE, (depth, answer))
-            self.assertIn(packets.POLICY, self.gap_fields(answer), (depth, answer))
+            self.assertEqual(self.gap_fields(answer), [packets.POLICY], answer)
             return False
 
-        # The deepest sandbox value this reader parses here, found rather than assumed.
+        def sandbox(answer):
+            self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
+            if self.gap_fields(answer) == ["policy.sandbox"]:
+                return True
+            self.assertEqual(self.gap_fields(answer), [packets.POLICY], answer)
+            return False
+
+        for placement, parsed in (("creationMetadata", unused), ("sandbox", sandbox)):
+            with self.subTest(edge=placement):
+                if placement == "sandbox":
+                    shaped = dict(data, sandbox=dict(data["sandbox"], extra="deep-value-marker"))
+                else:
+                    shaped = dict(data, creationMetadata="deep-value-marker")
+                self.parse_edge(CHILD, json.dumps(shaped), packet, parsed)
+
+    def parse_edge(self, task, shaped, packet, parsed):
+        """The deepest marker depth parsed(answer) holds for, every probe an answer."""
+        def probe(depth):
+            text = shaped.replace('"deep-value-marker"', "[" * depth + '"x"' + "]" * depth)
+            code, answer = self.checked_under(task, text, packet)
+            self.assertEqual(code, 0, (depth, answer))
+            return parsed(answer)
+
         low, high = 40, 20000
-        self.assertTrue(accepted(low))
-        self.assertFalse(accepted(high))
+        self.assertTrue(probe(low))
+        self.assertFalse(probe(high))
         while high - low > 1:
             middle = (low + high) // 2
-            if accepted(middle):
+            if probe(middle):
                 low = middle
             else:
                 high = middle
+        return low
 
     def checked_under(self, task, settings_text, packet):
         """packet-check with the task's settings row replaced as written, then restored."""
