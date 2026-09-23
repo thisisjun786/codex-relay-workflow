@@ -1158,10 +1158,10 @@ class DescriptorIdentity(unittest.TestCase):
     because a replacement reverted inside it leaves both observations reporting the original
     inode while the rows came out of another file entirely.
 
-    What is closed is every relocation still in place when one of the read's checks asks.
+    What is closed is every relocation still in place when the read asks the descriptor.
     SQLite resolves the descriptor and opens the name it finds, so a rename timed inside that
-    call, or a move and a return between two checks, is not closed and is recorded as a limit
-    rather than asserted away here.
+    call, or a move and a return between two of those asks, is not closed and is recorded as a
+    limit rather than asserted away here.
     """
 
     def setUp(self):
