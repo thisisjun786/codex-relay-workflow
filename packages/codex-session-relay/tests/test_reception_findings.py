@@ -287,6 +287,27 @@ class RB3CallbackAndPolicy(_Reading):
                 self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
                 self.assertIn(field, self.gap_fields(answer))
 
+    def test_an_artifact_identity_field_that_is_not_text_is_refused(self):
+        cases = (("headSha", {**a_pull_request(), "headSha": 123}),
+                 ("repository", {**a_pull_request(), "repository": 7}),
+                 ("path", {"kind": "locator", "path": 7, "digest": "d" * 64,
+                           "producedAt": None}),
+                 ("digest", {"kind": "locator", "path": "/state/x.md", "digest": ["d"],
+                             "producedAt": None}))
+        for field, artifact in cases:
+            with self.subTest(field=field):
+                one = packets.compose(**packet_kwargs(C2P, "review_ready"))
+                one[packets.ARTIFACT] = artifact
+                detail = self.refusal(lambda: packets.check(one))
+                self.assertIn(field, detail)
+
+    def test_a_refusal_list_of_another_shape_is_a_gap_not_none(self):
+        for held in ([7], {}, "x", 7, [{"model": "m", "effort": "e"}, 7]):
+            with self.subTest(held=held):
+                answer = self.received(self.assignment, a_record(refusedPolicies=held))
+                self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
+                self.assertIn("policy", self.gap_fields(answer))
+
 
     def test_the_pair_the_parent_left_is_refused_as_a_stale_callback(self):
         answer = self.received(
@@ -532,6 +553,53 @@ class NoShapeEscapesAsAHostFailure(_Reading):
                         escaped.append((direction, purpose, path, repr(shape),
                                         type(fault).__name__))
         self.assertEqual(escaped, [])
+
+    # Envelope fields reception neither compares nor acts on: what the recipient owes is
+    # derived from the kind, and the rest are renderings the receiver never reads back.
+    NOT_READ = {("envelope", "answerOwedBy"), ("envelope", "basis"), ("envelope", "scope"),
+                ("envelope", "observedAt"), ("envelope", "replyTo"), ("envelope", "evidence")}
+
+    def test_a_compared_field_of_another_shape_never_ends_accepted(self):
+        # Not only no exception: a field turned into another type is refused as a packet or
+        # left unread, and never agrees. The packet side first, then every record key the
+        # occasion reads.
+        agreed = []
+        for direction, purpose in sorted(CANONICAL_REQUIRED):
+            base = packets.compose(**packet_kwargs(direction, purpose))
+            paths = [(name,) for name in base] + [("envelope", name) for name in base["envelope"]]
+            paths += [(name, inner) for name in base if isinstance(base[name], dict)
+                      and name != "envelope" for inner in base[name]]
+            for path in paths:
+                original = base
+                for step in path:
+                    original = original[step]
+                if path in self.NOT_READ or original is None or envelope.is_absent(original):
+                    continue
+                for shape in WRONG_SHAPES:
+                    if type(shape) is type(original):
+                        continue
+                    one = json.loads(json.dumps(base))
+                    holder = one
+                    for step in path[:-1]:
+                        holder = holder[step]
+                    holder[path[-1]] = shape
+                    try:
+                        answer = packets.reception(one, a_record())
+                    except RelayError:
+                        continue
+                    if answer["disposition"] == packets.ACCEPTED:
+                        agreed.append(("packet", purpose, path, repr(shape)))
+            for key in _read_keys(direction, purpose):
+                for shape in WRONG_SHAPES:
+                    if type(shape) is type(a_record()[key]):
+                        continue
+                    try:
+                        answer = packets.reception(base, a_record(**{key: shape}))
+                    except RelayError:
+                        continue
+                    if answer["disposition"] == packets.ACCEPTED:
+                        agreed.append(("record", purpose, key, repr(shape)))
+        self.assertEqual(agreed, [])
 
 
 if __name__ == "__main__":

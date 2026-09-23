@@ -231,6 +231,32 @@ class TheReceiversOwnReading(StoreReception):
         self.assertEqual(answer["recordSource"], "supplied")
         self.assertEqual(answer["disposition"], packets.ACCEPTED, answer)
 
+    def test_a_supplied_reading_or_packet_of_the_wrong_shape_never_ends_as_a_host_failure(self):
+        relationship = self.registered()
+        one = self.report(relationship, self.event(relationship))
+        record = {"relationId": relationship["relationshipId"], "parentTaskId": PARENT,
+                  "childTaskId": CHILD, "issue": ISSUE, "generation": 1,
+                  "criteriaDigest": self.digest(), "relationRevision": self.revision(
+                      relationship), "relationStatus": "active", "repository": REPOSITORY,
+                  "prNumber": 107, "headSha": HEAD}
+        # An assignment reads the refusals; one that is not a pair is unread, not a crash.
+        assignment = self.first_assignment(dispatch="dispatch-1", issue=ISSUE)
+        code, answer = self.packet_check(assignment, record={
+            "childTaskId": CHILD, "parentTaskId": PARENT, "refusedPolicies": [7]})
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
+        code, answer = self.packet_check(one, record={**record, "callback": 7})
+        self.assertEqual(code, 0, answer)
+        code, answer = self.packet_check(one, record=["not", "a", "reading"])
+        self.assertEqual(code, cli.EXIT_REFUSED, answer)
+        # A head that is a number, against a reading holding the same number: the packet's
+        # own shape is refused before anything is compared.
+        numeric = self.report(relationship, self.event(relationship))
+        numeric[packets.ARTIFACT]["headSha"] = 123
+        code, answer = self.packet_check(numeric, record={**record, "headSha": 123})
+        self.assertEqual(code, cli.EXIT_REFUSED, answer)
+        self.assertIn("headSha", answer.get("detail", ""))
+
 
 class TheControlsThatMustNotPassTheReceiveStep(StoreReception):
     def test_a_missing_required_field_is_refused_by_name(self):
@@ -368,6 +394,29 @@ class TheControlsThatMustNotPassTheReceiveStep(StoreReception):
         self.assertIn("asks for something else", collided.get("detail", ""))
         code, bare = self.packet_check(one, receiver_id=CHILD, applied=True)
         self.assertEqual(code, cli.EXIT_USAGE, bare)
+
+    def test_a_paused_relationship_holds_act_until_it_is_resumed(self):
+        # Paused is current, so the packet is accepted; but nothing proceeds on a paused
+        # relationship until relationship-resume, so it is not to be acted on yet. Nothing is
+        # recorded applied, so once resumed the same packet comes back to be acted on.
+        relationship = self.registered()
+        rid = relationship["relationshipId"]
+        ledger = os.path.join(self.tmp, "child-ledger.json")
+        self.registry.set_status(rid, "paused", actor=PARENT)
+        one = self.correction(relationship, generation=1)
+        _code, paused = self.packet_check(one, receiver_id=CHILD, observation=self.observed(),
+                                          ledger=ledger)
+        self.assertEqual(paused["disposition"], packets.ACCEPTED, paused)
+        self.assertFalse(paused["act"], paused)
+        self.assertIn("paused", paused.get("actHeld", ""), paused)
+        self.registry.resume(rid, expect_generation=1, expect_artifact_roots=[self.root],
+                             expect_allowed_recipients=[PARENT, CHILD], actor=PARENT)
+        _code, resumed = self.packet_check(one, receiver_id=CHILD, observation=self.observed(),
+                                           ledger=ledger)
+        self.assertEqual(resumed["disposition"], packets.ACCEPTED, resumed)
+        self.assertEqual(resumed["repeat"]["state"], packets.REPLAY)
+        self.assertTrue(resumed["act"], resumed)
+        self.assertNotIn("actHeld", resumed)
 
     def test_the_callback_pair_the_parent_left_is_refused(self):
         relationship = self.registered()
