@@ -715,7 +715,9 @@ The relay daemon does, on every tick, with nobody asking. Its supervisor pass
 (`RelayDaemon._report_upward`) stages what each project owes - the same staging a parent runs
 by hand, restricted to obligations whose message is absent or still unsent - and attempts each
 recipient's oldest eligible message, oldest first, through `SupervisorChannel.attempt`, so one
-recipient's backlog cannot keep every other recipient's report unread. So every rule above holds
+recipient's backlog cannot keep every other recipient's report unread; an attempt that raises
+is deferred by the recheck interval, so a message that faults every time cannot take every
+tick's budget either. So every rule above holds
 for it unchanged: one obligation is one message and one wake, what goes out is re-derived where
 the transport starts (I-247), the recipient's budget is shared with parent-child traffic and
 spent only at the transport start, a paused, archived or unreachable supervisor is withheld

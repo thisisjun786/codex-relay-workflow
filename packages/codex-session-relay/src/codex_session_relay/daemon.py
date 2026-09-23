@@ -994,6 +994,13 @@ class RelayDaemon:
                 report.notes.append(
                     f"supervisor report {row['message_id']} not sent: {error}")
                 struggling.add(recipient)
+                # Out of the head of the queue for a recheck, so a message that faults on every
+                # attempt cannot spend every tick's budget ahead of the reports behind it.
+                try:
+                    channel.defer_after_fault(row["message_id"], now, error)
+                except Exception as deferral:  # noqa: BLE001
+                    report.notes.append(
+                        f"supervisor report {row['message_id']} not deferred: {deferral}")
                 continue
             if record is None:
                 # Busy, withheld, paced or recovered: nothing went out, and the row says when

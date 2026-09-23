@@ -2142,6 +2142,27 @@ class SupervisorChannel:
              row["next_eligible_at"], row["recipient_task_id"], row["attempt_count"]))
         return cursor.rowcount == 1
 
+    def defer_after_fault(self, message_id, now, error) -> None:
+        """Take a message whose attempt raised out of the head of its queue for a recheck.
+
+        An attempt that fails in a way nothing classified - a host answer this could not read,
+        say - used to leave the message exactly as eligible as it was, so the automatic pass read
+        it first again on the next tick, spent its budget on it again, and never reached the
+        reports queued behind it. Rescheduled by the same compare-and-set every other deferral
+        uses, and only while nothing holds it and nothing is sending it: a hold an attempt set
+        on the way out is its own answer, and a claim in flight is its lease's to recover.
+        """
+        row = self.find(message_id)
+        if row is None or row["state"] not in CLAIMABLE or row["hold_reason"]:
+            return
+        when = now + self.policy.lifecycle_recheck_seconds
+        with self.store.transaction() as db:
+            if self._reschedule_in(db, row, when):
+                self.store.journal(
+                    "supervisor_attempt_faulted", message_id,
+                    {"error": type(error).__name__ + ": " + str(error), "retryAt": when},
+                    at=self.clock.iso())
+
     def _defer_busy(self, row, now) -> None:
         """A recipient mid-turn is left strictly alone: no resume, no attempt, no record.
 

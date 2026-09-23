@@ -357,3 +357,26 @@ class TwoSupervisorsOneStuck(DaemonChannelCase):
         self.assertEqual(self.store.all(
             "SELECT cursor FROM discovery_cursors WHERE listing = 'supervisor_projects'"), [],
             "the rotation is kept in memory, so a quiet tick writes no cursor")
+    def test_a_recipient_whose_attempts_fault_does_not_starve_another(self):
+        """Review 5 on b9919eaf: an attempt that raised stayed first in the queue every tick."""
+        import dataclasses
+        from unittest import mock
+
+        self.daemon.policy = dataclasses.replace(self.daemon.policy,
+                                                 max_supervisor_sends_per_tick=1)
+        settings = self.channel._settings_for
+
+        def faulting(task, runtime=None):
+            if task == SUPERVISOR:
+                raise TypeError("unhashable type: 'dict'")
+            return settings(task, runtime)
+
+        self.channel.stage(self.obligation(self.completed()))
+        self.clock.advance(1)
+        self.complete_other()
+        with mock.patch.object(self.channel, "_settings_for", faulting):
+            for _ in range(3):
+                self.tick(advance=20)
+        to_second = [one for one in self.adapter.sends if one[1] == self.SECOND]
+        self.assertEqual(len(to_second), 1, "the healthy supervisor's report went up")
+        self.assertEqual(self.upward(), [])
