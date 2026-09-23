@@ -1871,6 +1871,14 @@ def _opened_elsewhere(connection, expected):
     `PRAGMA database_list` is the only view of that decision `sqlite3` exposes; it reports the
     main database's filename as SQLite computed it. A reading that cannot be obtained is itself
     a refusal, because an unverifiable open is not a verified one.
+
+    It is asked as the FIRST statement on every connection the diagnostics open, read or write.
+    SQLite creates the write-ahead log beside whichever name it opened, on the first statement
+    that touches the file - a query, or a transaction the write probe begins - and a log created
+    beside a moved name outlives the refusal. Opening the connection and this pragma create no
+    file at any name: measured on this host on 2026-09-23 with SQLite 3.46.1 and 3.53.1, read-only
+    and read-write, with and without another connection holding a live log. Asked any later, the
+    refusal arrives after the file it exists to prevent.
     """
     try:
         rows = connection.execute("PRAGMA database_list").fetchall()
@@ -2008,12 +2016,12 @@ def probe(selection: StateSelection) -> dict:
                             notes.append(
                                 f"database read failed: {type(error).__name__}: {error}")
 
-                    # Asked again, and it closes two things. A rename between the two
-                    # connections would put the write probe on a relocated name, where SQLite
-                    # was measured to fail AND leave a stray log behind. It is also the closing
-                    # question for the read that just happened: a store that moved during it
-                    # leaves an identity a caller reads as "the store at this path", so what
-                    # that read published is withdrawn rather than reported.
+                    # Asked again, and it closes two things. It is the closing question for the
+                    # read that just happened: a store that moved during it leaves an identity a
+                    # caller reads as "the store at this path", so what that read published is
+                    # withdrawn rather than reported. And a rename that already happened between
+                    # the two connections never reaches the write probe. One landing after this
+                    # answer is the write connection's own first question, below.
                     moved = _relocation(fd, expected)
                     if moved is not None:
                         notes.append("the database moved while it was being read: " + moved)
@@ -2028,12 +2036,16 @@ def probe(selection: StateSelection) -> dict:
                                 _held_uri(fd, "rw"), uri=True, timeout=5, isolation_level=None
                             )
                             try:
-                                connection.execute("BEGIN IMMEDIATE")
-                                connection.execute("ROLLBACK")
+                                # Before the transaction, never after it. A move that lands
+                                # between the check above and this connect leaves SQLite on the
+                                # moved name, and BEGIN IMMEDIATE there creates its -wal, which
+                                # survives the refusal and the file's return (PR115-RB1).
                                 elsewhere = _opened_elsewhere(connection, expected)
                                 if elsewhere is not None:
                                     notes.append("database write probe failed: " + elsewhere)
                                 else:
+                                    connection.execute("BEGIN IMMEDIATE")
+                                    connection.execute("ROLLBACK")
                                     # Acquiring a write transaction is evidence that this
                                     # process can write NOW. It is not a promise that a later
                                     # commit succeeds; a full disk still fails.
