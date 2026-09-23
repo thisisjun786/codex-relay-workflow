@@ -3,9 +3,11 @@
 The execution policy already asks two questions of every creation and every resume: was a model
 and an effort stated, and does this host allow that pair. Neither is the question that was
 actually being got wrong. CRW runs three levels -- a supervisor bound to an initiative, a parent
-to a project, a child to an issue -- and each level is meant to run on a different pair. A project
-parent created on someone else's model answered both existing questions correctly and was still
-wrong, because nothing related the task's ROLE to the pair it was started on.
+to a project, a child to an issue -- and each level runs on the pair decided for its role. Two
+roles may be decided onto the same pair; the question is still asked of each role on its own. A
+project parent created on a model decided for another level answered both existing questions
+correctly and was still wrong, because nothing related the task's ROLE to the pair it was started
+on.
 
 So this module adds the third question, IS IT THIS ROLE'S PAIR, and deliberately supplies no
 answer to it. The role ids live here because two packages have to agree on them. The values do

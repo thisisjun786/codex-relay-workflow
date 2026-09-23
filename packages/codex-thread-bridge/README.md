@@ -160,11 +160,11 @@ nothing, and carry no authorization record that might imply otherwise.
 
 
 **Was it this role's pair?** The two questions above can both be answered correctly by a task
-that is still on the wrong model. Callers that run several levels of work give each level its own
-pair, and nothing related a task's role to the pair it was started on: a project parent created
-on another level's model passed presence and the allowlist and was still wrong. So a caller may
-name the role it is creating for, through `role`, and a named role is compared against the pair
-this host declares for it.
+that is still on the wrong model. Callers that run several levels of work decide a pair for each
+level's role, and nothing related a task's role to the pair it was started on: a project parent
+created on a model decided for another level passed presence and the allowlist and was still
+wrong. So a caller may name the role it is creating for, through `role`, and a named role is
+compared against the pair this host declares for it.
 
 The values live in the file and nowhere else. This package ships no pair for any role, because a
 pair written into code would compete with the operator's file and would answer the approval
