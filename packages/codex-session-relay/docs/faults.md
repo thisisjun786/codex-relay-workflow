@@ -997,7 +997,9 @@ fault-prune       --fault <id> --keep <n>
 Every one of these reads and writes the store and never calls the host, so each is listed in
 `OFFLINE_COMMANDS`. `fault-next` returns the writes ready now, the held ones with the reason each
 waits, and the budgets. `fault-show --fault` adds the fault's publications and stage progress;
-`fault-show --publication` shows one write with what it created and its newest attempts. `status`
+`fault-show --publication` shows one write with what it created and its newest attempts; the two
+are alternatives, and a listing filter (`--product`, `--fault-class`, `--scope`, `--fault-state`,
+`--after`) beside either is refused rather than ignored. `status`
 carries `attention()` under `faults`. The global option `--kind-module <module>` (repeatable)
 imports a module that registers a publication kind before the command runs; a process that does
 not import it never offers, claims or issues that kind's writes.

@@ -1226,6 +1226,22 @@ class CommandLine(RelayTestCase):
             self.invoke("fault-notifications", "--after", "not-a-cursor")
         self.assertEqual(2, refusal.exception.code)
 
+    def test_fault_show_refuses_a_selector_it_would_ignore(self):
+        """PR #142 hosted review: one fault, one write, or a filtered listing - never a second
+        selection silently dropped while the command reports success."""
+        from codex_session_relay import cli
+
+        with self.assertRaises(SystemExit) as both:
+            self.invoke("fault-show", "--fault", "fault-a", "--publication", "publication-b")
+        self.assertEqual(2, both.exception.code)
+        for single in (("--fault", "fault-a"), ("--publication", "publication-b")):
+            for extra in (("--product", "crw"), ("--fault-class", "report_omitted"),
+                          ("--scope", "crw:CRW"), ("--fault-state", faults.OPEN),
+                          ("--after", "3")):
+                code, refusal = self.invoke("fault-show", *single, *extra)
+                self.assertEqual(cli.EXIT_REFUSED, code, (single, extra, refusal))
+                self.assertIn(extra[0], refusal["detail"])
+
 
 class TheFaultPathReachesNoNetwork(unittest.TestCase):
     """Asserted from the source, because a boundary nobody checks is a boundary that moves."""

@@ -1710,6 +1710,21 @@ def cmd_fault_show(services, args) -> dict:
     # One validated bound, applied on both branches. The listing branch used to take no bound
     # at all, so the flag an operator passed to keep the answer small reached nothing.
     limit = _positive(args.limit, "--limit")
+    # One fault, one write, or a filtered listing. A listing filter beside a single selection
+    # was ignored and the command still succeeded, answering a question the caller had not
+    # asked; argparse keeps --fault and --publication apart, and this refuses the rest.
+    if args.fault or args.publication:
+        ignored = [flag for flag, value in (
+            ("--product", args.product), ("--fault-class", args.fault_class),
+            ("--scope", args.scope), ("--fault-state", args.fault_state),
+            ("--after", args.after)) if value is not None]
+        if ignored:
+            from .errors import RefusalReason
+            from .faults import FaultRefused
+
+            raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                               f"{', '.join(ignored)} filter a listing and would be ignored"
+                               f" beside {'--fault' if args.fault else '--publication'}")
     if args.publication:
         # One write: its kind, state, trigger, target, payload, what it created, and its
         # newest attempts - the read a kind's caller uses to find what a create made.
@@ -4118,9 +4133,10 @@ def build_parser() -> argparse.ArgumentParser:
     fault_sweep.set_defaults(handler=cmd_fault_sweep)
 
     fault_show = subparsers.add_parser("fault-show")
-    fault_show.add_argument("--fault")
-    fault_show.add_argument("--publication",
-                            help="one write, with what it created and its newest attempts")
+    selected = fault_show.add_mutually_exclusive_group()
+    selected.add_argument("--fault")
+    selected.add_argument("--publication",
+                          help="one write, with what it created and its newest attempts")
     fault_show.add_argument("--product")
     fault_show.add_argument("--fault-class")
     fault_show.add_argument("--scope")

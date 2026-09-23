@@ -1171,15 +1171,21 @@ CREATE INDEX IF NOT EXISTS fault_remediations_fault ON fault_remediations (fault
 -- Where each source got to last time. Without it every sweep re-read the same first page,
 -- so with more persistent faults than one page the ones past it were never observed again -
 -- the starvation shape the delivery window already keeps a per-parent cursor to avoid.
+--
+-- Shipped (installed at 0ffcc4d0): the text between CREATE and its closing parenthesis,
+-- in-body comments included, is stored verbatim by SQLite and compared by the runtime swap
+-- gate, so it never changes - even a comment. What changed since is said here instead:
+-- position now holds JSON {"at", "until"}, where the source's rotation stopped and the upper
+-- key it captured when the rotation started (a plain value written before rotations were
+-- bounded reads as a position with no bound yet); pages is no longer read, since counting
+-- full pages before a forced wrap starved every row past them, and it is kept because this
+-- store adds tables and never drops columns.
 CREATE TABLE IF NOT EXISTS fault_cursors (
     source     TEXT PRIMARY KEY,
-    -- JSON {"at", "until"}: where the source's rotation stopped and the upper key it captured
-    -- when the rotation started. A plain value written before rotations were bounded reads as
-    -- a position with no bound yet.
     position   TEXT,
-    -- No longer read. It counted full pages before a forced wrap, which starved every row past
-    -- them; a rotation bounded by its upper key replaced that. Kept because this store adds
-    -- tables and never drops columns.
+    -- Consecutive FULL pages taken since this source last wrapped. These keys are not
+    -- monotonic insertion sequences, so a cursor that only wrapped on a short page would
+    -- never come back for a row behind it while full pages kept arriving.
     pages      INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL
 );
