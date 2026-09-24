@@ -257,6 +257,16 @@ any of `repository`, `prNumber`, `headSha`, `artifactPath`, `artifactDigest`. Wi
 pull request's head is a gap and the answer is unavailable. A locator is compared with the
 observed path and digest and is never asked for a head.
 
+That holds for every artifact a packet names, not only a pull request's head. A locator's path
+and digest are a reading of the file, and the store holds neither, so a correction, a resume,
+an acceptance, an integration result or a report checked without an observation comes back
+unavailable on `artifact.path` and `artifact.digest` (or on the pull request's
+`artifact.repository`, `artifact.number` and `artifact.headSha`). The receiver's answer to that
+is to read the artifact itself and check the same packet again with `--observation`; it is not
+a reason to act and not a refusal to report. The comparison is exact, so the observed digest is
+written in the form the packet states it. `--applied` reads nothing and refuses an
+observation: the observation belongs to the check before it.
+
 **The reception ledger** (`--ledger <file>`) is the receiver's own file, written by this command
 and read by nothing else. It names its receiver and a version, and a ledger naming another
 receiver is refused rather than read. It keeps each answered message id beside the content
