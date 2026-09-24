@@ -1727,6 +1727,47 @@ class AnAcknowledgementIsJudgedAgainstTheDeliveryItRead(HostLossCase):
                          ["verified"])
         self.assertEqual(self.delivery_row(event_id)["state"], ACKNOWLEDGED)
 
+    def test_a_kept_ack_is_not_promoted_for_a_later_attempt_folded_into_the_same_turn(self):
+        """Review 4 of 8c876676: attempt 1 was uncertain when the parent acknowledged from its
+        running turn, then settled as a confirmed pre-send rejection; attempt 2's message was
+        folded into that same running turn. The acknowledgement predates attempt 2's send."""
+        event_id, first = self.folded_delivery(message=False)
+        self.ack.acknowledge(event_id, ack_turn_id="folded",
+                             ack_proof=identity.ack_proof(event_id, "folded"), accepted=True,
+                             adapter=None)
+        self.adapter.ledger[first] = _pre_send_rejection(first)
+        self.reconciler.reconcile_attempt(first, self.adapter)
+        self.clock.advance(100000)
+        self.adapter.script("in_progress")
+        second = self.attempt(event_id, now=self.clock.now())["requestId"]
+        self.adapter.threads[PARENT].items.append(("folded", f"requestId: {second}"))
+        self.clock.advance(5)
+        self.daemon.tick()
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        row = self.ack_row(event_id)
+        self.assertEqual((row["verified"], row["last_reason"]),
+                         ("unverified_turn", "ack_predates_attempt"))
+        self.assertEqual(self.next_action(), "parent_reacknowledges")
+        # A new acknowledgement from the same turn answers attempt 2.
+        self.assertEqual(self.cli_ack(event_id, "folded")["_verified"], "verified")
+        self.assertEqual(self.delivery_row(event_id)["state"], ACKNOWLEDGED)
+
+    def test_manual_verify_acks_confirms_a_kept_acks_delivery_through_its_turn(self):
+        """Devin on 8c876676: verify-acks from a process with host access confirms a kept
+        acknowledgement's delivery through its turn, as the daemon's pass does."""
+        from types import SimpleNamespace
+
+        from codex_session_relay import cli
+
+        event_id, _request_id = self.folded_delivery(earlier=10, later=250)
+        self.ack.acknowledge(event_id, ack_turn_id="folded",
+                             ack_proof=identity.ack_proof(event_id, "folded"), accepted=True,
+                             adapter=None)
+        services = self.services()
+        services.adapter_requested = True
+        cli.cmd_verify_acks(services, SimpleNamespace(limit=8))
+        self.assertEqual(self.delivery_row(event_id)["state"], ACKNOWLEDGED)
+
 
 def _pages(*pages):
     """A thread/turns/list answer per call, newest first, chained by cursor."""
