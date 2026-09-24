@@ -954,7 +954,11 @@ deliverer is the seam between them and owns no rule. Each tick it:
   transport) may have been sent by its own means, so it stays uncertain for that owner's
   transport or `fault-notification-reconcile`. The deliverer's owner, `relay-daemon`
   (`DELIVERER_OWNER`), is its own: `reserve_notifications` refuses it to a reserver without
-  the deliverer's transport predicate, so the command line cannot take it.
+  the deliverer's transport predicate, so the command line cannot take it. And a reservation
+  it made is settled from the channel's records both ways: `reconcile_notification` refuses to
+  call it delivered unless the channel recorded its message dispatched or read back (a
+  `supervisor-read` readback records an arrival), as it refuses "not delivered" while the
+  channel may have sent.
 
 The level above is the one the live linkage names from what the notification is about: the
 fault's own relationship, else the current relationship of the issue it names - its scope's

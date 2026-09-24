@@ -1094,3 +1094,31 @@ class WhatTheSeventhFinalReviewFound(NoticeCase):
         self.tick()
         self.assertEqual(len(self.sent_for(self.notification(fault))), 1,
                          "the deliverer itself still reserves and sends it, once")
+
+
+class WhatTheEighthFinalReviewFound(NoticeCase):
+    """Final review of 41571f3d: the deliverer's reservations are settled from the supervisor
+    channel's records both ways - "not delivered" while it may have sent was already refused,
+    and "delivered" without the channel recording the send is refused too."""
+
+    def test_a_deliverer_reservation_is_settled_delivered_only_from_the_channel(self):
+        from codex_session_relay import faultnotice
+
+        fault = self.broken()
+        # The daemon reserves it and dies before anything is staged.
+        with mock.patch.object(channel_module.SupervisorChannel, "stage_notice",
+                               side_effect=RuntimeError("the relay process was killed")), \
+                mock.patch.object(faultnotice.NoticeDeliverer, "_return",
+                                  side_effect=RuntimeError("the relay process was killed")):
+            self.tick()
+        self.clock.advance(faults.LEASE_SECONDS + 1)
+        notification = self.notification(fault)["notificationId"]
+        with self.assertRaises(faults.FaultRefused):
+            self.ledger.reconcile_notification(notification, delivered=True,
+                                               ref="somebody says it arrived")
+        self.assertEqual(self.notification(fault)["state"], faults.UNCERTAIN)
+        for _ in range(2):
+            self.tick(advance=600)
+        settled = self.notification(fault)
+        self.assertEqual(settled["state"], faults.DELIVERED)
+        self.assertEqual(len(self.sent_for(settled)), 1, "nothing was sent, so it goes, once")

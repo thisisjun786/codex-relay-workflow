@@ -3231,7 +3231,14 @@ class FaultLedger:
         return self._settle_notification(notification, token=token, delivered=False, ref=error)
 
     def reconcile_notification(self, notification, *, delivered, ref) -> dict:
-        """Settle an uncertain notification from what the deliverer can read back."""
+        """Settle an uncertain notification from what the deliverer can read back.
+
+        One the relay daemon's deliverer reserved (DELIVERER_OWNER) went, if at all, through
+        the supervisor channel, so it is settled from that channel's records both ways: not as
+        delivered unless the channel recorded its message dispatched or read back, and not as
+        not delivered while the channel holds an attempt that may have sent. A claim of
+        arrival the channel has not recorded is a supervisor-read readback's to make.
+        """
         return self._settle_notification(notification, token=None, delivered=delivered, ref=ref)
 
     def _settle_notification(self, notification, *, token, delivered, ref):
@@ -3250,6 +3257,21 @@ class FaultLedger:
             elif row["state"] != RESERVED or row["token"] != token:
                 raise FaultRefused(RefusalReason.FAULT_CLAIM_STALE,
                                    "this reservation token is not the current one")
+            if delivered and token is None and row["owner"] == DELIVERER_OWNER:
+                from .supervisorchannel import READ
+                from .transport import DISPATCHED
+
+                went = db.execute(
+                    "SELECT message_id FROM supervisor_messages"
+                    " WHERE obligation_kind = 'fault_notification' AND obligation_id = ?"
+                    "   AND state IN (?,?)", (notification, DISPATCHED, READ)).fetchone()
+                if went is None:
+                    raise FaultRefused(
+                        RefusalReason.FAULT_STATE_CONFLICT,
+                        "notification " + notification + " was reserved by the relay daemon's"
+                        " deliverer, whose transport is the supervisor channel, and the channel"
+                        " has not recorded its message as sent; a supervisor-read readback"
+                        " records an arrival, and the deliverer settles it from that")
             if not delivered:
                 # "Not delivered" is refused while the supervisor channel - the transport this
                 # store records - holds an attempt of this notification's message that may have
