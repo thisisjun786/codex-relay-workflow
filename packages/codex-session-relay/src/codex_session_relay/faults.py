@@ -3348,6 +3348,24 @@ def issue_reference(value):
     return value if isinstance(value, str) and ISSUE_REFERENCE.fullmatch(value) else None
 
 
+# And the link to a published issue: an identifier, or a Linear issue URL of exactly this shape
+# - workspace, identifier and an optional slug of lowercase letters, digits and hyphens.
+ISSUE_LINK = re.compile(r"https://linear\.app/[a-z0-9][a-z0-9-]{0,63}/issue/"
+                        r"[A-Z][A-Z0-9_]{0,15}-[0-9]{1,9}(?:/[a-z0-9-]{1,120})?")
+
+
+def issue_link(value):
+    """value when it is an issue identifier or a Linear issue URL a notice may carry, else None."""
+    if issue_reference(value) is not None:
+        return value
+    return value if isinstance(value, str) and ISSUE_LINK.fullmatch(value) else None
+
+
+# A notice about a fault no relationship places is addressed from its scope's project, when that
+# project key is a plain identifier: the project's live parent sends, its supervisor receives.
+PROJECT_ANCHOR = "project:"
+
+
 # What a notice may carry of the relay's registered hierarchy - the project key in its scope,
 # the sender and recipient task ids: a plain identifier (letters, digits, '.', '_', '-'), which a
 # UUID is too. No spaces, '=', ':', '/', quotes or other free text, so no log line and no
@@ -3428,6 +3446,17 @@ def notice_facts(db, notification):
     if row is None:
         return None
     anchor = anchor_relationship(db, row)
+    scope = _json(row["scope"])
+    project = scope.get("projectKey")
+    if anchor is not None:
+        # The issue its relationship was registered for - the field every supervisor report
+        # carries - never the observation's scope.
+        where, issue = anchor["relationship_id"], issue_reference(anchor["issue_key"])
+    elif isinstance(project, str) and HIERARCHY_IDENTIFIER.fullmatch(project):
+        # A fault scoped to a project and no relationship: the level above is the project's.
+        where, issue = PROJECT_ANCHOR + project, issue_reference(scope.get("issueKey"))
+    else:
+        where, issue = None, None
     return {
         "notificationId": row["notification_id"],
         "deliveryKey": f"relay-notification:{row['notification_id']}",
@@ -3436,14 +3465,15 @@ def notice_facts(db, notification):
         "attempts": row["attempts"], "product": row["product"],
         "faultClass": row["fault_class"], "severity": row["severity"],
         "faultState": row["fault_state"],
-        # The issue the fault published or adopted, only as an identifier; anything else is
-        # said to exist and left on the fault (fault-show).
-        "externalRef": issue_reference(row["external_ref"]),
+        # The issue the fault published or adopted, only as an identifier or a Linear issue
+        # link; anything else is said to exist and left on the fault (fault-show).
+        "externalRef": issue_link(row["external_ref"]),
         "issuePublished": bool(row["external_ref"]),
-        "relationshipId": anchor["relationship_id"] if anchor is not None else None,
-        # The issue its relationship was registered for - the field every supervisor report
-        # carries - never the observation's scope, and only as an identifier.
-        "issueKey": issue_reference(anchor["issue_key"]) if anchor is not None else None,
+        # Where the notice is addressed from: the relationship the fault is about, else its
+        # project (PROJECT_ANCHOR), else nothing - and then it waits.
+        "anchor": where,
+        # The issue it names, only as an identifier, and only when there is one.
+        "issueKey": issue,
     }
 
 

@@ -497,20 +497,65 @@ class SupervisorChannel:
 
         The three answers stay three answers. An unreadable store has said nothing about the
         owner, a contested one has said two things, and neither becomes a recipient.
+
+        A fault notice about no relationship is addressed from its project instead
+        (faults.PROJECT_ANCHOR, "project:<key>"; a relationship id is "rel-..." and never
+        takes that shape): the walk starts at the project's one live owner, and the same
+        answers follow.
         """
-        reading = self.linkage.up(relationship_id=relationship_id)
+        from . import faults
+
+        if isinstance(relationship_id, str) and relationship_id.startswith(
+                faults.PROJECT_ANCHOR):
+            return self._resolve_project(relationship_id[len(faults.PROJECT_ANCHOR):])
+        return self._resolved(self.linkage.up(relationship_id=relationship_id),
+                              "relationship " + repr(relationship_id))
+
+    def _resolve_project(self, key) -> dict:
+        """resolve() for a project: its one live owner sends, the initiative above receives."""
+        where = "project " + repr(key)
+        try:
+            owners = self.linkage.owners(PROJECT, key)
+        except Exception as fault:  # noqa: BLE001 - an unread owner is an unknown one
+            raise DeliveryRefused(
+                RefusalReason.RELATION_UNREADABLE,
+                "the linkage could not be read for " + where + " (" + type(fault).__name__
+                + "), so who the level above is is unknown; nothing is staged") from None
+        if not owners:
+            raise DeliveryRefused(
+                RefusalReason.UNREGISTERED_SCOPE,
+                where + " has no live project owner, so there is nobody whose report this"
+                " would be; the notification waits")
+        if len(owners) > 1:
+            raise DeliveryRefused(
+                RefusalReason.DUPLICATE_SCOPE_OWNER,
+                where + " has more than one live owner ("
+                + ", ".join(repr(one["taskId"]) for one in owners)
+                + "); this sender will not choose between them")
+        reading = self.linkage.up(task_id=owners[0]["taskId"], scope_key=key)
+        first = (reading.get("levels") or [{}])[0]
+        if reading.get("readable", False) and (
+                first.get("scopeKind"), first.get("scopeKey")) != (PROJECT, key):
+            raise DeliveryRefused(
+                RefusalReason.UNREGISTERED_SCOPE,
+                "the linkage walk for " + where + " did not start at that project, so it"
+                " names no level above it; the notification waits")
+        return self._resolved(reading, where)
+
+    def _resolved(self, reading, where) -> dict:
+        """The sender and recipient a linkage reading names, or the refusal it amounts to."""
         if not reading.get("readable", False):
             raise DeliveryRefused(
                 RefusalReason.RELATION_UNREADABLE,
-                "the linkage could not be read for relationship " + repr(relationship_id)
+                "the linkage could not be read for " + where
                 + ", so who the level above is is unknown; nothing is staged and the"
                 " obligation stays exactly where it was",
             )
         if reading.get("state") == "ambiguous":
             raise DeliveryRefused(
                 RefusalReason.DUPLICATE_SCOPE_OWNER,
-                "the linkage reports more than one candidate above relationship "
-                + repr(relationship_id) + "; this sender will not choose between them: "
+                "the linkage reports more than one candidate above "
+                + where + "; this sender will not choose between them: "
                 + repr(reading.get("contention")),
             )
         contention = [one for one in (reading.get("contention") or []) if one.get("contention")]
@@ -522,7 +567,7 @@ class SupervisorChannel:
             drifting = any(one.get("contention") == "owner_drift" for one in contention)
             raise DeliveryRefused(
                 RefusalReason.RELATION_OWNER_DRIFT if drifting else RefusalReason.LINK_CONFLICT,
-                "the hierarchy above relationship " + repr(relationship_id)
+                "the hierarchy above " + where
                 + " is not settled: " + repr(contention) + ". A report waits for it to settle"
                 " rather than being filed with whichever candidate happens to match",
             )
@@ -532,15 +577,15 @@ class SupervisorChannel:
         if project is None:
             raise DeliveryRefused(
                 RefusalReason.UNREGISTERED_SCOPE,
-                "relationship " + repr(relationship_id) + " has no live project owner, so"
+                where + " has no live project owner, so"
                 " there is nobody whose report this would be; gaps "
                 + repr(reading.get("gaps")),
             )
         if supervisor is None:
             raise DeliveryRefused(
                 RefusalReason.UNREGISTERED_SCOPE,
-                "no initiative supervises the project above relationship "
-                + repr(relationship_id) + ", so there is nobody to report to; gaps "
+                "no initiative supervises the project above "
+                + where + ", so there is nobody to report to; gaps "
                 + repr(reading.get("gaps")) + ". The obligation stays standing, which is the"
                 " difference between having nowhere to send a report and not owing one",
             )
@@ -1394,8 +1439,9 @@ class SupervisorChannel:
         notice is what faults.notice_facts reads for a notification its deliverer has reserved.
         Addressed by resolve(), the one function that says who the level above is, from the
         relationship the notification is about NOW (faults.anchor_relationship, read into the
-        notice); a refusal there, or no such relationship, stages nothing and raises, and the
-        notification waits for it.
+        notice as its anchor), else from the project its fault is scoped to
+        (faults.PROJECT_ANCHOR); a refusal there, or neither, stages nothing and raises, and
+        the notification waits for it.
 
         The notification's own message is found by its obligation id, and its id is derived
         from the fault and the notification's deliveryKey alone, so a notification is never
@@ -1407,13 +1453,13 @@ class SupervisorChannel:
         wake.
         """
         existing = self.notice_message(notice["notificationId"])
-        relation = notice["relationshipId"]
+        relation = notice["anchor"]
         if not relation:
             raise DeliveryRefused(
                 RefusalReason.UNREGISTERED_SCOPE,
                 "fault " + repr(notice["faultId"]) + " is about no relationship this store"
-                " holds, so nothing places it under a project and there is no level above to"
-                " tell; the notification waits")
+                " holds and its scope names no project, so nothing places it under a project"
+                " and there is no level above to tell; the notification waits")
         resolution = self.resolve(relation)
         observed_at = self.clock.iso()
         packet = self.compose_notice(notice, resolution=resolution, observed_at=observed_at)
@@ -1553,17 +1599,18 @@ class SupervisorChannel:
             return {"kind": "obsolete", "live": live,
                     "detail": "notification " + repr(row["obligation_id"]) + " is no longer"
                     " eligible: " + eligibility["reason"]}
-        if notice["relationshipId"] != row["relationship_id"]:
+        if notice["anchor"] != row["relationship_id"]:
             # What the notification is about moved - ledger.move, an issue's relationship
-            # superseded - since this row was addressed. Not sent to the old hierarchy: nothing
-            # is claimed, and the next staging re-addresses it or it waits.
+            # superseded, a relationship registered for a fault its project addressed - since
+            # this row was addressed. Not sent to the old hierarchy: nothing is claimed, and
+            # the next staging re-addresses it or it waits.
             return {"kind": "moved", "refusal": DeliveryRefused(
-                RefusalReason.RELATION_OWNER_DRIFT if notice["relationshipId"]
+                RefusalReason.RELATION_OWNER_DRIFT if notice["anchor"]
                 else RefusalReason.UNREGISTERED_SCOPE,
                 "notification " + repr(row["obligation_id"]) + " was addressed from"
-                " relationship " + repr(row["relationship_id"]) + " and is about "
-                + (repr(notice["relationshipId"]) if notice["relationshipId"]
-                   else "no relationship") + " now")}
+                " " + repr(row["relationship_id"]) + " and is about "
+                + (repr(notice["anchor"]) if notice["anchor"]
+                   else "no relationship or project") + " now")}
         staged = json.loads(row["packet"])
         packet = self.compose_notice(notice, resolution=live,
                                      observed_at=staged["envelope"].get("observedAt"))
@@ -1584,8 +1631,11 @@ class SupervisorChannel:
 
         Its envelope relation is the fault ("fault:<id>") and its subject the deliveryKey, so
         its message id is the notification's own and does not move when the relationship
-        addressing it does. Its issue is the one that relationship was registered for, and only
-        as an identifier (faults.issue_reference); without one nothing is composed.
+        addressing it does. Its issue, when it names one, is the one that relationship was
+        registered for (or its scope's, for a project-addressed fault), and only as an
+        identifier (faults.issue_reference); anything else is left out rather than carried.
+        The published issue travels only as an identifier or a Linear issue link
+        (faults.issue_link).
         """
         from . import faults
 
@@ -1596,12 +1646,11 @@ class SupervisorChannel:
                 repr(notice["kind"]) + " is not a notification kind a notice carries; it"
                 " carries " + ", ".join(sorted(NOTICE_PURPOSE)))
         issue = notice.get("issueKey")
-        if not issue:
+        if issue is not None and faults.issue_reference(issue) is None:
             raise DeliveryRefused(
                 RefusalReason.MALFORMED_RECEIPT,
-                "the issue fault " + repr(notice["faultId"]) + "'s relationship names is not an"
-                " issue identifier (TEAM-123 or a UUID), so no notice names it; nothing was"
-                " composed")
+                "the issue fault " + repr(notice["faultId"]) + "'s notice names is not an"
+                " issue identifier (TEAM-123 or a UUID); nothing was composed")
         unfit = faults.unfit_hierarchy(resolution)
         if unfit is not None:
             raise DeliveryRefused(

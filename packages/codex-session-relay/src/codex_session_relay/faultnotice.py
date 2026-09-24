@@ -81,14 +81,14 @@ class NoticeDeliverer:
             return "whether it can be carried now could not be read: " + _said(error)
 
     def _waiting_for(self, notification, now):
-        # What the notification is about NOW, read on the store's own connection - never a
-        # transaction of its own: this is asked inside reserve_notifications' write, where a
-        # second BEGIN is refused. A staged message addressed from another relationship is
-        # re-addressed by the next staging when nothing of it was sent.
-        fault = self.store.one("SELECT signature, scope FROM fault_ledger WHERE fault_id = ?",
-                               (notification["faultId"],))
-        anchor = faults.anchor_relationship(self.store.db, fault) if fault is not None else None
-        relation = anchor["relationship_id"] if anchor is not None else None
+        # What the notification is about NOW - its relationship, else its scope's project
+        # (faults.notice_facts, the reading stage_notice addresses from) - read on the store's
+        # own connection, never a transaction of its own: this is asked inside
+        # reserve_notifications' write, where a second BEGIN is refused. A staged message
+        # addressed from another anchor is re-addressed by the next staging when nothing of it
+        # was sent.
+        notice = faults.notice_facts(self.store.db, notification["notificationId"])
+        relation = notice["anchor"] if notice is not None else None
         row = self.channel.notice_message(notification["notificationId"])
         if row is not None:
             if row["state"] in SENT:
@@ -104,12 +104,9 @@ class NoticeDeliverer:
                         + _at(row["next_eligible_at"]) + self._because(row["message_id"]))
         if not relation:
             return ("no relationship this store holds places fault " + notification["faultId"]
-                    + " under a project, so there is no level above to tell")
-        if faults.issue_reference(anchor["issue_key"]) is None:
-            return ("the issue relationship " + relation + " names is not an issue identifier"
-                    " (TEAM-123 or a UUID), so no notice can name it; fault-show has the fault")
-        unfit = faults.unfit_notice(faults.notice_facts(self.store.db,
-                                                        notification["notificationId"]))
+                    + " under a project, and its scope names no project, so there is no level"
+                    " above to tell")
+        unfit = faults.unfit_notice(notice)
         if unfit is not None:
             return ("the fault's " + unfit + " is not a value the ledger writes, so no notice"
                     " can carry it; fault-show has the fault")

@@ -386,17 +386,26 @@ class WhatTheArchitectReviewAsked(NoticeCase):
         self.assertEqual(self.notification(fault)["state"], faults.DELIVERED)
 
     def test_a_fault_nothing_places_under_a_project_waits_with_that_reason(self):
-        answer = self.ledger.record(faults.observation(
-            product=PRODUCT, fault_class="managed_start_failed", severity=faults.BROKEN,
-            signature={"issueKey": "REL-NEW", "receiptStatus": "failed"},
-            occurrence_key="managed:new:failed",
-            scope={"projectKey": PROJECT, "issueKey": "REL-NEW"}, detail="start failed"))
+        # No relationship, and a scope that names no project (or one nobody owns): there is no
+        # level above to tell, and it waits saying which.
+        waiting = {}
+        for name, scope, said in (
+                ("no-project", {"issueKey": "REL-NEW"}, "no level above"),
+                ("unowned", {"projectKey": "PRJ-UNBOUND", "issueKey": "REL-NEW"},
+                 "no live project owner")):
+            answer = self.ledger.record(faults.observation(
+                product=PRODUCT, fault_class="managed_start_failed", severity=faults.BROKEN,
+                signature={"issueKey": "REL-NEW", "receiptStatus": "failed", "case": name},
+                occurrence_key="managed:new:" + name, scope=scope, detail="start failed"))
+            waiting[answer["faultId"]] = said
         self.tick()
-        notification = self.notification(answer["faultId"])
-        self.assertEqual(notification["state"], faults.PENDING)
-        self.assertIn("no level above", notification["lastError"] or "")
+        for fault, said in waiting.items():
+            notification = self.notification(fault)
+            self.assertEqual(notification["state"], faults.PENDING)
+            self.assertIn(said, notification["lastError"] or "")
         self.assertEqual(self.notice_rows(), [])
         self.assertEqual(self.upward(), [])
+        self.assertEqual(self.budget_used(), 0)
 
     def test_a_blocking_notice_whose_fault_withdrew_before_it_left_never_goes(self):
         # Audit round one: a block that cleared before anybody above was told is not a new
@@ -455,14 +464,15 @@ class WhatTheFirstAuditFound(NoticeCase):
         self.adapter.threads[SUPERVISOR].archived = True
         self.tick()
         self.one_notice()
-        self.ledger.move(fault, scope={"projectKey": PROJECT, "issueKey": "REL-NO-LINK"})
+        # Moved to an issue no relationship holds, in a project nobody owns: no level above.
+        self.ledger.move(fault, scope={"projectKey": "PRJ-UNBOUND", "issueKey": "REL-NO-LINK"})
         self.adapter.threads[SUPERVISOR].archived = False
         for _ in range(2):
             self.tick(advance=3600)
         notification = self.notification(fault)
         self.assertEqual(self.upward(), [], "never to the hierarchy of the issue it left")
         self.assertEqual(notification["state"], faults.PENDING)
-        self.assertIn("no level above", notification["lastError"] or "")
+        self.assertIn("no live project owner", notification["lastError"] or "")
         self.ledger.move(fault, scope={"projectKey": PROJECT, "issueKey": ISSUE})
         self.tick(advance=3600)
         self.assertEqual(len(self.sent_for(self.notification(fault))), 1)
@@ -664,3 +674,80 @@ class WhatTheSixthAuditFound(NoticeCase):
             self.measure_parent()
         self.ticking_after(archive_parent)
         self.assert_kept_back(fault)
+
+
+class WhatTheSeventhAuditFound(NoticeCase):
+    """Plan audit, round seven: a fault about a project and no relationship - a managed start
+    that never produced one - goes to that project's supervisor (I-445), and the published
+    issue's Linear link travels when it has exactly that shape (I-448)."""
+
+    LINK = "https://linear.app/example/issue/CRW-205/synthetic-fault"
+
+    def project_fault(self, issue="REL-77", key="start"):
+        answer = self.ledger.record(faults.observation(
+            product=PRODUCT, fault_class="managed_start_failed", severity=faults.BROKEN,
+            signature={"issueKey": issue, "receiptStatus": "failed", "case": key},
+            occurrence_key="managed:" + key,
+            scope={"projectKey": PROJECT, "issueKey": issue}, detail="start failed"))
+        return answer["faultId"]
+
+    def test_a_fault_about_a_project_and_no_relationship_reaches_its_supervisor_once(self):
+        fault = self.project_fault()
+        self.tick()
+        notification = self.notification(fault)
+        sent = self.sent_for(notification)
+        self.assertEqual(len(sent), 1, "the project's supervisor was told")
+        self.assertEqual(notification["state"], faults.DELIVERED)
+        text = sent[0][2]
+        for said in ("managed_start_failed", "REL-77", PROJECT, fault, "fault-show"):
+            self.assertIn(said, text)
+        row = getattr(self, "one_notice")()
+        self.assertEqual(row["relationship_id"],
+                         getattr(faults, "PROJECT_ANCHOR", "project:") + PROJECT)
+        self.assertEqual(row["recipient_task_id"], SUPERVISOR)
+        for _ in range(3):
+            self.tick(advance=3600)
+        self.assertEqual(len(self.sent_for(notification)), 1, "one notification, one wake")
+        self.assertEqual(len(self.notice_rows()), 1)
+        self.assertEqual(self.budget_used(), 1)
+
+    def test_an_issue_a_project_fault_names_that_is_not_an_identifier_is_left_out(self):
+        fault = self.project_fault(issue="REL-NEW token=" + SECRET, key="odd")
+        self.tick()
+        sent = self.sent_for(self.notification(fault))
+        self.assertEqual(len(sent), 1)
+        self.assertNotIn(SECRET, sent[0][2])
+        self.assertNotIn("REL-NEW", sent[0][2])
+
+    def test_an_archived_supervisor_of_a_project_fault_is_not_woken(self):
+        self.adapter.threads[SUPERVISOR].archived = True
+        fault = self.project_fault()
+        self.tick()
+        self.assertEqual(self.upward(), [])
+        self.assertEqual(self.notification(fault)["state"], faults.PENDING, "kept, not dropped")
+        self.assertEqual(self.budget_used(), 0)
+
+    def test_a_published_linear_issue_link_travels_with_the_notice(self):
+        fault = self.broken(adopt={"externalRef": self.LINK, "scope": {"projectKey": PROJECT}})
+        self.tick()
+        sent = self.sent_for(self.notification(fault))
+        self.assertEqual(len(sent), 1)
+        self.assertIn(self.LINK, sent[0][2])
+        self.assertNotIn("its reference is on the fault", sent[0][2])
+
+    def test_a_link_of_any_other_shape_is_said_to_exist_and_not_carried(self):
+        refs = ("https://linear.app/example/issue/CRW-205/slug?token=" + SECRET,
+                "https://elsewhere.example/issue/CRW-205/" + SECRET.lower(),
+                "https://linear.app/example/issue/CRW-205/" + "x" * 121)
+        found = [self.broken(key="link" + str(n),
+                             adopt={"externalRef": ref, "scope": {"projectKey": PROJECT}})
+                 for n, ref in enumerate(refs)]
+        for _ in range(3):
+            self.tick(advance=3600)
+        for fault, ref in zip(found, refs):
+            sent = self.sent_for(self.notification(fault))
+            self.assertEqual(len(sent), 1)
+            self.assertNotIn(ref, sent[0][2])
+            self.assertNotIn(SECRET, sent[0][2])
+            self.assertNotIn(SECRET.lower(), sent[0][2])
+            self.assertIn("an issue is published", sent[0][2])

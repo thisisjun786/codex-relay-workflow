@@ -581,9 +581,14 @@ supervisor reads for itself, confirmed.
 notification's own. A second staging - another process, a restart, another relationship
 addressing it - finds the same row, and the store refuses a second one by a unique index
 (`supervisor_messages_one_notice`). It is addressed by `resolve()` from the relationship the
-notification is about now, like a report. A row none of whose attempts can have sent is
-restated, re-addressed (to another relationship too) or released from its park by the next
-staging; one that may have been sent is returned as it is.
+notification is about now, like a report, or - for a fault no relationship holds - from the
+project its scope names: `resolve("project:<key>")` walks up from that project's one live owner,
+and refuses as it refuses a relationship (no owner, two owners, no supervisor, a contested
+walk). Such a row's `relationship_id` holds that `project:<key>` anchor; a relationship id never
+takes that shape. A row none of whose attempts can have sent is
+restated, re-addressed (to another relationship or project too) or released from its park by the next
+staging; one that may have been sent is returned as it is. The issue is optional in both of its
+purposes (`fault_notice`, `fault_decision`): a fault about a project and no issue still goes.
 
 A notice is owed only while its notification is reserved under a live lease, because that
 reservation is where the ledger decided its eligibility and spent its budget. That is its I-247

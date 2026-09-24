@@ -950,10 +950,15 @@ deliverer is the seam between them and owns no rule. Each tick it:
   until its next reservation), and nothing when a send may have landed - the lease lapses to
   uncertain and the first step settles it.
 
-The level above is the one the live linkage names from the relationship the notification is
-about - the fault's own relationship, else its issue's current one (`anchor_relationship`, the
-anchor eligibility reads): the project's parent sends and the initiative's supervisor receives,
-exactly as a report does. A notice says what the fault is - purpose `fault_notice` (blocking,
+The level above is the one the live linkage names from what the notification is about: the
+fault's own relationship, else its issue's current one (`anchor_relationship`, the anchor
+eligibility reads), else - for a fault no relationship holds, such as a managed start that failed
+before its relationship existed - the project its scope names, when that project key is a plain
+identifier (`notice_facts`' anchor `project:<key>`). Either way the project's live parent sends
+and the initiative's supervisor receives, exactly as a report does. A project-addressed notice has
+no relationship whose pause or contact applies, so the ledger's eligibility lets it through and
+the channel's own rules decide the rest: the supervisor's archive, pause or limit withholds it
+without a wake, as it withholds a report. A notice says what the fault is - purpose `fault_notice` (blocking,
 resolved) or `fault_decision`, class, severity, state, product, the notification's kind and
 reason, the issue once published, the fault id - and points at `fault-show` on this store; the
 fault's recorded detail and evidence never travel, and neither do a caller's own words: a
@@ -964,21 +969,23 @@ recipient task ids, `unfit_hierarchy` - one that is not an identifier is not car
 notice waits), or the relay's own program path, state directory and socket, which every report
 carries. An issue is named only as an identifier (`TEAM-123` or a UUID,
 `issue_reference`): the notice's issue is the one its relationship was registered for, never the
-observation's scope, and a published or adopted reference that is not an identifier is said to
-exist and left on the fault; a relationship whose issue is not an identifier leaves the
-notification waiting with that reason. It is recomposed where its transport starts, so it states the fault as
+observation's scope - for a project-addressed notice, the issue its scope names - and one that is
+not an identifier is left out. The published or adopted issue travels as an identifier or as a
+Linear issue link of exactly the shape `https://linear.app/<workspace>/issue/<ID>[/<slug>]`
+(`issue_link`); a reference of any other shape is said to exist and left on the fault. The
+issue is not a required field of either purpose, so a fault about a project and no issue still
+goes. It is recomposed where its transport starts, so it states the fault as
 it stands then. Its message id is derived from the fault and the `deliveryKey` alone, and it is
-addressed from the relationship the fault is about at that moment: a fault moved to an issue
-with no relationship is not sent to the hierarchy it left, it waits; moved to another, its
-never-sent message is re-addressed there. A blocking notice whose fault withdrew before it went
+addressed from what the fault is about at that moment: a fault moved elsewhere is not sent to
+the hierarchy it left; its never-sent message is re-addressed to the new relationship or
+project, or it waits when neither has a level above. A blocking notice whose fault withdrew before it went
 does not go (invariant 5).
 
 Limits, stated rather than papered over:
 
-- A fault no relationship places under a project - a managed start that failed before its
-  relationship existed, a relationship with no project scope - has no level above to tell. Its
-  notification waits pending with that reason until one exists; a project-keyed route is a
-  follow-up.
+- A fault with neither a relationship nor a project key that is a plain identifier in its scope,
+  or whose project has no live owner or no supervising initiative, has no level above to tell.
+  Its notification waits pending with that reason until one exists.
 - A notice the channel has capped (a busy or attempt cap) waits with the cap named, and needs
   the same act that releases a capped report.
 - Notifications are keyed per fault, kind and cycle. A blocking notice already delivered is not
