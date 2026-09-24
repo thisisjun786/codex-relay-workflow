@@ -116,6 +116,21 @@ class HostLossCase(DeliveryTestCase):
             adapter=self.adapter,
         )
 
+    def token_confirmed(self):
+        """A completion whose uncertain send reconciliation confirmed from its token."""
+        self.parent_history()
+        _relationship, event_id = self.queued_event()
+        self.adapter.script("in_progress")
+        request_id = self.attempt(event_id)["requestId"]
+        turn = self.adapter.start_turn(PARENT, status="completed", text=f"...{request_id}...")
+        confirmed = self.reconciler.reconcile_attempt(request_id, self.adapter)
+        self.assertEqual(confirmed["evidence"], "turn_found")
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        return event_id, request_id, turn.turn_id
+
+    def evidence_of(self, event_id):
+        return [row["affirmative_evidence"] for row in self.attempts_for(event_id)]
+
     def host_loses(self, turn_id, *, items=True):
         """K5: the App Server died before the accepted turn reached the rollout."""
         thread = self.adapter.threads[PARENT]
@@ -221,6 +236,53 @@ class TheHostLostTheAcceptedTurn(HostLossCase):
             self.clock.advance(120)
             self.daemon.tick()
         self.assertEqual(len(self.adapter.sends), 2)
+
+    def test_a_manual_reconcile_keeps_a_token_confirmed_send_confirmed(self):
+        """Review 9 of 6407baaa: a later read that found nothing wrote the attempt back to none.
+
+        A token already found is affirmative evidence (I-41); not finding it again is not
+        evidence against it. Rewriting it to none also made a later loss record none.
+        """
+        event_id, request_id, turn = self.token_confirmed()
+        self.host_loses(turn)
+        self.clock.advance(5)
+        early = self.reconciler.reconcile_attempt(request_id, self.adapter)
+        self.assertEqual(early["evidence"], "turn_found")
+        self.assertEqual(self.evidence_of(event_id), ["turn_found"])
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        self.clock.advance(120)
+        self.daemon.tick()
+        self.assertEqual(self.attempt_states(event_id), [HOST_LOST, DISPATCHED])
+        self.assertEqual(self.evidence_of(event_id)[0], "turn_found")
+        self.assertEqual(json.loads(self.attempts_for(event_id)[0]["record"])
+                         ["reconciliation"]["affirmativeEvidence"], "turn_found")
+
+    def test_reconciling_a_lost_token_confirmed_attempt_reports_its_own_evidence(self):
+        """Review 9 of 6407baaa: the recorded-loss answer said receipt_turn_id for every loss."""
+        event_id, request_id, turn = self.token_confirmed()
+        self.host_loses(turn)
+        self.clock.advance(120)
+        self.daemon.tick()
+        self.assertEqual(self.attempt_states(event_id)[0], HOST_LOST)
+        again = self.reconciler.reconcile_attempt(request_id, self.adapter)
+        self.assertEqual((again["state"], again["evidence"]), (HOST_LOST, "turn_found"))
+        self.assertEqual(len(self.adapter.sends), 2)
+
+    def test_a_manual_reconcile_keeps_the_name_on_a_token_confirmed_send(self):
+        """Review 9 of 6407baaa: re-confirming from the token wrote over the undecided name."""
+        event_id, request_id, turn = self.token_confirmed()
+        self.host_loses(turn, items=False)
+        self.clock.advance(120)
+        self.daemon.tick()
+        self.assertEqual(self.completion_delivery().get("turnCheck"),
+                         "turn_check_undecided:token_without_turn")
+        outcome = self.reconciler.reconcile_attempt(request_id, self.adapter)
+        self.assertEqual(outcome["evidence"], "turn_found")
+        self.assertEqual(outcome.get("recipientTurn", {}).get("undecided"), "token_without_turn")
+        self.assertEqual(self.completion_delivery().get("turnCheck"),
+                         "turn_check_undecided:token_without_turn")
+        self.assertEqual(self.status_of(event_id)["phase"], "awaiting_ack:turn_check_undecided")
+        self.assertEqual(len(self.adapter.sends), 1)
 
     def test_a_tick_whose_only_change_is_the_loss_is_not_quiet(self):
         event_id, _first, turn = self.dispatched()
