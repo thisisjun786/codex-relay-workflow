@@ -75,7 +75,9 @@ READINESS_WITHDRAWN = "readiness_withdrawn"
 # can hold a forged one.
 LANDING_BASE_RESTATED = "landing_base_restated"
 RESTATE_PREFIX = "restate-base:"
-_RESTATE_KEY = re.compile(r"\Arestate-base:([0-9]+)\Z")
+# The digits a restatement key's sequence may have. A longer run is some older caller's key:
+# it is never converted to a number (Python refuses past 4300 digits), only stepped around.
+_RESTATE_KEY = re.compile(r"\Arestate-base:([0-9]{1,18})\Z")
 
 # What this module writes, and therefore what nobody else may write through attest().
 #
@@ -1954,14 +1956,19 @@ class MergeTurn:
                 # compares against the stored text.
                 answered = True
             elif refusal is None:
-                taken = [int(match.group(1)) for match in (
-                    _RESTATE_KEY.match(key["idempotency_key"]) for key in db.execute(
-                        "SELECT idempotency_key FROM merge_turn_ledger WHERE turn_id = ?",
-                        (turn,)).fetchall()) if match]
-                # One past every restate-base:<n> key the turn holds, whatever wrote it. A store
-                # written before this change could hold one under another kind, and converging
-                # onto it would roll the correction back.
-                sequence = max(taken, default=0) + 1
+                keys = {key["idempotency_key"] for key in db.execute(
+                    "SELECT idempotency_key FROM merge_turn_ledger WHERE turn_id = ?",
+                    (turn,)).fetchall()}
+                taken = [int(match.group(1)) for match in map(_RESTATE_KEY.match, keys)
+                         if match]
+                # One past every restate-base:<n> key the turn holds, whatever wrote it, and then
+                # the first of those numbers whose key no row already uses. A store written
+                # before this change could hold such keys under another kind, and converging
+                # onto one would roll the correction back; a key too long to be a number is
+                # stepped around rather than read. The walk is bounded by the keys there are.
+                first = max(taken, default=0) + 1
+                sequence = next(first + step for step in range(len(keys) + 1)
+                                if RESTATE_PREFIX + str(first + step) not in keys)
                 self._write_ledger(
                     db, turn, kind=TRANSITION, from_state=LANDED, to_state=LANDED,
                     evidence_kind=LANDING_BASE_RESTATED, actor=actor,

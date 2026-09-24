@@ -1916,6 +1916,22 @@ class TheBaseTheTargetActuallyReads(MergeTurnTestCase):
                 first["turnId"], evidence_kind=kind, idempotency_key=key,
                 actor=self.alpha.task_id, evidence="{}"), RefusalReason.MERGE_EVIDENCE_REQUIRED)
 
+    def test_a_key_too_long_to_be_a_number_does_not_stop_a_restatement(self):
+        """Final review 3: an older caller could write restate-base:<4301 digits>."""
+        first = self.landed()
+        turn = first["turnId"]
+        self.r3_landing(first)
+        self.legacy_row(turn, kind="attestation", key="restate-base:" + "9" * 4301,
+                        evidence_kind="transport_accepted", evidence="old caller row")
+        self.legacy_row(turn, kind="attestation", key="restate-base:" + "9" * 18,
+                        evidence_kind="transport_accepted", evidence="old caller row")
+        self.legacy_row(turn, kind="attestation", key="restate-base:1" + "0" * 18,
+                        evidence_kind="transport_accepted", evidence="old caller row")
+        answer = self.restate(turn)
+        self.assertTrue(answer["restated"])
+        self.assertEqual([r["sequence"] for r in answer["baseRestatements"]],
+                         [10 ** 18 + 1])
+
     def test_rows_an_older_store_may_hold_neither_block_nor_pass_as_restatements(self):
         first = self.landed()
         turn = first["turnId"]
