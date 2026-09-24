@@ -923,3 +923,42 @@ class WhatTheFinalReviewFound(NoticeCase):
         self.assertEqual(notification["state"], faults.PENDING)
         self.assertIn("paused", notification["eligibility"]["reason"])
         self.assertEqual([one for one in self.adapter.sends if one[1] != PARENT], [])
+
+
+class WhatTheThirdFinalReviewFound(NoticeCase):
+    """Final review of caee3e0e: a routed fault names the issue it is about in its signature -
+    a defect's attached `issue`, a completion check's `subject` - with only a project in its
+    scope, and that issue's assignment is whose wishes apply to its notices."""
+
+    def routed(self, signature, key):
+        return self.ledger.record(faults.observation(
+            product=PRODUCT, fault_class="delivery_stalled", severity=faults.BROKEN,
+            signature=signature, occurrence_key="routed:" + key,
+            scope={"projectKey": PROJECT}, detail="routed"))["faultId"]
+
+    def test_a_routed_defect_on_a_paused_assignment_is_held_back(self):
+        fault = self.routed({"component": "editor", "symptom": "cursor_jump", "issue": ISSUE},
+                            "defect")
+        self.registry.set_status(self.rid, "paused", actor="user")
+        for _ in range(2):
+            self.tick(advance=3600)
+        notification = self.notification(fault)
+        self.assertEqual(notification["state"], faults.PENDING)
+        self.assertIn("paused", (notification.get("eligibility") or {}).get("reason", ""))
+        self.assertEqual(self.upward(), [])
+        self.assertEqual(self.budget_used(), 0)
+
+    def test_a_completion_check_whose_parent_cannot_be_contacted_is_held_back(self):
+        fault = self.routed({"subject": ISSUE, "check": "claims"}, "completion")
+        self.adapter.threads[PARENT].archived = True
+        for _ in range(2):
+            self.tick(advance=3600)
+        notification = self.notification(fault)
+        self.assertEqual(notification["state"], faults.PENDING)
+        self.assertIn("recipient_archived",
+                      (notification.get("eligibility") or {}).get("reason", ""))
+        self.assertEqual(self.upward(), [])
+        self.adapter.threads[PARENT].archived = False
+        self.tick(advance=3600)
+        self.assertEqual(len(self.sent_for(self.notification(fault))), 1,
+                         "once its parent can be contacted, it goes once")

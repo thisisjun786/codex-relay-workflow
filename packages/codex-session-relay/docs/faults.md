@@ -952,7 +952,9 @@ deliverer is the seam between them and owns no rule. Each tick it:
   uncertain and the first step settles it.
 
 The level above is the one the live linkage names from what the notification is about: the
-fault's own relationship, else its issue's current one (`anchor_relationship`, the anchor
+fault's own relationship, else the current relationship of the issue it names - its scope's
+`issueKey`, or its signature's `issueKey` (a managed start), `issue` (a routed defect's attached
+issue) or `subject` (a completion check's), `ISSUE_NAMED_IN` - (`anchor_relationship`, the anchor
 eligibility reads, and never one the linkage registers under another project than the fault's
 scope names), else - for a fault no relationship holds, such as a managed start that failed
 before its relationship existed, or one whose scope names another project than its issue's

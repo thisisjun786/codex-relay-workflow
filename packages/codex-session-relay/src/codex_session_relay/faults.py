@@ -3314,11 +3314,19 @@ def notification_eligibility(store, db, identifier, moment) -> dict:
     return {**about, "eligible": True, "reason": "reportable"}
 
 
+# Where a fault names the issue it is about, in the order they are read: its scope's issueKey,
+# then its signature's - issueKey (a managed start), issue (a routed defect's attached issue),
+# subject (a completion check's subject issue).
+ISSUE_NAMED_IN = (("scope", "issueKey"), ("signature", "issueKey"), ("signature", "issue"),
+                  ("signature", "subject"))
+
+
 def anchor_relationship(db, fault):
     """The relationship a fault's notifications are about, or None.
 
-    The fault's own signature relationship when that relationship exists, else the issue's
-    current relationship - and neither when the linkage registers it under another project
+    The fault's own signature relationship when that relationship exists, else the current
+    relationship of the issue the fault names (ISSUE_NAMED_IN: the first one that has one) -
+    and neither when the linkage registers it under another project
     than the one the fault's scope names: that relationship is another project's assignment,
     and a fault filed under this project is neither told to its level above nor held back by
     its wishes. A relationship the linkage places under no project keeps its place, as it
@@ -3332,12 +3340,16 @@ def anchor_relationship(db, fault):
         row = db.execute("SELECT relationship_id, issue_key, status, parent_task_id FROM relationships"
                          " WHERE relationship_id = ?", (relationship,)).fetchone()
     scope = _json(fault["scope"])
-    issue = scope.get("issueKey")
-    if row is None and _named(issue):
-        row = db.execute(
-            "SELECT relationship_id, issue_key, status, parent_task_id FROM relationships"
-            " WHERE issue_key = ? AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 1",
-            (issue,)).fetchone()
+    named = {"scope": scope, "signature": _json(fault["signature"])}
+    for where, field in ISSUE_NAMED_IN:
+        if row is not None:
+            break
+        issue = named[where].get(field)
+        if _named(issue):
+            row = db.execute(
+                "SELECT relationship_id, issue_key, status, parent_task_id FROM relationships"
+                " WHERE issue_key = ? AND superseded_by IS NULL ORDER BY created_at DESC"
+                " LIMIT 1", (issue,)).fetchone()
     project = scope.get("projectKey")
     if row is not None and project:
         placed = db.execute("SELECT project_key FROM relationship_scope"
