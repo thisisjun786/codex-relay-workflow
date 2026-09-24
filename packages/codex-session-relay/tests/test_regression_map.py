@@ -234,8 +234,8 @@ SUMMARIES = {
     ("cli.py", None, "_receives_against_the_store", "function"): ((False,), (), ()),
     # A pacing no window reopens: a spent hourly cap of zero. The false side is reachable from any
     # one input alone - no pacing, the minimum gap, a cap with a reopen time (CRW-231).
-    # test_unknown_send_lost.py reaches it true for a completion, a correction and reconcile's
-    # redelivery answer under a cap of zero, and false for every capped delivery with a window.
+    # test_unknown_send_lost.py reaches it true for a completion and a correction under a cap of
+    # zero, and false for every capped delivery with a window.
     ("assignment.py", None, "never_reopens", "function"): ((False,), (), ()),
     # Replay equality folds entries, digest, source and mode; public tests independently
     # vary each input and assert that a stored set is preserved on refusal.
@@ -264,12 +264,6 @@ SUMMARIES = {
     ("packets.py", None, "_refusals_unreadable", "function"):
         ((True,), (("return: False", 1),), ()),
     ("receipts.py", None, "deliverable", "function"): ((False,), (), ()),
-    # Whether an uncertain send moved on while its loss was being settled: gone, settled on
-    # evidence, or its delivery past held_uncertain on this attempt, so the true side is reachable
-    # from any one input alone (CRW-231). test_unknown_send_lost.py's lost-race case reaches it
-    # true through a confirmation from the token; an acknowledgement that answers the attempt
-    # leaves every input as read and reaches it false.
-    ("reconcile.py", None, "_moved_since", "function"): ((True,), (), ()),
     ("scope.py", None, "is_within", "function"):
         ((True,), (("return: path.startswith('/')", 1),), ()),
     ("service.py", None, "_holder_is_ours", "function"):
@@ -352,9 +346,6 @@ FOLD_FREE_BOOLEANS = (
     ("delivery.py", None, "_rate_limited", "function"),
     # Membership of the item type in the agent-output deny-list, negated: one input, no fold.
     ("hostadapter.py", None, "may_be_message", "function"),
-    # Whether one acknowledgement row answers the attempt: the row's existence, and the rule is
-    # the query's (CRW-231).
-    ("hostloss.py", None, "acknowledged", "function"),
     ("lifecycle.py", None, "is_busy", "function"),
     ("lifecycle.py", None, "may_send", "function"),
     ("scope.py", None, "at_least", "function"),

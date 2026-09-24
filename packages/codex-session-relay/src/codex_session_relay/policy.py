@@ -26,14 +26,13 @@ HOST_LOST_TURN = "host_lost_turn"
 # send time. Recorded on the attempt as "turn_check_undecided:<reason>" (hostloss.record_undecided)
 # and read by status as awaiting_ack:turn_check_undecided, so it is named rather than silent.
 TURN_CHECK_UNDECIDED = "turn_check_undecided"
-# An uncertain send the recipient kept no trace of (hostloss.read_unknown_send, CRW-231). turn/start
+# An uncertain send the recipient keeps no trace of (hostloss.read_unknown_send, CRW-231). turn/start
 # went out, no usable answer came back and no turn id with it, and once the send is past the start-time
-# allowance the recipient's own turns and items since it show nothing of it: no turn begun since it still
-# running, and no item carrying this attempt's token. Whether the host never received the message or
-# received it and lost it, the recipient does not have it. The same word as host_lost_turn's in two of its
-# places: the lost attempt's state, and the hold of a delivery that is not sent again automatically - a
-# completion whose event had already lost an attempt, or any other kind, which the relay does not recover
-# by itself. Unlike host_lost_turn it is never dispatch evidence: nothing showed that this send arrived.
+# allowance the recipient's own turns and items since it, and the turn it could have been folded into,
+# show nothing of it. The hold of such a delivery, which stays held_uncertain: nothing shows that a live
+# App Server cannot still apply the turn/start, so it is never sent again, and the parent recovers the
+# report; a message that turns up later still confirms it. Named on the attempt as
+# "unknown_send_lost:no_trace". Never an attempt state and never dispatch evidence.
 UNKNOWN_SEND_LOST = "unknown_send_lost"
 # An uncertain send whose reading cannot decide however long the relay waits: the same reasons the turn
 # check names (a listing that never reached the send, an empty listing, a token scan that could not cover

@@ -267,17 +267,24 @@ def find_token_in_turn_items(pages, token: str, turn_id: str) -> TokenScan:
     host that ignored the turn filter answers with other turns' items, and an echo of the request
     id in the turn's own command output is not the message. The message opens a turn it started,
     and sits wherever a turn had got to when a send was folded into it; a turn that does not have
-    it is left to the thread-wide reading (hostloss.py) rather than concluded lost here.
+    it is left to the thread-wide reading (hostloss.py) rather than concluded lost here. As in
+    find_token_in, the first item of that turn carrying the token in a type that is neither the
+    message nor agent output is named as other_turn and other_kind (CRW-231).
     """
     scanned = 0
+    other = (None, None)
     for items, follows in pages:
         for owner, text, kind in items:
             scanned += 1
-            if owner == turn_id and is_message(kind) and token in text:
+            if owner != turn_id or not may_be_message(kind) or token not in text:
+                continue
+            if is_message(kind):
                 return TokenScan(True, owner, False, scanned)
+            if other == (None, None):
+                other = (owner, kind)
         if not follows:
-            return TokenScan(False, None, True, scanned)
-    return TokenScan(False, None, False, scanned)
+            return TokenScan(False, None, True, scanned, *other)
+    return TokenScan(False, None, False, scanned, *other)
 
 
 class HostAdapter(Protocol):

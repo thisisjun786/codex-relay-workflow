@@ -431,8 +431,6 @@ class AssignmentView:
             "       v.last_reason AS ack_last_reason,"
             "       (SELECT COUNT(*) FROM attempts h WHERE h.event_id = e.event_id"
             "         AND h.state = 'host_lost_turn') AS host_lost_attempts,"
-            "       (SELECT COUNT(*) FROM attempts u WHERE u.event_id = e.event_id"
-            "         AND u.state = 'unknown_send_lost') AS unknown_lost_attempts,"
             # The recipient's send budget, read in the same snapshot as the delivery it paces
             # (delivery.send_pacing reads the same two rows; RetryPolicy.pacing judges them).
             "       (SELECT sends FROM recipient_rate WHERE recipient_task_id = d.recipient_task_id"
@@ -479,13 +477,9 @@ class AssignmentView:
                 "dispatchEvidence": row["dispatch_evidence"],
                 "holdReason": row["hold_reason"],
                 "hostLostAttempts": row["host_lost_attempts"],
-                # How many of this event's uncertain sends the recipient kept no trace of
-                # (hostloss.read_unknown_send, CRW-231). Like the count above, it outlives the
-                # redelivery.
-                "unknownSendLostAttempts": row["unknown_lost_attempts"],
-                # The current attempt's recipient check, when it could not decide: the turn
+                # The current attempt's recipient check, when it named something: the turn
                 # check's turn_check_undecided:<reason>, or an uncertain send's
-                # unknown_send_undecided:<reason>; None otherwise.
+                # unknown_send_lost:no_trace or unknown_send_undecided:<reason>; None otherwise.
                 "turnCheck": (row["attempt_turn_check"]
                               if (row["attempt_turn_check"] or "").startswith(UNDECIDED_CHECKS)
                               else None),
@@ -888,10 +882,8 @@ REACKNOWLEDGE_ACTION = "parent_reacknowledges"
 RECONCILE_ACTION = "daemon_reconciles_delivery"
 HOST_LOST_REDELIVERY_ACTION = "daemon_redelivers_host_lost_turn"
 HOST_LOST_HELD_ACTION = "parent_recovers_host_lost_turn"
-# An uncertain send the recipient kept no trace of (hostloss.read_unknown_send, CRW-231): sent once
-# more by the daemon, held for the parent after a second loss, or held for the parent when no wait
-# can decide it.
-UNKNOWN_SEND_REDELIVERY_ACTION = "daemon_redelivers_unknown_send_lost"
+# An uncertain send the recipient keeps no trace of, or whose reading cannot decide
+# (hostloss.read_unknown_send, CRW-231): never sent again, and the parent's to recover.
 UNKNOWN_SEND_HELD_ACTION = "parent_recovers_unknown_send_lost"
 UNKNOWN_SEND_UNDECIDED_ACTION = "parent_recovers_unknown_send_undecided"
 # A delivery the recipient's send budget refuses in every window: a cap of zero. The daemon cannot
@@ -906,7 +898,7 @@ PARENT_RECOVERY_THEN = ("read the report, then open a fresh execution generation
                         " (generation-open) if the work still needs verifying")
 # The recipient-check names a current attempt can carry (hostloss): the turn check's, and an
 # uncertain send's.
-UNDECIDED_CHECKS = ("turn_check_undecided:", "unknown_send_undecided:")
+UNDECIDED_CHECKS = ("turn_check_undecided:", "unknown_send_lost:", "unknown_send_undecided:")
 # Verification's own "not yet": the host has not confirmed the acknowledging turn, and a process
 # with host access will try again; or the acknowledgement was kept while the relay had not
 # confirmed the delivery (ack.DELIVERY_UNCONFIRMED), and the daemon completes it now that it has.
@@ -929,15 +921,15 @@ def completion_next_action(state, projection):
       is left to NEXT_ACTION, as is every acknowledged claim (parent_verifies);
     - held, other than a closed push channel: nothing moves it automatically. A hold named for a
       loss is the parent's to recover under that loss's name (host_lost_turn, unknown_send_lost,
-      unknown_send_undecided, CRW-231); any other hold after a loss is the parent's under the loss
-      the event recorded, a host loss first; a completion never lost keeps today's answer;
+      unknown_send_undecided, CRW-231); any other hold after a host loss is the parent's to
+      recover; a completion never lost keeps today's answer;
     - held_uncertain or sending: an uncertain send or an unsettled claim, which reconciliation
       settles; it is not a send;
     - dispatched or inbox_only with an acknowledgement recorded: verification's, unless
       verification refused it, which only a new acknowledgement answers;
     - dispatched or inbox_only: the parent's to acknowledge;
-    - queued, deferred or withheld: the relay's to send, and after a loss its to send again, named
-      for the loss (a host loss first).
+    - queued, deferred or withheld: the relay's to send, and after a host loss its to send again;
+      under a budget no window reopens (a cap of zero), the operator's.
 
     None leaves NEXT_ACTION's answer.
     """
@@ -956,7 +948,6 @@ def completion_next_action(state, projection):
         return None
     ack = completion["ack"] or {}
     host_lost = (delivery.get("hostLostAttempts") or 0) > 0
-    unknown_lost = (delivery.get("unknownSendLostAttempts") or 0) > 0
     settlement = ack.get("settlement")
     if settlement == "verified":
         return NEXT_ACTION[VERIFYING] if state == RECEIVED and ack.get("accepted") else None
@@ -967,9 +958,7 @@ def completion_next_action(state, projection):
                  UNKNOWN_SEND_UNDECIDED: UNKNOWN_SEND_UNDECIDED_ACTION}.get(hold)
         if named is not None:
             return named
-        if host_lost:
-            return HOST_LOST_HELD_ACTION
-        return UNKNOWN_SEND_HELD_ACTION if unknown_lost else None
+        return HOST_LOST_HELD_ACTION if host_lost else None
     where = delivery["state"]
     if where in (HELD_UNCERTAIN, SENDING):
         return RECONCILE_ACTION
@@ -982,9 +971,7 @@ def completion_next_action(state, projection):
     if where in (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND):
         if never_reopens(delivery.get("pacing")):
             return SEND_POLICY_ACTION
-        if host_lost:
-            return HOST_LOST_REDELIVERY_ACTION
-        return UNKNOWN_SEND_REDELIVERY_ACTION if unknown_lost else NEXT_ACTION[RECEIVED]
+        return HOST_LOST_REDELIVERY_ACTION if host_lost else NEXT_ACTION[RECEIVED]
     return None
 
 

@@ -1,10 +1,17 @@
-"""An uncertain send that left no trace is redelivered once or held by name (CRW-231).
+"""An uncertain send that left no trace is held for the parent by name, never sent again (CRW-231).
 
 CRW-124's H0-R4 K5ctl killed the isolated App Server after the relay sent turn/start for a
 completion to the parent and before it read the answer. The attempt settled held_uncertain on an
 outcome_unknown receipt with no turn id, the restarted host held no trace of the message, and
 reconciliation kept the attempt held_uncertain_awaiting_evidence for ever while assignment-show
 named a daemon that could not settle it and the only fault stayed below its publish threshold.
+
+Nothing shows that a live App Server cannot still apply a turn/start whose answer never came back
+(independent reviews of bb1b6af6 and c367abb7), so no reading sends it again. The recipient's own
+turns and items since the send are read instead: no trace holds the delivery unknown_send_lost,
+a reading no wait can decide holds it unknown_send_undecided, and both name the parent with the
+command that reads the report. The delivery stays held_uncertain, so a message found later still
+confirms it.
 
 The loss is staged the way K5ctl left the host: the fake transport answers outcome_unknown and
 neither starts a turn nor keeps the message. The four cases are read apart: that loss; the same
@@ -13,7 +20,6 @@ host lost afterwards (CRW-224, host_lost_turn); and a delivery waiting on the re
 cap (O-H0R4-2), staged by filling the recipient's window.
 """
 
-import json
 import os
 import shlex
 import unittest
@@ -28,6 +34,7 @@ from .test_host_lost_turn import HostLossCase
 UNKNOWN_LOST = "unknown_send_lost"
 UNDECIDED = "unknown_send_undecided"
 HOST_LOST = "host_lost_turn"
+NO_TRACE = UNKNOWN_LOST + ":no_trace"
 
 
 class _Wrapped:
@@ -59,12 +66,15 @@ class MessageLandsAfterTheThreadScan(_Wrapped):
         return scan
 
 
+def message(request_id):
+    return f"[codex-session-relay] verification request\nrequestId: {request_id}"
+
+
 class UnknownSendCase(HostLossCase):
     def unknown_send(self, *, history=True, restarted=True):
         """K5ctl: turn/start went out, the App Server died before answering, and the host kept
-        nothing of it. The restarted host holds no live state for the parent (notLoaded) until
-        something loads it; restarted=False leaves the parent loaded, as a host that never went
-        down would."""
+        nothing of it. restarted leaves the parent notLoaded, as the restarted host did; the
+        reading does not depend on it."""
         if history:
             self.parent_history()
         _relationship, event_id = self.queued_event()
@@ -74,19 +84,23 @@ class UnknownSendCase(HostLossCase):
         self.assertIsNone(record["turnId"])
         self.assertEqual(self.delivery_row(event_id)["state"], HELD_UNCERTAIN)
         if restarted:
-            self.restart_host()
+            self.adapter.set_status(PARENT, "notLoaded")
         return event_id, record["requestId"]
-
-    def restart_host(self):
-        self.adapter.set_status(PARENT, "notLoaded")
 
     def ticks(self, count, seconds=120):
         for _ in range(count):
             self.clock.advance(seconds)
             self.daemon.tick()
 
+    def sends_to(self, recipient=PARENT):
+        return [send[0] for send in self.adapter.sends if send[1] == recipient]
+
     def recovery(self):
         return self.assignments.state(self._rid).get("recovery") or {}
+
+    def mark(self, request_id):
+        return self.store.one("SELECT recipient_scan FROM attempts WHERE request_id = ?",
+                              (request_id,))["recipient_scan"]
 
     def assert_reads_the_event_from_this_store(self, command, event_id):
         """The recovery line runs a relay on THIS store: a shell without the original --state or
@@ -94,6 +108,22 @@ class UnknownSendCase(HostLossCase):
         argv = shlex.split(command or "")
         store_dir = os.path.dirname(os.path.abspath(str(self.store.path)))
         self.assertEqual(argv[-5:], ["--state", store_dir, "show", "--event", event_id])
+
+    def assert_held(self, event_id, request_id, hold, mark):
+        """Held for the parent by name: the delivery, the attempt, status and assignment-show all
+        say so, and the parent is given the command that reads the report."""
+        row = self.delivery_row(event_id)
+        self.assertEqual((row["state"], row["hold_reason"]), (HELD_UNCERTAIN, hold))
+        self.assertEqual((row["dispatch_evidence"], row["dispatch_turn_id"]), (None, None))
+        self.assertEqual(self.mark(request_id), mark)
+        self.assertEqual(self.attempt_states(event_id)[-1], HELD_UNCERTAIN)
+        item = self.status_of(event_id)
+        self.assertEqual((item["phase"], item["reported"]), (f"held:{hold}", f"held:{hold}"))
+        self.assertEqual(self.next_action(), f"parent_recovers_{hold}")
+        self.assertEqual(self.completion_delivery().get("turnCheck"), mark)
+        recovery = self.recovery()
+        self.assertEqual((recovery.get("actor"), recovery.get("reason")), ("parent", hold))
+        self.assert_reads_the_event_from_this_store(recovery.get("command"), event_id)
 
     def fill_window(self, now):
         window = int(now // 3600) * 3600
@@ -112,66 +142,78 @@ class UnknownSendCase(HostLossCase):
 
 
 class AnUnknownSendTheHostKeptNoTraceOf(UnknownSendCase):
-    def test_the_daemon_redelivers_the_same_event_once_under_the_next_attempt(self):
+    def test_it_is_held_for_the_parent_by_name_and_never_sent_again(self):
+        """Independent reviews of bb1b6af6 and c367abb7: a live App Server can still apply a
+        turn/start whose answer never came back, and nothing the relay reads shows it will not."""
         event_id, first = self.unknown_send()
         self.ticks(1)
-        attempts = self.attempts_for(event_id)
-        self.assertEqual([row["state"] for row in attempts], [UNKNOWN_LOST, DISPATCHED])
-        self.assertEqual([row["event_id"] for row in attempts], [event_id, event_id])
-        self.assertEqual([send[0] for send in self.adapter.sends],
-                         [first, attempts[1]["request_id"]])
-        self.assertEqual(self.journalled(UNKNOWN_LOST), 1)
-        self.assertEqual(self.status_of(event_id)["phase"], "awaiting_ack")
-        self.assertEqual(self.next_action(), "parent_acknowledges")
-        self.assertEqual(self.completion_delivery().get("unknownSendLostAttempts"), 1)
-        # Nothing further is owed: later ticks read the redelivery and send nothing.
-        self.ticks(3)
-        self.assertEqual(len(self.adapter.sends), 2)
-        self.assertEqual(self.journalled(UNKNOWN_LOST), 1)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assertEqual(self.attempt_states(event_id), [HELD_UNCERTAIN])
+        self.ticks(6, seconds=700)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assertEqual(self.sends_to(), [first])
 
-    def test_a_recipient_its_host_still_holds_is_held_for_the_parent_not_redelivered(self):
-        """Independent review of bb1b6af6: a live App Server can still apply a turn/start whose
-        answer never came back, so absence alone is not enough to send again. Only a recipient
-        the host holds no live state for (notLoaded, as after K5ctl's restart) is redelivered."""
+    def test_a_recipient_its_host_still_holds_is_held_the_same_way(self):
         event_id, first = self.unknown_send(restarted=False)
         self.ticks(3)
-        row = self.delivery_row(event_id)
-        self.assertEqual((row["state"], row["hold_reason"]), (HELD_UNCERTAIN, UNDECIDED))
-        self.assertEqual(self.completion_delivery().get("turnCheck"),
-                         f"{UNDECIDED}:recipient_loaded")
-        self.assertEqual(self.next_action(), "parent_recovers_unknown_send_undecided")
-        self.assertEqual(len(self.adapter.sends), 1)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assertEqual(self.sends_to(), [first])
 
-    def test_a_loss_settlement_that_loses_its_race_reports_the_attempt_as_it_stands(self):
-        """Independent review of bb1b6af6: another reader confirmed the send between this
-        reading's held write and its loss settlement, and the outcome still said held."""
+    def test_reconcile_names_the_parent_the_reason_and_the_command_without_sending(self):
+        event_id, first = self.unknown_send()
+        self.clock.advance(120)
+        outcome = self.reconciler.reconcile_attempt(first, self.adapter)
+        self.assertEqual((outcome["state"], outcome["evidence"]), (HELD_UNCERTAIN, "none"))
+        self.assertEqual((outcome.get("nextExpectedAction"), outcome.get("reason")),
+                         ("parent_recovers_unknown_send_lost", UNKNOWN_LOST))
+        self.assertEqual((outcome.get("recipientTrace") or {}).get("finding"), UNKNOWN_LOST)
+        recovery = outcome.get("recovery") or {}
+        self.assertEqual(recovery.get("actor"), "parent")
+        self.assert_reads_the_event_from_this_store(recovery.get("command"), event_id)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assertEqual(self.sends_to(), [first])
+
+    def test_reconciling_it_again_keeps_the_hold_and_sends_nothing(self):
+        event_id, first = self.unknown_send()
+        self.clock.advance(120)
+        self.reconciler.reconcile_attempt(first, self.adapter)
+        again = self.reconciler.reconcile_attempt(first, self.adapter)
+        self.assertEqual((again["state"], again.get("nextExpectedAction")),
+                         (HELD_UNCERTAIN, "parent_recovers_unknown_send_lost"))
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assertEqual(self.attempt_states(event_id), [HELD_UNCERTAIN])
+        self.assertEqual(self.sends_to(), [first])
+
+    def test_a_hold_that_loses_its_race_to_a_confirmation_reports_the_confirmation(self):
+        """Another reader confirmed the send between this reading and its held write: nothing is
+        written over the confirmation and no hold is named."""
         from unittest import mock
         from codex_session_relay import hostloss
 
         event_id, first = self.unknown_send()
         self.clock.advance(120)
-        original = hostloss.settle_unknown_send
+        original = hostloss.read_unknown_send
 
         def confirmed_first(*args, **kwargs):
-            late = self.adapter.start_turn(
-                PARENT, status="completed",
-                text=f"[codex-session-relay] verification request\nrequestId: {first}")
+            reading = original(*args, **kwargs)
+            self.adapter.start_turn(PARENT, status="completed", text=message(first))
             self.assertEqual(self.reconciler.reconcile_attempt(first, self.adapter)["evidence"],
                              "turn_found")
-            del late
-            return original(*args, **kwargs)
+            return reading
 
-        with mock.patch.object(hostloss, "settle_unknown_send", confirmed_first):
+        with mock.patch.object(hostloss, "read_unknown_send", confirmed_first):
             outcome = self.reconciler.reconcile_attempt(first, self.adapter)
-        self.assertEqual((outcome["state"], outcome.get("deliveryState"), outcome["evidence"]),
-                         (HELD_UNCERTAIN, DISPATCHED, "turn_found"))
-        self.assertNotEqual(outcome.get("nextExpectedAction"), "daemon_reconciles_delivery")
-        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
-        self.assertEqual(len(self.adapter.sends), 1)
+        self.assertEqual((outcome.get("deliveryState"), outcome["evidence"]),
+                         (DISPATCHED, "turn_found"))
+        self.assertNotIn("nextExpectedAction", outcome)
+        row = self.delivery_row(event_id)
+        self.assertEqual((row["state"], row["hold_reason"]), (DISPATCHED, None))
+        self.assertEqual(self.next_action(), "parent_acknowledges")
+        self.assertEqual(self.sends_to(), [first])
 
-    def test_an_acknowledgement_that_answers_the_attempt_stops_the_redelivery(self):
-        """The parent acknowledged after the send, so it read this attempt, whatever its items
-        show now: the loss is not settled and nothing is sent again."""
+    def test_an_acknowledgement_without_a_trace_is_held_the_same_way(self):
+        """The parent acknowledged after the send, so it read this attempt whatever its items show
+        now. Nothing is sent again either way; the hold names the parent, who holds the answer."""
         from codex_session_relay import identity
 
         event_id, first = self.unknown_send()
@@ -181,136 +223,69 @@ class AnUnknownSendTheHostKeptNoTraceOf(UnknownSendCase):
                              ack_proof=identity.ack_proof(event_id, ack_turn.turn_id),
                              accepted=True, adapter=self.adapter)
         self.assertEqual(self.ack_row(event_id)["last_reason"], "delivery_unconfirmed")
-        self.clock.advance(120)
-        outcome = self.reconciler.reconcile_attempt(first, self.adapter)
-        # Independent review of 668890b0: not sent again, and not left as a wait the daemon will
-        # end either - held for the parent, named.
-        self.assertEqual((outcome["state"], outcome.get("nextExpectedAction")),
-                         (HELD_UNCERTAIN, "parent_recovers_unknown_send_undecided"))
-        self.assertNotIn("changed", outcome)
-        row = self.delivery_row(event_id)
-        self.assertEqual((row["state"], row["hold_reason"]), (HELD_UNCERTAIN, UNDECIDED))
-        self.assertEqual(self.completion_delivery().get("turnCheck"),
-                         f"{UNDECIDED}:acknowledged_without_trace")
-        self.ticks(2)
-        self.assertEqual(len(self.adapter.sends), 1)
+        self.ticks(3)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assertEqual(self.sends_to(), [first])
         self.assertIn((faults.OPEN, faults.BROKEN), self.fault_states())
 
-    def test_reconcile_names_the_loss_and_the_actor_that_moves_it_without_sending(self):
+    def test_a_send_too_recent_to_judge_is_read_again_until_it_is_held(self):
         event_id, first = self.unknown_send()
-        self.clock.advance(120)
-        outcome = self.reconciler.reconcile_attempt(first, self.adapter)
-        self.assertEqual(outcome["state"], UNKNOWN_LOST)
-        self.assertEqual(outcome.get("redelivery"), "queued")
-        self.assertEqual(outcome.get("nextExpectedAction"), "daemon_redelivers_unknown_send_lost")
-        self.assertEqual((outcome.get("recipientTrace") or {}).get("finding"), UNKNOWN_LOST)
-        self.assertEqual(len(self.adapter.sends), 1)
-        row = self.delivery_row(event_id)
-        self.assertEqual((row["state"], row["hold_reason"]), (QUEUED, None))
-        # No dispatch evidence exists for a send nobody can show arrived, so none is claimed.
-        self.assertIsNone(row["dispatch_evidence"])
-        item = self.status_of(event_id)
-        self.assertEqual((item["phase"], item["reported"]),
-                         ("redelivering:unknown_send_lost", "redelivering:unknown_send_lost"))
-        self.assertEqual(self.next_action(), "daemon_redelivers_unknown_send_lost")
-        self.assertEqual(self.completion_delivery().get("unknownSendLostAttempts"), 1)
-
-    def test_dispositions_does_not_say_nothing_was_sent_after_a_loss(self):
-        """Independent review of 668890b0: the queued row after a loss read not_sent, 'nothing
-        has been sent yet', beside a current attempt recorded unknown_send_lost."""
-        from codex_session_relay import dispositions
-        from codex_session_relay.store import resolve_state_dir
-
-        event_id, first = self.unknown_send()
-        self.clock.advance(120)
-        self.reconciler.reconcile_attempt(first, self.adapter)
-        answer = dispositions.read(resolve_state_dir(os.path.dirname(str(self.store.path))),
-                                   relationship_id=self._rid)
-        child = answer["children"][0]
-        delivery = next(event["delivery"] for event in child["events"]
-                        if event["eventId"] == event_id)
-        self.assertEqual((delivery["observation"], delivery["currentAttempt"]["state"]),
-                         ("not_sent", UNKNOWN_LOST))
-        self.assertNotIn("nothing has been sent", delivery["detail"])
-        self.assertIn(UNKNOWN_LOST, delivery["detail"])
-
-    def test_reconciling_a_lost_attempt_again_reports_it_and_changes_nothing(self):
-        event_id, first = self.unknown_send()
-        self.clock.advance(120)
-        self.reconciler.reconcile_attempt(first, self.adapter)
-        again = self.reconciler.reconcile_attempt(first, self.adapter)
-        self.assertEqual((again["state"], again["evidence"], again.get("redelivery")),
-                         (UNKNOWN_LOST, "none", "queued"))
-        self.assertEqual(self.journalled(UNKNOWN_LOST), 1)
-        self.assertEqual(self.delivery_row(event_id)["state"], QUEUED)
-        self.assertEqual(self.attempt_states(event_id), [UNKNOWN_LOST])
-
-    def test_a_second_unknown_loss_holds_the_obligation_by_name_instead_of_a_third_send(self):
-        event_id, first = self.unknown_send()
-        self.adapter.script("transport_unknown")
-        self.ticks(4)
-        self.assertEqual(self.attempt_states(event_id), [UNKNOWN_LOST, UNKNOWN_LOST])
-        self.assertEqual(len(self.adapter.sends), 2)
-        self.assertEqual(self.delivery_row(event_id)["hold_reason"], UNKNOWN_LOST)
-        item = self.status_of(event_id)
-        self.assertEqual((item["phase"], item["reported"]),
-                         ("held:unknown_send_lost", "held:unknown_send_lost"))
-        self.assertEqual(self.next_action(), "parent_recovers_unknown_send_lost")
-        self.assert_reads_the_event_from_this_store(self.recovery().get("command"), event_id)
-
-    def test_an_unknown_loss_after_a_host_lost_turn_is_held_and_claims_no_dispatch(self):
-        event_id, _first, turn = self.dispatched()
-        self.host_loses(turn)
-        self.adapter.script("transport_unknown")
-        self.ticks(1)
-        self.restart_host()
-        self.ticks(3)
-        self.assertEqual(self.attempt_states(event_id), [HOST_LOST, UNKNOWN_LOST])
-        self.assertEqual(len(self.adapter.sends), 2)
-        row = self.delivery_row(event_id)
-        self.assertEqual((row["hold_reason"], row["dispatch_evidence"]), (UNKNOWN_LOST, None))
-        self.assertEqual(self.next_action(), "parent_recovers_unknown_send_lost")
-
-    def test_a_host_lost_turn_after_an_unknown_loss_is_held_under_its_own_name(self):
-        event_id, _first = self.unknown_send()
-        self.ticks(1)
-        self.assertEqual(self.attempt_states(event_id), [UNKNOWN_LOST, DISPATCHED])
-        second = self.attempts_for(event_id)[1]
-        self.host_loses(json.loads(second["record"])["turnId"])
-        self.ticks(4)
-        self.assertEqual(self.attempt_states(event_id), [UNKNOWN_LOST, HOST_LOST])
-        self.assertEqual(len(self.adapter.sends), 2)
-        self.assertEqual(self.delivery_row(event_id)["hold_reason"], HOST_LOST)
-        self.assertEqual(self.next_action(), "parent_recovers_host_lost_turn")
-
-    def test_a_send_too_recent_to_judge_is_the_daemons_and_is_read_again_until_it_decides(self):
-        event_id, _first = self.unknown_send()
         self.ticks(1, seconds=20)
         self.assertEqual(self.attempt_states(event_id), [HELD_UNCERTAIN])
-        self.assertEqual(len(self.adapter.sends), 1)
+        self.assertIsNone(self.delivery_row(event_id)["hold_reason"])
         self.assertEqual(self.next_action(), "daemon_reconciles_delivery")
         # Nothing on the host changed, so only the owed re-read can reach the decision.
         self.ticks(1, seconds=60)
-        self.assertEqual(self.attempt_states(event_id)[0], UNKNOWN_LOST)
-        self.assertEqual(len(self.adapter.sends), 2)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assertEqual(self.sends_to(), [first])
 
     def test_a_turn_still_running_since_the_send_holds_the_decision_until_it_ends(self):
-        event_id, _first = self.unknown_send()
+        event_id, first = self.unknown_send()
         self.clock.advance(5)
         running = self.adapter.start_turn(PARENT, status="inProgress")
         self.ticks(1)
         self.assertEqual(self.attempt_states(event_id), [HELD_UNCERTAIN])
-        self.assertEqual(len(self.adapter.sends), 1)
+        self.assertIsNone(self.delivery_row(event_id)["hold_reason"])
         self.assertEqual(self.next_action(), "daemon_reconciles_delivery")
         self.adapter.finish_turn(PARENT, running.turn_id, "completed")
         self.ticks(1, seconds=30)
-        self.assertEqual(self.attempt_states(event_id)[0], UNKNOWN_LOST)
-        self.assertEqual(len(self.adapter.sends), 2)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assertEqual(self.sends_to(), [first])
 
-    def folded_unknown_send(self, *, later, running=False):
+    def test_a_message_that_turns_up_after_the_hold_confirms_the_send_and_clears_it(self):
+        event_id, first = self.unknown_send()
+        self.ticks(1)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.adapter.start_turn(PARENT, status="completed", text=message(first))
+        self.ticks(1)
+        row = self.delivery_row(event_id)
+        self.assertEqual((row["state"], row["hold_reason"]), (DISPATCHED, None))
+        self.assertEqual(self.evidence_of(event_id), ["turn_found"])
+        self.assertEqual(self.next_action(), "parent_acknowledges")
+        self.assertNotIn("recovery", self.assignments.state(self._rid))
+        self.assertEqual(self.sends_to(), [first])
+
+    def test_an_unknown_send_after_a_host_lost_turn_is_held_and_claims_no_dispatch(self):
+        """CRW-224's one redelivery goes out as before; when that send's own answer is lost and
+        the host keeps no trace of it, the delivery is held, with the first loss's dispatch
+        evidence and turn cleared from a row whose current send is uncertain."""
+        event_id, first, turn = self.dispatched()
+        self.host_loses(turn)
+        self.adapter.script("transport_unknown")
+        self.ticks(1)
+        self.assertEqual(self.attempt_states(event_id), [HOST_LOST, HELD_UNCERTAIN])
+        second = self.attempts_for(event_id)[1]["request_id"]
+        self.adapter.set_status(PARENT, "notLoaded")
+        self.ticks(3)
+        self.assertEqual(self.attempt_states(event_id), [HOST_LOST, HELD_UNCERTAIN])
+        self.assert_held(event_id, second, UNKNOWN_LOST, NO_TRACE)
+        self.assertEqual(self.sends_to(), [first, second])
+
+    def folded_unknown_send(self, *, later, running=False, kind=None):
         """The send was folded into a parent turn begun two minutes before it (a steer), and the
         App Server died before answering; the turn went on writing LATER items after the
-        message, so the thread-wide scan's 200 newest items no longer reach it."""
+        message, so the thread-wide scan's 200 newest items no longer reach it. kind types the
+        item carrying the token (None: the message itself)."""
         self.parent_history()
         _relationship, event_id = self.queued_event()
         self.adapter.start_turn(PARENT, turn_id="folded", status="inProgress")
@@ -318,8 +293,10 @@ class AnUnknownSendTheHostKeptNoTraceOf(UnknownSendCase):
         self.adapter.script("transport_unknown")
         first = self.attempt(event_id)["requestId"]
         thread = self.adapter.threads[PARENT]
-        thread.items.append(("folded", f"[codex-session-relay] verification request\n"
-                                       f"requestId: {first}"))
+        if kind is None:
+            thread.items.append(("folded", message(first)))
+        else:
+            thread.items.append(("folded", f"hook saw {first}", kind))
         thread.items.extend(("folded", f"later work {n}", "commandExecution")
                             for n in range(later))
         if not running:
@@ -335,7 +312,19 @@ class AnUnknownSendTheHostKeptNoTraceOf(UnknownSendCase):
         self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
         self.ticks(3)
         self.assertEqual(self.attempt_states(event_id), [HELD_UNCERTAIN])
-        self.assertEqual(len(self.adapter.sends), 1)
+        self.assertEqual(self.sends_to(), [first])
+
+    def test_a_token_only_in_a_hook_prompt_of_the_folded_turn_is_held_by_name(self):
+        """Independent review of c367abb7: the folded turn's own items were read for the message
+        alone, so a token that sat there only in a hook prompt passed as no trace."""
+        event_id, first = self.folded_unknown_send(later=205, kind="hookPrompt")
+        # Restarted, as K5ctl's host was, so no reading of the host's own state stands in for
+        # the one in the folded turn's items.
+        self.adapter.set_status(PARENT, "notLoaded")
+        self.ticks(1)
+        self.assert_held(event_id, first, UNDECIDED, f"{UNDECIDED}:token_in_other_item")
+        self.ticks(3, seconds=700)
+        self.assertEqual(self.sends_to(), [first])
 
     def test_a_send_folded_into_a_turn_begun_just_before_it_is_found_there(self):
         """Independent review of 668890b0: a turn begun inside the allowance before the send is
@@ -348,16 +337,15 @@ class AnUnknownSendTheHostKeptNoTraceOf(UnknownSendCase):
         self.adapter.script("transport_unknown")
         first = self.attempt(event_id)["requestId"]
         thread = self.adapter.threads[PARENT]
-        thread.items.append(("just-before", f"[codex-session-relay] verification request\n"
-                                            f"requestId: {first}"))
+        thread.items.append(("just-before", message(first)))
         thread.items.extend(("just-before", f"later work {n}", "commandExecution")
                             for n in range(205))
         self.adapter.finish_turn(PARENT, "just-before", "completed")
-        self.restart_host()
+        self.adapter.set_status(PARENT, "notLoaded")
         self.ticks(1)
         self.assertEqual(self.evidence_of(event_id), ["turn_found"])
         self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
-        self.assertEqual(len(self.adapter.sends), 1)
+        self.assertEqual(self.sends_to(), [first])
 
     def test_an_older_turn_still_running_holds_the_decision(self):
         event_id, first = self.folded_unknown_send(later=205, running=True)
@@ -367,37 +355,32 @@ class AnUnknownSendTheHostKeptNoTraceOf(UnknownSendCase):
         self.assertEqual(self.attempt_states(event_id), [HELD_UNCERTAIN])
         self.assertIsNone(self.delivery_row(event_id)["hold_reason"])
         self.assertEqual(self.next_action(), "daemon_reconciles_delivery")
-        self.assertEqual(len(self.adapter.sends), 1)
+        self.assertEqual(self.sends_to(), [first])
 
     def test_an_older_turn_too_long_to_read_through_holds_the_send_by_name(self):
         event_id, first = self.folded_unknown_send(later=0)
         thread = self.adapter.threads[PARENT]
         # The message sits past the in-turn read's bound, behind 2000 items of the same turn.
-        message = thread.items.pop()
+        carried = thread.items.pop()
         thread.items.extend(("folded", f"earlier work {n}", "commandExecution")
                             for n in range(2000))
-        thread.items.append(message)
+        thread.items.append(carried)
         thread.items.extend(("folded", f"later work {n}", "commandExecution") for n in range(205))
         self.ticks(1)
-        row = self.delivery_row(event_id)
-        self.assertEqual((row["state"], row["hold_reason"]), (HELD_UNCERTAIN, UNDECIDED))
-        self.assertEqual(self.completion_delivery().get("turnCheck"),
-                         f"{UNDECIDED}:token_scan_bounded")
-        self.assertEqual(len(self.adapter.sends), 1)
+        self.assert_held(event_id, first, UNDECIDED, f"{UNDECIDED}:token_scan_bounded")
+        self.assertEqual(self.sends_to(), [first])
 
     def test_a_message_that_lands_between_the_two_scans_confirms_the_send(self):
         event_id, first = self.unknown_send()
         self.clock.advance(3)
         late = self.adapter.start_turn(PARENT, status="completed")
         self.clock.advance(120)
-        adapter = MessageLandsAfterTheThreadScan(
-            self.adapter, late.turn_id,
-            f"[codex-session-relay] verification request\nrequestId: {first}")
+        adapter = MessageLandsAfterTheThreadScan(self.adapter, late.turn_id, message(first))
         outcome = self.reconciler.reconcile_attempt(first, adapter)
         self.assertEqual(outcome["evidence"], "turn_found")
         self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
         self.assertEqual(self.attempt_states(event_id), [HELD_UNCERTAIN])
-        self.assertEqual(len(self.adapter.sends), 1)
+        self.assertEqual(self.sends_to(), [first])
 
 
 class TheListingSinceASendWithNoTurnId(unittest.TestCase):
@@ -408,19 +391,20 @@ class TheListingSinceASendWithNoTurnId(unittest.TestCase):
         self.assertEqual((presence.finding, presence.stop, presence.seen, presence.older),
                          (TURN_ABSENT, "older_than_send", (None,), ("older",)))
         self.assertEqual([turn.status for turn in presence.seen_turns], ["completed"])
+        self.assertEqual(presence.stop_turn.turn_id, "older")
 
 
-class ASendTheTransportHasNotAnsweredIsHeldNotRedelivered(UnknownSendCase):
-    """Only a receipt the transport settled allows a loss. An unfinished one - what a transport
-    that crashed mid-request leaves for good - or none at all is held for the parent by name where
-    the recipient keeps no trace, and is never sent again (independent review of d369a9e7)."""
+class ASendTheTransportHasNotAnsweredIsHeldByName(UnknownSendCase):
+    """An unfinished receipt - what a transport that crashed mid-request leaves for good - or none
+    at all is held for the parent under the receipt's name where the recipient keeps no trace
+    (independent review of d369a9e7)."""
 
     def unfinished(self):
         self.parent_history()
         _relationship, event_id = self.queued_event()
         self.adapter.script("in_progress")
         request_id = self.attempt(event_id)["requestId"]
-        self.restart_host()
+        self.adapter.set_status(PARENT, "notLoaded")
         return event_id, request_id
 
     def test_an_unfinished_receipt_is_held_for_the_parent_by_name(self):
@@ -431,11 +415,8 @@ class ASendTheTransportHasNotAnsweredIsHeldNotRedelivered(UnknownSendCase):
                          ("parent_recovers_unknown_send_undecided",
                           "unknown_send_undecided:receipt_unsettled"))
         self.ticks(3)
-        row = self.delivery_row(event_id)
-        self.assertEqual((row["state"], row["hold_reason"]), (HELD_UNCERTAIN, UNDECIDED))
-        self.assertEqual(self.next_action(), "parent_recovers_unknown_send_undecided")
-        self.assertEqual(self.attempt_states(event_id), [HELD_UNCERTAIN])
-        self.assertEqual(len(self.adapter.sends), 1)
+        self.assert_held(event_id, first, UNDECIDED, f"{UNDECIDED}:receipt_unsettled")
+        self.assertEqual(self.sends_to(), [first])
 
     def test_a_receipt_that_settles_later_lets_the_rule_decide(self):
         event_id, first = self.unfinished()
@@ -445,8 +426,8 @@ class ASendTheTransportHasNotAnsweredIsHeldNotRedelivered(UnknownSendCase):
         self.adapter.ledger[first] = dict(self.adapter.ledger[first], status="outcome_unknown",
                                           error="TransportError: turn/start: no answer")
         self.ticks(1)
-        self.assertEqual(self.attempt_states(event_id), [UNKNOWN_LOST, DISPATCHED])
-        self.assertEqual(len(self.adapter.sends), 2)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assertEqual(self.sends_to(), [first])
 
     def test_a_claim_with_no_receipt_is_held_for_the_parent_by_name(self):
         self.parent_history()
@@ -473,24 +454,14 @@ class ASendTheTransportHasNotAnsweredIsHeldNotRedelivered(UnknownSendCase):
 
 class AnUndecidedReadingIsHeldByName(UnknownSendCase):
     def assert_held_undecided(self, event_id, request_id, reason):
-        row = self.delivery_row(event_id)
-        self.assertEqual((row["state"], row["hold_reason"]), (HELD_UNCERTAIN, UNDECIDED))
-        attempt = self.store.one("SELECT recipient_scan FROM attempts WHERE request_id = ?",
-                                 (request_id,))
-        self.assertEqual(attempt["recipient_scan"], f"{UNDECIDED}:{reason}")
-        item = self.status_of(event_id)
-        self.assertEqual((item["phase"], item["reported"]),
-                         ("held:unknown_send_undecided", "held:unknown_send_undecided"))
-        self.assertEqual(self.next_action(), "parent_recovers_unknown_send_undecided")
-        self.assertEqual(self.completion_delivery().get("turnCheck"), f"{UNDECIDED}:{reason}")
-        self.assert_reads_the_event_from_this_store(self.recovery().get("command"), event_id)
+        self.assert_held(event_id, request_id, UNDECIDED, f"{UNDECIDED}:{reason}")
 
     def test_a_parent_listing_no_turns_holds_the_send_by_name(self):
         event_id, first = self.unknown_send(history=False)
         self.ticks(1)
         self.assert_held_undecided(event_id, first, "listing_empty")
         self.ticks(3, seconds=700)
-        self.assertEqual(len(self.adapter.sends), 1)
+        self.assertEqual(self.sends_to(), [first])
 
     def test_a_token_only_in_another_item_type_is_held_by_name(self):
         event_id, first = self.unknown_send()
@@ -500,7 +471,7 @@ class AnUndecidedReadingIsHeldByName(UnknownSendCase):
                                                    "hookPrompt"))
         self.ticks(1)
         self.assert_held_undecided(event_id, first, "token_in_other_item")
-        self.assertEqual(len(self.adapter.sends), 1)
+        self.assertEqual(self.sends_to(), [first])
 
     def test_a_scan_bounded_before_the_send_is_held_by_name(self):
         event_id, first = self.unknown_send()
@@ -511,7 +482,7 @@ class AnUndecidedReadingIsHeldByName(UnknownSendCase):
         self.adapter.scan_limit = 3
         self.ticks(1)
         self.assert_held_undecided(event_id, first, "token_scan_bounded")
-        self.assertEqual(len(self.adapter.sends), 1)
+        self.assertEqual(self.sends_to(), [first])
 
     def test_a_listing_that_never_reaches_the_send_is_held_by_name(self):
         event_id, first = self.unknown_send()
@@ -520,7 +491,7 @@ class AnUndecidedReadingIsHeldByName(UnknownSendCase):
         self.assertEqual(outcome.get("nextExpectedAction"),
                          "parent_recovers_unknown_send_undecided")
         self.assert_held_undecided(event_id, first, "listing_bounded")
-        self.assertEqual(len(self.adapter.sends), 1)
+        self.assertEqual(self.sends_to(), [first])
 
     def test_a_later_reading_that_decides_replaces_the_undecided_hold(self):
         event_id, first = self.unknown_send(history=False)
@@ -529,9 +500,8 @@ class AnUndecidedReadingIsHeldByName(UnknownSendCase):
         # The parent works on; its list now reaches past the send and shows nothing of it.
         self.adapter.start_turn(PARENT, status="completed", text="the operator asked something")
         self.ticks(1)
-        self.assertEqual(self.attempt_states(event_id)[0], UNKNOWN_LOST)
-        self.assertIsNone(self.delivery_row(event_id)["hold_reason"])
-        self.assertEqual(len(self.adapter.sends), 2)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assertEqual(self.sends_to(), [first])
 
     def test_a_pass_that_cannot_decide_keeps_the_undecided_hold(self):
         event_id, first = self.unknown_send(history=False)
@@ -556,7 +526,7 @@ class AnUndecidedReadingIsHeldByName(UnknownSendCase):
                          ("parent_recovers_unknown_send_undecided",
                           "unknown_send_undecided:listing_empty"))
         self.assert_held_undecided(event_id, first, "listing_empty")
-        self.assertEqual(len(self.adapter.sends), 1)
+        self.assertEqual(self.sends_to(), [first])
 
     def test_an_undecided_hold_is_read_again_later_though_the_items_did_not_change(self):
         """Devin on d369a9e7: the gate fingerprints the parent's items, and a turn that shows up
@@ -566,11 +536,10 @@ class AnUndecidedReadingIsHeldByName(UnknownSendCase):
         self.assert_held_undecided(event_id, first, "listing_empty")
         self.adapter.start_turn(PARENT, status="completed")
         self.ticks(1, seconds=30)
-        self.assertEqual(self.attempt_states(event_id), [HELD_UNCERTAIN])
+        self.assert_held_undecided(event_id, first, "listing_empty")
         self.ticks(1, seconds=600)
-        self.assertEqual(self.attempt_states(event_id)[0], UNKNOWN_LOST)
-        self.assertIsNone(self.delivery_row(event_id)["hold_reason"])
-        self.assertEqual(len(self.adapter.sends), 2)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assertEqual(self.sends_to(), [first])
 
     def test_a_message_found_later_clears_the_undecided_hold(self):
         event_id, first = self.unknown_send()
@@ -580,8 +549,7 @@ class AnUndecidedReadingIsHeldByName(UnknownSendCase):
                                                    "hookPrompt"))
         self.ticks(1)
         self.assertEqual(self.delivery_row(event_id)["hold_reason"], UNDECIDED)
-        self.adapter.threads[PARENT].items.append(
-            (hook.turn_id, f"[codex-session-relay] verification request\nrequestId: {first}"))
+        self.adapter.threads[PARENT].items.append((hook.turn_id, message(first)))
         self.ticks(1)
         row = self.delivery_row(event_id)
         self.assertEqual((row["state"], row["hold_reason"]), (DISPATCHED, None))
@@ -614,16 +582,22 @@ class AnUndecidedReadingIsHeldByName(UnknownSendCase):
 
 
 class APersistingHoldReachesTheOperator(UnknownSendCase):
+    def test_a_lost_hold_opens_its_fault_instead_of_staying_observed(self):
+        self.unknown_send()
+        self.ticks(1)
+        self.assertIn((faults.OPEN, faults.BROKEN), self.fault_states())
+
     def test_an_undecided_hold_opens_its_fault_instead_of_staying_observed(self):
         self.unknown_send(history=False)
         self.ticks(1)
         self.assertIn((faults.OPEN, faults.BROKEN), self.fault_states())
 
-    def test_a_second_loss_opens_its_fault(self):
+    def test_a_wait_the_daemon_still_ends_stays_below_the_threshold(self):
+        """A send too recent to judge is still the daemon's, and its fault is not published as
+        broken for it."""
         self.unknown_send()
-        self.adapter.script("transport_unknown")
-        self.ticks(4)
-        self.assertIn((faults.OPEN, faults.BROKEN), self.fault_states())
+        self.ticks(1, seconds=20)
+        self.assertNotIn((faults.OPEN, faults.BROKEN), self.fault_states())
 
 
 class ACorrectionLostTheSameWayIsTheParentsToRecover(UnknownSendCase):
@@ -641,42 +615,41 @@ class ACorrectionLostTheSameWayIsTheParentsToRecover(UnknownSendCase):
         self.assert_reads_the_event_from_this_store((outcome.get("recovery") or {}).get("command"),
                                                     correction)
         row = self.delivery_row(correction)
-        self.assertEqual((row["state"], row["hold_reason"]), (QUEUED, UNKNOWN_LOST))
-        self.ticks(2)
-        self.assertEqual([send[0] for send in self.adapter.sends
-                          if send[1] == CHILD], [record["requestId"]])
+        self.assertEqual((row["state"], row["hold_reason"]), (HELD_UNCERTAIN, UNKNOWN_LOST))
+        self.ticks(3, seconds=700)
+        self.assertEqual(self.sends_to(CHILD), [record["requestId"]])
         self.assertEqual(self.next_action(), "parent_recovers_held_correction")
         # Independent review of bb1b6af6: the parent is named with the command that supports it.
         self.assert_reads_the_event_from_this_store(self.recovery().get("command"), correction)
 
 
 class TheFourCasesReadApart(UnknownSendCase):
-    """Criterion 4: the same K5 trigger at four moments, each with its own reading."""
+    """Criterion 4: the same K5 trigger at four moments, each with its own reading, and none sent
+    twice except CRW-224's one redelivery of a turn the host accepted and lost."""
 
     def reading(self, event_id):
         item = self.status_of(event_id)
         return (self.attempt_states(event_id), item["phase"], self.next_action())
 
     def test_death_before_the_answer_with_the_turn_lost(self):
-        event_id, _first = self.unknown_send()
+        event_id, first = self.unknown_send()
         self.clock.advance(120)
-        self.reconciler.reconcile_attempt(self.attempts_for(event_id)[0]["request_id"],
-                                          self.adapter)
+        self.reconciler.reconcile_attempt(first, self.adapter)
         self.assertEqual(self.reading(event_id),
-                         ([UNKNOWN_LOST], "redelivering:unknown_send_lost",
-                          "daemon_redelivers_unknown_send_lost"))
+                         ([HELD_UNCERTAIN], "held:unknown_send_lost",
+                          "parent_recovers_unknown_send_lost"))
+        self.assertEqual(self.sends_to(), [first])
 
     def test_death_before_the_answer_with_the_turn_run_and_kept(self):
         event_id, first = self.unknown_send()
         self.clock.advance(3)
-        self.adapter.start_turn(
-            PARENT, status="completed",
-            text=f"[codex-session-relay] verification request\nrequestId: {first}")
+        self.adapter.start_turn(PARENT, status="completed", text=message(first))
         self.clock.advance(120)
         self.reconciler.reconcile_attempt(first, self.adapter)
         self.assertEqual(self.reading(event_id),
                          ([HELD_UNCERTAIN], "awaiting_ack", "parent_acknowledges"))
         self.assertEqual(self.evidence_of(event_id), ["turn_found"])
+        self.assertEqual(self.sends_to(), [first])
 
     def test_death_after_the_answer_with_the_accepted_turn_lost(self):
         event_id, first, turn = self.dispatched()
@@ -686,7 +659,9 @@ class TheFourCasesReadApart(UnknownSendCase):
         self.assertEqual(self.reading(event_id),
                          ([HOST_LOST], "redelivering:host_lost_turn",
                           "daemon_redelivers_host_lost_turn"))
-        self.assertEqual(self.completion_delivery().get("unknownSendLostAttempts"), 0)
+        row = self.delivery_row(event_id)
+        self.assertEqual((row["state"], row["hold_reason"], row["dispatch_evidence"]),
+                         (QUEUED, None, HOST_LOST))
 
     def test_a_delivery_waiting_on_the_hourly_cap(self):
         _relationship, event_id = self.queued_event()
@@ -697,6 +672,7 @@ class TheFourCasesReadApart(UnknownSendCase):
                                                   "daemon_delivers"))
         self.assertEqual((self.status_of(event_id).get("pacing") or {}).get("reopensAt"),
                          window + 3600)
+        self.assertEqual(self.adapter.sends, [])
 
 
 class TheHourlyCapIsNamedWithItsReopenTime(UnknownSendCase):
@@ -780,31 +756,17 @@ class TheHourlyCapIsNamedWithItsReopenTime(UnknownSendCase):
                          "operator_changes_send_policy")
         self.assertEqual(self.adapter.sends, [])
 
-    def test_a_zero_cap_names_the_operator_for_a_correction_and_for_reconcile(self):
-        """Independent review of 668890b0: the correction's answer and reconcile's redelivery
-        answer still named the daemon under a cap of zero."""
+    def test_a_zero_cap_names_the_operator_for_a_correction(self):
+        """Independent review of 668890b0: the correction's answer still named the daemon under a
+        cap of zero."""
         from codex_session_relay.assignment import AssignmentView
         from codex_session_relay.policy import RetryPolicy
 
-        _completion, correction = self.correction_after_needs_changes()
+        _completion, _correction = self.correction_after_needs_changes()
         policy = RetryPolicy(max_sends_per_recipient_per_hour=0)
         view = AssignmentView(self.store, self.registry, self.clock, policy=policy)
         self.assertEqual(view.state(self._rid)["nextExpectedAction"],
                          "operator_changes_send_policy")
-
-    def test_reconcile_names_the_operator_for_a_redelivery_a_zero_cap_refuses(self):
-        from codex_session_relay.delivery import DeliveryService
-        from codex_session_relay.policy import RetryPolicy
-        from codex_session_relay.reconcile import Reconciler
-
-        event_id, first = self.unknown_send()
-        self.clock.advance(120)
-        delivery = DeliveryService(self.store, self.registry, self.intake, self.clock,
-                                   policy=RetryPolicy(max_sends_per_recipient_per_hour=0))
-        outcome = Reconciler(self.store, self.registry, delivery, self.clock).reconcile_attempt(
-            first, self.adapter)
-        self.assertEqual((outcome["state"], outcome.get("nextExpectedAction")),
-                         (UNKNOWN_LOST, "operator_changes_send_policy"))
 
     def test_assignment_show_reads_the_budget_the_delivery_service_paces_by(self):
         from types import SimpleNamespace
