@@ -175,6 +175,13 @@ class ARealConflictIsRefusedWhereItIsRecorded(DirectiveCase):
         second = self.direct("d-widen", "scope_correction")
         self.assertEqual(self.live(), [second["directiveId"]])
 
+    def test_a_refusal_names_the_message_the_live_correction_answers(self):
+        """The refusal says what the one in force answers, as the docs promise."""
+        first = self.direct("d-narrow", "scope_correction", correlation="msg-blocked-7")
+        refused = self.direct("d-widen", "scope_correction", expect=2)
+        self.assertIn(first["directiveId"], refused["detail"])
+        self.assertIn("msg-blocked-7", refused["detail"])
+
     def test_a_purposed_instruction_beside_one_of_unknown_purpose_is_refused(self):
         older = self.legacy("d-legacy")
 
