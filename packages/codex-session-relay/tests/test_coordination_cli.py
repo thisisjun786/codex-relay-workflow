@@ -383,6 +383,28 @@ class TheCapacityAndRegionSurfaces(CoordinationCliTestCase):
         code, agreed = self.run_cli(*words)
         self.assertEqual((code, agreed["state"]), (cli.EXIT_OK, "agreed"))
 
+    def test_the_command_a_second_successor_refusal_names_runs_as_printed(self):
+        """Review of db4c85ea: the printed restatement lacked the required --actor."""
+        link = self.peers()
+        self.run_cli(
+            "region-propose", "--repository", "owner/repo", "--revision", "rev-1",
+            "--path", "src/a.py", "--kind", "file", "--left-project", "PRJ-A",
+            "--right-project", "PRJ-B", "--peer-link", link, "--task", "task-alpha",
+            "--constraint", "keep the signature")
+        self.run_cli(
+            "region-restate-revision", "--repository", "owner/repo",
+            "--from-revision", "rev-1", "--to-revision", "rev-2", "--actor", "task-alpha")
+        code, refused = self.run_cli(
+            "region-restate-revision", "--repository", "owner/repo",
+            "--from-revision", "rev-1", "--to-revision", "rev-3", "--actor", "task-alpha")
+        self.assertEqual((code, refused["reason"]), (cli.EXIT_REFUSED, "agreement_revision_stale"))
+        detail = refused["detail"]
+        words = shlex.split(detail[detail.index("region-restate-revision"):])
+        code, moved = self.run_cli(*words)
+        self.assertEqual(
+            (code, moved["fromRevision"], moved["currentRevision"]),
+            (cli.EXIT_OK, "rev-2", "rev-3"))
+
     def test_an_acceptance_with_a_condition_is_a_bad_invocation(self):
         link = self.peers()
         _code, proposed = self.run_cli(

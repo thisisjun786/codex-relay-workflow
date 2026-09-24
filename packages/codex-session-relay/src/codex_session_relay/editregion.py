@@ -1164,7 +1164,7 @@ class EditRegions:
                     " nobody can order. A later move is recorded from the end of the recorded"
                     " chain, which is " + repr(end) + ": " + command_line(
                         "region-restate-revision", "--repository", repository,
-                        "--from-revision", end, "--to-revision", to_revision),
+                        "--from-revision", end, "--to-revision", to_revision, "--actor", actor),
                     domain=DOMAIN_EDIT_REGION, subject=repository,
                     incumbent=existing["to_revision"], challenger=to_revision)
                 self.conflicts.record_in(db, refusal, at=now)
