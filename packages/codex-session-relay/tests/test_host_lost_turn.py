@@ -1300,6 +1300,29 @@ class AnAcknowledgementBeforeTheSendIsConfirmed(HostLossCase):
         self.assertEqual((reading["finding"], reading["status"], reading["undecided"]),
                          ("present", "completed", None))
 
+    def test_an_ack_kept_for_an_attempt_that_never_sent_does_not_hide_the_next_attempts_loss(self):
+        """Devin on 50020bdf: attempt 1 was uncertain when the parent acknowledged, then settled
+        as a confirmed pre-send rejection; attempt 2 reached the parent and the host lost its
+        turn. The acknowledgement predates attempt 2's send, so it cannot answer it."""
+        self.parent_history()
+        _relationship, event_id = self.queued_event()
+        self.adapter.script("in_progress")
+        first = self.attempt(event_id)["requestId"]
+        self.clock.advance(2)
+        self.adapter.start_turn(PARENT, turn_id="ack-turn", status="completed")
+        self.assertEqual(self.cli_ack(event_id, "ack-turn")["_verified"], "unverified_turn")
+        self.adapter.ledger[first] = _pre_send_rejection(first)
+        self.reconciler.reconcile_attempt(first, self.adapter)
+        self.clock.advance(100000)
+        second = self.attempt(event_id, now=self.clock.now())
+        self.assertEqual(second["deliveryState"], DISPATCHED)
+        self.host_reloads_losing(second["turnId"])
+        self.clock.advance(120)
+        self.daemon.tick()
+        self.assertEqual(self.attempt_states(event_id),
+                         ["withheld_pre_send", HOST_LOST, DISPATCHED])
+        self.assertEqual(len(self.adapter.sends), 3)
+
 
 class EverySettlementIsACompareAndSet(HostLossCase):
     """D10: an attempt row has several writers (the sender, the daemon's and a manual reconcile,
