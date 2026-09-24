@@ -32,10 +32,11 @@ from codex_session_relay.delivery import current_settings_hold
 from codex_session_relay.errors import DeliveryRefused, RefusalReason
 from codex_session_relay.transport import DISPATCHED, INBOX_ONLY, WITHHELD_PRE_SEND
 
-from .support import PARENT
+from .support import CHILD, PARENT
 from .test_host_lost_turn import HostLossCase
 
 NOT_PRESERVED = "settings_not_preserved"
+UNAVAILABLE = RefusalReason.SETTINGS_UNAVAILABLE.value
 
 
 class SettingsHoldCase(HostLossCase):
@@ -154,6 +155,47 @@ class ACappedSettingsHold(SettingsHoldCase):
         self.assertEqual(fault_recovery["actor"], "parent")
 
 
+
+class ACorrectionHeldOnTheChildsSettings(SettingsHoldCase):
+    """A revision request to the child held on the child's settings is named on assignment-show
+    as a completion's hold is (Devin on aa9724f4)."""
+
+    def test_a_withheld_correction_is_the_operators_on_the_childs_settings(self):
+        """RED: assignment-show said daemon_delivers_correction, which cannot fix a settings
+        difference, while status named the operator."""
+        _completion, correction = self.correction_after_needs_changes()
+        self.adapter.script(NOT_PRESERVED)
+        self.attempt(correction)
+        self.assertEqual(self.delivery_row(correction)["state"], WITHHELD_PRE_SEND)
+        self.assertEqual(self.next_action(), OPERATOR_RESTORES_SETTINGS_ACTION)
+        recovery = self.recovery()
+        self.assertEqual((recovery.get("actor"), recovery.get("reason")),
+                         ("operator", NOT_PRESERVED))
+        child_settings = ["--state", self.store_dir(), "settings-show", "--task", CHILD]
+        self.assertEqual(shlex.split(recovery.get("command") or "")[-5:], child_settings)
+        item = self.status_of(correction)
+        self.assertEqual((item["recovery"]["actor"], item["recovery"]["reason"]),
+                         ("operator", NOT_PRESERVED))
+        self.assertEqual(shlex.split(item["recovery"]["command"])[-5:], child_settings)
+
+    def test_a_capped_correction_names_its_settings_code(self):
+        """RED: at the cap the parent's recovery named only attempt_cap."""
+        _completion, correction = self.correction_after_needs_changes()
+        self.adapter.script(NOT_PRESERVED)
+        self.attempt(correction)
+        for _ in range(self.delivery.policy.max_attempts - 1):
+            self.again(correction, NOT_PRESERVED)
+        row = self.delivery_row(correction)
+        self.assertEqual((row["state"], row["hold_reason"]), (WITHHELD_PRE_SEND, "attempt_cap"))
+        self.assertEqual(self.next_action(), "parent_recovers_held_correction")
+        recovery = self.recovery()
+        self.assertEqual((recovery.get("actor"), recovery.get("reason")), ("parent", NOT_PRESERVED),
+                         "named for the settings code, not the cap")
+        self.assert_show_event(recovery.get("command"), correction)
+        self.assertTrue(recovery.get("laterDeliveries"))
+        self.assertEqual(self.status_of(correction)["recovery"]["reason"], NOT_PRESERVED)
+
+
 class AClosedChannel(SettingsHoldCase):
     def test_a_closed_channel_names_the_parent_and_files_no_fault(self):
         """RED for the recovery; GREEN for the rest: stored where the parent reads it, no fault."""
@@ -230,6 +272,25 @@ class TheCurrentCauseWhateverTheClock(SettingsHoldCase):
         self.again(event_id, NOT_PRESERVED)
         self.assertEqual(self.status_of(event_id)["settingsHold"]["reason"], NOT_PRESERVED)
 
+    def test_an_attempts_fault_keeps_its_own_cause_after_a_later_presend_refusal(self):
+        """RED: the older attempt's occurrence was named for the later pre-send refusal, whose
+        own occurrence (refusal_faults) is where that refusal and its recovery belong."""
+        event_id = self.refused()
+        self.store.db.execute("DELETE FROM authorized_settings WHERE task_id = ?", (PARENT,))
+        self.store.db.commit()
+        self.assertIsNone(self.attempt(event_id, now=self.delivery_row(event_id)["next_eligible_at"]))
+        hold = self.status_of(event_id)["settingsHold"]
+        self.assertEqual((hold["source"], hold["reason"]), ("pre_send", UNAVAILABLE))
+        [observation] = self.observations(faultsweep.retry_faults, event_id)
+        self.assertTrue(observation["detail"].endswith(f"settings {NOT_PRESERVED}"),
+                        observation["detail"])
+        [settings] = self.evidence(observation, "settings")
+        self.assertEqual((settings["reason"], settings["current"]), (NOT_PRESERVED, False))
+        self.assertEqual(self.evidence(observation, "recovery"), [])
+        [refusal] = self.observations(faultsweep.refusal_faults, event_id)
+        [recovery] = self.evidence(refusal, "recovery")
+        self.assertEqual((recovery["actor"], recovery["reason"]), ("operator", UNAVAILABLE))
+
     def test_a_lifecycle_withhold_after_a_settings_refusal_is_not_a_settings_hold(self):
         """RED: the lifecycle withhold was reported as the older settings rejection."""
         event_id = self.refused()
@@ -305,6 +366,21 @@ class ReconciliationNamesTheCauseToo(SettingsHoldCase):
             (attempt["request_id"],))
         self.assertIsNone(json.loads(settled["detail"])["settingsRefusal"])
         self.assertIsNone(self.status_of(event_id)["settingsHold"])
+
+
+    def test_a_narrowing_settled_only_by_reconciliation_is_journaled_once(self):
+        """RED: reconciliation promoted the delivery without the note its receipt carried."""
+        event_id, attempt = self.left_for_reconciliation("accepted_with_notes")
+        self.reconciler.reconcile_attempt(attempt["request_id"], self.adapter)
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        self.reconciler.reconcile_attempt(attempt["request_id"], self.adapter)
+        rows = self.store.all(
+            "SELECT detail FROM journal WHERE subject = ? AND kind = 'delivery_settings_noted'",
+            (event_id,))
+        self.assertEqual(len(rows), 1, "one row per request, however often it is settled")
+        detail = json.loads(rows[0]["detail"])
+        self.assertEqual(detail["requestId"], attempt["request_id"])
+        self.assertEqual(detail["notes"][0]["code"], "runtime_roots_narrower_than_record")
 
 
 class RowsRecordedBeforeThisRevision(SettingsHoldCase):

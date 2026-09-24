@@ -403,8 +403,13 @@ settings or re-record it with `--source user_transition`), except a host answer 
 setting out, which the daemon may clear itself; a capped or closed-channel hold is the parent's
 (`show --event` for the stored report), with the operator's or the thread owner's step for later
 deliveries. assignment-show names the same actor as `operator_restores_recipient_settings` or
-`parent_recovers_settings_hold`, and the fault sweep carries the same reason and recovery on the
-occurrence.
+`parent_recovers_settings_hold`, for a completion and for a revision request to the child alike
+(`settings-show --task <child>` for the latter); a revision request held at the cap keeps
+`parent_recovers_held_correction`, its recovery named for the settings code. The fault sweep
+carries the same reason and recovery on the occurrence. An attempt's own occurrence keeps its own
+cause when a later pre-send refusal is what holds the delivery now; that refusal's occurrence
+names it with its recovery. An accepted narrowing settled by reconciliation is journaled
+(`delivery_settings_noted`) as the sender's settlement journals it, once per request.
 
 The cause is read where each transition wrote it, never from the time-ordered failure rows: the
 settlement row of the latest settled attempt (`settingsRefusal`, written by the sender and by

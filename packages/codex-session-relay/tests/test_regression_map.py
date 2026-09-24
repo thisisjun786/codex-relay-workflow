@@ -297,6 +297,11 @@ FOLDS_BEYOND_ITS_PATHS = (
     ("ack.py", None, "certainly_before", "function"),
     ("admission.py", "Admission", "admitted", "field"),
     ("assignment.py", None, "_criteria_current", "function"),
+    # Whether a delivery is withheld on its recipient's settings on a code only a person
+    # resolves: its state, the hold's kind and source, and the actor the one table names, folded
+    # through early returns (CRW-235). test_settings_hold_naming.py reaches it for a completion
+    # and a correction on each side, and for the daemon's own codes.
+    ("assignment.py", None, "operator_restores_settings", "function"),
     ("bridge_adapter.py", None, "_scan_listing", "function"),
     ("bridge_adapter.py", None, "same_ledger", "function"),
     ("cli.py", None, "_reads_no_selected_store", "function"),

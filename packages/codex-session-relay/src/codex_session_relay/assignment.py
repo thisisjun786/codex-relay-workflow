@@ -184,10 +184,27 @@ def correction_next_action(state, projection):
     if delivery["state"] in UNCONFIRMED_STATES:
         return CORRECTION_UNCONFIRMED_ACTION
     if delivery["state"] in NOT_SENT_STATES:
+        # A revision request withheld on its recipient's settings, on a code only a person
+        # resolves, is the operator's, as a completion's is (CRW-235; Devin on aa9724f4).
+        if operator_restores_settings(delivery):
+            return OPERATOR_RESTORES_SETTINGS_ACTION
         # A budget that never reopens (a cap of zero) is the operator's, not the relay's.
         return SEND_POLICY_ACTION if never_reopens(delivery.get("pacing")) else (
             CORRECTION_UNSENT_ACTION)
     return None
+
+
+def operator_restores_settings(delivery) -> bool:
+    """Whether a delivery is withheld on its recipient's settings, on a code only a person
+    resolves: the one rule the completion's and the correction's next action ask (CRW-235)."""
+    from .settings import settings_hold_recovery
+
+    hold = delivery.get("settingsHold") or {}
+    if delivery.get("state") != WITHHELD_PRE_SEND or hold.get("kind") != "withheld" \
+            or hold.get("source") not in ("attempt", "pre_send"):
+        return False
+    return settings_hold_recovery("withheld", hold.get("reason"),
+                                  hold.get("source"))["actor"] == "operator"
 
 
 def never_reopens(pacing) -> bool:
@@ -368,11 +385,15 @@ class AssignmentView:
         recovery = parent_recovery(record["nextExpectedAction"], record["projection"],
                                    store_directory(self.store))
         if recovery is None:
-            # A completion held on its recipient's settings: who restores them, or who reads
-            # the report nothing will send again (CRW-235).
+            # A delivery held on its recipient's settings: who restores them, or who reads the
+            # event nothing will send again (CRW-235). In needs_changes the delivery that moves
+            # the assignment is the correction to the child, not the completion already ruled on
+            # (Devin on aa9724f4).
+            correcting = state == NEEDS_CHANGES
             recovery = settings_hold_recovery_for(
                 record["nextExpectedAction"], record["projection"], self.store,
-                recipient=record["parentTaskId"])
+                recipient=record["childTaskId"] if correcting else record["parentTaskId"],
+                anchor="correction" if correcting else "completion")
         if recovery is not None:
             record["recovery"] = recovery
         return record
@@ -1000,14 +1021,8 @@ def completion_next_action(state, projection):
             return REACKNOWLEDGE_ACTION
         return AWAITING_ACK_ACTION
     if where in (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND):
-        if where == WITHHELD_PRE_SEND and settings_hold.get("kind") == "withheld" \
-                and settings_hold.get("source") in ("attempt", "pre_send"):
-            from .settings import settings_hold_recovery
-
-            actor = settings_hold_recovery("withheld", settings_hold.get("reason"),
-                                           settings_hold.get("source"))["actor"]
-            if actor == "operator":
-                return OPERATOR_RESTORES_SETTINGS_ACTION
+        if operator_restores_settings(delivery):
+            return OPERATOR_RESTORES_SETTINGS_ACTION
         if never_reopens(delivery.get("pacing")):
             return SEND_POLICY_ACTION
         return HOST_LOST_REDELIVERY_ACTION if host_lost else NEXT_ACTION[RECEIVED]
@@ -1055,6 +1070,13 @@ def parent_recovery(action, projection, state_directory):
         # step later deliveries need (CRW-235).
         return settings_hold_recovery_for(action, projection, None,
                                           state_directory=state_directory)
+    held = delivery.get("settingsHold") or {}
+    if action == CORRECTION_HELD_ACTION and held.get("kind") == "capped":
+        # A revision request capped on its recipient's settings: the same parent action, named
+        # for the settings code and with the step later deliveries need, as a completion's is
+        # (CRW-235; Devin on aa9724f4).
+        return settings_recovery_record(None, held, anchored["eventId"], None,
+                                        state_directory=state_directory)
     return {
         "actor": "parent",
         "reason": delivery.get("holdReason") or delivery.get("state"),
@@ -1093,16 +1115,18 @@ def settings_recovery_record(store, hold, event_id, recipient, *, state_director
 
 
 def settings_hold_recovery_for(action, projection, store, *, state_directory=None,
-                               recipient=None):
-    """The recovery for a completion whose delivery is a settings hold, or None.
+                               recipient=None, anchor="completion"):
+    """The recovery for the anchored delivery (the completion, or in needs_changes the
+    correction) when it is a settings hold, or None.
 
     Rendered for the three actions a settings hold leads to: the operator's restore, the
     parent's recovery of a capped one, and the parent's acknowledgement of a report a closed
     channel stored; and for an undetermined hold whatever the action, since its path is the
-    reading, not a fix. recipient is the completion's recipient, the parent, which settings-show
-    names; a recovery rendered without it (the capped one) reads the event instead."""
-    completion = projection["completion"]
-    delivery = completion.get("delivery") or {}
+    reading, not a fix. recipient is the anchored delivery's recipient (the parent for a
+    completion, the child for a correction), which settings-show names; a recovery rendered
+    without it (the capped one) reads the event instead."""
+    anchored = projection[anchor]
+    delivery = anchored.get("delivery") or {}
     hold = delivery.get("settingsHold")
     if not hold:
         return None
@@ -1113,5 +1137,5 @@ def settings_hold_recovery_for(action, projection, store, *, state_directory=Non
     if action == AWAITING_ACK_ACTION and hold.get("kind") != "channel_closed":
         return None
     directory = state_directory or store_directory(store)
-    return settings_recovery_record(None, hold, completion["eventId"], recipient,
+    return settings_recovery_record(None, hold, anchored["eventId"], recipient,
                                     state_directory=directory)

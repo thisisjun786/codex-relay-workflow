@@ -680,6 +680,7 @@ def retry_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> di
             own=_attempt_settings_cause(store, row["event_id"], row["request_id"]),
             current=(row["attempt_no"] == row["latest_settled"]
                      and row["delivery_state"] == "withheld_pre_send"),
+            request_id=row["request_id"],
         )
         observations.append(faults.observation(
             product=product, fault_class="delivery_stalled",
@@ -746,21 +747,29 @@ def _attempt_settings_cause(store, event_id, request_id):
     return None
 
 
-def _settings_items(store, event_id, recipient, *, own=None, current=False):
+def _settings_items(store, event_id, recipient, *, own=None, current=False, request_id=None):
     """Evidence naming a delivery's settings cause, and its recovery while it is the current
     hold, with the reason for the detail line: (items, reason or None). CRW-235.
 
     current asks the one reader status and assignment-show ask (delivery.current_settings_hold),
     so the three surfaces name one cause and one recovery for one hold; own is an attempt's own
-    cause, named without a recovery when it is history."""
+    cause, named without a recovery when it is history. request_id names the attempt an
+    occurrence is for: the current hold stands in for its cause only when that hold is the
+    attempt's own (its settlement row was the one chosen) or cannot be attributed
+    (undetermined). A later pre-send refusal is the delivery's cause and not this attempt's, so
+    the attempt keeps its own; refusal_faults names that refusal with its recovery (Devin on
+    aa9724f4)."""
     from .assignment import settings_recovery_record
     from .delivery import current_settings_hold
 
     hold = None
     if current:
         reading = current_settings_hold(store, event_id)
-        if reading["hold"] is not None:
-            hold = dict(reading["hold"], kind=reading["kind"])
+        held = reading["hold"]
+        if held is not None and (
+                request_id is None or held.get("source") == "undetermined"
+                or (held.get("source") == "attempt" and held.get("requestId") == request_id)):
+            hold = dict(held, kind=reading["kind"])
     if hold is not None:
         reason = hold.get("reason") or "undetermined"
         return [
