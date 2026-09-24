@@ -486,12 +486,15 @@ are recorded on the attempt as `turn_check_undecided:<reason>` (`listing_bounded
 `token_scan_bounded`, `no_send_time`). `status` reads the phase as
 `awaiting_ack:turn_check_undecided`, and `assignment-show` carries the reason as
 `projection.completion.delivery.turnCheck`. Nothing is sent again on an undecided reading. The
-daemon reads such a row again after ten minutes, and a later reading that decides clears the name.
-The parent can still acknowledge the delivery, or read the report with `show --event` and recover.
+daemon reads such a row again after ten minutes. Only a later reading that decides clears the
+name. A reconcile whose own read fails, or that settles the same dispatch from its receipt again,
+keeps it. The parent can still acknowledge the delivery, or read the report with `show --event`
+and recover.
 
 Reconciliation reads first and writes later. If the daemon records a loss in between, the
-reconcile's own write refuses to overwrite it and reports the recorded loss. Without that refusal,
-the attempt would go back to dispatched, and the one count that stops a third send would be lost.
+reconcile's own write refuses to overwrite it and reports the recorded loss, with its reading and
+the `redelivery` the loss recorded. Without that refusal, the attempt would go back to dispatched,
+and the one count that stops a third send would be lost.
 
 `reconcile --request-id` runs the same read for a receipt that carries a turn id and reports it
 as `recipientTurn`: `{turnId, finding, status, detail}`, where the finding is `present`,
