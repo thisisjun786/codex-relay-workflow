@@ -49,6 +49,70 @@ A holder that reached the currency check may already have merged. So:
 The refusal a caller gets in that state names `land` and `merge-turn-unknown` as the two routes
 out, because "wait longer" is the one answer that never helps.
 
+## The base a landing leaves behind
+
+A landing records the base branch it leaves behind, and the next candidate on that target has to
+restate exactly that value before `merge-turn-check` lets it merge. That value used to be typed by
+the caller. In the CRW-124 G1 trial on an installed relay both parents typed the base their
+candidate had been checked against rather than the one the branch pointed at after the merge, so
+their verified successors were refused `merge_currency_stale`, and nothing could correct a landed
+turn: `merge-turn-resolve` admits only an unknown one.
+
+So the merge turn reads one fact from the target itself: the commit its base branch points at. It
+reads it at the four moments it records a base, and at no other time:
+
+| Command | What it reads and records |
+| --- | --- |
+| `merge-turn-check` | The restated `--base-sha` must be the branch tip now; the reading, not the caller's text, is stored as the base the merge was checked against |
+| `merge-turn-land` | The branch after the merge, recorded as the base the next candidate must restate. `--landed-sha` is recorded as stated; `--observed-base-sha` is an optional cross-check |
+| `merge-turn-resolve` | The branch now, recorded with the outcome. `--observed-base-sha` is cross-checked |
+| `merge-turn-restate-base` | The branch now, recorded over the latest landing's base, with the value it replaces kept in the ledger |
+
+An absolute path is read with git (`show-ref --verify` on `refs/heads/<branch>`, repository
+discovery off, every `GIT_*` variable removed), so revision syntax in a branch name is never
+evaluated; the path must be the repository the merge goes into, not a working clone. An
+`owner/name` repository is read with one GET through the forge module, the reader
+`merge-evidence` uses. Anything else, and any failure to read, is unreadable. Each of these
+commands reads before its single transaction, never inside it, and only once the caller and the
+turn's state allow the call, so a refused caller never reaches the target.
+
+Three refusals come with it, each leaving the turn where it was:
+
+- `merge_target_unreadable`: nothing could be read, so nothing is recorded. A check stays
+  holding (its blocked cause is `target_unreadable`), a landing stays merging, and a merged
+  resolution stays unknown. An open or closed resolution still returns the turn, with no base
+  recorded, because the next check reads the target itself.
+- `merge_base_mismatch`: the caller stated a base the branch does not read. Abbreviated and
+  upper-case object names are compared as the commits they name.
+- `merge_base_not_advanced`, from `merge-turn-land` only: the branch still reads the base the
+  check read before merging, so the merge is not on it. A candidate that already was the branch
+  tip at the check is exempt. A merge that changed nothing because the base already contained the
+  candidate is recorded through `merge-turn-unknown` and `merge-turn-resolve --pr-state merged`,
+  which has no such rule.
+
+A turn that entered merging before this change was checked against a typed base, so the branch
+cannot show whether it landed. `merge-turn-land` refuses it with `merge_evidence_required` and
+names the route: `merge-turn-unknown`, then `merge-turn-resolve` from the pull request's state.
+A check records its reading on the engine's own holding-to-merging transition, which is how the
+two kinds of turn are told apart.
+
+`merge-turn-restate-base --turn <landing> --actor <holder or supervisor> --evidence <why>`
+corrects the base the currency check compares against. It admits only the latest landing on the
+target, and not while another turn there is merging or unknown. The ledger entry keeps `from`,
+`to`, the evidence and the reading's source, and `merge-turn-show --turn` lists them as
+`baseRestatements`. It records what the branch reads now, which is what the next candidate has
+to restate, so it can also carry a commit written outside the relay after the landing. When a
+`merge-turn-check` is refused because the last landing recorded a different base, its detail
+names that landing, this command, and who may run it.
+
+What this does not establish: `landedSha` is the holder's statement and is not checked for
+containment in the branch, so a merge that failed while another write moved the branch is
+recorded as landed, with the true base. On a resolved landing `landedSha` is the candidate head,
+because no landing commit was reported. The comparison with the last recorded landing is kept
+beside the reading on purpose: after an outside commit it stops a correct successor until the
+landing's holder or supervisor restates the base, and that restatement is the record of why the
+base moved outside the relay.
+
 ## A message about a turn is not the turn moving
 
 `merge-turn-request-return` records somebody asking. `merge-turn-attest` with
@@ -111,7 +175,8 @@ pull request is itself in that situation with `scripts/crw_runtime/components.js
   able to invoke the CLI is already inside the boundary.
 - **Forge evidence is cross-checked, never observed.** `merge-turn-check` verifies that what
   the caller restated is internally consistent and current against what this store knows. It
-  cannot see the pull request. An operator who wants proof that required CI was green reads
+  cannot see the pull request; the one thing it reads from the target is where the base branch
+  points (see above). An operator who wants proof that required CI was green reads
   the forge, not this record.
 
 - **An agreement confers nothing.** Not merge permission, not authority to instruct, not a
@@ -121,8 +186,8 @@ pull request is itself in that situation with `scripts/crw_runtime/components.js
   artifact roots: region paths are repository-relative, `artifact_roots` are absolute host
   paths, and nothing here records where a repository is checked out. A check that cannot be
   performed correctly but reads like enforcement is worse than its absence.
-- **An unknown target stays blocked until somebody observes it.** Nothing here watches a forge,
-  so a coordination loop with no recovery step will wedge a target after a holder dies. That is
+- **An unknown target stays blocked until somebody observes it.** Nothing here watches a forge
+  on its own; a base branch is read only when a command records a base. So a coordination loop with no recovery step will wedge a target after a holder dies. That is
   the correct failure for the criterion and a follow-up for whoever owns that loop, not a
   defect repaired here.
 - **Region disjointness is declarative.** The relay cannot parse code, so two names for one
@@ -130,8 +195,8 @@ pull request is itself in that situation with `scripts/crw_runtime/components.js
 - **A total is per store.** `resolve_state_dir` selects a store per socket, so two sockets are
   two totals and neither is a host-wide number.
 - **Required checks are restated, not discovered.** `merge-turn-check --required` is the
-  caller's declaration of what branch protection requires, stored as `requiredDeclared`. This
-  package never contacts a forge. What the check establishes is that the restated evidence is
+  caller's declaration of what branch protection requires, stored as `requiredDeclared`. The
+  merge turn never reads a forge's rules or checks; it reads only where the base branch points. What the check establishes is that the restated evidence is
   internally consistent and current: every declared required name present and successful on the
   candidate head at its highest submitted attempt, the base matching the last landing recorded
   here, and the review paginated to the end with nothing unresolved. When the turn names an

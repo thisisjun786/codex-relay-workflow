@@ -557,6 +557,40 @@ could not install a guard index. An ambiguous answer and a missing index are the
 from two sides, so a reader deciding whether to act on a contested owner is being told that the
 database is not stopping a second one either.
 
+## Checking, landing and correcting a landing's base
+
+    codex-session-relay --state "$RELAY_STATE" merge-turn-check --turn <id> --actor <task> --head-sha <head> --base-sha <base branch tip now> --checks <json> --review <json> --required <name>
+    codex-session-relay --state "$RELAY_STATE" merge-turn-land --turn <id> --actor <task> --landed-sha <the commit your merge put on the base> [--observed-base-sha <base branch tip read after the merge>] --evidence <what you observed>
+    codex-session-relay --state "$RELAY_STATE" merge-turn-restate-base --turn <landing> --actor <task> [--observed-base-sha <base branch tip now>] --evidence <why>
+
+The base a landing records is the value the next candidate on the same target has to restate as
+`--base-sha`, so the relay does not take it from you: at the check, the landing, a resolution and
+a restatement it reads where the base branch points, from the target the claim named (git for an
+absolute repository path, which must be the repository the merge goes into; a read-only forge
+GET for `owner/name`), and records that reading. What you pass is compared with it.
+
+- `--base-sha` is the branch tip now, in full. Anything else is refused `merge_currency_stale`.
+- `--landed-sha` is the commit your merge put on the base: the merge or squash commit, the last
+  rebased commit, or the candidate head for a fast-forward. It is recorded as stated.
+- `--observed-base-sha` is optional on landing and restating: the tip you read with
+  `git rev-parse` after the merge. It is never the base you checked against; that is exactly
+  the value that stopped both successors in the CRW-124 G1 trial, and it is now refused
+  `merge_base_mismatch`.
+
+A landing while the branch still reads the base the check read is refused
+`merge_base_not_advanced` and the turn stays merging: merge, then land again, or read again if
+the forge has not caught up. If the merge changed nothing because the base already contained the
+candidate, record it with `merge-turn-unknown` and `merge-turn-resolve --pr-state merged`. A
+target the relay cannot read refuses `merge_target_unreadable` and nothing is recorded; a
+merging turn checked before the relay read its base is refused `merge_evidence_required` and
+leaves through `merge-turn-unknown` and `merge-turn-resolve`.
+
+When `merge-turn-check` is refused because the last landing on the target recorded a different
+base, the refusal names that landing and who may correct it: its holder, or the supervisor above
+its project. That task runs `merge-turn-restate-base` on the landing; the relay reads the branch
+again, records it, and keeps the replaced value beside it (`merge-turn-show --turn <landing>`,
+`baseRestatements`). Then the candidate checks again. Nobody edits the store to correct a base.
+
 ## When the assignment is not in the store yet
 
 Registration needs the task id that creation returns, so a child which finishes quickly can reach
