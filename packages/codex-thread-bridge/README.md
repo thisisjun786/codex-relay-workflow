@@ -427,16 +427,18 @@ caller names its policy. The resume itself carries no `approvalPolicy` at all, s
 bridge cannot set or change the policy of a thread it did not create; measured on
 codex-cli 0.154.0 in both directions, omitting it reports the thread's own policy and
 does not inherit the `CODEX_HOME` config default.
-Declaring an interactive policy buys delivery, not approval servicing. Unsupported
-client-side tool and approval requests receive an explicit error, so this bridge grants
-none of them. The protocol has no method by which one client hands an approval request
-to another, and none is needed: the host sends every approval request to each
-connection subscribed to the thread, so the thread's own client receives it too. That
-was measured, and so was its cost. The host applies the first answer from any
-subscribed connection, and it applies this bridge's error as a denial. A bridge that is
-subscribed to an interactive thread therefore refuses that thread's approvals before
-the approver can answer, including the owner's own; see
-[Approval requests, as measured](#approval-requests-as-measured).
+Declaring an interactive policy buys delivery, not approval servicing. This bridge
+answers no approval request at all: it neither grants nor denies one, and it records
+each as left for the thread's approver (`approvalRequests` on the receipt,
+`answered: left_for_thread_approver`). The protocol has no method by which one client
+hands an approval request to another, and none is needed: the host sends every approval
+request to each connection subscribed to the thread, so the thread's own client receives
+it too, and a pending one is replayed to a client that opens the thread later. The host
+applies the first answer from any subscribed connection, an error as a denial, so any
+answer from this bridge would decide for the approver; that includes a request replayed
+to it because it resumed a thread whose own turn was waiting. See
+[Approval requests, as measured](#approval-requests-as-measured). Client-side tool
+requests that are not decisions still receive an explicit `-32601`.
 Concurrent external clients can still change a thread between those
 steps; the App Server remains authoritative. Nothing steers or interrupts on its own.
 

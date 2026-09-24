@@ -52,9 +52,15 @@ class FakeServer:
         # which the real host is, so the suite runs against both rather than picking one.
         self.resident = None
         self.resume_adopts = False
-        # Set to a server-to-client method name to make turn/start raise one request the client
-        # has to answer, which is how an interactive thread reaches the bridge mid-turn.
+        # Set to a server-to-client method name (or a list of them) to make turn/start raise
+        # requests the client could answer, which is how an interactive thread reaches the bridge
+        # mid-turn.
         self.approval_request_on_turn = None
+        # The same while answering thread/resume: measured on codex-cli 0.154.0, a connection that
+        # resumes a thread whose turn waits for approval is sent that pending request again.
+        self.approval_request_on_resume = None
+        # Every server-to-client request this fake sent, as (id, method), in order.
+        self.server_requests = []
         # Every answer the client sent back to such a request, so a test can assert that the
         # bridge refused rather than decided.
         self.client_answers = []
@@ -151,6 +157,30 @@ class FakeServer:
             "reasoningEffort": config.get("model_reasoning_effort", "medium"),
         }
 
+    async def _raise(self, ws, methods, thread_id):
+        if not methods:
+            return
+        for method in [methods] if isinstance(methods, str) else list(methods):
+            self._server_request_id += 1
+            ident = f"server-{self._server_request_id}"
+            self.server_requests.append((ident, method))
+            await ws.send(
+                json.dumps(
+                    {
+                        "id": ident,
+                        "method": method,
+                        "params": {
+                            "threadId": thread_id,
+                            "turnId": "turn-waiting",
+                            "command": ["rm", "-rf", "/"],
+                        },
+                    }
+                )
+            )
+
+    def answer_to(self, ident):
+        return [answer for answer in self.client_answers if answer.get("id") == ident]
+
     async def handle(self, ws):
         self.handshake_extensions.append(ws.request.headers.get("Sec-WebSocket-Extensions"))
         initialized = False
@@ -204,22 +234,9 @@ class FakeServer:
                 result = {}
             elif method == "turn/start":
                 thread = self.threads[params["threadId"]]
-                if self.approval_request_on_turn:
-                    # A request the client must answer, issued while turn/start is still in
-                    # flight. The real host asks this way when a thread's policy is interactive.
-                    self._server_request_id += 1
-                    await ws.send(
-                        json.dumps(
-                            {
-                                "id": f"server-{self._server_request_id}",
-                                "method": self.approval_request_on_turn,
-                                "params": {
-                                    "threadId": params["threadId"],
-                                    "command": ["rm", "-rf", "/"],
-                                },
-                            }
-                        )
-                    )
+                # A request the client could answer, issued while turn/start is still in flight.
+                # The real host asks this way when a thread's policy is interactive.
+                await self._raise(ws, self.approval_request_on_turn, params["threadId"])
                 turn = {
                     "id": f"turn-{len(thread['turns']) + 1}",
                     "status": "completed" if self.complete_turns else "inProgress",
@@ -237,6 +254,7 @@ class FakeServer:
                     thread["turns"] = []
                 result = {"thread": thread}
             elif method == "thread/resume":
+                await self._raise(ws, self.approval_request_on_resume, params["threadId"])
                 thread = self.threads[params["threadId"]]
                 if self.resident is not None and params["threadId"] not in self.resident:
                     # Materializing it. An adopting host takes what it was sent, which is exactly

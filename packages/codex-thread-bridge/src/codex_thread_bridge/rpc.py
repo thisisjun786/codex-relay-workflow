@@ -29,9 +29,12 @@ MAX_FRAME_BYTES = 16 * 1024 * 1024
 _FRAME_BYTES = re.compile(r"frame with (\d+) bytes")
 
 # The server-to-client requests that ask a human to decide, from
-# `codex app-server generate-json-schema --experimental` on codex-cli 0.154.0. They are named so a
-# receipt can say which refusals were a decision somebody was waiting on, rather than lumping
-# them in with an ordinary unsupported client call.
+# `codex app-server generate-json-schema --experimental` on codex-cli 0.154.0. This client answers
+# none of them. Measured on that release (README "Approval requests, as measured"), the host sends
+# each one to every connection subscribed to the thread, replays a pending one to a connection that
+# resumes the thread later, and applies the FIRST answer from any of them, an error answer as a
+# denial. Any answer from here would be a decision taken for the thread's approver, and answering
+# a request replayed to a resume would deny the owner's own pending request.
 APPROVAL_METHODS = frozenset(
     {
         "execCommandApproval",
@@ -44,10 +47,14 @@ APPROVAL_METHODS = frozenset(
     }
 )
 
-# How many refused server-to-client requests this connection remembers. Bounded, because a
-# long-lived connection would otherwise grow one list forever; large enough to cover the requests
-# a single dispatch can provoke.
+# How many server-to-client requests this connection remembers. Bounded, because a long-lived
+# connection would otherwise grow one list forever; large enough to cover the requests a single
+# dispatch can provoke. What falls out of the bound is still counted (requests_since notRetained).
 REFUSED_REQUESTS_KEPT = 64
+
+# What this client did with a server-to-client request.
+LEFT_FOR_APPROVER = "left_for_thread_approver"
+REFUSED = "refused"
 
 
 class RpcError(Exception):
@@ -169,17 +176,21 @@ class AppServer:
         # nor left for close() to miss. See _retire_out_of_band.
         self._retiring = set()
         self.info: dict[str, Any] = {}
-        # Every server-to-client request this connection refused, newest last and bounded.
-        # Kept because "this bridge granted no approval" should be evidence a caller can read,
-        # not a claim it has to take on trust.
+        # Every server-to-client request this connection received, newest last and bounded, with
+        # what happened to it: left for the thread's approver, or refused. Kept because "this
+        # bridge decided no approval" should be evidence a caller can read, not a claim it has
+        # to take on trust.
         self._refused = deque(maxlen=REFUSED_REQUESTS_KEPT)
-        # Monotonic across the whole connection, so a caller can mark a point and ask only about
-        # refusals recorded after it. The deque's own length cannot do that once it wraps.
-        self.refused_total = 0
+        # One monotonic sequence for BOTH outcomes, across the whole connection, so a caller can
+        # mark a point and ask about every request recorded after it, and learn how many of them
+        # the bound no longer holds. The deque's own length cannot do that once it wraps.
+        self.server_requests_total = 0
 
-    def refusal_mark(self):
-        """A point in the refusal stream, to be handed back to refusals_since."""
-        return self.refused_total
+    def request_mark(self):
+        """A point in the server-request stream, to be handed back to requests_since."""
+        return self.server_requests_total
+
+    refusal_mark = request_mark
 
     @property
     def phase_bounds(self) -> PhaseBounds:
@@ -188,13 +199,18 @@ class AppServer:
             return self._phase_bounds
         return PhaseBounds.from_timeout(self.timeout)
 
-    def refusals_since(self, mark: int, thread_id: str | None = None):
-        """Refused server-to-client requests recorded after `mark`, attributed where possible.
+    def requests_since(self, mark: int, thread_id: str | None = None):
+        """Server-to-client requests recorded after `mark`, attributed where possible.
 
         Split rather than filtered. One connection serves sequential dispatches, so counting every
-        recent refusal as this thread's would let another thread's denied command appear on this
+        recent request as this thread's would let another thread's command appear on this
         receipt. A request carrying no threadId cannot be attributed at all, and saying so is more
         useful than quietly dropping it or quietly claiming it.
+
+        Each entry says what happened to it (`answered`): left for the thread's approver, which
+        is every approval-class request, or refused with -32601. notRetained counts the requests
+        after `mark` that the bound no longer holds, so a long window reports a gap instead of
+        silently shrinking.
         """
         recent = [entry for entry in self._refused if entry["index"] > mark]
         mine = [entry for entry in recent if entry["threadId"] == thread_id]
@@ -203,27 +219,36 @@ class AppServer:
             "thisThread": mine,
             "unattributed": unattributed,
             "otherThreads": len(recent) - len(mine) - len(unattributed),
-            "approvalsRefusedForThisThread": sum(entry["approval"] for entry in mine),
-            "note": "Refusals recorded between the two marks this receipt spans. A turn outlives "
-            "that window, so a request the turn raises later is refused the same way and is "
-            "simply not on this receipt. Nothing here was ever granted.",
+            "approvalsLeftForThisThread": sum(
+                entry["answered"] == LEFT_FOR_APPROVER for entry in mine
+            ),
+            "refusedForThisThread": sum(entry["answered"] == REFUSED for entry in mine),
+            "notRetained": max(0, self.server_requests_total - mark - len(recent)),
+            "note": "Requests recorded between the two marks this receipt spans. A turn outlives "
+            "that window, so a request the turn raises later is handled the same way and is "
+            "simply not on this receipt. An approval-class request is never answered here: the "
+            "host sends it to every client subscribed to the thread and applies the first "
+            "answer, so it stays with the thread's own approver. Nothing here was granted or "
+            "denied.",
         }
 
-    def _record_refusal(self, message: dict[str, Any]):
-        """Note a refused server-to-client request, keyed by what it says it is about."""
+    refusals_since = requests_since
+
+    def _record_request(self, message: dict[str, Any], answered: str):
+        """Note a server-to-client request and what happened to it, keyed by what it is about."""
         params = message.get("params")
         params = params if isinstance(params, dict) else {}
         method = message.get("method")
         thread_id = params.get("threadId")
-        self.refused_total += 1
+        self.server_requests_total += 1
         self._refused.append(
             {
-                "index": self.refused_total,
+                "index": self.server_requests_total,
                 "method": method,
                 "approval": method in APPROVAL_METHODS,
                 "threadId": thread_id if isinstance(thread_id, str) else None,
                 "turnId": params.get("turnId") if isinstance(params.get("turnId"), str) else None,
-                "answered": "refused",
+                "answered": answered,
                 "at": time.time(),
             }
         )
@@ -274,14 +299,21 @@ class AppServer:
                 message = json.loads(raw)
                 if "method" in message:
                     if "id" in message:
-                        # No silent approvals or fake results for client-side tools. The refusal
-                        # is recorded first, so that "this bridge granted nothing" is evidence a
-                        # receipt can carry rather than an assurance. The answer itself is
-                        # unchanged on purpose: -32601 says this client does not implement the
-                        # method, which declines to decide. Answering in the approval vocabulary
-                        # instead -- denied, decline -- would write a verdict into the thread's
-                        # record in the approver's own type, and make this bridge the approver.
-                        self._record_refusal(message)
+                        if message["method"] in APPROVAL_METHODS:
+                            # A decision that belongs to the thread's approver. The host sent it
+                            # to every subscribed client and applies the first answer, an error
+                            # as a denial, so ANY answer from here would decide it for them -
+                            # including a request replayed to this connection because it resumed
+                            # a thread whose own turn is waiting. It is recorded and left
+                            # unanswered; the approver's client answers it, now or on its own
+                            # resume, and until then the turn waits.
+                            self._record_request(message, LEFT_FOR_APPROVER)
+                            continue
+                        # No fake results for client-side tools. The refusal is recorded first,
+                        # so "this bridge ran nothing" is evidence a receipt can carry rather
+                        # than an assurance; -32601 says this client does not implement the
+                        # method.
+                        self._record_request(message, REFUSED)
                         await ws.send(
                             json.dumps(
                                 {
@@ -289,9 +321,7 @@ class AppServer:
                                     "error": {
                                         "code": -32601,
                                         "message": "Unsupported client action; this bridge "
-                                        "services no approval or client-side tool and has no "
-                                        "route to this thread's approver. Nothing was granted. "
-                                        "Continue this task in the client that owns the thread.",
+                                        "runs no client-side tool. Nothing was run.",
                                     },
                                 }
                             )

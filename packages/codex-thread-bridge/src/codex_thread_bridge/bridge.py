@@ -407,15 +407,14 @@ class Bridge:
                     "does not inherit the CODEX_HOME config default.",
                 ),
                 "servicesApprovals": False,
-                "onApprovalRequest": "refused_not_routed",
-                "routeToOriginalApprover": None,
-                "missingInterface": "This bridge holds no route by which an approval request "
-                "reaches the thread's own approver, so it can refuse such a request and cannot "
-                "deliver it. That much is true by reading this bridge. The wider statement, that "
-                "the protocol offers no such method at all, is an inspection of codex-cli "
-                f"{TESTED_HOST_VERSION} rather than a reading of the connected server. Whether "
-                "the host shows that request to the owning client anyway is NOT established "
-                "here and is reported unverified rather than assumed.",
+                "onApprovalRequest": "left_for_thread_approver",
+                "approverRoute": "The host's, not this bridge's. Measured on codex-cli "
+                f"{TESTED_HOST_VERSION}, the host sends an approval request to every client "
+                "subscribed to the thread, replays a pending one to a client that resumes the "
+                "thread later, and applies the first answer from any of them. This bridge "
+                "therefore answers none and the thread's own client decides; that it does so on "
+                "the connected server is not re-measured by this call, and how a particular "
+                "client such as Desktop presents the request is not established here.",
                 "limits": APPROVAL_LIMITS,
             },
             # What THIS bridge offers. A tool missing here says nothing about the host: the
@@ -990,9 +989,9 @@ class Bridge:
             contract = built["contract"]
             receipt["threadId"] = thread_id
             receipt["executionPolicy"] = dict(built["execution"].receipt)
-            # Where this connection's refusal stream stood before anything was sent, so the
-            # refusals this dispatch provoked can be told apart from another thread's.
-            mark = self.rpc.refusal_mark()
+            # Where this connection's server-request stream stood before anything was sent, so
+            # the requests this dispatch met can be told apart from another thread's.
+            mark = self.rpc.request_mark()
             self.ledger.save(receipt)
             state = await self.rpc.call(
                 "thread/read", {"threadId": thread_id, "includeTurns": False}
@@ -1085,9 +1084,9 @@ class Bridge:
                     f"{first['expected']!r}. Message withheld and NOT delivered; no turn was "
                     "started. This bridge preserves a thread's approval policy and never sets "
                     "one, so the way to deliver here is a NEW request id declaring the policy "
-                    "the thread is actually on. Declaring it does not make this bridge service "
-                    "approvals: it services none, refuses every approval request and cannot "
-                    "route one to the thread's approver."
+                    "the thread is actually on. Declaring it does not make this bridge an "
+                    "approver: it answers no approval request, and the thread's own client "
+                    "decides every one the turn raises."
                     if first["code"] == "unsupported_approval_policy"
                     else f"{first['code']}: {first['field']} returned {first['returned']!r}, "
                     f"expected {first['expected']!r}; message withheld"
@@ -1105,7 +1104,7 @@ class Bridge:
             )
             receipt["turnId"] = turn["turn"]["id"]
             # Only the window this receipt actually spans. A turn outlives it, and the note says so.
-            receipt["approvalRequests"] = self.rpc.refusals_since(mark, thread_id)
+            receipt["approvalRequests"] = self.rpc.requests_since(mark, thread_id)
 
         def reconcile(receipt):
             """Say whether the logical message reached a turn, from what actually went out.
