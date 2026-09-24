@@ -429,15 +429,43 @@ codex-cli 0.154.0 in both directions, omitting it reports the thread's own polic
 does not inherit the `CODEX_HOME` config default.
 Declaring an interactive policy buys delivery, not approval servicing. Unsupported
 client-side tool and approval requests receive an explicit error, so this bridge grants
-none of them, and it holds no route to the thread's own approver: the protocol has no
-method by which a second client hands an approval request to the client that owns the
-thread. That is a statement about this bridge, and it stops there: whether the host
-independently surfaces the same request to the owning client is not established, so
-nothing here claims the approver saw it or that they did not. What is certain is that
-nothing this bridge does turns such a request into an approval; continue those tasks in
-the client that owns the thread.
+none of them. The protocol has no method by which one client hands an approval request
+to another, and none is needed: the host sends every approval request to each
+connection subscribed to the thread, so the thread's own client receives it too. That
+was measured, and so was its cost. The host applies the first answer from any
+subscribed connection, and it applies this bridge's error as a denial. A bridge that is
+subscribed to an interactive thread therefore refuses that thread's approvals before
+the approver can answer, including the owner's own; see
+[Approval requests, as measured](#approval-requests-as-measured).
 Concurrent external clients can still change a thread between those
 steps; the App Server remains authoritative. Nothing steers or interrupts on its own.
+
+### Approval requests, as measured
+
+Measured on codex-cli 0.154.0 against an isolated App Server with two client
+connections: an owner connection holding a thread whose policy is `on-request` and
+sandbox `workspace-write`, and a second connection that resumes it without sending a
+policy and starts a turn, which is what this bridge does. A scripted model provider made
+the turn ask for an escalated command, or for a patch outside the writable roots, so
+every request below had a known cause. The source of the same release agrees
+(`app-server/src/outgoing_message.rs` and `request_processors/thread_lifecycle.rs`).
+
+| Situation | What the host did |
+| --- | --- |
+| The second connection starts the turn while the owner's connection holds the thread | Both connections receive the same `item/commandExecution/requestApproval` (or `item/fileChange/requestApproval`) with the same request id |
+| The second connection answers first, with an error or with `decline` | That answer is the decision. An error is applied as a denial. Both connections receive `serverRequest/resolved`, and the owner's later `accept` changes nothing |
+| The second connection never answers | The owner's answer is the decision, whether the second connection stays connected or closes before the owner answers |
+| The owner is not connected when the turn asks | The turn waits. The thread reads `active` with `activeFlags: ["waitingOnApproval"]` and stays loaded past the 60-second unload delay. A connection that resumes the thread later receives the same pending request, and its answer is the decision |
+| The owner's own turn is waiting when another connection resumes the thread | The pending request is replayed to the resuming connection, and an error answered there is applied as a denial of the owner's request |
+| A report arrives while the turn waits | `turn/steer`, and a second `turn/start` alike, land in the waiting turn: `turn/start` answers with the id of the turn already running. The pending request is not cancelled |
+| The thread's approval policy across a plain resume, an unload and an App Server restart | Kept, together with the whole sandbox value, for a thread whose own turns ran under it, and effective: a turn started afterwards by the second connection still sent its approval request to the owner |
+| The App Server receives SIGTERM while a turn waits for approval | The graceful restart waits for the turn. A second signal forces it; afterwards the waiting turn reads `interrupted`, nothing is replayed, and the command never ran |
+| The thread's `approvalsReviewer` is `auto_review` | No client receives a request; the host's reviewer decides |
+
+Two limits apply. The owner connection was a test client, so how Desktop presents a
+request it did not ask for, or one replayed to it, is not established here. The
+isolation kept Codex's own sandbox from running, so only commands that ran with
+approval, outside the sandbox, were observed.
 
 ## Reaching a thread that is already working
 
