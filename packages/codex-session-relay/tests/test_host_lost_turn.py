@@ -475,6 +475,45 @@ class ReconcileReportsTheRecipientTurn(HostLossCase):
         self.assertEqual(outcome.get("recipientTurn", {}).get("finding"), HOST_LOST)
         self.assertEqual(self.delivery_row(event_id)["state"], QUEUED)
 
+    def test_a_token_behind_the_items_of_other_dropped_turns_still_vetoes_the_loss(self):
+        """Review 6 of e7859976: an item of an unlisted turn was taken for older history.
+
+        The host dropped the delivery turn and two later turns from its list but kept their
+        items. The scan stopped at the first item of a turn it had not been given, called the
+        turns since the send covered, and the report was sent a second time although the
+        parent's items still held it.
+        """
+        event_id, first, turn = self.dispatched()
+        self.clock.advance(5)
+        self.adapter.start_turn(PARENT, turn_id="parent-later", status="completed",
+                                text="later work")
+        self.adapter.start_turn(PARENT, turn_id="parent-later-2", status="completed",
+                                text="more later work")
+        for dropped in (turn, "parent-later", "parent-later-2"):
+            self.host_loses(dropped, items=False)
+        self.clock.advance(120)
+        self.daemon.tick()
+        self.assertEqual(self.attempt_states(event_id), [DISPATCHED])
+        self.assertEqual(len(self.adapter.sends), 1)
+        self.assertEqual(self.journalled(HOST_LOST), 0)
+        reading = self.reconciler.reconcile_attempt(first, self.adapter).get("recipientTurn", {})
+        self.assertEqual((reading.get("finding"), reading.get("status")), ("present", None))
+
+    def test_the_items_of_a_turn_listed_before_the_send_end_the_scan(self):
+        """The one boundary the scan keeps: a turn the listing showed began before the send.
+
+        Its items and everything older are history, so a loss behind 250 of them is still
+        found instead of reading as a scan stopped at its bound.
+        """
+        event_id, first, turn = self.dispatched()
+        thread = self.adapter.threads[PARENT]
+        thread.items[0:0] = [("parent-earlier", f"earlier item {n}") for n in range(250)]
+        self.host_loses(turn)
+        self.clock.advance(120)
+        outcome = self.reconciler.reconcile_attempt(first, self.adapter)
+        self.assertEqual(outcome.get("recipientTurn", {}).get("finding"), HOST_LOST)
+        self.assertEqual(self.delivery_row(event_id)["state"], QUEUED)
+
     def test_a_listing_too_long_to_reach_the_send_is_recorded_as_undecided(self):
         from codex_session_relay.hostadapter import ListingBounded
 
