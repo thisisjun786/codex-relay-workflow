@@ -444,6 +444,17 @@ class Completion(unittest.TestCase):
         answer = self.evaluate(self.reading())
         self.assertEqual(completion.CONSISTENT, self.verdicts(answer)["install"])
 
+    def test_a_requirement_is_a_boolean_and_a_null_check_reads_missing(self):
+        # A number compares equal to a boolean but is not one: 0 taken as false would read an
+        # absent install as not required and hide the difference.
+        for value in (0, 1, 0.0):
+            with self.subTest(value=value), self.assertRaises(products.RouteRefused):
+                self.reading(requires={"acceptance": True, "install": value})
+        reading = self.reading(requires={"acceptance": True, "install": None},
+                               observed={"acceptance": "passed", "install": None})
+        self.assertEqual((completion.UNKNOWN, "unobservable"),
+                         (reading["requires"]["install"], reading["observed"]["install"]))
+
     def test_done_without_acceptance_evidence_is_a_mismatch(self):
         for observed in ("absent", "failed"):
             with self.subTest(observed=observed):

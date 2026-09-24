@@ -189,8 +189,9 @@ is intended.
 ## Projects
 
 A project is created only under an explicitly configured `project_creation` policy whose basis
-names this request. Creation needs no suitable project for the members' components, plus at least
-`minIndependentFixes` (two or more) distinct held defects sharing one declared user goal with
+names this request. Creation needs no suitable project for the members' components, and a test
+project never counts as one. It also needs at least `minIndependentFixes` (two or more)
+distinct held defects sharing one declared user goal with
 completion criteria. Sharing the goal means declaring the same criteria for it: defects that give
 one goal key different criteria are different contracts, so they make no project. The pre-issue
 check counts only members declaring the criteria the create carries, and cancels the create when
@@ -276,7 +277,9 @@ what can be observed:
 
 A requirement is required only when the reading says so. Deployment is never assumed mandatory,
 and an unknown requirement or an unobservable result is **unverified**, recorded under its own
-notice identity rather than guessed. A follow-up split counts as an exception only when read back
+notice identity rather than guessed. A requirement or result that is absent or null reads as
+unknown or unobservable. A requirement is a boolean or `unknown`: a number that compares
+equal to a boolean is refused. A follow-up split counts as an exception only when read back
 from Linear: the follow-up is a different, open issue of the product that lists this subject and
 this check among what it took over. An approved scope reduction counts only with the approval and
 its reference. Anything else is **exception_unverified**.

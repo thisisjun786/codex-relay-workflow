@@ -155,8 +155,10 @@ def eligibility(db, payload) -> list:
     for binding in db.execute("SELECT record FROM product_bindings WHERE product_key = ?"
                               " AND kind = 'project'", (payload["product"],)).fetchall():
         project = json.loads(binding["record"])
-        if project["state"] == "active" and set(project["components"]) & set(
-                payload["components"]):
+        # A test project places only simulated incidents, so it covers nothing a real create
+        # is for; counting it would hold real defects for good without a project to take them.
+        if not project.get("test") and project["state"] == "active" and set(
+                project["components"]) & set(payload["components"]):
             problems.append(f"{project['ref']} now covers {sorted(payload['components'])}")
     return problems
 

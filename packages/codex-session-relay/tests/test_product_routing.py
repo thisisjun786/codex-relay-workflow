@@ -737,6 +737,19 @@ class Projects(ProductRoutingCase):
         self.assertNotIn(second["faultId"], [d["faultId"] for d in answer["decisions"]])
         self.assertEqual(1, answer["proposalsUnreached"])
 
+    def test_a_test_project_never_stands_in_for_a_real_one(self):
+        # A test project covering cache places only simulated incidents, so the real cache and
+        # queue defects still need a project of their own and get it.
+        self.router.register_product(dict(GAMMA, testTarget={"team": "TST",
+                                                             "project": "proj-gmk-test"}))
+        self.router.bind(binding("gamma-kit", "project", "proj-gmk-test", components=["cache"],
+                                 test=True))
+        self.router.set_policy(POLICY)
+        self.assertEqual("no_project", self.gamma("cache", "stale", "g1")["hold"])
+        self.gamma("queue", "lost", "g2")
+        self.holder.run()
+        self.assertEqual(["GMK"], [p["team"] for p in self.linear.projects.values()])
+
     def test_an_existing_suitable_project_is_reused(self):
         self.router.set_policy(POLICY)
         self.router.bind(binding("gamma-kit", "project", "proj-gmk-cache",

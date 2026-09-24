@@ -98,13 +98,16 @@ def read_reading(record) -> dict:
                                      limit=64),
     }
     for check in products.CHECKS:
-        required = requires.get(check, UNKNOWN)
-        if required not in (True, False, UNKNOWN):
+        # Absent or null reads as missing. A number is not a boolean, even where it compares
+        # equal to one: 0 taken as false would turn an absent result into a mismatch.
+        required = products._absent(requires.get(check), UNKNOWN)
+        if not (type(required) is bool or required == UNKNOWN):
             products.malformed(f"requires.{check} is true, false or {UNKNOWN!r}")
         reading["requires"][check] = required
         vocabulary = ACCEPTANCE_OBSERVED if check == "acceptance" else RESULT_OBSERVED
         reading["observed"][check] = products._choice(
-            observed.get(check, "unobservable"), vocabulary, f"observed.{check}")
+            products._absent(observed.get(check), "unobservable"), vocabulary,
+            f"observed.{check}")
         entry = products._absent(evidence.get(check), {})
         products._closed(entry, ("fix", "verification"), f"evidence.{check}")
         reading["evidence"][check] = {
