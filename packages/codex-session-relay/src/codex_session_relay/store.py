@@ -1446,6 +1446,75 @@ CREATE TABLE IF NOT EXISTS fault_policies (
     updated_at     TEXT NOT NULL,
     PRIMARY KEY (product, fault_class, severity)
 );
+-- CRW-206 product routing. The fault ledger owns identity, suppression, targets, limits and the
+-- outbox; these rows hold only what routing read back from Linear and what it decided, so none
+-- of them can become a second copy of anything the ledger decides.
+--
+-- One validated registry record per product: workspace, team, family label, repositories, the
+-- surfaces it watches and how, its triage project and its test target.
+CREATE TABLE IF NOT EXISTS product_registry (
+    product_key TEXT PRIMARY KEY,
+    record      TEXT NOT NULL,
+    recorded_at TEXT NOT NULL
+);
+
+-- Projects and issues as a credential holder read them back from Linear. A snapshot, replaced
+-- whole on every bind; routing never writes Linear state here on its own account.
+CREATE TABLE IF NOT EXISTS product_bindings (
+    product_key TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    ref         TEXT NOT NULL,
+    record      TEXT NOT NULL,
+    observed_at TEXT,
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY (product_key, kind, ref)
+);
+
+-- The explicit project creation policy. Absent means no project is ever created by routing.
+CREATE TABLE IF NOT EXISTS routing_policy (
+    policy_key  TEXT PRIMARY KEY,
+    record      TEXT NOT NULL,
+    basis       TEXT NOT NULL,
+    recorded_at TEXT NOT NULL
+);
+
+-- One row per routed fault: where routing decided it belongs and why, what it is waiting for,
+-- and the snapshot the digest last reported. The fault itself lives in the ledger.
+-- checked_seq is, for an outstanding project proposal, when the digest last checked its create,
+-- as a sequence: each digest checks the least recently checked ones first, so no proposal waiting
+-- on a slow create can keep a later one from being bound. Explanations stay above the CREATE
+-- keyword: SQLite keeps a CREATE's text verbatim, and a shipped object's text never changes.
+CREATE TABLE IF NOT EXISTS incident_routes (
+    fault_id         TEXT PRIMARY KEY,
+    product_key      TEXT NOT NULL,
+    workspace        TEXT NOT NULL,
+    disposition      TEXT NOT NULL,
+    stage            TEXT NOT NULL,
+    target           TEXT NOT NULL,
+    origin           TEXT NOT NULL,
+    claimed_severity TEXT NOT NULL,
+    goal             TEXT,
+    classification   TEXT,
+    superseded_by    TEXT,
+    reported         TEXT,
+    detail           TEXT,
+    checked_seq      INTEGER NOT NULL DEFAULT 0,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS incident_routes_stage ON incident_routes (product_key, stage);
+
+-- The newest incidents per route, which a later binding decides again from and a classification
+-- replays. Routing's input, not ledger occurrences: the ledger's episode rules decide whether a
+-- replayed occurrence is new.
+CREATE TABLE IF NOT EXISTS route_incidents (
+    incident_id  TEXT PRIMARY KEY,
+    fault_id     TEXT NOT NULL,
+    record       TEXT NOT NULL,
+    recorded_at  TEXT NOT NULL,
+    recorded_seq INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS route_incidents_fault ON route_incidents (fault_id, recorded_seq);
 
 
 

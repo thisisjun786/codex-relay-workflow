@@ -1,0 +1,646 @@
+"""Intake: an incident in, one ledger observation out, filed where placement decided.
+
+Every path here pairs a ledger call with routing's own rows, and every such pair runs inside
+store.composing(), so a refusal from the ledger leaves neither half behind. The ledger is reached
+only through the router's port; on a checkout without CRW-205's corrected contract every path
+refuses before it writes anything.
+"""
+
+import json
+from contextlib import contextmanager
+
+from . import ledger_port, placement, products, routes
+from .errors import RefusalReason, RelayError
+
+# Ledger refusals that mean "this owner cannot take the fault now", which routing turns into a
+# hold somebody decides rather than an error that loses the incident. Defined with the port,
+# whose gate requires the ledger to have them.
+OWNER_REFUSALS = ledger_port.OWNER_REFUSALS
+CLASSIFICATION_KEYS = ("product", "component", "symptom", "goal", "by")
+
+
+def scope(workspace, project):
+    return {"workspace": workspace, **({"projectKey": project} if project else {})}
+
+
+def _stored(value):
+    """A ledger row's JSON column, whether it arrives as text or already decoded."""
+    if isinstance(value, str):
+        return json.loads(value) if value else {}
+    return dict(value or {})
+
+
+class _Replayed(Exception):
+    """The ledger said this occurrence was already recorded; carries its answer."""
+
+
+@contextmanager
+def _attempt(db):
+    """A savepoint around one occurrence's ledger calls and routing's rows.
+
+    The ledger decides whether an occurrence is new, from a timeline it never prunes and per
+    episode; but record() applies the caller's scope and adoption before it answers. An
+    occurrence it already had is not new input, so everything this attempt did is rolled back:
+    a replay moves no scope, adopts nothing, and stores neither its payload nor its goal. A
+    refusal rolls back the same way.
+    """
+    db.execute("SAVEPOINT route_occurrence")
+    try:
+        yield
+    except BaseException:
+        db.execute("ROLLBACK TO route_occurrence")
+        db.execute("RELEASE route_occurrence")
+        raise
+    db.execute("RELEASE route_occurrence")
+
+
+def _replayed(result, route):
+    """Raise _Replayed when the ledger did not record this occurrence and routing already has
+    the route it would have changed."""
+    if route is not None and result.get("recorded") is not True:
+        raise _Replayed(result)
+
+
+def _unchanged(route, answer):
+    """What a replayed occurrence answers: the route as it stands."""
+    target = route["target"]
+    return {**answer, "disposition": route["disposition"], "stage": route["stage"],
+            "project": target["project"], "owner": target["owner"], "hold": target["hold"],
+            "unverifiedCause": target.get("unverifiedCause"), "recorded": False,
+            "publication": None,
+            "reason": "the ledger already recorded this occurrence; nothing changed"}
+
+
+def intake(router, record) -> dict:
+    """Route one incident. Refuses, writing nothing, when it cannot be collected here.
+
+    One transaction from the first read to the last write. The registry, the bindings and the
+    run's owner the decision is made from are the ones it commits with: a binding another
+    process commits meanwhile is either seen here or waits for this intake, and is then
+    decided with it by that binding's own redecision.
+    """
+    incident = products.read_incident(record)
+    with router.store.composing():
+        return _intake(router, incident)
+
+
+def _intake(router, incident) -> dict:
+    registries = router.registries()
+    product, why = placement.resolve_product(registries, incident)
+    registry = registries.get(product) if product else None
+    if registry is not None:
+        _watched(registry, incident)
+    workspace = placement.workspace_for(incident, registry)
+    if registry is None:
+        return _unresolved(router, incident, workspace, why)
+    return _place(router, incident, registry, workspace)
+
+
+def _place(router, incident, registry, workspace) -> dict:
+    """File an incident of a known product, through its named cause when that is another
+    product's: an intake, a forwarded incident and a classification replay alike."""
+    cause = incident["cause"]
+    if cause is not None and cause["product"] != registry["product"]:
+        return _shared_cause(router, incident, registry, workspace)
+    return file(router, incident, registry, workspace)
+
+
+def _watched(registry, incident):
+    spec = registry["surfaces"].get(incident["surface"])
+    if spec is None or not spec["active"]:
+        products.refuse(RefusalReason.ROUTE_SURFACE_UNWATCHED,
+                        f"{registry['product']} does not watch {incident['surface']}; nothing"
+                        f" from an unconnected surface is collected")
+    if incident["origin"] == products.SIMULATED and registry["testTarget"] is None:
+        products.refuse(RefusalReason.ROUTE_INPUT_MALFORMED,
+                        f"a simulated incident needs {registry['product']}'s test target")
+
+
+def _unresolved(router, incident, workspace, why) -> dict:
+    """One pending-classification record per identity, never filed, and never assigned."""
+    port = router.port
+    signature = placement.pending_signature(incident)
+    fault_id = port.fault_id(products.UNCLASSIFIED, workspace, products.PENDING, signature)
+    route = routes.get(router.store, fault_id)
+    if route is not None and route["stage"] == products.STAGE_SUPERSEDED:
+        return _forward(router, route, incident)
+    try:
+        with router.store.composing() as db, _attempt(db):
+            _replayed(port.record(port.observation(
+                product=products.UNCLASSIFIED, workspace=workspace,
+                fault_class=products.PENDING, severity="notice", signature=signature,
+                occurrence_key=incident["occurrenceKey"], observed_at=incident["observedAt"],
+                detail=placement.detail_text(incident), evidence=incident["evidence"])), route)
+            routes.upsert(db, router.clock, fault_id=fault_id, product=products.UNCLASSIFIED,
+                          workspace=workspace, disposition=products.PENDING_CLASSIFICATION,
+                          stage=products.STAGE_PENDING,
+                          target=routes.target({}, None, incident), origin=incident["origin"],
+                          claimed_severity=incident["severity"],
+                          goal=(incident["goal"] or {}).get("key"), detail=why)
+            routes.store_incident(db, router.clock, fault_id, incident, replace=True)
+    except _Replayed:
+        return _unchanged(route, {"faultId": fault_id, "product": None,
+                                  "workspace": workspace})
+    with router.store.composing():
+        if incident["severity"] == "broken":
+            # A severe incident nobody can place is a decision for somebody, not an issue in
+            # whichever team sorts first. The digest raises the same decision for every
+            # pending record under the same reason, so this is one notice, raised early.
+            port.notify(fault_id, reason=routes.AWAITING_CLASSIFICATION,
+                        ref=incident["occurrenceKey"])
+    return {"faultId": fault_id, "product": None, "workspace": workspace,
+            "disposition": products.PENDING_CLASSIFICATION, "stage": products.STAGE_PENDING,
+            "reason": why}
+
+
+def _classified(incident, classification):
+    applied = dict(incident)
+    applied["product"] = classification["product"]
+    for key in ("component", "symptom"):
+        if classification.get(key):
+            applied[key] = classification[key]
+    if classification.get("goal"):
+        applied["goal"] = classification["goal"]
+    return applied
+
+
+def _forward(router, route, incident) -> dict:
+    """A later incident with a classified pending identity goes to the product it was given."""
+    classification = route["classification"]
+    registry = router.registry(classification["product"])
+    applied = _classified(incident, classification)
+    # The product it was classified into decides what is collected, exactly as for an intake
+    # that named it: a surface it does not watch is refused, not filed through the side door.
+    _watched(registry, applied)
+    answer = _place(router, applied, registry, placement.workspace_for(applied, registry))
+    return {**answer, "forwardedFrom": route["fault_id"]}
+
+
+def _shared_cause(router, incident, registry, workspace) -> dict:
+    """A cause in another product: verified, it gains an occurrence at its own severity and the
+    affected product's defect is filed as usual and linked; unverified, nothing merges and the
+    claim stands on the defect's route as a decision of its own.
+
+    A cause counts only incidents of its own origin. A simulated incident naming a real fault,
+    or an observed one naming a simulated fault, is an unverified claim: it records nothing on
+    the cause and owes no relation to it, so a test can never make a real fault recur, notify or
+    reopen, and a real effect never counts toward a test fault."""
+    port = router.port
+    cause = incident["cause"]
+    row = port.get(cause["faultId"]) if cause["faultId"] else None
+    verified = (row is not None and row.get("product") == cause["product"]
+                and (cause["signature"] is None
+                     or _stored(row["signature"]) == cause["signature"]))
+    if not verified:
+        return file(router, incident, registry, workspace, unverified_cause=_claim(
+            cause, "no fault of that product with that signature is recorded here"))
+    theirs = _origin(row)
+    if theirs != incident["origin"]:
+        return file(router, incident, registry, workspace, unverified_cause=_claim(
+            cause, f"a {incident['origin']} incident never counts against a {theirs} fault"))
+    return file(router, incident, registry, workspace, cause_fault=cause["faultId"],
+                cause_row=row)
+
+
+def _affected(port, cause_row, product, fault_id, incident):
+    """The cause's occurrence saying this product was affected, recorded inside the product
+    occurrence's own attempt and only once the ledger has recorded that occurrence as new: a
+    replay of it counts nothing on the cause, a failed filing takes this back with it, and the
+    key carries the affected fault and its episode, so two defects sharing a source key are two
+    effects, and the same key after a clear counts again."""
+    placed = _stored(cause_row.get("scope"))
+    episode = (port.get(fault_id) or {}).get("episode") or 1
+    port.record(port.observation(
+        product=cause_row["product"], workspace=placed.get("workspace"),
+        fault_class=cause_row["fault_class"], severity=cause_row["severity"],
+        signature=_stored(cause_row["signature"]),
+        occurrence_key=f"affected:{product}:{fault_id}:{episode}:{incident['occurrenceKey']}",
+        project=placed.get("projectKey"), observed_at=incident["observedAt"],
+        detail=f"{product} was affected by this fault", evidence=incident["evidence"]))
+
+
+def _claim(cause, why):
+    return {"product": cause["product"], "faultId": cause["faultId"], "why": why}
+
+
+def _origin(row):
+    """Whether a ledger fault records simulated events. Routing puts the simulated mark into
+    every simulated signature it builds, as part of identity; a fault without it is real."""
+    signature = _stored(row["signature"])
+    return products.SIMULATED if signature.get("simulated") is True else products.OBSERVED
+
+
+def file(router, incident, registry, workspace, *, cause_fault=None,
+         unverified_cause=None, cause_row=None) -> dict:
+    """Decide, then record: the one place a product incident becomes a ledger observation.
+
+    cause_fault is a verified cause this incident links the defect to. unverified_cause is a
+    cause it named that could not be verified: the defect is placed exactly as if it named none,
+    and the claim stands on the route until an incident for this defect names a verified cause.
+    cause_row is the verified cause's ledger row, which gains an occurrence when this one is new.
+    """
+    port = router.port
+    product = registry["product"]
+    decision = placement.decide(incident, registry, router.bindings(product),
+                                router.run_issue(incident["context"]["run"]))
+    observe = decision["disposition"] == products.OBSERVE
+    fault_class = products.EXPECTED_STATE if observe else products.DEFECT
+    signature = placement.defect_signature(
+        incident, attached=decision["owner"]
+        if decision["disposition"] == products.ATTACH_CURRENT else None)
+    fault_id = port.fault_id(product, workspace, fault_class, signature)
+    existing = routes.get(router.store, fault_id)
+    if existing is not None and existing["stage"] == products.STAGE_FILED:
+        # Filed once, the fault's record belongs to the ledger; a later occurrence changes
+        # nothing about where it went.
+        kept = existing["target"]
+        decision = {**decision, "disposition": existing["disposition"],
+                    "stage": products.STAGE_FILED, "project": kept["project"],
+                    "owner": kept["owner"], "hold": None, "relate": kept["relate"],
+                    "reason": "filed earlier; the ledger's record carries this occurrence"}
+    before = (existing or {}).get("target") or {}
+    # Only a cause this incident verified releases a standing claim. The cause the route is
+    # already linked to is carried, never read as an answer: an incident naming no cause leaves
+    # both the link and the claim as they are.
+    claim = unverified_cause or (None if cause_fault else before.get("unverifiedCause"))
+    cause_fault = cause_fault or before.get("cause")
+    obligations = _obligations(decision, existing, cause_fault,
+                               labels=placement.issue_labels(incident))
+    target = routes.target(decision, registry, incident, obligations=obligations,
+                           cause=cause_fault, unverified_cause=claim)
+    first = port.get(fault_id) is None
+    adopt = None
+    if decision["owner"] and first:
+        adopt = {"externalRef": decision["owner"], "scope": scope(workspace, decision["project"])}
+    unchanged = {"faultId": fault_id, "product": product, "workspace": workspace}
+    try:
+        with router.store.composing() as db, _attempt(db):
+            # The one call that can refuse on the ledger's own terms goes first, before this
+            # attempt has written anything, so a refusal leaves nothing behind even when this
+            # runs inside a caller's composed transaction.
+            if decision["owner"] and not first and not (existing and existing["target"]["owner"]):
+                port.adopt(fault_id, external_ref=decision["owner"],
+                           scope=scope(workspace, decision["project"]))
+            if decision["project"]:
+                port.ensure_target(product=product, workspace=workspace,
+                                   project=decision["project"], team=target["team"],
+                                   project_ref=decision["project"])
+            result = port.record(port.observation(
+                product=product, workspace=workspace, fault_class=fault_class,
+                severity="notice" if observe else incident["severity"], signature=signature,
+                occurrence_key=incident["occurrenceKey"], project=decision["project"],
+                observed_at=incident["observedAt"], detail=placement.detail_text(incident),
+                evidence=incident["evidence"]), adopt=adopt)
+            _replayed(result, existing)
+            if cause_row is not None and result.get("recorded") is True:
+                _affected(port, cause_row, product, fault_id, incident)
+            _save(db, router, fault_id, product, workspace, decision, target, incident)
+    except _Replayed:
+        return _unchanged(existing, unchanged)
+    except RelayError as refusal:
+        if getattr(refusal.reason, "value", None) not in OWNER_REFUSALS:
+            raise
+        # The fault already files its own record, or lives in another workspace: holding it
+        # for a decision keeps both records from existing for one defect. The occurrence is
+        # recorded where the fault already is: a record() that named no project, or another
+        # one, would move its scope and re-point its unsent writes on the way to a hold.
+        kept = _stored((port.get(fault_id) or {}).get("scope")).get("projectKey")
+        decision = {**decision, "disposition": products.HELD, "stage": products.STAGE_HELD,
+                    "hold": products.OWNER_FOUND_AFTER_CREATE, "project": None,
+                    "reason": f"{decision['owner']} owns this, but {refusal}"}
+        target = routes.target(decision, registry, incident, obligations=(), cause=cause_fault,
+                               unverified_cause=claim)
+        try:
+            with router.store.composing() as db, _attempt(db):
+                result = port.record(port.observation(
+                    product=product, workspace=workspace, fault_class=fault_class,
+                    severity=incident["severity"], signature=signature,
+                    occurrence_key=incident["occurrenceKey"], project=kept,
+                    observed_at=incident["observedAt"], detail=placement.detail_text(incident),
+                    evidence=incident["evidence"]))
+                _replayed(result, existing)
+                if cause_row is not None and result.get("recorded") is True:
+                    _affected(port, cause_row, product, fault_id, incident)
+                _save(db, router, fault_id, product, workspace, decision, target, incident)
+        except _Replayed:
+            return _unchanged(existing, unchanged)
+    discharge(router, fault_id)
+    if decision["stage"] == products.STAGE_HELD:
+        _held(router, fault_id, decision, incident, product)
+    if existing is not None and existing["stage"] == products.STAGE_HELD and (
+            existing["target"]["hold"] == products.NO_PROJECT) and (
+            decision["hold"] != products.NO_PROJECT):
+        # It was one of a goal's members, and is not any more: the goal's create is evaluated
+        # again with the members that are left.
+        from . import projects
+
+        projects.evaluate(router, product)
+    if unverified_cause is not None and incident["severity"] == "broken":
+        port.notify(fault_id, reason=routes.CAUSE_UNVERIFIED, ref=incident["occurrenceKey"])
+    return {"faultId": fault_id, "product": product, "workspace": workspace,
+            "disposition": decision["disposition"], "stage": decision["stage"],
+            "project": decision["project"], "owner": decision["owner"],
+            "hold": decision["hold"], "unverifiedCause": claim,
+            "recorded": result.get("recorded"),
+            "publication": result.get("publication"), "reason": decision["reason"]}
+
+
+def _save(db, router, fault_id, product, workspace, decision, target, incident):
+    """Routing's rows for an occurrence the ledger has just recorded as new: its decision, and
+    the incident as the route's newest input, even under a key a past episode used."""
+    routes.upsert(db, router.clock, fault_id=fault_id, product=product, workspace=workspace,
+                  disposition=decision["disposition"], stage=decision["stage"], target=target,
+                  origin=incident["origin"], claimed_severity=incident["severity"],
+                  goal=(incident["goal"] or {}).get("key"), detail=decision["reason"])
+    routes.store_incident(db, router.clock, fault_id, incident, replace=True)
+
+
+def _obligations(decision, existing, cause_fault, *, labels=()):
+    """What this route still owes once its fault owns an issue, merged with what it owed.
+
+    An issue the fault creates owes its repository label, which the ledger's create does not
+    carry; an issue it adopts is somebody else's and keeps the labels it has, so an adopted
+    route owes none and an open label obligation from before the adoption is dropped.
+
+    More generally an obligation still open, never queued, is dropped when the current decision
+    contradicts it: a route decided again from a follow-up to a new issue no longer owes the
+    relation to the issue it was going to follow, and must not write it; a reopen belongs only
+    to a reopen. One already queued or done is history and stays.
+    """
+    owed = list((existing or {}).get("target", {}).get("obligations") or [])
+    labelled = decision["disposition"] in (products.NEW_ISSUE, products.FOLLOW_UP) and not (
+        decision.get("owner"))
+    related = set(decision.get("relate") or [])
+
+    def contradicted(obligation):
+        if obligation["kind"] == "add_label":
+            return not labelled
+        if obligation["kind"] == "reopen":
+            return decision["disposition"] != products.REOPEN
+        return obligation["toIssue"] is not None and obligation["toIssue"] not in related
+
+    owed = [o for o in owed if o["state"] != "open" or not contradicted(o)]
+    wanted = []
+    if decision["disposition"] == products.REOPEN:
+        wanted.append(_owed("reopen"))
+    if labelled:
+        wanted.extend(_owed("add_label", label=label) for label in labels)
+    for issue in decision.get("relate") or []:
+        wanted.append(_owed("add_relation", to_issue=issue))
+    if cause_fault:
+        wanted.append(_owed("add_relation", to_fault=cause_fault))
+    keys = {_owed_key(o) for o in owed}
+    owed.extend(o for o in wanted if _owed_key(o) not in keys)
+    return owed
+
+
+def _owed(kind, *, to_issue=None, to_fault=None, label=None):
+    return {"kind": kind, "toIssue": to_issue, "toFault": to_fault, "label": label,
+            "state": "open"}
+
+
+def _owed_key(obligation):
+    return (obligation["kind"], obligation["toIssue"], obligation["toFault"],
+            obligation.get("label"))
+
+
+def _held(router, fault_id, decision, incident, product):
+    from . import projects
+
+    if incident["severity"] == "broken":
+        router.port.notify(fault_id, reason=routes.held_reason(decision["hold"]),
+                           ref=incident["occurrenceKey"])
+    if decision["hold"] == products.NO_PROJECT:
+        projects.evaluate(router, product)
+
+
+def discharge(router, fault_id) -> list:
+    """Queue what a route owes once its fault owns an issue. Idempotent: the ledger keeps one
+    update per operation, value and cycle, and a queued obligation is not queued again."""
+    route = routes.get(router.store, fault_id)
+    if route is None:
+        return []
+    target = route["target"]
+    pending = [o for o in target["obligations"] if o["state"] == "open"]
+    if not pending:
+        return []
+    port = router.port
+    owned = (port.get(fault_id) or {}).get("external_ref")
+    if not owned:
+        return []
+    queued = []
+    with router.store.composing() as db:
+        for obligation in pending:
+            if obligation["kind"] == "reopen":
+                if owned != target["owner"]:
+                    continue
+                port.update(fault_id, op="reopen", value=None)
+            elif obligation["kind"] == "add_label":
+                if target["owner"]:
+                    continue
+                port.update(fault_id, op="add_label", value=obligation["label"])
+            else:
+                other = obligation["toIssue"] or (
+                    (port.get(obligation["toFault"]) or {}).get("external_ref")
+                    if obligation["toFault"] else None)
+                if not other:
+                    continue
+                port.update(fault_id, op="add_relation",
+                            value={"type": "related", "issue": other})
+            obligation["state"] = "queued"
+            queued.append(obligation)
+        if queued:
+            routes.set_target(db, router.clock, fault_id, target)
+    return queued
+
+
+def redecide(router, product) -> list:
+    """Decide held routes, and filed ones whose fault owns no issue yet, again from their
+    latest incident against the bindings as they are now."""
+    registry = router.registry(product)
+    if registry is None:
+        return []
+    bindings = router.bindings(product)
+    changed, after = [], None
+    while True:
+        page = routes.listing(router.store, product=product,
+                              stages=(products.STAGE_HELD, products.STAGE_FILED),
+                              limit=100, after=after)
+        for route in page["routes"]:
+            answer = _again(router, route, registry, bindings)
+            if answer is not None:
+                changed.append(answer)
+        after = page["next"]
+        if after is None:
+            return changed
+
+
+def _again(router, route, registry, bindings):
+    if route["disposition"] in (products.PROJECT_PROPOSAL, products.COMPLETION_MISMATCH,
+                                products.COMPLETION_UNVERIFIED):
+        return None
+    port = router.port
+    fault_id = route["fault_id"]
+    if route["stage"] == products.STAGE_FILED and (port.get(fault_id) or {}).get("external_ref"):
+        return None
+    stored = routes.incidents(router.store, fault_id)
+    if not stored:
+        return None
+    incident = stored[-1]
+    decision = placement.decide(incident, registry, bindings,
+                                router.run_issue(incident["context"]["run"]))
+    if decision["disposition"] == products.ATTACH_CURRENT:
+        # Attaching makes the incident its current issue's own record, a different fault from
+        # this one; that is decided when the incident arrives, never by moving a record later.
+        return None
+    current = route["target"]
+    target = routes.target(decision, registry, incident,
+                           obligations=_obligations(decision, route, current.get("cause"),
+                                                    labels=placement.issue_labels(incident)),
+                           cause=current.get("cause"),
+                           unverified_cause=current.get("unverifiedCause"))
+    # The team counts only where a project is named: that is where the ledger's target for the
+    # scope carries it, and a registry that moved the product to another team re-points there.
+    # Disposition and related issues count too: a binding that makes the route a follow-up of a
+    # completed issue changes what it owes, even where the project stays the same.
+    if (target["project"], target["owner"], target["hold"],
+            target["team"] if target["project"] else None,
+            decision["disposition"], sorted(target["relate"])) == (
+            current["project"], current["owner"], current["hold"],
+            current["team"] if current["project"] else None,
+            route["disposition"], sorted(current.get("relate") or [])):
+        return None
+    place = scope(route["workspace"], decision["project"])
+    # Held with no project, a fault that owns no issue leaves its old project's scope: the
+    # ledger offers a create only where its scope has a target and a project, so the unissued
+    # create waits instead of landing in a project that no longer suits it, and is re-pointed
+    # when a later decision places the route. An owned issue is never unlinked this way.
+    unplaced = not decision["project"] and not (port.get(fault_id) or {}).get("external_ref")
+    try:
+        with router.store.composing() as db:
+            if decision["owner"]:
+                port.adopt(fault_id, external_ref=decision["owner"], scope=place)
+            if decision["project"]:
+                port.ensure_target(product=registry["product"], workspace=route["workspace"],
+                                   project=decision["project"], team=target["team"],
+                                   project_ref=decision["project"])
+            if not decision["owner"] and (decision["project"] or unplaced):
+                port.move(fault_id, scope=place)
+            routes.upsert(db, router.clock, fault_id=fault_id, product=registry["product"],
+                          workspace=route["workspace"], disposition=decision["disposition"],
+                          stage=decision["stage"], target=target, origin=route["origin"],
+                          claimed_severity=route["claimed_severity"],
+                          detail=decision["reason"])
+    except RelayError as refusal:
+        if getattr(refusal.reason, "value", None) not in OWNER_REFUSALS:
+            raise
+        held = {**current, "hold": products.OWNER_FOUND_AFTER_CREATE, "owner": decision["owner"]}
+        with router.store.transaction() as db:
+            db.execute("UPDATE incident_routes SET stage = ?, disposition = ?, target = ?,"
+                       "  detail = ?, updated_at = ? WHERE fault_id = ?",
+                       (products.STAGE_HELD, products.HELD, products.canonical(held),
+                        str(refusal), router.clock.iso(), fault_id))
+        return {"faultId": fault_id, "hold": products.OWNER_FOUND_AFTER_CREATE}
+    discharge(router, fault_id)
+    return {"faultId": fault_id, "disposition": decision["disposition"],
+            "project": decision["project"], "owner": decision["owner"], "hold": decision["hold"]}
+
+
+def read_classification(record) -> dict:
+    """Who a pending incident belongs to. Severity is not a key: nobody classifies it."""
+    products._closed(record, CLASSIFICATION_KEYS, "a classification")
+    goal = record.get("goal")
+    if goal is not None:
+        products._closed(goal, ("key", "criteria"), "classification.goal")
+        goal = {"key": products._key(goal.get("key"), "goal.key"),
+                "criteria": products._text(goal.get("criteria"), "goal.criteria",
+                                           optional=True)}
+    by = products._text(record.get("by"), "by", limit=128)
+    if by != "operator" and not by.startswith("llm:"):
+        products.malformed("by is operator or llm:<model>")
+    return {"product": products._product(record.get("product"), "product"),
+            "component": products._key(record.get("component"), "component", optional=True),
+            "symptom": products._key(record.get("symptom"), "symptom", optional=True),
+            "goal": goal, "by": by}
+
+
+def classify(router, fault_id, record) -> dict:
+    """Give a pending record its product: replay its incidents there and withdraw it. One
+    transaction from reading the pending record to withdrawing it, as for an intake."""
+    classification = read_classification(record)
+    with router.store.composing():
+        return _classify(router, fault_id, classification)
+
+
+def _classify(router, fault_id, classification) -> dict:
+    route = routes.get(router.store, fault_id)
+    if route is None or route["product_key"] != products.UNCLASSIFIED:
+        products.refuse(RefusalReason.ROUTE_STATE_CONFLICT,
+                        f"{fault_id} is not a pending-classification record")
+    if route["stage"] == products.STAGE_SUPERSEDED:
+        return {"faultId": fault_id, "successor": route["superseded_by"], "replayed": 0,
+                "changed": False}
+    registry = router.registry(classification["product"])
+    if registry is None:
+        products.refuse(RefusalReason.ROUTE_PRODUCT_UNKNOWN,
+                        f"{classification['product']!r} is not a registered product")
+    stored = routes.incidents(router.store, fault_id)
+    if not stored:
+        products.refuse(RefusalReason.ROUTE_STATE_CONFLICT, f"{fault_id} keeps no incident")
+    for incident in stored:
+        # Every replayed incident must be one the classified product collects: classifying
+        # into a product that does not watch the surface would file it through the side door.
+        _watched(registry, _classified(incident, classification))
+    port = router.port
+    port.ready("route-classify")
+    with router.store.composing() as db:
+        successor = None
+        for incident in stored:
+            applied = _classified(incident, classification)
+            successor = _place(router, applied, registry,
+                               placement.workspace_for(applied, registry))["faultId"]
+        port.record(port.observation(
+            product=products.UNCLASSIFIED, workspace=route["workspace"],
+            fault_class=products.PENDING, severity="notice",
+            signature=placement.pending_signature(stored[0]),
+            occurrence_key=f"classified:{successor}", detail="classified", cleared=True))
+        routes.upsert(db, router.clock, fault_id=fault_id, product=products.UNCLASSIFIED,
+                      workspace=route["workspace"], disposition=route["disposition"],
+                      stage=products.STAGE_SUPERSEDED, target=route["target"],
+                      origin=route["origin"], claimed_severity=route["claimed_severity"],
+                      classification={**classification, "at": router.clock.iso()},
+                      superseded_by=successor, detail=f"classified by {classification['by']}")
+    return {"faultId": fault_id, "successor": successor, "replayed": len(stored),
+            "changed": True}
+
+
+def reconcile_route(router, route) -> dict:
+    """What one filed route owes now: its obligations, or the project its proposal created."""
+    from . import projects
+
+    if route["stage"] != products.STAGE_FILED:
+        return {"queued": [], "bound": []}
+    if route["disposition"] == products.PROJECT_PROPOSAL:
+        return {"queued": [], "bound": projects.bind_confirmed(router, route)}
+    if any(o["state"] == "open" for o in route["target"]["obligations"]):
+        return {"queued": discharge(router, route["fault_id"]), "bound": []}
+    return {"queued": [], "bound": []}
+
+
+def reconcile(router, *, product=None, limit=50, after=None) -> dict:
+    """Discharge obligations whose ends now own issues, and bind projects that were created,
+    over at most limit filed routes after the cursor; pass next back as after to continue."""
+    queued, bound, seen = [], [], 0
+    limit, after = products.read_page(limit, after, ceiling=5000)
+    while seen < limit:
+        page = routes.listing(router.store, product=product, stages=(products.STAGE_FILED,),
+                              limit=min(100, limit - seen), after=after)
+        for route in page["routes"]:
+            seen += 1
+            done = reconcile_route(router, route)
+            queued.extend(done["queued"])
+            bound.extend(done["bound"])
+        after = page["next"]
+        if after is None:
+            break
+    return {"queued": queued, "bound": bound, "read": seen, "next": after}

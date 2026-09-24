@@ -730,5 +730,7 @@ These are recorded because behaviour depends on them.
 - `docs/invariants.md` — every invariant and the code that enforces it.
 - `docs/faults.md` — the operational fault ledger: one breakage, one record, one Linear issue,
   closed only by reverification.
+- `docs/product-routing.md` — where a product's incident belongs: the current issue, an existing
+  issue, a reopen, a follow-up, a new issue in its project, or one pending-classification record.
 - `docs/operations.md` — where the state lives, who owns the daemon, and how to read a
   stuck delivery. Each section says whether the behaviour is implemented or planned.

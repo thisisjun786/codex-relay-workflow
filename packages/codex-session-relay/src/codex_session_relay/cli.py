@@ -84,6 +84,13 @@ OFFLINE_COMMANDS = (
     "fault-policy", "fault-limit", "fault-attention", "fault-relink", "fault-notifications",
     "fault-notification-raise", "fault-notification-reserve", "fault-notification-ack",
     "fault-notification-fail", "fault-notification-reconcile",
+    # Product routing's registry reads and writes this store alone: the registry, the bindings
+    # a credential holder read back from Linear, and the project creation policy. The route
+    # commands reach the fault ledger in the same store; the Linear writes they cause are
+    # performed by a credential holder through the fault-* holder commands.
+    "product-register", "product-bind", "product-show", "route-policy",
+    "route-intake", "route-classify", "route-reconcile", "route-show", "route-digest",
+    "route-projects", "completion-check",
     "service status", "service enable", "service disable", "service stop",
     # Records which execution policy file this service's daemon is launched with. It writes
     # one small file next to the intent and reaches no host, so an operator can configure a
@@ -156,6 +163,7 @@ class Services:
         self._reconciler = None
         self._sync = None
         self._faults = None
+        self._router = None
         self._assignments = None
         self._linkage = None
         self._merge_turn = None
@@ -295,6 +303,14 @@ class Services:
 
             self._faults = FaultLedger(self.store, self.clock)
         return self._faults
+
+    @property
+    def router(self):
+        if self._router is None:
+            from .routing import ProductRouter
+
+            self._router = ProductRouter(self.store, self.clock)
+        return self._router
 
     @property
     def assignments(self):
@@ -2037,6 +2053,69 @@ def _import_kind_modules(args) -> None:
         except ImportError as error:
             raise SystemExit2(f"--kind-module {name!r} could not be imported: {error}",
                               EXIT_USAGE) from error
+def _route_json(value, what):
+    """Caller-supplied JSON for product routing, or a routing refusal naming what was wrong.
+
+    A missing @path is as much a malformed argument as unreadable JSON; letting either escape
+    as a generic error would report an outage for a typo.
+    """
+    from .errors import RefusalReason
+    from .products import RouteRefused
+
+    try:
+        return json.loads(_read_text(value))
+    except OSError as error:
+        raise RouteRefused(RefusalReason.ROUTE_INPUT_MALFORMED,
+                           f"the {what} file cannot be read: {error}") from error
+    except ValueError as error:
+        raise RouteRefused(RefusalReason.ROUTE_INPUT_MALFORMED,
+                           f"the {what} is not readable JSON: {error}") from error
+
+
+def cmd_product_register(services, args) -> dict:
+    return services.router.register_product(_route_json(args.record, "registry record"))
+
+
+def cmd_product_bind(services, args) -> dict:
+    return services.router.bind(_route_json(args.record, "binding"))
+
+
+def cmd_product_show(services, args) -> dict:
+    return services.router.show_products(args.product)
+
+
+def cmd_route_policy(services, args) -> dict:
+    return services.router.set_policy(_route_json(args.record, "routing policy"))
+
+
+def cmd_route_intake(services, args) -> dict:
+    return services.router.intake(_route_json(args.incident, "incident"))
+
+
+def cmd_route_classify(services, args) -> dict:
+    return services.router.classify(args.fault,
+                                    _route_json(args.classification, "classification"))
+
+
+def cmd_route_reconcile(services, args) -> dict:
+    return services.router.reconcile(product=args.product, limit=args.limit, after=args.after)
+
+
+def cmd_route_show(services, args) -> dict:
+    return services.router.show(args.product, attention=args.attention, limit=args.limit,
+                                after=args.after)
+
+
+def cmd_route_digest(services, args) -> dict:
+    return services.router.digest(limit=args.limit, after=args.after)
+
+
+def cmd_route_projects(services, args) -> dict:
+    return services.router.evaluate_projects(args.product)
+
+
+def cmd_completion_check(services, args) -> dict:
+    return services.router.check_completion(_route_json(args.reading, "completion reading"))
 
 
 def _read_text(value: str) -> str:
@@ -4623,6 +4702,62 @@ def build_parser() -> argparse.ArgumentParser:
     notification_reconcile.add_argument("--delivered", required=True, choices=["yes", "no"])
     notification_reconcile.add_argument("--ref", required=True)
     notification_reconcile.set_defaults(handler=cmd_fault_notification_reconcile)
+    product_register = subparsers.add_parser("product-register")
+    product_register.add_argument("--record", required=True,
+                                  help="product-registry/1 JSON, or @path")
+    product_register.set_defaults(handler=cmd_product_register)
+
+    product_bind = subparsers.add_parser("product-bind")
+    product_bind.add_argument("--record", required=True, help="product-binding/1 JSON, or @path")
+    product_bind.set_defaults(handler=cmd_product_bind)
+
+    product_show = subparsers.add_parser("product-show")
+    product_show.add_argument("--product")
+    product_show.set_defaults(handler=cmd_product_show)
+
+    route_policy = subparsers.add_parser("route-policy")
+    route_policy.add_argument("--record", required=True, help="routing-policy/1 JSON, or @path")
+    route_policy.set_defaults(handler=cmd_route_policy)
+
+    route_intake = subparsers.add_parser("route-intake")
+    route_intake.add_argument("--incident", required=True,
+                              help="product-incident/1 JSON, or @path")
+    route_intake.set_defaults(handler=cmd_route_intake)
+
+    route_classify = subparsers.add_parser("route-classify")
+    route_classify.add_argument("--fault", required=True,
+                                help="the pending-classification record's fault id")
+    route_classify.add_argument("--classification", required=True,
+                                help="{product, component?, symptom?, goal?, by} JSON, or @path")
+    route_classify.set_defaults(handler=cmd_route_classify)
+
+    route_reconcile = subparsers.add_parser("route-reconcile")
+    route_reconcile.add_argument("--product")
+    route_reconcile.add_argument("--limit", type=int, default=50)
+    route_reconcile.add_argument("--after", type=int)
+    route_reconcile.set_defaults(handler=cmd_route_reconcile)
+
+    route_show = subparsers.add_parser("route-show")
+    route_show.add_argument("--product")
+    route_show.add_argument("--attention", action="store_true",
+                            help="only routes waiting on a decision")
+    route_show.add_argument("--limit", type=int, default=20)
+    route_show.add_argument("--after", type=int)
+    route_show.set_defaults(handler=cmd_route_show)
+
+    route_digest = subparsers.add_parser("route-digest")
+    route_digest.add_argument("--limit", type=int, default=500)
+    route_digest.add_argument("--after", type=int)
+    route_digest.set_defaults(handler=cmd_route_digest)
+
+    route_projects = subparsers.add_parser("route-projects")
+    route_projects.add_argument("--product", required=True)
+    route_projects.set_defaults(handler=cmd_route_projects)
+
+    completion_check = subparsers.add_parser("completion-check")
+    completion_check.add_argument("--reading", required=True,
+                                  help="completion-reading/1 JSON, or @path")
+    completion_check.set_defaults(handler=cmd_completion_check)
 
 
     show = subparsers.add_parser("show")

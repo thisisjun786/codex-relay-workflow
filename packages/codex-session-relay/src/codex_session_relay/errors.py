@@ -201,6 +201,16 @@ class RefusalReason(str, Enum):
     FAULT_POLICY_FIXED = "fault_policy_fixed"
     FAULT_KIND_UNREGISTERED = "fault_kind_unregistered"
 
+    # Product routing (CRW-206). Appended at the end for the same merge reason as the block
+    # above. Each names what to do next: repair the input; register the product or leave the
+    # incident to classification; connect the surface or stop sending it; read the route again;
+    # or wait for the ledger capability this checkout does not provide yet.
+    ROUTE_INPUT_MALFORMED = "route_input_malformed"
+    ROUTE_PRODUCT_UNKNOWN = "route_product_unknown"
+    ROUTE_SURFACE_UNWATCHED = "route_surface_unwatched"
+    ROUTE_STATE_CONFLICT = "route_state_conflict"
+    ROUTE_LEDGER_PENDING = "route_ledger_pending"
+
 
 
 class RelayError(Exception):
