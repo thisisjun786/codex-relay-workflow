@@ -590,7 +590,7 @@ store reading, exactly as a child checks what it receives
 ([the typed form these fields travel in](task-packet.md#the-typed-form-these-fields-travel-in)):
 
     codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
-      --receiver <own task id> --ledger <own reception ledger> --observation <forge reading>
+      --receiver <own task id> --ledger <own reception ledger> --observation <observation file>
 
 The observation is where you read the pull request's repository, number and head, with its
 source, or, for a deliverable that is not a pull request, its path and the digest you computed
