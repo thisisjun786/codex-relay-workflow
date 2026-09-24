@@ -386,3 +386,33 @@ def killed_before_commit(store, *, writing=None):
             + " was interrupted, so this test asserted nothing about recovery."
             f" Transactions seen: {interruption.transactions}"
         )
+
+
+class FakeTarget:
+    """Where each merge target's base branch points, as a test says it does (CRW-229).
+
+    The merge turn reads its target through an injected reader. This one starts no process and
+    reaches no network, so a module using it keeps an injected clock; the real reader is
+    exercised against real repositories in test_merge_target.py. Every read is counted, which is
+    how a case shows that a refused caller never reached the target.
+    """
+
+    def __init__(self):
+        self.tips = {}
+        self.reads = []
+
+    def set(self, repository, base_ref, sha):
+        self.tips[(repository, base_ref)] = sha
+
+    def forget(self, repository, base_ref):
+        self.tips.pop((repository, base_ref), None)
+
+    def tip(self, repository, base_ref):
+        from codex_session_relay.mergetarget import TargetUnreadable
+
+        self.reads.append((repository, base_ref))
+        if (repository, base_ref) not in self.tips:
+            raise TargetUnreadable(
+                "the test set no tip for " + repr(base_ref) + " of " + repr(repository))
+        return {"sha": self.tips[(repository, base_ref)], "source": "fake",
+                "reference": "refs/heads/" + base_ref, "repository": repository}

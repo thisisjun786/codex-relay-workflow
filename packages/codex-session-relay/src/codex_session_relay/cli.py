@@ -98,12 +98,16 @@ OFFLINE_COMMANDS = (
     "service declare",
     # Coordination between parents. Like the linkage surface these read and write the store
     # and never call the host, so an operator can run every one of them with no App Server.
+    # merge-turn-check, -land, -resolve and -restate-base also read where the target's base
+    # branch points (CRW-229): with git for a local repository path, and for an owner/name
+    # repository through the forge, read-only, the way merge-evidence does.
     # Read-only, offline, and constructs no Store at all.
     "dispositions-show", "managed-show", "managed-release", "reporting-show",
     "capacity-show", "limit-declare", "merge-turn-attest", "merge-turn-check",
     "merge-turn-land", "merge-turn-ready", "merge-turn-release", "merge-turn-request",
     "merge-turn-request-return", "merge-turn-resolve", "merge-turn-show",
     "merge-turn-unknown", "merge-turn-withdraw", "merge-turn-acknowledge",
+    "merge-turn-restate-base",
     "region-followup",
     "region-followup-accept", "region-followup-settle", "region-propose",
     "region-reaffirm", "region-restate-revision", "region-settle", "region-show",
@@ -212,8 +216,13 @@ class Services:
             # the relay's queue in the same transaction. This is the only construction of
             # MergeTurn outside the tests, so leaving it out would have made the wake path
             # unreachable everywhere it actually matters while every test still passed.
+            from .mergetarget import TargetReader
+
+            # And with the reader of the target itself (CRW-229): every base this records is
+            # what the branch reads, never what a caller typed.
             self._merge_turn = MergeTurn(
-                self.store, self.clock, self.linkage, delivery=self.delivery)
+                self.store, self.clock, self.linkage, delivery=self.delivery,
+                target_reader=TargetReader())
         return self._merge_turn
 
     @property
@@ -1295,6 +1304,12 @@ def cmd_merge_turn_land(services, args) -> dict:
     return services.merge_turn.land(
         args.turn, actor=args.actor, landed_sha=args.landed_sha,
         observed_base_sha=args.observed_base_sha, evidence=args.evidence)
+
+
+def cmd_merge_turn_restate_base(services, args) -> dict:
+    return services.merge_turn.restate_base(
+        args.turn, actor=args.actor, observed_base_sha=args.observed_base_sha,
+        evidence=args.evidence)
 
 
 def cmd_merge_turn_unknown(services, args) -> dict:
@@ -5070,7 +5085,10 @@ def build_parser() -> argparse.ArgumentParser:
     turn_check.add_argument("--turn", required=True)
     turn_check.add_argument("--actor", required=True)
     turn_check.add_argument("--head-sha", required=True)
-    turn_check.add_argument("--base-sha", required=True)
+    turn_check.add_argument("--base-sha", required=True,
+                            help="the base branch tip now, in full. The relay reads the branch"
+                                 " itself, refuses a different value, and stores its own"
+                                 " reading as the base this merge was checked against")
     turn_check.add_argument("--checks", required=True,
                             help="JSON list of {runId, name, headSha, conclusion, attempt}")
     turn_check.add_argument("--review", required=True,
@@ -5078,16 +5096,26 @@ def build_parser() -> argparse.ArgumentParser:
                                  " unresolved}")
     turn_check.add_argument("--required", action="append",
                             help="a check name branch protection requires. Repeat once per"
-                                 " name. This package never contacts a forge, so the set is"
-                                 " your declaration and is stored as requiredDeclared")
+                                 " name. The merge check reads only where the base branch"
+                                 " points, so the set is your declaration and is stored as"
+                                 " requiredDeclared")
     turn_check.set_defaults(handler=cmd_merge_turn_check)
 
     turn_land = subparsers.add_parser("merge-turn-land")
     turn_land.add_argument("--turn", required=True)
     turn_land.add_argument("--actor", required=True)
-    turn_land.add_argument("--landed-sha", required=True)
-    turn_land.add_argument("--observed-base-sha", required=True)
-    turn_land.add_argument("--evidence", required=True)
+    turn_land.add_argument("--landed-sha", required=True,
+                           help="the commit your merge put on the base: the merge or squash"
+                                " commit, the last rebased commit, or the candidate head for a"
+                                " fast-forward. Recorded as stated")
+    turn_land.add_argument("--observed-base-sha",
+                           help="optional cross-check: the base branch tip you read after the"
+                                " merge (git rev-parse). The relay reads the branch itself and"
+                                " records that reading as the base the next candidate must"
+                                " restate; a value that disagrees is refused as"
+                                " merge_base_mismatch. Never the base you checked against")
+    turn_land.add_argument("--evidence", required=True,
+                           help="what you observed that shows the merge happened")
     turn_land.set_defaults(handler=cmd_merge_turn_land)
 
     turn_unknown = subparsers.add_parser("merge-turn-unknown")
@@ -5099,7 +5127,12 @@ def build_parser() -> argparse.ArgumentParser:
     turn_resolve = subparsers.add_parser("merge-turn-resolve")
     turn_resolve.add_argument("--turn", required=True)
     turn_resolve.add_argument("--actor", required=True)
-    turn_resolve.add_argument("--observed-base-sha", required=True)
+    turn_resolve.add_argument("--observed-base-sha", required=True,
+                              help="the base branch tip you read now. The relay reads the branch"
+                                   " itself and refuses a value that disagrees. With merged it"
+                                   " is recorded as the base the next candidate must restate;"
+                                   " with open or closed an unchanged base is expected, and an"
+                                   " unreadable target returns the turn with no base recorded")
     turn_resolve.add_argument("--pr-state", required=True,
                               choices=["merged", "open", "closed"],
                               help="only these three establish an outcome; anything else is"
@@ -5108,6 +5141,23 @@ def build_parser() -> argparse.ArgumentParser:
                               help="what you observed. Elapsed time is not an observation"
                                    " and never becomes one")
     turn_resolve.set_defaults(handler=cmd_merge_turn_resolve)
+
+    turn_restate = subparsers.add_parser(
+        "merge-turn-restate-base",
+        help="re-read and record the base a landing left behind, keeping the old value")
+    turn_restate.add_argument("--turn", required=True,
+                              help="the landed turn whose recorded base the next candidate is"
+                                   " compared with; merge-turn-check names it when it refuses")
+    turn_restate.add_argument("--actor", required=True,
+                              help="that landing's holder, or the supervisor above its project")
+    turn_restate.add_argument("--observed-base-sha",
+                              help="optional cross-check: the base branch tip you read now. The"
+                                   " relay reads the branch itself, records that reading, and"
+                                   " refuses a value that disagrees")
+    turn_restate.add_argument("--evidence", required=True,
+                              help="why the recorded base is being read again; kept beside the"
+                                   " value it replaces")
+    turn_restate.set_defaults(handler=cmd_merge_turn_restate_base)
 
     turn_release = subparsers.add_parser("merge-turn-release")
     turn_release.add_argument("--turn", required=True)

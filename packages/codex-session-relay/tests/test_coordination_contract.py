@@ -29,7 +29,7 @@ from codex_session_relay.mergeturn import MergeTurn
 from codex_session_relay.models import Endpoint
 from codex_session_relay.store import Store
 
-from .support import RelayTestCase, written_table
+from .support import FakeTarget, RelayTestCase, written_table
 from .test_regression_map import (
     FOLD_FREE_BOOLEANS, FOLDS_BEYOND_ITS_PATHS, SUMMARIES,
 )
@@ -176,7 +176,9 @@ class OneBoundedWriteAndThenAnAnswer(RelayTestCase):
     def setUp(self):
         super().setUp()
         self.linkage = Linkage(self.store, self.clock)
-        self.turns = MergeTurn(self.store, self.clock, self.linkage)
+        self.target = FakeTarget()
+        self.target.set("owner/repo", "dev", "base-0")
+        self.turns = MergeTurn(self.store, self.clock, self.linkage, target_reader=self.target)
         self.alpha = Endpoint("task-alpha", "host-a", cwd="/alpha")
         self.linkage.bind_scope(
             role=PARENT, scope_key=self.PROJECT_KEY, endpoint=self.alpha)
@@ -225,15 +227,56 @@ class OneBoundedWriteAndThenAnAnswer(RelayTestCase):
                              "conclusion": "success", "attempt": 1}],
                     review=dict(self.GREEN))),
             "land": self.transactions_during(
-                lambda: self.turns.land(
+                lambda: (self.target.set("owner/repo", "dev", "base-1"), self.turns.land(
                     identifier, actor=self.alpha.task_id, landed_sha="merge-1",
-                    observed_base_sha="base-1", evidence="the merge commit is on the base")),
+                    observed_base_sha="base-1", evidence="the merge commit is on the base"))),
         }
         self.assertEqual(
             opened, {"declare_ready": 1, "attest": 1, "begin_merge": 1, "land": 1},
             "a mutator that opened a second transaction would be doing two things a caller"
             " cannot correct between",
         )
+
+    def test_the_mutators_that_read_the_target_still_open_exactly_one(self):
+        """CRW-229. Reading where the base branch points happens BEFORE the transaction.
+
+        A read inside BEGIN IMMEDIATE would hold every relay writer's lock for as long as a
+        forge takes to answer. These mutators read first and then open one transaction, on the
+        success path and on the refused one alike. What a FakeTarget cannot show is the real
+        read's own time: in production each of them spends one bounded read before it writes.
+        """
+        held = self.claim()
+        identifier = held["turnId"]
+        self.turns.acknowledge_grant(
+            identifier, actor=self.alpha.task_id,
+            grant=self.turns.turn(identifier)["grant"]["grantId"],
+            evidence="read the grant and re-checked the record")
+        self.turns.begin_merge(
+            identifier, actor=self.alpha.task_id, head_sha="head-a", base_sha="base-0",
+            required=["dev-gate"], review=dict(self.GREEN),
+            checks=[{"runId": "run-1", "name": "dev-gate", "headSha": "head-a",
+                     "conclusion": "success", "attempt": 1}])
+
+        def stranger_lands():
+            try:
+                self.turns.land(identifier, actor="task-stranger", landed_sha="merge-1",
+                                evidence="not mine")
+            except Exception:  # noqa: BLE001 - the refusal is the point, not its type
+                pass
+
+        opened = {"refused land": self.transactions_during(stranger_lands)}
+        self.turns.report_unknown(identifier, actor=self.alpha.task_id, reason="lost")
+        self.target.set("owner/repo", "dev", "base-1")
+        opened["resolve_unknown"] = self.transactions_during(
+            lambda: self.turns.resolve_unknown(
+                identifier, actor=self.alpha.task_id, observed_base_sha="base-1",
+                pr_state="merged", evidence="the pull request reads merged"))
+        self.target.set("owner/repo", "dev", "base-2")
+        opened["restate_base"] = self.transactions_during(
+            lambda: self.turns.restate_base(
+                identifier, actor=self.alpha.task_id, evidence="the branch moved"))
+        self.assertEqual(
+            opened, {"refused land": 1, "resolve_unknown": 1, "restate_base": 1})
 
     def test_a_claim_opens_exactly_one_transaction(self):
         self.assertEqual(self.transactions_during(self.claim), 1)

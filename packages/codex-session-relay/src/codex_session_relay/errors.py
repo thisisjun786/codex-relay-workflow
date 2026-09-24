@@ -211,6 +211,15 @@ class RefusalReason(str, Enum):
     ROUTE_STATE_CONFLICT = "route_state_conflict"
     ROUTE_LEDGER_PENDING = "route_ledger_pending"
 
+    # CRW-229: the base a merge turn records is read from the target, never taken from a caller.
+    # Appended as one block at the END for the reason the blocks above state. Each names a
+    # different next action: make the target readable (or wait for it), read the branch again
+    # because it disagrees with what was stated, and merge before landing (or record a merge
+    # that changed nothing through report-unknown and resolve).
+    MERGE_TARGET_UNREADABLE = "merge_target_unreadable"
+    MERGE_BASE_MISMATCH = "merge_base_mismatch"
+    MERGE_BASE_NOT_ADVANCED = "merge_base_not_advanced"
+
 
 
 class RelayError(Exception):
