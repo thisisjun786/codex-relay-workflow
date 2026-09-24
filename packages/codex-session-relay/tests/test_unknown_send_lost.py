@@ -576,6 +576,12 @@ class AnUndecidedReadingIsHeldByName(UnknownSendCase):
             outcome = self.reconciler.reconcile_attempt(first, self.adapter)
         self.assertEqual(raced[0]["undecided"], "listing_empty")
         self.assertTrue(outcome.get("changed"))
+        # The answer it gives is the hold as it now stands, with the actor and the command that
+        # recovers it (independent review of c86dc362).
+        self.assertEqual((outcome.get("nextExpectedAction"), outcome.get("reason")),
+                         ("parent_recovers_unknown_send_lost", UNKNOWN_LOST))
+        self.assert_reads_the_event_from_this_store((outcome.get("recovery") or {}).get("command"),
+                                                    event_id)
         self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
         self.assertEqual(self.sends_to(), [first])
 

@@ -724,7 +724,8 @@ of such a receipt does, so a host loss's value never stays on a row whose curren
 uncertain. If another reader confirms the send between this reading and its held write, nothing is
 written over the confirmation and `reconcile` reports the attempt as it now stands. The same holds
 when another reader, which read the host later, named a hold first: a reading that names a hold
-writes only over the name it read, so an older reading never replaces a newer one.
+writes only over the name it read, so an older reading never replaces a newer one, and its answer
+names the actor, reason and `recovery` of the hold the attempt now carries.
 
 Recovering the report is the parent's. `assignment-show` answers `parent_recovers_unknown_send_lost`
 or `parent_recovers_unknown_send_undecided` with `recovery`, whose command is `show --event <id>` on

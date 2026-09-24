@@ -200,6 +200,18 @@ class Reconciler:
                                  f" evidence does not write over it")
         if reading is not None:
             outcome["recipientTurn"] = reading
+        if (attempt["state"] == HELD_UNCERTAIN and delivery["state"] == HELD_UNCERTAIN
+                and delivery["attempt_count"] == attempt["attempt_no"]
+                and (attempt["affirmative_evidence"] or Evidence.NONE.value)
+                == Evidence.NONE.value):
+            # Still uncertain, and whatever the other reader named is what holds it now: the
+            # answer names who moves it and why, as the pass that wrote it did (independent
+            # review of c86dc362).
+            outcome.update(_awaiting(
+                delivery["kind"], outcome, None,
+                {"hold_reason": delivery["hold_reason"], "recipient_scan": attempt["recipient_scan"]},
+                event_id=attempt["event_id"], store=self.store,
+            ))
         return outcome
 
     def _recorded_loss(self, request_id: str, reading=None) -> dict:
