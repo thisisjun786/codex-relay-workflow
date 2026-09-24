@@ -12,6 +12,7 @@ reaching any task on any host.
 """
 
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -1787,3 +1788,68 @@ class TheSevenStatesAsTheStoreHoldsThem(StoreReception):
         self.assertIn(packets.MERGE_LANDING, answer["promotions"])
         self.assertEqual(answer["unbackedClaims"], [packets.RELAY_ACK])
         self.assertEqual(answer["unmeasurableClaims"], [packets.LINEAR_DONE])
+
+
+class TheReceiveStepForAPacketNamingAnArtifact(StoreReception):
+    """The receive step as the served instructions give it, for a packet that names an artifact.
+
+    An artifact is never a store fact, so a correction naming one and checked without the
+    receiver's own observation is unavailable on exactly the artifact's fields, and the
+    instruction is to observe it and check the same packet again - not to act, and not to report
+    a refusal. That step was missing from the served receive step, and a real child following
+    it literally could not apply a correction (CRW-149 criterion-8 installed trial, F-C8-1).
+    """
+
+    def locator_correction(self, relationship, path):
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("7\n")
+        digest = "sha256:" + hashlib.sha256(open(path, "rb").read()).hexdigest()
+        return self.correction(relationship, generation=1,
+                               artifact=packets.locator(path=path, digest=digest)), digest
+
+    def test_a_locator_correction_is_observed_and_checked_again_before_it_is_acted_on(self):
+        relationship = self.registered()
+        ledger = os.path.join(self.tmp, "child-ledger.json")
+        path = os.path.join(self.tmp, "answer.txt")
+        one, digest = self.locator_correction(relationship, path)
+
+        _code, unobserved = self.packet_check(one, receiver_id=CHILD, ledger=ledger)
+        self.assertEqual(unobserved["disposition"], packets.UNAVAILABLE, unobserved)
+        self.assertEqual(self.gap_fields(unobserved), ["artifact.digest", "artifact.path"])
+        self.assertFalse(unobserved["act"], unobserved)
+
+        mine = {"source": "the child's own sha256 of answer.txt in this test",
+                "artifactPath": path, "artifactDigest": digest}
+        _code, observed = self.packet_check(one, receiver_id=CHILD, ledger=ledger,
+                                            observation=mine)
+        self.assertEqual(observed["disposition"], packets.ACCEPTED, observed)
+        self.assertTrue(observed["act"], observed)
+        self.assertEqual(observed["repeat"]["state"], packets.REPLAY)
+        self.assertEqual(observed["repeat"]["previousDisposition"], packets.UNAVAILABLE)
+        self.assertEqual(observed["provenance"]["artifactDigest"],
+                         "observation: " + mine["source"])
+        # Not applied yet, so the reason may not say it is not acted on: act is true.
+        self.assertNotIn("not acted on", observed["repeat"]["reason"])
+        self.assertIn("--applied", observed["repeat"]["reason"])
+
+        code, refused = self.packet_check(one, receiver_id=CHILD, ledger=ledger,
+                                          observation=mine, applied=True)
+        self.assertNotEqual(code, 0, refused)
+        self.assertEqual(refused.get("error"), "usage", refused)
+        code, recorded = self.packet_check(one, receiver_id=CHILD, ledger=ledger, applied=True)
+        self.assertEqual(code, 0, recorded)
+        self.assertTrue(recorded["applied"], recorded)
+
+        _code, after = self.packet_check(one, receiver_id=CHILD, ledger=ledger, observation=mine)
+        self.assertFalse(after["act"], after)
+        self.assertIn("recorded applied", after["repeat"]["reason"])
+
+    def test_a_pull_request_correction_without_an_observation_is_unavailable_on_its_identity(self):
+        relationship = self.registered()
+        _code, answer = self.packet_check(self.correction(relationship, generation=1),
+                                          receiver_id=CHILD,
+                                          ledger=os.path.join(self.tmp, "child-ledger.json"))
+        self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
+        self.assertEqual(self.gap_fields(answer),
+                         ["artifact.headSha", "artifact.number", "artifact.repository"])
+        self.assertFalse(answer["act"], answer)
