@@ -1378,6 +1378,26 @@ class RegistryChanges(ProductRoutingCase):
         self.assertEqual({"filed"}, {routes.get(self.store, m["faultId"])["stage"]
                                      for m in members})
 
+    def test_a_created_project_made_the_test_target_is_held_never_settled_on_it(self):
+        self.router.set_policy(POLICY)
+        members = [Projects.gamma(self, "cache", "stale", "g1"),
+                   Projects.gamma(self, "queue", "lost", "g2")]
+        self.holder.run()  # the create is issued and confirmed; nothing has bound it yet
+        (created,) = self.linear.projects
+        # Before any digest binds it, the product makes that project its test target.
+        self.router.register_product(dict(GAMMA, testTarget={"team": "TST", "project": created}))
+        self.router.bind(binding("gamma-kit", "project", created, components=["cache"],
+                                 test=True))
+        answer = self.router.digest()
+        self.assertEqual([], answer["projectsBound"])
+        self.assertIn("held_project_is_test_target",
+                      [d["decision"] for d in answer["decisions"]])
+        (proposal,) = [r for r in routes.listing(self.store, product="gamma-kit")["routes"]
+                       if r["disposition"] == products.PROJECT_PROPOSAL]
+        self.assertEqual(products.STAGE_FILED, proposal["stage"])
+        self.assertEqual({"held"}, {routes.get(self.store, m["faultId"])["stage"]
+                                    for m in members})
+
     def test_a_product_using_its_test_target_keeps_it(self):
         self.route(origin="simulated", occurrenceKey="sim-1")
         for changed in (None, {"team": "TS2", "project": "proj-test-2"}):

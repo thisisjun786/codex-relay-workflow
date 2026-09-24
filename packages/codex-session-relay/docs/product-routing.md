@@ -240,6 +240,12 @@ after its create was issued, is never bound on faith: binding it would file the 
 in a team the product left. The proposal waits as `held_project_team_changed` and its members
 stay held, until somebody binds the project by hand or the registry names that team again.
 
+Only a real project binding binds a real create. A project a confirmed create made that the
+product has since made its test target, or bound as a test project, can be bound for neither:
+real defects never go into the test project, and a test binding places none of them. The
+proposal waits as `held_project_is_test_target`, is never settled on the test binding, and its
+members stay held until somebody decides.
+
 ### Holder protocol
 
 Routing writes nothing to Linear. The credential holder performs every write with the ledger's own

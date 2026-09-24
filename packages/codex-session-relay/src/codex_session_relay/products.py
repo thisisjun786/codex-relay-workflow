@@ -127,8 +127,11 @@ CAUSE_UNVERIFIED = "cause_unverified"
 OWNER_FOUND_AFTER_CREATE = "owner_found_after_create"
 # A project a confirmed create made in a team the product's registry no longer names.
 PROJECT_TEAM_CHANGED = "project_team_changed"
+# A project a confirmed create made for real work that the product has since made its test
+# target, or bound as a test project: it can be bound for neither.
+PROJECT_IS_TEST_TARGET = "project_is_test_target"
 HOLDS = (NO_PROJECT, OWNER_PROJECT_MISSING, AMBIGUOUS_OWNER, AMBIGUOUS_PROJECT,
-         OWNER_FOUND_AFTER_CREATE, PROJECT_TEAM_CHANGED)
+         OWNER_FOUND_AFTER_CREATE, PROJECT_TEAM_CHANGED, PROJECT_IS_TEST_TARGET)
 
 
 class RouteRefused(RelayError):

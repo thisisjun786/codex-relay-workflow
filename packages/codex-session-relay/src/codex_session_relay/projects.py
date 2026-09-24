@@ -398,14 +398,26 @@ def bind_confirmed(router, route) -> list:
     a new create files it again.
     """
     rows = router.port.publications(route["fault_id"], kind=KIND, limit=100)
-    bound = {b["ref"] for b in router.bindings(route["product_key"]) if b["kind"] == "project"}
+    projects_bound = [b for b in router.bindings(route["product_key"]) if b["kind"] == "project"]
+    # Only a real binding binds a real create: a test project places simulated incidents only,
+    # so settling on one would leave the members held for good.
+    bound = {b["ref"] for b in projects_bound if not b["test"]}
+    tested = {b["ref"] for b in projects_bound if b["test"]}
     registry = router.registry(route["product_key"]) or {}
+    tested.add((registry.get("testTarget") or {}).get("project"))
     made = []
     stranded = []
+    test_target = []
     for row in rows:
         ref, payload = row.get("external_ref"), row.get("payload") or {}
         if row.get("state") != "confirmed" or not ref or (
                 ref in bound and route["target"]["project"] == ref):
+            continue
+        if ref not in bound and ref in tested:
+            # Made for real work, and since made the product's test target or bound as a test
+            # project: binding it for real would put real defects in the test project, and the
+            # test binding places none of them. Somebody decides.
+            test_target.append(ref)
             continue
         if ref not in bound and payload.get("team") != registry.get("team"):
             # Made in a team the product has left since it was queued; an issued create cannot
@@ -425,10 +437,11 @@ def bind_confirmed(router, route) -> list:
                 made.append(ref)
             routes.set_target(db, router.clock, route["fault_id"],
                               {**route["target"], "project": ref, "hold": None})
-    if stranded:
+    if test_target or stranded:
         with router.store.transaction() as db:
-            routes.set_target(db, router.clock, route["fault_id"],
-                              {**route["target"], "hold": products.PROJECT_TEAM_CHANGED})
+            routes.set_target(db, router.clock, route["fault_id"], {
+                **route["target"], "hold": products.PROJECT_IS_TEST_TARGET if test_target
+                else products.PROJECT_TEAM_CHANGED})
         return made
     if rows and all(row.get("state") in ("confirmed", "cancelled") for row in rows):
         created = sorted(row["external_ref"] for row in rows
