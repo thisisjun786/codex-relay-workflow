@@ -587,9 +587,13 @@ class Reconciler:
             hold = UNKNOWN_SEND_UNDECIDED
         elif reading is not None and reading["finding"] == UNKNOWN_SEND_LOST:
             mark, hold = hostloss.UNKNOWN_LOST_MARK, UNKNOWN_SEND_LOST
+        # A reading that names a hold was taken against the attempt as this pass read it, so it
+        # is written only over that: another pass that read the host later and named its own
+        # hold first keeps it, and this one reports the attempt as it stands (Devin on aaa190a6).
         self._write(
             attempt, delivery, record, HELD_UNCERTAIN, Evidence.NONE, observation, mark, None,
             hold=hold, keep_unknown=hold is None, clear_dispatch=True,
+            expect_scan=hold is not None,
         )
         return {
             "evidence": Evidence.NONE.value,
@@ -605,7 +609,7 @@ class Reconciler:
 
     def _write(self, attempt, delivery, record, state, evidence, observation, scan_detail,
                next_eligible, *, aggregate=None, dispatch_evidence=None, dispatch_turn_id=None,
-               hold=None, keep_unknown=False, clear_dispatch=False):
+               hold=None, keep_unknown=False, clear_dispatch=False, expect_scan=False):
         now_iso = self.clock.iso()
         current = self._is_current(attempt, delivery)
         anchor = None
@@ -629,7 +633,9 @@ class Reconciler:
                 "   AND internal_state IS ? AND state IS ? AND affirmative_evidence IS ?"
                 # And a reading that found nothing never replaces evidence already settled.
                 "   AND NOT (? = ? AND affirmative_evidence IS NOT NULL"
-                "            AND affirmative_evidence <> ?)",
+                "            AND affirmative_evidence <> ?)"
+                # And a reading that names a hold only over the name this pass read (expect_scan).
+                "   AND (? = 0 OR recipient_scan IS ?)",
                 (
                     state, json.dumps(record), observation,
                     state, DISPATCHED, TURN_CHECK_UNDECIDED + ":%",
@@ -638,19 +644,21 @@ class Reconciler:
                     evidence.value, now_iso, attempt["request_id"], HOST_LOST_TURN,
                     attempt["internal_state"], attempt["state"], attempt["affirmative_evidence"],
                     evidence.value, Evidence.NONE.value, Evidence.NONE.value,
+                    int(expect_scan), attempt["recipient_scan"],
                 ),
             ).rowcount
             if updated != 1:
                 # Rolled back with the transaction: nothing of this settlement is written.
                 now_row = db.execute(
-                    "SELECT internal_state, state, affirmative_evidence FROM attempts"
+                    "SELECT internal_state, state, affirmative_evidence, recipient_scan FROM attempts"
                     " WHERE request_id = ?", (attempt["request_id"],),
                 ).fetchone()
                 if now_row is not None and now_row["state"] == HOST_LOST_TURN:
                     raise _AttemptLost()
                 raise _AttemptChanged(moved=now_row is None or (
                     now_row["internal_state"], now_row["state"], now_row["affirmative_evidence"]
-                ) != (attempt["internal_state"], attempt["state"], attempt["affirmative_evidence"]))
+                ) != (attempt["internal_state"], attempt["state"], attempt["affirmative_evidence"])
+                    or (expect_scan and now_row["recipient_scan"] != attempt["recipient_scan"]))
             if current:
                 promoted = db.execute(
                     "UPDATE deliveries SET state = ?, next_eligible_at = ?,"

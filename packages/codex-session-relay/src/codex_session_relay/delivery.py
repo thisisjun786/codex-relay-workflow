@@ -19,7 +19,7 @@ from .identity import (
     merge_turn_grant_event_id as derive_grant_event_id, request_id as derive_request_id,
 )
 from .lifecycle import UNKNOWN as LIFECYCLE_UNKNOWN, hold_reason_for, observe, record as record_lifecycle
-from .policy import RetryPolicy, pacing_holding
+from .policy import RATE_WINDOW_SECONDS, RetryPolicy, pacing_holding
 from .registry import ACTIVE as RELATIONSHIP_ACTIVE
 from .scope import assert_assignment_delivery, check_recipient
 from .transport import (
@@ -73,6 +73,11 @@ CLAIMABLE = (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND)
 REDELIVERING_HOST_LOST = "redelivering:" + HOST_LOST_TURN
 # What status reads for a queued delivery the recipient's hourly cap is holding back.
 AWAITING_SEND_CAPPED = "awaiting_send:" + HOURLY_CAP
+# The longest a delivery the hourly cap refused waits before the budget is read again. The cap's
+# own reopen time is named in pacing and does not move; reading sooner lets a policy changed in
+# the meantime (a raised cap, or a cap of zero lifted) take effect within this, without asking
+# every few seconds (Devin on c27051a5).
+CAP_RECHECK_SECONDS = 60.0
 
 # linkage.PROJECT and linkage.ISSUE, spelled here rather than imported. linkage reaches registry
 # and assignment from inside its own functions, and delivery is reached from registry, so a
@@ -1278,16 +1283,17 @@ class DeliveryService:
     def _paced_until(self, recipient: str, now: float) -> float:
         """When a delivery the recipient's budget refused may be tried again.
 
-        An hourly cap reopens when its window ends, and the delivery waits for exactly that, so
-        its nextEligibleAt names the reopen time instead of moving on by the gap every tick
-        (CRW-231, O-H0R4-2). A cap of zero never reopens and is read again at each window's end.
-        The minimum gap is a few seconds and keeps the gap from now.
+        An hourly cap reopens when its window ends, which pacing names (CRW-231, O-H0R4-2); the
+        delivery waits for that or CAP_RECHECK_SECONDS, whichever is sooner, so a changed policy
+        is read within a minute. A cap of zero never reopens and is read again each minute. The
+        minimum gap is a few seconds and keeps the gap from now (I-225).
         """
         pacing = send_pacing(self.store.db, self.policy, recipient, now)
         if pacing is not None and pacing["reason"] == HOURLY_CAP:
-            # A cap of zero reopens at no time; it is read again once a window, not every gap,
-            # and the operator is named for it (assignment.completion_next_action).
-            return pacing["reopensAt"] or pacing["windowStart"] + 3600
+            # A cap of zero reopens at no time, and the operator is named for it
+            # (assignment.completion_next_action).
+            reopens = pacing["reopensAt"] or pacing["windowStart"] + RATE_WINDOW_SECONDS
+            return min(reopens, now + CAP_RECHECK_SECONDS)
         return now + self.policy.min_send_interval_seconds
 
     def _reschedule(self, event_id: str, state: str, when: float, *, attempts: int) -> None:

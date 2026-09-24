@@ -398,8 +398,9 @@ budget holds it unless the delivery's own backoff (a busy recipient, a pre-send 
 than the budget reopens; then the backoff is what holds it and no `pacing` is shown. The block is
 `{reason, reopensAt, sends, cap, windowStart}`, where the reason is `hourly_cap` or
 `min_send_interval`. It is read live from the same budget the claim spends, so it is never stored
-and never a hold or a failure (I-225). A delivery refused by the hourly cap waits for exactly its
-window's end, so its `nextEligibleAt` is that `reopensAt` and does not move from tick to tick.
+and never a hold or a failure (I-225). A delivery refused by the hourly cap is tried again at its
+window's end or within a minute, whichever is sooner, so a policy changed in the meantime takes
+effect; `reopensAt` is the window's end and does not move from tick to tick.
 
 `status` also reports `pendingIntents`: events whose delivery was wanted and refused before a
 delivery row could exist, which a paused or unauthorized assignment produces. They have no
@@ -721,7 +722,9 @@ that decides keeps the hold and its name. Every settlement that leaves an attemp
 without evidence also clears the row's dispatch evidence and turn, as the sender's own settlement
 of such a receipt does, so a host loss's value never stays on a row whose current send is
 uncertain. If another reader confirms the send between this reading and its held write, nothing is
-written over the confirmation and `reconcile` reports the attempt as it now stands.
+written over the confirmation and `reconcile` reports the attempt as it now stands. The same holds
+when another reader, which read the host later, named a hold first: a reading that names a hold
+writes only over the name it read, so an older reading never replaces a newer one.
 
 Recovering the report is the parent's. `assignment-show` answers `parent_recovers_unknown_send_lost`
 or `parent_recovers_unknown_send_undecided` with `recovery`, whose command is `show --event <id>` on
@@ -757,11 +760,12 @@ from 16:42:25Z until the 17:00Z window opened. Nothing named the cap or when it 
 statement as the delivery and against the budget the delivery service paces by, so the reason and
 `reopensAt` agree with the row. A spent cap is named before the gap when both hold, because the cap
 is what keeps the delivery waiting. A cap of zero reopens at no time, and `pacing.detail` says only
-a changed policy reopens it: such a delivery is read again once a window rather than every few
+a changed policy reopens it: such a delivery is read again once a minute rather than every few
 seconds, and `assignment-show` names `operator_changes_send_policy`. Otherwise its
 `nextExpectedAction` stays `daemon_delivers`, which is true: the daemon sends it once the window
-reopens. A delivery refused by the hourly cap, before or inside its claim, is rescheduled to the
-window's end; one refused by the minimum gap keeps the gap from now.
+reopens. A delivery refused by the hourly cap, before or inside its claim, is tried again at the
+window's end or within a minute, whichever is sooner, so a cap raised or lifted mid-window takes
+effect within that minute; one refused by the minimum gap keeps the gap from now.
 
 ## What one tick guarantees
 

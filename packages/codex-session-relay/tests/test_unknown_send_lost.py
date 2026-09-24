@@ -549,6 +549,36 @@ class AnUndecidedReadingIsHeldByName(UnknownSendCase):
         self.assert_held_undecided(event_id, first, "listing_empty")
         self.assertEqual(self.sends_to(), [first])
 
+    def test_an_older_reading_does_not_overwrite_a_newer_hold(self):
+        """Devin on aaa190a6: two reconciliations read the host at different moments, and the
+        one that read first wrote last, replacing the newer decision with its older one."""
+        from unittest import mock
+        from codex_session_relay import hostloss
+
+        event_id, first = self.unknown_send(history=False)
+        # Reconciled once already, so both readers start from the same settled attempt.
+        self.ticks(1)
+        self.assert_held(event_id, first, UNDECIDED, f"{UNDECIDED}:listing_empty")
+        original = hostloss.read_unknown_send
+        raced = []
+
+        def newer_first(*args, **kwargs):
+            reading = original(*args, **kwargs)
+            if not raced:
+                raced.append(reading)
+                # The parent works on, and another reconciliation reads that and decides first.
+                self.adapter.start_turn(PARENT, status="completed", text="the operator asked")
+                newer = self.reconciler.reconcile_attempt(first, self.adapter)
+                self.assertEqual(newer.get("reason"), UNKNOWN_LOST)
+            return reading
+
+        with mock.patch.object(hostloss, "read_unknown_send", newer_first):
+            outcome = self.reconciler.reconcile_attempt(first, self.adapter)
+        self.assertEqual(raced[0]["undecided"], "listing_empty")
+        self.assertTrue(outcome.get("changed"))
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assertEqual(self.sends_to(), [first])
+
     def test_an_undecided_hold_is_read_again_later_though_the_items_did_not_change(self):
         """Devin on d369a9e7: the gate fingerprints the parent's items, and a turn that shows up
         without any leaves them unchanged, so an undecided reading was never taken again."""
@@ -711,11 +741,19 @@ class TheHourlyCapIsNamedWithItsReopenTime(UnknownSendCase):
                          ("hourly_cap", window + 3600))
         self.assertEqual((pacing.get("sends"), pacing.get("cap")),
                          (self.delivery.policy.max_sends_per_recipient_per_hour,) * 2)
-        self.assertEqual(item["nextEligibleAt"], window + 3600)
+        # The budget is read again within a minute, so a changed policy takes effect; the
+        # reopen time the cap names does not move (Devin on c27051a5).
+        self.assertEqual(item["nextEligibleAt"], now + 60)
         self.assertIsNone(item["holdReason"])
         self.clock.advance(30)
         self.assertIsNone(self.attempt(event_id, now=self.clock.now()))
-        self.assertEqual(self.status_of(event_id)["nextEligibleAt"], window + 3600)
+        self.assertEqual((self.status_of(event_id).get("pacing") or {}).get("reopensAt"),
+                         window + 3600)
+        self.clock.advance(60)
+        self.assertIsNone(self.attempt(event_id, now=self.clock.now()))
+        self.assertEqual((self.status_of(event_id).get("pacing") or {}).get("reopensAt"),
+                         window + 3600)
+        self.assertEqual(self.adapter.sends, [])
 
     def test_assignment_show_names_the_cap_and_its_reopen_time(self):
         event_id, now, window = self.capped()
@@ -725,11 +763,39 @@ class TheHourlyCapIsNamedWithItsReopenTime(UnknownSendCase):
                          ("hourly_cap", window + 3600))
         self.assertEqual(self.next_action(), "daemon_delivers")
 
-    def test_a_claim_refused_on_the_cap_waits_for_the_window(self):
+    def test_a_claim_refused_on_the_cap_reads_the_budget_again_within_a_minute(self):
         event_id, now, window = self.capped()
         self.delivery._rate_limited = lambda recipient, at: False
         self.assertIsNone(self.attempt(event_id, now=now))
-        self.assertEqual(self.delivery_row(event_id)["next_eligible_at"], window + 3600)
+        self.assertEqual(self.delivery_row(event_id)["next_eligible_at"], now + 60)
+
+    def test_a_raised_cap_releases_the_delivery_within_a_minute(self):
+        """Devin on c27051a5: a refusal scheduled for the window's end kept the delivery waiting
+        under the old cap after the operator raised it, with nothing in status saying why."""
+        from codex_session_relay.delivery import DeliveryService
+        from codex_session_relay.policy import RetryPolicy
+
+        event_id, now, window = self.capped()
+        self.assertIsNone(self.attempt(event_id, now=now))
+        raised = DeliveryService(self.store, self.registry, self.intake, self.clock,
+                                 policy=RetryPolicy(max_sends_per_recipient_per_hour=24))
+        self.clock.advance(60)
+        self.assertLess(self.clock.now(), window + 3600)
+        record = raised.attempt(event_id, self.adapter, now=self.clock.now())
+        self.assertEqual((record or {}).get("deliveryState"), DISPATCHED)
+
+    def test_a_lifted_zero_cap_releases_the_delivery_within_a_minute(self):
+        from codex_session_relay.delivery import DeliveryService
+        from codex_session_relay.policy import RetryPolicy
+
+        zero = DeliveryService(self.store, self.registry, self.intake, self.clock,
+                               policy=RetryPolicy(max_sends_per_recipient_per_hour=0))
+        _relationship, event_id = self.queued_event()
+        now = self.clock.now()
+        self.assertIsNone(zero.attempt(event_id, self.adapter, now=now))
+        self.clock.advance(60)
+        record = self.attempt(event_id, now=self.clock.now())
+        self.assertEqual((record or {}).get("deliveryState"), DISPATCHED)
 
     def test_a_spent_cap_is_named_before_the_gap_when_both_hold(self):
         """Independent review of d369a9e7: with the cap spent and a send a moment ago, the gap was
@@ -747,7 +813,7 @@ class TheHourlyCapIsNamedWithItsReopenTime(UnknownSendCase):
         self.assertEqual(((item.get("pacing") or {}).get("reason"),
                           (item.get("pacing") or {}).get("reopensAt"), item["phase"],
                           item["nextEligibleAt"]),
-                         ("hourly_cap", window + 3600, "awaiting_send:hourly_cap", window + 3600))
+                         ("hourly_cap", window + 3600, "awaiting_send:hourly_cap", now + 60))
 
     def test_a_cap_of_zero_says_nothing_reopens_it_but_a_changed_policy(self):
         from codex_session_relay.policy import RetryPolicy
@@ -757,9 +823,10 @@ class TheHourlyCapIsNamedWithItsReopenTime(UnknownSendCase):
         self.assertEqual((pacing["reason"], pacing["reopensAt"]), ("hourly_cap", None))
         self.assertIn("changed policy", pacing.get("detail") or "")
 
-    def test_a_cap_of_zero_waits_a_window_per_check_and_names_the_operator(self):
+    def test_a_cap_of_zero_is_read_again_each_minute_and_names_the_operator(self):
         """Independent review of bb1b6af6: a cap of zero was rescheduled every five seconds and
-        read daemon_delivers, which under that policy never can."""
+        read daemon_delivers, which under that policy never can. It is read again once a minute,
+        so a lifted cap takes effect (Devin on c27051a5)."""
         from codex_session_relay.assignment import AssignmentView
         from codex_session_relay.delivery import DeliveryService
         from codex_session_relay.policy import RetryPolicy
@@ -771,8 +838,7 @@ class TheHourlyCapIsNamedWithItsReopenTime(UnknownSendCase):
         _relationship, event_id = self.queued_event()
         now = self.clock.now()
         self.assertIsNone(delivery.attempt(event_id, self.adapter, now=now))
-        self.assertEqual(self.delivery_row(event_id)["next_eligible_at"],
-                         int(now // 3600) * 3600 + 3600)
+        self.assertEqual(self.delivery_row(event_id)["next_eligible_at"], now + 60)
         self.assertEqual(view.state(self._rid)["nextExpectedAction"],
                          "operator_changes_send_policy")
         self.assertEqual(self.adapter.sends, [])
