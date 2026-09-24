@@ -12,6 +12,8 @@ the verdict record cannot answer is named as not recorded rather than left out, 
 message tells the child to change is only what the parent ruled violated.
 """
 
+import json
+
 from codex_session_relay import cxc, identity, packets, report
 from codex_session_relay.errors import RelayError
 
@@ -114,7 +116,7 @@ class OnlyWhatIsRuledViolatedIsInScope(_Revisions):
             self.assertIn(part, violated)
         scope = section(message, "FIX SCOPE")
         self.assertIn("only the 1 finding marked needs_changes", scope)
-        self.assertIn("verified, unverified findings are out of scope", scope)
+        self.assertIn("verified and unverified findings are out of scope", scope)
         self.assertIn("1 finding marked unverified", section(message, "REVERIFY AND RETURN"))
 
     def test_every_composed_instruction_reads_the_findings_through_fix_scope(self):
@@ -174,6 +176,71 @@ class WhatTheVerdictRecordCannotAnswer(_Revisions):
         self.assertIn("1 finding without a disposition", tight)
         for part in ("emit --relationship", "--outcome ready_for_review", "--artifact <path>"):
             self.assertIn(part, tight)
+
+
+class ARecordMissingItsFields(_Revisions):
+    """A verdict record without a field renders that field as not recorded, never as None.
+
+    Both renderers read the record with .get, so a record written by an older relay or damaged
+    in place reaches them with keys missing. The return command is where it matters most:
+    --generation None is a command that parses and names no generation.
+    """
+
+    LOST = ("supersedesEvent", "supersedesRevisionHash", "verdictTurnId", "executionGeneration")
+
+    def lose(self, revision):
+        stored = self.store.one("SELECT receipt FROM events WHERE event_id = ?", (revision,))
+        receipt = json.loads(stored["receipt"])
+        for key in self.LOST:
+            receipt.pop(key, None)
+        self.store.db.execute("UPDATE events SET receipt = ? WHERE event_id = ?",
+                              (json.dumps(receipt), revision))
+
+    def test_the_plain_request_names_what_the_record_lacks(self):
+        _source, revision = self.revision(ONE)
+        self.lose(revision)
+        message = self.delivery.render_message(revision)
+        self.assert_correction_form(message)
+        self.assertIn("executionGeneration: not recorded", message)
+        self.assertIn("--generation <not recorded", message)
+
+    def test_the_composed_request_names_what_the_record_lacks(self):
+        _source, revision = self.revision(ONE)
+        self.with_report(revision)
+        self.lose(revision)
+        message = self.delivery.render_message(revision)
+        self.assert_correction_form(message)
+        self.assertIn("execution generation not recorded", section(message, "SCOPE"))
+        self.assertIn("--generation <not recorded", message)
+
+
+class NothingRuledViolatedOrOwed(_Revisions):
+    """A needs_changes verdict whose every finding is marked verified asks for nothing.
+
+    A relationship with no registered criteria can record one. What to change and what to
+    check again are then both unanswered, and each section has to say so itself: sending the
+    child from FIX SCOPE to REVERIFY AND RETURN and back again answers neither.
+    """
+
+    MET_ONLY = [{"id": "c-1", "verdict": "verified", "note": "the manifest lists everything"}]
+
+    def assert_both_gaps_named(self, message):
+        self.assert_correction_form(message)
+        scope = section(message, "FIX SCOPE")
+        reverify = section(message, "REVERIFY AND RETURN")
+        self.assertIn("not recorded", scope)
+        self.assertIn("not recorded", reverify)
+        self.assertNotIn("REVERIFY AND RETURN asks for", scope)
+        self.assertNotIn("FIX SCOPE says", reverify)
+
+    def test_the_plain_request(self):
+        _source, revision = self.revision(self.MET_ONLY)
+        self.assert_both_gaps_named(self.delivery.render_message(revision))
+
+    def test_the_composed_request(self):
+        _source, revision = self.revision(self.MET_ONLY)
+        self.with_report(revision)
+        self.assert_both_gaps_named(self.delivery.render_message(revision))
 
 
 class ManyFindings(_Revisions):
