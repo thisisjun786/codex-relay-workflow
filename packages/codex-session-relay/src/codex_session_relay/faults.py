@@ -92,6 +92,8 @@ UPDATE_OPS = ("set_project", "reopen", "add_relation", "add_label")
 UNASSIGNED = "unassigned"
 # A product is a plain identifier: letters, digits, dot, underscore and dash. Without ':', '@'
 # and '|' the product always ends where a target key's first separator begins.
+# Checked with fullmatch, always: under match() the '$' also matches before a trailing newline,
+# so "crw\n" read as an identifier and carried a line break wherever the name travelled.
 PRODUCT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 # What the ledger records about the work that follows an issue, each as its own state.
@@ -215,7 +217,7 @@ def register_class(fault_class, *, component, clears, threshold=None, window=Non
     threshold=None means the severity table decides, which is the ordinary case. A class
     supplies one only when its own recurrence means something the general rule does not.
     """
-    if not (isinstance(fault_class, str) and PRODUCT_NAME.match(fault_class)
+    if not (isinstance(fault_class, str) and PRODUCT_NAME.fullmatch(fault_class)
             and len(fault_class) <= 128):
         # A plain identifier, like a product: a class name is carried upward in every notice
         # about its faults, so it may hold no free text (I-448).
@@ -339,7 +341,7 @@ def fault_id(product, fault_class, signature, *, workspace=None) -> str:
 
 
 def _check_product(product):
-    if not isinstance(product, str) or not PRODUCT_NAME.match(product):
+    if not isinstance(product, str) or not PRODUCT_NAME.fullmatch(product):
         raise FaultRefused(
             RefusalReason.FAULT_OBSERVATION_MALFORMED,
             f"product {product!r} is not a plain identifier (letters, digits, '.', '_', '-');"
@@ -3419,8 +3421,8 @@ def unfit_notice(notice):
     (I-448). The value itself is never echoed."""
     checks = (
         ("faultClass", lambda v: isinstance(v, str) and len(v) <= 128
-         and PRODUCT_NAME.match(v) is not None),
-        ("product", lambda v: isinstance(v, str) and PRODUCT_NAME.match(v) is not None),
+         and PRODUCT_NAME.fullmatch(v) is not None),
+        ("product", lambda v: isinstance(v, str) and PRODUCT_NAME.fullmatch(v) is not None),
         ("severity", lambda v: v in SEVERITIES),
         ("faultState", lambda v: v in STATES),
         ("kind", lambda v: v in NOTICE_KINDS),

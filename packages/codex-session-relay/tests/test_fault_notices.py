@@ -994,3 +994,30 @@ class WhatDevinFoundOnTheLastHeads(NoticeCase):
         self.assertEqual(notification["state"], faults.DELIVERED,
                          notification.get("eligibility"))
         self.assertEqual(len(self.sent_for(notification)), 1)
+
+
+class WhatTheFifthFinalReviewFound(NoticeCase):
+    """Final review of 46ef7ed2: an identifier is the whole string. A trailing newline passed
+    PRODUCT_NAME's '$' under match(), so it entered the ledger and travelled upward (I-448)."""
+
+    def test_a_trailing_newline_is_refused_where_a_product_or_class_enters(self):
+        with self.assertRaises(faults.FaultRefused):
+            self.ledger.record(faults.observation(
+                product="crw\n", fault_class="delivery_stalled", severity=faults.BROKEN,
+                signature={"relationship": self.rid, "cause": "newline"},
+                occurrence_key="test:newline", scope={"projectKey": PROJECT, "issueKey": ISSUE}))
+        with self.assertRaises(ValueError):
+            faults.register_class("delivery_stalled_again\n", component="relay",
+                                  clears="never registered")
+        self.assertNotIn("delivery_stalled_again\n", faults.CLASS_POLICY)
+
+    def test_a_stored_product_with_a_newline_is_never_carried(self):
+        fault = self.broken()
+        # A row written before the ledger checked the whole string.
+        with self.store.transaction() as db:
+            db.execute("UPDATE fault_ledger SET product = ? WHERE fault_id = ?", ("crw\n", fault))
+        self.tick()
+        notification = self.notification(fault)
+        self.assertEqual(notification["state"], faults.PENDING)
+        self.assertIn("product", notification["lastError"] or "")
+        self.assertEqual(self.upward(), [])
