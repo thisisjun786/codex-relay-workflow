@@ -322,24 +322,25 @@ first replacement, and one carried a policy file registered before the current o
 resumed thread got from the new directory carried the recorded policy, and a `get_capabilities` call
 from that thread reported its digest.
 
-The first replacement cannot repeat while the record is version 2 and the new launcher reads it
-the way the current one does. The launcher finds the Codex home six directories above its own file and
-reads `crw-bridge-mcp.json` there. The record names the owner, the bridge executable, its arguments
-and the policy file with its digest; no field ties it to a version directory or a payload, and the
-executable the documented command registers is the installer's pointer, outside the cache. So a
-launcher in any version directory under the same Codex home reads the same record. That was
-measured in an isolated Codex home with codex-cli 0.154.0: one package installed and a version-2
-record written, then a different payload installed in its place, which removed the first
-directory. The new directory's launcher, started with its declared command, arguments and working
-directory and the App Server's environment, handed the bridge the recorded policy,
-`get_capabilities` reported its digest, and a `register-mcp` rerun answered `record_unchanged`. The
-two payloads differed in a skill and shipped the same launcher bytes, so a launcher with other
-bytes is outside what this showed; [updating safely](#updating-safely) probes every candidate
-before it is added. Three states failed closed rather than open: no record, a policy file that no longer
-matched its digest, and a rollback to a package whose launcher predates version 2 each made the
-launcher exit 2 and start no bridge. Only a version-1 record started a bridge that checks no role,
-which is what the host had at the first replacement. No App Server ran in that home, so it shows
-what a bridge started from a new directory reads, not whether or when the host starts one.
+What cannot repeat while the record is version 2, and the new launcher reads it the way the current
+one does, is the first replacement's bridges starting without the policy; whether the host restarts
+bridges at all is the unmeasured part. The launcher finds the Codex home six directories above its
+own file and reads `crw-bridge-mcp.json` there. The record names the owner, the bridge executable,
+its arguments and the policy file with its digest; no field ties it to a version directory or a
+payload, and the executable the documented command registers is the installer's pointer, outside the
+cache. So a launcher in any version directory under the same Codex home reads the same record. That
+was measured in an isolated Codex home with codex-cli 0.154.0: one package installed and a version-2
+record written, then a different payload installed in its place, which removed the first directory.
+The new directory's launcher, started with its declared command, arguments and working directory and
+the App Server's environment, handed the bridge the recorded policy, `get_capabilities` reported its
+digest, and a `register-mcp` rerun answered `record_unchanged`. The two payloads differed in a skill
+and shipped the same launcher bytes, so a launcher with other bytes is outside what this showed;
+[updating safely](#updating-safely) probes every candidate before it is added. Three states failed
+closed rather than open: no record, a policy file that no longer matched its digest, and a rollback
+to a package whose launcher predates version 2 each made the launcher exit 2 and start no bridge.
+Only a version-1 record started a bridge that checks no role, which is what the host had at the
+first replacement. No App Server ran in that home, so it shows what a bridge started from a new
+directory reads, not whether or when the host starts one.
 
 The Stop hook came through the second replacement on both counts. A turn begun before it ended
 thirteen seconds after the replacement finished, when the directory its Stop command named was gone,
@@ -481,7 +482,9 @@ making its first policy registration as well, and step 8 says what that changes.
 
    The same directory tells whether this update will need the hook trusted again. Trust belongs to
    the hook declaration rather than to the version, so compare the declaration files the two
-   manifests name under `hooks`:
+   manifests name under `hooks`. `<candidate-dir>` is the version directory the throwaway add
+   reported, and `<installed-dir>` the one installed now,
+   `$CODEX_HOME/plugins/cache/<marketplace>/crw/<version>`:
 
    ```sh
    python3 - <candidate-dir> <installed-dir> <<'EOF'
@@ -491,10 +494,16 @@ making its first policy registration as well, and step 8 says what that changes.
        hooks = json.loads((root / ".codex-plugin" / "plugin.json").read_text()).get("hooks")
        names = [hooks] if isinstance(hooks, str) else list(hooks or [])
        return names, [(root / name).read_bytes() for name in names]
-   print("unchanged" if declared(sys.argv[1]) == declared(sys.argv[2]) else "changed")
+   candidate, installed = declared(sys.argv[1]), declared(sys.argv[2])
+   if not candidate[0]:
+       print("no hook declared")
+   else:
+       print("unchanged" if candidate == installed else "changed")
    EOF
    ```
 
+   `no hook declared` means the candidate carries no Stop hook at all, so the completion hook
+   would stop firing after the add; that is not an update this procedure covers, so do not add it.
    `unchanged` means the stored trust carries over, as it did at the second measured replacement.
    `changed` means expect to trust the hook again in Codex after step 5, as at the first; that was
    measured for a change to the command text, what a change elsewhere in the file does was not, and
@@ -643,8 +652,10 @@ present.
 A rollback past the bridge record's version installs, and then its launcher refuses the record. A
 launcher that predates version 2 starts no bridge under a version-2 record: measured in isolation,
 where the older package's `codex plugin add` succeeded and every start of its bridge exited 2. So
-threads have no bridge tools after such a rollback until the record is replaced with a version-1
-one, and a version-1 record starts bridges that check no role.
+a bridge started after such a rollback, at the add or when a thread resumes, is refused, and that
+thread has no bridge tools until the record is replaced with a version-1 one, which starts bridges
+that check no role. A bridge already running may keep going from the removed directory, as all of
+them did at the second measured replacement, with the policy it started under.
 
 Removing the plugin deletes the cached version directory and the plugin entry in
 `config.toml`. It leaves the marketplace registration, so removing that is a
