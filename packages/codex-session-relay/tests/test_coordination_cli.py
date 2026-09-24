@@ -310,6 +310,66 @@ class TheCapacityAndRegionSurfaces(CoordinationCliTestCase):
         self.assertEqual(code, cli.EXIT_REFUSED)
         self.assertEqual(payload["reason"], "followup_unassigned")
 
+    def peers(self):
+        self.bind("PRJ-A", "task-alpha")
+        self.bind("PRJ-B", "task-beta", host="host-b")
+        code, link = self.run_cli(
+            "linkage-peer", "--left-project", "PRJ-A", "--left-task", "task-alpha",
+            "--left-host", "host-a", "--right-project", "PRJ-B",
+            "--right-task", "task-beta", "--right-host", "host-b")
+        self.assertEqual(code, cli.EXIT_OK)
+        return link["linkId"]
+
+    def test_a_late_acceptance_is_refused_and_the_answering_side_carries_the_terms(self):
+        """CRW-237, the CRW-124 G3 order through the operator surface."""
+        link = self.peers()
+        _code, proposed = self.run_cli(
+            "region-propose", "--repository", "owner/repo", "--revision", "rev-1",
+            "--path", "src/a.py", "--kind", "symbol", "--key", "parse",
+            "--left-project", "PRJ-B", "--right-project", "PRJ-A", "--peer-link", link,
+            "--task", "task-beta", "--constraint", "keep parse, lines 12-13 at rev-1",
+            "--condition", "beta restates this before renaming parse",
+            "--next-owner", "task-alpha")
+        code, _moved = self.run_cli(
+            "region-restate-revision", "--repository", "owner/repo",
+            "--from-revision", "rev-1", "--to-revision", "rev-2", "--actor", "task-beta")
+        self.assertEqual(code, cli.EXIT_OK)
+        code, late = self.run_cli(
+            "region-settle", "--agreement", proposed["agreementId"], "--actor", "task-alpha",
+            "--disposition", "accepted")
+        self.assertEqual((code, late["reason"]), (cli.EXIT_REFUSED, "agreement_revision_stale"))
+        code, successor = self.run_cli(
+            "region-reaffirm", "--agreement", proposed["agreementId"], "--actor", "task-alpha",
+            "--revision", "rev-2", "--condition", "alpha reads parse only, at rev-2")
+        self.assertEqual(code, cli.EXIT_OK)
+        self.assertEqual(successor["proposerTaskId"], "task-beta")
+        self.assertEqual(successor["rightCondition"], "beta restates this before renaming parse")
+        awaiting = successor["reaffirmation"]["awaitingAcceptance"]
+        self.assertEqual(awaiting["task"], "task-beta")
+        _code, shown = self.run_cli("region-show", "--repository", "owner/repo")
+        live = [r for r in shown["exclusive"] if r["agreementId"] == successor["agreementId"]]
+        self.assertEqual(live[0]["reaffirmation"]["awaitingAcceptance"], awaiting)
+        self.assertEqual(live[0]["leftCondition"], "alpha reads parse only, at rev-2")
+        self.assertEqual(live[0]["statedOn"]["leftCondition"], "rev-2")
+        # The command the answer names is the one that agrees it.
+        code, agreed = self.run_cli(*awaiting["command"].split())
+        self.assertEqual((code, agreed["state"]), (cli.EXIT_OK, "agreed"))
+        self.assertEqual(agreed["rightCondition"], "beta restates this before renaming parse")
+
+    def test_an_acceptance_with_a_condition_is_a_bad_invocation(self):
+        link = self.peers()
+        _code, proposed = self.run_cli(
+            "region-propose", "--repository", "owner/repo", "--revision", "rev-1",
+            "--path", "src/a.py", "--kind", "file", "--left-project", "PRJ-A",
+            "--right-project", "PRJ-B", "--peer-link", link, "--task", "task-alpha",
+            "--constraint", "keep the signature")
+        code, refused = self.run_cli(
+            "region-settle", "--agreement", proposed["agreementId"], "--actor", "task-beta",
+            "--disposition", "accepted", "--condition", "only if it forwards")
+        self.assertEqual((code, refused["reason"]), (cli.EXIT_REFUSED, "bad_invocation"))
+        _code, shown = self.run_cli("region-show", "--repository", "owner/repo")
+        self.assertEqual(shown["exclusive"][0]["state"], "proposed")
+
 
 if __name__ == "__main__":
     unittest.main()
