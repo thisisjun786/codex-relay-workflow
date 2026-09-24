@@ -232,7 +232,24 @@ class AppServer:
             "denied.",
         }
 
-    refusals_since = requests_since
+    def refusals_since(self, mark: int, thread_id: str | None = None):
+        """The compatibility name, with its old meaning: refused requests only.
+
+        A left approval is not a refusal, so a caller still on this name must never read one as
+        one; requests_since is the inclusive stream.
+        """
+        recent = [entry for entry in self._refused
+                  if entry["index"] > mark and entry["answered"] == REFUSED]
+        mine = [entry for entry in recent if entry["threadId"] == thread_id]
+        unattributed = [entry for entry in recent if entry["threadId"] is None]
+        return {
+            "thisThread": mine,
+            "unattributed": unattributed,
+            "otherThreads": len(recent) - len(mine) - len(unattributed),
+            "approvalsRefusedForThisThread": sum(entry["approval"] for entry in mine),
+            "note": "Refused requests only; an approval-class request is never refused here. "
+            "See requests_since for every request this connection received.",
+        }
 
     def _record_request(self, message: dict[str, Any], answered: str):
         """Note a server-to-client request and what happened to it, keyed by what it is about."""

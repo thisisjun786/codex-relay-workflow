@@ -464,10 +464,13 @@ every request below had a known cause. The source of the same release agrees
 | The App Server receives SIGTERM while a turn waits for approval | The graceful restart waits for the turn. A second signal forces it; afterwards the waiting turn reads `interrupted`, nothing is replayed, and the command never ran |
 | The thread's `approvalsReviewer` is `auto_review` | No client receives a request; the host's reviewer decides |
 
-Two limits apply. The owner connection was a test client, so how Desktop presents a
-request it did not ask for, or one replayed to it, is not established here. The
-isolation kept Codex's own sandbox from running, so only commands that ran with
-approval, outside the sandbox, were observed.
+Three limits apply. The requests measured were command and file-change approvals; the
+host source sends the other approval-class requests the same way, with one exception: a
+user-verification elicitation goes only to the one connection enrolled for it and is not
+replayed. The owner connection was a test client, so how Desktop presents a request it did
+not ask for, or one replayed to it, is not established here. The isolation kept Codex's own
+sandbox from running, so only commands that ran with approval, outside the sandbox, were
+observed.
 
 ## Reaching a thread that is already working
 

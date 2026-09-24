@@ -385,7 +385,8 @@ class ManagedStart:
         if not marker.valid_segment(task) or not marker.valid_segment(standby):
             return self.result("incomplete", "creation", "creation_identity_unobserved")
         creation = receipt.get("creation")
-        if not isinstance(creation, dict) or settings.mismatches(creation):
+        if not isinstance(creation, dict) or settings.mismatches(
+                creation, exact_approval_policy=True):
             return self.result("refused", "creation", "creation_settings_unverified")
         self.row = self.registry.record_start_receipt(request["requestId"],
                                                       identity["request_fingerprint"], receipt)
@@ -449,7 +450,7 @@ class ManagedStart:
         if (not marker.valid_segment(task) or creation.get("turnId")
                 or not isinstance(effects, list) or "thread/start" not in effects
                 or "turn/start" in effects or not isinstance(observed, dict)
-                or settings.mismatches(observed)):
+                or settings.mismatches(observed, exact_approval_policy=True)):
             return creation
         request_id = "managed-standby-" + hashlib.sha256(
             self.request["requestId"].encode()).hexdigest()

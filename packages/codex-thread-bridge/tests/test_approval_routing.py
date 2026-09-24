@@ -16,7 +16,23 @@ from conftest import EXECUTION
 
 from codex_thread_bridge.rpc import APPROVAL_METHODS, REFUSED_REQUESTS_KEPT
 
-METHODS = sorted(APPROVAL_METHODS)
+# Pinned from the codex-cli 0.154.0 schema (ServerRequest.json: the requests that ask a human to
+# decide), not read from the implementation, so dropping one from APPROVAL_METHODS fails here
+# instead of quietly shrinking what is tested.
+METHODS = sorted([
+    "applyPatchApproval",
+    "execCommandApproval",
+    "item/commandExecution/requestApproval",
+    "item/fileChange/requestApproval",
+    "item/permissions/requestApproval",
+    "item/tool/requestUserInput",
+    "mcpServer/elicitation/request",
+])
+
+
+def test_the_left_set_is_the_schema_set():
+    """GREEN: the implementation's set equals the pinned schema set."""
+    assert sorted(APPROVAL_METHODS) == METHODS
 
 
 async def create(bridge, *args, **kwargs):
@@ -143,3 +159,17 @@ async def test_requests_beyond_the_kept_bound_are_counted_not_dropped(
     assert len(report["thisThread"]) == REFUSED_REQUESTS_KEPT
     assert report["notRetained"] == 5
     assert fake.client_answers == []
+
+
+async def test_the_refusal_stream_keeps_its_old_meaning(bridge, fake_server, tmp_path):
+    """RED (Devin, PR #157): refusals_since is a compatibility name. It reports refusals only,
+    with its old count key, so a caller still on it never reads a left request as a refusal."""
+    fake, _ = fake_server
+    thread_id = await on_request_thread(bridge, fake, tmp_path)
+    mark = bridge.rpc.refusal_mark()
+    fake.approval_request_on_turn = ["item/commandExecution/requestApproval", "item/tool/call"]
+    await send(bridge, "compat", thread_id, "report", expected_settings={"approval_policy": "on-request"})
+    await settle(bridge, thread_id)
+    refusals = bridge.rpc.refusals_since(mark, thread_id)
+    assert [e["method"] for e in refusals["thisThread"]] == ["item/tool/call"]
+    assert refusals["approvalsRefusedForThisThread"] == 0

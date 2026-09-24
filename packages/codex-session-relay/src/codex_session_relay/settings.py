@@ -173,9 +173,9 @@ class TaskSettings:
     A record missing a required field cannot say what it is preserving. Neither can one whose
     cwd, model or reasoningEffort is present and is not a string, because resume_params would
     copy it onto the wire and only the host could then say what it had done with it.
-    Nor can one whose approvalPolicy is not the authorized literal, and that one is refused for
-    a different reason: it is not a value the host answers for at all, because this transport
-    cannot service an interactive approval. require_usable() decides all three, and it types
+    Nor can one whose approvalPolicy is outside the carried set (never, on-request), and that one
+    is refused for a different reason: it is not a value the host answers for at all, because this
+    transport carries no other policy. require_usable() decides all three, and it types
     runtimeWorkspaceRoots and environments as well: it used not to, and `runtimeWorkspaceRoots`
     of "/a/bc" then passed here, went on the wire as ["/", "a", "/", "b", "c"], and let the
     narrower-only comparison after a settings-free load read a host root "/" as one the record
@@ -227,11 +227,12 @@ class TaskSettings:
         require_usable() orders the two, exactly as resume_params and mismatches already assume
         a complete record. isinstance excludes bool as well, so True is not read as a model name.
 
-        approvalPolicy is not here. Contract v1 admits the single literal `never`, and
-        require_usable() compares the recorded value against it immediately after this gate, so
-        every value that field could hold and should not -- 7, True, a granular object -- is
-        already refused there, by the more specific of the two codes. A null is not among them:
-        missing() has answered it one gate earlier.
+        approvalPolicy is not here. The transport carries `never` and `on-request`
+        (CARRIED_APPROVAL_POLICIES), and require_usable() compares the recorded value against
+        that set immediately after this gate, so every value that field could hold and should
+        not -- 7, True, a granular object, untrusted -- is already refused there, by the more
+        specific of the two codes. A null is not among them: missing() has answered it one gate
+        earlier.
         """
         wrong = []
         if not isinstance(self.data["cwd"], str):
@@ -412,7 +413,8 @@ class TaskSettings:
         return {"code": APPROVAL_POLICY_DIFFERS_FROM_RECORD, "field": "approvalPolicy",
                 "recorded": recorded, "observed": observed}
 
-    def mismatches(self, response: dict, *, transmitted: bool = True) -> list:
+    def mismatches(self, response: dict, *, transmitted: bool = True,
+                   exact_approval_policy: bool = False) -> list:
         """Ordered findings against a resume response. Order is behaviour, not presentation.
 
         The approval policy is checked FIRST, against the set this transport carries, not against
@@ -421,6 +423,10 @@ class TaskSettings:
         closed channel into a retry loop. A carried policy is accepted even when it differs from
         the record: nothing here sent a policy, so the difference is the thread's own state, and
         approval_divergence() notes it without refusing.
+
+        exact_approval_policy=True is for a task this relay CREATED (managed.py): what came back
+        must be the policy that was requested, because a child created on another policy is not
+        the child requested, whether or not this transport could carry it.
 
         What is in question here is the HOST's answer, not the record's request. require_usable()
         has already refused a record outside the carried set, so a finding on this line means the
@@ -455,6 +461,11 @@ class TaskSettings:
             # interactive. It withholds, and stays eligible for a bounded pre-send retry.
             return [{"code": SETTING_UNOBSERVABLE, "field": "approvalPolicy",
                      "expected": self.data.get("approvalPolicy"), "returned": None}]
+        if exact_approval_policy and returned_policy != self.data.get("approvalPolicy"):
+            label = returned_policy if isinstance(returned_policy, str) else "granular"
+            return [{"code": UNSUPPORTED_APPROVAL_POLICY, "field": "approvalPolicy",
+                     "expected": self.data.get("approvalPolicy"), "returned": label,
+                     "returnedShape": type(returned_policy).__name__}]
         if not isinstance(returned_policy, str) or returned_policy not in CARRIED_APPROVAL_POLICIES:
             # A granular policy is an object; it is never copied into the frozen record, which
             # types this field as string or null. Contract v1 admits only a plain string.
