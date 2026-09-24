@@ -1121,6 +1121,9 @@ def settings_recovery_record(store, hold, event_id, recipient, *, state_director
         "command": command,
         "then": chosen["then"],
         "laterDeliveries": chosen["laterDeliveries"],
+        # The pre-send refusal as the relay service wrote it, naming the repair for its exact
+        # cause; None for a hold read from an attempt or recorded before this revision.
+        "refusalDetail": hold.get("detail"),
     }
 
 

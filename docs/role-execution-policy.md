@@ -185,8 +185,8 @@ That is the habit the incident was made of.
 | `execution_role_unknown` | a role was cited that this host's policy does not declare | declare it in the host's execution policy; there is no fallback pair |
 | `execution_role_mismatch` | the stated pair is not that role's pair | state the pair the policy declares for the role |
 | `execution_exception_out_of_scope` | the exception does not cover this directory, or its role and the cited role disagree | cite an exception written for this role and directory |
-| `role_policy_unconfigured` | the relay process has no declared role policy and the recipient is role-bound | set the variable for the relay process and restart; withheld deliveries resume by themselves |
-| `role_binding_mismatch` | a task's cited role and its bound role disagree, or its recorded pair is not that role's pair | fix the binding or the creation; do not re-record over it |
+| `role_policy_unconfigured` | the recipient is role-bound and the relay process has no declared role policy, or its policy does not declare that role | set the variable for the relay process and restart, or declare the role in the policy; withheld deliveries resume by themselves |
+| `role_binding_mismatch` | a task's cited role and its bound role disagree, its recorded pair is not that role's pair, it holds two live bindings, or its record cites an exception the policy does not authorize | fix the binding or the creation, and do not re-record over a binding that disagrees; for an unauthorized citation, re-record from a user-attributed source what actually authorized the creation |
 | `settings_record_stale_for_role` | the recorded authorization is not the role's current pair | re-record it from a user-attributed source |
 
 Every refusal above is decided before any call that costs inference. A creation or resume refused

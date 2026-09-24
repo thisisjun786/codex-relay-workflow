@@ -145,10 +145,16 @@ HOLD_CORRECTION_CHANNEL_THEN = (
     " takes no acknowledgement: read it, then open a fresh execution generation (generation-open)"
     " if the child still has to be given it"
 )
+# A hold recorded before this revision wrote causes down. Its cause is not established, but its
+# state still says who moves it, so the actor follows the kind (Devin on fd2ee727): the daemon
+# retries an uncapped withhold, and the parent reads what a cap or a closed channel stopped.
+HOLD_UNDETERMINED_CAUSE = (
+    "its settings cause was recorded before this revision wrote causes down and is not"
+    " established here, so nothing here claims a settings fix"
+)
 HOLD_UNDETERMINED_THEN = (
-    "this state was recorded before its cause was written down, so the cause is not"
-    " established here: read the event's attempts and their receipts, then settings-show;"
-    " nothing here claims a settings fix"
+    "the daemon retries on its own each pass; " + HOLD_UNDETERMINED_CAUSE + ": if it stays"
+    " withheld, read the event's attempts and their receipts, then settings-show"
 )
 LATER_BY_OPERATOR = (
     "for later deliveries, the operator brings the recipient back under its recorded settings"
@@ -167,16 +173,15 @@ LATER_BY_OWNER = (
 # review of fa2bacf7). The record's own refusals have one cause each: the record.
 HOLD_ROLE_GATE_THEN = (
     "the role gate refused the recorded authorization, and its refusal names the repair for the"
-    " exact cause in this delivery's lastFailedOperation.detail on status, as the relay service"
-    " read it (settings-show reports it as roleFinding when run with that service's execution"
-    " policy): declare the role in this host's execution policy, give the relay process its policy"
-    " and restart it, fix the binding or the creation, or re-record from a user-attributed source,"
-    " whichever the refusal names; the code alone does not tell them apart"
+    " exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote"
+    " it. Declare the role in this host's execution policy, give the relay process its policy and"
+    " restart it, fix the binding or the creation, or re-record from a user-attributed source,"
+    " whichever it names; the code alone does not tell them apart"
 )
 HOLD_RECORD_THEN = (
     "the recipient's authorization record was refused before any host call (missing, incomplete,"
     " mistyped, or a sandbox it does not state as a policy this transport carries), as"
-    " lastFailedOperation.detail on status says: record it again from the creation result or a"
+    " refusalDetail beside this recovery says: record it again from the creation result or a"
     " user-attributed source (settings-record --source user_transition), and the next pass reads"
     " it again"
 )
@@ -196,7 +201,16 @@ def settings_hold_recovery(kind, code, source, *, revision=False) -> dict:
     (attempt, pre_send or undetermined); revision says the delivery is a revision request to the
     child rather than a completion, which only a closed channel reads differently."""
     if source == "undetermined":
-        return {"actor": "operator", "command": SHOW_EVENT, "then": HOLD_UNDETERMINED_THEN,
+        if kind == "capped":
+            return {"actor": "parent", "command": SHOW_EVENT,
+                    "then": HOLD_CAPPED_THEN + "; " + HOLD_UNDETERMINED_CAUSE,
+                    "laterDeliveries": None}
+        if kind == "channel_closed":
+            return {"actor": "parent", "command": SHOW_EVENT,
+                    "then": (HOLD_CORRECTION_CHANNEL_THEN if revision else HOLD_CHANNEL_THEN)
+                    + "; " + HOLD_UNDETERMINED_CAUSE,
+                    "laterDeliveries": LATER_BY_OWNER}
+        return {"actor": "daemon", "command": SHOW_EVENT, "then": HOLD_UNDETERMINED_THEN,
                 "laterDeliveries": None}
     role_then = HOLD_REFUSAL_THEN.get(code)
     if kind == "capped":

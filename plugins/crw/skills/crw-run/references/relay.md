@@ -357,15 +357,16 @@ settings or re-record it with `--source user_transition` when the user changed i
 a host answer that left a setting out (`setting_unobservable`, `environments_unknown`): the daemon
 may clear it on its own next pass, so the recovery names the daemon and assignment-show keeps the
 daemon's action. A role gate refusal (`role_policy_unconfigured`, `role_binding_mismatch`,
-`settings_record_stale_for_role`) can have more than one cause, so its recovery points at the repair
-the refusal names in `status` (`lastFailedOperation.detail`): declaring the role, giving the relay
+`settings_record_stale_for_role`) can have more than one cause, so its recovery carries the refusal's
+own text as `refusalDetail` and points at the repair it names: declaring the role, giving the relay
 process its policy and restarting it, fixing the binding or the creation, or re-recording from a
 user-attributed source. A refusal of the record itself (missing, incomplete, mistyped) is fixed by
 recording it again.
 A capped one is never sent again, so the parent reads the stored report with the
 named `show --event`. A send budget that never reopens is named before any settings hold
 (`operator_changes_send_policy`), because until the policy changes nothing is sent. A hold recorded
-before this revision is named `undetermined` and points at the event rather than at a fix.
+before this revision is named `undetermined` and points at the event rather than at a fix; its actor still follows
+its state (the daemon for a withhold, the parent for a capped or closed-channel one).
 
 Read `deliverable` rather than `usable` before a send. They answer different questions: `usable`
 is about the record alone, whether the required fields are there, and it is the field `missing`

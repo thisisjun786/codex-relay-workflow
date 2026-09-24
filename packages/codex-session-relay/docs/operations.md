@@ -394,15 +394,17 @@ Each carries the most recent failed operation, its concrete error, the exact set
 difference where there is one, and the next retry time.
 
 A delivery held on its recipient's settings also carries `settingsHold` and `recovery` (CRW-235).
-`settingsHold` is `{kind, source, reason, field, requestId}`: the kind is `withheld` (still
+`settingsHold` is `{kind, source, reason, field, requestId, detail}`: the kind is `withheld` (still
 retried), `capped` (held at the attempt cap, never sent again) or `channel_closed` (stored where
-the recipient reads it); the source says where the cause was read. `recovery` is `{actor, reason,
-command, then, laterDeliveries}` with the command rendered for this store: a withheld hold is the
+the recipient reads it); the source says where the cause was read, and `detail` is a pre-send
+refusal's own text. `recovery` is `{actor, reason, command, then, laterDeliveries, refusalDetail}`
+with the command rendered for this store and `refusalDetail` that same text: a withheld hold is the
 operator's (`settings-show --task <recipient>`, then bring the recipient back under its recorded
 settings or re-record it with `--source user_transition`), except a host answer that left a
 setting out, which the daemon may clear itself; the role gate's refusals (`role_policy_unconfigured`,
 `role_binding_mismatch`, `settings_record_stale_for_role`), which each cover more than one cause
-and so point at the repair the refusal names in `lastFailedOperation.detail` (declare the role,
+and so point at the repair the refusal names in `refusalDetail`, never at whichever failure row a
+timestamp puts last (declare the role,
 give the relay process its policy and restart it, fix the binding or the creation, or re-record from
 a user-attributed source); and a refusal of the record itself (missing, incomplete, mistyped, or an
 unsupported sandbox type), whose step is recording it again; a capped or closed-channel hold is the parent's
@@ -426,7 +428,8 @@ settlement row of the latest settled attempt (`settingsRefusal`, written by the 
 reconciliation) or a pre-send withhold that took effect (`delivery_presend_withheld`), whichever
 came later in the journal. Two limits follow. A state recorded before this revision has neither,
 so its hold is named `undetermined`, with the event's attempts and receipts as the path and no
-claim of a settings fix; a strictly later lifecycle withhold still clears it, and a closed channel,
+claim of a settings fix, and its actor still follows its state: the daemon retries an uncapped
+withhold, and the parent reads what a cap or a closed channel stopped; a strictly later lifecycle withhold still clears it, and a closed channel,
 which only a settings refusal produces, is always named `undetermined`. And the reader
 trusts the newest recorded transition, so a pre-send withhold that a still-running older relay
 program writes after a newer program's settlement, which only an upgrade window allows (the

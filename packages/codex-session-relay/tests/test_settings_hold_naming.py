@@ -261,36 +261,47 @@ class APreSendRefusal(SettingsHoldCase):
         # 1f0f5a89 found the same gap for the role gate).
         self.assertIn("record it again from the creation result", item["recovery"]["then"])
         self.assertNotIn("bring the recipient back", item["recovery"]["then"])
+        self.assertIn("no authorized settings recorded", item["recovery"]["refusalDetail"])
         self.assertEqual(self.next_action(), OPERATOR_RESTORES_SETTINGS_ACTION)
         [observation] = self.observations(faultsweep.refusal_faults, event_id)
         [recovery] = self.evidence(observation, "recovery")
         self.assertEqual(recovery["actor"], "operator")
 
-    def test_a_role_gate_refusal_points_at_the_repair_its_refusal_names(self):
+    def test_a_role_gate_refusal_carries_the_repair_its_refusal_names(self):
         """RED: the role gate's refusals were told to restore or re-record the recipient's
-        settings (Devin on 1f0f5a89), and then one fixed repair per code, which each code's other
-        cause cannot use (the review of fa2bacf7): the recovery names every repair the gate can
-        give and sends the operator to the one its refusal names."""
+        settings (Devin on 1f0f5a89), then one fixed repair per code, which each code's other
+        cause cannot use (the review of fa2bacf7), then pointed at lastFailedOperation, which a
+        timestamp can give to an older lifecycle refusal (the review of fd2ee727). The recovery
+        now names every repair the gate can give and carries the refusal's own text."""
         for reason in (RefusalReason.ROLE_POLICY_UNCONFIGURED, RefusalReason.ROLE_BINDING_MISMATCH,
                        RefusalReason.SETTINGS_RECORD_STALE_FOR_ROLE):
             with self.subTest(reason=reason.value):
+                self.parent_history()
                 _relationship, event_id = self.queued_event()
+                # An older lifecycle refusal under the same timestamp as the gate's.
+                self.adapter.threads[PARENT].archived = True
+                self.attempt(event_id)
+                self.adapter.threads[PARENT].archived = False
+                gate = f"the gate's own repair for {reason.value}"
                 row = self.delivery_row(event_id)
                 self.delivery._withhold_settings(
-                    event_id, self.clock.now(), DeliveryRefused(reason, "gate"),
+                    event_id, self.clock.now(), DeliveryRefused(reason, gate),
                     attempts=row["attempt_count"], row=row)
                 item = self.status_of(event_id)
                 self.assertEqual((item["settingsHold"]["source"], item["settingsHold"]["reason"]),
                                  ("pre_send", reason.value))
                 recovery = item["recovery"]
-                self.assertEqual(recovery["actor"], "operator")
-                self.assertIn("lastFailedOperation.detail", recovery["then"])
+                self.assertEqual((recovery["actor"], recovery["refusalDetail"]), ("operator", gate))
+                self.assertIn("refusalDetail", recovery["then"])
                 for repair in ("declare the role", "restart", "fix the binding or the creation",
                                "re-record from a user-attributed source"):
-                    self.assertIn(repair, recovery["then"])
+                    self.assertIn(repair, recovery["then"].lower())
                 self.assertNotIn("do not re-record", recovery["then"])
                 self.assertNotIn("bring the recipient back", recovery["then"])
-                self.assertEqual(self.recovery().get("then"), recovery["then"])
+                shown = self.recovery()
+                self.assertEqual((shown.get("then"), shown.get("refusalDetail")),
+                                 (recovery["then"], gate))
+                self.adapter.threads[PARENT].archived = False
                 self.clock.advance(1)
 
     def test_a_withhold_that_did_not_take_effect_earns_no_recovery(self):
@@ -455,12 +466,15 @@ class RowsRecordedBeforeThisRevision(SettingsHoldCase):
         self.assertEqual((item["settingsHold"]["source"], item["settingsHold"]["reason"]),
                          ("undetermined", None))
         recovery = item["recovery"]
-        self.assertEqual((recovery["actor"], recovery["reason"]), ("operator", "undetermined"))
+        # The cause is unknown, the actor is not: an uncapped withhold is the daemon's to retry,
+        # as assignment-show says (Devin on fd2ee727).
+        self.assertEqual((recovery["actor"], recovery["reason"]), ("daemon", "undetermined"))
         self.assert_show_event(recovery["command"], event_id)
         self.assertIn("nothing here claims a settings fix", recovery["then"])
         self.assertEqual(self.next_action(), "daemon_delivers",
                          "an undetermined cause is not an operator settings fix")
-        self.assertEqual(self.recovery().get("reason"), "undetermined")
+        self.assertEqual((self.recovery().get("actor"), self.recovery().get("reason")),
+                         ("daemon", "undetermined"))
         [observation] = self.observations(faultsweep.retry_faults, event_id)
         [fault_recovery] = self.evidence(observation, "recovery")
         self.assertEqual(fault_recovery["reason"], "undetermined")
@@ -476,12 +490,31 @@ class RowsRecordedBeforeThisRevision(SettingsHoldCase):
         self.assertEqual((item["settingsHold"]["kind"], item["settingsHold"]["source"],
                           item["settingsHold"]["reason"]),
                          ("channel_closed", "undetermined", None))
-        self.assertEqual(item["recovery"]["reason"], "undetermined")
+        self.assertEqual((item["recovery"]["actor"], item["recovery"]["reason"]),
+                         ("parent", "undetermined"))
         self.assert_show_event(item["recovery"]["command"], event_id)
         self.assertEqual(self.next_action(), "parent_acknowledges")
         recovery = self.recovery()
-        self.assertEqual(recovery.get("reason"), "undetermined")
+        self.assertEqual((recovery.get("actor"), recovery.get("reason")), ("parent", "undetermined"))
         self.assert_show_event(recovery.get("command"), event_id)
+
+    def test_a_capped_hold_whose_cause_was_never_written_down_is_the_parents(self):
+        """RED: named the operator, while nothing sends it again and assignment-show names the
+        parent (Devin on fd2ee727)."""
+        event_id = self.refused()
+        for _ in range(self.delivery.policy.max_attempts - 1):
+            self.again(event_id, NOT_PRESERVED)
+        self.strip_this_revisions_records(event_id)
+        item = self.status_of(event_id)
+        self.assertEqual((item["settingsHold"]["kind"], item["settingsHold"]["source"]),
+                         ("capped", "undetermined"))
+        for recovery in (item["recovery"], self.recovery()):
+            self.assertEqual((recovery.get("actor"), recovery.get("reason")),
+                             ("parent", "undetermined"))
+            self.assert_show_event(recovery.get("command"), event_id)
+            self.assertIn("generation-open", recovery.get("then") or "")
+            self.assertIn("nothing here claims a settings fix", recovery.get("then") or "")
+        self.assertEqual(self.next_action(), PARENT_RECOVERS_SETTINGS_HOLD_ACTION)
 
     def test_a_strictly_later_lifecycle_withhold_is_no_settings_hold(self):
         """GREEN: a later lifecycle withhold recorded before this revision names no settings hold."""

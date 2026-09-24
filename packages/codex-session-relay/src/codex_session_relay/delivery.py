@@ -2156,6 +2156,11 @@ SETTINGS_HOLD_COLUMNS = (
     "   ORDER BY shp.seq DESC LIMIT 1) AS sh_presend,"
     " (SELECT shf.occurred_at FROM failed_operations shf WHERE shf.scope_key = {event}"
     "   AND shf.operation = 'settings_check') AS sh_settings_at,"
+    # The pre-send refusal's own text, from the row its withhold wrote in the same transaction
+    # (one per event and operation), so a recovery can carry the repair the refusal names rather
+    # than point at whichever failure row a timestamp puts last (the review of fd2ee727).
+    " (SELECT shd.detail FROM failed_operations shd WHERE shd.scope_key = {event}"
+    "   AND shd.operation = 'settings_check') AS sh_settings_detail,"
     " (SELECT shl.occurred_at FROM failed_operations shl WHERE shl.scope_key = {event}"
     "   AND shl.operation = 'lifecycle_read') AS sh_lifecycle_at"
 )
@@ -2231,8 +2236,12 @@ def settings_hold_reading(row) -> dict:
         reading.update(chosen="pre_send", definitive=True,
                        presendOperation=operation if isinstance(operation, str) else None)
         if isinstance(reason, str) and reason in PRESEND_SETTINGS_REFUSALS:
+            # The settings_check row is this withhold's: a settings withhold writes it with its
+            # presend row, and any later settings transition writes a later row of its own.
+            detail_text = row["sh_settings_detail"] if operation == "settings_check" else None
             reading["hold"] = {"source": "pre_send", "reason": reason, "field": None,
-                               "requestId": None}
+                               "requestId": None,
+                               "detail": detail_text if isinstance(detail_text, str) else None}
         return reading
     if settlement is not None and "settingsRefusal" in settlement[1]:
         reading.update(chosen="attempt", definitive=True)
