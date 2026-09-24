@@ -12,6 +12,14 @@ unfiltered scan, and it resumes from a stored cursor so successive checks make p
 re-reading the same prefix. When nothing conclusive is found the answer is None, meaning unknown,
 which withholds delivery rather than guessing.
 
+Which threads a listing contains depends on its source kinds, not only on its filters. With
+sourceKinds omitted the App Server lists its interactive sources only (in 0.154.0: cli, vscode and
+two custom sources), so a thread created by codex exec, including a child on the official worktree
+path, is in no default listing at all. Two listings that name exec therefore run beside the
+default ones. They are added rather than substituted, because no explicit list reproduces the
+default: the custom sources have no source kind to name. The default listings keep their exact
+parameters, so every thread they found before is found the same way.
+
 Item paging uses the forward cursor. The reverse cursor exists to change direction, and using it to
 continue a descending scan re-serves the newest page forever.
 """
@@ -29,6 +37,11 @@ from .settings import SETTINGS_DIFFER_AFTER_LOAD, SETTINGS_NOT_PRESERVED
 UNARCHIVED_CWD = "unarchived_cwd"
 UNARCHIVED_ALL = "unarchived_all"
 ARCHIVED = "archived"
+# A source kind the default listing leaves out, and the listings that ask for it. Each keeps its
+# own resumable cursor under its own key in discovery_cursors.
+EXEC_SOURCE_KINDS = ("exec",)
+ARCHIVED_EXEC = "archived:exec"
+UNARCHIVED_ALL_EXEC = "unarchived_all:exec"
 PAGE = 50
 MAX_PAGES_PER_CHECK = 4
 
@@ -232,11 +245,22 @@ class BridgeHostAdapter:
         )
 
     def is_archived(self, thread_id: str, *, cwd: str | None = None):
-        """True, False, or None for unknown. Resolved by exact id, never by a filter's silence."""
+        """True, False, or None for unknown. Resolved by exact id, never by a filter's silence.
+
+        The exec listings run after the archived default listing and before the unarchived one,
+        which is the listing that usually needs its cursor: an exec thread then resolves in a
+        few pages on its first check instead of waiting behind the whole default listing. Each
+        listing is bounded by MAX_PAGES_PER_CHECK.
+        """
         if cwd and self._scan_listing(thread_id, UNARCHIVED_CWD, {"archived": False, "cwd": cwd}):
             return False
         if self._scan_listing(thread_id, ARCHIVED, {"archived": True}):
             return True
+        exec_kinds = {"sourceKinds": list(EXEC_SOURCE_KINDS)}
+        if self._scan_listing(thread_id, ARCHIVED_EXEC, {"archived": True, **exec_kinds}):
+            return True
+        if self._scan_listing(thread_id, UNARCHIVED_ALL_EXEC, {"archived": False, **exec_kinds}):
+            return False
         if self._scan_listing(thread_id, UNARCHIVED_ALL, {"archived": False}):
             return False
         return None

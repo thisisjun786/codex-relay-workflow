@@ -718,7 +718,12 @@ These are recorded because behaviour depends on them.
 - An attempt with no affirmative evidence stays held and reports what it is missing. There is no
   operator override.
 - Archive state is resolved by exact task id, because a cwd-filtered listing can miss a task whose
-  cwd changed. An inconclusive answer withholds rather than guessing.
+  cwd changed. The App Server's default listing holds its interactive sources only, so a thread
+  created by codex exec (a child on the official worktree path) is looked up in listings that name
+  that source, beside the unchanged default ones. An inconclusive answer withholds rather than
+  guessing, and assignment-show and dispositions-show then name that withhold on the correction it
+  holds back. A thread from another source outside the default listing (appServer) still reads
+  unknown.
 - The JSON date-time format is not validated by the available validator; that is reported as
   unverified rather than implied.
 

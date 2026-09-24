@@ -1067,7 +1067,8 @@ class DeliveryService:
             self._defer_busy(event_id, row, now)
             return None
         if not observation.may_send:
-            self._withhold(event_id, observation, now, attempts=row["attempt_count"])
+            self._withhold(event_id, observation, now, attempts=row["attempt_count"], row=row,
+                           relationship=relationship)
             return None
 
         # The authorized settings are established BEFORE anything is claimed or sent. A send
@@ -1177,34 +1178,41 @@ class DeliveryService:
 
         Not a permanent hold: settings that were never recorded can be recorded, and the next
         pass decides again. Nothing was claimed and nothing was sent, so there is no attempt.
+
+        The failure row is written in the same transaction as the delivery's transition, and
+        only when the guarded UPDATE changed the row, with the stamp that transition wrote.
+        Written afterwards in a transaction of its own, it could land after a later withhold
+        of the same delivery and describe a decision that was no longer the current one.
         """
         when = now + self.policy.lifecycle_recheck_seconds
+        reason = refusal.reason.value if refusal.reason else "settings_unavailable"
         with self.store.transaction() as db:
-            db.execute(
+            # Read once, after BEGIN IMMEDIATE holds the write lock, and used for both writes.
+            stamp = self.clock.iso()
+            changed = db.execute(
                 "UPDATE deliveries SET state = ?, next_eligible_at = ?, updated_at = ?"
                 " WHERE event_id = ? AND state IN (?,?,?) AND attempt_count = ?",
                 (
-                    WITHHELD_PRE_SEND, when, self.clock.iso(), event_id, QUEUED, DEFERRED_BUSY,
+                    WITHHELD_PRE_SEND, when, stamp, event_id, QUEUED, DEFERRED_BUSY,
                     WITHHELD_PRE_SEND, attempts,
                 ),
-            )
+            ).rowcount == 1
             self.store.journal(
                 "delivery_withheld", event_id,
-                {"reason": refusal.reason.value if refusal.reason else "settings_unavailable",
-                 "detail": refusal.detail},
+                {"reason": reason, "detail": refusal.detail},
                 at=self.clock.iso(),
             )
-        # Outside the transaction above, and recorded because there is no attempt to read it
-        # from. Every other cause reaches an operator through the attempt record; this one
-        # refused before one existed, so status reported the generic awaiting_receipt and
-        # said nothing about the settings that are actually missing.
-        self.record_failure(
-            event_id, "settings_check",
-            detail=refusal.detail,
-            relationship_id=row["relationship_id"] if row is not None else None,
-            error_code=refusal.reason.value if refusal.reason else "settings_unavailable",
-            retry_safe=True, next_retry_at=when,
-        )
+            # Recorded because there is no attempt to read it from. Every other cause reaches
+            # an operator through the attempt record; this one refused before one existed, so
+            # status reported the generic awaiting_receipt and said nothing about the settings
+            # that are actually missing.
+            if changed:
+                self._record_failure_in(
+                    db, event_id, "settings_check", occurred_at=stamp,
+                    detail=refusal.detail,
+                    relationship_id=row["relationship_id"] if row is not None else None,
+                    error_code=reason, retry_safe=True, next_retry_at=when,
+                )
 
     def record_settings_violation(self, request_id: str, event_id: str, findings) -> dict:
         """Annotate a dispatch that already reached a turn. It stays a dispatch.
@@ -1263,21 +1271,25 @@ class DeliveryService:
         hold = None
         if attempts >= self.policy.busy_max_attempts:
             hold = self.policy.cap_reason("busy")
-        self.record_failure(
-            event_id, "parent_busy", detail="the recipient is mid-turn and is never interrupted",
-            relationship_id=row["relationship_id"],
-            next_retry_at=now + self.policy.delay_for(attempts + 1, "busy"),
-        )
+        when = now + self.policy.delay_for(attempts + 1, "busy")
         with self.store.transaction() as db:
-            db.execute(
+            # One stamp for the transition and its failure row, read under the write lock; the
+            # row is written only when this deferral actually took effect (see _withhold).
+            stamp = self.clock.iso()
+            changed = db.execute(
                 "UPDATE deliveries SET state = ?, next_eligible_at = ?, hold_reason = ?,"
                 " updated_at = ? WHERE event_id = ? AND state IN (?,?,?) AND attempt_count = ?",
                 (
-                    DEFERRED_BUSY, now + self.policy.delay_for(attempts + 1, "busy"), hold,
-                    self.clock.iso(), event_id, QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND,
-                    attempts,
+                    DEFERRED_BUSY, when, hold, stamp, event_id, QUEUED, DEFERRED_BUSY,
+                    WITHHELD_PRE_SEND, attempts,
                 ),
-            )
+            ).rowcount == 1
+            if changed:
+                self._record_failure_in(
+                    db, event_id, "parent_busy", occurred_at=stamp,
+                    detail="the recipient is mid-turn and is never interrupted",
+                    relationship_id=row["relationship_id"], next_retry_at=when,
+                )
             if row["state"] != DEFERRED_BUSY:
                 self.store.journal("delivery_deferred_busy", event_id, at=self.clock.iso())
 
@@ -1333,26 +1345,41 @@ class DeliveryService:
             "sendAttempted": "no",
         }
 
-    def _withhold(self, event_id: str, observation, now: float, *, attempts: int) -> None:
+    def _withhold(self, event_id: str, observation, now: float, *, attempts: int, row=None,
+                  relationship=None) -> None:
         # Deliberately NOT a hold_reason. A recipient that is archived, paused or unreadable
         # today may not be tomorrow, and a permanent hold would turn a temporary host state
         # into a delivery that never happens. The reason is recorded in recipient_lifecycle
         # and the journal, and the next observation decides again.
+        #
+        # The lifecycle_read row is written in the same transaction as the transition, with the
+        # stamp the transition wrote as updated_at, and only when the guarded UPDATE changed the
+        # row. Written first and on its own, it outlived an UPDATE that matched nothing because
+        # another worker had claimed the delivery, and named a withhold that never took effect.
+        # The shared stamp is what lets assignment.undelivered_reason say that this withhold is
+        # the delivery's current state rather than an older one. It carries the relationship and
+        # its parent, as every other delivery failure row does.
         when = now + self.policy.lifecycle_recheck_seconds
-        self.record_failure(
-            event_id, "lifecycle_read",
-            detail=observation.detail or observation.withhold_reason or "not deliverable",
-            error_code=observation.withhold_reason, next_retry_at=when,
-        )
         with self.store.transaction() as db:
-            db.execute(
+            # Read once, after BEGIN IMMEDIATE holds the write lock, and used for both writes.
+            stamp = self.clock.iso()
+            changed = db.execute(
                 "UPDATE deliveries SET state = ?, next_eligible_at = ?, updated_at = ?"
                 " WHERE event_id = ? AND state IN (?,?,?) AND attempt_count = ?",
                 (
-                    WITHHELD_PRE_SEND, when, self.clock.iso(), event_id, QUEUED, DEFERRED_BUSY,
+                    WITHHELD_PRE_SEND, when, stamp, event_id, QUEUED, DEFERRED_BUSY,
                     WITHHELD_PRE_SEND, attempts,
                 ),
-            )
+            ).rowcount == 1
+            if changed:
+                self._record_failure_in(
+                    db, event_id, "lifecycle_read", occurred_at=stamp,
+                    detail=observation.detail or observation.withhold_reason or "not deliverable",
+                    relationship_id=row["relationship_id"] if row is not None else None,
+                    parent_task_id=(relationship["parent"]["taskId"]
+                                    if relationship is not None else None),
+                    error_code=observation.withhold_reason, next_retry_at=when,
+                )
             self.store.journal(
                 "delivery_withheld", event_id,
                 {"reason": observation.withhold_reason, "detail": observation.detail},
@@ -1613,18 +1640,39 @@ class DeliveryService:
         transport classification keeps only a code, dropping the field-level findings.
         """
         with self.store.transaction() as db:
-            db.execute(
-                "INSERT INTO failed_operations (scope_key, operation, relationship_id,"
-                " parent_task_id, detail, error_code, difference, retry_safe, occurred_at,"
-                " next_retry_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
-                " ON CONFLICT(scope_key, operation) DO UPDATE SET detail=excluded.detail,"
-                " error_code=excluded.error_code, difference=excluded.difference,"
-                " retry_safe=excluded.retry_safe, occurred_at=excluded.occurred_at,"
-                " next_retry_at=excluded.next_retry_at",
-                (scope_key, operation, relationship_id, parent_task_id, str(detail),
-                 error_code, difference, None if retry_safe is None else int(retry_safe),
-                 self.clock.iso(), next_retry_at),
+            self._record_failure_in(
+                db, scope_key, operation, occurred_at=self.clock.iso(), detail=detail,
+                relationship_id=relationship_id, parent_task_id=parent_task_id,
+                error_code=error_code, difference=difference, retry_safe=retry_safe,
+                next_retry_at=next_retry_at,
             )
+
+    @staticmethod
+    def _record_failure_in(db, scope_key, operation, *, occurred_at, detail, relationship_id=None,
+                           parent_task_id=None, error_code=None, difference=None,
+                           retry_safe=None, next_retry_at=None) -> None:
+        """The upsert behind record_failure, inside a transaction the caller already holds.
+
+        occurred_at is required rather than read here: a withhold passes the stamp it wrote as
+        the delivery's updated_at, which is how a reader ties the row to that transition. A
+        relationship or parent already recorded for this subject is kept when a later write
+        names none, and a row recorded without them is filled by the next write that has them.
+        """
+        db.execute(
+            "INSERT INTO failed_operations (scope_key, operation, relationship_id,"
+            " parent_task_id, detail, error_code, difference, retry_safe, occurred_at,"
+            " next_retry_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(scope_key, operation) DO UPDATE SET detail=excluded.detail,"
+            " error_code=excluded.error_code, difference=excluded.difference,"
+            " retry_safe=excluded.retry_safe, occurred_at=excluded.occurred_at,"
+            " next_retry_at=excluded.next_retry_at,"
+            " relationship_id=COALESCE(excluded.relationship_id,"
+            "                          failed_operations.relationship_id),"
+            " parent_task_id=COALESCE(excluded.parent_task_id, failed_operations.parent_task_id)",
+            (scope_key, operation, relationship_id, parent_task_id, str(detail),
+             error_code, difference, None if retry_safe is None else int(retry_safe),
+             occurred_at, next_retry_at),
+        )
 
     def failures_for(self, scope_key):
         rows = self.store.all(
