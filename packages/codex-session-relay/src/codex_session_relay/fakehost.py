@@ -10,11 +10,21 @@ No test sleeps. Time only moves when a test moves it.
 
 import hashlib
 
-from .hostadapter import ThreadFacts, TokenScan, TurnInfo, find_in_listing, find_token_in
+from .hostadapter import (
+    IN_TURN_ITEMS_MAX, USER_MESSAGE, ThreadFacts, TokenScan, TurnInfo, find_in_listing,
+    find_token_in, find_token_in_turn_items, is_message,
+)
 
 
 class ProcessDied(Exception):
     """Raised by a scripted send to stand in for the relay process being killed mid-call."""
+
+
+def _typed(item) -> tuple:
+    """A thread item as (turn id, text, type). A pair is what a send appends: the user message."""
+    if len(item) == 2:
+        return item[0], item[1], USER_MESSAGE
+    return tuple(item)
 
 
 class FakeThread:
@@ -31,6 +41,8 @@ class FakeThread:
         # persists every field a record holds.
         self.loaded_settings = loaded_settings
         self.turns = []
+        # (turn id, text) is a user message, the item a send appends; (turn id, text, type) is
+        # an item of the named type, such as a command's output.
         self.items = []
 
 
@@ -143,9 +155,15 @@ class FakeHostAdapter:
     def find_token_since(self, thread_id, token, *, older, limit=200) -> TokenScan:
         """The real adapter's rule over this thread's items, newest first, bounded like a scan."""
         self._guard("find_token_since")
-        items = list(reversed(self.threads[thread_id].items))
+        items = [_typed(item) for item in reversed(self.threads[thread_id].items)]
         bound = min(limit, self.scan_limit or limit)
         return find_token_in([(items[:bound], bound < len(items))], token, older)
+
+    def find_token_in_turn(self, thread_id, token, *, turn_id, limit=IN_TURN_ITEMS_MAX) -> TokenScan:
+        """The real adapter's rule over one turn's own items, oldest first, bounded like its read."""
+        self._guard("find_token_in_turn")
+        items = [_typed(item) for item in self.threads[thread_id].items if item[0] == turn_id]
+        return find_token_in_turn_items([(items[:limit], limit < len(items))], token, turn_id)
 
     def get_operation(self, request_id):
         self._guard("get_operation")
@@ -157,17 +175,21 @@ class FakeHostAdapter:
         """Content, not just identity: a token appended to an existing item changes this."""
         self._guard("recipient_fingerprint")
         digest = hashlib.sha256()
-        for item_turn, text in list(reversed(self.threads[thread_id].items))[:window]:
+        for item_turn, text, _kind in [_typed(item) for item in
+                                       reversed(self.threads[thread_id].items)][:window]:
             digest.update(f"{item_turn}:{hashlib.sha256(text.encode()).hexdigest()}|".encode())
         return digest.hexdigest()
 
-    def find_token(self, thread_id, token, *, limit=200, turn_id=None) -> TokenScan:
+    def find_token(self, thread_id, token, *, limit=200, turn_id=None,
+                   message_only=False) -> TokenScan:
         self._guard("find_token")
-        items = list(reversed(self.threads[thread_id].items))
+        items = [_typed(item) for item in reversed(self.threads[thread_id].items)]
         bound = min(limit, self.scan_limit or limit)
         scanned = 0
-        for item_turn, text in items[:bound]:
+        for item_turn, text, kind in items[:bound]:
             scanned += 1
+            if message_only and not is_message(kind):
+                continue
             if token in text:
                 return TokenScan(True, item_turn, scanned >= len(items), scanned)
         return TokenScan(False, None, bound >= len(items), scanned)

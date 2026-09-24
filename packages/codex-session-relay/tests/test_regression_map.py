@@ -239,6 +239,10 @@ SUMMARIES = {
     # A stated absence is a dict carrying one key, so the false side is reachable from either
     # input alone - anything that is not a mapping, and any mapping without the key.
     ("envelope.py", None, "is_absent", "function"): ((False,), (), ()),
+    # The delivered message, as the host types it: userMessage, or no type at all on a host that
+    # gives none, so the true side is reachable from either alone. test_host_lost_turn.py hands
+    # the token readers typed and untyped items (TheAdapterLooksBackOnlyToTheSend).
+    ("hostadapter.py", None, "is_message", "function"): ((True,), (), ()),
     ("marker.py", None, "named", "function"): ((False,), (), ()),
     ("marker.py", None, "same_identity", "function"): ((False,), (), ()),
     # A first assignment is a parent-to-child assignment whose recipient is a stated absence,
@@ -334,6 +338,8 @@ FOLD_FREE_BOOLEANS = (
     # One predicate now, shared with the supervisor channel's claim; the fold it used to do
     # lives in delivery.send_refusal, which returns a reason rather than a boolean.
     ("delivery.py", None, "_rate_limited", "function"),
+    # Membership of the item type in the agent-output deny-list, negated: one input, no fold.
+    ("hostadapter.py", None, "may_be_message", "function"),
     ("lifecycle.py", None, "is_busy", "function"),
     ("lifecycle.py", None, "may_send", "function"),
     ("scope.py", None, "at_least", "function"),
@@ -455,6 +461,56 @@ SUMMARY_SITES = (
      "the fold is the subject: the line above asserts every other counter as_dict carries is 0,"
      " so false can only come from turnsLost reaching the disjunction quiet reduces; mutation"
      " evidence drops turnsLost from the fold and this case fails"),
+    ("test_host_lost_turn.py",
+     "test_a_message_deep_in_a_long_delivery_turn_is_confirmed_through_the_ack_turn", "found",
+     False, "self.assertFalse(self.adapter.find_token(PARENT, request_id).found)",
+     "a precondition, not the subject: false pins that the bounded thread-wide scan misses the"
+     " message 250 items back, so the verified acknowledgement asserted after it can only come"
+     " from the read of the acknowledging turn's own first items"),
+    ("test_host_lost_turn.py", "test_a_typed_item_leaves_the_fingerprint_and_readback_working",
+     "found", False,
+     "self.assertFalse(self.adapter.find_token(PARENT, 'del-echo-a1', message_only=True).found)",
+     "the keyword is the subject: the line above finds the same token without it, so false"
+     " here cannot come from a token that is absent, only from the command-output type"),
+    ("test_host_lost_turn.py", "test_a_typed_item_leaves_the_fingerprint_and_readback_working",
+     "found", True, "self.assertTrue(self.adapter.find_token(PARENT, 'del-echo-a1').found)",
+     "the default is the subject: supervisor readback still finds a token in any item, and true"
+     " is reachable only through a match"),
+    ("test_host_lost_turn.py", "test_the_in_turn_read_asks_for_that_turns_items_oldest_first",
+     "found", True, "self.assertTrue(scan.found)",
+     "true is reachable only through a match, and the one request that produced it is asserted"
+     " verbatim on the next line"),
+    ("test_host_lost_turn.py", "test_the_in_turn_read_counts_only_that_turns_user_message",
+     "found", False, "self.assertFalse(scan.found)",
+     "paired with exhausted true on the next line: every item was read and both carry the token,"
+     " so false pins the owner check (the user message belongs to another turn) and the type"
+     " check (the turn's own item is command output) rather than a bound"),
+    ("test_host_lost_turn.py", "test_the_in_turn_read_counts_only_that_turns_user_message",
+     "exhausted", True, "self.assertTrue(scan.exhausted)",
+     "the answer ended with no cursor, so true pins that the false above is a finding over the"
+     " whole answer"),
+    ("test_host_lost_turn.py", "test_the_thread_reads_tell_the_message_from_agent_output",
+     "found", False, "self.assertFalse(adapter.find_token('thread', 'del-x-a1', message_only=True).found)",
+     "paired with the default read on the next line over the same two items, which finds the"
+     " token: false pins that neither command output nor a hook prompt is a user message"),
+    ("test_host_lost_turn.py", "test_the_thread_reads_tell_the_message_from_agent_output",
+     "found", True, "self.assertTrue(adapter.find_token('thread', 'del-x-a1').found)",
+     "the default counts every item; true is reachable only through a match, and it is what"
+     " makes the false above mean the type filter"),
+    ("test_host_lost_turn.py", "test_the_thread_reads_tell_the_message_from_agent_output",
+     "found", True, "self.assertTrue(adapter.find_token_since('thread', 'del-x-a1', older=()).found)",
+     "true is reachable only through a user message, and the item of an unknown type newer than"
+     " it carries the token too, so true pins that the scan goes on past that item to the message"),
+    ("test_host_lost_turn.py", "test_the_thread_reads_tell_the_message_from_agent_output",
+     "found", False, "self.assertFalse(prompted.found)",
+     "paired with the next line, which names the hook prompt as the item carrying the token:"
+     " false pins that a token outside a user message is not taken for the message, not that"
+     " the token is absent"),
+    ("test_host_lost_turn.py", "test_the_thread_reads_tell_the_message_from_agent_output",
+     "found", False, "self.assertFalse(written.found)",
+     "paired with other_kind asserted None on the next line over the same items, the hook prompt"
+     " retyped as a written file: both items are agent output, so false pins the deny-list"
+     " (fileChange included), not an absent token"),
     ("test_guard_property.py", "test_marker_commands_are_exempt_from_the_store_selection_refusal",
      "_reads_no_selected_store", True,
      "self.assertTrue(cli._reads_no_selected_store(Namespace(handler=cli.cmd_intent_register,"

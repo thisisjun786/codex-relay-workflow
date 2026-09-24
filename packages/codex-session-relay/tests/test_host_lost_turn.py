@@ -66,6 +66,63 @@ class SettlesDuringTheRead:
         return getattr(self._inner, name)
 
 
+class AcksDuringTheSend:
+    """The parent acknowledges while the relay is still inside its send (delivery 'sending')."""
+
+    def __init__(self, inner, during):
+        self._inner = inner
+        self._during = during
+
+    def send_message(self, *args, **kwargs):
+        receipt = self._inner.send_message(*args, **kwargs)
+        self._during(receipt)
+        return receipt
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+class CountingReads:
+    """Records the receipt and item reads a confirmation could make."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.reads = []
+
+    def get_operation(self, request_id):
+        self.reads.append(("get_operation", request_id))
+        return self._inner.get_operation(request_id)
+
+    def find_token(self, *args, **kwargs):
+        self.reads.append(("find_token", args[1] if len(args) > 1 else kwargs.get("token")))
+        return self._inner.find_token(*args, **kwargs)
+
+    def find_token_in_turn(self, *args, **kwargs):
+        self.reads.append(("find_token_in_turn", kwargs.get("turn_id")))
+        return self._inner.find_token_in_turn(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+class ActsDuringTheTurnRead:
+    """Runs something else first, once, when an acknowledgement's turn is read: another process
+    moving the delivery while the relay is reading the parent's turn."""
+
+    def __init__(self, inner, action):
+        self._inner = inner
+        self._action = action
+
+    def read_turn(self, thread_id, turn_id):
+        action, self._action = self._action, None
+        if action is not None:
+            action()
+        return self._inner.read_turn(thread_id, turn_id)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
 class HostLossCase(DeliveryTestCase):
     def setUp(self):
         super().setUp()
@@ -130,6 +187,76 @@ class HostLossCase(DeliveryTestCase):
 
     def evidence_of(self, event_id):
         return [row["affirmative_evidence"] for row in self.attempts_for(event_id)]
+
+    def host_reloads_losing(self, turn_id):
+        """K5c: the host died on the accepted turn, and a later load of the parent brought it back
+        listed interrupted with none of its items."""
+        thread = self.adapter.threads[PARENT]
+        self.adapter.finish_turn(PARENT, turn_id, "interrupted")
+        thread.items = [item for item in thread.items if item[0] != turn_id]
+
+    def echo(self, turn_id, text):
+        """A relay command's output printed inside a parent turn: not the delivered message."""
+        self.adapter.threads[PARENT].items.append((turn_id, text, "commandExecution"))
+
+    def uncertain_delivery(self, *, message=True):
+        """K5u: the host ran the delivery turn but the relay lost the turn/start receipt."""
+        self.parent_history()
+        _relationship, event_id = self.queued_event()
+        self.adapter.script("in_progress")
+        request_id = self.attempt(event_id)["requestId"]
+        self.assertEqual(self.delivery_row(event_id)["state"], HELD_UNCERTAIN)
+        self.clock.advance(2)
+        turn = self.adapter.start_turn(
+            PARENT, status="inProgress",
+            text=f"[codex-session-relay] verification request\nrequestId: {request_id}" if message
+            else "another prompt")
+        return event_id, request_id, turn.turn_id
+
+    def services(self, adapter=None):
+        from types import SimpleNamespace
+        return SimpleNamespace(ack=self.ack, reconciler=self.reconciler,
+                               adapter=adapter or self.adapter)
+
+    def folded_delivery(self, *, message=True, earlier=0, later=0):
+        """K5u into a running turn: the send was folded into a parent turn begun two minutes
+        before it, and the relay lost the turn/start receipt."""
+        self.parent_history()
+        _relationship, event_id = self.queued_event()
+        self.adapter.start_turn(PARENT, turn_id="folded", status="inProgress")
+        thread = self.adapter.threads[PARENT]
+        thread.items.extend(("folded", f"earlier work {n}", "commandExecution")
+                            for n in range(earlier))
+        self.clock.advance(120)
+        self.adapter.script("in_progress")
+        request_id = self.attempt(event_id)["requestId"]
+        self.assertEqual(self.delivery_row(event_id)["state"], HELD_UNCERTAIN)
+        if message:
+            thread.items.append(("folded", f"[codex-session-relay] verification request\n"
+                                           f"requestId: {request_id}"))
+        thread.items.extend(("folded", f"later work {n}", "commandExecution")
+                            for n in range(later))
+        return event_id, request_id
+
+    def cli_ack(self, event_id, turn_id, *, adapter=None):
+        from types import SimpleNamespace
+        from codex_session_relay import cli
+        return cli.cmd_ack(self.services(adapter), SimpleNamespace(
+            event=event_id, ack_turn=turn_id, ack_proof=identity.ack_proof(event_id, turn_id),
+            reject=None))
+
+    def cli_verdict(self, event_id, turn_id, *, adapter=None):
+        from types import SimpleNamespace
+        from codex_session_relay import cli
+        return cli.cmd_verdict(self.services(adapter), SimpleNamespace(
+            event=event_id, verdict="verified", verdict_turn=turn_id, criterion=None,
+            finding=None, criteria=None, restoration=None, reason=None,
+            expect_criteria_digest=None))
+
+    def ack_row(self, event_id):
+        return self.store.one("SELECT a.verified, e.last_reason FROM acks a"
+                              " LEFT JOIN ack_evidence e ON e.event_id = a.event_id"
+                              " WHERE a.event_id = ?", (event_id,))
 
     def host_loses(self, turn_id, *, items=True):
         """K5: the App Server died before the accepted turn reached the rollout."""
@@ -915,6 +1042,733 @@ class AssignmentShowNamesTheNextActor(HostLossCase):
         self.assertEqual(self.next_action(), "daemon_redelivers_host_lost_turn")
 
 
+class TheHostListsALostTurnAfterAReload(HostLossCase):
+    """H0R3-F1 (CRW-124 R3, K5c): the host died on the accepted delivery turn, then a routine load
+    of the parent brought the turn back listed interrupted with none of its items. A listed
+    turn read as present, the finished-turn memory kept it for good, and the report was lost."""
+
+    def test_a_turn_reloaded_interrupted_without_its_message_is_lost_and_redelivered_once(self):
+        event_id, first, turn = self.dispatched()
+        self.host_reloads_losing(turn)
+        self.clock.advance(5)
+        self.daemon.tick()
+        self.assertEqual(self.attempt_states(event_id), [DISPATCHED])
+        self.clock.advance(120)
+        self.daemon.tick()
+        attempts = self.attempts_for(event_id)
+        self.assertEqual([row["state"] for row in attempts], [HOST_LOST, DISPATCHED])
+        self.assertEqual(len(self.adapter.sends), 2)
+        self.assertEqual(self.journalled(HOST_LOST), 1)
+        reading = self.reconciler.reconcile_attempt(first, self.adapter).get("recipientTurn", {})
+        self.assertEqual(reading.get("finding"), HOST_LOST)
+        self.assertIn("interrupted", reading.get("detail") or "")
+
+    def test_a_message_found_only_under_another_turn_is_read_again_and_its_loss_caught(self):
+        event_id, first, turn = self.dispatched()
+        thread = self.adapter.threads[PARENT]
+        message = next(item[1] for item in thread.items if item[0] == turn)
+        self.host_reloads_losing(turn)
+        self.adapter.start_turn(PARENT, turn_id="parent-later", status="completed")
+        thread.items.append(("parent-later", message))
+        self.clock.advance(120)
+        self.daemon.tick()
+        reading = self.reconciler.reconcile_attempt(first, self.adapter)["recipientTurn"]
+        self.assertEqual((reading["finding"], reading["status"], reading["undecided"]),
+                         ("present", None, None))
+        self.assertIn("parent-later", reading["detail"])
+        self.assertEqual(len(self.adapter.sends), 1)
+        # A second load empties that turn as well: the next reading catches the loss.
+        self.host_reloads_losing("parent-later")
+        self.clock.advance(20)
+        self.daemon.tick()
+        self.assertEqual(self.attempt_states(event_id), [HOST_LOST, DISPATCHED])
+        self.assertEqual(len(self.adapter.sends), 2)
+
+    def test_a_relay_command_echoing_the_request_id_does_not_veto_the_loss(self):
+        event_id, first, turn = self.dispatched()
+        self.host_reloads_losing(turn)
+        self.adapter.start_turn(PARENT, turn_id="parent-later", status="completed")
+        self.echo("parent-later", json.dumps({"delivery": {"requestId": first}}))
+        self.clock.advance(120)
+        self.daemon.tick()
+        self.assertEqual(self.attempt_states(event_id), [HOST_LOST, DISPATCHED])
+
+    def test_a_file_the_parent_wrote_with_the_request_id_does_not_veto_the_loss(self):
+        """Review of 8386c7fe: a fileChange is the parent's own work, not the delivered message."""
+        event_id, first, turn = self.dispatched()
+        self.host_reloads_losing(turn)
+        self.adapter.start_turn(PARENT, turn_id="parent-later", status="completed")
+        self.adapter.threads[PARENT].items.append(
+            ("parent-later", f"+ waiting on {first}", "fileChange"))
+        self.clock.advance(120)
+        self.daemon.tick()
+        self.assertEqual(self.attempt_states(event_id), [HOST_LOST, DISPATCHED])
+        self.assertEqual(len(self.adapter.sends), 2)
+
+    def test_a_message_the_host_types_unfamiliarly_is_named_and_not_sent_again(self):
+        event_id, first, turn = self.dispatched()
+        thread = self.adapter.threads[PARENT]
+        message = next(item[1] for item in thread.items if item[0] == turn)
+        self.host_reloads_losing(turn)
+        thread.items.append((turn, message, "hookPrompt"))
+        self.clock.advance(120)
+        self.daemon.tick()
+        self.assertEqual(self.attempt_states(event_id), [DISPATCHED])
+        self.assertEqual(len(self.adapter.sends), 1)
+        self.assertEqual(self.attempts_for(event_id)[0]["recipient_scan"],
+                         "turn_check_undecided:token_in_other_item")
+        reading = self.reconciler.reconcile_attempt(first, self.adapter)["recipientTurn"]
+        self.assertEqual((reading["finding"], reading["undecided"]),
+                         ("unknown", "token_in_other_item"))
+        self.assertIn("hookPrompt", reading["detail"])
+
+    def test_a_long_finished_turn_is_read_from_its_first_item(self):
+        event_id, first, turn = self.dispatched()
+        thread = self.adapter.threads[PARENT]
+        thread.items.extend((turn, f"work item {n}", "commandExecution") for n in range(300))
+        self.adapter.finish_turn(PARENT, turn, "completed")
+        self.clock.advance(120)
+        reading = self.reconciler.reconcile_attempt(first, self.adapter)["recipientTurn"]
+        self.assertEqual((reading["finding"], reading["status"], reading["undecided"]),
+                         ("present", "completed", None))
+
+    def test_an_in_progress_listed_turn_is_present_without_reading_its_items(self):
+        event_id, first, turn = self.dispatched()
+        thread = self.adapter.threads[PARENT]
+        thread.items = [item for item in thread.items if item[0] != turn]
+        self.clock.advance(120)
+        reading = self.reconciler.reconcile_attempt(first, self.adapter)["recipientTurn"]
+        self.assertEqual((reading["finding"], reading["status"]), ("present", "inProgress"))
+
+
+class AnAcknowledgementBeforeTheSendIsConfirmed(HostLossCase):
+    """H0R3-F2 (CRW-124 R3, K5u): the host ran the delivery turn but the relay lost the
+    turn/start receipt, so the parent's ACK inside that very turn was refused as held_uncertain;
+    reconciliation confirmed the delivery seconds later and nothing asked the parent again."""
+
+    def test_an_ack_in_the_delivery_turn_confirms_the_send_and_the_verdict_follows(self):
+        event_id, request_id, turn = self.uncertain_delivery()
+        self.assertEqual(self.ack.claim_verification(event_id, turn_id=turn), "proceed")
+        record = self.cli_ack(event_id, turn)
+        self.assertEqual(record["_verified"], "verified")
+        self.assertEqual(self.delivery_row(event_id)["state"], ACKNOWLEDGED)
+        self.assertEqual(self.attempt_states(event_id), [HELD_UNCERTAIN])
+        self.assertEqual(self.evidence_of(event_id), ["turn_found"])
+        verdict = self.cli_verdict(event_id, turn)
+        self.assertEqual(verdict["verdict"], "verified")
+        self.assertEqual(len(self.adapter.sends), 1)
+
+    def test_an_ack_the_relay_cannot_confirm_yet_is_kept_not_refused(self):
+        event_id, request_id, turn = self.uncertain_delivery(message=False)
+        self.ack.claim_verification(event_id, turn_id=turn)
+        record = self.cli_ack(event_id, turn)
+        self.assertEqual(record["_verified"], "unverified_turn")
+        row = self.ack_row(event_id)
+        self.assertEqual((row["verified"], row["last_reason"]),
+                         ("unverified_turn", "delivery_unconfirmed"))
+        self.assertEqual(self.delivery_row(event_id)["state"], HELD_UNCERTAIN)
+        self.assertEqual(self.next_action(), "daemon_reconciles_delivery")
+
+    def test_a_kept_ack_completes_once_the_delivery_is_confirmed(self):
+        event_id, request_id, turn = self.uncertain_delivery(message=False)
+        self.ack.claim_verification(event_id, turn_id=turn)
+        self.cli_ack(event_id, turn)
+        # A tick before the host catches up leaves it kept, and backs its check off.
+        self.clock.advance(1)
+        self.daemon.tick()
+        self.assertEqual(self.delivery_row(event_id)["state"], HELD_UNCERTAIN)
+        # The host catches up: the delivery turn now shows the message. One tick, well inside
+        # that backoff, reconciles the send and completes the acknowledgement.
+        self.adapter.threads[PARENT].items.append((turn, f"requestId: {request_id}"))
+        self.clock.advance(5)
+        self.daemon.tick()
+        self.assertEqual(self.delivery_row(event_id)["state"], ACKNOWLEDGED)
+        self.assertEqual(self.next_action(), "parent_verifies")
+        self.assertEqual(len(self.adapter.sends), 1)
+
+    def test_a_confirmed_delivery_with_a_kept_ack_is_the_daemons_to_verify(self):
+        event_id, request_id, turn = self.uncertain_delivery(message=False)
+        self.ack.claim_verification(event_id, turn_id=turn)
+        self.cli_ack(event_id, turn)
+        self.adapter.threads[PARENT].items.append((turn, f"requestId: {request_id}"))
+        self.reconciler.reconcile_attempt(request_id, self.adapter)
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        self.assertEqual(self.next_action(), "daemon_verifies_acknowledgement")
+
+    def test_a_verdict_completes_a_kept_ack_first(self):
+        event_id, request_id, turn = self.uncertain_delivery(message=False)
+        self.ack.claim_verification(event_id, turn_id=turn)
+        self.cli_ack(event_id, turn)
+        self.adapter.threads[PARENT].items.append((turn, f"requestId: {request_id}"))
+        verdict = self.cli_verdict(event_id, turn)
+        self.assertEqual(verdict["verdict"], "verified")
+        self.assertEqual(self.delivery_row(event_id)["state"], ACKNOWLEDGED)
+
+    def test_a_claimed_completion_without_an_ack_is_the_parents_to_acknowledge(self):
+        event_id, _first, turn = self.dispatched()
+        self.ack.claim_verification(event_id, turn_id="parent-reading")
+        self.assertEqual(self.next_action(), "parent_acknowledges")
+
+    def test_an_ack_while_the_relay_is_still_sending_is_kept_and_completes_after(self):
+        self.parent_history()
+        _relationship, event_id = self.queued_event()
+        kept = {}
+        counting = CountingReads(self.adapter)
+
+        def parent_acks(receipt):
+            kept["state"] = self.delivery_row(event_id)["state"]
+            kept["record"] = self.cli_ack(event_id, receipt["turnId"], adapter=counting)
+
+        self.delivery.attempt(event_id, AcksDuringTheSend(self.adapter, parent_acks))
+        self.assertEqual(kept["state"], "sending")
+        self.assertEqual(kept["record"]["_verified"], "unverified_turn")
+        self.assertEqual(counting.reads, [])
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        self.clock.advance(5)
+        self.daemon.tick()
+        self.assertEqual(self.delivery_row(event_id)["state"], ACKNOWLEDGED)
+
+    def test_an_ordinary_ack_makes_no_confirmation_reads(self):
+        event_id, _first, _turn = self.dispatched()
+        self.clock.advance(5)
+        ack_turn = self.adapter.start_turn(PARENT, turn_id="ack-turn", status="inProgress")
+        counting = CountingReads(self.adapter)
+        record = self.cli_ack(event_id, ack_turn.turn_id, adapter=counting)
+        self.assertEqual(record["_verified"], "verified")
+        self.assertEqual(counting.reads, [])
+        self.assertEqual(self.delivery_row(event_id)["state"], ACKNOWLEDGED)
+
+    def test_a_wrong_proof_makes_no_host_reads(self):
+        from types import SimpleNamespace
+        from codex_session_relay import cli
+        from codex_session_relay.errors import AckRefused
+        event_id, request_id, turn = self.uncertain_delivery()
+        counting = CountingReads(self.adapter)
+        with self.assertRaises(AckRefused):
+            cli.cmd_ack(self.services(counting), SimpleNamespace(
+                event=event_id, ack_turn=turn, ack_proof="0" * 64, reject=None))
+        self.assertEqual(counting.reads, [])
+        self.assertEqual(self.delivery_row(event_id)["state"], HELD_UNCERTAIN)
+
+    def test_a_message_deep_in_a_long_delivery_turn_is_confirmed_through_the_ack_turn(self):
+        event_id, request_id, turn = self.uncertain_delivery()
+        thread = self.adapter.threads[PARENT]
+        thread.items.extend((turn, f"work item {n}", "commandExecution") for n in range(250))
+        self.assertFalse(self.adapter.find_token(PARENT, request_id).found)
+        record = self.cli_ack(event_id, turn)
+        self.assertEqual(record["_verified"], "verified")
+        self.assertEqual(self.delivery_row(event_id)["state"], ACKNOWLEDGED)
+
+    def test_an_echo_in_the_ack_turn_does_not_confirm_the_send(self):
+        event_id, request_id, turn = self.uncertain_delivery(message=False)
+        self.echo(turn, json.dumps({"delivery": {"requestId": request_id}}))
+        record = self.cli_ack(event_id, turn)
+        self.assertEqual(record["_verified"], "unverified_turn")
+        self.assertEqual(self.delivery_row(event_id)["state"], HELD_UNCERTAIN)
+        self.assertEqual(self.evidence_of(event_id), ["none"])
+
+    def test_a_kept_ack_is_confirmed_by_the_daemon_through_its_turn(self):
+        event_id, request_id, turn = self.uncertain_delivery(message=False)
+        self.cli_ack(event_id, turn)
+        thread = self.adapter.threads[PARENT]
+        position = next(i for i, item in enumerate(thread.items) if item[0] == turn)
+        thread.items.insert(position, (turn, f"requestId: {request_id}"))
+        thread.items.extend((turn, f"work item {n}", "commandExecution") for n in range(250))
+        self.clock.advance(5)
+        self.daemon.tick()
+        self.assertEqual(self.delivery_row(event_id)["state"], ACKNOWLEDGED)
+
+    def test_an_echo_alone_never_confirms_an_uncertain_send(self):
+        event_id, request_id, turn = self.uncertain_delivery(message=False)
+        self.echo(turn, f"status: attempt {request_id} held_uncertain")
+        outcome = self.reconciler.reconcile_attempt(request_id, self.adapter)
+        self.assertEqual(outcome["state"], HELD_UNCERTAIN)
+        self.assertEqual(self.delivery_row(event_id)["state"], HELD_UNCERTAIN)
+
+    def test_an_ack_from_the_turn_the_send_was_folded_into_is_verified(self):
+        """Review 2 of 50020bdf: the turn began before the send, and the message is in it."""
+        event_id, request_id = self.folded_delivery()
+        record = self.cli_ack(event_id, "folded")
+        self.assertEqual(record["_verified"], "verified")
+        row = self.delivery_row(event_id)
+        self.assertEqual((row["state"], row["dispatch_turn_id"]), (ACKNOWLEDGED, "folded"))
+        self.assertEqual(len(self.adapter.sends), 1)
+
+    def test_an_ack_from_a_folded_turn_is_kept_until_the_send_is_confirmed(self):
+        event_id, request_id = self.folded_delivery(message=False)
+        record = self.cli_ack(event_id, "folded")
+        self.assertEqual(record["_verified"], "unverified_turn")
+        self.assertEqual(self.ack_row(event_id)["last_reason"], "delivery_unconfirmed")
+        self.adapter.threads[PARENT].items.append(("folded", f"requestId: {request_id}"))
+        self.clock.advance(5)
+        self.daemon.tick()
+        self.assertEqual(self.delivery_row(event_id)["state"], ACKNOWLEDGED)
+        self.assertEqual(len(self.adapter.sends), 1)
+
+    def test_a_message_deep_in_a_folded_turn_is_found_through_the_ack_turn(self):
+        """Review 2: ten items before the folded message and 250 after it, past both scans."""
+        event_id, request_id = self.folded_delivery(earlier=10, later=250)
+        record = self.cli_ack(event_id, "folded")
+        self.assertEqual(record["_verified"], "verified")
+        self.assertEqual(self.delivery_row(event_id)["state"], ACKNOWLEDGED)
+        # The same turn, finished, reads present from its own items and is not left undecided.
+        self.adapter.finish_turn(PARENT, "folded", "completed")
+        self.clock.advance(120)
+        reading = self.reconciler.check_dispatched_turn(request_id, self.adapter)["recipientTurn"]
+        self.assertEqual((reading["finding"], reading["status"], reading["undecided"]),
+                         ("present", "completed", None))
+
+    def test_an_ack_kept_for_an_attempt_that_never_sent_does_not_hide_the_next_attempts_loss(self):
+        """Devin on 50020bdf: attempt 1 was uncertain when the parent acknowledged, then settled
+        as a confirmed pre-send rejection; attempt 2 reached the parent and the host lost its
+        turn. The acknowledgement predates attempt 2's send, so it cannot answer it."""
+        self.parent_history()
+        _relationship, event_id = self.queued_event()
+        self.adapter.script("in_progress")
+        first = self.attempt(event_id)["requestId"]
+        self.clock.advance(2)
+        self.adapter.start_turn(PARENT, turn_id="ack-turn", status="completed")
+        self.assertEqual(self.cli_ack(event_id, "ack-turn")["_verified"], "unverified_turn")
+        self.adapter.ledger[first] = _pre_send_rejection(first)
+        self.reconciler.reconcile_attempt(first, self.adapter)
+        self.clock.advance(100000)
+        second = self.attempt(event_id, now=self.clock.now())
+        self.assertEqual(second["deliveryState"], DISPATCHED)
+        self.host_reloads_losing(second["turnId"])
+        self.clock.advance(120)
+        self.daemon.tick()
+        self.assertEqual(self.attempt_states(event_id),
+                         ["withheld_pre_send", HOST_LOST, DISPATCHED])
+        self.assertEqual(len(self.adapter.sends), 3)
+
+    def test_an_ack_authored_after_the_send_keeps_the_delivery_out_of_the_turn_pass(self):
+        """The control beside the one above: an acknowledgement the parent authored after this
+        attempt was sent answers it, verified or not, and the pass does not read its turn."""
+        event_id, _first, turn = self.dispatched()
+        self.clock.advance(5)
+        self.ack.acknowledge(event_id, ack_turn_id="ack-later",
+                             ack_proof=identity.ack_proof(event_id, "ack-later"), accepted=True,
+                             adapter=None)
+        reads = []
+        lookup = self.adapter.find_dispatched_turn
+
+        def counted(*args, **kwargs):
+            reads.append(args)
+            return lookup(*args, **kwargs)
+
+        self.adapter.find_dispatched_turn = counted
+        self.host_loses(turn)
+        self.clock.advance(120)
+        self.daemon.tick()
+        self.assertEqual(reads, [])
+        self.assertEqual(self.attempt_states(event_id), [DISPATCHED])
+        self.assertEqual(len(self.adapter.sends), 1)
+
+
+class EverySettlementIsACompareAndSet(HostLossCase):
+    """D10: an attempt row has several writers (the sender, the daemon's and a manual reconcile,
+    the confirmation through an ACK's turn), and each settles only the attempt it read. A reader
+    that found nothing never undoes what another reader established meanwhile."""
+
+    def test_a_replacement_ack_written_during_the_read_is_not_promoted_with_the_old_evidence(self):
+        event_id, request_id, turn = self.uncertain_delivery(message=False)
+        self.cli_ack(event_id, turn)
+        self.adapter.threads[PARENT].items.append((turn, f"requestId: {request_id}"))
+        self.reconciler.reconcile_attempt(request_id, self.adapter)
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        later = self.adapter.start_turn(PARENT, turn_id="later-turn", status="inProgress")
+        ack = self.ack
+
+        class ReplacesDuringTheRead:
+            def __init__(self, inner):
+                self._inner = inner
+                self.fired = False
+
+            def read_turn(self, thread_id, turn_id):
+                if not self.fired:
+                    self.fired = True
+                    # A host-less re-acknowledgement from another turn: the parent's own upsert.
+                    ack.acknowledge(event_id, ack_turn_id=later.turn_id,
+                                    ack_proof=identity.ack_proof(event_id, later.turn_id),
+                                    accepted=True, adapter=None)
+                return self._inner.read_turn(thread_id, turn_id)
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+        results = self.ack.verify_pending_acks(ReplacesDuringTheRead(self.adapter))
+        self.assertEqual([r.get("outcome") for r in results], ["replaced"])
+        row = self.store.one("SELECT ack_turn_id, verified FROM acks WHERE event_id = ?", (event_id,))
+        self.assertEqual((row["ack_turn_id"], row["verified"]), ("later-turn", "unverified_turn"))
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+
+    def test_a_reader_that_found_nothing_cannot_undo_a_confirmation_made_meanwhile(self):
+        event_id, request_id, turn = self.uncertain_delivery()
+        thread = self.adapter.threads[PARENT]
+        thread.items.extend((turn, f"work item {n}", "commandExecution") for n in range(250))
+        reconciler = self.reconciler
+        adapter = self.adapter
+
+        class ConfirmsDuringTheScan:
+            def __init__(self, inner):
+                self._inner = inner
+                self.fired = False
+
+            def find_token(self, *args, **kwargs):
+                scan = self._inner.find_token(*args, **kwargs)
+                if not self.fired:
+                    self.fired = True
+                    reconciler.confirm_delivery(event_id, adapter, turn_id=turn)
+                return scan
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+        outcome = self.reconciler.reconcile_attempt(request_id, ConfirmsDuringTheScan(self.adapter))
+        self.assertEqual(outcome["evidence"], "turn_found")
+        self.assertEqual(self.evidence_of(event_id), ["turn_found"])
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+
+    def test_a_reader_that_found_nothing_cannot_undo_a_pre_send_rejection_made_meanwhile(self):
+        self.parent_history()
+        _relationship, event_id = self.queued_event()
+        self.adapter.script("in_progress")
+        request_id = self.attempt(event_id)["requestId"]
+        reconciler = self.reconciler
+        adapter = self.adapter
+
+        class RejectsDuringTheScan:
+            def __init__(self, inner):
+                self._inner = inner
+                self.fired = False
+
+            def find_token(self, *args, **kwargs):
+                scan = self._inner.find_token(*args, **kwargs)
+                if not self.fired:
+                    self.fired = True
+                    adapter.ledger[request_id] = _pre_send_rejection(request_id)
+                    reconciler.reconcile_attempt(request_id, adapter)
+                return scan
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+        outcome = self.reconciler.reconcile_attempt(request_id, RejectsDuringTheScan(self.adapter))
+        self.assertTrue(outcome.get("changed"))
+        self.assertEqual(self.evidence_of(event_id), ["confirmed_pre_send_rejection"])
+        self.assertNotEqual(self.delivery_row(event_id)["state"], HELD_UNCERTAIN)
+        self.clock.advance(100000)
+        self.assertEqual(self.attempt(event_id, now=self.clock.now())["attemptNo"], 2)
+
+    def test_a_refused_stale_write_leaves_the_attempt_owed_to_the_next_tick(self):
+        event_id, request_id, turn = self.uncertain_delivery()
+        thread = self.adapter.threads[PARENT]
+        thread.items.extend((turn, f"work item {n}", "commandExecution") for n in range(250))
+        reconciler = self.reconciler
+        adapter = self.adapter
+
+        class ConfirmsDuringTheScan:
+            def __init__(self, inner):
+                self._inner = inner
+                self.fired = False
+
+            def find_token(self, *args, **kwargs):
+                scan = self._inner.find_token(*args, **kwargs)
+                if not self.fired:
+                    self.fired = True
+                    reconciler.confirm_delivery(event_id, adapter, turn_id=turn)
+                return scan
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+        self.daemon_with(RetryPolicy(max_sends_per_tick=0),
+                         adapter=ConfirmsDuringTheScan(self.adapter)).tick()
+        gate = self.store.one("SELECT retry_required FROM reconcile_gate WHERE request_id = ?",
+                              (request_id,))
+        self.assertEqual(gate["retry_required"], 1)
+        self.assertEqual(self.evidence_of(event_id), ["turn_found"])
+
+    def test_a_reconcile_during_the_send_that_found_nothing_leaves_the_accepted_send_to_the_next_tick(self):
+        self.parent_history()
+        _relationship, event_id = self.queued_event()
+        reconciler = self.reconciler
+        adapter = self.adapter
+        seen = {}
+
+        class ReconcilesBeforeTheSend:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def send_message(self, request_id, *args, **kwargs):
+                seen["outcome"] = reconciler.reconcile_attempt(request_id, adapter)
+                return self._inner.send_message(request_id, *args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+        result = self.delivery.attempt(event_id, ReconcilesBeforeTheSend(self.adapter))
+        self.assertEqual(seen["outcome"]["state"], HELD_UNCERTAIN)
+        self.assertTrue(result.get("_settledElsewhere"))
+        self.assertEqual(self.delivery_row(event_id)["state"], HELD_UNCERTAIN)
+        self.clock.advance(20)
+        self.daemon_with(RetryPolicy(max_sends_per_tick=0)).tick()
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        self.assertEqual(len(self.adapter.sends), 1)
+
+    def test_a_reconcile_during_the_send_that_confirmed_it_survives_the_senders_unknown_result(self):
+        self.parent_history()
+        _relationship, event_id = self.queued_event()
+        self.adapter.script("in_progress")
+        reconciler = self.reconciler
+        adapter = self.adapter
+        started = {}
+
+        class HostRunsTheTurnAndAReconcileFindsIt:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def send_message(self, request_id, *args, **kwargs):
+                receipt = self._inner.send_message(request_id, *args, **kwargs)
+                started["turn"] = adapter.start_turn(
+                    PARENT, status="inProgress", text=f"requestId: {request_id}").turn_id
+                reconciler.reconcile_attempt(request_id, adapter)
+                return receipt
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+        result = self.delivery.attempt(event_id, HostRunsTheTurnAndAReconcileFindsIt(self.adapter))
+        self.assertTrue(result.get("_settledElsewhere"))
+        self.assertEqual(result.get("_deliveryState"), DISPATCHED)
+        row = self.delivery_row(event_id)
+        self.assertEqual((row["state"], row["dispatch_turn_id"]), (DISPATCHED, started["turn"]))
+        self.assertEqual(self.evidence_of(event_id), ["turn_found"])
+
+    def test_a_reconcile_that_read_the_send_in_flight_cannot_undo_the_senders_settlement(self):
+        """Sender first: a reconcile in another process reads the attempt while it is in flight
+        and finds nothing, and the sender's accepted result lands before that reconcile writes."""
+        import threading
+
+        from codex_session_relay.delivery import DeliveryService
+        from codex_session_relay.receipts import ReceiptIntake
+        from codex_session_relay.reconcile import Reconciler
+        from codex_session_relay.registry import Registry
+        from codex_session_relay.store import Store
+
+        self.parent_history()
+        _relationship, event_id = self.queued_event()
+        read_done, settled = threading.Event(), threading.Event()
+        seen, errors = {}, []
+        adapter, clock, path = self.adapter, self.clock, self.store.path
+
+        class WaitsForTheSender:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def find_token(self, *args, **kwargs):
+                scan = self._inner.find_token(*args, **kwargs)
+                read_done.set()
+                settled.wait(timeout=10)
+                return scan
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+        def reconcile(request_id):
+            store = Store(path)
+            try:
+                registry = Registry(store, clock)
+                intake = ReceiptIntake(store, registry, clock)
+                delivery = DeliveryService(store, registry, intake, clock)
+                seen["outcome"] = Reconciler(store, registry, delivery, clock).reconcile_attempt(
+                    request_id, WaitsForTheSender(adapter))
+            except Exception as error:  # noqa: BLE001 - recorded and asserted below
+                errors.append(error)
+                read_done.set()
+            finally:
+                store.close()
+
+        class ReconcileReadsDuringTheSend:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def send_message(self, request_id, *args, **kwargs):
+                seen["thread"] = threading.Thread(target=reconcile, args=(request_id,))
+                seen["thread"].start()
+                read_done.wait(timeout=10)
+                return self._inner.send_message(request_id, *args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+        result = self.delivery.attempt(event_id, ReconcileReadsDuringTheSend(adapter))
+        settled.set()
+        seen["thread"].join(timeout=30)
+        self.assertEqual(errors, [])
+        self.assertEqual(result["deliveryState"], DISPATCHED)
+        self.assertTrue(seen["outcome"].get("changed"))
+        self.assertEqual(self.attempt_states(event_id), [DISPATCHED])
+        row = self.delivery_row(event_id)
+        self.assertEqual((row["state"], row["dispatch_turn_id"]), (DISPATCHED, result["turnId"]))
+
+    def test_a_later_reconcile_that_cannot_read_the_receipt_keeps_a_pre_send_rejection(self):
+        self.parent_history()
+        _relationship, event_id = self.queued_event()
+        self.adapter.script("in_progress")
+        request_id = self.attempt(event_id)["requestId"]
+        self.adapter.ledger[request_id] = _pre_send_rejection(request_id)
+        self.reconciler.reconcile_attempt(request_id, self.adapter)
+        self.assertEqual(self.evidence_of(event_id), ["confirmed_pre_send_rejection"])
+        before = self.delivery_row(event_id)["state"]
+        self.adapter.ledger.pop(request_id)
+        self.reconciler.reconcile_attempt(request_id, self.adapter)
+        self.assertEqual(self.evidence_of(event_id), ["confirmed_pre_send_rejection"])
+        self.assertEqual(self.delivery_row(event_id)["state"], before)
+
+    def test_a_typed_item_leaves_the_fingerprint_and_readback_working(self):
+        thread = self.adapter.threads[PARENT]
+        thread.items.append(("t-x", "plain"))
+        before = self.adapter.recipient_fingerprint(PARENT)
+        thread.items.append(("t-x", "del-echo-a1", "commandExecution"))
+        self.assertNotEqual(self.adapter.recipient_fingerprint(PARENT), before)
+        # Supervisor readback keeps the default: any item that carries the token.
+        self.assertTrue(self.adapter.find_token(PARENT, "del-echo-a1").found)
+        self.assertFalse(self.adapter.find_token(PARENT, "del-echo-a1", message_only=True).found)
+
+
+def _pre_send_rejection(request_id):
+    """The transport's attributable pre-send refusal, as the ledger records it."""
+    return {"requestId": request_id, "status": "failed", "error": "thread/read: transport refused",
+            "rpcError": {"code": "internal", "message": "refused"}}
+
+
+class AnAcknowledgementIsJudgedAgainstTheDeliveryItRead(HostLossCase):
+    """Review 3 of 230abd1f: a turn check made against the delivery as it was is not trusted for
+    the delivery as it is. The acknowledgement is kept and checked again, never refused for a
+    reading that no longer holds and never promoted on one."""
+
+    def lose_first_turn_and_requeue(self):
+        event_id, first, lost = self.dispatched()
+        self.host_reloads_losing(lost)
+        self.clock.advance(120)
+        self.daemon_with(RetryPolicy(max_sends_per_tick=0)).tick()
+        self.assertEqual(self.attempt_states(event_id), [HOST_LOST])
+        self.clock.advance(10)
+        return event_id, lost
+
+    def test_a_folded_send_confirmed_during_the_read_keeps_the_ack_and_completes_it(self):
+        event_id, request_id = self.folded_delivery()
+        record = self.ack.acknowledge(
+            event_id, ack_turn_id="folded", ack_proof=identity.ack_proof(event_id, "folded"),
+            accepted=True, adapter=ActsDuringTheTurnRead(
+                self.adapter, lambda: self.reconciler.reconcile_attempt(request_id, self.adapter)))
+        self.assertEqual(record["_verified"], "unverified_turn")
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        self.clock.advance(5)
+        self.daemon.tick()
+        self.assertEqual(self.delivery_row(event_id)["state"], ACKNOWLEDGED)
+
+    def test_an_ack_naming_a_lost_turn_cannot_close_the_redelivery_confirmed_during_its_read(self):
+        event_id, lost = self.lose_first_turn_and_requeue()
+        ack, reconciler, adapter = self.ack, self.reconciler, self.adapter
+        seen = {}
+
+        class AcksWithTheLostTurnDuringTheSend:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def send_message(self, request_id, *args, **kwargs):
+                receipt = self._inner.send_message(request_id, *args, **kwargs)
+                seen["ack"] = ack.acknowledge(
+                    event_id, ack_turn_id=lost, ack_proof=identity.ack_proof(event_id, lost),
+                    accepted=True, adapter=ActsDuringTheTurnRead(
+                        adapter, lambda: reconciler.reconcile_attempt(request_id, adapter)))
+                return receipt
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+        self.delivery.attempt(event_id, AcksWithTheLostTurnDuringTheSend(adapter))
+        self.assertEqual(seen["ack"]["_verified"], "unverified_turn")
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        self.clock.advance(5)
+        self.daemon.tick()
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        self.assertEqual(self.ack_row(event_id)["last_reason"], "ack_turn_unverified")
+        self.assertEqual(self.next_action(), "parent_reacknowledges")
+
+    def test_an_ack_is_not_promoted_onto_an_attempt_sent_during_its_read(self):
+        event_id, first, lost = self.dispatched()
+        self.host_reloads_losing(lost)
+        self.clock.advance(120)
+
+        def lose_and_resend():
+            self.reconciler.check_dispatched_turn(first, self.adapter)
+            self.delivery.attempt(event_id, self.adapter)
+
+        record = self.ack.acknowledge(
+            event_id, ack_turn_id=lost, ack_proof=identity.ack_proof(event_id, lost),
+            accepted=True, adapter=ActsDuringTheTurnRead(self.adapter, lose_and_resend))
+        self.assertEqual(self.attempt_states(event_id), [HOST_LOST, DISPATCHED])
+        self.assertEqual(record["_verified"], "unverified_turn")
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+
+    def test_a_pending_ack_read_against_a_delivery_that_moved_is_checked_again(self):
+        event_id, request_id = self.folded_delivery()
+        self.ack.acknowledge(event_id, ack_turn_id="folded",
+                             ack_proof=identity.ack_proof(event_id, "folded"), accepted=True,
+                             adapter=None)
+        results = self.ack.verify_pending_acks(ActsDuringTheTurnRead(
+            self.adapter, lambda: self.reconciler.reconcile_attempt(request_id, self.adapter)))
+        self.assertEqual([r.get("outcome") for r in results], ["changed"])
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        self.assertEqual([r.get("outcome") for r in self.ack.verify_pending_acks(self.adapter)],
+                         ["verified"])
+        self.assertEqual(self.delivery_row(event_id)["state"], ACKNOWLEDGED)
+
+    def test_a_kept_ack_is_not_promoted_for_a_later_attempt_folded_into_the_same_turn(self):
+        """Review 4 of 8c876676: attempt 1 was uncertain when the parent acknowledged from its
+        running turn, then settled as a confirmed pre-send rejection; attempt 2's message was
+        folded into that same running turn. The acknowledgement predates attempt 2's send."""
+        event_id, first = self.folded_delivery(message=False)
+        self.ack.acknowledge(event_id, ack_turn_id="folded",
+                             ack_proof=identity.ack_proof(event_id, "folded"), accepted=True,
+                             adapter=None)
+        self.adapter.ledger[first] = _pre_send_rejection(first)
+        self.reconciler.reconcile_attempt(first, self.adapter)
+        self.clock.advance(100000)
+        self.adapter.script("in_progress")
+        second = self.attempt(event_id, now=self.clock.now())["requestId"]
+        self.adapter.threads[PARENT].items.append(("folded", f"requestId: {second}"))
+        self.clock.advance(5)
+        self.daemon.tick()
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        row = self.ack_row(event_id)
+        self.assertEqual((row["verified"], row["last_reason"]),
+                         ("unverified_turn", "ack_predates_attempt"))
+        self.assertEqual(self.next_action(), "parent_reacknowledges")
+        # A new acknowledgement from the same turn answers attempt 2.
+        self.assertEqual(self.cli_ack(event_id, "folded")["_verified"], "verified")
+        self.assertEqual(self.delivery_row(event_id)["state"], ACKNOWLEDGED)
+
+    def test_manual_verify_acks_confirms_a_kept_acks_delivery_through_its_turn(self):
+        """Devin on 8c876676: verify-acks from a process with host access confirms a kept
+        acknowledgement's delivery through its turn, as the daemon's pass does."""
+        from types import SimpleNamespace
+
+        from codex_session_relay import cli
+
+        event_id, _request_id = self.folded_delivery(earlier=10, later=250)
+        self.ack.acknowledge(event_id, ack_turn_id="folded",
+                             ack_proof=identity.ack_proof(event_id, "folded"), accepted=True,
+                             adapter=None)
+        services = self.services()
+        services.adapter_requested = True
+        cli.cmd_verify_acks(services, SimpleNamespace(limit=8))
+        self.assertEqual(self.delivery_row(event_id)["state"], ACKNOWLEDGED)
+
+
 def _pages(*pages):
     """A thread/turns/list answer per call, newest first, chained by cursor."""
     calls = []
@@ -997,6 +1851,83 @@ class TheAdapterLooksBackOnlyToTheSend(unittest.TestCase):
         self.assertEqual(calls[0], {"threadId": "thread", "limit": 2, "itemsView": "notLoaded",
                                     "sortDirection": "desc"})
 
+    def test_a_match_reads_on_to_the_first_turn_older_than_the_send(self):
+        call, calls = _pages([_turn("newer", SENT_AT + 30), _turn("wanted", SENT_AT + 1)],
+                             [_turn("between", SENT_AT - 10), _turn("before", SENT_AT - 600)],
+                             [_turn("older", SENT_AT - 900)])
+        presence = self.lookup(call)
+        self.assertEqual((presence.finding, presence.turn.turn_id, presence.scanned),
+                         ("present", "wanted", 2))
+        self.assertEqual(presence.older, ("before",))
+        self.assertEqual(len(calls), 2)
+
+    def test_a_failure_reading_on_after_a_match_keeps_the_match(self):
+        first = [_turn("newer", SENT_AT + 30), _turn("wanted", SENT_AT + 1)]
+
+        def call(method, params):
+            if params.get("cursor"):
+                raise HostUnavailable("the next page could not be read")
+            return {"data": first, "nextCursor": "1"}
+
+        presence = self.lookup(call)
+        self.assertEqual((presence.finding, presence.turn.turn_id, presence.older),
+                         ("present", "wanted", ()))
+
+    def test_the_in_turn_read_asks_for_that_turns_items_oldest_first(self):
+        calls = []
+
+        def call(method, params):
+            calls.append((method, dict(params)))
+            return {"data": [_item("t1", "userMessage", "requestId: tok")], "nextCursor": None}
+
+        scan = BridgeHostAdapter(call=call, page=2).find_token_in_turn("thread", "tok", turn_id="t1")
+        self.assertTrue(scan.found)
+        self.assertEqual(calls, [("thread/items/list", {"threadId": "thread", "turnId": "t1",
+                                                         "sortDirection": "asc", "limit": 2})])
+
+    def test_the_in_turn_read_counts_only_that_turns_user_message(self):
+        def call(method, params):
+            return {"data": [_item("other", "userMessage", "requestId: tok"),
+                             _item("t1", "commandExecution", "requestId: tok")],
+                    "nextCursor": None}
+
+        scan = BridgeHostAdapter(call=call, page=8).find_token_in_turn("thread", "tok", turn_id="t1")
+        self.assertFalse(scan.found)
+        self.assertTrue(scan.exhausted)
+
+    def test_the_thread_reads_tell_the_message_from_agent_output(self):
+        items = [_item("t2", "commandExecution", "del-x-a1"), _item("t2", "hookPrompt", "del-x-a1")]
+
+        def call(method, params):
+            return {"data": items, "nextCursor": None}
+
+        adapter = BridgeHostAdapter(call=call, page=8)
+        self.assertFalse(adapter.find_token("thread", "del-x-a1", message_only=True).found)
+        self.assertTrue(adapter.find_token("thread", "del-x-a1").found)
+        # Neither the message nor agent output: named, and taken for neither.
+        prompted = adapter.find_token_since("thread", "del-x-a1", older=())
+        self.assertFalse(prompted.found)
+        self.assertEqual((prompted.other_turn, prompted.other_kind), ("t2", "hookPrompt"))
+        # Agent output of every kind the host names is passed over, a written file included.
+        items[1] = _item("t2", "fileChange", "del-x-a1")
+        written = adapter.find_token_since("thread", "del-x-a1", older=())
+        self.assertFalse(written.found)
+        self.assertIsNone(written.other_kind)
+        # The message itself still counts behind an item of a type the relay does not know.
+        items[:] = [_item("t2", "someLaterKind", "del-x-a1"), _item("t1", "userMessage", "del-x-a1")]
+        self.assertTrue(adapter.find_token_since("thread", "del-x-a1", older=()).found)
+
+
+def _item(turn_id, kind, text):
+    if kind == "userMessage":
+        item = {"type": kind, "id": "i", "content": [{"type": "text", "text": text}]}
+    elif kind == "commandExecution":
+        item = {"type": kind, "id": "i", "aggregatedOutput": text}
+    elif kind == "agentMessage":
+        item = {"type": kind, "id": "i", "text": text}
+    else:
+        item = {"type": kind, "id": "i", "fragments": [{"text": text}]}
+    return {"turnId": turn_id, "item": item}
 
 if __name__ == "__main__":
     unittest.main()
