@@ -183,12 +183,18 @@ class AnUnknownSendTheHostKeptNoTraceOf(UnknownSendCase):
         self.assertEqual(self.ack_row(event_id)["last_reason"], "delivery_unconfirmed")
         self.clock.advance(120)
         outcome = self.reconciler.reconcile_attempt(first, self.adapter)
-        self.assertEqual((outcome["state"], outcome.get("redelivery")),
-                         (HELD_UNCERTAIN, "not_moved"))
+        # Independent review of 668890b0: not sent again, and not left as a wait the daemon will
+        # end either - held for the parent, named.
+        self.assertEqual((outcome["state"], outcome.get("nextExpectedAction")),
+                         (HELD_UNCERTAIN, "parent_recovers_unknown_send_undecided"))
         self.assertNotIn("changed", outcome)
-        self.assertEqual(self.delivery_row(event_id)["state"], HELD_UNCERTAIN)
+        row = self.delivery_row(event_id)
+        self.assertEqual((row["state"], row["hold_reason"]), (HELD_UNCERTAIN, UNDECIDED))
+        self.assertEqual(self.completion_delivery().get("turnCheck"),
+                         f"{UNDECIDED}:acknowledged_without_trace")
         self.ticks(2)
         self.assertEqual(len(self.adapter.sends), 1)
+        self.assertIn((faults.OPEN, faults.BROKEN), self.fault_states())
 
     def test_reconcile_names_the_loss_and_the_actor_that_moves_it_without_sending(self):
         event_id, first = self.unknown_send()
@@ -208,6 +214,25 @@ class AnUnknownSendTheHostKeptNoTraceOf(UnknownSendCase):
                          ("redelivering:unknown_send_lost", "redelivering:unknown_send_lost"))
         self.assertEqual(self.next_action(), "daemon_redelivers_unknown_send_lost")
         self.assertEqual(self.completion_delivery().get("unknownSendLostAttempts"), 1)
+
+    def test_dispositions_does_not_say_nothing_was_sent_after_a_loss(self):
+        """Independent review of 668890b0: the queued row after a loss read not_sent, 'nothing
+        has been sent yet', beside a current attempt recorded unknown_send_lost."""
+        from codex_session_relay import dispositions
+        from codex_session_relay.store import resolve_state_dir
+
+        event_id, first = self.unknown_send()
+        self.clock.advance(120)
+        self.reconciler.reconcile_attempt(first, self.adapter)
+        answer = dispositions.read(resolve_state_dir(os.path.dirname(str(self.store.path))),
+                                   relationship_id=self._rid)
+        child = answer["children"][0]
+        delivery = next(event["delivery"] for event in child["events"]
+                        if event["eventId"] == event_id)
+        self.assertEqual((delivery["observation"], delivery["currentAttempt"]["state"]),
+                         ("not_sent", UNKNOWN_LOST))
+        self.assertNotIn("nothing has been sent", delivery["detail"])
+        self.assertIn(UNKNOWN_LOST, delivery["detail"])
 
     def test_reconciling_a_lost_attempt_again_reports_it_and_changes_nothing(self):
         event_id, first = self.unknown_send()
@@ -310,6 +335,28 @@ class AnUnknownSendTheHostKeptNoTraceOf(UnknownSendCase):
         self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
         self.ticks(3)
         self.assertEqual(self.attempt_states(event_id), [HELD_UNCERTAIN])
+        self.assertEqual(len(self.adapter.sends), 1)
+
+    def test_a_send_folded_into_a_turn_begun_just_before_it_is_found_there(self):
+        """Independent review of 668890b0: a turn begun inside the allowance before the send is
+        read by the since-send scan only as far as its bound, and the message it took sat behind
+        205 later items of the same turn."""
+        self.parent_history()
+        _relationship, event_id = self.queued_event()
+        self.adapter.start_turn(PARENT, turn_id="just-before", status="inProgress")
+        self.clock.advance(10)
+        self.adapter.script("transport_unknown")
+        first = self.attempt(event_id)["requestId"]
+        thread = self.adapter.threads[PARENT]
+        thread.items.append(("just-before", f"[codex-session-relay] verification request\n"
+                                            f"requestId: {first}"))
+        thread.items.extend(("just-before", f"later work {n}", "commandExecution")
+                            for n in range(205))
+        self.adapter.finish_turn(PARENT, "just-before", "completed")
+        self.restart_host()
+        self.ticks(1)
+        self.assertEqual(self.evidence_of(event_id), ["turn_found"])
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
         self.assertEqual(len(self.adapter.sends), 1)
 
     def test_an_older_turn_still_running_holds_the_decision(self):
@@ -732,6 +779,29 @@ class TheHourlyCapIsNamedWithItsReopenTime(UnknownSendCase):
         self.assertEqual(view.state(self._rid)["nextExpectedAction"],
                          "operator_changes_send_policy")
         self.assertEqual(self.adapter.sends, [])
+
+    def test_a_zero_cap_names_the_operator_for_a_correction_and_for_reconcile(self):
+        """Independent review of 668890b0: the correction's answer and reconcile's redelivery
+        answer still named the daemon under a cap of zero."""
+        from codex_session_relay.assignment import AssignmentView
+        from codex_session_relay.delivery import DeliveryService
+        from codex_session_relay.policy import RetryPolicy
+        from codex_session_relay.reconcile import Reconciler
+
+        _completion, correction = self.correction_after_needs_changes()
+        policy = RetryPolicy(max_sends_per_recipient_per_hour=0)
+        view = AssignmentView(self.store, self.registry, self.clock, policy=policy)
+        self.assertEqual(view.state(self._rid)["nextExpectedAction"],
+                         "operator_changes_send_policy")
+        # A completion lost to an uncertain send and queued again, under the same policy.
+        event_id, first = self.unknown_send()
+        self.clock.advance(120)
+        delivery = DeliveryService(self.store, self.registry, self.intake, self.clock,
+                                   policy=policy)
+        outcome = Reconciler(self.store, self.registry, delivery, self.clock).reconcile_attempt(
+            first, self.adapter)
+        self.assertEqual((outcome["state"], outcome.get("nextExpectedAction")),
+                         (UNKNOWN_LOST, "operator_changes_send_policy"))
 
     def test_assignment_show_reads_the_budget_the_delivery_service_paces_by(self):
         from types import SimpleNamespace
