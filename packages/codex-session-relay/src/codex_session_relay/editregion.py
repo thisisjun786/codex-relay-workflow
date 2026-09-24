@@ -15,9 +15,10 @@ when two share an injected clock's instant.
 A base move reaches an agreement only when a party records it (CRW-237). Nothing here watches a
 branch, and merge-turn-land records no revision mark: a mark is append-only with one successor
 per revision, while a landing's recorded base can still be corrected, so a mark written from a
-wrong reading could never be taken back. A registered parent of a project holding an agreement in
-the repository records the move, from the end of the recorded chain; until somebody does, a late
-acceptance on the older tree stands.
+wrong reading could never be taken back. A registered parent of a project with an agreement in the
+repository, open or closed (_check_restater reads that history, not the agreement being moved),
+records the move from the end of the recorded chain; until somebody does, a late acceptance on the
+older tree stands.
 
 Carrying an agreement onto the newer tree keeps what was agreed. The successor keeps its proposer,
 its constraint and both sides' conditions, whichever side carries it; the carrying side may
@@ -441,7 +442,10 @@ class EditRegions:
                 "a " + region_kind + " region "
                 + ("names the symbol or data key it covers" if region_kind in KEYED
                    else "covers the whole path and takes no key"))
-        if self._owned_side(low, high, proposer_task_id) is None:
+        if carry is None and self._owned_side(low, high, proposer_task_id) is None:
+            # A carry's ownership is decided inside its transaction instead (the "no longer
+            # owns" branch below), where the refusal is recorded: reaffirm validated ownership a
+            # transaction earlier, and a handover in between used to be refused here, unrecorded.
             raise CoordinationError(
                 RefusalReason.SCOPE_ROLE_MISMATCH,
                 "task " + repr(proposer_task_id) + " is the registered parent of neither "

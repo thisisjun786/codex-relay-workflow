@@ -606,8 +606,10 @@ and records no revision mark. A mark is append-only with one successor per revis
 landing's recorded base can still be corrected with `merge-turn-restate-base`; a mark written from
 a wrong reading could never be taken back.
 
-**Who records a move, and when.** A registered parent of a project holding an agreement in that
-repository records it once it has read the landed base, from its own `merge-turn-land` answer or from
+**Who records a move, and when.** The relay accepts a move from the registered parent of any
+project with an agreement in that repository, open or closed: it checks that history, not the
+agreement being moved, and a move reopens every agreement standing on that revision. In practice a
+party to those agreements records it once it has read the landed base, from its own `merge-turn-land` answer or from
 `merge-turn-show`, and before it answers, relies on, or asks its peer to act on an agreement
 standing on the older revision. When the landing parent is a party it records the move right after
 landing; otherwise the party that reads the landing in its next pass does. Either party may, and a

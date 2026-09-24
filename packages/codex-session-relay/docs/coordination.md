@@ -164,8 +164,9 @@ A region carries the revision it was proposed on, so an agreement is about a pla
 Nothing here watches a branch, and `merge-turn-land` records no revision mark: a mark is
 append-only with one successor per revision, while a landing's recorded base can still be
 corrected with `merge-turn-restate-base` (see above), so a mark written from a wrong reading could
-never be taken back. A registered parent of a project holding an agreement in the repository
-records the move with `region-restate-revision` once it has read the landed base, and before it
+never be taken back. A registered parent of any project with an agreement in the repository, open
+or closed (the check reads that history, not the agreement being moved), records the move with
+`region-restate-revision` once it has read the landed base, and before it
 answers or relies on an agreement standing on the older tree. Until somebody does, a late
 acceptance on the older tree stands; that is the contract, not an oversight.
 

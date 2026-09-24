@@ -866,6 +866,27 @@ class AReaffirmationCarriesWhatWasAgreed(EditRegionTestCase):
             self.store.all(
                 "SELECT * FROM edit_agreements WHERE base_revision = 'rev-2'", ()), [])
 
+    def test_a_handover_while_carrying_is_refused_recorded_and_keeps_the_predecessor(self):
+        """Third review: the carrier lost its project between validation and write, and the
+        refusal was raised before the write transaction, so nothing recorded it."""
+        record = self.proposed_by_beta()
+        self.moved("rev-2")
+        self.racing(lambda: self.linkage.handover(
+            role=PARENT, scope_key="PRJ-A", expect_task_id=self.alpha.task_id,
+            endpoint=Endpoint("task-alpha-next", "host-a"), acknowledged=[],
+            evidence="project A changed hands during the carry", actor="test"))
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.reaffirm(
+                record["agreementId"], actor=self.alpha.task_id, base_revision="rev-2")
+        self.assertEqual(caught.exception.reason, RefusalReason.SCOPE_ROLE_MISMATCH)
+        still = self.regions.agreement(record["agreementId"])
+        self.assertEqual((still["state"], still["supersededBy"]), ("reopened", None))
+        self.assertEqual(self.carries(), [])
+        contests = self.regions.show(repository=REPO)["conflicts"]
+        self.assertEqual(
+            [c["challenger"] for c in contests if c["reason"] == "scope_role_mismatch"],
+            [self.alpha.task_id], "the refusal was recorded, not only raised")
+
     def test_an_acceptance_carrying_a_condition_is_refused_rather_than_dropped(self):
         original = self.proposed_by_beta()
         with self.assertRaises(CoordinationError) as caught:
