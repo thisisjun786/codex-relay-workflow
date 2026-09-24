@@ -981,6 +981,30 @@ class ABaseMoveChainsFromTheLastRecordedRevision(EditRegionTestCase):
         self.assertEqual(
             (moved["alreadyRecorded"], moved["currentRevision"]), (False, "other-2"))
 
+    def test_a_closed_agreement_does_not_make_its_revision_a_starting_point(self):
+        """Second review: a withdrawn agreement's revision let the wrong move start anyway.
+
+        The live agreement's chain stayed where it was, so its late acceptance went through on a
+        tree that had moved.
+        """
+        closed = self.propose("src/old.py", revision="closed-1")
+        self.regions.settle(
+            closed["agreementId"], actor=self.alpha.task_id, disposition="withdrawn")
+        live = self.propose("src/a.py")
+        self.regions.restate_revision(
+            repository=REPO, from_revision=REV, to_revision="rev-2", actor=self.alpha.task_id)
+        successor = self.regions.reaffirm(
+            live["agreementId"], actor=self.alpha.task_id, base_revision="rev-2")
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.restate_revision(
+                repository=REPO, from_revision="closed-1", to_revision="rev-3",
+                actor=self.alpha.task_id)
+        self.assertEqual(caught.exception.reason, RefusalReason.AGREEMENT_REVISION_STALE)
+        self.assertIn("'rev-2'", caught.exception.detail)
+        self.assertEqual(len(self.store.all("SELECT * FROM edit_revision_marks", ())), 1)
+        self.assertEqual(
+            self.regions.agreement(successor["agreementId"])["currentRevision"], "rev-2")
+
 
 class TwoPairsProposingOverlappingRegionsAtOnce(EditRegionTestCase):
     """One independent Store per thread, a barrier, bounded joins, errors collected.

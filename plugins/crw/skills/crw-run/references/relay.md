@@ -620,8 +620,9 @@ relay closes for you.
 revision; every later move is recorded from the end of the recorded chain, never from the
 proposal's revision again. `region-show` gives each agreement its `currentRevision`, the end of the
 chain from its own revision, and a refused restatement names that end and the command to run from
-it. A move from a revision no agreement stands on and no recorded move reaches is refused too,
-naming where the chains end: it would start a chain no agreement follows.
+it. A move from a revision no live agreement stands on and no recorded move reaches is refused
+too, naming where the chains end: it would start a chain no agreement follows. A closed agreement
+stands nowhere.
 
 **After a move.** Settling an agreement whose revision was restated is refused as
 `agreement_revision_stale`, and the refusal names the end of the chain and the `region-reaffirm`

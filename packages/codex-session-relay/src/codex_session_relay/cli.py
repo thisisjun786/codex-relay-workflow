@@ -5319,7 +5319,7 @@ def build_parser() -> argparse.ArgumentParser:
                     " the end of the recorded chain, which region-show reports as"
                     " currentRevision and a refusal names. A move the chain already holds"
                     " answers alreadyRecorded and writes no new mark; a move from a revision"
-                    " no agreement stands on and no recorded move reaches is refused.")
+                    " no live agreement stands on and no recorded move reaches is refused.")
     region_restate.add_argument("--repository", required=True)
     region_restate.add_argument("--from-revision", required=True,
                                 help="the end of the recorded chain: the proposal's revision"

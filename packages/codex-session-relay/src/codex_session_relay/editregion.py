@@ -950,11 +950,15 @@ class EditRegions:
 
         One successor per revision stops a second chain from the SAME revision and nothing
         stopped one from a revision nobody stands on: after A->B, recording C->D instead of B->D
-        succeeded, and the move never reached the agreement on A (CRW-237 review). A repository
-        with neither an agreement nor a mark keeps the first restatement _check_restater allows.
+        succeeded, and the move never reached the agreement on A (CRW-237 review). Only a LIVE
+        agreement stands anywhere: counting a withdrawn one let the same wrong move start from
+        the closed agreement's revision (second review). A repository with neither a live
+        agreement nor a mark keeps the first restatement _check_restater allows.
         """
         bases = {row["base_revision"] for row in db.execute(
-            "SELECT DISTINCT base_revision FROM edit_agreements WHERE repository = ?",
+            "SELECT DISTINCT base_revision FROM edit_agreements"
+            "  WHERE repository = ? AND state IN ('proposed','agreed','reopened')"
+            "    AND superseded_by IS NULL",
             (repository,)).fetchall()}
         successors = self._successor_map(db.execute(MARKS, (repository,)).fetchall())
         if not bases and not successors:
@@ -965,10 +969,10 @@ class EditRegions:
                       | {end for end in successors.values() if end not in successors})
         return Refusal(
             RefusalReason.AGREEMENT_REVISION_STALE,
-            "no agreement in " + repr(repository) + " stands on " + repr(revision) + " and no"
+            "no live agreement in " + repr(repository) + " stands on " + repr(revision) + " and no"
             " recorded move reaches it, so a move from it would start a chain no agreement"
-            " follows. A first move starts at an agreement's revision and a later one at the end"
-            " of its recorded chain; the chains here end at " + repr(ends),
+            " follows. A first move starts at a live agreement's revision and a later one at the"
+            " end of its recorded chain; the chains here end at " + repr(ends),
             domain=DOMAIN_EDIT_REGION, subject=repository, incumbent=",".join(ends),
             challenger=revision)
 

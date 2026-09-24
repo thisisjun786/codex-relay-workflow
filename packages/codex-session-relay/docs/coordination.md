@@ -173,10 +173,10 @@ One revision has one successor, so only the first move starts at the proposal's 
 later move starts at the end of the recorded chain, which `region-show` reports per agreement as
 `currentRevision` and which a refused restatement names with the command to run. A move the chain
 already holds answers `alreadyRecorded` and writes no mark; like any restatement it is journalled
-and reopens an agreement proposed on the older revision since. A move from a revision no agreement
-stands on and no recorded move reaches is refused, naming where the chains end, because it would
-start a chain no agreement follows; a repository with neither an agreement nor a mark still takes
-its first one.
+and reopens an agreement proposed on the older revision since. A move from a revision no live
+agreement stands on and no recorded move reaches is refused, naming where the chains end, because
+it would start a chain no agreement follows; a closed agreement stands nowhere, and a repository
+with neither a live agreement nor a mark still takes its first one.
 
 After a move, settling an agreement on the older revision is refused as
 `agreement_revision_stale`, naming the chain's end, and either side carries it there with
