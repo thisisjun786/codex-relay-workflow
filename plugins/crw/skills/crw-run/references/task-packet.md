@@ -433,8 +433,9 @@ A correction arriving twice is applied once. The ledger keeps each answered mess
 the content it asked for and whether you recorded acting on it, so a repeat is answered from
 today's reading with the earlier disposition beside it, while one id asking for something
 different is refused as a collision. An accepted answer is not an applied one: `act` stays
-true on a repeat until you record the application with `--applied`, so a check you made just
-before a restart does not lose the instruction. If you stopped after acting but before
+true on a repeat until you record the application with `--applied` (while the relationship
+is paused it is held instead, as above), so a check you made just before a restart does not
+lose the instruction. If you stopped after acting but before
 recording it, read your own work first; where the instruction is already in it, record it
 applied instead of acting again. The ledger also keeps the mode the accepted assignment gave,
 which is how a later resume or report is checked against it.

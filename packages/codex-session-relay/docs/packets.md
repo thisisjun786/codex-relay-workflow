@@ -331,8 +331,8 @@ which reads no store and is refused unless this ledger answered this very packet
 content) as accepted and some check of it said `act`: a packet only ever answered held, as
 on a paused relationship, told the receiver not to act, so it has nothing applied to record,
 while a held replay after an `act` does not take back what the receiver was already told. `act`
-is true when today's answer is accepted and no application is
-recorded. So a receiver that checked and then stopped before acting gets the instruction back
+is true when a ledger was named, today's answer is accepted, no application is recorded and
+the relationship is not paused (below). So a receiver that checked and then stopped before acting gets the instruction back
 on the next arrival rather than losing it, and a correction applied once is not applied again.
 Nothing is acted on while the relationship is paused: the packet is current and accepted, but
 `act` is false and `actHeld` says it waits for `relationship-resume`, because nothing proceeds
