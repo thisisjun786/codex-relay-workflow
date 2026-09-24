@@ -45,6 +45,11 @@ def a_row(**overrides) -> dict:
         "attempt_state": None, "attempt_sent_at": None,
         "ack_event": None, "ack_accepted": None, "ack_rejection": None, "ack_verified": None,
         "ack_evidence_event": None, "ack_tier": None,
+        "superseded_by": None, "correction_event": None, "correction_state": None,
+        "correction_attempts": None, "correction_hold": None,
+        "correction_next_eligible_at": None, "correction_lifecycle_withhold": None,
+        "correction_lifecycle_recorded_at": None, "correction_lifecycle_next_retry_at": None,
+        "correction_supersession_reason": None, "correction_supersession_applied": None,
     }
     row.update(overrides)
     return row
@@ -659,6 +664,119 @@ class TheCommand(DeliveryTestCase):
         self.assertIn("dispositions-show", OFFLINE_COMMANDS)
 
 
+def a_correction(state="withheld_pre_send", **overrides) -> dict:
+    """A child row carrying its generation's correction, which the relay sent or did not."""
+    base = {
+        "correction_event": "rev-1", "correction_state": state, "correction_attempts": 0,
+        "correction_next_eligible_at": 1790000060.0,
+    }
+    base.update(overrides)
+    return a_row(**base)
+
+
+LIFECYCLE_RECORD = {
+    "correction_lifecycle_withhold": "lifecycle_unknown",
+    "correction_lifecycle_recorded_at": "2026-09-24T04:51:46.594000+00:00",
+    "correction_lifecycle_next_retry_at": 1790000060.0,
+}
+
+
+class TheCorrectionBlock(unittest.TestCase):
+    """CRW-222: the correction a verdict queued is relay-produced, so it is not in events.
+
+    In CRW-5 c6 this reader showed a generation-2 child with no events and every count 0 while
+    its correction sat withheld as lifecycle_unknown. The block says whether the correction went
+    out and, when it did not, why.
+    """
+
+    def test_a_child_without_a_correction_has_none_and_counts_nothing(self):
+        answer = derived([a_row()])
+        self.assertIsNone(answer["children"][0]["correction"])
+        self.assertEqual(answer["counts"]["correctionNotSent"], 0)
+        self.assertEqual(answer["counts"]["correctionWithheld"], 0)
+
+    def test_a_correction_withheld_by_the_lifecycle_is_named(self):
+        answer = derived([a_correction(**LIFECYCLE_RECORD)])
+        correction = answer["children"][0]["correction"]
+        self.assertEqual(correction["eventId"], "rev-1")
+        self.assertEqual(correction["delivery"]["observation"], "not_sent")
+        self.assertEqual(correction["delivery"]["state"], "withheld_pre_send")
+        self.assertEqual(correction["undeliveredReason"]["source"],
+                         "failed_operations.lifecycle_read")
+        self.assertEqual(correction["undeliveredReason"]["value"], "lifecycle_unknown")
+        self.assertEqual(answer["counts"]["correctionNotSent"], 1)
+        self.assertEqual(answer["counts"]["correctionWithheld"], 1)
+
+    def test_a_withheld_correction_without_a_lifecycle_record_is_still_counted(self):
+        answer = derived([a_correction()])
+        self.assertIsNone(answer["children"][0]["correction"]["undeliveredReason"])
+        self.assertEqual(answer["counts"]["correctionWithheld"], 1)
+
+    def test_a_busy_deferral_is_not_sent_but_not_withheld(self):
+        answer = derived([a_correction("deferred_busy")])
+        self.assertEqual(answer["counts"]["correctionNotSent"], 1)
+        self.assertEqual(answer["counts"]["correctionWithheld"], 0)
+
+    def test_a_paused_assignment_names_the_relationship(self):
+        child = only_child([a_correction(relationship_status="paused")])
+        self.assertEqual(child["correction"]["undeliveredReason"]["value"],
+                         "relationship_not_active")
+
+    def test_a_superseded_assignment_is_not_called_merely_inactive(self):
+        child = only_child([a_correction(relationship_status="archived",
+                                         superseded_by="rel-2")])
+        self.assertIsNone(child["correction"]["undeliveredReason"])
+
+    def test_a_held_correction_names_its_hold(self):
+        child = only_child([a_correction(correction_hold="attempt_cap")])
+        self.assertEqual(child["correction"]["undeliveredReason"],
+                         {"source": "deliveries.hold_reason", "value": "attempt_cap"})
+
+    def test_a_dispatched_correction_has_no_reason(self):
+        answer = derived([a_correction("dispatched", correction_attempts=1)])
+        correction = answer["children"][0]["correction"]
+        self.assertEqual(correction["delivery"]["observation"], "dispatched")
+        self.assertIsNone(correction["undeliveredReason"])
+        self.assertEqual(answer["counts"]["correctionNotSent"], 0)
+
+    def test_a_state_this_reader_has_no_word_for_is_said_so(self):
+        child = only_child([a_correction("teleported")])
+        self.assertEqual(child["correction"]["delivery"]["observation"], "state_unrecognised")
+
+    def test_a_correction_the_child_already_answered_is_superseded_and_not_counted(self):
+        """A supersession note outranks the state, as it does for events."""
+        answer = derived([a_correction(
+            **LIFECYCLE_RECORD, correction_supersession_reason="superseded_revision",
+            correction_supersession_applied=0)])
+        correction = answer["children"][0]["correction"]
+        self.assertEqual(correction["delivery"]["observation"], "superseded")
+        self.assertEqual(correction["delivery"]["state"], "withheld_pre_send")
+        self.assertEqual(correction["delivery"]["supersession"],
+                         {"reason": "superseded_revision", "applied": False})
+        self.assertEqual(answer["counts"]["correctionNotSent"], 0)
+        self.assertEqual(answer["counts"]["correctionWithheld"], 0)
+
+
+class TheCorrectionAgainstARealStore(DeliveryTestCase):
+    """The c6 shape against what the relay writes: an archived child's correction, withheld."""
+
+    def test_a_withheld_correction_is_listed_with_its_reason(self):
+        from codex_session_relay.lifecycle import ARCHIVED
+
+        self.selection = resolve_state_dir(os.path.join(self.tmp, "state"))
+        _completion, correction = self.correction_after_needs_changes()
+        self.adapter.threads[CHILD].archived = True
+        self.assertIsNone(self.attempt(correction))
+        self.clock.advance(1)
+        answer = dispositions.read(self.selection, relationship_id=self._rid)
+        self.assertTrue(answer["readable"], answer["detail"])
+        child = answer["children"][0]
+        self.assertEqual(child["correction"]["eventId"], correction)
+        self.assertEqual(child["correction"]["delivery"]["observation"], "not_sent")
+        self.assertEqual(child["correction"]["undeliveredReason"]["value"], ARCHIVED)
+        self.assertEqual(answer["counts"]["correctionNotSent"], 1)
+        self.assertEqual(answer["counts"]["correctionWithheld"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
-

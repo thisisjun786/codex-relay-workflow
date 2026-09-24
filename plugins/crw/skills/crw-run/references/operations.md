@@ -1095,7 +1095,8 @@ OPS-8.2, without consuming the budget above, and no part of this clause resumes 
 The two are not recorded alike, and the readiness check in [Start policy](start-policy.md) reads
 this scope's failure records, so the difference is one a parent acts on. A withhold caused by the
 RECIPIENT's own state does write a failure record, under `lifecycle_read` with the withhold reason
-as its code, because that is a host condition somebody may need to see. A withhold caused by the
+as its code and the assignment's relationship and parent on it, because that is a host condition
+somebody may need to see. A withhold caused by the
 ASSIGNMENT's status does not: somebody stopping their own work is not a service fault, and
 recording one would have a parent stand down over a deliberate act.
 

@@ -87,6 +87,14 @@ class AssignmentStates(AssignmentTestCase):
             findings=[{"id": "c1", "verdict": "needs_changes", "note": "fix the shape"}],
         )
         self.assertEqual(self.state(), NEEDS_CHANGES)
+        # The verdict queued the correction in its own transaction and nothing has sent it, so
+        # what happens next is the relay delivering it, not the child correcting.
+        self.assertEqual(
+            self.assignments.state(self._rid)["nextExpectedAction"], "daemon_delivers_correction"
+        )
+        correction = self.assignments.state(self._rid)["projection"]["correction"]["eventId"]
+        self.clock.advance(1)
+        self.attempt(correction)
         self.assertEqual(
             self.assignments.state(self._rid)["nextExpectedAction"], "child_corrects"
         )
@@ -631,3 +639,278 @@ class TheAxesStayApart(AssignmentTestCase):
         self.assertEqual(anchored["delivery"]["state"], "dispatched")
         self.assertEqual(anchored["event"]["stage"], "final")
         self.assertIsNotNone(anchored["ack"])
+
+
+
+class UnsentCorrection(AssignmentTestCase):
+    """CRW-222: a correction the child never received is not reported as the child's to make.
+
+    In CRW-5 c6 the relay withheld the correction every minute as lifecycle_unknown while
+    assignment-show said child_corrects with undeliveredReason null. The clock moves between
+    transitions throughout, as a real clock does between two transactions.
+    """
+
+    LIFECYCLE_SOURCE = "failed_operations.lifecycle_read"
+
+    def setUp(self):
+        super().setUp()
+        self._completion, self.correction = self.correction_after_needs_changes()
+
+    def read(self):
+        record = self.assignments.state(self._rid)
+        return record, record["projection"]["correction"]
+
+    def withhold(self):
+        self.assertIsNone(self.attempt(self.correction))
+        self.clock.advance(1)
+
+    def test_a_correction_withheld_for_an_archived_child_names_the_withhold(self):
+        from codex_session_relay.lifecycle import ARCHIVED
+
+        self.adapter.threads[CHILD].archived = True
+        self.withhold()
+        record, correction = self.read()
+        self.assertEqual(record["state"], NEEDS_CHANGES)
+        self.assertEqual(record["nextExpectedAction"], "daemon_delivers_correction")
+        self.assertEqual(correction["delivery"]["state"], "withheld_pre_send")
+        reason = correction["undeliveredReason"]
+        self.assertEqual(reason["source"], self.LIFECYCLE_SOURCE)
+        self.assertEqual(reason["value"], ARCHIVED)
+        delivery = self.delivery_row(self.correction)
+        self.assertEqual(reason["recordedAt"], delivery["updated_at"])
+        self.assertEqual(reason["nextRetryAt"], delivery["next_eligible_at"])
+
+    def test_an_archive_state_that_cannot_be_read_is_named_lifecycle_unknown(self):
+        from codex_session_relay.lifecycle import UNKNOWN
+
+        self.adapter.fail_reads("is_archived")
+        self.withhold()
+        record, correction = self.read()
+        self.assertEqual(record["nextExpectedAction"], "daemon_delivers_correction")
+        self.assertEqual(correction["undeliveredReason"]["value"], UNKNOWN)
+
+    def test_a_freshly_queued_correction_waits_on_the_relay_with_no_reason_yet(self):
+        record, correction = self.read()
+        self.assertEqual(correction["delivery"]["state"], "queued")
+        self.assertEqual(record["nextExpectedAction"], "daemon_delivers_correction")
+        self.assertIsNone(correction["undeliveredReason"])
+
+    def test_a_dispatched_correction_is_the_childs_to_act_on(self):
+        self.adapter.threads[CHILD].archived = True
+        self.withhold()
+        self.adapter.threads[CHILD].archived = False
+        self.clock.advance(self.delivery.policy.lifecycle_recheck_seconds + 1)
+        record = self.attempt(self.correction, now=self.clock.now())
+        self.assertEqual(record["deliveryState"], "dispatched")
+        record, correction = self.read()
+        self.assertEqual(record["nextExpectedAction"], "child_corrects")
+        self.assertIsNone(correction["undeliveredReason"])
+
+    def test_a_later_settings_withhold_is_not_reported_as_the_lifecycle(self):
+        self.adapter.threads[CHILD].archived = True
+        self.withhold()
+        self.adapter.threads[CHILD].archived = False
+        self.store.db.execute("DELETE FROM authorized_settings WHERE task_id = ?", (CHILD,))
+        self.store.db.commit()
+        self.clock.advance(self.delivery.policy.lifecycle_recheck_seconds + 1)
+        self.assertIsNone(self.attempt(self.correction, now=self.clock.now()))
+        record, correction = self.read()
+        self.assertEqual(correction["delivery"]["state"], "withheld_pre_send")
+        self.assertEqual(record["nextExpectedAction"], "daemon_delivers_correction")
+        self.assertIsNone(correction["undeliveredReason"])
+
+    def test_a_pause_names_the_relationship_and_a_resume_waits_for_the_next_reading(self):
+        from codex_session_relay.lifecycle import ARCHIVED
+
+        self.adapter.threads[CHILD].archived = True
+        self.withhold()
+        self.registry.set_status(self._rid, "paused", actor="user")
+        self.clock.advance(1)
+        self.attempt(self.correction)
+        record, correction = self.read()
+        self.assertEqual(record["state"], PAUSED)
+        self.assertEqual(correction["undeliveredReason"]["value"], "relationship_not_active")
+        self.assertEqual(correction["undeliveredReason"]["relationshipStatus"], "paused")
+
+        self.clock.advance(1)
+        current = self.registry.get(self._rid)
+        self.registry.resume(
+            self._rid, expect_generation=current["executionGeneration"],
+            expect_artifact_roots=current["authorizedScope"]["artifactRoots"],
+            expect_allowed_recipients=current["authorizedScope"]["allowedRecipients"],
+            actor="user",
+        )
+        _record, correction = self.read()
+        self.assertIsNone(correction["undeliveredReason"],
+                          "the pause set the delivery's current state, not the old reading")
+
+        self.clock.advance(self.delivery.policy.lifecycle_recheck_seconds + 1)
+        self.assertIsNone(self.attempt(self.correction, now=self.clock.now()))
+        _record, correction = self.read()
+        self.assertEqual(correction["undeliveredReason"]["value"], ARCHIVED)
+
+    def test_a_held_correction_is_the_parents_to_recover(self):
+        self.store.db.execute(
+            "UPDATE deliveries SET state = 'withheld_pre_send', hold_reason = 'attempt_cap'"
+            " WHERE event_id = ?",
+            (self.correction,),
+        )
+        self.store.db.commit()
+        record, correction = self.read()
+        self.assertEqual(record["nextExpectedAction"], "parent_recovers_held_correction")
+        self.assertEqual(correction["undeliveredReason"],
+                         {"source": "deliveries.hold_reason", "value": "attempt_cap"})
+
+    def test_a_correction_stored_without_waking_the_child_is_the_parents_to_recover(self):
+        """inbox_only is stored where the child reads it, no turn woken, held and never retried."""
+        self.adapter.threads[CHILD].approval_policy = "on-request"
+        self.adapter.script("approval_policy")
+        self.assertEqual(self.attempt(self.correction)["deliveryState"], "inbox_only")
+        record, correction = self.read()
+        self.assertEqual(record["nextExpectedAction"], "parent_recovers_held_correction")
+        self.assertEqual(correction["undeliveredReason"],
+                         {"source": "deliveries.hold_reason", "value": "push_channel_closed"})
+
+    def test_a_correction_whose_send_is_uncertain_waits_on_the_relay_to_confirm_it(self):
+        self.adapter.script("transport_unknown")
+        self.assertEqual(self.attempt(self.correction)["deliveryState"], "held_uncertain")
+        record, _correction = self.read()
+        self.assertEqual(record["nextExpectedAction"], "daemon_confirms_correction")
+
+    def test_a_correction_claimed_and_not_yet_answered_waits_on_the_relay_to_confirm_it(self):
+        # What a claim leaves while its send is in flight, or after the process stopped mid-send.
+        self.store.db.execute(
+            "UPDATE deliveries SET state = 'sending', attempt_count = attempt_count + 1,"
+            " lease_owner = 'relay', lease_until = ? WHERE event_id = ?",
+            (self.clock.now() + 60, self.correction),
+        )
+        self.store.db.commit()
+        record, correction = self.read()
+        self.assertEqual(correction["delivery"]["state"], "sending")
+        self.assertEqual(record["nextExpectedAction"], "daemon_confirms_correction")
+
+    def test_another_reading_of_the_same_task_does_not_move_this_events_reason(self):
+        from codex_session_relay.lifecycle import ARCHIVED, Lifecycle, record
+
+        self.adapter.threads[CHILD].archived = True
+        self.withhold()
+        # What an observation made for some other delivery to the same task would leave.
+        record(self.store, self.clock,
+               Lifecycle(CHILD, "idle", False, None, True, "yes", None))
+        _record, correction = self.read()
+        self.assertEqual(correction["undeliveredReason"]["value"], ARCHIVED)
+
+    def test_a_correction_the_child_already_answered_is_not_awaiting_delivery(self):
+        """A final child event in the correction's generation supersedes the correction.
+
+        The supersession is noted on the queued delivery, whose state is left alone, and the
+        next attempt suppresses it rather than sending. The relay is not going to deliver it,
+        and the child has already answered, so what is owed next is the parent reading that
+        answer - before the suppression is applied and after it.
+        """
+        failed_event = self._child_answers_with_failure()
+        record, correction = self.read()
+        self.assertEqual(correction["delivery"]["state"], "queued")
+        self.assertIsNotNone(correction["supersession"])
+        self.assertEqual(record["state"], NEEDS_CHANGES)
+        self.assertEqual(record["nextExpectedAction"], "parent_reads_child_disposition")
+
+        self.clock.advance(1)
+        self.attempt(self.correction)
+        record, correction = self.read()
+        self.assertEqual(correction["delivery"]["state"], "superseded")
+        self.assertEqual(record["nextExpectedAction"], "parent_reads_child_disposition")
+        self.assertEqual(self.adapter.sends[-1][1], PARENT,
+                         "the suppressed correction was sent to the child")
+        self.assertIsNotNone(failed_event)
+
+    def _child_answers_with_failure(self):
+        relationship = self.registry.get(self._rid)
+        generation = relationship["executionGeneration"]
+        self.registry.bind_anchor(
+            self._rid, generation, dispatch_turn_id="revision-turn", source="dispatch_receipt",
+        )
+        payload = self.execution_payload(
+            relationship, "failed", generation=generation,
+            turn=self.assigned_turn("failed", turn="revision-turn"),
+        )
+        self.accept(payload)
+        self.delivery.enqueue(payload["eventId"])
+        return payload["eventId"]
+
+    def test_an_identical_stamp_on_another_operation_is_not_guessed(self):
+        self.adapter.threads[CHILD].archived = True
+        self.withhold()
+        lifecycle = self.store.one(
+            "SELECT occurred_at FROM failed_operations WHERE scope_key = ?"
+            " AND operation = 'lifecycle_read'", (self.correction,))
+        self.store.db.execute(
+            "INSERT INTO failed_operations (scope_key, operation, detail, occurred_at,"
+            " next_retry_at) VALUES (?, 'settings_check', 'raw', ?, 1)",
+            (self.correction, lifecycle["occurred_at"]),
+        )
+        self.store.db.commit()
+        _record, correction = self.read()
+        self.assertIsNone(correction["undeliveredReason"])
+
+    def test_a_late_record_of_an_older_attempt_does_not_hide_the_reason(self):
+        """A send attempt's record can commit long after it was claimed, even after a recovery.
+
+        Without a later delivery transition the lifecycle withhold still set the current state.
+        If that old attempt then settles, its transition does, and the reason is not guessed.
+        """
+        from codex_session_relay.lifecycle import ARCHIVED
+
+        self.adapter.threads[CHILD].archived = True
+        self.withhold()
+        self.store.db.execute(
+            "INSERT INTO failed_operations (scope_key, operation, detail, occurred_at)"
+            " VALUES (?, 'thread/resume', 'late', ?)",
+            (self.correction, self.clock.iso()),
+        )
+        self.store.db.commit()
+        _record, correction = self.read()
+        self.assertEqual(correction["undeliveredReason"]["value"], ARCHIVED)
+
+        self.clock.advance(1)
+        self.store.db.execute(
+            "UPDATE deliveries SET next_eligible_at = ?, updated_at = ? WHERE event_id = ?",
+            (self.clock.now() + 60, self.clock.iso(), self.correction),
+        )
+        self.store.db.commit()
+        _record, correction = self.read()
+        self.assertIsNone(correction["undeliveredReason"])
+
+    def test_the_reason_needs_the_withhold_and_its_record_to_share_one_stamp(self):
+        """Two clock reads differ in production; this clock moves on every read to show it."""
+        from codex_session_relay.lifecycle import ARCHIVED
+
+        self.adapter.threads[CHILD].archived = True
+        original = self.clock.iso
+
+        def ticking():
+            self.clock.advance(0.000001)
+            return original()
+
+        self.clock.iso = ticking
+        self.withhold()
+        _record, correction = self.read()
+        self.assertEqual(correction["undeliveredReason"]["value"], ARCHIVED)
+
+    def test_the_correction_is_still_read_in_one_statement(self):
+        self.adapter.threads[CHILD].archived = True
+        self.withhold()
+        calls = []
+        original = self.assignments.store.one
+
+        def counting(sql, params=()):
+            calls.append(sql)
+            return original(sql, params)
+
+        self.assignments.store.one = counting
+        try:
+            anchored = self.assignments._anchored(self.correction, 2)
+        finally:
+            self.assignments.store.one = original
+        self.assertEqual(len(calls), 1, calls)
+        self.assertIsNotNone(anchored["undeliveredReason"])

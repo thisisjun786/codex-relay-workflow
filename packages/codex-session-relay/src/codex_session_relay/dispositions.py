@@ -30,6 +30,13 @@ assignment state, project ownership, a verdict, or which reviewable event is the
 is currency.head_revision's question, decided from declared lineage rather than from a timestamp, so
 the reviewable block lists ids and names no winner.
 
+The correction a needs_changes verdict queued for the child is the one relay-produced event read
+here, and it is kept out of events, which stay what the child reported. It gets its own block per
+child: whether it was sent, in the same send-axis words, and when it was not, why - through
+assignment.undelivered_reason over the same kind of single-statement row assignment-show reads, so
+the two surfaces cannot give different reasons. Without it a child whose correction the relay had
+withheld every minute read as a child with nothing in its generation (CRW-5 c6).
+
 It constructs no Store. Store.__init__ opens the file O_RDWR, switches on WAL and runs the whole
 schema script, so a reader that reached Services.store against a mistyped state directory would
 create an empty relay database which then answers "nothing is blocked" honestly. Every read here
@@ -39,6 +46,7 @@ from rather than to whatever the pathname reaches afterwards. store._hold_databa
 that reaches and the window it does not.
 """
 
+from .assignment import LIFECYCLE_WITHHOLD_JOIN, undelivered_reason
 from .receipts import READY
 from .transport import (
     ACKNOWLEDGED,
@@ -161,7 +169,13 @@ _SQL = (
     "       NULL AS attempt_state, NULL AS attempt_sent_at,"
     "       NULL AS ack_event, NULL AS ack_accepted, NULL AS ack_rejection,"
     "       NULL AS ack_verified,"
-    "       NULL AS ack_evidence_event, NULL AS ack_tier"
+    "       NULL AS ack_evidence_event, NULL AS ack_tier,"
+    "       NULL AS superseded_by, NULL AS correction_event, NULL AS correction_state,"
+    "       NULL AS correction_attempts, NULL AS correction_hold,"
+    "       NULL AS correction_next_eligible_at, NULL AS correction_lifecycle_withhold,"
+    "       NULL AS correction_lifecycle_recorded_at,"
+    "       NULL AS correction_lifecycle_next_retry_at,"
+    "       NULL AS correction_supersession_reason, NULL AS correction_supersession_applied"
     " UNION ALL"
     " SELECT 'child' AS kind, NULL AS store_id,"
     "        r.relationship_id AS relationship_id, r.issue_key AS issue_key,"
@@ -201,7 +215,16 @@ _SQL = (
     "        a.sent_at AS attempt_sent_at,"
     "        k.event_id AS ack_event, k.accepted AS ack_accepted,"
     "        k.rejection_reason AS ack_rejection, k.verified AS ack_verified,"
-    "        v.event_id AS ack_evidence_event, v.tier AS ack_tier"
+    "        v.event_id AS ack_evidence_event, v.tier AS ack_tier,"
+    "        r.superseded_by AS superseded_by, ce.event_id AS correction_event,"
+    "        cd.state AS correction_state, cd.attempt_count AS correction_attempts,"
+    "        cd.hold_reason AS correction_hold,"
+    "        cd.next_eligible_at AS correction_next_eligible_at,"
+    "        cf.error_code AS correction_lifecycle_withhold,"
+    "        cf.occurred_at AS correction_lifecycle_recorded_at,"
+    "        cf.next_retry_at AS correction_lifecycle_next_retry_at,"
+    "        cx.reason AS correction_supersession_reason,"
+    "        cx.applied AS correction_supersession_applied"
     "   FROM relationships r"
     "   LEFT JOIN relationship_scope s ON s.relationship_id = r.relationship_id"
     # The event filter lives HERE and not in WHERE, so a child with no matching event still yields
@@ -222,6 +245,18 @@ _SQL = (
     "   LEFT JOIN delivery_supersession x ON x.event_id = e.event_id"
     "   LEFT JOIN acks k ON k.event_id = e.event_id"
     "   LEFT JOIN ack_evidence v ON v.event_id = e.event_id"
+    # The current generation's correction, chosen as AssignmentView._projection chooses it, and
+    # its delivery. Each join is at most one row per child, so there is still one row per child
+    # and event. e, d and a above are the child's own event, delivery and attempt.
+    "   LEFT JOIN events ce ON ce.event_id = (SELECT MIN(rq.event_id) FROM events rq"
+    "                                          WHERE rq.relationship_id = r.relationship_id"
+    "                                            AND rq.execution_generation"
+    "                                                = r.execution_generation"
+    "                                            AND rq.outcome = 'revision_request'"
+    "                                            AND rq.suppressed_reason IS NULL)"
+    "   LEFT JOIN deliveries cd ON cd.event_id = ce.event_id"
+    "   LEFT JOIN delivery_supersession cx ON cx.event_id = ce.event_id"
+    + LIFECYCLE_WITHHOLD_JOIN.format(alias="cf", event="ce", delivery="cd") +
     # The live predicate belongs to the project selector alone. --relationship names one assignment
     # explicitly and answers about it whatever its status, carrying that status; a global live
     # filter would make an archived assignment unreadable through the selector that named it.
@@ -303,6 +338,7 @@ def derive(rows, *, selector) -> dict:
                     "readWith": "assignment-show --relationship " + str(row["relationship_id"]),
                 },
                 "earlierGenerationEvents": row["earlier_events"] or 0,
+                "correction": _correction(row),
                 "events": [],
             }
         if row["event_id"] is None:
@@ -337,6 +373,50 @@ def _event(row) -> dict:
         "delivery": _delivery(row),
         "acknowledgement": _acknowledgement(row),
     }
+
+
+def _correction(row):
+    """The correction this generation's needs_changes verdict queued for the child, or None.
+
+    The send axis uses the words events use, with the same precedence: a supersession note - a
+    final event of the generation already answered the correction, and the next attempt
+    suppresses it - outranks the state, which is carried beside it unchanged. The reason is
+    assignment's own rule over this row, with no refusal to read: a correction is queued in the
+    verdict's transaction, so it always has a delivery row. For the per-delivery phase, status
+    remains the reader.
+    """
+    if row["correction_event"] is None:
+        return None
+    state = row["correction_state"]
+    superseded = row["correction_supersession_reason"] is not None
+    delivery = None
+    if state is not None:
+        delivery = {
+            "observation": (WAS_SUPERSEDED if superseded
+                            else OBSERVATION_BY_STATE.get(state, UNRECOGNISED)),
+            "state": state,
+            "attemptCount": row["correction_attempts"],
+            "holdReason": row["correction_hold"],
+            "nextEligibleAt": row["correction_next_eligible_at"],
+            "supersession": (
+                {"reason": row["correction_supersession_reason"],
+                 "applied": bool(row["correction_supersession_applied"])}
+                if superseded else None
+            ),
+        }
+    reason = undelivered_reason({
+        "delivered": row["correction_event"] if state is not None else None,
+        "delivery_state": state,
+        "hold_reason": row["correction_hold"],
+        "relationship_status": row["relationship_status"],
+        "superseded_by": row["superseded_by"],
+        "lifecycle_withhold": row["correction_lifecycle_withhold"],
+        "lifecycle_recorded_at": row["correction_lifecycle_recorded_at"],
+        "lifecycle_next_retry_at": row["correction_lifecycle_next_retry_at"],
+        "refusal_reason": None,
+    })
+    return {"eventId": row["correction_event"], "delivery": delivery,
+            "undeliveredReason": reason}
 
 
 def _work_report(row) -> dict:
@@ -563,4 +643,15 @@ def _counts(children) -> dict:
         "deliveryUnmeasured": unmeasured_send,
         "recipientUnmeasured": unmeasured_recipient,
         "workReportMissing": missing_report,
+        # Counted by the delivery's own state, so a correction withheld for a reason this reader
+        # cannot name is still counted.
+        "correctionNotSent": sum(
+            1 for child in children
+            if (child["correction"] or {}).get("delivery")
+            and child["correction"]["delivery"]["observation"] == NOT_SENT),
+        "correctionWithheld": sum(
+            1 for child in children
+            if (child["correction"] or {}).get("delivery")
+            and child["correction"]["delivery"]["state"] == WITHHELD_PRE_SEND
+            and child["correction"]["delivery"]["supersession"] is None),
     }

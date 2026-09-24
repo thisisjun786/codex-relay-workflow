@@ -14,6 +14,18 @@ returned as history.
 import json
 
 from .currency import AMBIGUOUS, head_revision
+from .errors import RefusalReason
+from .transport import (
+    ACKNOWLEDGED,
+    DEFERRED_BUSY,
+    DISPATCHED,
+    HELD_UNCERTAIN,
+    INBOX_ONLY,
+    QUEUED,
+    SENDING,
+    SUPERSEDED,
+    WITHHELD_PRE_SEND,
+)
 
 REQUESTED = "requested"
 RECEIVED = "received"
@@ -59,6 +71,120 @@ NEXT_ACTION = {
     CLOSED: "none",
     ABANDONED: "none",
 }
+
+# What happens next while a needs_changes verdict's correction has not reached the child. The
+# child cannot correct what it was never sent, so child_corrects is kept for a correction whose
+# delivery reached a turn. An unsent correction is the relay's to deliver; one whose send is in
+# flight or answered unusably is the relay's to confirm (reconciliation settles it); and a held
+# one, including one stored where the child reads without waking it, is never retried (no
+# command clears a hold; its recovery is a fresh execution generation), so it is the parent's to
+# recover. Derived, like NEXT_ACTION, from the one statement that reads the correction's delivery.
+CORRECTION_UNSENT_ACTION = "daemon_delivers_correction"
+CORRECTION_UNCONFIRMED_ACTION = "daemon_confirms_correction"
+CORRECTION_HELD_ACTION = "parent_recovers_held_correction"
+# A final event of the correction's generation already answered it (a failed, interrupted or
+# blocked reply, which leaves the assignment in needs_changes): the relay suppresses the
+# correction instead of sending it, and what is owed is the parent reading that answer, which
+# dispositions-show lists. The only supersession a correction delivery can carry is this one
+# (delivery._supersession_reason for a revision request).
+CORRECTION_ANSWERED_ACTION = "parent_reads_child_disposition"
+
+# delivery states in which nothing has been sent (dispositions.NOT_SENT uses the same three).
+NOT_SENT_STATES = (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND)
+# delivery states whose send may or may not have reached the child (dispositions.SEND_UNCERTAIN).
+UNCONFIRMED_STATES = (SENDING, HELD_UNCERTAIN)
+# delivery states that establish the correction reached a turn.
+REACHED_STATES = (DISPATCHED, ACKNOWLEDGED)
+
+LIFECYCLE_WITHHOLD_SOURCE = "failed_operations.lifecycle_read"
+
+# The failure record a lifecycle withhold writes, and the read that finds it. Placed after the
+# delivery join it compares with, because an ON clause may only name tables to its left.
+# {event} and {delivery} are the aliases of the event and its delivery in the statement that
+# uses it; the record counts only when it was written by the transition the delivery row
+# currently shows (same stamp, same deadline) and no other operation carries that stamp.
+LIFECYCLE_WITHHOLD_JOIN = (
+    " LEFT JOIN failed_operations {alias} ON {alias}.scope_key = {event}.event_id"
+    "       AND {alias}.operation = 'lifecycle_read'"
+    "       AND {alias}.occurred_at = {delivery}.updated_at"
+    "       AND {alias}.next_retry_at = {delivery}.next_eligible_at"
+    "       AND NOT EXISTS (SELECT 1 FROM failed_operations other"
+    "                        WHERE other.scope_key = {event}.event_id"
+    "                          AND other.operation <> {alias}.operation"
+    "                          AND other.occurred_at = {alias}.occurred_at)"
+)
+
+
+def undelivered_reason(row):
+    """Why an event's delivery has not gone out, copied from the row that recorded it.
+
+    row carries: delivered (the delivery's event id or None), delivery_state, hold_reason,
+    relationship_status, superseded_by, lifecycle_withhold, lifecycle_recorded_at,
+    lifecycle_next_retry_at and refusal_reason, all read by ONE statement so the reason cannot
+    come from a later snapshot than the delivery it explains. Most specific first:
+
+    - a hold is about THIS delivery;
+    - an assignment somebody paused, cancelled or archived stops an unsent delivery before any
+      host read (delivery.attempt), and writes no failure row for it, so its status is the
+      reason. Superseded assignments keep their own vocabulary and are not named here;
+    - a lifecycle withhold of this very event, when it is what set the delivery's current
+      state. The failure row is keyed by the event and written by _withhold in the same
+      transaction as the delivery's transition, with the stamp that transition wrote as
+      updated_at; every other writer of a delivery row sets its own updated_at, so a later
+      transition of any kind (a settings withhold, a busy deferral, a claim, a settle, a
+      recovery, a pacing reschedule, a pause) ends the match. It is the reason that withhold
+      recorded, archived, paused or lifecycle_unknown among them, with its time;
+    - a refusal, only while no delivery row exists: once one exists the refusal that preceded
+      it is no longer why anything is undelivered.
+
+    A settings or send-path withhold is not explained here; status reads those.
+    """
+    delivered = row["delivered"] is not None
+    state = row["delivery_state"]
+    if delivered and row["hold_reason"]:
+        return {"source": "deliveries.hold_reason", "value": row["hold_reason"]}
+    if (delivered and state in NOT_SENT_STATES and row["relationship_status"] is not None
+            and row["relationship_status"] != "active" and row["superseded_by"] is None):
+        return {"source": "relationships.status",
+                "value": RefusalReason.RELATIONSHIP_NOT_ACTIVE.value,
+                "relationshipStatus": row["relationship_status"]}
+    if delivered and state == WITHHELD_PRE_SEND and row["lifecycle_withhold"] is not None:
+        return {"source": LIFECYCLE_WITHHOLD_SOURCE, "value": row["lifecycle_withhold"],
+                "recordedAt": row["lifecycle_recorded_at"],
+                "nextRetryAt": row["lifecycle_next_retry_at"]}
+    if delivered:
+        return None
+    if row["refusal_reason"] is not None:
+        return {"source": "refusals.reason", "value": row["refusal_reason"]}
+    return None
+
+
+def correction_next_action(state, projection):
+    """The next action for needs_changes, from the correction the same projection read.
+
+    None leaves NEXT_ACTION's answer. A correction event always has its delivery row, because
+    ack.record_verdict inserts the event and queues it in one transaction. A correction with a
+    supersession note, or one the note has already been applied to, was answered by a final
+    event of its generation; that is checked first, because the note outranks the delivery
+    state (the state is left alone so reconciliation can still settle an outstanding send). A
+    state this rule has no word for leaves NEXT_ACTION's answer.
+    """
+    correction = projection["correction"]
+    delivery = correction["delivery"]
+    if state != NEEDS_CHANGES or delivery is None:
+        return None
+    if correction.get("supersession") is not None or delivery["state"] == SUPERSEDED:
+        return CORRECTION_ANSWERED_ACTION
+    if delivery["state"] in REACHED_STATES:
+        return None
+    reason = correction["undeliveredReason"] or {}
+    if delivery["state"] == INBOX_ONLY or reason.get("source") == "deliveries.hold_reason":
+        return CORRECTION_HELD_ACTION
+    if delivery["state"] in UNCONFIRMED_STATES:
+        return CORRECTION_UNCONFIRMED_ACTION
+    if delivery["state"] in NOT_SENT_STATES:
+        return CORRECTION_UNSENT_ACTION
+    return None
 
 
 class AssignmentView:
@@ -217,7 +343,11 @@ class AssignmentView:
             relationship_id, generation, head, verdict, state
         )
         record["nextExpectedAction"] = (
-            completion_next_action(state, record["projection"]) or record["nextExpectedAction"]
+            # Disjoint states: the correction's answer is for needs_changes (CRW-222), the
+            # completion's for received and corrected (CRW-224); NEXT_ACTION answers the rest.
+            correction_next_action(state, record["projection"])
+            or completion_next_action(state, record["projection"])
+            or record["nextExpectedAction"]
         )
         return record
 
@@ -257,7 +387,8 @@ class AssignmentView:
 
     def _anchored(self, event_id, generation) -> dict:
         record = {"eventId": event_id, "executionGeneration": generation,
-                  "event": None, "delivery": None, "ack": None, "undeliveredReason": None}
+                  "event": None, "delivery": None, "ack": None, "undeliveredReason": None,
+                  "supersession": None}
         if event_id is None:
             # A null is an answer. A row borrowed from another generation is not.
             record["detail"] = "this generation has no such event"
@@ -280,6 +411,11 @@ class AssignmentView:
             "       k.event_id AS acked, k.verified AS ack_verified,"
             "       k.accepted AS ack_accepted, k.rejection_reason AS ack_rejection,"
             "       v.tier AS ack_tier,"
+            "       r.status AS relationship_status, r.superseded_by AS superseded_by,"
+            "       lf.error_code AS lifecycle_withhold,"
+            "       lf.occurred_at AS lifecycle_recorded_at,"
+            "       lf.next_retry_at AS lifecycle_next_retry_at,"
+            "       sx.reason AS supersession_reason, sx.applied AS supersession_applied,"
             "       (SELECT reason FROM refusals WHERE event_id = e.event_id"
             "         ORDER BY id DESC LIMIT 1) AS refusal_reason"
             "  FROM events e"
@@ -288,6 +424,9 @@ class AssignmentView:
             "                      AND a.attempt_no = d.attempt_count"
             "  LEFT JOIN acks k ON k.event_id = e.event_id"
             "  LEFT JOIN ack_evidence v ON v.event_id = e.event_id"
+            "  LEFT JOIN delivery_supersession sx ON sx.event_id = e.event_id"
+            "  LEFT JOIN relationships r ON r.relationship_id = e.relationship_id"
+            + LIFECYCLE_WITHHOLD_JOIN.format(alias="lf", event="e", delivery="d") +
             " WHERE e.event_id = ?",
             (event_id,),
         )
@@ -328,32 +467,15 @@ class AssignmentView:
             # unrecorded rather than unverified.
             "evidenceTier": row["ack_tier"] if row["ack_tier"] is not None else "unrecorded",
         }
-        record["undeliveredReason"] = self._undelivered_reason(row)
+        record["undeliveredReason"] = undelivered_reason(row)
+        # A newer final event of the same generation replaced this delivery. Reported beside the
+        # delivery state, which is left alone so reconciliation can still settle an outstanding
+        # send; the note comes from the same statement as the state it annotates.
+        record["supersession"] = (
+            {"reason": row["supersession_reason"], "applied": bool(row["supersession_applied"])}
+            if row["supersession_reason"] is not None else None
+        )
         return record
-
-    def _undelivered_reason(self, row):
-        """Copied verbatim from the row that recorded it, saying which row that was.
-
-        Two tables can explain one event's delivery and they answer different questions, so the
-        source travels with the value instead of being guessed from its shape. Most specific
-        first: a hold is about THIS delivery, a refusal is about a write that was rejected.
-        failed_operations is deliberately not in this chain - it is keyed by scope rather than
-        by event, so attributing one to a particular delivery would be an inference, not a copy.
-
-        Reads only what the single projection statement already returned, so the reason cannot
-        come from a later snapshot than the delivery it is explaining.
-        """
-        if row["delivered"] is not None and row["hold_reason"]:
-            return {"source": "deliveries.hold_reason", "value": row["hold_reason"]}
-        if row["delivered"] is not None:
-            # A refusal is durable audit history and the same deterministic event can be
-            # accepted later once its cause is corrected. Once a delivery row exists, the
-            # refusal that preceded it is no longer why anything is undelivered, and reporting
-            # it here would contradict a delivery that has since dispatched.
-            return None
-        if row["refusal_reason"] is not None:
-            return {"source": "refusals.reason", "value": row["refusal_reason"]}
-        return None
 
     def _resolve(self, row, head, verdict, relationship_id, generation, current_mark,
                  criteria_current=True) -> str:
