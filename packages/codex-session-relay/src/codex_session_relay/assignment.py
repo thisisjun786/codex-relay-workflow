@@ -273,7 +273,8 @@ class AssignmentView:
             "       d.event_id AS delivered, d.state AS delivery_state,"
             "       d.hold_reason AS hold_reason, d.dispatch_evidence AS dispatch_evidence,"
             "       a.request_id AS request_id, a.attempt_no AS attempt_no,"
-            "       a.state AS attempt_state, v.last_reason AS ack_last_reason,"
+            "       a.state AS attempt_state, a.recipient_scan AS attempt_turn_check,"
+            "       v.last_reason AS ack_last_reason,"
             "       (SELECT COUNT(*) FROM attempts h WHERE h.event_id = e.event_id"
             "         AND h.state = 'host_lost_turn') AS host_lost_attempts,"
             "       k.event_id AS acked, k.verified AS ack_verified,"
@@ -307,6 +308,11 @@ class AssignmentView:
                 "dispatchEvidence": row["dispatch_evidence"],
                 "holdReason": row["hold_reason"],
                 "hostLostAttempts": row["host_lost_attempts"],
+                # The current attempt's recipient-turn check, when it could not decide
+                # (turn_check_undecided:<reason>); None otherwise.
+                "turnCheck": (row["attempt_turn_check"]
+                              if (row["attempt_turn_check"] or "").startswith("turn_check_undecided:")
+                              else None),
             }
         record["ack"] = {
             # The parent's DISPOSITION, independent of whether the acknowledging turn could be

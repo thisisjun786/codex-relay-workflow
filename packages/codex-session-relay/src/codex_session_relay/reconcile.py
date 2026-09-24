@@ -53,6 +53,15 @@ class Evidence(str, Enum):
     NONE = "none"
 
 
+class _AttemptLost(Exception):
+    """The host-loss check recorded this attempt after reconciliation read it (PR #156 review).
+
+    Reconciliation reads first and writes later, outside one transaction; a daemon pass can
+    record the loss in between. Writing the receipt's settlement then would set the attempt back
+    to dispatched and erase the count that stops a third send, so the write refuses instead.
+    """
+
+
 class Reconciler:
     def __init__(self, store, registry, delivery, clock, *, policy=None):
         self.store = store
@@ -124,6 +133,18 @@ class Reconciler:
         return [row["parent_task_id"] for row in rows]
 
     def reconcile_attempt(self, request_id: str, adapter, *, now=None) -> dict:
+        try:
+            return self._reconcile_attempt(request_id, adapter, now=now)
+        except _AttemptLost:
+            attempt = self.store.one("SELECT * FROM attempts WHERE request_id = ?", (request_id,))
+            return {
+                "evidence": Evidence.RECEIPT_TURN_ID.value, "state": HOST_LOST_TURN,
+                "record": json.loads(attempt["record"]),
+                "detail": "the host-loss check recorded this attempt while it was being"
+                          " reconciled; its record stands and nothing else was written",
+            }
+
+    def _reconcile_attempt(self, request_id: str, adapter, *, now=None) -> dict:
         now = self.clock.now() if now is None else now
         attempt = self.store.one("SELECT * FROM attempts WHERE request_id = ?", (request_id,))
         if attempt is None:
@@ -199,6 +220,8 @@ class Reconciler:
                 ))
             else:
                 outcome["redelivery"] = hostloss.REPORT_ONLY
+        elif delivery["kind"] == COMPLETION:
+            hostloss.record_undecided(self.store, attempt["request_id"], reading)
         return outcome
 
     def check_dispatched_turn(self, request_id: str, adapter) -> dict:
@@ -217,6 +240,8 @@ class Reconciler:
                    "state": attempt["state"], "recipientTurn": reading}
         if reading["finding"] == HOST_LOST_TURN:
             outcome.update(hostloss.settle(self.store, self.clock, request_id, reading))
+        else:
+            outcome["undecidedChanged"] = hostloss.record_undecided(self.store, request_id, reading)
         return outcome
 
     # --------------------------------------------------------------- outcomes
@@ -327,15 +352,18 @@ class Reconciler:
         current = self._is_current(attempt, delivery)
         anchor = None
         with self.store.transaction() as db:
-            db.execute(
+            updated = db.execute(
                 "UPDATE attempts SET internal_state = 'settled', state = ?, record = ?,"
                 " operation_observation = ?, recipient_scan = ?, affirmative_evidence = ?,"
-                " reconciled_at = ? WHERE request_id = ?",
+                " reconciled_at = ? WHERE request_id = ? AND (state IS NULL OR state <> ?)",
                 (
                     state, json.dumps(record), observation, scan_detail, evidence.value, now_iso,
-                    attempt["request_id"],
+                    attempt["request_id"], HOST_LOST_TURN,
                 ),
-            )
+            ).rowcount
+            if updated != 1:
+                # Rolled back with the transaction: nothing of this settlement is written.
+                raise _AttemptLost()
             if current:
                 promoted = db.execute(
                     "UPDATE deliveries SET state = ?, next_eligible_at = ?, hold_reason = ?,"

@@ -21,6 +21,11 @@ RECIPIENT_UNDELIVERABLE = "recipient_undeliverable"
 # record keeps deliveryState dispatched, because turn/start did return that turn id; this word is
 # what the host said about the turn afterwards.
 HOST_LOST_TURN = "host_lost_turn"
+# A dispatched completion whose turn check cannot reach an answer by waiting: the listing never
+# reached the send, the token scan could not cover the turns begun since it, or the attempt has no
+# send time. Recorded on the attempt as "turn_check_undecided:<reason>" (hostloss.record_undecided)
+# and read by status as awaiting_ack:turn_check_undecided, so it is named rather than silent.
+TURN_CHECK_UNDECIDED = "turn_check_undecided"
 
 
 @dataclass(frozen=True)

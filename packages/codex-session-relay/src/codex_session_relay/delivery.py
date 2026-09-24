@@ -35,7 +35,9 @@ from .transport import (
     attempt_record,
     classify_operation_receipt,
 )
-from .policy import HOST_LOST_TURN, PUSH_CHANNEL_CLOSED, SUPERSEDED as SUPERSEDED_HOLD
+from .policy import (
+    HOST_LOST_TURN, PUSH_CHANNEL_CLOSED, SUPERSEDED as SUPERSEDED_HOLD, TURN_CHECK_UNDECIDED,
+)
 from . import NO_DELIVERABLE, envelope, restoration, rolepolicy
 from .report import (
     NO_NOTE, compose_revision, fix_scope_lines, inline, known, preserve_lines, unheaded,
@@ -2289,6 +2291,12 @@ def _phase(row, attempts, ack, failure=None, superseded=None, grant=None) -> str
             if grant == MERGE_TURN_GRANT_ANSWERED:
                 return "grant_acknowledged"
             return "awaiting_grant_acknowledgement"
+        current = attempts[-1] if attempts else None
+        if current is not None and (current["recipient_scan"] or "").startswith(
+                TURN_CHECK_UNDECIDED + ":"):
+            # The relay could not tell whether the host still has this delivery's turn, and
+            # waiting will not tell it either (hostloss.record_undecided). Named, not silent.
+            return "awaiting_ack:" + TURN_CHECK_UNDECIDED
         return "awaiting_ack"
     if row["state"] == DEFERRED_BUSY:
         return "parent_busy"

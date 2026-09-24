@@ -44,6 +44,28 @@ class CountingLookups:
         return getattr(self._inner, name)
 
 
+class SettlesDuringTheRead:
+    """A daemon pass that records the loss while a manual reconcile is reading the same turn.
+
+    The reconcile read the attempt as dispatched before this lookup; the settlement commits in
+    between; the reconcile then writes. That is the interleaving review found (PR #156).
+    """
+
+    def __init__(self, inner, settle):
+        self._inner = inner
+        self._settle = settle
+        self.fired = 0
+
+    def find_dispatched_turn(self, thread_id, turn_id, *, sent_at):
+        if not self.fired:
+            self.fired += 1
+            self._settle()
+        return self._inner.find_dispatched_turn(thread_id, turn_id, sent_at=sent_at)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
 class HostLossCase(DeliveryTestCase):
     def setUp(self):
         super().setUp()
@@ -264,6 +286,27 @@ class ReconcileReportsTheRecipientTurn(HostLossCase):
         self.assertEqual(self.delivery_row(event_id)["hold_reason"], HOST_LOST)
         self.assertEqual(len(self.adapter.sends), 2)
 
+    def test_a_reconcile_racing_the_daemons_settlement_cannot_undo_the_loss(self):
+        event_id, first, turn = self.dispatched()
+        self.host_loses(turn)
+        self.clock.advance(120)
+        racing = SettlesDuringTheRead(
+            self.adapter, lambda: self.reconciler.check_dispatched_turn(first, self.adapter))
+        outcome = self.reconciler.reconcile_attempt(first, racing)
+        self.assertEqual(racing.fired, 1)
+        self.assertEqual(outcome.get("state"), HOST_LOST)
+        self.assertEqual(self.attempt_states(event_id), [HOST_LOST])
+        self.assertEqual(self.delivery_row(event_id)["state"], QUEUED)
+        self.assertEqual(self.journalled(HOST_LOST), 1)
+        # And the once-count still holds: the redelivery's loss is held, not sent a third time.
+        second = self.attempt(event_id)
+        self.host_loses(second["turnId"])
+        for _ in range(3):
+            self.clock.advance(120)
+            self.daemon.tick()
+        self.assertEqual(self.delivery_row(event_id)["hold_reason"], HOST_LOST)
+        self.assertEqual(len(self.adapter.sends), 2)
+
     def test_a_recorded_acknowledgement_wins_over_a_missing_turn(self):
         event_id, first, turn = self.dispatched()
         self.ack.acknowledge(
@@ -291,6 +334,89 @@ class ReconcileReportsTheRecipientTurn(HostLossCase):
         outcome = self.reconciler.reconcile_attempt(record["requestId"], self.adapter)
         self.assertEqual(outcome.get("recipientTurn", {}).get("finding"), "present")
         self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+
+    def test_a_token_deeper_than_the_scan_in_a_later_turn_is_undecided_not_lost(self):
+        """Review of 35aa454c: a scan that stops at its bound has not shown the token is absent.
+
+        The parent ran a long turn after the send and the delivered message sits under 201 newer
+        items of it. Calling the turn lost there would send the report a second time.
+        """
+        event_id, first, turn = self.dispatched()
+        thread = self.adapter.threads[PARENT]
+        message = next(text for owner, text in thread.items if owner == turn)
+        self.host_loses(turn)
+        self.adapter.start_turn(PARENT, turn_id="parent-later", status="completed")
+        thread.items.append(("parent-later", message))
+        thread.items.extend(("parent-later", f"work item {n}") for n in range(201))
+        self.clock.advance(120)
+        outcome = self.reconciler.reconcile_attempt(first, self.adapter)
+        reading = outcome.get("recipientTurn", {})
+        self.assertEqual((reading.get("finding"), reading.get("undecided")),
+                         ("unknown", "token_scan_bounded"))
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        self.assertEqual(self.attempt_states(event_id), [DISPATCHED])
+        self.assertEqual(len(self.adapter.sends), 1)
+        # Undecided is recorded under its name, where status and assignment-show can read it.
+        self.assertEqual(self.status_of(event_id)["phase"], "awaiting_ack:turn_check_undecided")
+        self.assertEqual(self.completion_delivery().get("turnCheck"),
+                         "turn_check_undecided:token_scan_bounded")
+
+    def test_a_short_turn_after_the_send_is_read_through_and_the_loss_still_found(self):
+        event_id, first, turn = self.dispatched()
+        self.host_loses(turn)
+        self.adapter.start_turn(PARENT, turn_id="parent-later", status="completed",
+                                text="unrelated work")
+        self.clock.advance(120)
+        outcome = self.reconciler.reconcile_attempt(first, self.adapter)
+        self.assertEqual(outcome.get("recipientTurn", {}).get("finding"), HOST_LOST)
+        self.assertEqual(self.delivery_row(event_id)["state"], QUEUED)
+
+    def test_a_listing_too_long_to_reach_the_send_is_recorded_as_undecided(self):
+        from codex_session_relay.hostadapter import ListingBounded
+
+        class NeverReachesTheSend:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def find_dispatched_turn(self, thread_id, turn_id, *, sent_at):
+                raise ListingBounded("1000 newer turns and the send not reached")
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+        event_id, first, turn = self.dispatched()
+        self.host_loses(turn)
+        self.clock.advance(120)
+        outcome = self.reconciler.reconcile_attempt(first, NeverReachesTheSend(self.adapter))
+        reading = outcome.get("recipientTurn", {})
+        self.assertEqual((reading.get("finding"), reading.get("undecided")),
+                         ("unknown", "listing_bounded"))
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        self.assertEqual(self.status_of(event_id)["phase"], "awaiting_ack:turn_check_undecided")
+
+    def test_an_undecided_reading_is_cleared_once_the_turn_is_found(self):
+        event_id, first, _turn = self.dispatched()
+        with self.store.transaction() as db:
+            db.execute("UPDATE attempts SET recipient_scan = ? WHERE request_id = ?",
+                       ("turn_check_undecided:listing_bounded", first))
+        self.clock.advance(120)
+        self.daemon.tick()
+        self.assertEqual(self.status_of(event_id)["phase"], "awaiting_ack")
+
+    def test_the_daemon_records_an_undecided_reading_once(self):
+        event_id, _first, turn = self.dispatched()
+        thread = self.adapter.threads[PARENT]
+        message = next(text for owner, text in thread.items if owner == turn)
+        self.host_loses(turn)
+        self.adapter.start_turn(PARENT, turn_id="parent-later", status="completed")
+        thread.items.append(("parent-later", message))
+        thread.items.extend(("parent-later", f"work item {n}") for n in range(201))
+        self.clock.advance(120)
+        first_tick = self.daemon.tick().as_dict()
+        self.assertEqual((first_tick.get("turnsUndecided"), first_tick.get("turnsLost")), (1, 0))
+        self.clock.advance(20)
+        self.assertEqual(self.daemon.tick().as_dict().get("turnsUndecided"), 0)
+        self.assertEqual(len(self.adapter.sends), 1)
 
 
 class TheControlsReadAsBefore(HostLossCase):
@@ -528,11 +654,22 @@ class TheAdapterLooksBackOnlyToTheSend(unittest.TestCase):
             self.lookup(call)
 
     def test_a_bounded_scan_that_never_reached_the_send_is_not_evidence(self):
-        pages = [[_turn(f"newer-{n}-{m}", SENT_AT + 1000 - n) for m in range(2)] for n in range(10)]
+        pages = [[_turn(f"newer-{n}-{m}", SENT_AT + 1000 - n) for m in range(2)] for n in range(25)]
         call, calls = _pages(*pages)
         with self.assertRaises(HostUnavailable):
             self.lookup(call)
-        self.assertEqual(len(calls), 4)
+        self.assertEqual(len(calls), 20)
+
+    def test_a_long_history_after_the_send_is_read_through_to_the_send(self):
+        """Review of 35aa454c: 250 turns after a lost send still reach an answer."""
+        pages = [[_turn(f"newer-{n}-{m}", SENT_AT + 1000 - n) for m in range(50)] for n in range(5)]
+        pages.append([_turn("before", SENT_AT - 600)])
+        call, calls = _pages(*pages)
+        presence = BridgeHostAdapter(call=call, page=50).find_dispatched_turn(
+            "thread", "wanted", sent_at=SENT_AT)
+        self.assertEqual((presence.finding, presence.stop, presence.scanned),
+                         ("absent", "older_than_send", 251))
+        self.assertEqual(len(calls), 6)
 
     def test_a_steered_turn_begun_before_the_send_is_matched_before_the_cutoff(self):
         call, _calls = _pages([_turn("wanted", SENT_AT - 600, "inProgress"),

@@ -24,7 +24,8 @@ import stat
 from pathlib import Path
 
 from .hostadapter import (
-    HostUnavailable, ThreadFacts, TokenScan, TurnInfo, TurnPresence, find_in_listing,
+    DISPATCHED_TURN_MAX_PAGES, HostUnavailable, ThreadFacts, TokenScan, TurnInfo, TurnPresence,
+    find_in_listing, find_token_in,
 )
 from .settings import SETTINGS_DIFFER_AFTER_LOAD, SETTINGS_NOT_PRESERVED
 
@@ -342,7 +343,7 @@ class BridgeHostAdapter:
 
         def pages():
             cursor = None
-            for _ in range(MAX_PAGES_PER_CHECK):
+            for _ in range(DISPATCHED_TURN_MAX_PAGES):
                 params = {"threadId": thread_id, "limit": self.page, "itemsView": "notLoaded",
                           "sortDirection": "desc"}
                 if cursor:
@@ -357,6 +358,31 @@ class BridgeHostAdapter:
                     return
 
         return find_in_listing(pages(), turn_id, sent_at)
+
+    def find_token_since(self, thread_id: str, token: str, *, turns, limit: int = 200) -> TokenScan:
+        """A token among the items of the turns begun since a send (hostadapter.find_token_in).
+
+        The same forward paging as find_token, but it stops as soon as it reaches an item of an
+        older turn, which is what lets "not found" mean something: every item of the given turns
+        was read. Stopping at the bound first is reported as not covered.
+        """
+
+        def pages():
+            cursor, read = None, 0
+            while read < limit:
+                params = {"threadId": thread_id, "sortDirection": "desc",
+                          "limit": min(self.page, limit - read)}
+                if cursor:
+                    params["cursor"] = cursor
+                page = self._call("thread/items/list", params)
+                entries = page.get("data", [])
+                read += len(entries)
+                cursor = page.get("nextCursor")
+                yield [(entry.get("turnId"), _item_text(entry)) for entry in entries], bool(cursor)
+                if not cursor or not entries:
+                    return
+
+        return find_token_in(pages(), token, turns)
 
     # ----------------------------------------------------------------- writes
 

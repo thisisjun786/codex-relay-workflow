@@ -34,6 +34,9 @@ from .faults import DELIVERER_OWNER
 # The same name reserves the daemon's fault notifications, and the ledger keeps it the
 # deliverer's (faults.DELIVERER_OWNER).
 DAEMON_OWNER = DELIVERER_OWNER
+# How long an undecided recipient-turn reading waits before it is read again (hostloss.py). Such a
+# reading will not change by waiting a tick, and each read can page far back through the parent.
+UNDECIDED_RECHECK_SECONDS = 600.0
 
 
 @dataclass
@@ -53,6 +56,8 @@ class TickReport:
     # Delivered completions whose turn the host no longer had, each recorded and queued once
     # more or held (hostloss.settle). A write, so it is part of quiet.
     turnsLost: int = 0
+    # Undecided readings newly named on their attempt, or cleared (hostloss.record_undecided).
+    turnsUndecided: int = 0
     quiet: bool = True
     notes: list = field(default_factory=list)
 
@@ -68,6 +73,7 @@ class TickReport:
             "supervisorSent": self.supervisorSent,
             "notificationsDelivered": self.notificationsDelivered,
             "turnsLost": self.turnsLost,
+            "turnsUndecided": self.turnsUndecided,
             "quiet": self.quiet, "notes": self.notes,
         }
 
@@ -168,6 +174,9 @@ class RelayDaemon:
         # learns nothing new writes nothing.
         self._turn_check_after = None
         self._turns_settled = set()
+        # Request ids whose last reading was undecided in a way waiting alone will not change,
+        # and when to read them again. A schedule, not evidence: the reading itself decides.
+        self._turns_undecided = {}
 
     # ------------------------------------------------------------------ tick
 
@@ -187,7 +196,7 @@ class RelayDaemon:
         self._bind_anchors(report)
         self._verify_acks(report, now)
         # Before delivery, so an obligation whose turn the host lost is sent again in this tick.
-        self._check_dispatched_turns(report)
+        self._check_dispatched_turns(report, now)
         self._deliver(report, now)
         # After the parent-child deliveries, which share each recipient's budget with it: a
         # task that is both a parent and a supervisor hears its children first.
@@ -196,10 +205,11 @@ class RelayDaemon:
                             or report.deferred or report.acksVerified or report.anchorsBound
                             or report.requeued or report.faultsRecorded
                             or report.supervisorStaged or report.supervisorSent
-                            or report.notificationsDelivered or report.turnsLost)
+                            or report.notificationsDelivered or report.turnsLost
+                            or report.turnsUndecided)
         return report
 
-    def _check_dispatched_turns(self, report) -> None:
+    def _check_dispatched_turns(self, report, now) -> None:
         """Ask each parent whether the turn a delivered completion started still exists (CRW-224).
 
         An accepted turn/start is not a turn the host keeps: an App Server that dies before the
@@ -208,6 +218,8 @@ class RelayDaemon:
         candidates rotate from where the last pass stopped and wrap once, and a delivery whose
         turn was listed as finished is not read again, without spending the budget. An in-progress
         turn, a token found without its turn, and an unreadable host are all read again later.
+        A reading that stays undecided however long it waits (hostloss.LISTING_BOUNDED and its
+        kind) is named on the attempt and read again after UNDECIDED_RECHECK_SECONDS.
         """
         budget = self.policy.max_turn_checks_per_tick
         if budget <= 0 or getattr(self.adapter, "find_dispatched_turn", None) is None:
@@ -224,13 +236,18 @@ class RelayDaemon:
         except Exception as error:  # noqa: BLE001 - a tick never dies on one pass
             report.notes.append(f"recipient turn check could not list deliveries: {error}")
             return
-        self._turns_settled &= {row["request_id"] for row in rows}
+        live = {row["request_id"] for row in rows}
+        self._turns_settled &= live
+        self._turns_undecided = {key: when for key, when in self._turns_undecided.items()
+                                 if key in live}
         spent = 0
         for row in rows:
             if spent >= budget:
                 break
             self._turn_check_after = row["event_id"]
             if row["request_id"] in self._turns_settled:
+                continue
+            if self._turns_undecided.get(row["request_id"], now) > now:
                 continue
             spent += 1
             try:
@@ -239,6 +256,10 @@ class RelayDaemon:
                 report.notes.append(f"recipient turn check failed for {row['request_id']}: {error}")
                 continue
             reading = outcome["recipientTurn"]
+            if reading.get("undecided"):
+                self._turns_undecided[row["request_id"]] = now + UNDECIDED_RECHECK_SECONDS
+            else:
+                self._turns_undecided.pop(row["request_id"], None)
             if reading["finding"] == hostloss.PRESENT and reading["status"] in hostloss.TERMINAL:
                 self._turns_settled.add(row["request_id"])
             elif reading["finding"] == hostloss.UNKNOWN and (
@@ -248,6 +269,7 @@ class RelayDaemon:
                 )
             if outcome.get("redelivery") in (hostloss.REQUEUED, hostloss.HELD):
                 report.turnsLost += 1
+            report.turnsUndecided += outcome.get("undecidedChanged", 0)
 
     def _sweep_faults(self, report) -> None:
         """Record what the store currently shows is broken, so nobody has to notice first.

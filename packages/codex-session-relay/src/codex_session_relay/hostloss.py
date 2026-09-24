@@ -9,10 +9,16 @@ parent's turns, so the child's report was lost silently and looked exactly like 
 The reading here asks the recipient's own turn list for the dispatched turn among the turns begun
 since the send (hostadapter.find_in_listing). A loss is concluded only from the host's answer, only
 once the send is older than the allowance a whole-second start time and a clock skew need, and only
-when this attempt's token is not in the recipient's newest items: a found token means the message
-reached the recipient whatever happened to the turn row. The token scan is a veto and never the
-proof - a bounded scan that finds nothing has shown nothing (I-42). A lost ACK keeps its turn in the
-list, interrupted, with the message in it, so it reads present and its path does not change.
+when a scan of every item of the turns begun since the send shows this attempt's token is not
+there (hostadapter.find_token_in): a found token means the message reached the recipient whatever
+happened to the turn row, and a scan that stopped at its bound has shown nothing (I-42). A lost
+ACK keeps its turn in the list, interrupted, with the message in it, so it reads present and its
+path does not change.
+
+A reading that cannot reach an answer by waiting - the listing never reached the send, the token
+scan could not cover the turns since it, the attempt has no send time - is recorded on the attempt
+as turn_check_undecided:<reason>, which status names, rather than left to look like an ordinary
+wait. It is cleared when a later reading decides.
 
 Recovery is the ordinary claim path, once. The delivery goes back to queued and the next attempt of
 the same event is sent under a new request id; if the host loses that turn too, the delivery is
@@ -26,7 +32,8 @@ from datetime import datetime
 
 from .delivery import COMPLETION
 from .hostadapter import DISPATCH_TURN_SKEW_SECONDS, TURN_PRESENT, TURN_START_PRECISION_SECONDS
-from .policy import HOST_LOST_TURN
+from .hostadapter import ListingBounded
+from .policy import HOST_LOST_TURN, TURN_CHECK_UNDECIDED
 from .transport import DISPATCHED, QUEUED, assert_attempt_invariants
 
 PRESENT = "present"
@@ -40,6 +47,13 @@ REQUEUED = "queued"
 HELD = "held"
 NOT_MOVED = "not_moved"
 REPORT_ONLY = "report_only"
+# Why an unknown reading will not resolve by waiting. These are recorded by name; every other
+# unknown - an unreadable host, a send too recent - is simply read again later.
+LISTING_BOUNDED = "listing_bounded"
+TOKEN_SCAN_BOUNDED = "token_scan_bounded"
+NO_SEND_TIME = "no_send_time"
+NO_TURN = "no_turn"
+UNDECIDED_MARK = TURN_CHECK_UNDECIDED + ":"
 
 
 class _Raced(Exception):
@@ -59,24 +73,32 @@ def read_recipient_turn(adapter, clock, attempt, delivery, turn_id) -> dict:
     finding is present, host_lost_turn or unknown. unknown is not an answer, and detail says why
     no answer was reached: an adapter that cannot list turns, an attempt without a send time, an
     unreadable host, or a send too recent to call its turn lost.
+    undecided names the reasons waiting will not fix (listing_bounded, token_scan_bounded,
+    no_send_time, no_turn), and is None otherwise.
     """
-    reading = {"turnId": turn_id, "finding": UNKNOWN, "status": None, "detail": None}
+    reading = {"turnId": turn_id, "finding": UNKNOWN, "status": None, "detail": None,
+               "undecided": None}
     thread = delivery["recipient_thread_id"]
     lookup = getattr(adapter, "find_dispatched_turn", None)
-    if lookup is None:
+    token_since = getattr(adapter, "find_token_since", None)
+    if lookup is None or token_since is None:
         reading["detail"] = "this host adapter cannot list the recipient's turns"
         return reading
     if not turn_id:
-        reading["detail"] = "the attempt names no turn"
+        reading.update(detail="the attempt names no turn", undecided=NO_TURN)
         return reading
     # When the send STARTED. observed_at is its settlement, later than the send, and would move
     # the cutoff the wrong way; an attempt without the stamp is left unjudged instead.
     sent_at = _epoch(attempt["sent_at"])
     if sent_at is None:
-        reading["detail"] = "the attempt has no send time, so absence cannot be bounded"
+        reading.update(detail="the attempt has no send time, so absence cannot be bounded",
+                       undecided=NO_SEND_TIME)
         return reading
     try:
         presence = lookup(thread, turn_id, sent_at=sent_at)
+    except ListingBounded as error:
+        reading.update(detail=f"undecided: {error}", undecided=LISTING_BOUNDED)
+        return reading
     except Exception as error:  # noqa: BLE001 - an unreadable host is its own answer
         reading["detail"] = f"unreadable: {type(error).__name__}: {error}"
         return reading
@@ -92,7 +114,8 @@ def read_recipient_turn(adapter, clock, attempt, delivery, turn_id) -> dict:
         )
         return reading
     try:
-        scan = adapter.find_token(thread, attempt["request_id"], limit=TOKEN_SCAN_LIMIT)
+        scan = token_since(thread, attempt["request_id"], turns=presence.seen + (turn_id,),
+                           limit=TOKEN_SCAN_LIMIT)
     except Exception as error:  # noqa: BLE001
         reading["detail"] = (
             f"the recipient does not list this turn, and its items could not be read for this "
@@ -106,13 +129,50 @@ def read_recipient_turn(adapter, clock, attempt, delivery, turn_id) -> dict:
                    f"items (turn {scan.turn_id})",
         )
         return reading
+    if not scan.exhausted:
+        reading.update(
+            detail=f"undecided: the recipient does not list this turn, and {scan.scanned} items "
+                   f"did not cover the {len(presence.seen)} turns begun since the send, so the "
+                   f"token's absence is not shown",
+            undecided=TOKEN_SCAN_BOUNDED,
+        )
+        return reading
     reading.update(
         finding=HOST_LOST_TURN,
         detail=f"the recipient's turn list has no such turn ({presence.stop} after "
-               f"{presence.scanned} turns) and this attempt's token is not in its newest "
-               f"{scan.scanned} items",
+               f"{presence.scanned} turns) and this attempt's token is not among the "
+               f"{scan.scanned} items of the {len(presence.seen)} turns begun since the send",
     )
     return reading
+
+
+def record_undecided(store, request_id, reading) -> int:
+    """Name an undecided reading on its attempt, or clear the name once a reading decides.
+
+    Written only while the attempt is still a settled dispatch, and only when the recorded value
+    changes, so a tick that learns nothing new writes nothing. Returns the rows changed.
+    """
+    if reading["finding"] == PRESENT:
+        wanted = None
+    elif reading["finding"] == UNKNOWN and reading.get("undecided"):
+        wanted = UNDECIDED_MARK + reading["undecided"]
+    else:
+        return 0
+    with store.transaction() as db:
+        row = db.execute(
+            "SELECT internal_state, state, recipient_scan FROM attempts WHERE request_id = ?",
+            (request_id,),
+        ).fetchone()
+        if row is None or row["internal_state"] != "settled" or row["state"] != DISPATCHED:
+            return 0
+        current = row["recipient_scan"]
+        if wanted is None and not (current or "").startswith(UNDECIDED_MARK):
+            return 0
+        if wanted is not None and current == wanted:
+            return 0
+        return db.execute(
+            "UPDATE attempts SET recipient_scan = ? WHERE request_id = ?", (wanted, request_id)
+        ).rowcount
 
 
 def settle(store, clock, request_id, reading, *, observation=None) -> dict:
