@@ -5309,7 +5309,8 @@ def build_parser() -> argparse.ArgumentParser:
                     " Nothing else does: merge-turn-land records no revision mark, because a"
                     " mark is append-only while a landed base can still be corrected. A"
                     " registered parent of any project with an agreement in the repository, open"
-                    " or closed, records the move after reading the landed base (its merge-turn-land"
+                    " or closed (any registered parent while the repository has none), records"
+                    " the move after reading the landed base (its merge-turn-land"
                     " answer or merge-turn-show), before answering or relying on an agreement"
                     " standing on the older tree. Until then a late acceptance on the older"
                     " tree stands. The move reopens the proposed and agreed agreements on"
@@ -5328,7 +5329,8 @@ def build_parser() -> argparse.ArgumentParser:
                                 help="the base the landing left, as merge-turn-show reads it")
     region_restate.add_argument("--actor", required=True,
                                 help="a registered parent of any project with an agreement in"
-                                     " this repository, open or closed")
+                                     " this repository, open or closed; any registered"
+                                     " parent while the repository has none")
     region_restate.set_defaults(handler=cmd_region_restate_revision)
 
     region_reaffirm = subparsers.add_parser(

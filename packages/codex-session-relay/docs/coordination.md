@@ -161,14 +161,14 @@ pull request is itself in that situation with `scripts/crw_runtime/components.js
 ## A base move reaches an agreement only when a party records it
 
 A region carries the revision it was proposed on, so an agreement is about a place in one tree.
-Nothing here watches a branch, and `merge-turn-land` records no revision mark: a mark is
-append-only with one successor per revision, while a landing's recorded base can still be
-corrected with `merge-turn-restate-base` (see above), so a mark written from a wrong reading could
-never be taken back. A registered parent of any project with an agreement in the repository, open
-or closed (the check reads that history, not the agreement being moved), records the move with
-`region-restate-revision` once it has read the landed base, and before it
-answers or relies on an agreement standing on the older tree. Until somebody does, a late
-acceptance on the older tree stands; that is the contract, not an oversight.
+Nothing here watches a branch, and `merge-turn-land` records no revision mark: a mark is append-only
+with one successor per revision, while a landing's recorded base can still be corrected with
+`merge-turn-restate-base` (see above), so a mark written from a wrong reading could never be taken
+back. A registered parent of any project with an agreement in the repository, open or closed (the
+check reads that history, not the agreement being moved; a repository with no agreement at all takes
+any registered parent), records the move with `region-restate-revision` once it has read the landed
+base, and before it answers or relies on an agreement standing on the older tree. Until somebody
+does, a late acceptance on the older tree stands; that is the contract, not an oversight.
 
 One revision has one successor, so only the first move starts at the proposal's revision. Every
 later move starts at the end of the recorded chain, which `region-show` reports per agreement as
@@ -193,8 +193,12 @@ a line number inside one points there. A successor carried before carries were r
 `edit_reaffirmations` row; its constraint was copied from what it supersedes, so the revision is
 found by following `supersedes` back while the text is unchanged. That carry also made its caller
 the proposer and dropped both conditions; `legacyCarry` names the agreement it came from with those
-terms, and the next reaffirmation carries the terms from there. The first version made the carrier
-the proposer, dropped both conditions and cleared the other acceptance without a word (CRW-124 G3).
+terms, and the next reaffirmation carries the terms from there. Two shapes that older code left
+behind are shown but not repaired here: a carry interrupted after it released its predecessor and
+before it wrote a successor, and an older successor still waiting for an acceptance, which can be
+accepted with the terms it lost. Both predate this change and are left to a follow-up. The first
+version made the carrier the proposer, dropped both conditions and cleared the other acceptance
+without a word (CRW-124 G3).
 
 An acceptance takes no condition. One given to `region-settle` used to vanish; it is now refused,
 as `bad_invocation` at the command line.

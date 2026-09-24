@@ -607,10 +607,11 @@ landing's recorded base can still be corrected with `merge-turn-restate-base`; a
 a wrong reading could never be taken back.
 
 **Who records a move, and when.** The relay accepts a move from the registered parent of any project
-with an agreement in that repository, open or closed: it checks that history, not the agreement
-being moved, and a move reopens every agreement standing on that revision. In practice a party to
-those agreements records it once it has read the landed base, from its own `merge-turn-land` answer
-or from `merge-turn-show`, and before it answers, relies on, or asks its peer to act on an agreement
+with an agreement in that repository, open or closed (or, while the repository holds no agreement at
+all, from any registered parent): it checks that history, not the agreement being moved, and a move
+reopens every agreement standing on that revision. In practice a party to those agreements records
+it once it has read the landed base, from its own `merge-turn-land` answer or from
+`merge-turn-show`, and before it answers, relies on, or asks its peer to act on an agreement
 standing on the older revision. When the landing parent is a party it records the move right after
 landing; otherwise the party that reads the landing in its next pass does. Either party may, and a
 move the chain already records answers `alreadyRecorded` and writes no new mark (like any
