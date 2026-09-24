@@ -363,6 +363,33 @@ class ReconcileReportsTheRecipientTurn(HostLossCase):
         self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
         self.assertEqual(self.attempt_states(event_id), [DISPATCHED])
 
+    def test_a_delivery_turn_gone_from_the_list_with_its_token_kept_is_named(self):
+        """Review 7 of d817117a: the veto kept the report from a second send, and hid it.
+
+        The turn the delivery started is gone from the parent's list while the message stays in
+        its items. Sending again would duplicate a message the parent holds, but the turn that
+        would have acted on it is gone, and the delivery read as an ordinary acknowledgement wait
+        with no reason anybody could query.
+        """
+        event_id, first, turn = self.dispatched()
+        self.host_loses(turn, items=False)
+        self.clock.advance(120)
+        report = self.daemon.tick().as_dict()
+        self.assertEqual(report.get("turnsUndecided"), 1)
+        self.assertEqual(self.attempt_states(event_id), [DISPATCHED])
+        self.assertEqual(len(self.adapter.sends), 1)
+        self.assertEqual(self.status_of(event_id)["phase"], "awaiting_ack:turn_check_undecided")
+        self.assertEqual(self.completion_delivery().get("turnCheck"),
+                         "turn_check_undecided:token_without_turn")
+        outcome = self.reconciler.reconcile_attempt(first, self.adapter)
+        reading = outcome.get("recipientTurn", {})
+        self.assertEqual((reading.get("finding"), reading.get("undecided")),
+                         ("present", "token_without_turn"))
+        self.assertEqual(outcome["record"]["reconciliation"]["recipientTurnsChecked"], True)
+        self.assertEqual(self.completion_delivery().get("turnCheck"),
+                         "turn_check_undecided:token_without_turn")
+        self.assertEqual(len(self.adapter.sends), 1)
+
     def test_reconciling_a_lost_attempt_again_changes_nothing(self):
         """The lost attempt is the once-count. Re-settling it from its receipt after the
         redelivery went out would set it back to dispatched, and a later loss of the redelivery
