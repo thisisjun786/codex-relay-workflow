@@ -1329,17 +1329,22 @@ class SupervisorChannel:
         that same refusal, asked of resolve() itself rather than of a copy of its rule, and
         returned as a gap naming the reason, the relation and the obligations it holds.
 
-        Only reports that have not gone out are held: no message yet, or one still claimable,
-        whatever hold it carries - a send-budget hold is a reason not to restage it, not a sign
-        it left. One on its way, sent, read or held uncertain has left staging, and calling it
-        held would contradict what supervisor-show says happened to it. One resolve() per
-        relation, which is the read staging would make anyway.
+        Only reports the hierarchy is actually keeping back are held. With no message yet, that
+        is an obligation whose own decision says a report is due: one already recorded under its
+        id (supervisor-report-recorded) is suppressed for that reason, not by the hierarchy, and
+        naming the hierarchy would misstate why nothing goes. With a message, it is one still
+        claimable, whatever hold it carries - a send-budget hold is a reason not to restage it,
+        not a sign it left. One on its way, sent, read or held uncertain has left staging, and
+        calling it held would contradict what supervisor-show says happened to it. One resolve()
+        per relation, which is the read staging would make anyway.
         """
         waiting = {}
         for obligation in standing.get("standing") or []:
             row = self.store.one(
                 "SELECT state FROM supervisor_messages WHERE obligation_id = ?"
                 " ORDER BY staged_at DESC LIMIT 1", (obligation["obligationId"],))
+            if row is None and not (obligation.get("decision") or {}).get("report"):
+                continue
             if row is not None and row["state"] not in CLAIMABLE:
                 continue
             waiting.setdefault(obligation["relationId"], []).append(obligation["obligationId"])

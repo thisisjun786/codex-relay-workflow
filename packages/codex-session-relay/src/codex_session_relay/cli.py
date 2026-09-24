@@ -4187,8 +4187,8 @@ def build_parser() -> argparse.ArgumentParser:
                                 " writing --reference by hand. The pointer's message id is"
                                 " computed from this link and digest, so a pointer belonging"
                                  " to another instruction is refused. The purpose also places"
-                                 " it: a scope keeps one live project_assignment and one live"
-                                 " scope_correction, one answer per message and purpose, and"
+                                 " it: a scope never holds two different live project_assignments"
+                                 " or scope_corrections, one answer per message and purpose, and"
                                  " the rest stand beside them. An instruction competing for a"
                                  " place already held is refused here, naming the live one and"
                                  " the linkage-settle that replaces it")

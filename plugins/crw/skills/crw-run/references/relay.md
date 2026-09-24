@@ -1044,8 +1044,9 @@ from a turn of its own, runs `supervisor-read`, and nothing reads back on its be
 the digest rather than leaving it to be written by hand. A pointer belonging to another
 instruction is refused with the contest retained, and one digest cannot carry two purposes.
 
-The purpose also decides what an instruction competes with. A project keeps one live
-`project_assignment` and one live `scope_correction` (answering a message or not); a
+The purpose also decides what an instruction competes with. A project never holds two different
+live `project_assignment`s, nor two different live `scope_correction`s (answering a message or
+not); restating the same instruction, as a successor does after a handover, is not a second one. A
 `relayed_decision`, `midpoint_check`, `resume` or `user_stop` stands beside them, and only
 two of one purpose answering the same `--correlation` with different digests compete. Record
 every instruction with `--purpose`: one without it cannot be placed and contests every live

@@ -617,6 +617,7 @@ def contradiction(text, *, link_id, digest):
                 f"digest derive {expected}; the pointer belongs to another instruction")
     return None
 
+
 # ------------------------------------------------------------ where an instruction stands
 
 # What a supervisor's instruction competes with, decided by its recorded purpose (CRW-230).
@@ -624,12 +625,16 @@ def contradiction(text, *, link_id, digest):
 # decision contest the assignment it was answering inside, and the level above then heard
 # nothing for half an hour (CRW-124 G1, F-G1-2). The relations, which linkage enforces:
 #
-#   - A project has at most ONE live assignment and ONE live scope correction. A second of either
-#     would leave the parent two versions of the same thing with no recorded order between them
-#     (directives are read in recorded order, and a tie falls to the directive id), so a later
-#     one replaces the earlier explicitly: the earlier is settled superseded and anything of it
-#     still in force is restated in the later. That holds for a correction whether or not it
-#     answers a message; a correction is the current statement of scope, not a reply.
+#   - A project never has two DIFFERENT live assignments, nor two different live scope
+#     corrections. A second version of either would leave the parent two versions of the same
+#     thing with no recorded order between them (directives are read in recorded order, and a
+#     tie falls to the directive id), so a later one replaces the earlier explicitly: the earlier
+#     is settled superseded and anything of it still in force is restated in the later. That
+#     holds for a correction whether or not it answers a message; a correction is the current
+#     statement of scope, not a reply. The same instruction restated - one digest - is not a
+#     second version: after a handover the successor's identical re-issue is its own record on
+#     the new link revision (directive_id carries the revision on purpose) and competes with
+#     nothing.
 #   - Every other purpose stands beside them. A relayed decision, a midpoint check, a resume and
 #     a user stop are occasions inside the assignment, not rival versions of it. Two of one
 #     purpose that answer the SAME message with different digests are two answers to one
@@ -639,7 +644,7 @@ def contradiction(text, *, link_id, digest):
 #     of another digest - exactly the rule that applied to every row before.
 #
 # Priority is for the parent reading them, and the store never consults it: a user stop comes
-# first; the one live scope correction amends the one live assignment; a relayed decision
+# first; the live scope correction amends the live assignment; a relayed decision
 # applies within both; a midpoint check or a resume asks for an answer or a restart and changes
 # nothing about what the work is.
 SOLE_DIRECTIVES = frozenset({"project_assignment", "scope_correction"})

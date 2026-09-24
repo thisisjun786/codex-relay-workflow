@@ -1471,9 +1471,9 @@ class Linkage:
                         + " on link revision " + str(row["revision"]))
             if why == "sole":
                 what = (scope_kind + " " + repr(scope_key) + " already has a live "
-                        + held["purpose"] + " (" + recorded + "). A scope keeps one live "
-                        + held["purpose"] + ", and a second would leave the parent two versions"
-                        " of it with no recorded order between them")
+                        + held["purpose"] + " (" + recorded + "). A scope never keeps two"
+                        " different live " + held["purpose"] + "s: a second version would leave"
+                        " the parent two of it with no recorded order between them")
             elif why == "answer":
                 what = (scope_kind + " " + repr(scope_key) + " already has a live "
                         + held["purpose"] + " answering " + repr(held["correlationId"]) + " ("

@@ -199,14 +199,19 @@ projects and held every report they owed upward for half an hour (CRW-124 G1, F-
 
 | Purpose | Relation to the others |
 |---|---|
-| `project_assignment` | Sole: one live per scope. A later one replaces it explicitly |
-| `scope_correction` | Sole: one live per scope, whether or not it answers a message. It amends the assignment and stands beside it; a later correction replaces it explicitly |
+| `project_assignment` | Sole: never two different live ones per scope. A later version replaces it explicitly |
+| `scope_correction` | Sole: never two different live ones per scope, whether or not they answer a message. It amends the assignment and stands beside it; a later correction replaces it explicitly |
 | `relayed_decision` | Stands beside the assignment and the correction. Two answering the same message with different digests compete |
 | `midpoint_check`, `resume`, `user_stop` | Stand beside everything. Two answering the same message with different digests compete |
 | none recorded | Cannot be placed, so it competes with every live instruction of another digest: the rule every row followed before |
 
 Two live instructions contest when their digests differ and they claim the same place: the same
 sole purpose, the same purpose answering the same message, or either with no recorded purpose.
+The same instruction restated is not a contest: one digest is one instruction. After a handover a
+successor re-issuing it records its own row on the new link revision (the id carries the revision
+so the two stay distinguishable, see Identity), and the two rows stand together as the same
+instruction said twice; a successor issuing a DIFFERENT one is refused and names the
+predecessor's row.
 Replacing one is always explicit: settle the one in force `superseded` (`linkage-settle`),
 restate in the new instruction whatever of it still applies, and record the new one. `chosen`
 also takes a directive out of the live set, but it records the winner of a contest rather than
@@ -214,7 +219,7 @@ a replacement. Two corrections are not merged, because the store keeps no order 
 that a parent could apply: directives are read in recorded order and a tie falls to the id.
 
 Priority is guidance for the parent and the store never reads it: a user stop comes first; the
-one live correction amends the one live assignment; a relayed decision applies within both; a
+live correction amends the live assignment; a relayed decision applies within both; a
 midpoint check or a resume asks for an answer or a restart and changes nothing about the work.
 
 An instruction recorded WITH a purpose is placed where it is recorded. One that would contest a
