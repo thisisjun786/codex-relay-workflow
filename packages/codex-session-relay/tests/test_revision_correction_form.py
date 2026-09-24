@@ -138,6 +138,19 @@ class OnlyWhatIsRuledViolatedIsInScope(_Revisions):
         self.assertIn("verified, unverified and review-only findings are out of scope",
                       section(message, "FIX SCOPE"))
 
+    def test_the_task_line_quotes_the_parent_summary_within_fix_scope(self):
+        # The summary is the parent's free text, recorded without any check against the
+        # findings, so "fix c-1 and c-2" beside a verdict that marked c-1 verified would
+        # contradict FIX SCOPE if TASK stated it as the task outright.
+        _source, revision = self.revision(MIXED)
+        self.with_report(revision, summary="Fix c-1 and c-2 before resubmission")
+        message = self.delivery.render_message(revision)
+        self.assert_correction_form(message)
+        task = next(line for line in message.splitlines() if line.startswith("TASK:"))
+        self.assertEqual(
+            task, "TASK: the parent's summary, within FIX SCOPE: Fix c-1 and c-2 before"
+                  " resubmission")
+
 
 class WhatTheVerdictRecordCannotAnswer(_Revisions):
     def test_a_verdict_that_named_no_criterion_names_the_gap(self):
@@ -150,6 +163,11 @@ class WhatTheVerdictRecordCannotAnswer(_Revisions):
         # It reads no criteria set, so it never claims one exists.
         self.assertNotIn("criteria set", section(message, "REVERIFY AND RETURN"))
         self.assertIn("emit --relationship", message)
+        # The full record holds no more criteria than this message does, so the gap is the
+        # parent's to answer and pointing at the record would be a dead end.
+        for name in ("VIOLATED CRITERION", "FIX SCOPE", "REVERIFY AND RETURN"):
+            self.assertIn("ask the parent", section(message, name))
+            self.assertNotIn("full record", section(message, name))
 
     def test_a_review_is_the_source_when_the_verdict_recorded_none(self):
         _source, revision = self.revision(None)
@@ -250,6 +268,9 @@ class NothingRuledViolatedOrOwed(_Revisions):
         self.assertIn("not recorded", reverify)
         self.assertNotIn("REVERIFY AND RETURN asks for", scope)
         self.assertNotIn("FIX SCOPE says", reverify)
+        for text in (scope, reverify):
+            self.assertIn("ask the parent", text)
+            self.assertNotIn("full record", text)
 
     def test_the_plain_request(self):
         _source, revision = self.revision(self.MET_ONLY)
