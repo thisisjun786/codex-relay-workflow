@@ -1480,9 +1480,12 @@ class Linkage:
             recorded = ("directive " + repr(row["directive_id"]) + ", recorded "
                         + str(row["recorded_at"]) + " by " + repr(row["from_task_id"])
                         + " on link revision " + str(row["revision"]))
+            answering = ("" if held is None or held["correlationId"] is None
+                         else " answering " + repr(held["correlationId"]))
             if why == "restated":
                 what = (scope_kind + " " + repr(scope_key) + " already has this same "
-                        + held["purpose"] + " live (" + recorded + ", the same digest). It"
+                        + held["purpose"] + answering + " live (" + recorded
+                        + ", the same digest). It"
                         " stays in force through the link's move to revision " + str(revision)
                         + ", so there is nothing to record, and a second live copy would leave"
                         " a later replacement settling one of two")
@@ -1496,13 +1499,13 @@ class Linkage:
                     incumbent=row["directive_id"], challenger=challenger)
             if why == "sole":
                 what = (scope_kind + " " + repr(scope_key) + " already has a live "
-                        + held["purpose"] + " (" + recorded + "). A scope keeps one live "
-                        + held["purpose"] + ", and a second would leave the parent two versions"
-                        " of it with no recorded order between them")
+                        + held["purpose"] + answering + " (" + recorded + "). A scope keeps"
+                        " one live " + held["purpose"] + ", and a second would leave the parent"
+                        " two versions of it with no recorded order between them")
             elif why == "answer":
                 what = (scope_kind + " " + repr(scope_key) + " already has a live "
-                        + held["purpose"] + " answering " + repr(held["correlationId"]) + " ("
-                        + recorded + "). One message takes one answer of each purpose")
+                        + held["purpose"] + answering + " (" + recorded
+                        + "). One message takes one answer of each purpose")
             else:
                 what = (scope_kind + " " + repr(scope_key) + " has a live directive whose"
                         " purpose was never recorded (" + recorded + ", reference "

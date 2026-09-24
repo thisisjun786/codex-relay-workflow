@@ -1335,17 +1335,28 @@ class SupervisorChannel:
         naming the hierarchy would misstate why nothing goes. With a message, it is one still
         claimable, whatever hold it carries - a send-budget hold is a reason not to restage it,
         not a sign it left. One on its way, sent, read or held uncertain has left staging, and
-        calling it held would contradict what supervisor-show says happened to it. One resolve()
+        calling it held would contradict what supervisor-show says happened to it.
+
+        The messages are read once for the whole list: supervisor_messages has no index on the
+        obligation, so a read per obligation would scan the table once each. Then one resolve()
         per relation, which is the read staging would make anyway.
         """
+        obligations = standing.get("standing") or []
+        newest = {}
+        identifiers = [one["obligationId"] for one in obligations]
+        for start in range(0, len(identifiers), 500):
+            chunk = identifiers[start:start + 500]
+            for row in self.store.all(
+                    "SELECT obligation_id, state FROM supervisor_messages WHERE obligation_id IN ("
+                    + ",".join("?" * len(chunk)) + ") ORDER BY staged_at", tuple(chunk)):
+                # Ascending, so the last row seen for an obligation is its newest.
+                newest[row["obligation_id"]] = row["state"]
         waiting = {}
-        for obligation in standing.get("standing") or []:
-            row = self.store.one(
-                "SELECT state FROM supervisor_messages WHERE obligation_id = ?"
-                " ORDER BY staged_at DESC LIMIT 1", (obligation["obligationId"],))
-            if row is None and not (obligation.get("decision") or {}).get("report"):
+        for obligation in obligations:
+            state = newest.get(obligation["obligationId"])
+            if state is None and not (obligation.get("decision") or {}).get("report"):
                 continue
-            if row is not None and row["state"] not in CLAIMABLE:
+            if state is not None and state not in CLAIMABLE:
                 continue
             waiting.setdefault(obligation["relationId"], []).append(obligation["obligationId"])
         holds = []
