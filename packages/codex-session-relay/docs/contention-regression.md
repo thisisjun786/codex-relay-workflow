@@ -128,6 +128,9 @@ What each one waits on:
   launched that way publishes. A mapping that looks right to the parent is not evidence that
   a child reads a policy out of it, and only a process boundary shows the difference.
 - `test_operational_scale.py` spawns one real replacement worker.
+- `test_merge_target.py` builds bare repositories with git and reads them through the merge
+  turn's own target reader and command line, because what a real git answers for a branch -
+  and what it refuses, such as revision syntax - is the property under test (CRW-229).
 - `test_cli.py`, `test_management_cli.py` and `test_wp1_regressions.py` shell
   out to the command line.
 - `test_bridge_adapter.py` waits before asserting a transport worker is still alive.

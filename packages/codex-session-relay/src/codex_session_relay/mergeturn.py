@@ -26,10 +26,12 @@ is next does not become next.
 """
 
 import json
+import re
 
 from .coordination import DOMAIN_MERGE_TARGET, Conflicts, Refusal, derive, exact
 from .errors import CoordinationError, RefusalReason
 from .identity import sha256_hex
+from .mergetarget import TargetUnreadable, same_commit
 from . import mergeevidence, report
 
 PROJECT = "project"
@@ -67,6 +69,17 @@ GRANT = "grant"
 GRANT_ACKNOWLEDGED = "grant_acknowledged"
 READINESS_DECLARED = "readiness_declared"
 READINESS_WITHDRAWN = "readiness_withdrawn"
+# CRW-229. A landing's recorded base, re-read from the target and recorded again, with the value
+# it replaced. Written only by restate_base, as a same-state TRANSITION, which is a shape attest()
+# cannot write: attest() only ever wrote ATTESTATION rows, so no store that predates this change
+# can hold a forged one.
+LANDING_BASE_RESTATED = "landing_base_restated"
+RESTATE_PREFIX = "restate-base:"
+# The digits a restatement key's sequence may have. Every key within this bound counts towards
+# the next sequence, so corrections stay in order whatever an older caller wrote. A longer run is
+# never converted: Python refuses to convert past 4300 digits either way (int() and str()), and
+# the bound leaves room for the next sequence to be written. Such a key is only stepped around.
+_RESTATE_KEY = re.compile(r"\Arestate-base:([0-9]{1,4000})\Z")
 
 # What this module writes, and therefore what nobody else may write through attest().
 #
@@ -80,10 +93,11 @@ RESERVED_KINDS = (
     "claim", "close", "candidate_head_changed", "took_free_target", "promoted",
     "currency_confirmed", "outcome_unknown",
     GRANT, GRANT_ACKNOWLEDGED, READINESS_DECLARED, READINESS_WITHDRAWN,
+    LANDING_BASE_RESTATED,
 )
 RESERVED_PREFIXES = (
     "request:", "close:", "head:", "take:", "promote:", "merging:", "unknown:", "ready:",
-    GRANT + ":", GRANT_ACKNOWLEDGED + ":",
+    GRANT + ":", GRANT_ACKNOWLEDGED + ":", RESTATE_PREFIX,
 )
 
 # What a stored refusal means for somebody asking why a target is not moving. Each of these
@@ -95,6 +109,9 @@ REFUSAL_CAUSES = {
     RefusalReason.MERGE_CURRENCY_STALE.value: "required_evidence_not_current",
     RefusalReason.MERGE_REVIEW_INCOMPLETE.value: "review_not_finished",
     RefusalReason.MERGE_CANDIDATE_MOVED.value: "candidate_moved",
+    # The check could not read where the base branch points, so nothing was compared. Waiting
+    # on the holder does not help; making the target readable does.
+    RefusalReason.MERGE_TARGET_UNREADABLE.value: "target_unreadable",
 }
 
 
@@ -198,6 +215,37 @@ def grant_envelope(entry, turn, tenure):
     return envelope
 
 
+def restatement_envelope(entry, turn):
+    """One ledger entry read as a restatement restate_base wrote, or None when it is not one.
+
+    restate_base writes a same-state TRANSITION on a landed turn, keyed restate-base:<n>, whose
+    evidence names this turn and n. attest() could only ever write ATTESTATION rows, so an
+    existing store cannot hold a forged restatement of this shape; anything else under the
+    evidence kind is somebody else's row and is reported, never read as a correction.
+    Nothing here raises.
+    """
+    if entry["evidenceKind"] != LANDING_BASE_RESTATED or entry["kind"] != TRANSITION:
+        return None
+    if entry["fromState"] != LANDED or entry["toState"] != LANDED:
+        return None
+    try:
+        envelope = json.loads(entry["evidence"])
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(envelope, dict) or envelope.get("turnId") != turn:
+        return None
+    sequence = envelope.get("sequence")
+    if not isinstance(sequence, int) or isinstance(sequence, bool):
+        return None
+    if entry["idempotencyKey"] != RESTATE_PREFIX + str(sequence):
+        return None
+    for field in ("from", "to"):
+        if not isinstance(envelope.get(field), str) or not envelope[field]:
+            return None
+    return {"sequence": sequence, "from": envelope["from"], "to": envelope["to"],
+            "evidence": envelope.get("evidence"), "source": envelope.get("source")}
+
+
 def check_id(turn, head_sha, base_sha, checks_digest, review_digest):
     return derive("chk", turn, head_sha, base_sha, checks_digest, review_digest)
 
@@ -231,11 +279,15 @@ def review_digest(review):
 class MergeTurn:
     """Claims on a shared merge target, and the lifecycle of the one that holds it."""
 
-    def __init__(self, store, clock, linkage, *, delivery=None):
+    def __init__(self, store, clock, linkage, *, delivery=None, target_reader=None):
         self.store = store
         self.clock = clock
         self.linkage = linkage
         self.conflicts = Conflicts(store)
+        # CRW-229: what reads where a target's base branch points (mergetarget.TargetReader in
+        # the CLI). Absent, every operation that has to record a base refuses rather than take
+        # one on a caller's word; the operations that record none are unaffected.
+        self.target_reader = target_reader
         # Optional for the reason DeliveryService's own linkage is optional: absent, every
         # caller written before this keeps its exact behaviour, down to the bytes of the grant
         # envelope. Supplied, a grant that a parent did NOT cause is also pushed to it through
@@ -260,6 +312,17 @@ class MergeTurn:
             if entry["evidenceKind"] == GRANT
             and grant_envelope(entry, turn, row["tenure"]) is None
         ]
+        # Every correction of the recorded base, with the value it replaced, so the original
+        # and each correction stay readable side by side. Same rule as grants: a row this
+        # module cannot read as its own restatement is named, never parsed and never raised on.
+        restated = [(entry, restatement_envelope(entry, turn)) for entry in record["ledger"]
+                    if entry["evidenceKind"] == LANDING_BASE_RESTATED]
+        record["baseRestatements"] = sorted(
+            (dict(envelope, actorTaskId=entry["actorTaskId"], recordedAt=entry["recordedAt"])
+             for entry, envelope in restated if envelope is not None),
+            key=lambda one: one["sequence"])
+        record["unreadableRestatements"] = [
+            entry["idempotencyKey"] for entry, envelope in restated if envelope is None]
         return record
 
     def outstanding(self, task_id):
@@ -505,6 +568,7 @@ class MergeTurn:
             "declaredReady": row["declared_ready"] == 1,
             "state": row["state"], "tenure": row["tenure"],
             "landedSha": row["landed_sha"], "observedBaseSha": row["observed_base_sha"],
+            "checkedBaseSha": row["checked_base_sha"],
             "closeReason": row["close_reason"], "requestedAt": row["requested_at"],
             "heldAt": row["held_at"], "mergingAt": row["merging_at"],
             "closedAt": row["closed_at"], "updatedAt": row["updated_at"],
@@ -875,7 +939,8 @@ class MergeTurn:
 
         A head is the only thing this package can notice for itself. A base that moved and a
         finding that arrived are equally fatal to a readiness claim and equally invisible from
-        here - nothing in this package contacts a forge - so the caller says so through cause,
+        here - the merge turn reads a base branch only when it records a base - so the caller
+        says so through cause,
         and the change is recorded either way. Before this, readiness could go from true to
         false with nothing in the ledger saying it ever had, which is how a peer reading the
         record could not tell a candidate that was never ready from one that stopped being it.
@@ -1278,6 +1343,117 @@ class MergeTurn:
                 candidate["holder_task_id"], at=at)
             self.conflicts.record_in(db, stale, at=at)
         return None
+
+    # ------------------------------------------------------------- the target
+
+    def _read_target(self, row):
+        """Where the target's base branch points now, as (reading, None) or (None, why not).
+
+        Called OUTSIDE any transaction, and only once the call's cheap preconditions hold, so
+        a stranger or a wrong-state call never reaches the target and a slow read never holds
+        the writer lock. Never raises: a reading that did not happen is an answer too, and the
+        transaction that follows refuses on it rather than guessing.
+        """
+        if self.target_reader is None:
+            return None, ("this relay has no target reader configured, so it cannot read where "
+                          + repr(row["base_ref"]) + " points")
+        try:
+            return self.target_reader.tip(row["repository"], row["base_ref"]), None
+        except TargetUnreadable as error:
+            return None, error.detail
+
+    @staticmethod
+    def _unreadable(row, actor, why, what):
+        return Refusal(
+            RefusalReason.MERGE_TARGET_UNREADABLE,
+            "the base branch " + repr(row["base_ref"]) + " of " + repr(row["repository"])
+            + " was not read, so " + what + ": " + why,
+            domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
+            incumbent=row["turn_id"], challenger=actor)
+
+    @staticmethod
+    def _mismatch(row, actor, stated, reading, what, *, optional=True):
+        return Refusal(
+            RefusalReason.MERGE_BASE_MISMATCH,
+            "the base branch " + repr(row["base_ref"]) + " reads " + repr(reading["sha"])
+            + " (" + str(reading.get("source")) + ") and " + what + " states " + repr(stated)
+            + "; the relay records what the branch reads, so read it again and state it in"
+            " full" + (", or leave the statement out" if optional else ""),
+            domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
+            incumbent=reading["sha"], challenger=stated)
+
+    @staticmethod
+    def _not_advanced(row, reading):
+        """The branch still reads the base the currency check itself read before merging.
+
+        Both sides are relay readings (begin_merge stores its reading as checked_base_sha), so
+        this is a fact about the target rather than a comparison with caller text. A candidate
+        that already WAS the branch tip at the check is exempt: its landing changes nothing,
+        the reading is the truth, and refusing it would leave the target occupied for good.
+        """
+        checked = row["checked_base_sha"]
+        return (checked is not None and same_commit(reading["sha"], checked)
+                and not same_commit(checked, row["candidate_head"]))
+
+    @staticmethod
+    def _not_advanced_refusal(row, actor, reading):
+        return Refusal(
+            RefusalReason.MERGE_BASE_NOT_ADVANCED,
+            "the base branch " + repr(row["base_ref"]) + " still reads "
+            + repr(reading["sha"]) + ", the base the currency check read before merging, so"
+            " the merge of " + repr(row["candidate_head"]) + " is not on it. The turn stays"
+            " merging: merge and land again, or read again if the forge has not caught up. If"
+            " the merge changed nothing because the base already contained the candidate,"
+            " record that with merge-turn-unknown and merge-turn-resolve --pr-state merged",
+            domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
+            incumbent=row["checked_base_sha"], challenger=reading["sha"])
+
+    @staticmethod
+    def _base_was_read_in(db, row):
+        """Whether this turn's checked base is a relay reading rather than a caller's text.
+
+        begin_merge records its reading on the engine's own holding->merging transition. A
+        turn that reached merging before the relay read the target has a bare check id there,
+        so its checked base is whatever its holder typed, and comparing the branch with it
+        says nothing about whether the merge landed.
+        """
+        entry = db.execute(
+            "SELECT kind, from_state, to_state, evidence FROM merge_turn_ledger"
+            "  WHERE turn_id = ? AND idempotency_key = ? AND evidence_kind = ?",
+            (row["turn_id"], "merging:" + row["candidate_head"], "currency_confirmed"),
+        ).fetchone()
+        if (entry is None or row["checked_base_sha"] is None or entry["kind"] != TRANSITION
+                or entry["from_state"] != HOLDING or entry["to_state"] != MERGING):
+            return False
+        try:
+            envelope = json.loads(entry["evidence"])
+        except (TypeError, ValueError):
+            return False
+        return isinstance(envelope, dict) and envelope.get("baseRead") == row["checked_base_sha"]
+
+    @staticmethod
+    def _latest_landing_in(db, target):
+        """The landed turn whose recorded base the next candidate must restate, or None.
+
+        LANDED rows only: the rule is the base matching the last LANDING recorded here. A
+        returned or resolved-open row carries an observation, not a landing, and letting it
+        gate the target left a returned row nobody could restate blocking every successor.
+
+        Last by the order the closes were WRITTEN, not by closed_at: that has one-second
+        resolution, and breaking its ties by turn_id - a digest - picked between two landings
+        of one instant by chance, so the currency check could compare against the older one
+        while the restatement refused the newer. Every close journals merge_turn_closed, and
+        the journal's sequence is an autoincrement nothing deletes, so it orders them exactly.
+        A row with no such entry (written by hand) sorts after every journalled one.
+        """
+        return db.execute(
+            "SELECT m.turn_id, m.observed_base_sha, m.holder_task_id, m.project_key"
+            "  FROM merge_turns m LEFT JOIN journal j"
+            "    ON j.subject = m.turn_id AND j.kind = 'merge_turn_closed'"
+            "  WHERE m.target_key = ? AND m.state = 'landed' AND m.observed_base_sha IS NOT NULL"
+            "  ORDER BY COALESCE(j.seq, -1) DESC, m.closed_at DESC, m.turn_id DESC LIMIT 1",
+            (target,),
+        ).fetchone()
     # ----------------------------------------------------------- pre-merge
 
     def begin_merge(self, turn, *, actor, head_sha, base_sha, checks, review, required=()):
@@ -1293,13 +1469,27 @@ class MergeTurn:
         moved since the claim, the base matches the last landing recorded here, every declared
         required check is present and successful on that head at its highest submitted
         attempt, and the review was paginated to the end with nothing unresolved. It does NOT
-        establish what a forge requires: this package never contacts one, so the required set
-        is the caller's declaration and is stored as requiredDeclared rather than discovered.
+        establish what a forge requires: the one thing read from the target is where its base
+        branch points (CRW-229), so the required set is the caller's declaration and is stored
+        as requiredDeclared rather than discovered.
+
+        The restated base must be what the branch reads now, and the READING is what is
+        stored as the checked base, because land compares the branch against it.
         """
         required = sorted({str(name) for name in (required or ())})
         checks = [dict(entry) for entry in (checks or [])]
         review = dict(review or {})
         digest_c, digest_r = checks_digest(required, checks), review_digest(review)
+        # The base is read from the target, outside the transaction, and only when this call
+        # could reach the comparison: a stranger, a turn that is not holding, an unready one or
+        # a moved head is refused below without the target ever being read.
+        reading, unread = None, ("the turn was not holding this ready candidate when the call"
+                                 " began, and changed during it; call again")
+        early = self.store.one("SELECT * FROM merge_turns WHERE turn_id = ?", (turn,))
+        if (early is not None and early["holder_task_id"] == actor
+                and early["state"] == HOLDING and early["declared_ready"] == 1
+                and early["candidate_head"] == head_sha):
+            reading, unread = self._read_target(early)
         now = self.clock.iso()
         refusal, verified_against = None, None
         with self.store.transaction() as db:
@@ -1344,19 +1534,30 @@ class MergeTurn:
                     " head is " + repr(head_sha) + "; the turn was granted for the first",
                     domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
                     incumbent=row["candidate_head"], challenger=head_sha)
+            if refusal is None and reading is None:
+                refusal = self._unreadable(
+                    row, actor, unread, "the restated base cannot be compared with it")
+            if refusal is None and not same_commit(base_sha, reading["sha"]):
+                refusal = Refusal(
+                    RefusalReason.MERGE_CURRENCY_STALE,
+                    "the base branch " + repr(row["base_ref"]) + " reads "
+                    + repr(reading["sha"]) + " and this restates " + repr(base_sha)
+                    + "; restate the base the branch points at now, in full",
+                    domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
+                    incumbent=reading["sha"], challenger=base_sha)
             if refusal is None:
-                landing = db.execute(
-                    "SELECT observed_base_sha FROM merge_turns"
-                    "  WHERE target_key = ? AND observed_base_sha IS NOT NULL"
-                    "  ORDER BY closed_at DESC, turn_id DESC LIMIT 1",
-                    (row["target_key"],),
-                ).fetchone()
-                if landing is not None and landing["observed_base_sha"] != base_sha:
+                landing = self._latest_landing_in(db, row["target_key"])
+                if landing is not None and not same_commit(
+                        landing["observed_base_sha"], base_sha):
                     refusal = Refusal(
                         RefusalReason.MERGE_CURRENCY_STALE,
-                        "the last landing on this target observed base "
-                        + repr(landing["observed_base_sha"]) + " and this restates "
-                        + repr(base_sha) + "; the base moved under the candidate",
+                        "the last landing on this target, turn " + repr(landing["turn_id"])
+                        + ", recorded base " + repr(landing["observed_base_sha"])
+                        + " and this restates " + repr(base_sha) + "; the base moved under"
+                        " the candidate. If that recorded base is wrong, the landing's holder "
+                        + repr(landing["holder_task_id"]) + " or the supervisor above project "
+                        + repr(landing["project_key"]) + " re-reads it with merge-turn-restate-base"
+                        " --turn " + landing["turn_id"],
                         domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
                         incumbent=landing["observed_base_sha"], challenger=base_sha)
             if refusal is None:
@@ -1378,15 +1579,24 @@ class MergeTurn:
                  refusal.reason.value if refusal is not None else None, now),
             )
             if refusal is None:
+                # The READING, not the caller's text: land compares the branch against this, and a
+                # restated abbreviation or a wrong first-turn base would make that comparison
+                # mean nothing.
                 db.execute(
                     "UPDATE merge_turns SET state = ?, merging_at = ?, updated_at = ?"
                     ", checked_base_sha = ? WHERE turn_id = ?",
-                    (MERGING, now, now, base_sha, turn),
+                    (MERGING, now, now, reading["sha"], turn),
                 )
+                # The reading rides on the engine's own transition, and that is what later tells
+                # land the checked base was READ: a turn that entered merging before this change
+                # carries a bare check id here and a typed base in checked_base_sha.
                 self._write_ledger(
                     db, turn, kind=TRANSITION, from_state=HOLDING, to_state=MERGING,
                     evidence_kind="currency_confirmed", actor=actor,
-                    evidence=check_id(turn, head_sha, base_sha, digest_c, digest_r),
+                    evidence=json.dumps({
+                        "checkId": check_id(turn, head_sha, base_sha, digest_c, digest_r),
+                        "baseRead": reading["sha"], "source": reading.get("source"),
+                    }, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
                     idempotency_key="merging:" + head_sha, at=now)
             else:
                 self.conflicts.record_in(db, refusal, at=now)
@@ -1478,21 +1688,34 @@ class MergeTurn:
         return heads[0], None
     # ------------------------------------------------------------- outcomes
 
-    def land(self, turn, *, actor, landed_sha, observed_base_sha, evidence):
+    def land(self, turn, *, actor, landed_sha, evidence, observed_base_sha=None):
         """Confirm the merge landed, and close the tenure in the same transaction.
 
         Landing IS the return. Keeping the target occupied after a confirmed landing would
         wedge it if the holder then died, with nothing gained: a merge sha and an observed base
         are positive evidence that the merge finished. Ordering is preserved inside the write
         instead of across two calls that can lose the second one.
+
+        The base the landing leaves behind is READ from the target, never taken from the
+        caller (CRW-229). It is what the next candidate on this target has to restate, so a
+        typed value that was wrong - the base the candidate was checked against, in the trial
+        that found this - stopped every successor with no way back. The caller's
+        observed_base_sha is optional and only cross-checked; landed_sha is recorded as stated
+        and is not checked for containment in the branch.
         """
         if not str(evidence or "").strip():
             raise CoordinationError(
                 RefusalReason.MERGE_EVIDENCE_REQUIRED,
-                "a landing states what was observed; this package cannot watch a forge, so the"
-                " evidence is the only thing that makes the landing a fact")
+                "a landing states what was observed; the relay reads only where the base branch"
+                " points, so the evidence is what makes the merge itself a fact")
         exact(landed_sha, "a landed sha")
-        exact(observed_base_sha, "an observed base sha")
+        if observed_base_sha is not None:
+            exact(observed_base_sha, "an observed base sha")
+        reading, unread = None, ("the turn was not merging under this holder when the call"
+                                 " began, and changed during it; call again")
+        early = self.store.one("SELECT * FROM merge_turns WHERE turn_id = ?", (turn,))
+        if early is not None and early["holder_task_id"] == actor and early["state"] == MERGING:
+            reading, unread = self._read_target(early)
         now = self.clock.iso()
         refusal, promoted = None, None
         with self.store.transaction() as db:
@@ -1501,10 +1724,32 @@ class MergeTurn:
                 refusal = self._not_holder(row, actor, "record a landing on")
             elif row["state"] != MERGING:
                 refusal = self._wrong_state(row, actor, "recording a landing")
+            elif not self._base_was_read_in(db, row):
+                refusal = Refusal(
+                    RefusalReason.MERGE_EVIDENCE_REQUIRED,
+                    "turn " + repr(turn) + " entered merging before the relay read its base, so"
+                    " its checked base " + repr(row["checked_base_sha"]) + " was typed rather"
+                    " than read and the branch cannot show whether this merge landed. Report"
+                    " the outcome with merge-turn-unknown and resolve it from the pull"
+                    " request's state with merge-turn-resolve, which reads the branch",
+                    domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
+                    incumbent=row["checked_base_sha"] or "", challenger=actor)
+            elif reading is None:
+                refusal = self._unreadable(
+                    row, actor, unread, "the base this landing leaves behind cannot be recorded;"
+                    " the turn stays merging")
+            elif self._not_advanced(row, reading):
+                refusal = self._not_advanced_refusal(row, actor, reading)
+            elif observed_base_sha is not None and not same_commit(
+                    observed_base_sha, reading["sha"]):
+                refusal = self._mismatch(
+                    row, actor, observed_base_sha, reading, "--observed-base-sha")
             if refusal is None:
                 self._close_in(
                     db, row, LANDED, evidence, actor, at=now,
-                    landed_sha=landed_sha, observed_base_sha=observed_base_sha)
+                    landed_sha=landed_sha, observed_base_sha=reading["sha"])
+                self.store.journal(
+                    "merge_turn_base_observed", turn, dict(reading, at="landing"), at=now)
                 promoted = self._promote_in(db, row["target_key"], now)
             else:
                 self.conflicts.record_in(db, refusal, at=now)
@@ -1512,6 +1757,7 @@ class MergeTurn:
             raise refusal.error()
         return {"released": self.turn(turn),
                 "promoted": self.turn(promoted) if promoted else None,
+                "baseObservation": reading,
                 "ledger": self.ledger(turn)}
 
     def report_unknown(self, turn, *, actor, reason):
@@ -1554,6 +1800,14 @@ class MergeTurn:
         Not a timer, not a cancellation, not a supervisor's authority on its own. The
         observation decides the outcome rather than the caller: a merged pull request or a base
         that moved lands the turn, anything else returns it.
+
+        The base recorded here is READ from the target (CRW-229); the caller's
+        observed_base_sha is cross-checked against it. A merged outcome needs that reading. An
+        open or closed one does not: an unreadable target returns the turn with no base
+        recorded, because the next candidate's currency check reads the target itself and a
+        returned candidate changed nothing. There is deliberately no not-advanced rule here:
+        the pull request's merged state is the evidence, and a candidate the base already
+        contained has to be resolvable as merged.
         """
         if not str(evidence or "").strip():
             raise CoordinationError(
@@ -1561,6 +1815,14 @@ class MergeTurn:
                 "resolving an unknown outcome requires the observation that resolves it;"
                 " elapsed time is not one and never becomes one")
         exact(observed_base_sha, "an observed base sha")
+        reading, unread = None, ("the turn was not unknown when the call began, or the caller"
+                                 " could not resolve it then, and it changed during the call;"
+                                 " call again")
+        early = self.store.one("SELECT * FROM merge_turns WHERE turn_id = ?", (turn,))
+        if (early is not None and early["state"] == UNKNOWN
+                and pr_state in ("merged", "open", "closed")
+                and self._authority_refusal(early, actor, "resolve its outcome") is None):
+            reading, unread = self._read_target(early)
         now = self.clock.iso()
         refusal, promoted, landed = None, None, False
         with self.store.transaction() as db:
@@ -1598,12 +1860,27 @@ class MergeTurn:
                         + ("; the base moved from " + repr(row["checked_base_sha"]) + " to "
                            + repr(observed_base_sha) + ", which any unrelated commit also"
                            " does" if moved else ""))
+                if reading is None:
+                    if landed:
+                        refusal = self._unreadable(
+                            row, actor, unread, "a merged outcome has no base to record; the"
+                            " turn stays unknown")
+                elif not same_commit(observed_base_sha, reading["sha"]):
+                    # Required on resolve, so the refusal cannot suggest leaving it out.
+                    refusal = self._mismatch(
+                        row, actor, observed_base_sha, reading, "--observed-base-sha",
+                        optional=False)
+            if refusal is None:
                 self._close_in(
                     db, row, LANDED if landed else RETURNED,
                     "resolved from an observation: pr_state=" + str(pr_state) + "; " + evidence,
                     actor, at=now,
                     landed_sha=row["candidate_head"] if landed else None,
-                    observed_base_sha=observed_base_sha)
+                    observed_base_sha=reading["sha"] if reading is not None else None)
+                if reading is not None:
+                    self.store.journal(
+                        "merge_turn_base_observed", turn, dict(reading, at="resolution"),
+                        at=now)
                 promoted = self._promote_in(db, row["target_key"], now)
             else:
                 self.conflicts.record_in(db, refusal, at=now)
@@ -1611,7 +1888,115 @@ class MergeTurn:
             raise refusal.error()
         return {"released": self.turn(turn), "outcome": LANDED if landed else RETURNED,
                 "promoted": self.turn(promoted) if promoted else None,
+                "baseObservation": reading,
                 "ledger": self.ledger(turn)}
+
+    def restate_base(self, turn, *, actor, evidence, observed_base_sha=None):
+        """Re-read the base a landing left behind, and record it with the value it replaces.
+
+        CRW-229. A landing whose recorded base is wrong stops every later candidate on the
+        target at merge_currency_stale, and nothing else can correct a landed turn: resolve
+        admits only an unknown one. Relays before this change took that base from the caller,
+        so stores written by them can hold the base a candidate was checked against rather
+        than the one the branch pointed at afterwards.
+
+        What is recorded is what the branch reads NOW, which is exactly what the next candidate
+        has to restate. The caller's observed_base_sha is optional and only cross-checked. The
+        previous value stays in the ledger entry beside the new one, so the record says both
+        what was recorded and why it changed.
+
+        Only the landing the currency check reads can be restated - any other would change
+        nothing that check compares and would look like a fix - and not while another turn on
+        the target is merging or unresolved, because that merge was checked against the value
+        this would replace.
+        """
+        if not str(evidence or "").strip():
+            raise CoordinationError(
+                RefusalReason.MERGE_EVIDENCE_REQUIRED,
+                "a restatement states why the recorded base is being read again")
+        if observed_base_sha is not None:
+            exact(observed_base_sha, "an observed base sha")
+        reading, unread = None, ("the turn was not a landing this caller may restate when the"
+                                 " call began, and changed during it; call again")
+        early = self.store.one("SELECT * FROM merge_turns WHERE turn_id = ?", (turn,))
+        if (early is not None and early["state"] == LANDED
+                and self._authority_refusal(early, actor, "restate its base") is None):
+            reading, unread = self._read_target(early)
+        now = self.clock.iso()
+        refusal, answered = None, False
+        with self.store.transaction() as db:
+            row = self._row_in(db, turn)
+            refusal = self._authority_refusal(row, actor, "restate its base")
+            if refusal is None and row["state"] != LANDED:
+                refusal = self._wrong_state(row, actor, "restating a landing's base")
+            if refusal is None:
+                latest = self._latest_landing_in(db, row["target_key"])
+                if latest is None or latest["turn_id"] != turn:
+                    refusal = Refusal(
+                        RefusalReason.MERGE_TURN_NOT_HELD,
+                        "turn " + repr(turn) + " is not the landing the currency check reads"
+                        + ("; that is " + repr(latest["turn_id"]) + ", so restate that one"
+                           if latest is not None else "; it records no base"),
+                        domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
+                        incumbent=latest["turn_id"] if latest is not None else "",
+                        challenger=actor)
+            if refusal is None:
+                in_flight = db.execute(
+                    "SELECT * FROM merge_turns WHERE target_key = ? AND state IN (?,?)"
+                    "  ORDER BY turn_id LIMIT 1",
+                    (row["target_key"], MERGING, UNKNOWN)).fetchone()
+                if in_flight is not None:
+                    refusal = self._unresolved(in_flight, actor)
+            if refusal is None and reading is None:
+                refusal = self._unreadable(
+                    row, actor, unread, "the recorded base cannot be read again")
+            if refusal is None and observed_base_sha is not None and not same_commit(
+                    observed_base_sha, reading["sha"]):
+                refusal = self._mismatch(
+                    row, actor, observed_base_sha, reading, "--observed-base-sha")
+            if refusal is None and reading["sha"] == row["observed_base_sha"]:
+                # Exact, not same_commit: a stored base in another case or an abbreviation an
+                # older relay stored is replaced by the reading, because the next check
+                # compares against the stored text.
+                answered = True
+            elif refusal is None:
+                keys = {key["idempotency_key"] for key in db.execute(
+                    "SELECT idempotency_key FROM merge_turn_ledger WHERE turn_id = ?",
+                    (turn,)).fetchall()}
+                taken = [int(match.group(1)) for match in map(_RESTATE_KEY.match, keys)
+                         if match]
+                # One past every restate-base:<n> key the turn holds, whatever wrote it, and then
+                # the first of those numbers whose key no row already uses. A store written
+                # before this change could hold such keys under another kind, and converging
+                # onto one would roll the correction back; a key too long to be a number is
+                # stepped around rather than read. The walk is bounded by the keys there are.
+                first = max(taken, default=0) + 1
+                sequence = next(first + step for step in range(len(keys) + 1)
+                                if RESTATE_PREFIX + str(first + step) not in keys)
+                self._write_ledger(
+                    db, turn, kind=TRANSITION, from_state=LANDED, to_state=LANDED,
+                    evidence_kind=LANDING_BASE_RESTATED, actor=actor,
+                    evidence=json.dumps({
+                        "turnId": turn, "sequence": sequence,
+                        "from": row["observed_base_sha"] or "", "to": reading["sha"],
+                        "evidence": evidence, "source": reading.get("source"),
+                    }, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
+                    idempotency_key=RESTATE_PREFIX + str(sequence), at=now)
+                db.execute(
+                    "UPDATE merge_turns SET observed_base_sha = ?, updated_at = ?"
+                    " WHERE turn_id = ?", (reading["sha"], now, turn))
+                self.store.journal(
+                    "merge_turn_base_restated", turn,
+                    {"from": row["observed_base_sha"], "to": reading["sha"],
+                     "source": reading.get("source"), "actor": actor}, at=now)
+            if refusal is not None:
+                self.conflicts.record_in(db, refusal, at=now)
+        if refusal is not None:
+            raise refusal.error()
+        answer = self.turn(turn)
+        answer["baseObservation"] = reading
+        answer["restated"] = not answered
+        return answer
 
     def release(self, turn, *, actor, disposition, reason, evidence=""):
         """Give the turn back, or take it away, and hand it to the next ready candidate.

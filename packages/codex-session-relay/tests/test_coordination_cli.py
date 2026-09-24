@@ -25,6 +25,7 @@ NEW_COMMANDS = (
     "merge-turn-land", "merge-turn-ready", "merge-turn-release", "merge-turn-request",
     "merge-turn-request-return", "merge-turn-resolve", "merge-turn-show",
     "merge-turn-unknown", "merge-turn-withdraw", "merge-turn-acknowledge",
+    "merge-turn-restate-base",
     "region-followup",
     "region-followup-accept", "region-followup-settle", "region-propose",
     "region-reaffirm", "region-restate-revision", "region-settle", "region-show",
@@ -92,10 +93,17 @@ class AFullMergeTurnThroughTheCommandSurface(CoordinationCliTestCase):
     CHECKS = json.dumps([{"runId": "run-1", "name": "dev-gate", "headSha": "head-a",
                           "conclusion": "success", "attempt": 1}])
 
-    def test_request_ready_check_and_land_each_answer_with_their_state(self):
+    def test_request_and_check_answer_with_their_state_and_an_unread_target_holds(self):
+        """The check reads where the base branch points (CRW-229), from the target itself.
+
+        A path that does not exist is unreadable without starting a process, so this module
+        keeps an injected clock; the successful check-and-land flow against a real repository
+        is in test_merge_target.py, which is declared as spending real time.
+        """
+        repository = "/nonexistent-crw-229/R.git"
         self.bind("PRJ-A", "task-alpha")
         code, claimed = self.run_cli(
-            "merge-turn-request", "--repository", "owner/repo", "--base-ref", "dev",
+            "merge-turn-request", "--repository", repository, "--base-ref", "dev",
             "--project", "PRJ-A", "--task", "task-alpha", "--host", "host-a",
             "--head", "head-a", "--pr", "7", "--ready")
         self.assertEqual(code, cli.EXIT_OK)
@@ -107,21 +115,15 @@ class AFullMergeTurnThroughTheCommandSurface(CoordinationCliTestCase):
             "merge-turn-check", "--turn", turn, "--actor", "task-alpha",
             "--head-sha", "head-a", "--base-sha", "base-0",
             "--checks", self.CHECKS, "--review", self.GREEN, "--required", "dev-gate")
-        self.assertEqual(code, cli.EXIT_OK)
-        self.assertEqual(checked["state"], "merging")
-        self.assertEqual(checked["requiredDeclared"], ["dev-gate"])
-
-        code, landed = self.run_cli(
-            "merge-turn-land", "--turn", turn, "--actor", "task-alpha",
-            "--landed-sha", "merge-1", "--observed-base-sha", "base-1",
-            "--evidence", "the merge commit is on the base")
-        self.assertEqual(code, cli.EXIT_OK)
-        self.assertEqual(landed["released"]["state"], "landed")
+        self.assertEqual(code, cli.EXIT_REFUSED)
+        self.assertEqual(checked["reason"], "merge_target_unreadable")
 
         code, shown = self.run_cli(
-            "merge-turn-show", "--repository", "owner/repo", "--base-ref", "dev")
+            "merge-turn-show", "--repository", repository, "--base-ref", "dev")
         self.assertEqual(code, cli.EXIT_OK)
-        self.assertFalse(shown["occupied"])
+        self.assertTrue(shown["occupied"])
+        self.assertEqual(shown["holder"]["state"], "holding")
+        self.assertEqual(shown["blocked"]["cause"], "target_unreadable")
 
     def test_a_refusal_prints_its_reason_and_exits_two(self):
         self.bind("PRJ-A", "task-alpha")

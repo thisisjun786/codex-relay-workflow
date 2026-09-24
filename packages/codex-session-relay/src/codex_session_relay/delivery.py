@@ -774,9 +774,16 @@ class DeliveryService:
             f"  merge-turn-acknowledge --turn {record.get('turnId')}"
             f" --grant {record.get('grantId')} --actor <your task id> --evidence <what you read>",
             f"  merge-turn-check --turn {record.get('turnId')} --actor <your task id>"
-            " --head-sha <head> --base-sha <base> --checks <json> --review <json>" + flags,
+            " --head-sha <head> --base-sha <base branch tip now> --checks <json>"
+            " --review <json>" + flags,
             f"  merge-turn-land --turn {record.get('turnId')} --actor <your task id>"
-            " --landed-sha <sha> --observed-base-sha <sha> --evidence <what you observed>",
+            " --landed-sha <the commit your merge put on the base>"
+            " --observed-base-sha <base branch tip you read after the merge>"
+            " --evidence <what you observed>",
+            "",
+            "The relay reads the base branch itself at the check and at the landing and records",
+            "its own reading: a --base-sha or --observed-base-sha that disagrees is refused, and",
+            "so is a landing while the branch still reads the base it was checked against.",
             "",
             *guidance,
             "",

@@ -30,7 +30,7 @@ from codex_session_relay.mergeturn import (
 from codex_session_relay.models import Endpoint
 from codex_session_relay.transport import DISPATCHED, HELD_UNCERTAIN, SUPERSEDED
 
-from .support import CHILD, HOST, PARENT, DeliveryTestCase
+from .support import CHILD, HOST, PARENT, DeliveryTestCase, FakeTarget
 from .test_report_contract import a_handoff, a_report
 
 PROJECT_A = "PRJ-A"
@@ -75,7 +75,10 @@ class MergeTurnWakeTestCase(DeliveryTestCase):
         self.rid = self.relationship["relationshipId"]
         self._install_policy()
         self.linkage = Linkage(self.store, self.clock)
-        self.turns = MergeTurn(self.store, self.clock, self.linkage, delivery=self.delivery)
+        self.target = FakeTarget()
+        self.target.set(REPO, BASE, "base-0")
+        self.turns = MergeTurn(self.store, self.clock, self.linkage, delivery=self.delivery,
+                               target_reader=self.target)
         self.alpha = Endpoint(PARENT, HOST, cwd="/parent")
         self.beta = Endpoint("01rival-task", "host-b", cwd="/rival")
         self.supervisor = Endpoint("01supervisor-task", "host-s", cwd="/sup")
@@ -542,6 +545,7 @@ class AGrantThatNoLongerAppliesOwesNothing(MergeTurnWakeTestCase):
         self.turns.begin_merge(
             turn, actor=PARENT, head_sha="head-a", base_sha="base-0",
             checks=run_checks("head-a"), review=dict(GREEN), required=["dev-gate"])
+        self.target.set(REPO, BASE, "base-1")
         landed = self.turns.land(
             turn, actor=PARENT, landed_sha="merge-1", observed_base_sha="base-1",
             evidence="the merge commit is on the base")
@@ -688,7 +692,8 @@ class TheNoticeDeclaresTheRequiredChecks(MergeTurnWakeTestCase):
                    "conclusion": "success", "attempt": 1}]
         return self.parsed(
             text, "merge-turn-check", ("<your task id>", PARENT), ("<head>", "head-a"),
-            ("<base>", "base-0"), ("<json>", json.dumps(checks)), ("<json>", json.dumps(GREEN)))
+            ("<base branch tip now>", "base-0"), ("<json>", json.dumps(checks)),
+            ("<json>", json.dumps(GREEN)))
 
     def assertNotRecorded(self, text, reason):
         self.assertIn("requiredDeclared: not recorded (", text)

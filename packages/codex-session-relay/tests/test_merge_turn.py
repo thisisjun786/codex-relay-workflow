@@ -22,7 +22,7 @@ from codex_session_relay.mergeturn import MergeTurn, grant_id, target_key
 from codex_session_relay.models import Endpoint
 from codex_session_relay.store import Store
 
-from .support import RelayTestCase
+from .support import FakeTarget, RelayTestCase
 
 PROJECT_A = "PRJ-A"
 PROJECT_B = "PRJ-B"
@@ -41,7 +41,11 @@ class MergeTurnTestCase(RelayTestCase):
     def setUp(self):
         super().setUp()
         self.linkage = Linkage(self.store, self.clock)
-        self.turns = MergeTurn(self.store, self.clock, self.linkage)
+        # Where the target's base branch points (CRW-229). The currency check and every
+        # recorded base read it; a case that moves the branch says so.
+        self.target = FakeTarget()
+        self.target.set(REPO, BASE, "base-0")
+        self.turns = MergeTurn(self.store, self.clock, self.linkage, target_reader=self.target)
         self.contests = Conflicts(self.store)
         self.alpha = Endpoint("task-alpha", "host-a", cwd="/alpha")
         self.beta = Endpoint("task-beta", "host-b", cwd="/beta")
@@ -623,6 +627,7 @@ class NothingIsReleasedBecauseTimePassed(MergeTurnTestCase):
         waiter = self.claim(self.beta, PROJECT_B, "head-b")
         self.turns.report_unknown(
             held["turnId"], actor=self.alpha.task_id, reason="lost the connection")
+        self.target.set(REPO, BASE, "base-9")
         answer = self.turns.resolve_unknown(
             held["turnId"], actor=self.supervisor.task_id, observed_base_sha="base-9",
             pr_state="merged", evidence="the pull request reads merged and the base moved")
@@ -642,6 +647,7 @@ class NothingIsReleasedBecauseTimePassed(MergeTurnTestCase):
     def test_a_confirmed_landing_closes_the_tenure_and_frees_the_target(self):
         held = self.merging()
         waiter = self.claim(self.beta, PROJECT_B, "head-b")
+        self.target.set(REPO, BASE, "base-1")
         answer = self.turns.land(
             held["turnId"], actor=self.alpha.task_id, landed_sha="merge-1",
             observed_base_sha="base-1", evidence="the merge commit is on the base")
@@ -777,6 +783,7 @@ class TheCurrencyCheckImmediatelyBeforeMerging(MergeTurnTestCase):
     def test_a_base_that_moved_since_the_last_landing_is_refused(self):
         first = self.held()
         self.begin(first)
+        self.target.set(REPO, BASE, "base-1")
         self.turns.land(
             first["turnId"], actor=self.alpha.task_id, landed_sha="merge-1",
             observed_base_sha="base-1", evidence="landed")
@@ -933,6 +940,7 @@ class AnObservationDecidesTheOutcomeRatherThanTheCaller(MergeTurnTestCase):
         unmerged predecessor, which is the failure the whole module exists to prevent.
         """
         held = self.unknown_turn()
+        self.target.set(REPO, BASE, "base-9")
         answer = self.turns.resolve_unknown(
             held["turnId"], actor=self.supervisor.task_id, observed_base_sha="base-9",
             pr_state="open", evidence="somebody else pushed; this one is still open")
@@ -1390,6 +1398,7 @@ class TheCrossedHandoffOf20260921(MergeTurnTestCase):
 
     def setUp(self):
         super().setUp()
+        self.target.set(CROSSED["repository"], CROSSED["baseRef"], "base-0")
         self.crossed = {}
         for entry in CROSSED["parents"]:
             endpoint = Endpoint(entry["task"], entry["host"], cwd="/" + entry["task"])
@@ -1462,6 +1471,500 @@ class TheCrossedHandoffOf20260921(MergeTurnTestCase):
         self.assertEqual(len(CROSSED["parents"]), 4)
         for step in CROSSED["steps"]:
             self.assertTrue(step["invariant"].strip())
+
+
+class TheBaseTheTargetActuallyReads(MergeTurnTestCase):
+    """CRW-229: a recorded base is what the branch reads, never what a caller typed.
+
+    The CRW-124 G1 trial, on an installed relay: both parents landed their first candidate by
+    fast-forward and passed --observed-base-sha the base they had CHECKED against rather than
+    the one the branch pointed at afterwards. The next candidate, verified and built on the
+    real post-landing base, was then refused merge_currency_stale, and nothing could correct a
+    landed turn. The relay now reads the target when it records a base, refuses a statement
+    that disagrees with that reading, and a recorded base can be read again and restated.
+    """
+
+    POST = "base-1"
+
+    def held(self, endpoint=None, project=PROJECT_A, head="head-a"):
+        endpoint = endpoint or self.alpha
+        held = self.claim(endpoint, project, head)
+        self.answer_grant(held["turnId"], endpoint.task_id)
+        return held
+
+    def check(self, held, *, head="head-a", base="base-0", actor=None):
+        return self.turns.begin_merge(
+            held["turnId"], actor=actor or self.alpha.task_id, head_sha=head, base_sha=base,
+            checks=run_checks(head), review=dict(GREEN), required=["dev-gate"])
+
+    def merging(self, head="head-a", base="base-0"):
+        held = self.held(head=head)
+        self.check(held, head=head, base=base)
+        return held
+
+    def merged(self, tip=POST):
+        """The merge happened: the branch now reads tip."""
+        self.target.set(REPO, BASE, tip)
+
+    def land(self, held, *, landed="merge-1", observed=None, actor=None):
+        arguments = {"actor": actor or self.alpha.task_id, "landed_sha": landed,
+                     "evidence": "merged; the base branch read afterwards"}
+        if observed is not None:
+            arguments["observed_base_sha"] = observed
+        return self.turns.land(held["turnId"], **arguments)
+
+    def landed(self, *, head="head-a", tip=POST):
+        held = self.merging(head=head)
+        self.merged(tip)
+        self.land(held)
+        return held
+
+    def restate(self, turn, *, actor=None, observed=None, evidence="read the branch again"):
+        arguments = {"actor": actor or self.alpha.task_id, "evidence": evidence}
+        if observed is not None:
+            arguments["observed_base_sha"] = observed
+        return self.turns.restate_base(turn, **arguments)
+
+    def refused(self, call, reason):
+        with self.assertRaises(CoordinationError) as caught:
+            call()
+        self.assertEqual(caught.exception.reason, reason)
+        return caught.exception
+
+    def ledger_rows(self, turn):
+        return self.store.all(
+            "SELECT * FROM merge_turn_ledger WHERE turn_id = ? ORDER BY recorded_at, entry_id",
+            (turn,))
+
+    def restatement_rows(self, turn):
+        return [row for row in self.ledger_rows(turn)
+                if row["evidence_kind"] == "landing_base_restated"]
+
+    def legacy_row(self, turn, *, kind, key, evidence_kind, evidence, states=("landed", None)):
+        """A ledger row as a store written before this change could hold it."""
+        self.store.db.execute(
+            "INSERT INTO merge_turn_ledger (entry_id, turn_id, kind, from_state, to_state,"
+            " evidence_kind, actor_task_id, evidence, idempotency_key, recorded_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            ("legacy-" + key, turn, kind, states[0], states[1], evidence_kind,
+             self.alpha.task_id, evidence, key, self.clock.iso()))
+
+    def r3_landing(self, held):
+        """What an R3 store holds after the trial: the landing recorded its checked base."""
+        self.store.db.execute(
+            "UPDATE merge_turns SET observed_base_sha = checked_base_sha WHERE turn_id = ?",
+            (held["turnId"],))
+
+    # ------------------------------------------------------------- the check reads
+
+    def test_the_check_stores_what_the_branch_reads(self):
+        held = self.held()
+        self.target.set(REPO, BASE, "c" * 40)
+        answer = self.check(held, base="C" * 40)
+        self.assertEqual(answer["state"], "merging")
+        self.assertEqual(answer["checkedBaseSha"], "c" * 40)
+
+    def test_a_restated_base_the_branch_does_not_read_is_refused(self):
+        held = self.held()
+        error = self.refused(lambda: self.check(held, base="base-x"),
+                             RefusalReason.MERGE_CURRENCY_STALE)
+        self.assertIn("reads 'base-0'", error.detail)
+        self.assertEqual(self.turns.turn(held["turnId"])["state"], "holding")
+
+    def test_a_first_turn_restating_its_own_head_as_base_never_merges(self):
+        """Review round 3: a first check has no landing to compare, so its base was trusted."""
+        held = self.held()
+        self.refused(lambda: self.check(held, base="head-a"),
+                     RefusalReason.MERGE_CURRENCY_STALE)
+        self.assertEqual(self.turns.turn(held["turnId"])["state"], "holding")
+
+    def test_an_unreadable_target_is_a_refused_check_with_its_own_cause(self):
+        held = self.held()
+        self.target.forget(REPO, BASE)
+        self.refused(lambda: self.check(held), RefusalReason.MERGE_TARGET_UNREADABLE)
+        rows = self.store.all("SELECT * FROM merge_turn_checks WHERE turn_id = ?",
+                              (held["turnId"],))
+        self.assertEqual([row["refusal_reason"] for row in rows], ["merge_target_unreadable"])
+        self.assertEqual(self.turns.target(REPO, BASE)["blocked"]["cause"], "target_unreadable")
+
+    def test_a_check_refused_before_the_comparison_never_reads_the_target(self):
+        held = self.held()
+        before = len(self.target.reads)
+        self.refused(lambda: self.check(held, head="head-z"),
+                     RefusalReason.MERGE_CANDIDATE_MOVED)
+        self.refused(lambda: self.check(held, actor=self.beta.task_id),
+                     RefusalReason.MERGE_TURN_NOT_HELD)
+        self.assertEqual(len(self.target.reads), before)
+
+    def test_the_check_leaves_its_reading_on_the_engines_own_transition(self):
+        held = self.merging()
+        entry = next(row for row in self.ledger_rows(held["turnId"])
+                     if row["evidence_kind"] == "currency_confirmed")
+        self.assertEqual(entry["kind"], "transition")
+        self.assertEqual(json.loads(entry["evidence"])["baseRead"], "base-0")
+
+    # ------------------------------------------------------------- the landing reads
+
+    def test_a_landing_records_what_the_branch_reads(self):
+        held = self.merging()
+        self.merged()
+        answer = self.land(held)
+        self.assertEqual(answer["released"]["state"], "landed")
+        self.assertEqual(answer["released"]["observedBaseSha"], self.POST)
+        self.assertEqual(answer["released"]["landedSha"], "merge-1")
+        self.assertEqual(answer["baseObservation"]["sha"], self.POST)
+
+    def test_a_stated_base_that_agrees_with_the_reading_is_accepted(self):
+        held = self.merging()
+        self.merged("d" * 40)
+        answer = self.land(held, observed="D" * 40)
+        self.assertEqual(answer["released"]["observedBaseSha"], "d" * 40)
+
+    def test_the_trial_mistake_is_refused_where_it_is_written(self):
+        """landed = the fast-forwarded head, observed = the base it was checked against."""
+        held = self.merging()
+        self.merged("head-a")
+        self.refused(lambda: self.land(held, landed="head-a", observed="base-0"),
+                     RefusalReason.MERGE_BASE_MISMATCH)
+        record = self.turns.turn(held["turnId"])
+        self.assertEqual(record["state"], "merging")
+        self.assertIsNone(record["observedBaseSha"])
+        self.assertIn("merge_base_mismatch", [c["reason"] for c in self.contests_for()])
+
+    def test_a_landing_before_the_branch_moved_is_refused(self):
+        held = self.merging()
+        self.refused(lambda: self.land(held), RefusalReason.MERGE_BASE_NOT_ADVANCED)
+        self.assertEqual(self.turns.turn(held["turnId"])["state"], "merging")
+        self.merged()
+        self.assertEqual(self.land(held)["released"]["state"], "landed")
+
+    def test_an_abbreviation_is_refused_rather_than_trusted(self):
+        """Final review 1: two commits can share a prefix, and nothing here can tell."""
+        self.target.set(REPO, BASE, "c" * 40)
+        held = self.held()
+        self.refused(lambda: self.check(held, base="c" * 8), RefusalReason.MERGE_CURRENCY_STALE)
+        self.check(held, base="c" * 40)
+        self.merged("d" * 40)
+        self.refused(lambda: self.land(held, observed="d" * 8), RefusalReason.MERGE_BASE_MISMATCH)
+        self.assertEqual(self.turns.turn(held["turnId"])["state"], "merging")
+
+    def test_a_candidate_that_already_was_the_base_is_not_wedged(self):
+        held = self.held()
+        self.target.set(REPO, BASE, "head-a")
+        self.check(held, base="head-a")
+        answer = self.land(held, landed="head-a")
+        self.assertEqual(answer["released"]["state"], "landed")
+        self.assertEqual(answer["released"]["observedBaseSha"], "head-a")
+
+    def test_an_unreadable_target_keeps_the_turn_merging(self):
+        held = self.merging()
+        self.target.forget(REPO, BASE)
+        self.refused(lambda: self.land(held), RefusalReason.MERGE_TARGET_UNREADABLE)
+        self.assertEqual(self.turns.turn(held["turnId"])["state"], "merging")
+
+    def test_a_relay_with_no_reader_records_no_base(self):
+        held = self.merging()
+        blind = MergeTurn(self.store, self.clock, self.linkage)
+        self.refused(lambda: blind.land(held["turnId"], actor=self.alpha.task_id,
+                                        landed_sha="merge-1", evidence="merged"),
+                     RefusalReason.MERGE_TARGET_UNREADABLE)
+
+    def test_a_stranger_landing_never_reads_the_target(self):
+        held = self.merging()
+        before = len(self.target.reads)
+        self.refused(lambda: self.land(held, actor="task-stranger"),
+                     RefusalReason.MERGE_TURN_NOT_HELD)
+        self.assertEqual(len(self.target.reads), before)
+
+    def test_a_turn_checked_before_the_relay_read_its_base_lands_through_resolve(self):
+        """Review round 4: an R3 row's checked base is typed, so the branch proves nothing."""
+        held = self.merging()
+        self.store.db.execute(
+            "UPDATE merge_turns SET checked_base_sha = 'base-y' WHERE turn_id = ?",
+            (held["turnId"],))
+        self.store.db.execute(
+            "UPDATE merge_turn_ledger SET evidence = 'chk-legacy'"
+            "  WHERE turn_id = ? AND evidence_kind = 'currency_confirmed'", (held["turnId"],))
+        self.refused(lambda: self.land(held), RefusalReason.MERGE_EVIDENCE_REQUIRED)
+        self.assertEqual(self.turns.turn(held["turnId"])["state"], "merging")
+        self.turns.report_unknown(held["turnId"], actor=self.alpha.task_id,
+                                  reason="checked before the relay read its base")
+        self.merged()
+        answer = self.turns.resolve_unknown(
+            held["turnId"], actor=self.alpha.task_id, observed_base_sha=self.POST,
+            pr_state="merged", evidence="the pull request reads merged")
+        self.assertEqual(answer["outcome"], "landed")
+        self.assertEqual(answer["released"]["observedBaseSha"], self.POST)
+
+    def test_a_forged_reading_mark_written_as_an_attestation_is_not_a_mark(self):
+        held = self.merging()
+        self.store.db.execute(
+            "UPDATE merge_turn_ledger SET kind = 'attestation'"
+            "  WHERE turn_id = ? AND evidence_kind = 'currency_confirmed'", (held["turnId"],))
+        self.merged()
+        self.refused(lambda: self.land(held), RefusalReason.MERGE_EVIDENCE_REQUIRED)
+
+    # ------------------------------------------------------------- resolution reads
+
+    def unknown(self):
+        held = self.merging()
+        self.turns.report_unknown(held["turnId"], actor=self.alpha.task_id,
+                                  reason="lost the connection")
+        return held
+
+    def test_a_merged_resolution_records_the_reading(self):
+        held = self.unknown()
+        self.merged()
+        answer = self.turns.resolve_unknown(
+            held["turnId"], actor=self.supervisor.task_id, observed_base_sha=self.POST,
+            pr_state="merged", evidence="merged")
+        self.assertEqual(answer["released"]["observedBaseSha"], self.POST)
+
+    def test_a_candidate_the_base_already_contained_resolves_as_merged(self):
+        """Stacked pull requests: the merge changed nothing, and the forge says merged."""
+        held = self.unknown()
+        answer = self.turns.resolve_unknown(
+            held["turnId"], actor=self.supervisor.task_id, observed_base_sha="base-0",
+            pr_state="merged", evidence="merged; the base already contained it")
+        self.assertEqual(answer["outcome"], "landed")
+
+    def test_a_resolution_statement_that_disagrees_with_the_reading_is_refused(self):
+        held = self.unknown()
+        error = self.refused(lambda: self.turns.resolve_unknown(
+            held["turnId"], actor=self.supervisor.task_id, observed_base_sha="base-9",
+            pr_state="open", evidence="still open"), RefusalReason.MERGE_BASE_MISMATCH)
+        # The argument is required on resolve, so the refusal does not offer leaving it out.
+        self.assertNotIn("leave the statement out", error.detail)
+        self.assertEqual(self.turns.turn(held["turnId"])["state"], "unknown")
+
+    def test_an_unreadable_target_returns_an_open_candidate_without_a_base(self):
+        held = self.unknown()
+        self.target.forget(REPO, BASE)
+        answer = self.turns.resolve_unknown(
+            held["turnId"], actor=self.supervisor.task_id, observed_base_sha="base-0",
+            pr_state="open", evidence="still open")
+        self.assertEqual(answer["outcome"], "returned")
+        self.assertIsNone(answer["released"]["observedBaseSha"])
+
+    def test_an_unreadable_target_keeps_a_merged_outcome_unknown(self):
+        held = self.unknown()
+        self.target.forget(REPO, BASE)
+        self.refused(lambda: self.turns.resolve_unknown(
+            held["turnId"], actor=self.supervisor.task_id, observed_base_sha=self.POST,
+            pr_state="merged", evidence="merged"), RefusalReason.MERGE_TARGET_UNREADABLE)
+        self.assertEqual(self.turns.turn(held["turnId"])["state"], "unknown")
+
+    def test_a_base_missing_after_an_unreadable_return_does_not_let_a_merge_through(self):
+        held = self.unknown()
+        self.target.forget(REPO, BASE)
+        self.turns.resolve_unknown(
+            held["turnId"], actor=self.supervisor.task_id, observed_base_sha="base-0",
+            pr_state="closed", evidence="closed unmerged")
+        second = self.held(head="head-c")
+        self.refused(lambda: self.check(second, head="head-c"),
+                     RefusalReason.MERGE_TARGET_UNREADABLE)
+        self.target.set(REPO, BASE, "base-0")
+        self.assertEqual(self.check(second, head="head-c")["state"], "merging")
+
+    # ------------------------------------------------------------- restating it
+
+    def test_the_trial_shape_is_recovered_by_restating_the_landing(self):
+        first = self.landed()
+        self.r3_landing(first)
+        second = self.held(head="head-c")
+        self.target.set(REPO, BASE, self.POST)
+        error = self.refused(lambda: self.check(second, head="head-c", base=self.POST),
+                             RefusalReason.MERGE_CURRENCY_STALE)
+        self.assertIn(first["turnId"], error.detail)
+        self.assertIn("merge-turn-restate-base", error.detail)
+        self.assertIn(self.alpha.task_id, error.detail)
+
+        restated = self.restate(first["turnId"], observed=self.POST)
+        self.assertTrue(restated["restated"])
+        self.assertEqual(restated["observedBaseSha"], self.POST)
+        self.assertEqual([(r["from"], r["to"]) for r in restated["baseRestatements"]],
+                         [("base-0", self.POST)])
+        self.assertEqual(restated["closeReason"], "merged; the base branch read afterwards")
+
+        self.assertEqual(self.check(second, head="head-c", base=self.POST)["state"], "merging")
+        self.merged("merge-2")
+        self.assertEqual(self.land(second, landed="merge-2")["released"]["state"], "landed")
+
+    def test_a_restatement_keeps_the_original_beside_the_correction(self):
+        first = self.landed()
+        self.r3_landing(first)
+        self.restate(first["turnId"], evidence="git rev-parse main reads base-1")
+        rows = self.restatement_rows(first["turnId"])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["kind"], rows[0]["from_state"], rows[0]["to_state"]),
+                         ("transition", "landed", "landed"))
+        body = json.loads(rows[0]["evidence"])
+        self.assertEqual((body["from"], body["to"]), ("base-0", self.POST))
+        self.assertEqual(body["evidence"], "git rev-parse main reads base-1")
+        self.assertEqual(body["source"], "fake")
+        self.assertEqual(rows[0]["idempotency_key"], "restate-base:1")
+
+    def test_restating_what_is_already_recorded_writes_nothing(self):
+        first = self.landed()
+        answer = self.restate(first["turnId"])
+        self.assertFalse(answer["restated"])
+        self.assertEqual(self.restatement_rows(first["turnId"]), [])
+        self.r3_landing(first)
+        self.restate(first["turnId"])
+        self.restate(first["turnId"])
+        self.assertEqual(len(self.restatement_rows(first["turnId"])), 1)
+
+    def test_a_branch_that_moved_twice_keeps_every_step(self):
+        first = self.landed()
+        self.target.set(REPO, BASE, "base-2")
+        self.restate(first["turnId"])
+        self.target.set(REPO, BASE, self.POST)
+        answer = self.restate(first["turnId"])
+        self.assertEqual([(r["sequence"], r["from"], r["to"]) for r in answer["baseRestatements"]],
+                         [(1, self.POST, "base-2"), (2, "base-2", self.POST)])
+
+    def test_the_supervisor_may_restate_and_a_stranger_learns_nothing(self):
+        first = self.landed()
+        self.r3_landing(first)
+        before = len(self.target.reads)
+        self.refused(lambda: self.restate(first["turnId"], actor="task-stranger"),
+                     RefusalReason.SCOPE_ROLE_MISMATCH)
+        self.assertEqual(len(self.target.reads), before)
+        answer = self.restate(first["turnId"], actor=self.supervisor.task_id)
+        self.assertEqual(answer["observedBaseSha"], self.POST)
+
+    def test_a_restated_value_the_branch_does_not_read_is_refused(self):
+        first = self.landed()
+        self.r3_landing(first)
+        self.refused(lambda: self.restate(first["turnId"], observed="base-0"),
+                     RefusalReason.MERGE_BASE_MISMATCH)
+        self.assertEqual(self.turns.turn(first["turnId"])["observedBaseSha"], "base-0")
+
+    def test_only_a_landed_turn_is_restated(self):
+        held = self.merging()
+        self.refused(lambda: self.restate(held["turnId"]), RefusalReason.MERGE_TURN_NOT_HELD)
+
+    def test_only_the_landing_the_currency_check_reads_is_restated(self):
+        first = self.landed()
+        second = self.held(head="head-c")
+        self.check(second, head="head-c", base=self.POST)
+        self.merged("base-2")
+        self.land(second)
+        error = self.refused(lambda: self.restate(first["turnId"]),
+                             RefusalReason.MERGE_TURN_NOT_HELD)
+        self.assertIn(second["turnId"], error.detail)
+
+    def test_two_landings_in_one_instant_are_ordered_by_when_they_were_written(self):
+        """Final review 1: closed_at ties were broken by a digest, so by chance."""
+        first = self.landed()
+        second = self.held(head="head-c")
+        self.check(second, head="head-c", base=self.POST)
+        self.merged("base-2")
+        self.land(second)
+        self.assertEqual(self.turns.turn(first["turnId"])["closedAt"],
+                         self.turns.turn(second["turnId"])["closedAt"])
+        third = self.held(head="head-d")
+        self.assertEqual(self.check(third, head="head-d", base="base-2")["state"], "merging")
+        error = self.refused(lambda: self.restate(first["turnId"]),
+                             RefusalReason.MERGE_TURN_NOT_HELD)
+        self.assertIn(second["turnId"], error.detail)
+
+    def test_the_latest_of_two_landings_in_one_instant_is_the_one_restated(self):
+        first = self.landed()
+        second = self.held(head="head-c")
+        self.check(second, head="head-c", base=self.POST)
+        self.merged("base-2")
+        self.land(second)
+        self.r3_landing(second)
+        self.merged("base-2")
+        answer = self.restate(second["turnId"])
+        self.assertEqual(answer["observedBaseSha"], "base-2")
+        self.refused(lambda: self.restate(first["turnId"]), RefusalReason.MERGE_TURN_NOT_HELD)
+
+    def test_a_merge_in_flight_holds_the_restatement(self):
+        first = self.landed()
+        second = self.held(head="head-c")
+        self.check(second, head="head-c", base=self.POST)
+        self.target.set(REPO, BASE, "base-2")
+        self.refused(lambda: self.restate(first["turnId"]),
+                     RefusalReason.MERGE_TURN_UNRESOLVED)
+        self.assertEqual(self.turns.turn(first["turnId"])["observedBaseSha"], self.POST)
+
+    def test_a_returned_turn_does_not_gate_the_target(self):
+        """Architect 011 W1: a resolved-open row carried a base nobody could restate."""
+        self.landed()
+        second = self.held(head="head-c")
+        self.check(second, head="head-c", base=self.POST)
+        self.turns.report_unknown(second["turnId"], actor=self.alpha.task_id, reason="lost")
+        self.turns.resolve_unknown(
+            second["turnId"], actor=self.alpha.task_id, observed_base_sha=self.POST,
+            pr_state="open", evidence="still open")
+        self.target.set(REPO, BASE, "base-3")
+        third = self.held(head="head-d")
+        error = self.refused(lambda: self.check(third, head="head-d", base="base-3"),
+                             RefusalReason.MERGE_CURRENCY_STALE)
+        self.assertNotIn(second["turnId"], error.detail)
+
+    def test_a_restatement_states_why(self):
+        first = self.landed()
+        self.refused(lambda: self.restate(first["turnId"], evidence=" "),
+                     RefusalReason.MERGE_EVIDENCE_REQUIRED)
+
+    def test_attesting_cannot_squat_the_restatement_record(self):
+        first = self.landed()
+        for kind, key in (("landing_base_restated", "mine-1"),
+                          ("transport_accepted", "restate-base:1")):
+            self.refused(lambda: self.turns.attest(
+                first["turnId"], evidence_kind=kind, idempotency_key=key,
+                actor=self.alpha.task_id, evidence="{}"), RefusalReason.MERGE_EVIDENCE_REQUIRED)
+
+    def test_a_key_too_long_to_be_a_number_does_not_stop_a_restatement(self):
+        """Final review 3: an older caller could write restate-base:<4301 digits>."""
+        first = self.landed()
+        turn = first["turnId"]
+        self.r3_landing(first)
+        self.legacy_row(turn, kind="attestation", key="restate-base:" + "9" * 4301,
+                        evidence_kind="transport_accepted", evidence="old caller row")
+        self.legacy_row(turn, kind="attestation", key="restate-base:" + "9" * 18,
+                        evidence_kind="transport_accepted", evidence="old caller row")
+        self.legacy_row(turn, kind="attestation", key="restate-base:1" + "0" * 18,
+                        evidence_kind="transport_accepted", evidence="old caller row")
+        answer = self.restate(turn)
+        self.assertTrue(answer["restated"])
+        self.assertEqual([r["sequence"] for r in answer["baseRestatements"]],
+                         [10 ** 18 + 1])
+
+    def test_corrections_stay_in_order_past_a_nineteen_digit_key(self):
+        """Devin review: a bound of eighteen digits restarted the sequence below a longer one."""
+        first = self.landed()
+        turn = first["turnId"]
+        self.legacy_row(turn, kind="attestation", key="restate-base:" + str(10 ** 18),
+                        evidence_kind="transport_accepted", evidence="old caller row")
+        self.legacy_row(turn, kind="transition", key="restate-base:" + str(10 ** 18 + 1),
+                        evidence_kind="landing_base_restated", states=("landed", "landed"),
+                        evidence=json.dumps({"turnId": turn, "sequence": 10 ** 18 + 1,
+                                             "from": "base-x", "to": self.POST,
+                                             "evidence": "earlier", "source": "fake"}))
+        self.r3_landing(first)
+        answer = self.restate(turn)
+        self.assertEqual([r["sequence"] for r in answer["baseRestatements"]],
+                         [10 ** 18 + 1, 10 ** 18 + 2])
+
+    def test_rows_an_older_store_may_hold_neither_block_nor_pass_as_restatements(self):
+        first = self.landed()
+        turn = first["turnId"]
+        self.r3_landing(first)
+        self.legacy_row(turn, kind="attestation", key="restate-base:1",
+                        evidence_kind="transport_accepted", evidence="squatted")
+        self.legacy_row(turn, kind="attestation", key="mine",
+                        evidence_kind="landing_base_restated", evidence="free text")
+        self.legacy_row(turn, kind="attestation", key="restate-base:7",
+                        evidence_kind="landing_base_restated",
+                        evidence=json.dumps({"turnId": turn, "sequence": 7, "from": "x",
+                                             "to": "y", "evidence": "forged"}))
+        answer = self.restate(turn)
+        self.assertEqual([r["sequence"] for r in answer["baseRestatements"]], [8])
+        self.assertEqual(sorted(answer["unreadableRestatements"]), ["mine", "restate-base:7"])
 
 
 if __name__ == "__main__":
