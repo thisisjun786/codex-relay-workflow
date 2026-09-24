@@ -1,0 +1,190 @@
+"""The revision request a needs_changes verdict opens carries the correction form.
+
+Finding F4 of the CRW-116 installed round trip at 4120e2a0: the relay's own revision request
+carried the ruling, the per-criterion notes and the return command, and none of the five
+sections the packet contract fixes for a correction (cxc.CORRECTION_SECTIONS), which packets.py
+refuses a packet revision_request without. The verdict path and the packet contract disagreed
+about what a correction is.
+
+Every case here goes through the real delivery render of a needs_changes verdict: the plain
+rendering used when no work report is recorded and the composed one used when it is. A section
+the verdict record cannot answer is named as not recorded rather than left out, and what the
+message tells the child to change is only what the parent ruled violated.
+"""
+
+from codex_session_relay import cxc, identity, packets, report
+from codex_session_relay.errors import RelayError
+
+from .support import CHILD, PARENT, DeliveryTestCase
+from .test_reception_findings import P2C, packet_kwargs
+from .test_report_contract import a_report
+
+ONE = [{"id": "c-1", "verdict": "needs_changes",
+        "note": "the manifest omits the migration script"}]
+MIXED = [
+    {"id": "c-1", "verdict": "verified", "note": "the manifest lists every deliverable"},
+    {"id": "c-2", "verdict": "needs_changes", "note": "the migration script is missing"},
+    {"id": "c-3", "verdict": "unverified", "note": "no run of the migration was shown"},
+]
+HEADINGS = cxc.CORRECTION_SECTIONS + cxc.DISPATCH_SECTIONS
+
+
+def section(message, name):
+    """The lines of one line-anchored section, from its heading to the next heading or blank."""
+    lines = message.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip().upper().startswith(name + ":"):
+            out = [line]
+            for following in lines[index + 1:]:
+                heading = following.strip().upper()
+                if not following.strip() or any(heading.startswith(other + ":")
+                                                 for other in HEADINGS):
+                    break
+                out.append(following)
+            return "\n".join(out)
+    return ""
+
+
+class _Revisions(DeliveryTestCase):
+    def revision(self, findings=None):
+        _relationship, event_id = self.queued_event(recipients=[PARENT, CHILD])
+        self.attempt(event_id)
+        self.clock.advance(5)
+        turn = self.adapter.start_turn(PARENT, turn_id="ack-turn", status="inProgress")
+        self.ack.acknowledge(
+            event_id, ack_turn_id=turn.turn_id,
+            ack_proof=identity.ack_proof(event_id, turn.turn_id), accepted=True,
+            adapter=self.adapter,
+        )
+        self.ack.record_verdict(event_id, verdict="needs_changes", verdict_turn_id="verdict-1",
+                                criteria=findings)
+        row = self.store.one("SELECT * FROM deliveries WHERE kind = 'revision_request'")
+        return event_id, row["event_id"]
+
+    def with_report(self, revision_event, **overrides):
+        base = dict(cxc_status=cxc.NEEDS_HUMAN, handoff=None,
+                    cxc_reason="the parent judged the work incomplete",
+                    summary="correct what the verdict names and re-submit",
+                    next_action="add the migration script and emit generation 2")
+        base.update(overrides)
+        return report.record(self.store, self.clock, event_id=revision_event, **a_report(**base))
+
+    def assert_correction_form(self, message):
+        self.assertEqual(cxc.correction_problems(message), [], message)
+        self.assertNotIn("None", message)
+
+
+class TheVerdictPathCarriesTheCorrectionForm(_Revisions):
+    def test_the_plain_request_carries_the_five_sections(self):
+        source, revision = self.revision(ONE)
+        message = self.delivery.render_message(revision)
+        self.assert_correction_form(message)
+        self.assertIn("the manifest omits the migration script", message)
+        self.assertIn(source, message)
+        self.assertIn("--generation 2", message)
+        # The same bytes are a body the packet contract accepts for a correction.
+        try:
+            packets.compose(**packet_kwargs(P2C, "revision_request", body=message))
+        except RelayError as refused:
+            self.fail("the packet contract refuses the relay's own correction: "
+                      + refused.detail)
+
+    def test_the_composed_request_carries_both_forms(self):
+        _source, revision = self.revision(ONE)
+        self.with_report(revision, review={
+            "kind": cxc.GO_WITH_FIXES, "blockers": 1,
+            "findings": [{"id": "c-1", "verdict": "needs_changes",
+                          "note": "the manifest omits the migration script",
+                          "anchor": "migrations/004_add_reports.sql"}]})
+        message = self.delivery.render_message(revision)
+        self.assert_correction_form(message)
+        for field in cxc.DISPATCH_FIELDS + (cxc.DECISION_BOUNDARY,):
+            self.assertIn(field + ":", message)
+        self.assertIn("the review judged GO-WITH-FIXES with 1 blocker",
+                      section(message, "WHAT CHANGED"))
+
+
+class OnlyWhatIsRuledViolatedIsInScope(_Revisions):
+    def test_a_mixed_verdict_scopes_the_one_finding_marked_needs_changes(self):
+        _source, revision = self.revision(MIXED)
+        message = self.delivery.render_message(revision)
+        self.assert_correction_form(message)
+        violated = section(message, "VIOLATED CRITERION")
+        for part in ("1 marked needs_changes", "1 marked unverified", "1 marked verified"):
+            self.assertIn(part, violated)
+        scope = section(message, "FIX SCOPE")
+        self.assertIn("only the 1 finding marked needs_changes", scope)
+        self.assertIn("verified or unverified", scope)
+        self.assertIn("1 finding marked unverified", section(message, "REVERIFY AND RETURN"))
+
+    def test_every_composed_instruction_reads_the_findings_through_fix_scope(self):
+        _source, revision = self.revision(MIXED)
+        self.with_report(revision, next_action="fix c-1 as well", review={
+            "kind": cxc.GO_WITH_FIXES, "blockers": 1,
+            "findings": [{"id": "c-9", "verdict": "needs_changes",
+                          "note": "a style point the review raised on its own"}]})
+        message = self.delivery.render_message(revision)
+        self.assert_correction_form(message)
+        self.assertNotIn("answer every finding above", message)
+        must_do = section(message, "MUST DO")
+        self.assertIn("every finding FIX SCOPE names", must_do)
+        self.assertIn("the parent's next action, as written: fix c-1 as well", must_do)
+        self.assertIn("FIX SCOPE and DECISION BOUNDARY decide", must_do)
+        self.assertIn("FIX SCOPE does not name", section(message, "MUST NOT"))
+        self.assertIn("fix what FIX SCOPE names", section(message, "DECISION BOUNDARY"))
+        self.assertIn("everything FIX SCOPE does not name", section(message, "PRESERVE"))
+        self.assertIn("raised only in review", section(message, "FIX SCOPE"))
+
+
+class WhatTheVerdictRecordCannotAnswer(_Revisions):
+    def test_a_verdict_that_named_no_criterion_names_the_gap(self):
+        _source, revision = self.revision(None)
+        message = self.delivery.render_message(revision)
+        self.assert_correction_form(message)
+        self.assertIn("VIOLATED CRITERION: not recorded", message)
+        self.assertIn("FIX SCOPE: not recorded", message)
+        self.assertIn("what to re-check is not recorded", section(message, "REVERIFY AND RETURN"))
+        # It reads no criteria set, so it never claims one exists.
+        self.assertNotIn("criteria set", section(message, "REVERIFY AND RETURN"))
+        self.assertIn("emit --relationship", message)
+
+    def test_a_review_is_the_source_when_the_verdict_recorded_none(self):
+        _source, revision = self.revision(None)
+        stored = self.with_report(revision, review={
+            "kind": cxc.FAIL,
+            "findings": [{"id": "c-7", "verdict": "needs_changes",
+                          "note": "the migration script is missing"},
+                         {"id": "c-8", "note": "the changelog does not mention it"}]},
+            unresolved=[f"open item {n} with some length to it" for n in range(40)])
+        message = self.delivery.render_message(revision)
+        self.assert_correction_form(message)
+        self.assertNotIn("the verdict named no criterion", message)
+        self.assertIn("only the 1 finding marked needs_changes", section(message, "FIX SCOPE"))
+        self.assertIn("1 finding carries no disposition", message)
+        self.assertIn("the review judged FAIL", section(message, "WHAT CHANGED"))
+        # Shortened hard, the gap and the whole return instruction are still there.
+        row = self.delivery.get(revision)
+        receipt = self.intake.get(revision) or {}
+        tight = report.render_revision(row, receipt, "del-t-a1", stored, budget=2600)
+        self.assertIn("omitted:", tight)
+        self.assert_correction_form(tight)
+        self.assertIn("1 finding carries no disposition", tight)
+        for part in ("emit --relationship", "--outcome ready_for_review", "--artifact <path>"):
+            self.assertIn(part, tight)
+
+
+class ManyFindings(_Revisions):
+    def test_many_long_findings_drop_no_section_and_keep_their_counts(self):
+        findings = [{"id": f"criterion-{n:03d}-" + "x" * 40, "verdict": "needs_changes",
+                     "note": "a long note " * 12} for n in range(30)]
+        _source, revision = self.revision(findings)
+        plain = self.delivery.render_message(revision)
+        self.assert_correction_form(plain)
+        self.assertIn("20 more", plain)
+        self.assertIn("30 recorded findings", section(plain, "VIOLATED CRITERION"))
+        self.with_report(revision)
+        composed = self.delivery.render_message(revision)
+        self.assert_correction_form(composed)
+        self.assertIn("omitted:", composed)
+        self.assertIn("30 recorded findings", section(composed, "VIOLATED CRITERION"))
+        self.assertIn("only the 30 findings marked needs_changes", section(composed, "FIX SCOPE"))
