@@ -5103,8 +5103,10 @@ def build_parser() -> argparse.ArgumentParser:
     turn_check.add_argument("--checks", required=True,
                             help="JSON list of {runId, name, headSha, conclusion, attempt}")
     turn_check.add_argument("--review", required=True,
-                            help="JSON {hasNextPage, pagesRead, totalCount, threadsSeen,"
-                                 " unresolved}")
+                            help="JSON {hasNextPage: true or false, pagesRead: whole number,"
+                                 " totalCount: whole number, threadsSeen: list of thread id"
+                                 " strings, unresolved: whole number}. A wrong type is refused"
+                                 " as merge_evidence_malformed and nothing is recorded")
     turn_check.add_argument("--required", action="append",
                             help="a check name branch protection requires. Repeat once per"
                                  " name. The merge check reads only where the base branch"

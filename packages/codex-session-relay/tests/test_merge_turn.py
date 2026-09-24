@@ -728,6 +728,66 @@ class TheCurrencyCheckImmediatelyBeforeMerging(MergeTurnTestCase):
                                      "threadsSeen": ["one"], "unresolved": 1})
         self.assertEqual(caught.exception.reason, RefusalReason.MERGE_REVIEW_INCOMPLETE)
 
+    def store_rows(self):
+        """Every row of every table, for a refusal that must leave the store as it found it."""
+        tables = [row["name"] for row in self.store.all(
+            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")]
+        return {name: sorted(repr(tuple(row)) for row in self.store.all(
+            'SELECT * FROM "' + name + '"')) for name in tables}
+
+    def test_a_malformed_review_is_refused_by_name_before_anything_is_read_or_recorded(self):
+        """CRW-232: the review's shape is checked before any rule reads a value.
+
+        The CRW-124 G1c parent restated threadsSeen as the forge's count, and the command ended
+        as a host TypeError, which reads as a broken relay rather than a wrong argument. Other
+        shapes were worse than an exception: a string threadsSeen was counted one character at
+        a time and an empty-list unresolved read as zero, so both reached merging. Each case
+        here must be refused by name, say which field is wrong and what it should be, and
+        leave every table and the target untouched, so the holder corrects the argument and
+        restates rather than returning a turn it never actually checked.
+
+        Each case holds its own target, so a shape that used to pass cannot move the turn the
+        next case is checked on.
+        """
+        cases = (
+            (dict(GREEN, threadsSeen=1), "threadsSeen is a list of thread identifiers, not a int"),
+            (dict(GREEN, threadsSeen="ab", totalCount=2),
+             "threadsSeen is a list of thread identifiers, not a str"),
+            (dict(GREEN, threadsSeen=[1]),
+             "threadsSeen entry 0 is a thread identifier string, not a int"),
+            (dict(GREEN, unresolved=[]), "unresolved is a whole number, not a list"),
+            (dict(GREEN, unresolved=["thread-1"]), "unresolved is a whole number, not a list"),
+            (dict(GREEN, pagesRead="1"), "pagesRead is a whole number, not a str"),
+            (dict(GREEN, hasNextPage="false"), "hasNextPage is true or false, not a str"),
+            ([], "the review record is an object stating"),
+            ("review", "the review record is an object stating"),
+        )
+        for index, (review, fragment) in enumerate(cases):
+            with self.subTest(review=review):
+                branch = "dev-" + str(index)
+                self.target.set(REPO, branch, "base-0")
+                held = self.claim(self.alpha, PROJECT_A, "head-a", base=branch)
+                self.answer_grant(held["turnId"], self.alpha.task_id)
+                before, reads = self.store_rows(), len(self.target.reads)
+                with self.assertRaises(CoordinationError) as caught:
+                    self.begin(held, review=review)
+                self.assertEqual(caught.exception.reason.value, "merge_evidence_malformed")
+                self.assertIn(fragment, caught.exception.detail)
+                self.assertEqual(self.store_rows(), before)
+                self.assertEqual(len(self.target.reads), reads)
+                self.assertEqual(self.stored_checks(held), [])
+                self.assertEqual(self.turns.turn(held["turnId"])["state"], "holding")
+                self.assertEqual(self.begin(held)["state"], "merging")
+
+    def test_an_absent_review_is_still_an_unstated_one(self):
+        """No review at all says nothing, which the unstated rule already refuses and records."""
+        held = self.held()
+        with self.assertRaises(CoordinationError) as caught:
+            self.begin(held, review=None)
+        self.assertEqual(caught.exception.reason, RefusalReason.MERGE_REVIEW_INCOMPLETE)
+        self.assertEqual([row["refusal_reason"] for row in self.stored_checks(held)],
+                         ["merge_review_incomplete"])
+
     def test_a_declared_required_check_missing_from_the_restated_set_is_refused(self):
         held = self.held()
         with self.assertRaises(CoordinationError) as caught:

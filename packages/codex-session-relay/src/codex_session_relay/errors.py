@@ -220,6 +220,12 @@ class RefusalReason(str, Enum):
     MERGE_BASE_MISMATCH = "merge_base_mismatch"
     MERGE_BASE_NOT_ADVANCED = "merge_base_not_advanced"
 
+    # CRW-232: evidence restated to the merge turn whose shape is wrong. Appended at the END for
+    # the same merge reason. The next action is to correct the argument and restate it, which is
+    # neither finishing a review (merge_review_incomplete) nor waiting for a check
+    # (merge_currency_stale), so it folds into neither.
+    MERGE_EVIDENCE_MALFORMED = "merge_evidence_malformed"
+
 
 
 class RelayError(Exception):

@@ -464,7 +464,9 @@ class MergeTurn:
         The cause of a refused restatement is read from the refusal that was stored, not
         assumed. begin_merge writes a check row for EVERY refusal it reaches - an unfinished
         review, a base that moved, a candidate that moved - so calling all of them unfinished
-        checks would put a confident wrong word on three different problems.
+        checks would put a confident wrong word on three different problems. A review whose
+        shape is wrong is refused before it reaches any of them and leaves no row, so this
+        still reads that turn's candidate as not restated, which is true.
         """
         if holder is None:
             return None
@@ -1459,10 +1461,17 @@ class MergeTurn:
     def begin_merge(self, turn, *, actor, head_sha, base_sha, checks, review, required=()):
         """Restate exact head and base, the checks and the review, immediately before merging.
 
-        Every outcome writes a merge_turn_checks row, including a refused one, because a
-        refused check is the evidence for the safe return that follows it. The turn stays
-        holding on a refusal, so the holder's next legal move is release(returned) and the
-        next ready candidate proceeds.
+        Every outcome that reaches the check writes a merge_turn_checks row, including a
+        refused one, because a refused check is the evidence for the safe return that follows
+        it. The turn stays holding on a refusal, so the holder's next legal move is
+        release(returned) and the next ready candidate proceeds.
+
+        A review whose shape is wrong does not reach the check (CRW-232). It is refused as
+        merge_evidence_malformed before the turn or the target is read and before any
+        transaction, and nothing is written: it is a fault in the argument, not a fact about
+        the candidate, so the holder's next move is to restate it rather than return the turn.
+        Only a review of None is taken as one that states nothing, which the unstated rule
+        refuses and records as it always has.
 
         What this establishes and what it does not. It verifies the restated evidence is
         internally consistent and current against what this store knows: the head has not
@@ -1476,9 +1485,22 @@ class MergeTurn:
         The restated base must be what the branch reads now, and the READING is what is
         stored as the checked base, because land compares the branch against it.
         """
+        # review_problems reads values through str() and int(), so a wrongly typed field raised
+        # out of this call as a host fault - threadsSeen given as the forge's count, in the
+        # CRW-124 trial - or, worse, passed: a string threadsSeen was counted one character at
+        # a time and an empty-list unresolved read as zero. The shape is asked first, by the
+        # same rules the child's handoff is held to.
+        stated = {} if review is None else review
+        malformed = mergeevidence.review_shape_problems(stated)
+        if malformed:
+            raise CoordinationError(
+                RefusalReason.MERGE_EVIDENCE_MALFORMED,
+                "the review restated for turn " + repr(turn) + " is malformed, so the turn and"
+                " its target were not read and nothing was recorded for this check: "
+                + "; ".join(mergeevidence.details(malformed)))
         required = sorted({str(name) for name in (required or ())})
         checks = [dict(entry) for entry in (checks or [])]
-        review = dict(review or {})
+        review = dict(stated)
         digest_c, digest_r = checks_digest(required, checks), review_digest(review)
         # The base is read from the target, outside the transaction, and only when this call
         # could reach the comparison: a stranger, a turn that is not holding, an unready one or
