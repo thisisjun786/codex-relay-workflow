@@ -499,12 +499,18 @@ SUMMARY_SITES = (
      " makes the false above mean the type filter"),
     ("test_host_lost_turn.py", "test_the_thread_reads_tell_the_message_from_agent_output",
      "found", True, "self.assertTrue(adapter.find_token_since('thread', 'del-x-a1', older=()).found)",
-     "the veto's deny-list is the subject: the hook prompt is not agent output, so it still"
-     " blocks a loss; true is reachable only through a match"),
+     "true is reachable only through a user message, and the item of an unknown type newer than"
+     " it carries the token too, so true pins that the scan goes on past that item to the message"),
     ("test_host_lost_turn.py", "test_the_thread_reads_tell_the_message_from_agent_output",
-     "found", False, "self.assertFalse(adapter.find_token_since('thread', 'del-x-a1', older=()).found)",
-     "paired with the true above over the same items with the hook prompt retyped as an agent"
-     " message: both items are agent output, so false pins the deny-list, not an absent token"),
+     "found", False, "self.assertFalse(prompted.found)",
+     "paired with the next line, which names the hook prompt as the item carrying the token:"
+     " false pins that a token outside a user message is not taken for the message, not that"
+     " the token is absent"),
+    ("test_host_lost_turn.py", "test_the_thread_reads_tell_the_message_from_agent_output",
+     "found", False, "self.assertFalse(written.found)",
+     "paired with other_kind asserted None on the next line over the same items, the hook prompt"
+     " retyped as a written file: both items are agent output, so false pins the deny-list"
+     " (fileChange included), not an absent token"),
     ("test_guard_property.py", "test_marker_commands_are_exempt_from_the_store_selection_refusal",
      "_reads_no_selected_store", True,
      "self.assertTrue(cli._reads_no_selected_store(Namespace(handler=cli.cmd_intent_register,"

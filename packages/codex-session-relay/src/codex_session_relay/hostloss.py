@@ -68,6 +68,11 @@ TOKEN_SCAN_BOUNDED = "token_scan_bounded"
 # Not a question waiting answers either: the message is in the parent's items, so it is not sent
 # again, but the turn that would have acted on it is gone from the list (review 7).
 TOKEN_WITHOUT_TURN = "token_without_turn"
+# Not a question waiting answers either: this attempt's token is in the parent's items only in an
+# item that is neither the message nor agent output (a hook prompt, a type the relay does not
+# know). It may be the message or an echo of it, so it is neither a loss nor a delivery: nothing
+# is sent again, and the attempt carries the name (review 1 of the CRW-224 follow-up).
+TOKEN_IN_OTHER_ITEM = "token_in_other_item"
 NO_SEND_TIME = "no_send_time"
 NO_TURN = "no_turn"
 UNDECIDED_MARK = TURN_CHECK_UNDECIDED + ":"
@@ -95,8 +100,9 @@ def read_recipient_turn(adapter, clock, attempt, delivery, turn_id) -> dict:
     no answer was reached: an adapter that cannot list turns, an attempt without a send time, an
     unreadable host, or a send too recent to call its turn lost.
     undecided names the reasons waiting will not fix (listing_bounded, listing_empty,
-    token_scan_bounded, no_send_time, no_turn), and is None otherwise. A present reading can
-    carry one too: token_without_turn, a delivered message whose turn the list no longer has.
+    token_scan_bounded, token_in_other_item, no_send_time, no_turn), and is None otherwise. A
+    present reading can carry one too: token_without_turn, a delivered message whose turn the
+    list no longer has.
     status is the listed turn's status when the reading rests on that turn: the turn is in
     progress, or it has finished with this attempt's message in its items. It is None when the
     message was found anywhere else, so a caller does not take the turn for settled.
@@ -204,6 +210,14 @@ def read_recipient_turn(adapter, clock, attempt, delivery, turn_id) -> dict:
             detail=f"the recipient does not list this turn, but this attempt's token is in its "
                    f"items (turn {scan.turn_id})",
             undecided=TOKEN_WITHOUT_TURN,
+        )
+        return reading
+    if scan.other_kind is not None:
+        reading.update(
+            detail=f"undecided: the recipient {where}, and this attempt's token is in its items "
+                   f"only in an item of type {scan.other_kind} (turn {scan.other_turn}), which is "
+                   f"neither the delivered message nor agent output; not sent again",
+            undecided=TOKEN_IN_OTHER_ITEM,
         )
         return reading
     if not scan.exhausted:

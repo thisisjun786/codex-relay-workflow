@@ -482,14 +482,19 @@ turn, the delivery is not sent again, but the reading carries no status, so the 
 keep it as settled and a later reload that empties that turn as well is still caught. A turn
 still in progress is present as listed and is read again once it finishes.
 
-The token has to be in the message itself, not in something the parent printed about it: relay
-commands such as `status` and `show` print request ids into the parent's own command output.
-Where the host gives item types, reconciliation's scan and the in-turn read count only a
-`userMessage` item. The loss veto ignores the items the host types as agent output
-(`commandExecution`, `agentMessage`, `functionCallOutput`, `mcpToolCall`, `dynamicToolCall`,
-`reasoning`, `plan`), so a message the host types some other way, such as a hook prompt, still
-blocks a loss. A host that gives no types is read by text, as before, and there a command's
-output can still be taken for the message.
+The token has to be in the message itself, not in something the parent printed or wrote about
+it: relay commands such as `status` and `show` print request ids into the parent's own command
+output, and a parent can write one into a file. Where the host gives item types,
+reconciliation's scan and the in-turn read count only a `userMessage` item, and the loss scan
+passes over every type App Server 0.154.0 names for agent output (`agentMessage`,
+`collabAgentToolCall`, `commandExecution`, `contextCompaction`, `dynamicToolCall`,
+`enteredReviewMode`, `exitedReviewMode`, `fileChange`, `functionCallOutput`, `imageGeneration`,
+`imageView`, `mcpToolCall`, `plan`, `reasoning`, `sleep`, `subAgentActivity`, `webSearch`). A
+token found only in an item of another type, a hook prompt or a type the relay does not know,
+may be the message or an echo of it. That reading is neither a loss nor a delivery: nothing is
+sent again, and the attempt is named `turn_check_undecided:token_in_other_item`. A host that
+gives no types is read by text, as before, and there a command's output can still be taken for
+the message.
 
 A lost turn is recorded on the attempt as `host_lost_turn`, and the delivery is queued again, so the
 ordinary claim sends the next attempt of the same event under a new request id. If the host loses
@@ -517,7 +522,8 @@ not cover the turns since it, or an attempt without a send time. An empty listin
 parent shows when the lost delivery was its only turn, and also what a host shows for a thread it
 answers for without its turns, so it is named and never taken for absence. These are recorded on
 the attempt as `turn_check_undecided:<reason>` (`listing_bounded`, `listing_empty`,
-`token_scan_bounded`, `no_send_time`). One more reading is named the same way although it
+`token_scan_bounded`, `token_in_other_item`, `no_send_time`). One more reading is named the
+same way although it
 decides the veto: the delivery's token is in the parent's items but its turn is gone from the
 list (`token_without_turn`). The message is there, so it is not sent again, but the turn that would
 have acted on it is gone, which the parent has to be able to see. `status` reads the phase as

@@ -31,12 +31,18 @@ class TokenScan:
 
     The exhausted field is the important one. A scan that stopped at its bound has not
     searched the history, so not finding the token there means nothing at all.
+
+    other_turn and other_kind name the first item the scan passed that carried the token but is
+    neither the message nor agent output (find_token_in): a hook prompt, or a type the relay
+    does not know. Such an item is not taken for the message, and not dismissed either.
     """
 
     found: bool
     turn_id: str | None
     exhausted: bool
     scanned: int
+    other_turn: str | None = None
+    other_kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -60,12 +66,16 @@ TURN_ABSENT = "absent"
 DISPATCHED_TURN_MAX_PAGES = 20
 # The item type the host gives the message a turn/start delivered (App Server ThreadItem).
 USER_MESSAGE = "userMessage"
-# The item types the host gives an agent's own output. A relay command that prints a request id -
-# status, show, reconcile - puts it in one of these, and that is the parent reading about the
-# delivery, not the delivery (CRW-224 follow-up, H0R3).
+# Every ThreadItem type App Server 0.154.0 names for the agent's own work, or for text the host
+# derived from it. A relay command that prints a request id (status, show, reconcile), a file the
+# parent wrote, a compaction summary: all of it is the parent reading or writing about the
+# delivery, never the delivery (CRW-224 follow-up, H0R3; fileChange from review 1). The schema's
+# two other types are userMessage and hookPrompt, which is input, not output.
 AGENT_OUTPUT = frozenset({
-    "commandExecution", "agentMessage", "functionCallOutput", "mcpToolCall", "dynamicToolCall",
-    "reasoning", "plan",
+    "agentMessage", "collabAgentToolCall", "commandExecution", "contextCompaction",
+    "dynamicToolCall", "enteredReviewMode", "exitedReviewMode", "fileChange",
+    "functionCallOutput", "imageGeneration", "imageView", "mcpToolCall", "plan", "reasoning",
+    "sleep", "subAgentActivity", "webSearch",
 })
 
 
@@ -79,10 +89,11 @@ def is_message(kind) -> bool:
 
 
 def may_be_message(kind) -> bool:
-    """What can still block a loss: anything the host did not type as agent output.
+    """What a loss scan cannot pass over: anything the host did not type as agent output.
 
-    Wider than is_message on purpose. A message the host types some other way (a hook prompt)
-    has still reached the recipient, and a loss is concluded only when nothing like it is there.
+    Wider than is_message on purpose. A token in a hook prompt, or in a type the relay does not
+    know, may be the message or an echo of it: the scan neither counts it as the message nor
+    passes over it, and the reading it leads to is named instead of a loss (hostloss.py).
     """
     return kind not in AGENT_OUTPUT
 
@@ -204,22 +215,30 @@ def find_token_in(pages, token: str, older) -> TokenScan:
     scan in front of a token that was there (review 6). A scan that stops at its bound first has
     not covered them, and not finding the token there shows nothing (I-42).
 
-    A token counts in any item the host did not type as agent output (may_be_message): a relay
-    command that printed the request id is not the message, and a loss it vetoed was reported
-    as delivered (H0R3).
+    Only a user message (is_message) is found. Agent output is passed over: a relay command that
+    printed the request id, or a file the parent wrote with it, is not the message, and a loss
+    such an echo vetoed was reported as delivered (H0R3, review 1). The scan also goes on past an
+    item of any other type that carries the token (a hook prompt, a type the relay does not
+    know), and reports the first one as other_turn and other_kind: neither the message nor
+    absence, so the caller names it rather than concluding either.
     """
     boundary = set(older)
     scanned = 0
+    other = (None, None)
     for items, follows in pages:
         for owner, text, kind in items:
             if owner is not None and owner in boundary:
-                return TokenScan(False, None, True, scanned)
+                return TokenScan(False, None, True, scanned, *other)
             scanned += 1
-            if may_be_message(kind) and token in text:
+            if not may_be_message(kind) or token not in text:
+                continue
+            if is_message(kind):
                 return TokenScan(True, owner, False, scanned)
+            if other == (None, None):
+                other = (owner, kind)
         if not follows:
-            return TokenScan(False, None, True, scanned)
-    return TokenScan(False, None, False, scanned)
+            return TokenScan(False, None, True, scanned, *other)
+    return TokenScan(False, None, False, scanned, *other)
 
 
 def find_token_in_turn_items(pages, token: str, turn_id: str) -> TokenScan:
