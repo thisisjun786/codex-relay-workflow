@@ -45,8 +45,6 @@ GITHUB = "github"
 #: not accepted from a reader: the value is recorded and compared exactly by the next check.
 _FULL_SHA = re.compile(r"\A(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 _GITHUB_SHA = re.compile(r"\A[0-9a-f]{40}\Z")
-#: What same_commit treats as an object name a caller may have abbreviated.
-_OBJECT_NAME = re.compile(r"\A[0-9a-f]{7,64}\Z")
 _SLUG = re.compile(r"\A[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}\Z")
 #: Characters git reads as revision syntax or refuses in a ref name. show-ref's exact lookup
 #: would not evaluate them, but a name that needs them is not a branch this can mean.
@@ -170,18 +168,11 @@ class TargetReader:
 
 
 def same_commit(one, other):
-    """Whether two stated object names can mean the same commit.
+    """Whether two stated object names are the same commit: the same full name, any case.
 
-    Callers type these, and begin_merge stores them as typed. An abbreviated or uppercase name
-    compared as a plain string would silently switch a rule off, so both are lowercased and, when
-    both look like object names of at least seven hex digits, one being a prefix of the other
-    counts as the same commit. Anything else is compared exactly, which is what a fixture name
-    like base-0 needs.
+    An abbreviation is not accepted. Two different commits can share a prefix, and nothing
+    here can tell whether the one a caller typed is ambiguous in the target, so a match on a
+    prefix could let a wrong value through a cross-check. Upper case is the same name.
     """
     left, right = str(one or "").strip().lower(), str(other or "").strip().lower()
-    if not left or not right:
-        return False
-    if _OBJECT_NAME.match(left) and _OBJECT_NAME.match(right):
-        return left.startswith(right) or right.startswith(left)
-    return left == right
-
+    return bool(left) and left == right

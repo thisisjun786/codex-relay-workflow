@@ -82,8 +82,9 @@ Three refusals come with it, each leaving the turn where it was:
   holding (its blocked cause is `target_unreadable`), a landing stays merging, and a merged
   resolution stays unknown. An open or closed resolution still returns the turn, with no base
   recorded, because the next check reads the target itself.
-- `merge_base_mismatch`: the caller stated a base the branch does not read. Abbreviated and
-  upper-case object names are compared as the commits they name.
+- `merge_base_mismatch`: the caller stated a base the branch does not read. Object names
+  are compared in full, ignoring case; an abbreviation is refused, because nothing here can tell
+  whether it is ambiguous.
 - `merge_base_not_advanced`, from `merge-turn-land` only: the branch still reads the base the
   check read before merging, so the merge is not on it. A candidate that already was the branch
   tip at the check is exempt. A merge that changed nothing because the base already contained the

@@ -1373,8 +1373,8 @@ class MergeTurn:
             RefusalReason.MERGE_BASE_MISMATCH,
             "the base branch " + repr(row["base_ref"]) + " reads " + repr(reading["sha"])
             + " (" + str(reading.get("source")) + ") and " + what + " states " + repr(stated)
-            + "; the relay records what the branch reads, so read it again or leave the"
-            " statement out",
+            + "; the relay records what the branch reads, so read it again and state it in"
+            " full, or leave the statement out",
             domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
             incumbent=reading["sha"], challenger=stated)
 
@@ -1434,11 +1434,20 @@ class MergeTurn:
         LANDED rows only: the rule is the base matching the last LANDING recorded here. A
         returned or resolved-open row carries an observation, not a landing, and letting it
         gate the target left a returned row nobody could restate blocking every successor.
+
+        Last by the order the closes were WRITTEN, not by closed_at: that has one-second
+        resolution, and breaking its ties by turn_id - a digest - picked between two landings
+        of one instant by chance, so the currency check could compare against the older one
+        while the restatement refused the newer. Every close journals merge_turn_closed, and
+        the journal's sequence is an autoincrement nothing deletes, so it orders them exactly.
+        A row with no such entry (written by hand) sorts after every journalled one.
         """
         return db.execute(
-            "SELECT turn_id, observed_base_sha, holder_task_id, project_key FROM merge_turns"
-            "  WHERE target_key = ? AND state = 'landed' AND observed_base_sha IS NOT NULL"
-            "  ORDER BY closed_at DESC, turn_id DESC LIMIT 1",
+            "SELECT m.turn_id, m.observed_base_sha, m.holder_task_id, m.project_key"
+            "  FROM merge_turns m LEFT JOIN journal j"
+            "    ON j.subject = m.turn_id AND j.kind = 'merge_turn_closed'"
+            "  WHERE m.target_key = ? AND m.state = 'landed' AND m.observed_base_sha IS NOT NULL"
+            "  ORDER BY COALESCE(j.seq, -1) DESC, m.closed_at DESC, m.turn_id DESC LIMIT 1",
             (target,),
         ).fetchone()
     # ----------------------------------------------------------- pre-merge
@@ -1529,7 +1538,7 @@ class MergeTurn:
                     RefusalReason.MERGE_CURRENCY_STALE,
                     "the base branch " + repr(row["base_ref"]) + " reads "
                     + repr(reading["sha"]) + " and this restates " + repr(base_sha)
-                    + "; restate the base the branch points at now",
+                    + "; restate the base the branch points at now, in full",
                     domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
                     incumbent=reading["sha"], challenger=base_sha)
             if refusal is None:
@@ -1940,8 +1949,9 @@ class MergeTurn:
                 refusal = self._mismatch(
                     row, actor, observed_base_sha, reading, "--observed-base-sha")
             if refusal is None and reading["sha"] == row["observed_base_sha"]:
-                # Exact, not same_commit: an abbreviated stored base is replaced by the full
-                # reading, because the next check compares against the stored text.
+                # Exact, not same_commit: a stored base in another case or an abbreviation an
+                # older relay stored is replaced by the reading, because the next check
+                # compares against the stored text.
                 answered = True
             elif refusal is None:
                 taken = [int(match.group(1)) for match in (

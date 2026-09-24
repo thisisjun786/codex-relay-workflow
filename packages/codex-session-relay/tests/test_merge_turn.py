@@ -1560,7 +1560,7 @@ class TheBaseTheTargetActuallyReads(MergeTurnTestCase):
     def test_the_check_stores_what_the_branch_reads(self):
         held = self.held()
         self.target.set(REPO, BASE, "c" * 40)
-        answer = self.check(held, base="C" * 12)
+        answer = self.check(held, base="C" * 40)
         self.assertEqual(answer["state"], "merging")
         self.assertEqual(answer["checkedBaseSha"], "c" * 40)
 
@@ -1617,7 +1617,7 @@ class TheBaseTheTargetActuallyReads(MergeTurnTestCase):
     def test_a_stated_base_that_agrees_with_the_reading_is_accepted(self):
         held = self.merging()
         self.merged("d" * 40)
-        answer = self.land(held, observed="D" * 9)
+        answer = self.land(held, observed="D" * 40)
         self.assertEqual(answer["released"]["observedBaseSha"], "d" * 40)
 
     def test_the_trial_mistake_is_refused_where_it_is_written(self):
@@ -1638,11 +1638,15 @@ class TheBaseTheTargetActuallyReads(MergeTurnTestCase):
         self.merged()
         self.assertEqual(self.land(held)["released"]["state"], "landed")
 
-    def test_an_abbreviated_restatement_does_not_switch_the_rule_off(self):
+    def test_an_abbreviation_is_refused_rather_than_trusted(self):
+        """Final review 1: two commits can share a prefix, and nothing here can tell."""
         self.target.set(REPO, BASE, "c" * 40)
         held = self.held()
-        self.check(held, base="c" * 8)
-        self.refused(lambda: self.land(held), RefusalReason.MERGE_BASE_NOT_ADVANCED)
+        self.refused(lambda: self.check(held, base="c" * 8), RefusalReason.MERGE_CURRENCY_STALE)
+        self.check(held, base="c" * 40)
+        self.merged("d" * 40)
+        self.refused(lambda: self.land(held, observed="d" * 8), RefusalReason.MERGE_BASE_MISMATCH)
+        self.assertEqual(self.turns.turn(held["turnId"])["state"], "merging")
 
     def test_a_candidate_that_already_was_the_base_is_not_wedged(self):
         held = self.held()
@@ -1843,11 +1847,37 @@ class TheBaseTheTargetActuallyReads(MergeTurnTestCase):
         second = self.held(head="head-c")
         self.check(second, head="head-c", base=self.POST)
         self.merged("base-2")
-        self.clock.advance(5)
         self.land(second)
         error = self.refused(lambda: self.restate(first["turnId"]),
                              RefusalReason.MERGE_TURN_NOT_HELD)
         self.assertIn(second["turnId"], error.detail)
+
+    def test_two_landings_in_one_instant_are_ordered_by_when_they_were_written(self):
+        """Final review 1: closed_at ties were broken by a digest, so by chance."""
+        first = self.landed()
+        second = self.held(head="head-c")
+        self.check(second, head="head-c", base=self.POST)
+        self.merged("base-2")
+        self.land(second)
+        self.assertEqual(self.turns.turn(first["turnId"])["closedAt"],
+                         self.turns.turn(second["turnId"])["closedAt"])
+        third = self.held(head="head-d")
+        self.assertEqual(self.check(third, head="head-d", base="base-2")["state"], "merging")
+        error = self.refused(lambda: self.restate(first["turnId"]),
+                             RefusalReason.MERGE_TURN_NOT_HELD)
+        self.assertIn(second["turnId"], error.detail)
+
+    def test_the_latest_of_two_landings_in_one_instant_is_the_one_restated(self):
+        first = self.landed()
+        second = self.held(head="head-c")
+        self.check(second, head="head-c", base=self.POST)
+        self.merged("base-2")
+        self.land(second)
+        self.r3_landing(second)
+        self.merged("base-2")
+        answer = self.restate(second["turnId"])
+        self.assertEqual(answer["observedBaseSha"], "base-2")
+        self.refused(lambda: self.restate(first["turnId"]), RefusalReason.MERGE_TURN_NOT_HELD)
 
     def test_a_merge_in_flight_holds_the_restatement(self):
         first = self.landed()

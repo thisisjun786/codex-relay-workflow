@@ -176,9 +176,11 @@ class ReadingAForge(RelayTestCase):
 
 
 class SameCommit(RelayTestCase):
-    def test_abbreviations_and_case_match_and_names_do_not_blur(self):
-        self.assertTrue(same_commit("ABCDEF1234", "abcdef1234" + "0" * 30))
-        self.assertFalse(same_commit("abcdef", "abcdef0"))
+    def test_names_match_in_full_in_any_case_and_never_by_prefix(self):
+        full = "abcdef1234" + "0" * 30
+        self.assertTrue(same_commit(full.upper(), full))
+        self.assertFalse(same_commit("abcdef1", full))
+        self.assertFalse(same_commit(full, "abcdef1"))
         self.assertFalse(same_commit("base-0", "base-00"))
         self.assertTrue(same_commit("base-0", "base-0"))
         self.assertFalse(same_commit("", ""))
