@@ -611,7 +611,8 @@ repository records it once it has read the landed base, from its own `merge-turn
 `merge-turn-show`, and before it answers, relies on, or asks its peer to act on an agreement
 standing on the older revision. When the landing parent is a party it records the move right after
 landing; otherwise the party that reads the landing in its next pass does. Either party may, and a
-move the chain already records answers `alreadyRecorded` and changes nothing. Until a move is
+move the chain already records answers `alreadyRecorded` and writes no new mark (like any
+restatement it still reopens an agreement proposed on the older revision since). Until a move is
 recorded, a late acceptance on the older revision is accepted: that is the contract, not a gap the
 relay closes for you.
 
@@ -619,7 +620,8 @@ relay closes for you.
 revision; every later move is recorded from the end of the recorded chain, never from the
 proposal's revision again. `region-show` gives each agreement its `currentRevision`, the end of the
 chain from its own revision, and a refused restatement names that end and the command to run from
-it.
+it. A move from a revision no agreement stands on and no recorded move reaches is refused too,
+naming where the chains end: it would start a chain no agreement follows.
 
 **After a move.** Settling an agreement whose revision was restated is refused as
 `agreement_revision_stale`, and the refusal names the end of the chain and the `region-reaffirm`
@@ -629,9 +631,10 @@ proposer, the constraint and both sides' conditions as written, whichever side r
 your side on the new tree. The other side's acceptance is not carried, because an acceptance stands
 on the tree it was given on: the answer's `reaffirmation.awaitingAcceptance` names that side's
 parent, the reason (`acceptance_on_prior_revision` when it had accepted the predecessor,
-`not_yet_accepted` when it had not) and the exact `region-settle` command, and `nextOwner` is set
-to that parent. When that side has no single registered parent, the answer names no task and no
-command and says what has to happen first. Tell your peer through the pair route; its acceptance agrees the successor.
+`not_yet_accepted` when it had not) and the exact `region-settle` command, and `nextOwner` names
+that parent as it stands when read, so a handover since the carry is followed. When that side has
+no single registered parent, the answer names no task and no command and says what has to happen
+first. Tell your peer through the pair route; its acceptance agrees the successor.
 Reaffirming onto the revision an agreement already stands on is refused, as is carrying onto a
 place the same two projects already hold on the new revision.
 

@@ -875,6 +875,42 @@ class AReaffirmationCarriesWhatWasAgreed(EditRegionTestCase):
         self.assertEqual(caught.exception.reason, RefusalReason.LINK_NOT_ACTIVE)
         self.assertIsNone(self.regions.agreement(original["agreementId"])["leftAcceptedAt"])
 
+    def test_the_next_owner_follows_a_handover_while_the_carry_waits(self):
+        """Review of the first head: nextOwner kept naming a parent that had handed over."""
+        original = self.proposed_by_beta()
+        self.moved("rev-2")
+        successor = self.regions.reaffirm(
+            original["agreementId"], actor=self.alpha.task_id, base_revision="rev-2")
+        self.linkage.handover(
+            role=PARENT, scope_key="PRJ-B", expect_task_id=self.beta.task_id,
+            endpoint=Endpoint("task-beta-next", "host-b"), acknowledged=[],
+            evidence="project B changed hands after the carry", actor="test")
+        waiting = self.regions.agreement(successor["agreementId"])
+        awaiting = waiting["reaffirmation"]["awaitingAcceptance"]
+        self.assertEqual(
+            (waiting["nextOwner"], awaiting["task"]), ("task-beta-next", "task-beta-next"))
+        self.assertIn("--actor task-beta-next", awaiting["command"])
+        agreed = self.regions.settle(
+            successor["agreementId"], actor="task-beta-next", disposition="accepted")
+        self.assertEqual(agreed["state"], "agreed")
+
+    def test_a_classification_clash_on_the_new_revision_is_refused_and_recorded(self):
+        """Review of the first head: this refusal was raised inside its transaction, unrecorded."""
+        original = self.proposed_by_beta()
+        self.moved("rev-2")
+        self.propose("src/a.py", revision="rev-2", right="PRJ-Z", link=self.other,
+                     region_class="generated", regenerate_from="derive")
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.reaffirm(
+                original["agreementId"], actor=self.alpha.task_id, base_revision="rev-2")
+        self.assertEqual(caught.exception.reason, RefusalReason.REGION_OVERLAP)
+        still = self.regions.agreement(original["agreementId"])
+        self.assertEqual((still["state"], still["supersededBy"]), ("reopened", None))
+        self.assertEqual(self.carries(), [])
+        contests = self.regions.show(repository=REPO)["conflicts"]
+        self.assertEqual(
+            [c["challenger"] for c in contests if c["reason"] == "region_overlap"], ["source"])
+
 
 class ABaseMoveChainsFromTheLastRecordedRevision(EditRegionTestCase):
     """CRW-237. One revision has one successor, so only the first move starts at the proposal."""
@@ -917,6 +953,33 @@ class ABaseMoveChainsFromTheLastRecordedRevision(EditRegionTestCase):
             record["agreementId"], actor=self.beta.task_id, base_revision="rev-3")
         self.assertEqual(
             (successor["baseRevision"], successor["currentRevision"]), ("rev-3", "rev-3"))
+
+    def test_a_move_from_a_revision_nothing_stands_on_is_refused(self):
+        """Review of the first head: after A->B, C->D was recorded and never reached A."""
+        self.propose("src/a.py")
+        self.regions.restate_revision(
+            repository=REPO, from_revision=REV, to_revision="rev-2", actor=self.alpha.task_id)
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.restate_revision(
+                repository=REPO, from_revision="rev-9", to_revision="rev-10",
+                actor=self.alpha.task_id)
+        self.assertEqual(caught.exception.reason, RefusalReason.AGREEMENT_REVISION_STALE)
+        self.assertIn("'rev-2'", caught.exception.detail)
+        self.assertEqual(len(self.store.all("SELECT * FROM edit_revision_marks", ())), 1)
+        contests = self.regions.show(repository=REPO)["conflicts"]
+        self.assertIn(
+            ("rev-2", "rev-9"), [(c["incumbent"], c["challenger"]) for c in contests])
+
+    def test_an_agreement_on_another_revision_starts_its_own_chain(self):
+        self.propose("src/a.py")
+        self.regions.restate_revision(
+            repository=REPO, from_revision=REV, to_revision="rev-2", actor=self.alpha.task_id)
+        self.propose("src/b.py", revision="other-1")
+        moved = self.regions.restate_revision(
+            repository=REPO, from_revision="other-1", to_revision="other-2",
+            actor=self.alpha.task_id)
+        self.assertEqual(
+            (moved["alreadyRecorded"], moved["currentRevision"]), (False, "other-2"))
 
 
 class TwoPairsProposingOverlappingRegionsAtOnce(EditRegionTestCase):

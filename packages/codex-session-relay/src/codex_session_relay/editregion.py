@@ -321,11 +321,17 @@ class EditRegions:
         ]
         chain = self._walk(successors, base)
         record["currentRevision"] = chain[-1] if chain else base
+        awaiting = None if carry is None else self._awaiting(record, carry)
+        if awaiting is not None:
+            # While a carried agreement waits for a side, whoever acts next is that side's
+            # parent NOW. The stored value names the parent at the time of the carry, and after
+            # a handover it would send the acceptance to a task that can no longer give it.
+            record["nextOwner"] = awaiting["task"]
         record["reaffirmation"] = None if carry is None else {
             "predecessor": carry["predecessor_id"], "actor": carry["actor"],
             "actorProject": carry["actor_project"], "fromRevision": carry["from_revision"],
             "toRevision": carry["to_revision"], "recordedAt": carry["recorded_at"],
-            "awaitingAcceptance": self._awaiting(record, carry),
+            "awaitingAcceptance": awaiting,
         }
         return record
 
@@ -469,13 +475,17 @@ class EditRegions:
                     region["regenerate_from"] or "") != (regenerate_from or "")):
                 # The insert above is ON CONFLICT DO NOTHING, so a later proposal naming a
                 # different classification silently inherited the first one - and
-                # classification decides whether the region contests at all.
-                raise CoordinationError(
+                # classification decides whether the region contests at all. Recorded like every
+                # other refusal here: raised inside the transaction it kept no trace, which a
+                # carry refused this way made visible (CRW-237 review).
+                refusal = Refusal(
                     RefusalReason.REGION_OVERLAP,
                     "region " + repr(identifier) + " is already recorded as "
                     + repr(region["region_class"]) + " derived from "
                     + repr(region["regenerate_from"]) + "; a place is classified once, and a"
-                    " different classification is a different claim about it")
+                    " different classification is a different claim about it",
+                    domain=DOMAIN_EDIT_REGION, subject=repository, incumbent=identifier,
+                    challenger=region_class)
             previous = None if refusal is not None else db.execute(
                 "SELECT * FROM edit_agreements"
                 "  WHERE region_id = ? AND left_project = ? AND right_project = ?"
@@ -935,6 +945,33 @@ class EditRegions:
     def _successor_map(rows):
         return {row["from_revision"]: row["to_revision"] for row in rows}
 
+    def _unrelated_start(self, db, repository, revision):
+        """A first move starts where an agreement stands, and a later one where a chain ends.
+
+        One successor per revision stops a second chain from the SAME revision and nothing
+        stopped one from a revision nobody stands on: after A->B, recording C->D instead of B->D
+        succeeded, and the move never reached the agreement on A (CRW-237 review). A repository
+        with neither an agreement nor a mark keeps the first restatement _check_restater allows.
+        """
+        bases = {row["base_revision"] for row in db.execute(
+            "SELECT DISTINCT base_revision FROM edit_agreements WHERE repository = ?",
+            (repository,)).fetchall()}
+        successors = self._successor_map(db.execute(MARKS, (repository,)).fetchall())
+        if not bases and not successors:
+            return None
+        if revision in bases or revision in successors.values():
+            return None
+        ends = sorted({(self._walk(successors, base) or [base])[-1] for base in bases}
+                      | {end for end in successors.values() if end not in successors})
+        return Refusal(
+            RefusalReason.AGREEMENT_REVISION_STALE,
+            "no agreement in " + repr(repository) + " stands on " + repr(revision) + " and no"
+            " recorded move reaches it, so a move from it would start a chain no agreement"
+            " follows. A first move starts at an agreement's revision and a later one at the end"
+            " of its recorded chain; the chains here end at " + repr(ends),
+            domain=DOMAIN_EDIT_REGION, subject=repository, incumbent=",".join(ends),
+            challenger=revision)
+
     @staticmethod
     def _walk(marks, revision):
         reached, cursor = [], revision
@@ -1024,8 +1061,9 @@ class EditRegions:
                     incumbent=existing["to_revision"], challenger=to_revision)
                 self.conflicts.record_in(db, refusal, at=now)
             elif existing is None:
+                refusal = self._unrelated_start(db, repository, from_revision)
                 reached = self._chain_from(db, repository, to_revision)
-                if from_revision in reached:
+                if refusal is None and from_revision in reached:
                     # One successor per revision does not make the chain acyclic. A to B
                     # followed by B to A left BOTH revisions carrying an outgoing mark, so
                     # every revision read as superseded and no tree was current at all.
@@ -1036,6 +1074,7 @@ class EditRegions:
                         " and leave no current revision for anything to stand on",
                         domain=DOMAIN_EDIT_REGION, subject=repository,
                         incumbent=to_revision, challenger=from_revision)
+                if refusal is not None:
                     self.conflicts.record_in(db, refusal, at=now)
             if refusal is None and existing is None:
                 db.execute(

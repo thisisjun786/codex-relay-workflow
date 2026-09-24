@@ -172,7 +172,11 @@ acceptance on the older tree stands; that is the contract, not an oversight.
 One revision has one successor, so only the first move starts at the proposal's revision. Every
 later move starts at the end of the recorded chain, which `region-show` reports per agreement as
 `currentRevision` and which a refused restatement names with the command to run. A move the chain
-already holds answers `alreadyRecorded` and writes no mark.
+already holds answers `alreadyRecorded` and writes no mark; like any restatement it is journalled
+and reopens an agreement proposed on the older revision since. A move from a revision no agreement
+stands on and no recorded move reaches is refused, naming where the chains end, because it would
+start a chain no agreement follows; a repository with neither an agreement nor a mark still takes
+its first one.
 
 After a move, settling an agreement on the older revision is refused as
 `agreement_revision_stale`, naming the chain's end, and either side carries it there with
@@ -181,8 +185,8 @@ sides' conditions as written; the carrying side may restate only its own conditi
 accepts the carrier's side on the new tree. The other side's acceptance was given on the older
 tree and is not carried: the answer's `reaffirmation.awaitingAcceptance` names that side's parent,
 the reason (`acceptance_on_prior_revision` or `not_yet_accepted`) and the `region-settle` command,
-and `nextOwner` names that parent - or, with no single registered parent on that side, is left
-empty while the answer says what has to happen first. `statedOn` names the revision each text was
+and `nextOwner` names that parent as it stands when read - or, with no single registered parent on
+that side, is left empty while the answer says what has to happen first. `statedOn` names the revision each text was
 written against and `textFromEarlierRevision` lists those from an older tree, because a line
 number inside one points there. The first version made the carrier the proposer, dropped both
 conditions and cleared the other acceptance without a word (CRW-124 G3).
