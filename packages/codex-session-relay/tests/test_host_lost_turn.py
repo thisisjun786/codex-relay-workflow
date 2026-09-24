@@ -241,6 +241,9 @@ class ReconcileReportsTheRecipientTurn(HostLossCase):
         self.assertEqual(self.attempt_states(event_id), [DISPATCHED])
 
     def test_reconciling_a_lost_attempt_again_changes_nothing(self):
+        """The lost attempt is the once-count. Re-settling it from its receipt after the
+        redelivery went out would set it back to dispatched, and a later loss of the redelivery
+        would then be treated as the first one and sent a third time."""
         event_id, first, turn = self.dispatched()
         self.host_loses(turn)
         self.clock.advance(120)
@@ -248,10 +251,18 @@ class ReconcileReportsTheRecipientTurn(HostLossCase):
             db.execute("UPDATE attempts SET state = ? WHERE request_id = ?", (HOST_LOST, first))
             db.execute("UPDATE deliveries SET state = ?, dispatch_evidence = ? WHERE event_id = ?",
                        (QUEUED, HOST_LOST, event_id))
+        second = self.attempt(event_id)
+        self.assertEqual(second["deliveryState"], DISPATCHED)
         outcome = self.reconciler.reconcile_attempt(first, self.adapter)
         self.assertEqual(outcome.get("recipientTurn", {}).get("finding"), HOST_LOST)
-        self.assertEqual(self.attempt_states(event_id), [HOST_LOST])
-        self.assertEqual(self.delivery_row(event_id)["state"], QUEUED)
+        self.assertEqual(self.attempt_states(event_id), [HOST_LOST, DISPATCHED])
+        self.assertEqual(self.journalled(HOST_LOST), 0, "reporting the old loss recorded nothing")
+        self.host_loses(second["turnId"])
+        for _ in range(3):
+            self.clock.advance(120)
+            self.daemon.tick()
+        self.assertEqual(self.delivery_row(event_id)["hold_reason"], HOST_LOST)
+        self.assertEqual(len(self.adapter.sends), 2)
 
     def test_a_recorded_acknowledgement_wins_over_a_missing_turn(self):
         event_id, first, turn = self.dispatched()
@@ -541,4 +552,3 @@ class TheAdapterLooksBackOnlyToTheSend(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
