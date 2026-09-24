@@ -58,9 +58,11 @@ class MessageLandsAfterTheThreadScan(_Wrapped):
 
 
 class UnknownSendCase(HostLossCase):
-    def unknown_send(self, *, history=True):
+    def unknown_send(self, *, history=True, restarted=True):
         """K5ctl: turn/start went out, the App Server died before answering, and the host kept
-        nothing of it."""
+        nothing of it. The restarted host holds no live state for the parent (notLoaded) until
+        something loads it; restarted=False leaves the parent loaded, as a host that never went
+        down would."""
         if history:
             self.parent_history()
         _relationship, event_id = self.queued_event()
@@ -69,7 +71,12 @@ class UnknownSendCase(HostLossCase):
         self.assertEqual(record["transportReceiptStatus"], "outcome_unknown")
         self.assertIsNone(record["turnId"])
         self.assertEqual(self.delivery_row(event_id)["state"], HELD_UNCERTAIN)
+        if restarted:
+            self.restart_host()
         return event_id, record["requestId"]
+
+    def restart_host(self):
+        self.adapter.set_status(PARENT, "notLoaded")
 
     def ticks(self, count, seconds=120):
         for _ in range(count):
@@ -112,6 +119,46 @@ class AnUnknownSendTheHostKeptNoTraceOf(UnknownSendCase):
         self.ticks(3)
         self.assertEqual(len(self.adapter.sends), 2)
         self.assertEqual(self.journalled(UNKNOWN_LOST), 1)
+
+    def test_a_recipient_its_host_still_holds_is_held_for_the_parent_not_redelivered(self):
+        """Independent review of bb1b6af6: a live App Server can still apply a turn/start whose
+        answer never came back, so absence alone is not enough to send again. Only a recipient
+        the host holds no live state for (notLoaded, as after K5ctl's restart) is redelivered."""
+        event_id, first = self.unknown_send(restarted=False)
+        self.ticks(3)
+        row = self.delivery_row(event_id)
+        self.assertEqual((row["state"], row["hold_reason"]), (HELD_UNCERTAIN, UNDECIDED))
+        self.assertEqual(self.completion_delivery().get("turnCheck"),
+                         f"{UNDECIDED}:recipient_loaded")
+        self.assertEqual(self.next_action(), "parent_recovers_unknown_send_undecided")
+        self.assertEqual(len(self.adapter.sends), 1)
+
+    def test_a_loss_settlement_that_loses_its_race_reports_the_attempt_as_it_stands(self):
+        """Independent review of bb1b6af6: another reader confirmed the send between this
+        reading's held write and its loss settlement, and the outcome still said held."""
+        from unittest import mock
+        from codex_session_relay import hostloss
+
+        event_id, first = self.unknown_send()
+        self.clock.advance(120)
+        original = hostloss.settle_unknown_send
+
+        def confirmed_first(*args, **kwargs):
+            late = self.adapter.start_turn(
+                PARENT, status="completed",
+                text=f"[codex-session-relay] verification request\nrequestId: {first}")
+            self.assertEqual(self.reconciler.reconcile_attempt(first, self.adapter)["evidence"],
+                             "turn_found")
+            del late
+            return original(*args, **kwargs)
+
+        with mock.patch.object(hostloss, "settle_unknown_send", confirmed_first):
+            outcome = self.reconciler.reconcile_attempt(first, self.adapter)
+        self.assertEqual((outcome["state"], outcome.get("deliveryState"), outcome["evidence"]),
+                         (HELD_UNCERTAIN, DISPATCHED, "turn_found"))
+        self.assertNotEqual(outcome.get("nextExpectedAction"), "daemon_reconciles_delivery")
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        self.assertEqual(len(self.adapter.sends), 1)
 
     def test_reconcile_names_the_loss_and_the_actor_that_moves_it_without_sending(self):
         event_id, first = self.unknown_send()
@@ -161,7 +208,9 @@ class AnUnknownSendTheHostKeptNoTraceOf(UnknownSendCase):
         event_id, _first, turn = self.dispatched()
         self.host_loses(turn)
         self.adapter.script("transport_unknown")
-        self.ticks(4)
+        self.ticks(1)
+        self.restart_host()
+        self.ticks(3)
         self.assertEqual(self.attempt_states(event_id), [HOST_LOST, UNKNOWN_LOST])
         self.assertEqual(len(self.adapter.sends), 2)
         row = self.delivery_row(event_id)
@@ -294,7 +343,9 @@ class ASendTheTransportHasNotAnsweredIsHeldNotRedelivered(UnknownSendCase):
         self.parent_history()
         _relationship, event_id = self.queued_event()
         self.adapter.script("in_progress")
-        return event_id, self.attempt(event_id)["requestId"]
+        request_id = self.attempt(event_id)["requestId"]
+        self.restart_host()
+        return event_id, request_id
 
     def test_an_unfinished_receipt_is_held_for_the_parent_by_name(self):
         event_id, first = self.unfinished()
@@ -511,12 +562,17 @@ class ACorrectionLostTheSameWayIsTheParentsToRecover(UnknownSendCase):
         self.clock.advance(120)
         outcome = self.reconciler.reconcile_attempt(record["requestId"], self.adapter)
         self.assertEqual(outcome.get("nextExpectedAction"), "parent_recovers_held_correction")
+        self.assertEqual((outcome.get("recovery") or {}).get("command"),
+                         f"codex-session-relay show --event {correction}")
         row = self.delivery_row(correction)
         self.assertEqual((row["state"], row["hold_reason"]), (QUEUED, UNKNOWN_LOST))
         self.ticks(2)
         self.assertEqual([send[0] for send in self.adapter.sends
                           if send[1] == CHILD], [record["requestId"]])
         self.assertEqual(self.next_action(), "parent_recovers_held_correction")
+        # Independent review of bb1b6af6: the parent is named with the command that supports it.
+        self.assertEqual(self.recovery().get("command"),
+                         f"codex-session-relay show --event {correction}")
 
 
 class TheFourCasesReadApart(UnknownSendCase):
@@ -628,6 +684,26 @@ class TheHourlyCapIsNamedWithItsReopenTime(UnknownSendCase):
             self.clock.now(), sends=0, last=None)
         self.assertEqual((pacing["reason"], pacing["reopensAt"]), ("hourly_cap", None))
         self.assertIn("changed policy", pacing.get("detail") or "")
+
+    def test_a_cap_of_zero_waits_a_window_per_check_and_names_the_operator(self):
+        """Independent review of bb1b6af6: a cap of zero was rescheduled every five seconds and
+        read daemon_delivers, which under that policy never can."""
+        from codex_session_relay.assignment import AssignmentView
+        from codex_session_relay.delivery import DeliveryService
+        from codex_session_relay.policy import RetryPolicy
+
+        policy = RetryPolicy(max_sends_per_recipient_per_hour=0)
+        delivery = DeliveryService(self.store, self.registry, self.intake, self.clock,
+                                   policy=policy)
+        view = AssignmentView(self.store, self.registry, self.clock, policy=policy)
+        _relationship, event_id = self.queued_event()
+        now = self.clock.now()
+        self.assertIsNone(delivery.attempt(event_id, self.adapter, now=now))
+        self.assertEqual(self.delivery_row(event_id)["next_eligible_at"],
+                         int(now // 3600) * 3600 + 3600)
+        self.assertEqual(view.state(self._rid)["nextExpectedAction"],
+                         "operator_changes_send_policy")
+        self.assertEqual(self.adapter.sends, [])
 
     def test_assignment_show_reads_the_budget_the_delivery_service_paces_by(self):
         from types import SimpleNamespace
