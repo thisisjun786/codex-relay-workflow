@@ -685,13 +685,14 @@ and names a token found only in another item type. The recipient keeps no trace
   be the send's own with its message not readable yet, so the relay reads again once it ends;
 - the scan covered every item since the send and found neither the message nor another item
   carrying its token;
-- the newest turn begun before the send, the one turn a `turn/start` could have steered, has
-  ended, and its own items, read oldest first up to 2000, hold neither the message nor another
-  item carrying its token. That is the turn the listing stopped at, or one begun inside the
-  61-second allowance before the send. The since-send scan stops at the first one's items and
-  reads only the newest items of the second, and when the turn ran on after the message, the
-  thread-wide scan's 200 newest items do not reach it either. While that turn still runs, the
-  relay reads again once it ends; if it ran past 2000 items, the send is held undecided.
+- every turn a `turn/start` could have steered has ended, and its own items, read oldest first up
+  to 2000, hold neither the message nor another item carrying its token. Those are the turn the
+  listing stopped at and every turn begun inside the 61-second allowance up to the send; a turn
+  begun just after the send says nothing about which of them was running when it went out, so all
+  of them are read. The since-send scan stops at the first one's items and reads only the newest
+  items of the others, and when a turn ran on after the message, the thread-wide scan's 200 newest
+  items do not reach it either. While such a turn still runs, the relay reads again once it ends;
+  if one ran past 2000 items, the send is held undecided.
 
 The delivery then stays `held_uncertain` and is held as `unknown_send_lost`. The attempt keeps its
 honest transport snapshot with affirmative evidence `none` and names `unknown_send_lost:no_trace`.

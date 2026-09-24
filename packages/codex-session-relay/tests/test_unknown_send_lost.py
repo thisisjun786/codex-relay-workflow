@@ -326,6 +326,27 @@ class AnUnknownSendTheHostKeptNoTraceOf(UnknownSendCase):
         self.ticks(3, seconds=700)
         self.assertEqual(self.sends_to(), [first])
 
+    def test_a_turn_begun_just_after_the_send_does_not_hide_the_folded_one(self):
+        """Independent review of aaa190a6: a turn begun half a second after the send was read as
+        the one the send could have been folded into, and the turn that was running at the send,
+        which the listing stopped at, was never read."""
+        event_id, first = self.folded_unknown_send(later=205)
+        self.clock.advance(0.5)
+        self.adapter.start_turn(PARENT, turn_id="later", status="completed", text="unrelated")
+        self.ticks(1)
+        self.assertEqual(self.evidence_of(event_id), ["turn_found"])
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        self.assertEqual(self.sends_to(), [first])
+
+    def test_a_hook_prompt_in_the_folded_turn_behind_a_later_turn_is_held_by_name(self):
+        event_id, first = self.folded_unknown_send(later=205, kind="hookPrompt")
+        self.clock.advance(0.5)
+        self.adapter.start_turn(PARENT, turn_id="later", status="completed", text="unrelated")
+        self.adapter.set_status(PARENT, "notLoaded")
+        self.ticks(1)
+        self.assert_held(event_id, first, UNDECIDED, f"{UNDECIDED}:token_in_other_item")
+        self.assertEqual(self.sends_to(), [first])
+
     def test_a_send_folded_into_a_turn_begun_just_before_it_is_found_there(self):
         """Independent review of 668890b0: a turn begun inside the allowance before the send is
         read by the since-send scan only as far as its bound, and the message it took sat behind
