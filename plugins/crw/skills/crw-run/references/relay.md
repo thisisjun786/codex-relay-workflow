@@ -302,14 +302,21 @@ recipient, brings it in with its cwd as the only root. So the roots, at the top 
 environment, may come back narrower than recorded and never wider: always after a resume that
 requested nothing, and after a resume that carried the recorded settings when the transport's own
 read found the recipient loaded (`idle`) just before it. A resume that carried the settings to a
-recipient read as `notLoaded` loads it itself, and its roots must come back exact. Every other
-setting is compared exactly on both routes, and a root the record does not name is refused on
-both. A delivery accepted on narrower roots is still delivered, and its transport receipt says so
-under `settingsNotes` (`runtime_roots_narrower_than_record`, with the recorded and observed
-roots and the status read before the resume): a recipient running on fewer roots than recorded
-may lack write access to one the record names, which is a reason to look, not to withhold. The
-bridge's own tool path still refuses the unloaded case, so an operator message to an unloaded
-supervisor through the bridge waits until the host has it loaded.
+recipient read as `notLoaded` is expected to load it, so its roots must come back exact; if
+another client loaded it in between, the narrower answer is refused, retry-safe, and the next pass
+reads the recipient `idle`. A
+workspace-write sandbox reports its non-cwd roots as its writable roots, so those follow the same
+rule: fewer than recorded where the roots may narrow, never one the record does not name, and
+every other field of the sandbox exact. Every other setting keeps its own comparison on both
+routes (the approval policy against the set this transport carries, the rest exactly), and a
+root the record does not name is refused on both. A delivery accepted on narrower roots is still
+delivered, and its transport receipt says so under `settingsNotes`
+(`runtime_roots_narrower_than_record`, one note per narrowed place: the top-level roots, an
+environment's roots, the writable roots, each with the recorded and observed lists and the
+status read before the resume). A recipient running on fewer roots than recorded may lack write
+access to one the record names, which is a reason to look, not to withhold. The bridge's own
+tool path still refuses the unloaded case, so an operator message to an unloaded supervisor
+through the bridge waits until the host has it loaded.
 
 Reading the state before choosing is what keeps those apart, and it is also what a report must
 not skip: a send accepted on a resumed recipient, a steer accepted into a live turn, and a

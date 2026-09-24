@@ -292,8 +292,10 @@ loaded (`idle`) just before the resume: that is how a parent that another task's
 loaded with its cwd as the only root is still reached, instead of being withheld as
 `settings_not_preserved` until the attempt cap. A resume that loads the recipient itself must
 return the roots exact, a root the record does not name is refused on either route, and an
-accepted narrowing is noted on the transport receipt. The bridge's tool path below still refuses
-the unloaded case, because it reads no binding and does not load a thread without transmitting.
+accepted narrowing is noted on the transport receipt. A workspace-write sandbox's writable
+roots, which the host derives from the runtime roots, follow the same rule; every other field of
+the sandbox stays exact. The bridge's tool path below still refuses the unloaded case, because it
+reads no binding and does not load a thread without transmitting.
 
 This guard is only as good as what the sender says, and the bridge is explicit about where that
 stops. It reads no scope binding, so on a send that names no role it cannot tell an unnamed
