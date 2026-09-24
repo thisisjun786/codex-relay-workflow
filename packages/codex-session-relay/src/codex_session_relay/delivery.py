@@ -38,8 +38,9 @@ from .transport import (
 from .policy import PUSH_CHANNEL_CLOSED, SUPERSEDED as SUPERSEDED_HOLD
 from . import NO_DELIVERABLE, envelope, restoration, rolepolicy
 from .report import (
-    compose_revision, read as read_work_report, render_completion, render_revision,
-    required_for_candidate,
+    NO_NOTE, compose_revision, fix_scope_lines, inline, known, preserve_lines, unheaded,
+    read as read_work_report, render_completion, render_revision, required_for_candidate,
+    return_lines, reverify_lines, violated_heading, what_changed_lines,
 )
 
 COMPLETION = "completion_event"
@@ -692,38 +693,40 @@ class DeliveryService:
             f"requestId: {request}",
             f"eventId: {row['event_id']}",
             f"relationshipId: {row['relationship_id']}",
-            f"executionGeneration: {record.get('executionGeneration')}  (new)",
-            f"supersedesEvent: {record.get('supersedesEvent')}",
-            f"supersedesRevisionHash: {record.get('supersedesRevisionHash')}",
-            f"verdict: {record.get('verdict')}",
+            # known(): a field the record lacks reads as not recorded, never as None.
+            f"executionGeneration: {known(record.get('executionGeneration'))}  (new)",
+            f"supersedesEvent: {known(record.get('supersedesEvent'))}",
+            f"supersedesRevisionHash: {known(record.get('supersedesRevisionHash'))}",
+            f"verdict: {known(record.get('verdict'))}",
         ]
+        # The correction form (cxc.CORRECTION_SECTIONS), built by the same report functions the
+        # composed rendering uses, so a child reads one shape of correction whichever path
+        # rendered it and the packet contract accepts these bytes as a revision_request body.
+        # The finding lines, their cap and the overflow line are unchanged, because the
+        # restoration accounting (restoration.project_cap in _render_and_account) is arithmetic
+        # over exactly this list.
         findings = record.get("criteria") or []
-        if findings:
-            lines.append("what to change:")
-            for item in findings[:MANIFEST_LINES]:
-                note = item.get("note")
-                lines.append(
-                    f"  {item.get('id')}{restoration.label(item)}: {item.get('verdict')}"
-                    + (f" — {note}" if note else "")
-                )
-            overflow = _overflow_line(findings, row["event_id"])
-            if overflow:
-                lines.append(overflow)
-        else:
-            lines.append("what to change: no per-criterion findings were recorded")
-        lines += [
-            "",
-            "There is nothing to acknowledge. Contract v1 defines no acknowledgement for this",
-            "direction and the relay refuses one by kind, so there is no proof to compute and",
-            "no acknowledgement to send.",
-            "Answer with your next completion receipt under the new generation:",
-            f"  emit --relationship {row['relationship_id']}"
-            f" --generation {record.get('executionGeneration')} --attempt <n>",
-            "       --outcome ready_for_review --turn-thread <your task id> --turn-id <your turn>",
-            "       --artifact <path> [--continues-anchor <this generation dispatch turn>]",
-            "",
-            f"Full record: codex-session-relay show --event {row['event_id']}",
-        ]
+        lines += ["", violated_heading(record)]
+        for item in findings[:MANIFEST_LINES]:
+            note = item.get("note")
+            # A stored finding can lack its id or disposition; str() of either is None. It can
+            # lack its note legitimately (no registered criteria), and then says so. Each value
+            # stays on this line (report.inline), so none of them can open a heading.
+            lines.append(
+                f"  {unheaded(inline(item.get('id') or '(no id recorded)'))}"
+                f"{restoration.label(item)}:"
+                f" {inline(item.get('verdict') or 'no disposition recorded')}"
+                + (f" — {inline(note)}" if note else f" — {NO_NOTE}")
+            )
+        overflow = _overflow_line(findings, row["event_id"])
+        if overflow:
+            lines.append(inline(overflow))
+        lines += what_changed_lines(record)
+        lines += fix_scope_lines(record)
+        lines += ["", *preserve_lines()]
+        lines += reverify_lines(record)
+        lines += return_lines(row["relationship_id"], record.get("executionGeneration"))
+        lines += ["", f"Full record: codex-session-relay show --event {row['event_id']}"]
         return NEWLINE.join(lines)
 
     def _render_grant(self, row, record, request, required=None) -> str:

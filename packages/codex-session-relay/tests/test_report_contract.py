@@ -707,9 +707,11 @@ class Directions(DeliveryTestCase):
         self.assertIn(cxc.MEANING[cxc.NEEDS_HUMAN], message)
         self.assertIn("VERDICT: GO-WITH-FIXES (blockers=1)", message)
         # What was violated, and how to reproduce it, lead the message.
-        self.assertLess(message.index("violated criteria:"), message.index("SCOPE:"))
+        self.assertLess(message.index("VIOLATED CRITERION:"), message.index("SCOPE:"))
         self.assertIn("anchor: migrations/004_add_reports.sql", message)
-        self.assertIn("preserve:", message)
+        self.assertIn("PRESERVE:", message)
+        # And it is a correction, so it carries the correction form as well.
+        self.assertEqual(cxc.correction_problems(message), [])
         # And the asymmetry the contract actually has is preserved.
         self.assertIn("nothing to acknowledge", message)
         self.assertNotIn("--ack-proof", message)
@@ -1192,11 +1194,14 @@ class FinalLine(Directions):
             **a_report(handoff=None, cxc_status=cxc.NEEDS_HUMAN, cxc_reason="incomplete",
                        unresolved=[f"open item {n} with some length to it" for n in range(40)])
         )
-        message = report.render_revision(row, receipt, "del-p-a1", stored, budget=2600)
+        # 2600 before the correction form. With its sections, and TASK saying FIX SCOPE bounds
+        # the parent's summary, this report renders from 2607 bytes and in full at 4492, so
+        # 2650 still forces the forty unresolved items out.
+        message = report.render_revision(row, receipt, "del-p-a1", stored, budget=2650)
         self.assertIn("omitted:", message, "something had to go")
         # show returns the receipt and the work report, not template prose, so these lines
         # are recoverable nowhere once dropped.
-        self.assertIn("preserve: everything outside the findings above", message)
+        self.assertIn("PRESERVE: everything FIX SCOPE does not name", message)
         self.assertIn("request does not mention", message)
 
 
@@ -1465,7 +1470,7 @@ class VerdictPosition(Directions):
             evidence=[{"check": f"a long check name number {n} that takes up room",
                        "exitCode": 0} for n in range(30)],
         )
-        message = report.render_revision(row, receipt, "del-y-a1", stored, budget=2400)
+        message = report.render_revision(row, receipt, "del-y-a1", stored, budget=3000)
         self.assertIn("omitted:", message, "something had to go")
         self.assertEqual(
             message.splitlines()[-1], "VERDICT: GO-WITH-FIXES (blockers=2)",
@@ -1485,7 +1490,10 @@ class VerdictPosition(Directions):
         # bisects to 2106 rather than 1983 and the tighter budget moves with it. What the case
         # asserts is unchanged: something was elided, the identity survived, and the verdict is
         # still the final line.
-        tighter = report.render_revision(row, receipt, "del-y-a1", stored, budget=2200)
+        # 2400 and 2200 before the correction form: WHAT CHANGED, FIX SCOPE and REVERIFY AND
+        # RETURN are statements kept whole and TASK says FIX SCOPE bounds the summary, so the
+        # same message bisects to 2715 and is 4580 in full; 3000 and 2800 sit between the two.
+        tighter = report.render_revision(row, receipt, "del-y-a1", stored, budget=2800)
         self.assertIn("submission 1", tighter)
         self.assertIn("messageId", tighter, "and the message identity is not what got cut")
         self.assertEqual(tighter.splitlines()[-1], "VERDICT: GO-WITH-FIXES (blockers=2)")

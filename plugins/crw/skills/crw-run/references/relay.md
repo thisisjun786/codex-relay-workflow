@@ -651,6 +651,12 @@ A `needs_changes` verdict IS the correction: it opens the next generation and qu
 request to the same registered child, carrying the superseded event, its digest and the findings.
 Give every finding a note.
 
+A build carrying this renders that request in the correction form a packet revision request is
+refused without: VIOLATED CRITERION, WHAT CHANGED, FIX SCOPE, PRESERVE and REVERIFY AND RETURN.
+FIX SCOPE is exactly the findings ruled `needs_changes`; one ruled `verified` is preserved, one
+ruled `unverified` is evidence to show, and what the verdict did not record is written as not
+recorded rather than omitted. So give each finding its disposition as well as its note.
+
 What the child actually reads is the RENDERED revision request, which is not the whole verdict.
 A build carrying the behaviour below still shows only the first ten findings, but it says how
 many it dropped and names the restoration block when the cut took it. Say which finding carries

@@ -1612,6 +1612,12 @@ def compose_revision(row, receipt, request, report, *, budget=BUDGET, context=No
     DISPATCH-TASK-01 fixes the fields. What leads is the thing that was violated and the
     anchor that reproduces it, because a correction whose first line is an identifier is a
     correction the child has to go and research before it can start.
+
+    And it is a correction, so it also carries the correction form (cxc.CORRECTION_SECTIONS),
+    built by the same functions the plain renderer uses. The two forms are one reading of the
+    findings: every DISPATCH field that speaks about them points at FIX SCOPE, which names only
+    what the parent ruled violated, so a mixed verdict carries no instruction to change a
+    criterion it found met.
     """
     event_id = row["event_id"]
     generation = receipt.get("executionGeneration")
@@ -1621,7 +1627,10 @@ def compose_revision(row, receipt, request, report, *, budget=BUDGET, context=No
     head = [
         "[codex-session-relay] revision request",
     ]
-    head.append(f"TASK: {report['summary']}")
+    # The summary is the parent's free text, like its next action below, recorded without any
+    # check against the findings; within FIX SCOPE it cannot ask for a finding ruled met.
+    # No section name is followed by a colon here, so no reader takes this line for a heading.
+    head.append(f"TASK: the parent's summary (FIX SCOPE bounds it): {report['summary']}")
     # The status and its reason belong here too. The contract map says a report carries them
     # and the correction direction was dropping both without saying it had.
     head.append(f"cxc: {report['cxcStatus']} - {report['cxcReason']}")
@@ -1631,25 +1640,38 @@ def compose_revision(row, receipt, request, report, *, budget=BUDGET, context=No
     # its shortening left standing, and it can only do that if it was told which line belonged
     # to which finding before it started removing them.
     finding_lines, finding_owners = _finding_lines(receipt, review)
+    what_changed = what_changed_lines(receipt, review, composed=True)
+    fix_scope = fix_scope_lines(receipt, review, composed=True)
+    reverify = (reverify_lines(receipt, review, proof=True)
+                + return_lines(row["relationship_id"], generation))
 
     sections = [
         _Section("header", head, rank=0, essential=True, keep=4),
-        _Section("violated criteria", finding_lines, rank=0, essential=True, keep=2,
+        _Section("VIOLATED CRITERION", finding_lines, rank=0, essential=True, keep=2,
                  owners=finding_owners),
+        # Statements only, so each correction section's floor is the whole section and
+        # shortening adds nothing to it.
+        _Section("WHAT CHANGED", what_changed, rank=0, essential=True, keep=len(what_changed)),
         _Section("SCOPE", _scope_lines(report, generation), rank=1, essential=True, keep=2),
-        _Section("preserve", _preserve_lines(), rank=0, essential=True, keep=2),
+        _Section("FIX SCOPE", fix_scope, rank=0, essential=True, keep=len(fix_scope)),
+        _Section("PRESERVE", preserve_lines(), rank=0, essential=True, keep=2),
         # A correction that hides the dependencies and risks the report marked open sends the
         # child at the findings without telling it what else is in the way.
         _Section("unresolved", _unresolved_lines(report), rank=2, essential=True, keep=2),
+        # The parent's next action is its own free text, recorded without any check against
+        # the findings, and nothing here can reconcile free text with FIX SCOPE. So it is
+        # quoted as the parent's words and the precedence is stated beside it.
         _Section("MUST DO", [
             "MUST DO:",
-            f"  {report['nextAction']}",
-            "  answer every finding above with a fix, a reasoned rebuttal, or an explicit"
-            " out-of-scope split, and reply on its thread",
-        ], rank=0, essential=True, keep=2),
+            f"  the parent's next action, as written: {report['nextAction']}",
+            "  where it goes beyond FIX SCOPE, FIX SCOPE and DECISION BOUNDARY decide",
+            "  answer every finding FIX SCOPE names with a fix, a reasoned rebuttal, or an"
+            " explicit out-of-scope split, and reply on its thread; supply the evidence"
+            " REVERIFY AND RETURN asks for",
+        ], rank=0, essential=True, keep=3),
         _Section("MUST NOT", [
             "MUST NOT:",
-            "  discard work outside the findings above, rewrite another task history, or"
+            "  discard work FIX SCOPE does not name, rewrite another task history, or"
             " force-push a shared branch",
             "  treat this request as an acknowledgeable message; see the note below",
         ], rank=1, essential=True, keep=2),
@@ -1661,23 +1683,14 @@ def compose_revision(row, receipt, request, report, *, budget=BUDGET, context=No
         ], rank=2, essential=True, keep=2),
         _Section("DECISION BOUNDARY", [
             "DECISION BOUNDARY:",
-            "  fix what the findings name. Anything wider, anything that would discard"
+            "  fix what FIX SCOPE names. Anything wider, anything that would discard"
             " preserved work, and anything needing authority you were not given comes back"
             " here instead of being decided locally",
         ], rank=1, essential=True, keep=2),
         _Section("workflow restore", _restore_lines(report), rank=3),
-        _Section("answer", [
-            "",
-            "There is nothing to acknowledge. Contract v1 defines no acknowledgement for this",
-            "direction and the relay refuses one by kind, so there is no proof to compute and",
-            "no acknowledgement to send.",
-            "Answer with your next completion receipt under the new generation:",
-            f"  emit --relationship {row['relationship_id']}"
-            f" --generation {generation} --attempt <n>",
-            "       --outcome ready_for_review --turn-thread <your task id>"
-            " --turn-id <your turn>",
-            "       --artifact <path> [--continues-anchor <this generation dispatch turn>]",
-        ], rank=0, essential=True, keep=8),
+        # The floor is every line: a shortened return command is a correction the child
+        # cannot hand back, and the section check alone would still pass without it.
+        _Section("REVERIFY AND RETURN", reverify, rank=0, essential=True, keep=len(reverify)),
         # Its own section, with a floor that covers every line in it. Left at the end of the
         # answer block, the submission identifier was the first thing shortening removed, and
         # it is what tells a recipient which of several stored submissions produced the bytes
@@ -1768,11 +1781,13 @@ def _unresolved_lines(report):
         return ["", "unresolved: none"]
     lines = ["", "unresolved:"]
     for item in entries:
+        # unheaded: the section reader steps over this dash, so an entry that names a section
+        # would open one.
         if isinstance(item, str):
-            lines.append(f"  - {item}")
+            lines.append(f"  - {unheaded(item)}")
         else:
             note = item.get("note") or ""
-            lines.append(f"  - {item.get('id')}: {note}".rstrip(": "))
+            lines.append(f"  - {unheaded(item.get('id'))}: {note}".rstrip(": "))
     return lines
 
 
@@ -1791,15 +1806,20 @@ def _finding_lines(receipt, review):
     occupy two lines, so the composer cannot work out which findings its shortening left
     standing from a line count alone, and a restoration block would go back to being
     unobservable.
+
+    Its heading is the correction form's VIOLATED CRITERION, with the counts of what each
+    listed finding asks (violated_heading), because the list mixes what is to be fixed with
+    what is met and with what the review raised on its own.
     """
     authoritative = [item for item in (receipt.get("criteria") or []) if item.get("id")]
     enrichment = {}
     for item in (review or {}).get("findings") or []:
         enrichment[item["id"]] = item
+    heading = violated_heading(receipt, review)
     if not authoritative and not enrichment:
-        return ["", "violated criteria: no per-criterion findings were recorded"], [None, None]
+        return ["", heading], [None, None]
 
-    lines = ["", "violated criteria:"]
+    lines = ["", heading]
     owners = [None, None]
     seen = set()
     if not authoritative:
@@ -1827,44 +1847,297 @@ def _finding_lines(receipt, review):
 
 def _one_finding(item, extra):
     note = item.get("note") or extra.get("note")
+    note = inline(note) if note else note
     # An enrichment-only finding has no disposition of its own, and rendering the absence as
     # "None" told the reader a criterion had a judgment named None.
-    disposition = item.get("verdict")
-    name = f"{item['id']}{restoration.label(item)}"
+    disposition = inline(item["verdict"]) if item.get("verdict") else None
+    name = f"{unheaded(inline(item['id']))}{restoration.label(item)}"
     rendered = f"  {name}: {disposition}" if disposition else f"  {name}"
-    if note:
-        rendered += f" - {note}"
+    # A relationship with no registered criteria records findings without notes, and a finding
+    # the child is sent to change must not arrive without saying its reason is missing.
+    rendered += f" - {note}" if note else f" - {NO_NOTE}"
     out = [rendered]
     anchor = extra.get("anchor") or item.get("anchor")
     if anchor:
-        out.append(f"    anchor: {anchor}")
+        out.append(f"    anchor: {inline(anchor)}")
     return out
 
 
 def _scope_lines(report, generation):
     lines = ["", "SCOPE:"]
     reference = pr_ref(report)
-    lines.append(f"  {reference}" if reference else f"  {report['repository']}")
+    # The line begins with the repository, which record() holds to one line but not to a slug.
+    lines.append(f"  {unheaded(reference or report['repository'])}")
     if report.get("baseSha"):
         lines.append(f"  base {report.get('baseRef') or ''} {report['baseSha']}".rstrip())
     if report.get("headSha"):
         lines.append(f"  head {report['headSha']}")
     if report.get("criteriaDigest"):
         lines.append(f"  criteria {report['criteriaDigest']}")
-    lines.append(f"  execution generation {generation} (new)")
+    lines.append(f"  execution generation {known(generation)} (new)")
     return lines
 
 
-def _preserve_lines():
+def preserve_lines():
     """Fixed protocol prose, kept out of the shortenable part of SCOPE.
 
     Mixed in with the variable data, the preserve boundary could be shortened away, and the
     omission marker points at show, which returns the receipt and the work report but not
     template text. So those lines were not recoverable anywhere once dropped.
+
+    It is the correction form's PRESERVE, heading inline so the section stays exactly two
+    lines under its floor of two, and it is keyed on FIX SCOPE: preserving "everything outside
+    the findings above" would have let a finding recorded as met be reworked.
     """
     return [
-        "  preserve: everything outside the findings above, including work this",
-        "    request does not mention and any other task in-flight beside it",
+        "PRESERVE: everything FIX SCOPE does not name, verified findings included,",
+        "  work this request does not mention and any other task in-flight beside it",
+    ]
+
+
+# ------------------------------------------------------------------ the correction form
+
+# What a correction cannot do without (cxc.CORRECTION_SECTIONS), for the revision request a
+# needs_changes verdict opens. Built here once for both renderers, the plain one delivery uses
+# when no work report is recorded and compose_revision, because two spellings of one form are
+# how the verdict path and the packet contract came to disagree about what a correction is: the
+# relay's own request carried the ruling and the notes and none of the five sections a packet
+# revision_request is refused without (finding F4 of the CRW-116 installed round trip).
+#
+# Everything is read from what the renderer is handed - the verdict record and, composed, the
+# work report's review - and nothing from the store: rendering runs inside the claim
+# transaction and is a function of its arguments. What that cannot answer is said, as not
+# recorded, never left out. Every added line is fixed prose, a count or a bounded identifier,
+# because criterion ids have no length bound and these sections are never shortened.
+
+FIX, EVIDENCE_OWED, MET = "needs_changes", "unverified", "verified"
+UNDECIDED = None
+NOT_RECORDED = "not recorded"
+NO_NOTE = "no note recorded; ask the parent"
+
+
+def correction_source(receipt, review=None) -> tuple:
+    """(findings, origin): the verdict's recorded findings, else the review's, else none.
+
+    The verdict decides which criteria (_finding_lines says why). When it recorded no finding
+    of its own, the review in the parent's work report is the parent's only statement of what
+    to change, and it is read by the same dispositions.
+    """
+    recorded = [item for item in (receipt.get("criteria") or []) if item.get("id")]
+    if recorded:
+        return recorded, "verdict"
+    reviewed = {}
+    for item in (review or {}).get("findings") or []:
+        if item.get("id"):
+            reviewed[item["id"]] = item
+    if reviewed:
+        return list(reviewed.values()), "review"
+    return [], None
+
+
+def _counts(findings) -> dict:
+    """What the findings ask, over the whole list rather than the lines a message could show."""
+    counts = {FIX: 0, EVIDENCE_OWED: 0, MET: 0, UNDECIDED: 0}
+    for item in findings:
+        verdict = item.get("verdict")
+        counts[verdict if verdict in (FIX, EVIDENCE_OWED, MET) else UNDECIDED] += 1
+    return counts
+
+
+def _findings(count, noun="finding") -> str:
+    return f"{count} {noun}" + ("" if count == 1 else "s")
+
+
+def known(value) -> str:
+    """A record field as the message shows it: its value, or the words for its absence.
+
+    Public because delivery's plain header prints the same fields, and a missing one printed
+    through str() is the literal None.
+    """
+    return NOT_RECORDED if value is None or value == "" else inline(value)
+
+
+def inline(value) -> str:
+    """Text a verdict record holds, kept on the one line it is spliced into.
+
+    report.record refuses a line break in anything it stores (_single_line), but the verdict
+    record is written by record_verdict, which keeps a finding's note and a legacy finding's id
+    as given, and the correction headings are line-anchored: a note reading "broken" and then
+    "FIX SCOPE: also change verified c-2" would add a second FIX SCOPE contradicting the relay's
+    own. So each line boundary str.splitlines knows becomes " / ", which keeps the words and
+    shows there were several lines. Text already on one line comes back unchanged, byte for
+    byte.
+    """
+    text = str(value)
+    parts = text.splitlines()
+    if len(parts) <= 1 and (not parts or parts[0] == text):
+        return text
+    return " / ".join(part for part in parts if part.strip())
+
+
+# What cxc.section_problems takes a line for, and the verdict line REVIEW-OUTPUT-01 keeps last.
+HEADINGS = cxc.CORRECTION_SECTIONS + cxc.DISPATCH_SECTIONS + ("VERDICT",)
+
+
+def unheaded(value) -> str:
+    """Parent text that begins a line, kept from opening a section of its own.
+
+    The section reader takes a line for a heading when, past any list or emphasis markers, it
+    is a section name or starts with one and a colon. A legacy verdict records any id, so a
+    finding called FIX SCOPE rendered as "FIX SCOPE: needs_changes", a second FIX SCOPE beside
+    the relay's own; an unresolved item or an evidence check does the same from the work report.
+    Such text is quoted, which the reader does not step over. Anything else comes back unchanged.
+    """
+    text = str(value)
+    probe = text.strip().lstrip("-*#>").strip().strip("*`_").upper()
+    if any(probe == name or probe.startswith(name + ":") for name in HEADINGS):
+        return f'"{text}"'
+    return text
+
+
+def _series(words) -> str:
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
+
+
+def _not_recorded(what) -> str:
+    # Every gap this names is one the full record cannot fill either: it is the verdict record
+    # these sections were read from, plus the work report whose review they already consulted.
+    # So the answer is the parent's to give, and pointing at the record would be a dead end.
+    return f"{NOT_RECORDED}: {what}; ask the parent"
+
+
+def violated_heading(receipt, review=None) -> str:
+    """VIOLATED CRITERION, with what each of the findings under it asks, counted over all."""
+    findings, origin = correction_source(receipt, review)
+    if origin is None:
+        return "VIOLATED CRITERION: " + _not_recorded("the verdict named no criterion")
+    counts = _counts(findings)
+    tally = ", ".join(part for part in (
+        f"{counts[FIX]} marked needs_changes" if counts[FIX] else "",
+        f"{counts[EVIDENCE_OWED]} marked unverified" if counts[EVIDENCE_OWED] else "",
+        f"{counts[MET]} marked verified" if counts[MET] else "",
+        f"{counts[UNDECIDED]} without a disposition" if counts[UNDECIDED] else "",
+    ) if part)
+    if origin == "verdict":
+        return (f"VIOLATED CRITERION: of the {_findings(len(findings), 'recorded finding')},"
+                f" {tally}")
+    return (f"VIOLATED CRITERION: none recorded by the verdict; the parent's review names"
+            f" {len(findings)}: {tally}")
+
+
+def what_changed_lines(receipt, review=None, *, composed=False) -> list:
+    """WHAT CHANGED: the ruling itself, as one statement.
+
+    Composed, the statement is the whole section, so shortening has nothing to remove and no
+    marker to add: the superseded revision and the turn are in the full record, and a review's
+    judgment rides on the same line. The plain rendering has no budget and names them.
+    """
+    heading = (f"WHAT CHANGED: submission {known(receipt.get('supersedesEvent'))} ruled"
+               f" {known(receipt.get('verdict'))} and superseded, generation"
+               f" {known(receipt.get('executionGeneration'))} opened")
+    if review and review.get("kind"):
+        # A count only where one is recorded: a FAIL review carries none, and cxc.verdict_line
+        # refuses a count on it.
+        blockers = review.get("blockers")
+        counted = isinstance(blockers, int) and not isinstance(blockers, bool)
+        heading += (f"; the review judged {review['kind']}"
+                    + (f" with {_findings(blockers, 'blocker')}" if counted else ""))
+    if composed:
+        return ["", heading]
+    return ["", heading,
+            f"  superseded revision {known(receipt.get('supersedesRevisionHash'))}, ruled in"
+            f" turn {known(receipt.get('verdictTurnId'))}"]
+
+
+def fix_scope_lines(receipt, review=None, *, composed=False) -> list:
+    """FIX SCOPE: only what the parent ruled violated.
+
+    The statement is the heading line, and a finding without a disposition is named on the
+    line after it, because whether to change it is exactly what the message must keep saying.
+    Every line here is the section's floor. The boundary line repeats DECISION BOUNDARY for
+    the plain rendering, which has none; the composed message states it there instead.
+
+    With nothing marked needs_changes the verdict ruled nothing violated, and what is left to
+    say depends on what else it recorded: evidence owed, findings still undecided, or, when
+    every finding is marked verified, no answer at all, which is said as not recorded. It
+    never points at REVERIFY AND RETURN for something that section does not ask.
+    """
+    findings, origin = correction_source(receipt, review)
+    if origin is None:
+        return ["", "FIX SCOPE: " + _not_recorded(
+            "no criterion was named, so nothing bounds a change")]
+    counts = _counts(findings)
+    unruled = "FIX SCOPE: no finding is marked needs_changes, so nothing is ruled violated"
+    if counts[FIX]:
+        excluded = ["verified", "unverified"] + (
+            ["review-only"] if origin == "verdict" and review else [])
+        heading = (f"FIX SCOPE: only the {_findings(counts[FIX])} marked needs_changes, shown"
+                   f" or not; {_series(excluded)} findings are out of scope")
+    elif counts[EVIDENCE_OWED]:
+        heading = unruled + "; change nothing but the evidence REVERIFY AND RETURN asks for"
+    elif counts[UNDECIDED]:
+        heading = unruled + "; change nothing until the parent settles the findings below"
+    else:
+        heading = "FIX SCOPE: " + _not_recorded(
+            "what to change, since every finding is marked verified")
+    lines = ["", heading]
+    if counts[UNDECIDED]:
+        undecided = counts[UNDECIDED]
+        lines.append(
+            f"  {_findings(undecided)} without a disposition: whether to change"
+            f" {'it' if undecided == 1 else 'them'} is not recorded; ask the parent first")
+    if not composed:
+        lines.append("  anything wider, anything that would discard preserved work, or anything"
+                     " needing authority you were not given comes back to the parent")
+    return lines
+
+
+def reverify_lines(receipt, review=None, *, proof=False) -> list:
+    """REVERIFY AND RETURN, one statement: what to check again, then return_lines' hand-back.
+
+    Each clause is asked of this section's own reader; when the findings ask for nothing to
+    be re-checked or shown, that is the gap it names, rather than a pointer back at FIX SCOPE.
+    """
+    findings, origin = correction_source(receipt, review)
+    if origin is None:
+        clauses = ["what to re-check is " + _not_recorded("the verdict named no criterion")]
+    else:
+        counts = _counts(findings)
+        clauses = []
+        if counts[FIX]:
+            clauses.append("re-check each finding FIX SCOPE names"
+                           + (" (PROOF says how)" if proof else ""))
+        if counts[EVIDENCE_OWED]:
+            clauses.append(f"show evidence for the {_findings(counts[EVIDENCE_OWED])}"
+                           " marked unverified")
+        if counts[UNDECIDED]:
+            clauses.append("settle with the parent whether to change the"
+                           f" {_findings(counts[UNDECIDED])} without a disposition")
+        if not clauses:
+            clauses.append("what to re-check is " + _not_recorded(
+                "every finding is marked verified"))
+    return ["", "REVERIFY AND RETURN: " + "; ".join(clauses + ["then hand back as below"])]
+
+
+def return_lines(relationship_id, generation) -> list:
+    """The hand-back, the same bytes on both paths.
+
+    A generation the record lacks is a placeholder the parent has to fill, never
+    --generation None, which parses and names no generation. It is the parent's to give
+    because the full record is the very receipt that lacks it, and no read command here
+    shows a relationship's current generation to its child.
+    """
+    absent = generation is None or generation == ""
+    shown = "<not recorded; ask the parent>" if absent else inline(generation)
+    return [
+        "",
+        "There is nothing to acknowledge. Contract v1 defines no acknowledgement for this",
+        "direction and the relay refuses one by kind, so there is no proof to compute and",
+        "no acknowledgement to send.",
+        "Answer with your next completion receipt under the new generation:",
+        f"  emit --relationship {relationship_id} --generation {shown} --attempt <n>",
+        "       --outcome ready_for_review --turn-thread <your task id> --turn-id <your turn>",
+        "       --artifact <path> [--continues-anchor <this generation dispatch turn>]",
     ]
 
 
@@ -1875,11 +2148,12 @@ def _proof_lines(report):
         lines.append("  re-run what this review ran, and report command, exit code and result:")
         for item in entries:
             if isinstance(item, str):
-                lines.append(f"    {item}")
+                lines.append(f"    {unheaded(item)}")
             else:
-                lines.append(f"    {item.get('check', '')}")
+                lines.append(f"    {unheaded(item.get('check', ''))}")
     else:
-        lines.append("  state the command, its exit code and what it showed, for each finding")
+        lines.append("  state the command, its exit code and what it showed, for each finding"
+                     " FIX SCOPE or REVERIFY AND RETURN names")
     lines.append("  a passing string match is not a passing behaviour")
     return lines
 
