@@ -665,6 +665,7 @@ class AReaffirmationCarriesWhatWasAgreed(EditRegionTestCase):
             {"constraint": REV, "leftCondition": None, "rightCondition": REV})
         self.assertEqual(
             successor["textFromEarlierRevision"], ["constraint", "rightCondition"])
+        self.assertIsNone(successor["legacyCarry"])
         self.assertIsNotNone(successor["leftAcceptedAt"], "reaffirming accepts the carrier's side")
         self.assertIsNone(successor["rightAcceptedAt"])
         carried = successor["reaffirmation"]
@@ -916,15 +917,29 @@ class AReaffirmationCarriesWhatWasAgreed(EditRegionTestCase):
             issue_key="CRW-1", supersedes=original["agreementId"])
         self.assertEqual(legacy["statedOn"]["constraint"], REV)
         self.assertEqual(legacy["textFromEarlierRevision"], ["constraint"])
+        # Fifth review: that carry also made its caller the proposer and dropped both
+        # conditions; the agreement it came from still holds them, and a read says so.
+        self.assertEqual(legacy["legacyCarry"], {
+            "origin": original["agreementId"], "proposerTaskId": self.beta.task_id,
+            "leftCondition": None, "rightCondition": self.BETA_CONDITION})
         shown = [r for r in self.regions.show(repository=REPO)["exclusive"]
                  if r["agreementId"] == legacy["agreementId"]]
         self.assertEqual(shown[0]["statedOn"]["constraint"], REV)
+        self.assertEqual(shown[0]["legacyCarry"], legacy["legacyCarry"])
         self.regions.restate_revision(
             repository=REPO, from_revision="rev-2", to_revision="rev-3",
             actor=self.beta.task_id)
         carried = self.regions.reaffirm(
-            legacy["agreementId"], actor=self.beta.task_id, base_revision="rev-3")
+            legacy["agreementId"], actor=self.alpha.task_id, base_revision="rev-3")
         self.assertEqual(carried["statedOn"]["constraint"], REV)
+        # ... and carrying it again brings the original terms back rather than the lost ones.
+        self.assertEqual(
+            (carried["proposerTaskId"], carried["rightCondition"],
+             carried["statedOn"]["rightCondition"], carried["legacyCarry"]),
+            (self.beta.task_id, self.BETA_CONDITION, REV, None))
+        self.assertEqual(
+            carried["reaffirmation"]["awaitingAcceptance"]["task"], self.beta.task_id)
+        self.assertEqual(carried["nextOwner"], self.beta.task_id)
 
     def test_the_next_owner_follows_a_handover_while_the_carry_waits(self):
         """Review of the first head: nextOwner kept naming a parent that had handed over."""

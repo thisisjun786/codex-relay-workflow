@@ -90,9 +90,9 @@ NOT_YET_ACCEPTED = "not_yet_accepted"
 
 MARKS = ("SELECT from_revision, to_revision FROM edit_revision_marks"
          "  WHERE repository = ?")
-LINEAGE = ("SELECT agreement_id, supersedes, constraint_text, base_revision FROM edit_agreements"
-           "  WHERE repository = ?")
-ORIGINS = ("SELECT c.agreement_id, c.constraint_revision FROM edit_reaffirmations c"
+LINEAGE = ("SELECT agreement_id, supersedes, constraint_text, base_revision, proposer_task_id,"
+           " left_condition, right_condition FROM edit_agreements WHERE repository = ?")
+CARRIES = ("SELECT c.* FROM edit_reaffirmations c"
            "  JOIN edit_agreements a ON a.agreement_id = c.agreement_id WHERE a.repository = ?")
 # The destination a carry must share with the agreement it retires, named as the columns are.
 CARRIED_PLACE = (
@@ -204,12 +204,7 @@ class EditRegions:
         )
         # Read once for the whole answer rather than once per agreement.
         successors = self._successor_map(self.store.all(MARKS, (repository,)))
-        carries = {
-            row["agreement_id"]: row for row in self.store.all(
-                "SELECT c.* FROM edit_reaffirmations c"
-                "  JOIN edit_agreements a ON a.agreement_id = c.agreement_id"
-                " WHERE a.repository = ?", (repository,))
-        }
+        carries = {row["agreement_id"]: row for row in self.store.all(CARRIES, (repository,))}
         exclusive, regenerate = [], []
         lineage = {row["agreement_id"]: row for row in rows}
         for row in rows:
@@ -307,19 +302,27 @@ class EditRegions:
             carries = {record["agreementId"]: row} if row is not None else {}
         carry = carries.get(record["agreementId"])
         base = record["baseRevision"]
+        legacy = None
         if carry is None:
             constraint = base
             if record["supersedes"]:
-                # A successor a reaffirmation made before carries were recorded: its constraint
-                # was copied from the agreement it supersedes and says nothing of where.
+                # A successor a reaffirmation made before carries were recorded: it copied the
+                # constraint, made its caller the proposer and dropped both conditions, and
+                # recorded none of it. The agreement it came from still holds what it lost.
                 if lineage is None:
                     lineage = {row["agreement_id"]: row for row in self.store.all(
                         LINEAGE, (record["repository"],))}
-                    origins = {row["agreement_id"]: row["constraint_revision"]
-                               for row in self.store.all(ORIGINS, (record["repository"],))}
-                else:
-                    origins = {key: row["constraint_revision"] for key, row in carries.items()}
-                constraint = self._written_on(record["agreementId"], lineage, origins)
+                    carries = {row["agreement_id"]: row for row in self.store.all(
+                        CARRIES, (record["repository"],))}
+                constraint = self._written_on(record["agreementId"], lineage, carries)
+                origin = self._origin(record["agreementId"], lineage, carries)
+                if origin is not None and origin["agreement_id"] != record["agreementId"]:
+                    legacy = {
+                        "origin": origin["agreement_id"],
+                        "proposerTaskId": origin["proposer_task_id"],
+                        "leftCondition": origin["left_condition"],
+                        "rightCondition": origin["right_condition"],
+                    }
             stated = {
                 "constraint": constraint,
                 "leftCondition": base if record["leftCondition"] is not None else None,
@@ -332,6 +335,9 @@ class EditRegions:
                 "rightCondition": carry["right_condition_revision"],
             }
         record["statedOn"] = stated
+        # What an earlier reaffirmation dropped without a record, read from where it came from.
+        # The next reaffirmation carries these terms rather than this row's.
+        record["legacyCarry"] = legacy
         # Listed rather than rewritten: a line number in any of these points into the tree it was
         # written against, and only the side that wrote a text can restate it.
         record["textFromEarlierRevision"] = [
@@ -398,25 +404,44 @@ class EditRegions:
         return owners[0] if len(owners) == 1 else None
 
     @staticmethod
-    def _written_on(identifier, lineage, origins):
+    def _written_on(identifier, lineage, carries):
         """The revision an agreement's constraint text was written against.
 
-        ``origins`` maps a carried successor to the revision its carry recorded. A successor
-        made before carries were recorded has no entry: its constraint was copied verbatim from
-        the agreement it supersedes, so the text is followed back while it stays the same. A
-        bounded walk over rows already read, like the revision chain.
+        ``carries`` maps a carried successor to its edit_reaffirmations row. A successor made
+        before carries were recorded has none: its constraint was copied verbatim from the
+        agreement it supersedes, so the text is followed back while it stays the same. A bounded
+        walk over rows already read, like the revision chain.
         """
         cursor = lineage.get(identifier)
         if cursor is None:
             return None
         for _step in range(len(lineage) + 1):
-            if cursor["agreement_id"] in origins:
-                return origins[cursor["agreement_id"]]
+            if cursor["agreement_id"] in carries:
+                return carries[cursor["agreement_id"]]["constraint_revision"]
             before = lineage.get(cursor["supersedes"] or "")
             if before is None or before["constraint_text"] != cursor["constraint_text"]:
                 break
             cursor = before
         return cursor["base_revision"]
+
+    @staticmethod
+    def _origin(identifier, lineage, carries):
+        """The row holding what a successor made before carries were recorded lost.
+
+        Such a successor has ``supersedes`` and no carry row. The walk goes back through
+        successors like it to the first row that is not one - an original proposal or a recorded
+        carry - whose proposer and conditions are the agreement's own.
+        """
+        cursor = lineage.get(identifier)
+        for _step in range(len(lineage) + 1):
+            if cursor is None or cursor["agreement_id"] in carries \
+                    or not cursor["supersedes"]:
+                return cursor
+            before = lineage.get(cursor["supersedes"])
+            if before is None:
+                return cursor
+            cursor = before
+        return cursor
 
     # -------------------------------------------------------------- ownership
 
@@ -811,26 +836,43 @@ class EditRegions:
             (predecessor["agreement_id"],)).fetchone()
         before = predecessor["base_revision"]
         conditions = {low: predecessor["left_condition"], high: predecessor["right_condition"]}
+        proposer = predecessor["proposer_task_id"]
         if earlier is not None:
             revisions = {low: earlier["left_condition_revision"],
                          high: earlier["right_condition_revision"]}
             constraint_revision = earlier["constraint_revision"]
+        elif predecessor["supersedes"]:
+            # A predecessor carried before carries were recorded lost its proposer and both
+            # conditions to that carry, and says nothing of where its copied constraint was
+            # written. The row it came from still holds all of it, so the terms are carried
+            # from there: the original agreement comes back, and the other side accepts again.
+            lineage = {row["agreement_id"]: row for row in db.execute(
+                LINEAGE, (predecessor["repository"],)).fetchall()}
+            carries = {row["agreement_id"]: row for row in db.execute(
+                CARRIES, (predecessor["repository"],)).fetchall()}
+            origin = self._origin(predecessor["agreement_id"], lineage, carries)
+            source = carries.get(origin["agreement_id"])
+            revisions = {}
+            for side, column in ((low, "left_condition"), (high, "right_condition")):
+                if conditions[side] is not None:
+                    revisions[side] = before
+                    continue
+                conditions[side] = origin[column]
+                revisions[side] = (source[column + "_revision"] if source is not None
+                                   else origin["base_revision"] if origin[column] is not None
+                                   else None)
+            proposer = origin["proposer_task_id"]
+            constraint_revision = self._written_on(
+                predecessor["agreement_id"], lineage, carries)
         else:
             revisions = {side: before if conditions[side] is not None else None
                          for side in (low, high)}
-            # A predecessor carried before carries were recorded still holds a copied
-            # constraint; where that text was written is followed back, not assumed.
-            constraint_revision = before if not predecessor["supersedes"] else self._written_on(
-                predecessor["agreement_id"],
-                {row["agreement_id"]: row for row in db.execute(
-                    LINEAGE, (predecessor["repository"],)).fetchall()},
-                {row["agreement_id"]: row["constraint_revision"] for row in db.execute(
-                    ORIGINS, (predecessor["repository"],)).fetchall()})
+            constraint_revision = before
         if restated is not None:
             conditions[owned] = restated
             revisions[owned] = revision
         return {
-            "proposer": predecessor["proposer_task_id"],
+            "proposer": proposer,
             "constraint": predecessor["constraint_text"], "issue": predecessor["issue_key"],
             # Whoever must act next is the side still to accept, when there is exactly one task
             # to name. The carried value was never checked against anybody's ownership.

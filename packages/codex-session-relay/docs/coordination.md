@@ -191,7 +191,9 @@ side, is left empty while the answer says what has to happen first. `statedOn` n
 each text was written against and `textFromEarlierRevision` lists those from an older tree, because
 a line number inside one points there. A successor carried before carries were recorded has no
 `edit_reaffirmations` row; its constraint was copied from what it supersedes, so the revision is
-found by following `supersedes` back while the text is unchanged. The first version made the carrier
+found by following `supersedes` back while the text is unchanged. That carry also made its caller
+the proposer and dropped both conditions; `legacyCarry` names the agreement it came from with those
+terms, and the next reaffirmation carries the terms from there. The first version made the carrier
 the proposer, dropped both conditions and cleared the other acceptance without a word (CRW-124 G3).
 
 An acceptance takes no condition. One given to `region-settle` used to vanish; it is now refused,

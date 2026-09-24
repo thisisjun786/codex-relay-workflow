@@ -645,7 +645,9 @@ place the same two projects already hold on the new revision.
 were written against, and `textFromEarlierRevision` lists those carried from an earlier revision
 than the agreement's own. A line number in them points into that older tree. A successor carried
 before the relay recorded carries says the same by following what it supersedes back while its
-constraint is unchanged. To change the terms themselves, the proposer withdraws or the other side
+constraint is unchanged; that carry also made its caller the proposer and dropped both conditions,
+so `legacyCarry` names the agreement it came from and those terms, and the next reaffirmation
+carries them instead. To change the terms themselves, the proposer withdraws or the other side
 declines with the condition it would accept, and a new proposal states them on the current revision.
 Only the task that proposed can withdraw; once its project has changed hands, the project's current
 parent releases or declines instead and proposes again. An acceptance takes no condition:
