@@ -947,6 +947,12 @@ class RelayDaemon:
             # Another reader settled the attempt while this one read it, and nothing was
             # written (I-37): the attempt as it now stands is owed a reading of its own.
             return False
+        if (outcome.get("recipientTrace") or {}).get("pending"):
+            # The recipient's turns since an uncertain send could not decide yet: the send is too
+            # recent, a turn begun since it is still running, or the host could not be read
+            # (hostloss.read_unknown_send, CRW-231). Nothing the gate fingerprints has to change
+            # for that to resolve, so the reading is owed on the next tick rather than cached.
+            return False
         observation = outcome.get("operationObservation", "")
         scan = outcome.get("recipientScan", "")
         if "unreadable" in observation or "unreadable" in scan:

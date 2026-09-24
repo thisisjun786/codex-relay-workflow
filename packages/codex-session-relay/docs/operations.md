@@ -371,6 +371,7 @@ transport call.
 |---|---|
 | `awaiting_receipt` | the child has not produced a completion receipt yet |
 | `awaiting_send` | the receipt is collected and accepted; this relay has not reached the recipient yet |
+| `awaiting_send:hourly_cap` | as above, and the recipient's hourly send cap is spent; `pacing` says until when (see "When the send budget holds a delivery") |
 | `in_flight` | a send was claimed and its outcome is not yet settled |
 | `parent_busy` | the parent is mid-turn; it is never interrupted |
 | `settings_rejected` | the host would not confirm the authorized execution settings |
@@ -380,6 +381,9 @@ transport call.
 | `awaiting_ack:turn_check_undecided` | delivered, acknowledgement outstanding, and the relay could not tell whether the host still has the delivery's turn; waiting will not tell it either (see "When the host loses an accepted turn") |
 | `redelivering:host_lost_turn` | the host lost the turn the last attempt started; the same event is queued for its next attempt |
 | `held:host_lost_turn` | the host lost the redelivery's turn as well; held, and nothing sends it again |
+| `redelivering:unknown_send_lost` | the last attempt's send got no answer and the recipient keeps no trace of it; the same event is queued for its next attempt (see "When an uncertain send leaves no trace") |
+| `held:unknown_send_lost` | such a send, lost again or after a host loss, or a correction or grant lost that way; held for the parent, and nothing sends it again |
+| `held:unknown_send_undecided` | an uncertain send whose reading cannot decide however long the relay waits; held for the parent, and still settled by a message found later |
 | `awaiting_child_receipt` | a revision request was delivered; contract v1 defines no acknowledgement for that direction, so the child answers with its next completion receipt |
 | `awaiting_grant_acknowledgement` | a merge-turn grant was delivered and its turn has not recorded the acknowledgement; it is answered with `merge-turn-acknowledge`, never with an `ack` |
 | `grant_acknowledged` | the grant was acknowledged on its merge turn, in any delivery state (a parent can answer before the notice is sent) and including after that turn later landed or was returned |
@@ -389,6 +393,12 @@ transport call.
 
 Each carries the most recent failed operation, its concrete error, the exact settings
 difference where there is one, and the next retry time.
+
+An unsent, unheld delivery whose recipient's send budget is what holds it also carries `pacing`:
+`{reason, reopensAt, sends, cap, windowStart}`, where the reason is `hourly_cap` or
+`min_send_interval`. It is read live from the same budget the claim spends, so it is never stored
+and never a hold or a failure (I-225). A delivery refused by the hourly cap waits for exactly its
+window's end, so its `nextEligibleAt` is that `reopensAt` and does not move from tick to tick.
 
 `status` also reports `pendingIntents`: events whose delivery was wanted and refused before a
 delivery row could exist, which a paused or unauthorized assignment produces. They have no
@@ -609,22 +619,117 @@ acknowledgement is verified.
 | Delivery | `nextExpectedAction` |
 |---|---|
 | acknowledged and accepted, or acknowledged after a claim | `parent_verifies` |
-| held after a host loss, for any reason | `parent_recovers_host_lost_turn` |
+| held `host_lost_turn`, or held for another reason after a host loss | `parent_recovers_host_lost_turn` |
 | `held_uncertain`, or a claim still `sending`, with or without a kept acknowledgement | `daemon_reconciles_delivery` |
 | dispatched or `inbox_only`, acknowledgement recorded and not yet confirmed, or kept while the delivery was unconfirmed | `daemon_verifies_acknowledgement` |
 | dispatched or `inbox_only`, acknowledgement refused by verification | `parent_reacknowledges` |
 | dispatched or `inbox_only`, no acknowledgement | `parent_acknowledges` |
 | queued, deferred or withheld after a host loss | `daemon_redelivers_host_lost_turn` |
+| held `unknown_send_lost`, or held for another reason after such a loss and no host loss | `parent_recovers_unknown_send_lost` |
+| held `unknown_send_undecided` | `parent_recovers_unknown_send_undecided` |
+| queued, deferred or withheld after an uncertain send was lost, and no host loss | `daemon_redelivers_unknown_send_lost` |
 | queued, deferred or withheld | `daemon_delivers` |
 
 `projection.completion.delivery.hostLostAttempts` counts the event's lost attempts and stays
-above zero after a redelivery reaches the parent. A verified rejection keeps the state's own
+above zero after a redelivery reaches the parent. `unknownSendLostAttempts` counts the uncertain
+sends the parent kept no trace of in the same way. A hold named for a loss is read under that name
+first, so an event that lost an uncertain send and then the redelivery's accepted turn reads
+`parent_recovers_host_lost_turn`, and the reverse order reads `parent_recovers_unknown_send_lost`.
+Whenever the answer is one of the three `parent_recovers_*` actions above, `assignment-show` also
+carries `recovery`: `{actor: parent, reason, command: "codex-session-relay show --event <id>",
+then}`. The report is in this store whatever happened to the message, so the parent reads it
+there and opens a fresh execution generation if the work still needs verifying. A verified rejection keeps the state's own
 answer, and so does a held completion that was never lost.
 
 Status: implemented, and tested against the fake host (`tests/test_host_lost_turn.py`). Whether
 the installed App Server lists turns the way this relies on is re-checked on the isolated
 host with CRW-124's K5 and H7 legs, and the reload and lost-receipt cases with its K5c and K5u
 legs.
+
+## When an uncertain send leaves no trace
+
+CRW-124's H0-R4 K5ctl stopped the isolated App Server after the relay sent `turn/start` for a
+completion to the parent and before it read the answer. The attempt settled `held_uncertain` on an
+`outcome_unknown` receipt with no turn id, which is right. The restarted host then held no trace of
+the message. Reconciliation found no evidence on every pass, kept the attempt
+`held_uncertain_awaiting_evidence` for good, `assignment-show` named `daemon_reconciles_delivery`,
+which could never settle it, and the only signal was a `delivery_stalled` fault left below its
+publish threshold. The child's report never reached the parent.
+
+Reconciliation now asks the recipient one more question for such a send. It applies when the
+transport settled the receipt with no turn id and nothing affirmative: `outcome_unknown`, or a
+failed `initialize` or `turn/start` it cannot call a refusal. An `in_progress_or_unknown` receipt is
+still the transport's to answer and is not read this way; neither is a missing or unreadable one.
+Once the thread-wide scan has not found the message, the relay reads the recipient's turns begun
+since the send and its items since the send, by the same rules as the lost-turn check above: the
+same 61-second allowance, the same listing back to the first turn that began before the send, and
+the same token scan, which passes over agent output and names a token found only in another item
+type. The send is concluded lost (`unknown_send_lost`) only when all of these hold:
+
+- the send is more than 61 seconds old;
+- the listing reached the send, and no turn begun since it is still running. A running turn could
+  be the send's own with its message not readable yet, so the relay reads again once it ends;
+- the scan covered every item since the send and found neither the message nor another item
+  carrying its token.
+
+Whether the host never received the message or received it and lost it, the recipient does not
+have it, and a completion is treated like one whose accepted turn the host lost. The attempt's
+state becomes `unknown_send_lost` and its record keeps its honest transport snapshot with
+affirmative evidence `none`. The delivery goes back to `queued`, and the next attempt of the same
+event is sent under a new request id. One redelivery per obligation is shared with the host-lost
+turn: an event that already lost an attempt either way is held under the word of this loss,
+`held:unknown_send_lost`, and never sent a third time. A revision request or a merge-turn grant
+lost this way is held at once rather than redelivered, like every kind the relay does not recover
+by itself, so a correction reads `parent_recovers_held_correction`. The loss writes no dispatch
+evidence and clears any an earlier attempt left, because nothing showed that this send arrived.
+An acknowledgement that answers the attempt, or a later attempt, leaves everything unchanged.
+
+Some readings cannot decide however long the relay waits: a listing that never reached the send,
+a listing with no turns at all, a scan that could not cover the items since the send, the token
+only in an item that is neither the message nor agent output, or an attempt with no send time. The
+delivery then stays `held_uncertain` and is held under `unknown_send_undecided`, with the reason on
+the attempt as `unknown_send_undecided:<reason>` and in `assignment-show` as
+`projection.completion.delivery.turnCheck`. Nothing sends it again. A later reading that decides
+replaces the hold: a message found confirms the delivery from its token as before, and a covered
+scan with no trace records the loss. A reading that is merely not ready - the send too recent, a
+turn still running, the host unreadable - keeps the attempt `held_uncertain` with the answer
+`daemon_reconciles_delivery`, which is then true: the daemon reads the attempt again on its next
+tick instead of waiting for the recipient's items to change. Every settlement that leaves an
+attempt `held_uncertain` without evidence also clears the row's dispatch evidence and turn, as
+the sender's own settlement of such a receipt does, so a host loss's value never stays on a row
+whose current send is uncertain.
+
+`reconcile --request-id` reports the reading as `recipientTrace`: `{finding, detail, undecided,
+pending, turnId}`, where the finding is `present`, `unknown_send_lost` or `unknown`. Beside it,
+for an outcome it left uncertain or lost, it names who moves the send next and why:
+`nextExpectedAction` and `reason`, in the words `assignment-show` uses. The daemon counts the
+redelivery in `reconciled`, like any other settlement.
+
+A hold only the parent can recover (`host_lost_turn`, `unknown_send_lost`,
+`unknown_send_undecided`) is a broken `delivery_stalled` fault as soon as the sweep reads it, so it
+is opened and published rather than left observed. Before this change the hold page reported a
+delivery held on its first attempt as degraded, and the retry page's broken reading of the same
+attempt shared its occurrence key, so the ledger kept the degraded one.
+
+Status: implemented, and tested against the fake host (`tests/test_unknown_send_lost.py`). Whether
+the installed App Server leaves no trace the way K5ctl did, and whether the redelivery then
+reaches the parent, is re-checked on the isolated host with CRW-124's K5ctl leg.
+
+## When the send budget holds a delivery
+
+Every sender that wakes a task shares one budget per recipient: a minimum gap between sends and a
+cap per hour (`min_send_interval_seconds`, `max_sends_per_recipient_per_hour`, I-225). CRW-124's
+H7 leg met the cap: an interrupted notice to the parent read `queued` with no hold, no failure
+and a `nextEligibleAt` that moved every tick, and `assignment-show` said `daemon_delivers`,
+from 16:42:25Z until the 17:00Z window opened. Nothing named the cap or when it would reopen.
+
+`status` now carries `pacing` on such a delivery, and a plain queued one reads the phase
+`awaiting_send:hourly_cap`. `assignment-show` carries the same block as
+`projection.completion.delivery.pacing` (and on the correction's delivery), read in the same
+statement as the delivery, so the reason and `reopensAt` agree with the row. Its
+`nextExpectedAction` stays `daemon_delivers`, which is true: the daemon sends it once the window
+reopens. A delivery refused by the hourly cap, before or inside its claim, is rescheduled to the
+window's end; one refused by the minimum gap keeps the gap from now.
 
 ## What one tick guarantees
 

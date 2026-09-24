@@ -33,7 +33,9 @@ from pathlib import Path
 from . import __version__, faults
 from . import settings as settings_module
 from .errors import RefusalReason
-from .policy import BUSY_CAP, RetryPolicy
+from .policy import (
+    BUSY_CAP, HOST_LOST_TURN, UNKNOWN_SEND_LOST, UNKNOWN_SEND_UNDECIDED, RetryPolicy,
+)
 from .transport import DEFERRED_BUSY
 
 SWEEP_LIMIT = 32
@@ -76,6 +78,12 @@ SETTLED_DELIVERY = ("dispatched", "inbox_only", "superseded")
 # before this rule is cleared by recovery.
 BUSY_ATTEMPT = DEFERRED_BUSY
 BUSY_HOLD = BUSY_CAP
+# Holds only the parent can recover: no send, retry or reconciliation moves them any more
+# (hostloss.py). A held row is BROKEN on the hold page as soon as it is read, like a capped one.
+# The retry page would say so too, but a delivery held on its first attempt shares that page's
+# occurrence key with the hold page, so the hold page's severity is the one the ledger records
+# (CRW-231: an uncertain send held unknown_send_undecided stayed observed at degraded).
+PARENT_HOLDS = (HOST_LOST_TURN, UNKNOWN_SEND_LOST, UNKNOWN_SEND_UNDECIDED)
 # How many attempts make a delivery one that is RETRYING rather than one in flight. A first
 # attempt is ordinary; a second means the first did not land.
 RETRYING_ATTEMPTS = 2
@@ -584,11 +592,12 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None,
         if not _current(store, row["event_id"]):
             continue
         capped = (row["attempt_count"] or 0) >= policy.max_attempts
+        parked = row["hold_reason"] in PARENT_HOLDS
         signature = {"recipient": row["recipient_task_id"],
                      "attemptState": row["last_state"]}
         observations.append(faults.observation(
             product=product, fault_class="delivery_stalled",
-            severity=faults.BROKEN if capped else faults.DEGRADED,
+            severity=faults.BROKEN if capped or parked else faults.DEGRADED,
             signature=signature,
             occurrence_key=f"delivery:{row['last_request'] or row['event_id']}",
             scope=scope_of(store, row["relationship_id"], scope, cache),

@@ -218,6 +218,36 @@ class AnUnknownSendTheHostKeptNoTraceOf(UnknownSendCase):
         self.assertEqual(len(self.adapter.sends), 1)
 
 
+class ASendTheTransportHasNotAnsweredIsNotReadAsLost(UnknownSendCase):
+    """The rule reads only a receipt the transport settled. An unfinished one is still the
+    transport's to answer, and no receipt at all says nothing: neither is ever redelivered."""
+
+    def test_an_unfinished_receipt_stays_the_daemons_to_reconcile(self):
+        self.parent_history()
+        _relationship, event_id = self.queued_event()
+        self.adapter.script("in_progress")
+        first = self.attempt(event_id)["requestId"]
+        self.clock.advance(120)
+        outcome = self.reconciler.reconcile_attempt(first, self.adapter)
+        self.assertNotIn("recipientTrace", outcome)
+        self.assertEqual(outcome.get("nextExpectedAction"), "daemon_reconciles_delivery")
+        self.ticks(3)
+        self.assertEqual(self.attempt_states(event_id), [HELD_UNCERTAIN])
+        self.assertEqual(len(self.adapter.sends), 1)
+
+    def test_a_claim_with_no_receipt_stays_the_daemons_to_reconcile(self):
+        self.parent_history()
+        _relationship, event_id = self.queued_event()
+        _attempt_no, request_id, _message = self.delivery._claim(
+            event_id, now=self.clock.now(), owner="relay", recipient=PARENT)
+        self.clock.advance(120)
+        outcome = self.reconciler.reconcile_attempt(request_id, self.adapter)
+        self.assertNotIn("recipientTrace", outcome)
+        self.assertEqual(outcome.get("nextExpectedAction"), "daemon_reconciles_delivery")
+        self.assertEqual(self.attempt_states(event_id), [HELD_UNCERTAIN])
+        self.assertEqual(self.adapter.sends, [])
+
+
 class AnUndecidedReadingIsHeldByName(UnknownSendCase):
     def assert_held_undecided(self, event_id, request_id, reason):
         row = self.delivery_row(event_id)

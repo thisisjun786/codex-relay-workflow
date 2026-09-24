@@ -36,7 +36,8 @@ from .transport import (
     classify_operation_receipt,
 )
 from .policy import (
-    HOST_LOST_TURN, PUSH_CHANNEL_CLOSED, SUPERSEDED as SUPERSEDED_HOLD, TURN_CHECK_UNDECIDED,
+    HOST_LOST_TURN, HOURLY_CAP, PUSH_CHANNEL_CLOSED, SUPERSEDED as SUPERSEDED_HOLD,
+    TURN_CHECK_UNDECIDED, UNKNOWN_SEND_LOST,
 )
 from . import NO_DELIVERABLE, envelope, restoration, rolepolicy
 from .report import (
@@ -70,6 +71,11 @@ EXECUTION_ONLY_OUTCOMES = ("failed", "interrupted", "blocked_needs_input")
 CLAIMABLE = (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND)
 # What status reports for a delivery queued again because the host lost its last turn.
 REDELIVERING_HOST_LOST = "redelivering:" + HOST_LOST_TURN
+# And for one queued again because the recipient kept no trace of its last, uncertain, send
+# (hostloss.read_unknown_send). Read from the attempts: that loss leaves no dispatch evidence.
+REDELIVERING_UNKNOWN_LOST = "redelivering:" + UNKNOWN_SEND_LOST
+# What status reads for a queued delivery the recipient's hourly cap is holding back.
+AWAITING_SEND_CAPPED = "awaiting_send:" + HOURLY_CAP
 
 # linkage.PROJECT and linkage.ISSUE, spelled here rather than imported. linkage reaches registry
 # and assignment from inside its own functions, and delivery is reached from registry, so a
@@ -1057,7 +1063,7 @@ class DeliveryService:
         )
         if self._rate_limited(recipient, now):
             self._reschedule(
-                event_id, row["state"], now + self.policy.min_send_interval_seconds,
+                event_id, row["state"], self._paced_until(recipient, now),
                 attempts=row["attempt_count"],
             )
             return None
@@ -1101,10 +1107,10 @@ class DeliveryService:
         except _Paced:
             # Refused on the shared budget INSIDE the claim: another sender woke this recipient
             # after the preflight read. The claim rolled back, so this is the preflight's answer
-            # arriving late, and it gets the preflight's treatment - deferred by the same gap,
-            # never recorded as a failure and never held.
+            # arriving late, and it gets the preflight's treatment - deferred until the same
+            # reading reopens, never recorded as a failure and never held.
             self._reschedule(
-                event_id, row["state"], now + self.policy.min_send_interval_seconds,
+                event_id, row["state"], self._paced_until(recipient, now),
                 attempts=row["attempt_count"],
             )
             return None
@@ -1271,6 +1277,18 @@ class DeliveryService:
         bounds the recipient is reserve_send inside _claim.
         """
         return send_refusal(self.store.db, self.policy, recipient, now) is not None
+
+    def _paced_until(self, recipient: str, now: float) -> float:
+        """When a delivery the recipient's budget refused may be tried again.
+
+        An hourly cap reopens when its window ends, and the delivery waits for exactly that, so
+        its nextEligibleAt names the reopen time instead of moving on by the gap every tick
+        (CRW-231, O-H0R4-2). The minimum gap is a few seconds and keeps the gap from now.
+        """
+        pacing = send_pacing(self.store.db, self.policy, recipient, now)
+        if pacing is not None and pacing["reason"] == HOURLY_CAP and pacing["reopensAt"]:
+            return pacing["reopensAt"]
+        return now + self.policy.min_send_interval_seconds
 
     def _reschedule(self, event_id: str, state: str, when: float, *, attempts: int) -> None:
         # Guarded on the state and attempt count we observed. Another caller may have
@@ -1951,6 +1969,8 @@ class DeliveryService:
             params = (relationship_id,)
         rows = self.store.all(sql + " ORDER BY created_at", params)
         items = []
+        now = self.clock.now()
+        paced = {}
         for row in rows:
             attempts = self.store.all(
                 "SELECT request_id, attempt_no, internal_state, state, affirmative_evidence,"
@@ -1968,12 +1988,22 @@ class DeliveryService:
             # through an acks row, so the phase and the reported state are both read from there
             # and must not disagree about whether an acknowledgement is still owed.
             grant = self._grant_state(row)
+            # Why an unsent delivery is not going out, when the recipient's send budget is the
+            # reason: the cap or the gap, and when that reading reopens (CRW-231, O-H0R4-2).
+            # Read once per recipient, like the budget itself, and never stored: it is a pacing,
+            # not a hold and not a failure (I-225).
+            pacing = None
+            if row["state"] in CLAIMABLE and not row["hold_reason"]:
+                recipient = row["recipient_task_id"]
+                if recipient not in paced:
+                    paced[recipient] = send_pacing(self.store.db, self.policy, recipient, now)
+                pacing = paced[recipient]
             items.append({
                 "eventId": row["event_id"],
                 "kind": row["kind"],
                 "recipient": row["recipient_task_id"],
                 "state": row["state"],
-                "reported": _reported_state(row, ack, grant),
+                "reported": _reported_state(row, ack, grant, attempts),
                 "attempts": row["attempt_count"],
                 "holdReason": row["hold_reason"],
                 "nextEligibleAt": row["next_eligible_at"],
@@ -1982,7 +2012,9 @@ class DeliveryService:
                 "ackVerified": ack["verified"] if ack else None,
                 "verdict": verdict["verdict"] if verdict else None,
                 "attemptDetail": [dict(a) for a in attempts],
-                "phase": _phase(row, attempts, ack, failure, superseded, grant=grant),
+                "phase": _phase(row, attempts, ack, failure, superseded, grant=grant,
+                                pacing=pacing),
+                "pacing": pacing,
                 "lastFailedOperation": failure,
                 "nextRetryAt": row["next_eligible_at"],
                 "supersededNote": superseded,
@@ -2029,23 +2061,28 @@ def send_refusal(db, policy, recipient: str, now: float):
     configured cap of zero refuses the first send too, which is what the count checked after
     its increment always did.
     """
-    window = int(now // 3600) * 3600
-    reach = 3600 * (1 + int(policy.min_send_interval_seconds // 3600))
+    pacing = send_pacing(db, policy, recipient, now)
+    return pacing["reason"] if pacing is not None else None
+
+
+def send_pacing(db, policy, recipient: str, now: float):
+    """send_refusal's reading with its reason's reopen time, or None when the recipient may be woken.
+
+    The same two reads, and RetryPolicy.pacing applies the rule, so the claim, status and
+    assignment-show cannot disagree about why a delivery waits or until when (CRW-231).
+    """
+    window, earliest = policy.rate_windows(now)
     last = db.execute(
         "SELECT MAX(last_send_at) AS last FROM recipient_rate WHERE recipient_task_id = ?"
         "   AND window_start BETWEEN ? AND ?",
-        (recipient, window - reach, window),
+        (recipient, earliest, window),
     ).fetchone()
-    if (last is not None and last["last"] is not None
-            and (now - last["last"]) < policy.min_send_interval_seconds):
-        return "min_send_interval"
     used = db.execute(
         "SELECT sends FROM recipient_rate WHERE recipient_task_id = ? AND window_start = ?",
         (recipient, window),
     ).fetchone()
-    if (used["sends"] if used is not None else 0) >= policy.max_sends_per_recipient_per_hour:
-        return "hourly_cap"
-    return None
+    return policy.pacing(now, sends=used["sends"] if used is not None else 0,
+                         last=last["last"] if last is not None else None)
 
 
 def reserve_send(db, policy, recipient: str, now: float):
@@ -2152,6 +2189,9 @@ def _message_status(row, record) -> str:
     if row["state"] == HOST_LOST_TURN:
         # The host accepted this attempt's turn and no longer has it (hostloss.py).
         return HOST_LOST_TURN
+    if row["state"] == UNKNOWN_SEND_LOST:
+        # An uncertain send the recipient kept no trace of (hostloss.read_unknown_send).
+        return UNKNOWN_SEND_LOST
     if record and record.get("sendAttempted") == "no":
         return "confirmed_unsent"
     return "uncertain"
@@ -2209,7 +2249,13 @@ def _required_for_notice(record, required):
     )
 
 
-def _reported_state(row, ack, grant=None) -> str:
+def _latest_settled(attempts):
+    """The state of the delivery's most recent settled attempt, or None."""
+    settled = [a for a in attempts or () if a["internal_state"] == "settled"]
+    return settled[-1]["state"] if settled else None
+
+
+def _reported_state(row, ack, grant=None, attempts=None) -> str:
     """What an operator should read, as distinct from the raw state.
 
     An inbox-only event is stored and NOT woken, and saying so plainly is the point: a durable
@@ -2239,10 +2285,17 @@ def _reported_state(row, ack, grant=None) -> str:
     if row["state"] == DISPATCHED:
         return "dispatched_awaiting_ack"
     if row["state"] == HELD_UNCERTAIN:
+        # A hold on an uncertain send names a reading no wait will change
+        # (unknown_send_undecided, CRW-231); without one the evidence may still come.
+        if row["hold_reason"]:
+            return f"held:{row['hold_reason']}"
         return "held_uncertain_awaiting_evidence"
     if row["state"] == QUEUED and row["dispatch_evidence"] == HOST_LOST_TURN \
             and not row["hold_reason"]:
         return REDELIVERING_HOST_LOST
+    if row["state"] == QUEUED and not row["hold_reason"] \
+            and _latest_settled(attempts) == UNKNOWN_SEND_LOST:
+        return REDELIVERING_UNKNOWN_LOST
     if row["hold_reason"]:
         return f"held:{row['hold_reason']}"
     return row["state"]
@@ -2327,7 +2380,7 @@ def _manifest_paths(event_row):
 
 
 
-def _phase(row, attempts, ack, failure=None, superseded=None, grant=None) -> str:
+def _phase(row, attempts, ack, failure=None, superseded=None, grant=None, pacing=None) -> str:
     """Which stage a delivery is actually at, without inventing certainty.
 
     withheld_pre_send used to mean five different things at once, and the cause is the only
@@ -2404,6 +2457,10 @@ def _phase(row, attempts, ack, failure=None, superseded=None, grant=None) -> str
             record = {}
     failed = record.get("failedOperation")
     if row["state"] == HELD_UNCERTAIN:
+        if row["hold_reason"]:
+            # The recipient's turns since this uncertain send cannot decide it however long the
+            # relay waits (unknown_send_undecided, CRW-231): held, and named.
+            return f"held:{row['hold_reason']}"
         # A turn id is the only affirmative evidence that a turn exists. A failed turn/start
         # with no id means the call was REFUSED, not that its answer was lost, and reporting
         # turn_accepted for it claimed a turn on no evidence at all.
@@ -2441,6 +2498,14 @@ def _phase(row, attempts, ack, failure=None, superseded=None, grant=None) -> str
         # The name lasts while the row waits; once the next attempt settles, the phase is that
         # attempt's, and the lost one keeps host_lost_turn in its own state.
         return REDELIVERING_HOST_LOST
+    if row["state"] == QUEUED and _latest_settled(attempts) == UNKNOWN_SEND_LOST:
+        # Queued again because the recipient kept no trace of the last attempt's uncertain send
+        # (hostloss.read_unknown_send). That loss writes no dispatch evidence, so the attempt
+        # itself says so; once the next attempt settles, the phase is that attempt's.
+        return REDELIVERING_UNKNOWN_LOST
+    if row["state"] == QUEUED and pacing is not None and pacing["reason"] == HOURLY_CAP:
+        # Waiting for the recipient's hourly cap to reopen; pacing says when (CRW-231).
+        return AWAITING_SEND_CAPPED
     if row["state"] == QUEUED:
         # A delivery row exists, so the receipt was already collected and accepted. What is
         # outstanding is this relay reaching the recipient, not the child producing anything.

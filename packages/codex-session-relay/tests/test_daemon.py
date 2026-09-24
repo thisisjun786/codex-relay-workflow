@@ -120,6 +120,10 @@ class ReconcileGate(DaemonTestCase):
         _relationship, event_id = self.queued_event()
         self.adapter.script("turn_start_fail")
         record = self.attempt(event_id)
+        # Past the start-time allowance, so the reading of the unanswered send is complete and
+        # the gate may cache it. A send too recent to judge is owed a reading on every tick and
+        # is never skipped (CRW-231), which tests/test_unknown_send_lost.py measures.
+        self.clock.advance(120)
         return record["requestId"]
 
     def test_a_failed_read_forces_reconciliation_on_a_later_unchanged_tick(self):

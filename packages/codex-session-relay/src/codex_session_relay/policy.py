@@ -26,6 +26,27 @@ HOST_LOST_TURN = "host_lost_turn"
 # send time. Recorded on the attempt as "turn_check_undecided:<reason>" (hostloss.record_undecided)
 # and read by status as awaiting_ack:turn_check_undecided, so it is named rather than silent.
 TURN_CHECK_UNDECIDED = "turn_check_undecided"
+# An uncertain send the recipient kept no trace of (hostloss.read_unknown_send, CRW-231). turn/start
+# went out, no usable answer came back and no turn id with it, and once the send is past the start-time
+# allowance the recipient's own turns and items since it show nothing of it: no turn begun since it still
+# running, and no item carrying this attempt's token. Whether the host never received the message or
+# received it and lost it, the recipient does not have it. The same word as host_lost_turn's in two of its
+# places: the lost attempt's state, and the hold of a delivery that is not sent again automatically - a
+# completion whose event had already lost an attempt, or any other kind, which the relay does not recover
+# by itself. Unlike host_lost_turn it is never dispatch evidence: nothing showed that this send arrived.
+UNKNOWN_SEND_LOST = "unknown_send_lost"
+# An uncertain send whose reading cannot decide however long the relay waits: the same reasons the turn
+# check names (a listing that never reached the send, an empty listing, a token scan that could not cover
+# the items since it, the token only in an item that is neither the message nor agent output, no send
+# time). The delivery stays held_uncertain, so a message found later still confirms it, and carries this
+# hold so that nothing reads it as a wait the daemon will end. The attempt names the reason as
+# "unknown_send_undecided:<reason>".
+UNKNOWN_SEND_UNDECIDED = "unknown_send_undecided"
+# Why a recipient may not be woken now (RetryPolicy.pacing). Neither is a hold or a failure: the delivery
+# waits and goes out once the reading reopens (I-225).
+MIN_SEND_INTERVAL = "min_send_interval"
+HOURLY_CAP = "hourly_cap"
+RATE_WINDOW_SECONDS = 3600
 
 
 @dataclass(frozen=True)
@@ -103,3 +124,35 @@ class RetryPolicy:
 
     def cap_reason(self, reason: str) -> str:
         return BUSY_CAP if reason == "busy" else ATTEMPT_CAP
+
+    def rate_windows(self, now: float) -> tuple:
+        """The hour window a send at now is counted in, and the earliest window the gap reaches.
+
+        The gap is read across windows, because last_send_at lives on the hour's row and two sends a
+        second apart can straddle the boundary; only the windows the gap can reach are read, never a
+        later one (delivery.send_refusal).
+        """
+        window = int(now // RATE_WINDOW_SECONDS) * RATE_WINDOW_SECONDS
+        reach = RATE_WINDOW_SECONDS * (1 + int(self.min_send_interval_seconds // RATE_WINDOW_SECONDS))
+        return window, window - reach
+
+    def pacing(self, now: float, *, sends, last):
+        """Why a recipient may not be woken at now, and when that reading reopens, or None.
+
+        sends is the count in now's window and last the newest send the gap reaches, as rate_windows
+        bounds them. The one rule every reader applies, so status, assignment-show and the claim cannot
+        disagree about why a delivery waits (CRW-224 H7, O-H0R4-2). reopensAt is None for a cap of zero,
+        which refuses every send in every window. A clock-ahead row in a later window can still refuse
+        the send at reopensAt; that is read then, like every other pacing.
+        """
+        window, _earliest = self.rate_windows(now)
+        sends = sends or 0
+        cap = self.max_sends_per_recipient_per_hour
+        gap_ends = None if last is None else last + self.min_send_interval_seconds
+        reading = {"sends": sends, "cap": cap, "windowStart": window}
+        if gap_ends is not None and now < gap_ends:
+            return {"reason": MIN_SEND_INTERVAL, "reopensAt": gap_ends, **reading}
+        if sends >= cap:
+            reopens = None if cap <= 0 else max(window + RATE_WINDOW_SECONDS, gap_ends or 0)
+            return {"reason": HOURLY_CAP, "reopensAt": reopens, **reading}
+        return None

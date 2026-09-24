@@ -34,6 +34,18 @@ the same event is sent under a new request id; if the host loses that turn too, 
 held under host_lost_turn and nothing sends it again. Only a completion is recovered: it is the one
 kind waiting for an acknowledgement, and a revision's dispatch turn is its generation's anchor,
 which is never rebound. Other kinds are read and reported, and changed in nothing.
+
+A send that returned no turn id at all is read the same way (CRW-231). CRW-124's H0-R4 K5ctl
+killed the App Server after turn/start went out and before its answer was read: the receipt said
+outcome_unknown with no turn id, the restarted host kept nothing of the message, and reconciliation
+held the attempt awaiting evidence that could never come. read_unknown_send asks the recipient's
+turns since the send and its items since the send, under the same allowance and the same scan as
+the loss above; when they show no trace, and no turn begun since the send is still running, the
+attempt is unknown_send_lost and settle_unknown_send puts the obligation back once, exactly like a
+lost accepted turn. The two losses share one count: an event that already lost an attempt either
+way is held, never sent a third time (I-454). A revision request or a merge-turn grant is held at
+once instead of redelivered, so the parent recovers it as it recovers any held one. A reading that
+cannot decide by waiting holds the delivery under unknown_send_undecided, named on the attempt.
 """
 
 import json
@@ -42,11 +54,15 @@ from datetime import datetime
 from .delivery import COMPLETION
 from .hostadapter import DISPATCH_TURN_SKEW_SECONDS, TURN_PRESENT, TURN_START_PRECISION_SECONDS
 from .hostadapter import IN_TURN_ITEMS_MAX, ListingBounded, ListingEmpty
-from .policy import HOST_LOST_TURN, TURN_CHECK_UNDECIDED
+from .policy import HOST_LOST_TURN, TURN_CHECK_UNDECIDED, UNKNOWN_SEND_LOST, UNKNOWN_SEND_UNDECIDED
 from .transport import DISPATCHED, HELD_UNCERTAIN, QUEUED, assert_attempt_invariants
 
 PRESENT = "present"
 UNKNOWN = "unknown"
+# Every attempt state that records a loss. One redelivery per obligation counts them together.
+LOST_STATES = (HOST_LOST_TURN, UNKNOWN_SEND_LOST)
+# reconcile.Evidence.NONE, spelled here because reconcile imports this module.
+NO_EVIDENCE = "none"
 # A turn listed in one of these is persisted: a later restart reads it back, interrupted at worst,
 # so it cannot be lost any more and need not be read again - once its items show it holds this
 # attempt's message. A reload lists a lost turn in one of these too, empty.
@@ -78,6 +94,8 @@ TOKEN_IN_OTHER_ITEM = "token_in_other_item"
 NO_SEND_TIME = "no_send_time"
 NO_TURN = "no_turn"
 UNDECIDED_MARK = TURN_CHECK_UNDECIDED + ":"
+# The name an undecided reading of an uncertain send leaves on its attempt (read_unknown_send).
+UNKNOWN_UNDECIDED_MARK = UNKNOWN_SEND_UNDECIDED + ":"
 # The attempt states a delivered completion's current attempt can have: dispatched on an accepted
 # receipt, or held_uncertain when reconciliation confirmed it from the token in the parent's items
 # and kept the honest transport snapshot (reconcile._settle_from_scan). Both are checked the same.
@@ -93,6 +111,15 @@ def _epoch(stamp):
         return datetime.fromisoformat(stamp).timestamp()
     except (TypeError, ValueError):
         return None
+
+
+def earlier_losses(db, event_id, request_id) -> int:
+    """How many OTHER attempts of this event were lost, either way. Read inside the settling write."""
+    return db.execute(
+        "SELECT COUNT(*) AS c FROM attempts WHERE event_id = ? AND state IN (?, ?)"
+        " AND request_id <> ?",
+        (event_id, *LOST_STATES, request_id),
+    ).fetchone()["c"]
 
 
 def read_recipient_turn(adapter, clock, attempt, delivery, turn_id) -> dict:
@@ -295,11 +322,9 @@ def settle(store, clock, request_id, reading, *, observation=None) -> dict:
             attempt = db.execute(
                 "SELECT * FROM attempts WHERE request_id = ?", (request_id,)
             ).fetchone()
-            earlier = db.execute(
-                "SELECT COUNT(*) AS c FROM attempts"
-                " WHERE event_id = ? AND state = ? AND request_id <> ?",
-                (attempt["event_id"], HOST_LOST_TURN, request_id),
-            ).fetchone()["c"]
+            # Either loss counts: an event whose uncertain send was already lost and redelivered is
+            # held here rather than sent a third time (CRW-231).
+            earlier = earlier_losses(db, attempt["event_id"], request_id)
             hold = HOST_LOST_TURN if earlier else None
             moved = db.execute(
                 "UPDATE deliveries SET state = ?, hold_reason = ?, next_eligible_at = NULL,"
@@ -349,6 +374,165 @@ def settle(store, clock, request_id, reading, *, observation=None) -> dict:
                 "redeliveryDetail": "the attempt changed while the loss was being recorded"}
     return {"state": HOST_LOST_TURN, "redelivery": HELD if hold else REQUEUED,
             "holdReason": hold, "record": record}
+
+
+def read_unknown_send(adapter, clock, attempt, delivery) -> dict:
+    """What the recipient's own turns and items say about a send that returned no turn id (CRW-231).
+
+    Reads only; writes nothing. Called for an attempt whose operation receipt the transport settled
+    without affirmative evidence (outcome_unknown, or a failed initialize or turn/start it cannot call
+    a refusal) once reconciliation's thread-wide scan has not found the message.
+
+    finding is present (the message is in the recipient's items since the send; turnId names the
+    turn), unknown_send_lost, or unknown. A loss is concluded only from the host's answer, only once
+    the send is older than the start-time allowance, only when no turn begun since the send is still
+    running, and only when a scan of every item since the send finds no message and no other item
+    carrying the token: the rule read_recipient_turn applies to a lost accepted turn.
+    pending is True for an unknown a later reading can decide - a send too recent, a turn still
+    running, an unreadable host - and the daemon reads it again on its next tick. undecided names the
+    reasons waiting will not fix, as for the turn check.
+    """
+    reading = {"turnId": None, "finding": UNKNOWN, "detail": None, "undecided": None,
+               "pending": False}
+    thread = delivery["recipient_thread_id"]
+    lookup = getattr(adapter, "find_dispatched_turn", None)
+    token_since = getattr(adapter, "find_token_since", None)
+    if lookup is None or token_since is None:
+        reading["detail"] = "this host adapter cannot list the recipient's turns"
+        return reading
+    sent_at = _epoch(attempt["sent_at"])
+    if sent_at is None:
+        reading.update(detail="the attempt has no send time, so absence cannot be bounded",
+                       undecided=NO_SEND_TIME)
+        return reading
+    allowance = TURN_START_PRECISION_SECONDS + DISPATCH_TURN_SKEW_SECONDS
+    if clock.now() < sent_at + allowance:
+        reading.update(detail=f"the send is less than {allowance:.0f} s old, too recent to call "
+                              f"it lost; read again", pending=True)
+        return reading
+    try:
+        presence = lookup(thread, None, sent_at=sent_at)
+    except ListingBounded as error:
+        reading.update(detail=f"undecided: {error}", undecided=LISTING_BOUNDED)
+        return reading
+    except ListingEmpty as error:
+        reading.update(detail=f"undecided: {error}", undecided=LISTING_EMPTY)
+        return reading
+    except Exception as error:  # noqa: BLE001 - an unreadable host is its own answer
+        reading.update(detail=f"unreadable: {type(error).__name__}: {error}", pending=True)
+        return reading
+    running = [turn.turn_id for turn in presence.seen_turns if turn.status not in TERMINAL]
+    if running:
+        # Possibly the send's own turn, with its message not readable yet; and a turn that ends
+        # can still leave the message behind. Read again once it has ended.
+        reading.update(detail=f"a turn begun since the send is still running ({running[0]}); "
+                              f"read again once it ends", pending=True)
+        return reading
+    try:
+        scan = token_since(thread, attempt["request_id"], older=presence.older,
+                           limit=TOKEN_SCAN_LIMIT)
+    except Exception as error:  # noqa: BLE001
+        reading.update(detail=f"unreadable: the recipient's items could not be read for this "
+                              f"attempt's token: {type(error).__name__}: {error}", pending=True)
+        return reading
+    if scan.found:
+        reading.update(finding=PRESENT, turnId=scan.turn_id,
+                       detail=f"this attempt's message is in the recipient's items since the "
+                              f"send (turn {scan.turn_id}, {scan.scanned} items read)")
+        return reading
+    if scan.other_kind is not None:
+        reading.update(
+            detail=f"undecided: this attempt's token is in the recipient's items only in an item "
+                   f"of type {scan.other_kind} (turn {scan.other_turn}), which is neither the "
+                   f"delivered message nor agent output; not sent again",
+            undecided=TOKEN_IN_OTHER_ITEM,
+        )
+        return reading
+    if not scan.exhausted:
+        reading.update(
+            detail=f"undecided: {scan.scanned} items did not reach history older than the send, "
+                   f"so the token's absence is not shown",
+            undecided=TOKEN_SCAN_BOUNDED,
+        )
+        return reading
+    reading.update(
+        finding=UNKNOWN_SEND_LOST,
+        detail=f"the recipient keeps no trace of this send: its turn list ({presence.stop} after "
+               f"{presence.scanned} turns) shows {len(presence.seen)} turns begun since it, none "
+               f"running, and this attempt's token is not among the {scan.scanned} items since it",
+    )
+    return reading
+
+
+def settle_unknown_send(store, clock, request_id, reading, *, observation=None) -> dict:
+    """Record an uncertain send as lost and put the obligation back, in one guarded transaction.
+
+    The delivery moves only while it is still held_uncertain on THIS attempt, unheld or held only
+    as undecided, and unacknowledged for this attempt (the test awaiting_ack applies); the attempt
+    only while it is still settled held_uncertain with no evidence. Anything else means somebody
+    moved first - a confirmation from the token, a recorded acknowledgement, a later attempt - and
+    nothing is written.
+
+    A completion whose event lost no other attempt goes back to queued and is sent once more under a
+    new request id. One whose event already lost an attempt, either way, and every other kind, is
+    held under unknown_send_lost: nothing sends it again. The row's dispatch evidence and turn are
+    cleared in the same write, because the current attempt has none and an earlier attempt's (a host
+    loss's) must not be read as this one's. The attempt keeps its honest transport snapshot; the
+    loss is its state.
+    """
+    now_iso = clock.iso()
+    try:
+        with store.transaction() as db:
+            attempt = db.execute(
+                "SELECT * FROM attempts WHERE request_id = ?", (request_id,)
+            ).fetchone()
+            earlier = earlier_losses(db, attempt["event_id"], request_id)
+            hold = UNKNOWN_SEND_LOST if (earlier or attempt["kind"] != COMPLETION) else None
+            moved = db.execute(
+                "UPDATE deliveries SET state = ?, hold_reason = ?, next_eligible_at = NULL,"
+                " dispatch_evidence = NULL, dispatch_turn_id = NULL, lease_owner = NULL,"
+                " lease_until = NULL, updated_at = ?"
+                " WHERE event_id = ? AND state = ? AND attempt_count = ?"
+                "   AND (hold_reason IS NULL OR hold_reason = ?)"
+                "   AND NOT EXISTS (SELECT 1 FROM acks k WHERE k.event_id = deliveries.event_id"
+                "                     AND (k.verified = 'verified' OR ? IS NULL OR k.ack_at >= ?))",
+                (QUEUED, hold, now_iso, attempt["event_id"], HELD_UNCERTAIN, attempt["attempt_no"],
+                 UNKNOWN_SEND_UNDECIDED, attempt["sent_at"], attempt["sent_at"]),
+            ).rowcount
+            if moved != 1:
+                return {"redelivery": NOT_MOVED,
+                        "redeliveryDetail": "the delivery is no longer this attempt's uncertain,"
+                                            " unacknowledged send"}
+            record = json.loads(attempt["record"])
+            record["reconciliation"] = {
+                "operationReceiptChecked": observation is not None,
+                "recipientTurnsChecked": True,
+                "affirmativeEvidence": NO_EVIDENCE,
+                "checkedAt": now_iso,
+            }
+            assert_attempt_invariants(record)
+            marked = db.execute(
+                "UPDATE attempts SET state = ?, record = ?,"
+                " operation_observation = COALESCE(?, operation_observation),"
+                " recipient_scan = ?, affirmative_evidence = ?, reconciled_at = ?"
+                " WHERE request_id = ? AND internal_state = 'settled' AND state = ?"
+                "   AND (affirmative_evidence IS NULL OR affirmative_evidence = ?)",
+                (UNKNOWN_SEND_LOST, json.dumps(record), observation, reading["detail"],
+                 NO_EVIDENCE, now_iso, request_id, HELD_UNCERTAIN, NO_EVIDENCE),
+            ).rowcount
+            if marked != 1:
+                raise _Raced()
+            store.journal(
+                UNKNOWN_SEND_LOST, attempt["event_id"],
+                {"requestId": request_id, "redelivery": HELD if hold else REQUEUED,
+                 "detail": reading["detail"]},
+                at=now_iso,
+            )
+    except _Raced:
+        return {"redelivery": NOT_MOVED,
+                "redeliveryDetail": "the attempt changed while the loss was being recorded"}
+    return {"state": UNKNOWN_SEND_LOST, "evidence": NO_EVIDENCE,
+            "redelivery": HELD if hold else REQUEUED, "holdReason": hold, "record": record}
 
 
 # An acknowledgement answers the attempt it could have read: a verified one always, and otherwise

@@ -259,6 +259,13 @@ SUMMARIES = {
     ("packets.py", None, "_refusals_unreadable", "function"):
         ((True,), (("return: False", 1),), ()),
     ("receipts.py", None, "deliverable", "function"): ((False,), (), ()),
+    # A receipt the transport settled with no turn id and nothing affirmative, which is when the
+    # recipient's turns since the send are read (CRW-231). The false side is reachable from any
+    # one input alone. test_unknown_send_lost.py reaches it true (outcome_unknown), and false for
+    # an unfinished receipt and for no receipt at all (ASendTheTransportHasNotAnsweredIsNotRead-
+    # AsLost). A turn id and retry-safe are settled before it is asked, so those two inputs guard
+    # a reordering rather than a branch a test takes.
+    ("reconcile.py", None, "_unanswered", "function"): ((False,), (), ()),
     ("scope.py", None, "is_within", "function"):
         ((True,), (("return: path.startswith('/')", 1),), ()),
     ("service.py", None, "_holder_is_ours", "function"):
