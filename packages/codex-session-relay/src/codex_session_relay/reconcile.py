@@ -38,7 +38,7 @@ import json
 from enum import Enum
 
 from . import hostloss
-from .delivery import COMPLETION, REVISION, SENDING
+from .delivery import COMPLETION, REVISION, SENDING, settings_refusal_of
 from .hostadapter import TokenScan
 from .policy import (
     HOST_LOST_TURN, TURN_CHECK_UNDECIDED, UNKNOWN_SEND_LOST, UNKNOWN_SEND_UNDECIDED,
@@ -537,6 +537,10 @@ class Reconciler:
             "not scanned", next_eligible, hold=hold,
             dispatch_evidence="transport_accepted" if facts.delivery_state == DISPATCHED else None,
             dispatch_turn_id=facts.turn_id,
+            # This attempt's settings cause, read from the receipt reconciliation just classified,
+            # so an attempt a crash left for reconciliation is named as exactly as one the sender
+            # settled itself (CRW-235). The field is not in the classified facts; none is claimed.
+            settings_refusal=settings_refusal_of(facts),
         )
         return _with_anchor(
             {"evidence": evidence.value, "state": facts.delivery_state, "record": record},
@@ -621,7 +625,8 @@ class Reconciler:
 
     def _write(self, attempt, delivery, record, state, evidence, observation, scan_detail,
                next_eligible, *, aggregate=None, dispatch_evidence=None, dispatch_turn_id=None,
-               hold=None, keep_unknown=False, clear_dispatch=False, expect_scan=False):
+               hold=None, keep_unknown=False, clear_dispatch=False, expect_scan=False,
+               settings_refusal=None):
         now_iso = self.clock.iso()
         current = self._is_current(attempt, delivery)
         anchor = None
@@ -700,7 +705,11 @@ class Reconciler:
                     anchor = self._bind_promoted_anchor(db, attempt, delivery, dispatch_turn_id)
             self.store.journal(
                 "reconciled", attempt["request_id"],
-                {"evidence": evidence.value, "state": aggregate or state}, at=now_iso,
+                # settingsRefusal is always written by this revision, null for a settlement that
+                # is not a settings refusal: its absence is what marks an older row (CRW-235).
+                {"evidence": evidence.value, "state": aggregate or state,
+                 "settingsRefusal": settings_refusal},
+                at=now_iso,
             )
         return anchor
 

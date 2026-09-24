@@ -595,6 +595,10 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None,
         parked = row["hold_reason"] in PARENT_HOLDS
         signature = {"recipient": row["recipient_task_id"],
                      "attemptState": row["last_state"]}
+        # A held row is the delivery's current state, so its settings cause, when it has one,
+        # is named with who recovers it and how (CRW-235). Identity is unchanged.
+        settings_evidence, cause = _settings_items(store, row["event_id"], row["recipient_task_id"],
+                                       current=True)
         observations.append(faults.observation(
             product=product, fault_class="delivery_stalled",
             severity=faults.BROKEN if capped or parked else faults.DEGRADED,
@@ -602,14 +606,15 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None,
             occurrence_key=f"delivery:{row['last_request'] or row['event_id']}",
             scope=scope_of(store, row["relationship_id"], scope, cache),
             detail=(f"a delivery to {row['recipient_task_id']} is held:"
-                    f" {row['hold_reason']}" if row["hold_reason"] else
+                    f" {row['hold_reason']}" + (f" after settings {cause}" if cause else "")
+                    if row["hold_reason"] else
                     f"a delivery to {row['recipient_task_id']} is on attempt"
                     f" {row['attempt_count']}"),
             evidence=[_evidence("row", f"deliveries:{row['event_id']}", {
                 "state": row["state"], "holdReason": row["hold_reason"],
                 "attemptCount": row["attempt_count"], "lastAttemptState": row["last_state"],
                 "relationship": row["relationship_id"],
-            }), _facts(
+            }), *settings_evidence, _facts(
                 expected=f"the delivery reaches {row['recipient_task_id']}",
                 actual=(f"held ({row['hold_reason']}) after {row['attempt_count']} attempts;"
                         f" the last settled attempt ended {row['last_state']}"),
@@ -641,6 +646,9 @@ def retry_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> di
     after, until, _ = _rotation(store, cursor, "SELECT MAX(rowid) FROM attempts", integer=True)
     rows = [] if until is None else store.all(
         "SELECT a.rowid AS seq, a.request_id, a.state AS attempt_state, a.event_id,"
+        "       a.attempt_no,"
+        "       (SELECT MAX(x.attempt_no) FROM attempts x WHERE x.event_id = a.event_id"
+        "          AND x.internal_state = 'settled') AS latest_settled,"
         "       d.relationship_id, d.recipient_task_id, d.state AS delivery_state,"
         "       d.hold_reason, d.attempt_count, e.execution_generation AS generation,"
         "       e.turn_id AS turn"
@@ -660,35 +668,104 @@ def retry_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> di
     )
     cache = {}
     current = {}
-    observations = [faults.observation(
-        product=product, fault_class="delivery_stalled",
-        severity=(faults.BROKEN if row["hold_reason"] and row["hold_reason"] != BUSY_HOLD
-                  else faults.DEGRADED),
-        # The attempt's own classified state, never the delivery's hold reason. That reason
-        # is set when a delivery gives up and it is MUTABLE: deriving identity from it meant
-        # that the moment a retrying delivery hit its cap, every historical attempt re-derived
-        # under a new signature and one continuous failure owned two faults and two issues.
-        # Severity still reads it, because severity is not identity - the fault escalates
-        # instead of forking.
-        signature={"recipient": row["recipient_task_id"],
-                   "attemptState": row["attempt_state"]},
-        occurrence_key=f"delivery:{row['request_id']}",
-        scope=scope_of(store, row["relationship_id"], scope, cache),
-        detail=(f"an attempt to deliver to {row['recipient_task_id']} ended"
-                f" {row['attempt_state']}"),
-        evidence=[_evidence("row", f"attempts:{row['request_id']}", {
-            "attemptState": row["attempt_state"], "deliveryState": row["delivery_state"],
-            "holdReason": row["hold_reason"], "attemptCount": row["attempt_count"],
-            "event": row["event_id"],
-        }), _facts(
-            expected=f"the attempt reaches {row['recipient_task_id']}",
-            actual=f"the attempt ended {row['attempt_state']}",
-            impact="the delivery is retried and has not reached its recipient",
-            limits=["one occurrence per settled failed attempt; attempts in flight are not read"],
-            event=row["event_id"], relationship=row["relationship_id"],
-            generation=row["generation"], turn=row["turn"])],
-    ) for row in rows if _current(store, row["event_id"], current)]
+    observations = []
+    for row in rows:
+        if not _current(store, row["event_id"], current):
+            continue
+        # Each attempt's OWN settings cause, from its settlement row, exact for history; and for
+        # the latest one while the delivery is still withheld, the current hold with its
+        # recovery (CRW-235). Identity is unchanged.
+        settings_evidence, cause = _settings_items(
+            store, row["event_id"], row["recipient_task_id"],
+            own=_attempt_settings_cause(store, row["event_id"], row["request_id"]),
+            current=(row["attempt_no"] == row["latest_settled"]
+                     and row["delivery_state"] == "withheld_pre_send"),
+        )
+        observations.append(faults.observation(
+            product=product, fault_class="delivery_stalled",
+            severity=(faults.BROKEN if row["hold_reason"] and row["hold_reason"] != BUSY_HOLD
+                      else faults.DEGRADED),
+            # The attempt's own classified state, never the delivery's hold reason. That reason
+            # is set when a delivery gives up and it is MUTABLE: deriving identity from it meant
+            # that the moment a retrying delivery hit its cap, every historical attempt re-derived
+            # under a new signature and one continuous failure owned two faults and two issues.
+            # Severity still reads it, because severity is not identity - the fault escalates
+            # instead of forking.
+            signature={"recipient": row["recipient_task_id"],
+                       "attemptState": row["attempt_state"]},
+            occurrence_key=f"delivery:{row['request_id']}",
+            scope=scope_of(store, row["relationship_id"], scope, cache),
+            detail=(f"an attempt to deliver to {row['recipient_task_id']} ended"
+                    f" {row['attempt_state']}" + (f": settings {cause}" if cause else "")),
+            evidence=[_evidence("row", f"attempts:{row['request_id']}", {
+                "attemptState": row["attempt_state"], "deliveryState": row["delivery_state"],
+                "holdReason": row["hold_reason"], "attemptCount": row["attempt_count"],
+                "event": row["event_id"],
+            }), *settings_evidence, _facts(
+                expected=f"the attempt reaches {row['recipient_task_id']}",
+                actual=f"the attempt ended {row['attempt_state']}",
+                impact="the delivery is retried and has not reached its recipient",
+                limits=["one occurrence per settled failed attempt; attempts in flight are not read"],
+                event=row["event_id"], relationship=row["relationship_id"],
+                generation=row["generation"], turn=row["turn"])],
+        ))
     return _page(observations, rows, "seq", after, limit, until)
+
+
+def _attempt_settings_cause(store, event_id, request_id):
+    """An attempt's own settings cause, from the later of its settlement rows, or None.
+
+    Written by this revision on every settlement (delivery_attempted by the sender, reconciled by
+    reconciliation) as settingsRefusal, null for one that was not a settings refusal; an older
+    row without the key names nothing (CRW-235)."""
+    row = store.one(
+        "SELECT detail FROM journal"
+        " WHERE (subject = ? AND kind = 'delivery_attempted'"
+        "        AND (CASE WHEN json_valid(detail)"
+        "             THEN json_extract(detail, '$.requestId') END) = ?)"
+        "    OR (subject = ? AND kind = 'reconciled')"
+        " ORDER BY seq DESC LIMIT 1",
+        (event_id, request_id, request_id),
+    )
+    try:
+        detail = json.loads(row["detail"]) if row is not None and row["detail"] else {}
+    except (TypeError, ValueError):
+        return None
+    refusal = detail.get("settingsRefusal") if isinstance(detail, dict) else None
+    if isinstance(refusal, dict) and isinstance(refusal.get("reason"), str):
+        return refusal
+    return None
+
+
+def _settings_items(store, event_id, recipient, *, own=None, current=False):
+    """Evidence naming a delivery's settings cause, and its recovery while it is the current
+    hold, with the reason for the detail line: (items, reason or None). CRW-235.
+
+    current asks the one reader status and assignment-show ask (delivery.current_settings_hold),
+    so the three surfaces name one cause and one recovery for one hold; own is an attempt's own
+    cause, named without a recovery when it is history."""
+    from .assignment import settings_recovery_record
+    from .delivery import current_settings_hold
+
+    hold = None
+    if current:
+        reading = current_settings_hold(store, event_id)
+        if reading["hold"] is not None:
+            hold = dict(reading["hold"], kind=reading["kind"])
+    if hold is not None:
+        reason = hold.get("reason") or "undetermined"
+        return [
+            _evidence("settings", f"deliveries:{event_id}", {
+                "reason": hold.get("reason"), "field": hold.get("field"),
+                "source": hold.get("source"), "kind": hold.get("kind"), "current": True}),
+            _evidence("recovery", f"deliveries:{event_id}",
+                      settings_recovery_record(store, hold, event_id, recipient)),
+        ], reason
+    if own is not None:
+        return [_evidence("settings", f"deliveries:{event_id}", {
+            "reason": own["reason"], "field": own.get("field"), "source": "attempt",
+            "current": False})], own["reason"]
+    return [], None
 
 
 def sync_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> dict:
@@ -881,7 +958,8 @@ def refusal_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> 
             "event": row["event_id"], "reason": row["reason"],
             "detail": row["refusal_detail"] if isinstance(row["refusal_detail"], str) else None,
             "deliveryState": row["state"], "at": row["at"],
-        }), _facts(
+        }), *_confirmed_recovery(store, row["event_id"], row["recipient_task_id"],
+                                 row["reason"]), _facts(
             expected="the recorded settings pass the check made before sending",
             actual=f"refused before any transport call: {row['reason']}",
             impact="the delivery is withheld and the recipient is not given it",
@@ -890,6 +968,28 @@ def refusal_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> 
             generation=row["generation"], turn=row["turn"])],
     ) for row in rows if _current(store, row["event_id"], current)]
     return _page(observations, rows, "seq", after, limit, until)
+
+
+def _confirmed_recovery(store, event_id, recipient, reason):
+    """The recovery for a pre-send refusal, only while the reader confirms it is the current hold.
+
+    A delivery_withheld row is written whether or not its guarded UPDATE took effect, and a later
+    attempt can supersede it, so the row alone never earns a recovery: the reader must name the
+    same pre-send reason, or an undetermined hold recorded before this revision (CRW-235)."""
+    from .assignment import settings_recovery_record
+    from .delivery import current_settings_hold
+
+    reading = current_settings_hold(store, event_id)
+    hold = reading["hold"]
+    if hold is None:
+        return []
+    confirmed = (hold.get("source") == "pre_send" and hold.get("reason") == reason) \
+        or hold.get("source") == "undetermined"
+    if not confirmed:
+        return []
+    hold = dict(hold, kind=reading["kind"])
+    return [_evidence("recovery", f"deliveries:{event_id}",
+                      settings_recovery_record(store, hold, event_id, recipient))]
 
 
 def managed_start_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> dict:

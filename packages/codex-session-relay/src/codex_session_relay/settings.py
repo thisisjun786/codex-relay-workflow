@@ -111,6 +111,66 @@ APPROVAL_POLICY_DIFFERS_FROM_RECORD = "approval_policy_differs_from_record"
 # recipient on fewer roots than recorded may lack write access to one the record names.
 RUNTIME_ROOTS_NARROWER = "runtime_roots_narrower_than_record"
 
+# Who recovers a settings hold, and how (CRW-235). One table for status, assignment-show and the
+# fault sweep, so no two of them can name a different actor for one hold. The command is a NAME
+# ("settings-show" or "show-event"); the caller renders it for its own store, because this module
+# is imported everywhere and must not import the renderer's.
+SETTINGS_SHOW = "settings-show"
+SHOW_EVENT = "show-event"
+# The two refusals the daemon itself may clear: the host answered without the setting, which a
+# later answer can supply. Every other settings code is a difference only a person can resolve.
+DAEMON_SETTINGS_CODES = (SETTING_UNOBSERVABLE, ENVIRONMENTS_UNKNOWN)
+HOLD_OPERATOR_THEN = (
+    "bring the recipient back under its recorded settings - another client loaded it under"
+    " other ones, and it loads under the record once the host has unloaded it and the relay"
+    " loads it again - or, if the user changed the task, re-record it with settings-record"
+    " --source user_transition; a refusal of the record itself names its own recovery. The"
+    " daemon retries on its own each pass until the attempt cap"
+)
+HOLD_DAEMON_THEN = (
+    "the daemon retries on its own each pass; if the host keeps answering without the setting,"
+    " the operator compares its reading with settings-show"
+)
+HOLD_CAPPED_THEN = (
+    "nothing sends this delivery again: read the report, then open a fresh execution"
+    " generation (generation-open) if the work still needs verifying"
+)
+HOLD_CHANNEL_THEN = "the report is stored where the recipient reads it: read it and acknowledge"
+HOLD_UNDETERMINED_THEN = (
+    "this state was recorded before its cause was written down, so the cause is not"
+    " established here: read the event's attempts and their receipts, then settings-show;"
+    " nothing here claims a settings fix"
+)
+LATER_BY_OPERATOR = (
+    "for later deliveries, the operator brings the recipient back under its recorded settings"
+    " or re-records it (settings-record --source user_transition); settings-show names the"
+    " difference"
+)
+LATER_BY_OWNER = (
+    "for later deliveries, the thread's owner switches it back to an approval policy this"
+    " transport carries (never or on-request)"
+)
+
+
+def settings_hold_recovery(kind, code, source) -> dict:
+    """Who recovers a settings hold of this kind and code, and how: {actor, command, then,
+    laterDeliveries}. kind is withheld, capped or channel_closed; source is the reader's
+    (attempt, pre_send or undetermined)."""
+    if source == "undetermined":
+        return {"actor": "operator", "command": SHOW_EVENT, "then": HOLD_UNDETERMINED_THEN,
+                "laterDeliveries": None}
+    if kind == "capped":
+        return {"actor": "parent", "command": SHOW_EVENT, "then": HOLD_CAPPED_THEN,
+                "laterDeliveries": LATER_BY_OPERATOR}
+    if kind == "channel_closed":
+        return {"actor": "parent", "command": SHOW_EVENT, "then": HOLD_CHANNEL_THEN,
+                "laterDeliveries": LATER_BY_OWNER}
+    if code in DAEMON_SETTINGS_CODES:
+        return {"actor": "daemon", "command": SETTINGS_SHOW, "then": HOLD_DAEMON_THEN,
+                "laterDeliveries": None}
+    return {"actor": "operator", "command": SETTINGS_SHOW, "then": HOLD_OPERATOR_THEN,
+            "laterDeliveries": None}
+
 
 def normalise_policy(policy):
     """Fill the declared defaults so an omitted default compares equal to an explicit one.

@@ -1,0 +1,369 @@
+"""A settings hold names its reason, who recovers it and how, on every surface (CRW-235).
+
+CRW-124 G2: while a parent that another task's bridge message loaded stayed loaded, every relay
+delivery to it was withheld as settings_not_preserved. status carried the reason
+(lastFailedOperation settings_check) but no actor and no path, assignment-show named the daemon,
+which could not deliver it, the fault sweep named only the attempt state, and after the attempt cap
+nothing sent it again. The narrowing itself is delivered now (test_bridge_load_roots.py). These
+cover every hold that remains: whatever holds a delivery on its recipient's settings, status,
+assignment-show and the fault sweep name one reason, one actor and one supported command, from one
+reader (delivery.current_settings_hold) that reads each cause where its transition recorded it.
+
+The clock does not move unless a case says so, which is the fixed clock under which a reader that
+ordered causes by their timestamps could not tell two of them apart.
+
+Each test is labelled RED where it fails on the relay before this change, or GREEN where it pins
+behaviour that must not change.
+"""
+
+import json
+import os
+import shlex
+import unittest
+
+from codex_session_relay import faultsweep
+from codex_session_relay.assignment import (
+    OPERATOR_RESTORES_SETTINGS_ACTION,
+    PARENT_RECOVERS_SETTINGS_HOLD_ACTION,
+    RECEIVED,
+    completion_next_action,
+)
+from codex_session_relay.delivery import current_settings_hold
+from codex_session_relay.errors import DeliveryRefused, RefusalReason
+from codex_session_relay.transport import DISPATCHED, INBOX_ONLY, WITHHELD_PRE_SEND
+
+from .support import PARENT
+from .test_host_lost_turn import HostLossCase
+
+NOT_PRESERVED = "settings_not_preserved"
+
+
+class SettingsHoldCase(HostLossCase):
+    def recovery(self):
+        return self.assignments.state(self._rid).get("recovery") or {}
+
+    def store_dir(self):
+        return os.path.dirname(os.path.abspath(str(self.store.path)))
+
+    def assert_settings_show(self, command):
+        self.assertEqual(shlex.split(command or "")[-5:],
+                         ["--state", self.store_dir(), "settings-show", "--task", PARENT])
+
+    def assert_show_event(self, command, event_id):
+        self.assertEqual(shlex.split(command or "")[-5:],
+                         ["--state", self.store_dir(), "show", "--event", event_id])
+
+    def refused(self, outcome=NOT_PRESERVED):
+        self.parent_history()
+        _relationship, event_id = self.queued_event()
+        self.adapter.script(outcome)
+        self.attempt(event_id)
+        return event_id
+
+    def again(self, event_id, outcome):
+        row = self.delivery_row(event_id)
+        self.adapter.script(outcome)
+        return self.attempt(event_id, now=row["next_eligible_at"])
+
+    def observations(self, source, event_id):
+        page = source(self.store, product="crw", scope=None)
+        return [one for one in page["observations"]
+                if any(item["observed"].get("event") == event_id for item in one["evidence"])]
+
+    @staticmethod
+    def evidence(observation, kind):
+        return [item["observed"] for item in observation["evidence"] if item["kind"] == kind]
+
+    def strip_this_revisions_records(self, event_id):
+        """What a store written before this revision holds: no key, no marker."""
+        self.store.db.execute(
+            "UPDATE journal SET detail = json_remove(detail, '$.settingsRefusal')"
+            " WHERE subject = ? AND kind = 'delivery_attempted'", (event_id,))
+        self.store.db.execute(
+            "DELETE FROM journal WHERE subject = ? AND kind = 'delivery_presend_withheld'",
+            (event_id,))
+        self.store.db.commit()
+
+
+class AWithheldSettingsHold(SettingsHoldCase):
+    def test_status_names_the_reason_the_operator_and_settings_show(self):
+        """RED: status named the reason and phase only."""
+        event_id = self.refused()
+        item = self.status_of(event_id)
+        self.assertEqual(item["phase"], "settings_rejected")
+        hold = item["settingsHold"]
+        self.assertEqual((hold["kind"], hold["source"], hold["reason"], hold["field"]),
+                         ("withheld", "attempt", NOT_PRESERVED, "runtimeWorkspaceRoots"))
+        recovery = item["recovery"]
+        self.assertEqual((recovery["actor"], recovery["reason"]), ("operator", NOT_PRESERVED))
+        self.assert_settings_show(recovery["command"])
+        self.assertIn("settings-record --source user_transition", recovery["then"])
+
+    def test_assignment_show_names_the_operator_not_the_daemon(self):
+        """RED: nextExpectedAction was daemon_delivers, which cannot fix a settings difference."""
+        self.refused()
+        self.assertEqual(self.next_action(), OPERATOR_RESTORES_SETTINGS_ACTION)
+        self.assertEqual(self.completion_delivery()["settingsHold"]["reason"], NOT_PRESERVED)
+        recovery = self.recovery()
+        self.assertEqual((recovery.get("actor"), recovery.get("reason")),
+                         ("operator", NOT_PRESERVED))
+        self.assert_settings_show(recovery.get("command"))
+
+    def test_the_fault_sweep_names_the_reason_and_the_recovery(self):
+        """RED: the occurrence named only the attempt state."""
+        event_id = self.refused()
+        [observation] = self.observations(faultsweep.retry_faults, event_id)
+        self.assertTrue(observation["detail"].endswith(f"settings {NOT_PRESERVED}"),
+                        observation["detail"])
+        [settings] = self.evidence(observation, "settings")
+        self.assertEqual((settings["reason"], settings["current"]), (NOT_PRESERVED, True))
+        [recovery] = self.evidence(observation, "recovery")
+        self.assertEqual(recovery["actor"], "operator")
+        self.assert_settings_show(recovery["command"])
+
+    def test_an_answer_the_daemon_can_still_clear_stays_the_daemons(self):
+        """RED for the recovery; GREEN for the next action, which stays the daemon's."""
+        event_id = self.refused("setting_unobservable")
+        self.assertEqual(self.next_action(), "daemon_delivers")
+        recovery = self.status_of(event_id)["recovery"]
+        self.assertEqual((recovery["actor"], recovery["reason"]), ("daemon", "setting_unobservable"))
+
+
+class ACappedSettingsHold(SettingsHoldCase):
+    def test_after_the_cap_the_parent_reads_the_report(self):
+        """RED: a capped settings hold named nobody, and assignment-show said daemon_delivers."""
+        event_id = self.refused()
+        for _ in range(self.delivery.policy.max_attempts - 1):
+            self.again(event_id, NOT_PRESERVED)
+        row = self.delivery_row(event_id)
+        self.assertEqual((row["state"], row["hold_reason"]), (WITHHELD_PRE_SEND, "attempt_cap"))
+        item = self.status_of(event_id)
+        self.assertEqual(item["settingsHold"]["kind"], "capped")
+        self.assertEqual(item["recovery"]["actor"], "parent")
+        self.assert_show_event(item["recovery"]["command"], event_id)
+        self.assertIn("settings-record", item["recovery"]["laterDeliveries"])
+        self.assertEqual(self.next_action(), PARENT_RECOVERS_SETTINGS_HOLD_ACTION)
+        recovery = self.recovery()
+        self.assertEqual((recovery.get("actor"), recovery.get("reason")), ("parent", NOT_PRESERVED),
+                         "named for the settings code, not the cap")
+        self.assert_show_event(recovery.get("command"), event_id)
+        self.assertTrue(recovery.get("laterDeliveries"))
+        [observation] = self.observations(faultsweep.delivery_faults, event_id)
+        self.assertIn(f"after settings {NOT_PRESERVED}", observation["detail"])
+        [fault_recovery] = self.evidence(observation, "recovery")
+        self.assertEqual(fault_recovery["actor"], "parent")
+
+
+class AClosedChannel(SettingsHoldCase):
+    def test_a_closed_channel_names_the_parent_and_files_no_fault(self):
+        """RED for the recovery; GREEN for the rest: stored where the parent reads it, no fault."""
+        event_id = self.refused("approval_policy")
+        self.assertEqual(self.delivery_row(event_id)["state"], INBOX_ONLY)
+        item = self.status_of(event_id)
+        self.assertEqual(item["phase"], "channel_closed")
+        self.assertEqual((item["settingsHold"]["kind"], item["settingsHold"]["reason"]),
+                         ("channel_closed", "unsupported_approval_policy"))
+        self.assertEqual(item["recovery"]["actor"], "parent")
+        self.assert_show_event(item["recovery"]["command"], event_id)
+        self.assertIn("never or on-request", item["recovery"]["laterDeliveries"])
+        self.assertEqual(self.next_action(), "parent_acknowledges")
+        self.assertEqual(self.recovery().get("actor"), "parent")
+        for source in (faultsweep.retry_faults, faultsweep.delivery_faults):
+            self.assertEqual(self.observations(source, event_id), [])
+
+
+class APreSendRefusal(SettingsHoldCase):
+    def test_a_record_refusal_before_any_attempt_is_named(self):
+        """RED: the refusal was named by code only, with no actor or path."""
+        self.parent_history()
+        _relationship, event_id = self.queued_event(settings=None)
+        self.assertIsNone(self.attempt(event_id))
+        item = self.status_of(event_id)
+        self.assertEqual(item["phase"], "withheld:settings_check")
+        hold = item["settingsHold"]
+        self.assertEqual((hold["source"], hold["reason"]),
+                         ("pre_send", RefusalReason.SETTINGS_UNAVAILABLE.value))
+        self.assertEqual(item["recovery"]["actor"], "operator")
+        self.assert_settings_show(item["recovery"]["command"])
+        self.assertEqual(self.next_action(), OPERATOR_RESTORES_SETTINGS_ACTION)
+        [observation] = self.observations(faultsweep.refusal_faults, event_id)
+        [recovery] = self.evidence(observation, "recovery")
+        self.assertEqual(recovery["actor"], "operator")
+
+    def test_a_withhold_that_did_not_take_effect_earns_no_recovery(self):
+        """GREEN: its refusal is still counted, and nothing names a hold the row is not in."""
+        _relationship, event_id = self.queued_event()
+        self.delivery._withhold_settings(
+            event_id, self.clock.now(),
+            DeliveryRefused(RefusalReason.SETTINGS_UNAVAILABLE, "gone"), attempts=99,
+            row=self.delivery_row(event_id))
+        self.assertEqual(current_settings_hold(self.store, event_id)["hold"], None)
+        [observation] = self.observations(faultsweep.refusal_faults, event_id)
+        self.assertEqual(self.evidence(observation, "recovery"), [])
+
+
+    def test_a_stale_refusal_row_beside_another_current_hold_earns_no_recovery(self):
+        """GREEN for the refusal occurrence, RED-proof for its recovery: the row names
+        settings_unavailable, the delivery's current hold is the attempt's settings_not_preserved,
+        so the occurrence must not carry a recovery for a hold it is not."""
+        event_id = self.refused()
+        self.delivery._withhold_settings(
+            event_id, self.clock.now(),
+            DeliveryRefused(RefusalReason.SETTINGS_UNAVAILABLE, "gone"), attempts=99,
+            row=self.delivery_row(event_id))
+        self.assertEqual(current_settings_hold(self.store, event_id)["hold"]["reason"],
+                         NOT_PRESERVED)
+        [observation] = self.observations(faultsweep.refusal_faults, event_id)
+        self.assertEqual(self.evidence(observation, "recovery"), [])
+
+
+class TheCurrentCauseWhateverTheClock(SettingsHoldCase):
+    def test_a_transport_failure_after_a_settings_refusal_ends_the_hold(self):
+        """RED: under one timestamp the older settings failure could still name the phase."""
+        event_id = self.refused()
+        self.again(event_id, "resume_fail")
+        item = self.status_of(event_id)
+        self.assertIsNone(item["settingsHold"])
+        self.assertEqual(item["phase"], "withheld:thread/resume")
+        self.assertEqual(self.next_action(), "daemon_delivers")
+        self.assertEqual(self.recovery(), {})
+        self.again(event_id, NOT_PRESERVED)
+        self.assertEqual(self.status_of(event_id)["settingsHold"]["reason"], NOT_PRESERVED)
+
+    def test_a_lifecycle_withhold_after_a_settings_refusal_is_not_a_settings_hold(self):
+        """RED: the lifecycle withhold was reported as the older settings rejection."""
+        event_id = self.refused()
+        self.adapter.threads[PARENT].archived = True
+        self.attempt(event_id, now=self.delivery_row(event_id)["next_eligible_at"])
+        item = self.status_of(event_id)
+        self.assertIsNone(item["settingsHold"])
+        self.assertEqual(item["phase"], "withheld:lifecycle_read")
+
+    def test_a_settings_refusal_after_a_lifecycle_withhold_is_named(self):
+        """RED: nothing named it."""
+        self.parent_history()
+        _relationship, event_id = self.queued_event(settings=None)
+        self.adapter.threads[PARENT].archived = True
+        self.attempt(event_id)
+        self.adapter.threads[PARENT].archived = False
+        self.attempt(event_id, now=self.delivery_row(event_id)["next_eligible_at"])
+        item = self.status_of(event_id)
+        self.assertEqual(item["phase"], "withheld:settings_check")
+        self.assertEqual(item["settingsHold"]["source"], "pre_send")
+
+    def test_a_pause_after_a_settings_refusal_is_not_a_settings_hold(self):
+        """RED: the paused delivery still read as a settings rejection."""
+        event_id = self.refused()
+        self.registry.set_status(self._rid, "paused", actor="test")
+        self.attempt(event_id)
+        item = self.status_of(event_id)
+        self.assertIsNone(item["settingsHold"])
+        self.assertEqual(item["phase"], "withheld_pre_send")
+
+
+class ReconciliationNamesTheCauseToo(SettingsHoldCase):
+    def test_a_settings_refusal_settled_only_by_reconciliation_is_named(self):
+        """RED: an attempt a crash left for reconciliation carried no cause at all."""
+        self.parent_history()
+        _relationship, event_id = self.queued_event()
+        self.adapter.script(NOT_PRESERVED)
+        settle = self.delivery._settle
+
+        def stopped(*args, **kwargs):
+            raise RuntimeError("the relay stopped before settling the attempt")
+
+        self.delivery._settle = stopped
+        with self.assertRaises(RuntimeError):
+            self.attempt(event_id)
+        self.delivery._settle = settle
+        [attempt] = self.attempts_for(event_id)
+        self.assertEqual(attempt["internal_state"], "in_flight")
+        self.reconciler.reconcile_attempt(attempt["request_id"], self.adapter)
+        self.assertEqual(self.delivery_row(event_id)["state"], WITHHELD_PRE_SEND)
+        hold = self.status_of(event_id)["settingsHold"]
+        self.assertEqual((hold["source"], hold["reason"], hold["requestId"]),
+                         ("attempt", NOT_PRESERVED, attempt["request_id"]))
+        self.assertEqual(self.next_action(), OPERATOR_RESTORES_SETTINGS_ACTION)
+
+
+class RowsRecordedBeforeThisRevision(SettingsHoldCase):
+    def test_a_hold_whose_cause_was_never_written_down_is_undetermined(self):
+        """RED: nothing named it; now it is named undetermined, never guessed."""
+        event_id = self.refused()
+        self.strip_this_revisions_records(event_id)
+        item = self.status_of(event_id)
+        self.assertEqual((item["settingsHold"]["source"], item["settingsHold"]["reason"]),
+                         ("undetermined", None))
+        recovery = item["recovery"]
+        self.assertEqual((recovery["actor"], recovery["reason"]), ("operator", "undetermined"))
+        self.assert_show_event(recovery["command"], event_id)
+        self.assertIn("nothing here claims a settings fix", recovery["then"])
+        self.assertEqual(self.next_action(), "daemon_delivers",
+                         "an undetermined cause is not an operator settings fix")
+        self.assertEqual(self.recovery().get("reason"), "undetermined")
+        [observation] = self.observations(faultsweep.retry_faults, event_id)
+        [fault_recovery] = self.evidence(observation, "recovery")
+        self.assertEqual(fault_recovery["reason"], "undetermined")
+
+    def test_a_strictly_later_lifecycle_withhold_is_no_settings_hold(self):
+        """GREEN: a later lifecycle withhold recorded before this revision names no settings hold."""
+        event_id = self.refused()
+        self.clock.advance(60)
+        self.adapter.threads[PARENT].archived = True
+        self.attempt(event_id, now=self.delivery_row(event_id)["next_eligible_at"])
+        self.strip_this_revisions_records(event_id)
+        self.assertIsNone(current_settings_hold(self.store, event_id)["hold"])
+
+    def test_an_order_the_timestamps_cannot_settle_is_undetermined(self):
+        """RED: one timestamp for both, so no side is claimed."""
+        event_id = self.refused()
+        self.adapter.threads[PARENT].archived = True
+        self.attempt(event_id, now=self.delivery_row(event_id)["next_eligible_at"])
+        self.strip_this_revisions_records(event_id)
+        self.assertEqual(current_settings_hold(self.store, event_id)["hold"]["source"],
+                         "undetermined")
+
+
+class TheOrderOfTheNextAction(unittest.TestCase):
+    @staticmethod
+    def projection(state, hold, *, host_lost=1, pacing=None, kind="withheld"):
+        return {"completion": {
+            "eventId": "event-1", "ack": None,
+            "delivery": {"state": state, "holdReason": hold, "hostLostAttempts": host_lost,
+                         "pacing": pacing,
+                         "settingsHold": {"kind": kind, "source": "attempt",
+                                          "reason": NOT_PRESERVED}},
+        }}
+
+    def test_a_settings_hold_is_named_before_a_host_loss_or_the_send_policy(self):
+        """RED: a withheld settings hold after a host loss read as a redelivery the daemon owns."""
+        self.assertEqual(completion_next_action(RECEIVED, self.projection(WITHHELD_PRE_SEND, None)),
+                         OPERATOR_RESTORES_SETTINGS_ACTION)
+        self.assertEqual(completion_next_action(
+            RECEIVED, self.projection(WITHHELD_PRE_SEND, "attempt_cap", kind="capped")),
+            PARENT_RECOVERS_SETTINGS_HOLD_ACTION)
+        never = {"reason": "hourly_cap", "reopensAt": None}
+        self.assertEqual(completion_next_action(
+            RECEIVED, self.projection(WITHHELD_PRE_SEND, None, host_lost=0, pacing=never)),
+            OPERATOR_RESTORES_SETTINGS_ACTION)
+
+
+class AnAcceptedNarrowingIsWrittenDown(SettingsHoldCase):
+    def test_an_accepted_narrowing_is_journaled_beside_its_settlement(self):
+        """RED: the note lived only on the transport receipt."""
+        self.parent_history()
+        _relationship, event_id = self.queued_event()
+        self.adapter.script("accepted_with_notes")
+        record = self.attempt(event_id)
+        self.assertEqual(record["deliveryState"], DISPATCHED)
+        row = self.store.one("SELECT detail FROM journal WHERE subject = ? AND kind = ?",
+                             (event_id, "delivery_settings_noted"))
+        self.assertIsNotNone(row)
+        detail = json.loads(row["detail"])
+        self.assertEqual(detail["requestId"], record["requestId"])
+        self.assertEqual(detail["notes"][0]["code"], "runtime_roots_narrower_than_record")
+        self.assertIsNone(self.status_of(event_id)["settingsHold"], "a delivered send holds nothing")
+
+
+if __name__ == "__main__":
+    unittest.main()

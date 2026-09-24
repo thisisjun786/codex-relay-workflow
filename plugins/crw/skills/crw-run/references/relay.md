@@ -345,6 +345,16 @@ incomplete one is refused when it is written, and a recipient with no record at 
 withheld rather than sent under a host default. `settings-show --task <id>` reports what is held
 and what is missing.
 
+A delivery held on its recipient's settings says who recovers it and how. `status` carries
+`settingsHold` (kind `withheld`, `capped` or `channel_closed`, and the reason) and `recovery`
+(actor, command, next step, and what later deliveries need); assignment-show names the same actor
+as `operator_restores_recipient_settings` or `parent_recovers_settings_hold`; the fault sweep
+carries the same reason and recovery. A withheld hold is the operator's: run the named
+`settings-show`, then bring the recipient back under its recorded settings or re-record it with
+`--source user_transition` when the user changed it. A capped one is never sent again, so the
+parent reads the stored report with the named `show --event`. A hold recorded before this
+revision is named `undetermined` and points at the event rather than at a fix.
+
 Read `deliverable` rather than `usable` before a send. They answer different questions: `usable`
 is about the record alone, whether the required fields are there, and it is the field `missing`
 pairs with. `deliverable` also accounts for the role the task is actually bound to, so a complete
