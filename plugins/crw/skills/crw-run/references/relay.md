@@ -351,12 +351,15 @@ A delivery held on its recipient's settings says who recovers it and how. `statu
 as `operator_restores_recipient_settings` or `parent_recovers_settings_hold` (a revision request
 to the child the same way, except that one held at the cap or stored by a closed channel keeps
 `parent_recovers_held_correction`, named for the settings code, and a stored revision request takes
-no acknowledgement); the fault sweep
-carries the same reason and recovery. A withheld hold is the operator's: run the named
-`settings-show`, then bring the recipient back under its recorded settings or re-record it with
-`--source user_transition` when the user changed it. A capped one is never sent again, so the
-parent reads the stored report with the named `show --event`. A hold recorded before this
-revision is named `undetermined` and points at the event rather than at a fix.
+no acknowledgement); the fault sweep carries the same reason and recovery. A withheld hold is the
+operator's: run the named `settings-show`, then bring the recipient back under its recorded
+settings or re-record it with `--source user_transition` when the user changed it. The exception is
+a host answer that left a setting out (`setting_unobservable`, `environments_unknown`): the daemon
+may clear it on its own next pass, so the recovery names the daemon and assignment-show keeps the
+daemon's action. A capped one is never sent again, so the parent reads the stored report with the
+named `show --event`. A send budget that never reopens is named before any settings hold
+(`operator_changes_send_policy`), because until the policy changes nothing is sent. A hold recorded
+before this revision is named `undetermined` and points at the event rather than at a fix.
 
 Read `deliverable` rather than `usable` before a send. They answer different questions: `usable`
 is about the record alone, whether the required fields are there, and it is the field `missing`
