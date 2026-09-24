@@ -203,9 +203,10 @@ the hook as it then stands.
 
 None of this starts a daemon. The server is a stdio process Codex spawns per session (one per
 thread on Codex Desktop 0.154.0, observed), so a record written afterwards reaches the next thread
-and not one already running. Replacing the package is the exception measured so far: the host
-started bridges again from the new version directory, and each ran under the record as it stood
-at that moment ([what one replacement measured](#what-one-replacement-measured)). The hook runs on
+and not one already running. Replacing the package can reach a running thread too: at one of two
+measured replacements the host started bridges again from the new version directory, each under
+the record as it stood at that moment, and at the other none was seen to start until a thread resumed
+([what two replacements measured](#what-two-replacements-measured)). The hook runs on
 a Stop and exits, and the completion hook installs in `observe` mode, which classifies and
 records and never holds a turn.
 
@@ -272,7 +273,7 @@ each declared surface is whether its reference outlives the directory it names.
 | Stop settings at `<CODEX_HOME>/crw-completion-hook.json` | No | Nothing | The same command |
 | Adapter, relay and bridge executables | No, they sit under the installer pointer | Nothing | `runtime_install.py install` |
 | Hook document path in the run identifier | Yes | Held as an identifier and never re-read | The host |
-| MCP start `cwd` and `args` | Yes | The host starts bridges again from the new version directory, and each runs under the bridge record as it stands at that moment: measured once, on the host. That the add caused the restart is inferred from its timing | The host |
+| MCP start `cwd` and `args` | Yes | At one measured replacement the host started bridges again from the new version directory; at the other none was seen to start: the bridges already running kept running from the removed directory, and a thread that resumed was given one from the new directory. Either way a bridge started from the new directory runs under the bridge record as it stands then. Both measured on the host; what decides between the two is not | The host |
 | Skill reads | Yes | A turn already running keeps the removed directory as its skills root until it ends, and the thread's next turn is given the new one: measured on the host. A read against the removed directory was not observed | The host |
 
 Two of those this package can answer for and two it cannot, and the difference is a host rule
@@ -282,52 +283,74 @@ its own program at run time. An MCP `command` must be a bare executable name or 
 skills are read by the host from the directory the manifest names. Neither can be pointed
 outside the version cache by anything this package declares.
 
-### What one replacement measured
+### What two replacements measured
 
-The two rows the host owns were measured on the user's host, whose App Server was codex 0.154.0,
-during one package replacement from `0.4.0` to `0.4.0+1ed13de2edbb` on 2026-09-23, with
-`codex plugin add` at 11:17:06Z, by reading the App Server's child processes and the context each
-session recorded. The evidence is kept with
-the task record, outside this repository.
+The two rows the host owns, and how the Stop hook came through, were measured on the user's host,
+whose App Server was codex 0.154.0, at two package replacements: from `0.4.0` to
+`0.4.0+1ed13de2edbb` on 2026-09-23, with `codex plugin add` at 11:17:06Z, and from
+`0.4.0+1ed13de2edbb` to `0.4.0+e9f724fde562` on 2026-09-24, with the add at 00:52:09Z. They were
+read from the App Server's child processes, the Stop journal and the context each session recorded.
+The evidence is kept with the task record, outside this repository.
 
-About a minute after the add, while the Stop hook waited to be trusted again, the App Server started
-twelve new bridge processes within three seconds. Each ran from the new version directory with the
-six variables the App Server gives a plugin server, no bridge was left running from the old
-directory, and the App Server itself was not restarted. So the MCP reference does not outlive the
-directory the way a Stop command can: the host resolves the declaration again against the new
-directory. That the add, or the configuration written around it, caused the restart is inferred
-from the timing; nothing the host printed names a cause.
+The two replacements treated running bridges differently. At the first, the Stop hook's declaration
+had changed and had to be trusted again, and about a minute after the add, before the new trust was
+found in place, the App Server started twelve new bridge processes within three seconds. Each ran
+from the new version directory with the six variables the App Server gives a plugin server, no
+bridge was left running from the old directory, and the App Server itself was not restarted. At the
+second, the declaration was byte-for-byte unchanged, no approval was given, and no bridge was seen
+to start at the add: right after it all ten crw bridges were still running from the removed
+directory, nine of them still were half an hour later (the tenth had exited), and a thread that
+resumed twenty minutes after the add was given a bridge from the new directory. So the MCP reference
+can outlive its directory, as at the second replacement, or the host can resolve the declaration
+again against the new one, as at the first. The one restart seen came before a changed declaration's
+new trust was found in place, and at the replacement that needed no new trust none was seen to
+start. The approval itself was not timed, only found done about ten seconds after the restart, and
+two replacements that differ in more than this do not establish a cause: what restarts the bridges
+is not measured.
 
-A restarted bridge runs under whatever the bridge record says at that moment, and the record lives
-in the Codex home, outside the cache. At this replacement it was still version 1: the old package
-was enabled and cached and its launcher predates version 2, so `register-mcp` could only write the
-policy once the new package was in place, and it did so about thirty seconds after the restart. The
-twelve restarted bridges checked no role pair, and ten of them were still running that way more
-than an hour and a half later. Every bridge started after the record was written whose state
-could be read carried the policy, one of them started when a thread was resumed; one short-lived
-process exited before it could be classified.
+A bridge started from the new directory runs under whatever the bridge record says at that moment,
+and the record lives in the Codex home, outside the cache. At the first replacement it was still
+version 1: the old package was enabled and cached and its launcher predates version 2, so
+`register-mcp` could only write the policy once the new package was in place, and it did so about
+thirty seconds after the restart. The twelve restarted bridges checked no role pair, and ten of them
+were still running that way more than an hour and a half later. Every bridge started after the
+record was written whose state could be read carried the policy, one of them started when a thread
+was resumed; one short-lived process exited before it could be classified. At the second replacement
+the record was already version 2. The bridges left running from the removed directory kept the
+policy each had started with: eight carried the recorded one, one carried none, a leftover of the
+first replacement, and one carried a policy file registered before the current one. The bridge the
+resumed thread got from the new directory carried the recorded policy, and a `get_capabilities` call
+from that thread reported its digest.
 
-A later replacement does not repeat that while the record is version 2 and the new launcher reads
-it the way this one does. The launcher finds the Codex home six directories above its own file and
-reads `crw-bridge-mcp.json` there. The record names the owner, the bridge executable, its arguments
-and the policy file with its digest; no field ties it to a version directory or a payload, and the
-executable the documented command registers is the installer's pointer, outside the cache. So a
-launcher in any version directory under the same Codex home reads the same record. That was
-measured in an isolated Codex home with codex-cli 0.154.0: one package installed and a version-2
-record written, then a different payload installed in its place, which removed the first
-directory. The new directory's launcher, started with its declared command, arguments and working
-directory and the App Server's environment, handed the bridge the recorded policy,
-`get_capabilities` reported its digest, and a `register-mcp` rerun answered `record_unchanged`. The
-two payloads differed in a skill and shipped the same launcher bytes, so a launcher with other
-bytes is outside what this showed; [updating safely](#updating-safely) probes every candidate
-before it is added. Three states failed closed rather than open: no record, a policy file that no longer
-matched its digest, and a rollback to a package whose launcher predates version 2 each made the
-launcher exit 2 and start no bridge. Only a version-1 record started a bridge that checks no role,
-which is what the host had. No App Server ran in that home, so it shows what a restarted bridge
-reads, not whether the host restarts it.
+What cannot repeat while the record is version 2, and the new launcher reads it the way the current
+one does, is the first replacement's bridges starting without the policy; whether the host restarts
+bridges at all is the unmeasured part. The launcher finds the Codex home six directories above its
+own file and reads `crw-bridge-mcp.json` there. The record names the owner, the bridge executable,
+its arguments and the policy file with its digest; no field ties it to a version directory or a
+payload, and the executable the documented command registers is the installer's pointer, outside the
+cache. So a launcher in any version directory under the same Codex home reads the same record. That
+was measured in an isolated Codex home with codex-cli 0.154.0: one package installed and a version-2
+record written, then a different payload installed in its place, which removed the first directory.
+The new directory's launcher, started with its declared command, arguments and working directory and
+the App Server's environment, handed the bridge the recorded policy, `get_capabilities` reported its
+digest, and a `register-mcp` rerun answered `record_unchanged`. The two payloads differed in a skill
+and shipped the same launcher bytes, so a launcher with other bytes is outside what this showed;
+[updating safely](#updating-safely) probes every candidate before it is added. Three states failed
+closed rather than open: no record, a policy file that no longer matched its digest, and a rollback
+to a package whose launcher predates version 2 each made the launcher exit 2 and start no bridge.
+Only a version-1 record started a bridge that checks no role, which is what the host had at the
+first replacement. No App Server ran in that home, so it shows what a bridge started from a new
+directory reads, not whether or when the host starts one.
 
-Skills follow the turn. Three threads were in a turn when the package was replaced, one of them a
-turn begun hours earlier, and each compacted afterwards with the removed directory still the root it
+The Stop hook came through the second replacement on both counts. A turn begun before it ended
+thirteen seconds after the replacement finished, when the directory its Stop command named was gone,
+and recorded its Stop once; the journal does not name the candidate that answered, but the packaged
+one no longer existed. And with no approval given, a new ordinary task started after the add
+recorded its Stop, which a hook without trust does not do. Subagent turns recorded no Stop at all on
+this host, before the replacement or after it, so they are no signal either way.
+
+Skills follow the turn. At the first replacement three threads were in a turn when the package was
+replaced, one of them a turn begun hours earlier, and each compacted afterwards with the removed directory still the root it
 had been given. Three threads whose next turn began after the replacement were given the new
 directory when that turn started, one of them on a resume. A compaction summary can still mention
 the old directory as history, so the row speaks of the root a turn is given, not of every mention.
@@ -375,34 +398,41 @@ therefore failures, and the declaration treats them as failures.
 
 Changing the command text changes the hook’s `trusted_hash`, so an update that changes it needs
 one re-trust per installed hook identity. Trust is keyed to the declaration content and not to
-the version path, so an update that leaves the command alone keeps its trust.
+the version path, so an update that leaves the command alone keeps its trust. Both halves were
+seen on the host. After the first measured replacement, whose declaration had changed, the stored
+value stayed as it was until the new declaration was trusted; after the second, whose declaration
+was byte-identical, no approval was given and the hook still fired in a task started
+afterwards. The stored value reads the same in both cases until someone approves, so it cannot tell
+them apart; [updating safely](#updating-safely) compares the declarations instead.
 
 ### The supported range
 
 | Task holding the old package reference | Stop | MCP bridge | Skill reads |
 | --- | --- | --- | --- |
-| Existing task, including an idle interval between turns | The fallback is available if installed; a quiet turn does not establish package-reference reload | Started again by the host from the new directory, under the record as it stood then: measured once | The next turn is given the new root: measured |
-| Existing task during a turn, removed cache | Fallback invocation measured after removal | Started again during the turn, as above: measured once. What a tool call in flight across the restart sees was not measured | The turn keeps the removed root until it ends: measured. A read against it was not observed |
+| Existing task, including an idle interval between turns | The fallback is available if installed; a quiet turn does not establish package-reference reload | At the first measured replacement, started again by the host from the new directory under the record as it stood then; at the second, left running from the removed directory, while a thread that resumed was given one from the new directory. Both measured on the host | The next turn is given the new root: measured |
+| Existing task during a turn, removed cache | Fallback invocation measured after removal; on the host, a turn begun before the second replacement recorded its Stop once after it | As above; which running bridge belonged to a thread in mid-turn was not mapped. What a tool call in flight across a restart sees was not measured | The turn keeps the removed root until it ends: measured. A read against it was not observed |
 | Fresh task created after update | Invocation measured from the updated installation | Verify the new task's actual MCP call | Verify the new task's actual skill read |
 
 The fallback protects the Stop launcher, and nothing measured shows a later turn resolving the Stop
 command afresh: a task can remain alive across many turns, and for that command an idle interval is
 not a session reload. The other two references were measured to behave differently. The skills root
-is renewed when the next turn starts, and the bridge is started again by the host at the
-replacement, under whatever the record says then.
+is renewed when the next turn starts. The bridge is either started again by the host at the
+replacement, under whatever the record says then, or left running from the removed directory with
+the policy it started under while a thread loaded again gets one from the new directory; both
+happened on the host.
 
 ### Updating safely
 
 This is the order for an update that changes the payload, which is any update that moves the
 version directory. It assumes the plugin owns the bridge and the Stop hook, as
 [turning the wired surfaces on](#turning-the-wired-surfaces-on) sets them up, and it rests on
-[what one replacement measured](#what-one-replacement-measured). Steps 1 to 7 are written for a
+[what two replacements measured](#what-two-replacements-measured). Steps 1 to 7 are written for a
 host whose bridge record is already version 2. A host whose record is version 1, or absent, is
 making its first policy registration as well, and step 8 says what that changes.
 
 1. Prefer a moment when no turn is running. A turn in progress keeps the removed skills root until
-   it ends and has its bridge started again underneath it, and what a tool call in flight across
-   that restart sees was not measured. Nothing here lists running turns for you.
+   it ends and may have its bridge started again underneath it, and what a tool call in flight
+   across such a restart sees was not measured. Nothing here lists running turns for you.
 2. Read the version-2 record without changing it: run `register-mcp` with the arguments it was
    written with and without `--apply`.
 
@@ -415,9 +445,9 @@ making its first policy registration as well, and step 8 says what that changes.
    `record_unchanged` means the record still names that policy and the file still hashes to the
    recorded digest, and, with crw enabled and one version cached, that the cached package's declared
    server started a probe under such a record; nothing is written. Every bridge the host starts
-   again during the add reads this record at that moment, so settle any other answer first: a
-   policy file edited since it was registered, for one, would make every restarted bridge refuse to
-   start. If the record is version 1 or absent, read step 8 now, because it decides what happens
+   from the new directory, at the add or when a thread resumes, reads this record at that moment,
+   so settle any other answer first: a policy file edited since it was registered, for one, would
+   make every such bridge refuse to start. If the record is version 1 or absent, read step 8 now, because it decides what happens
    around step 5.
 3. Run the completion hook installation again with the arguments its settings were written with,
    `--dest` included, so the fallback is current before the directory it backs up can disappear:
@@ -449,12 +479,45 @@ making its first policy registration as well, and step 8 says what that changes.
    means its bridge would start without the policy or not at all: do not add it until the answer is
    `record_would_create`. Both of those answers were measured in throwaway homes, and neither run
    left a record behind.
+
+   The same directory tells whether this update will need the hook trusted again. Trust belongs to
+   the hook declaration rather than to the version, so compare the declaration files the two
+   manifests name under `hooks`. `<candidate-dir>` is the version directory the throwaway add
+   reported, and `<installed-dir>` the one installed now,
+   `$CODEX_HOME/plugins/cache/<marketplace>/crw/<version>`:
+
+   ```sh
+   python3 - <candidate-dir> <installed-dir> <<'EOF'
+   import json, pathlib, sys
+   def declared(root):
+       root = pathlib.Path(root)
+       hooks = json.loads((root / ".codex-plugin" / "plugin.json").read_text()).get("hooks")
+       names = [hooks] if isinstance(hooks, str) else list(hooks or [])
+       return names, [(root / name).read_bytes() for name in names]
+   candidate, installed = declared(sys.argv[1]), declared(sys.argv[2])
+   if not any(json.loads(data).get("hooks", {}).get("Stop") for data in candidate[1]):
+       print("no Stop hook declared")
+   else:
+       print("unchanged" if candidate == installed else "changed")
+   EOF
+   ```
+
+   `no Stop hook declared` means none of the candidate's hook declarations has a Stop event, so
+   the completion hook would stop firing after the add; that is not an update this procedure covers,
+   so do not add it.
+   `unchanged` means the stored trust carries over, as it did at the second measured replacement.
+   `changed` means expect to trust the hook again in Codex after step 5, as at the first; that was
+   measured for a change to the command text, what a change elsewhere in the file does was not, and
+   step 6's firing check settles it either way. The trust entry also names the marketplace, so adding
+   the package from a marketplace of another name is inferred to need a trust of its own whatever
+   this prints. The trust entry in the Codex configuration cannot decide any of this: its value
+   stays the same after the add in both cases until someone approves.
 5. On a host that gates the bridge,
    [check the candidate's declaration](#before-you-add-or-update-on-a-host-that-gates-the-bridge),
    passing the version directory step 4's throwaway add reported as `--package`.
-   Then run `codex plugin add crw@<marketplace>`, and re-trust the hook once if its command
-   changed. At the measured replacement the host started bridges again inside this step, before the
-   trust was given.
+   Then run `codex plugin add crw@<marketplace>`, and trust the hook again in Codex if step 4
+   found its declaration changed. At the first measured replacement the host started bridges again
+   before that trust was found in place; at the second, which needed none, none was seen to start.
 6. Read back what landed:
    - the installed payload: `check-declaration --package` on the version directory the add
      installed reports a `payloadDigest` that should equal the one the same command reports for
@@ -465,7 +528,12 @@ making its first policy registration as well, and step 8 says what that changes.
    - `get_capabilities` in a fresh task and in the tasks that were loaded during the add: its
      `executionPolicy.digest` is the digest the record names, and a bridge with no policy reports
      `presence_only`;
-   - every running crw bridge, from `/proc`, the way the measured replacement was read. Run it as
+   - whether the hook fires: end a turn in an ordinary task started after the add and find that
+     session and turn in the Stop journal, as the step of
+     [running the combination against a real host](runtime-install.md#running-the-combination-against-a-real-host)
+     that reads the journal records for one session and turn does. A subagent's turn is no signal:
+     on the measured host subagent turns recorded no Stop at all;
+   - every running crw bridge, from `/proc`, the way both measured replacements were read. Run it as
      the user the App Server runs as; a bridge process whose directory or environment you may not
      read is listed as `UNREADABLE` rather than skipped. This is an operator reading, not a command
      this repository ships:
@@ -503,19 +571,24 @@ making its first policy registration as well, and step 8 says what that changes.
      ```
 
      Each line is a bridge process, the marketplace and version directory it runs from, and whether
-     it carries the recorded policy.
+     it carries the recorded policy. A bridge still running from a removed directory shows
+     `(deleted)` after the version, as all ten did right after the second measured replacement.
 
    Preserve existing recovery evidence and compatibility paths until their readers are gone.
 7. Tasks that were loaded before the replacement:
    - A turn that was running keeps the removed skills root it was given until it ends, and that
      directory is gone; what a later read against it does was not observed. The thread's next turn
      is given the new root.
-   - Its bridge was started again at the replacement and runs under the record as it was at that
-     moment. With a version-2 record and a candidate that passed step 4, that is the policy: measured
-     in isolation, not yet at a host replacement. With a version-1 record it is no policy, as the
-     host showed; with no record there is no bridge, as the isolated run showed. A bridge that step 6
-     reports without the policy stays that way until the host starts that thread's bridge again. A
-     resume did that at the measured replacement; nothing in this repository can.
+   - Its bridge was either started again at the replacement or left running from the removed
+     directory while a thread that resumed was given a new one, and what decides between the two was
+     not measured. A bridge left running keeps the
+     policy it started with. A bridge started from the new directory, at the replacement or when the
+     thread resumes, runs under the record as it is at that moment: with a version-2 record and a
+     candidate that passed step 4 that is the policy, measured on the host at the second replacement
+     and in isolation; with a version-1 record it is no policy, as the first replacement showed; with
+     no record there is no bridge, as the isolated run showed. A bridge that step 6 reports without
+     the recorded policy stays that way until the host starts that thread's bridge again. A resume
+     did that at both measured replacements; nothing in this repository can.
    - A Stop whose command names the removed directory falls back to the copy step 3 placed.
 8. The first policy registration. Step 4 is what shows the new package starts a bridge under a
    version-2 record, and it applies in every order below. With no record at all, run the step 2
@@ -531,10 +604,10 @@ making its first policy registration as well, and step 8 says what that changes.
    cached ships a launcher older than version 2, `register-mcp` refuses the version-2 record itself
    ([turning the wired surfaces on](#turning-the-wired-surfaces-on)). Step 2 therefore answers with
    one of those refusals, and the choice is when the version-1 record leaves:
-   - After step 5, as at the measured replacement: add the package, move the version-1 record aside,
-     run the step 2 command with `--apply`, read back as in step 6, then have the host start again
-     the bridges it reports without the policy. Every bridge the host restarts before the record
-     moves checks no role.
+   - After step 5, as at the first measured replacement: add the package, move the version-1
+     record aside, run the step 2 command with `--apply`, read back as in step 6, then have the host
+     start again the bridges it reports without the policy. Every bridge the host restarts before
+     the record moves checks no role.
    - Before step 5: move the version-1 record aside, add the package, then register with `--apply`
      and read back the same way. A launcher that finds no record starts no bridge (measured in
      isolation), so a thread whose bridge restarts in between has no bridge tools rather than
@@ -568,8 +641,9 @@ the source offer the earlier revision again and reinstalling it, not selecting a
 older copy from the cache. Bump `version` in the manifest for a release and record the
 payload suffix under it; a new
 task picks up the new package when its session starts. A task already running meets it piece by
-piece: the host starts its bridge again, a turn in progress keeps the skills directory it was given
-until it ends, and a Stop whose command names the removed directory falls back.
+piece: the host may start its bridge again or leave it running from the removed directory, a thread
+that resumes gets one from the new directory, a turn in progress keeps the skills directory it was
+given until it ends, and a Stop whose command names the removed directory falls back.
 [The cache lifetime](#the-cache-lifetime) says which of those were measured.
 
 Because the suffix follows the payload, an earlier revision reinstalls into its own directory
@@ -579,8 +653,11 @@ present.
 A rollback past the bridge record's version installs, and then its launcher refuses the record. A
 launcher that predates version 2 starts no bridge under a version-2 record: measured in isolation,
 where the older package's `codex plugin add` succeeded and every start of its bridge exited 2. So
-threads have no bridge tools after such a rollback until the record is replaced with a version-1
-one, and a version-1 record starts bridges that check no role.
+a bridge started after such a rollback, at the add or when a thread resumes, is refused, and that
+thread has no bridge tools. A version-1 record in place of the version-2 one lets bridges started
+after it run, and they check no role; whether the host starts a refused bridge again was not
+measured. A bridge already running may keep going from the removed directory, as all of them did at
+the second measured replacement, with the policy it started under.
 
 Removing the plugin deletes the cached version directory and the plugin entry in
 `config.toml`. It leaves the marketplace registration, so removing that is a

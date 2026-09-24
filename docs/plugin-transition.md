@@ -285,8 +285,9 @@ through `<destination>/current`, so replacing the version behind that pointer ch
 resolves while a process already running keeps the one it started with. The records are not rewritten
 by an update, which is the point of recording the pointer rather than a resolved version.
 
-Replacing the plugin package is a separate update with an order of its own, because the host starts
-the bridges of loaded threads again and a running turn keeps its skills directory until it ends. See
+Replacing the plugin package is a separate update with an order of its own, because the host may
+start the bridges of loaded threads again, a running turn keeps its skills directory until it ends,
+and a changed hook declaration has to be trusted again. See
 [updating safely](plugin-packaging.md#updating-safely).
 
 ## A failed version replacement
