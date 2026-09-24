@@ -188,13 +188,19 @@ class ARecordMissingItsFields(_Revisions):
 
     LOST = ("supersedesEvent", "supersedesRevisionHash", "verdictTurnId", "executionGeneration")
 
-    def lose(self, revision):
+    def lose(self, revision, *, disposition=False):
         stored = self.store.one("SELECT receipt FROM events WHERE event_id = ?", (revision,))
         receipt = json.loads(stored["receipt"])
         for key in self.LOST:
             receipt.pop(key, None)
+        if disposition:
+            receipt["criteria"][0].pop("verdict", None)
         self.store.db.execute("UPDATE events SET receipt = ? WHERE event_id = ?",
                               (json.dumps(receipt), revision))
+
+    # The full record is the stored receipt this lacks, so the generation is the parent's to
+    # give: pointing the child at the record would send it to look where the value is not.
+    PLACEHOLDER = "--generation <not recorded; ask the parent> --attempt <n>"
 
     def test_the_plain_request_names_what_the_record_lacks(self):
         _source, revision = self.revision(ONE)
@@ -202,7 +208,7 @@ class ARecordMissingItsFields(_Revisions):
         message = self.delivery.render_message(revision)
         self.assert_correction_form(message)
         self.assertIn("executionGeneration: not recorded", message)
-        self.assertIn("--generation <not recorded", message)
+        self.assertIn(self.PLACEHOLDER, message)
 
     def test_the_composed_request_names_what_the_record_lacks(self):
         _source, revision = self.revision(ONE)
@@ -211,7 +217,19 @@ class ARecordMissingItsFields(_Revisions):
         message = self.delivery.render_message(revision)
         self.assert_correction_form(message)
         self.assertIn("execution generation not recorded", section(message, "SCOPE"))
-        self.assertIn("--generation <not recorded", message)
+        self.assertIn(self.PLACEHOLDER, message)
+
+    def test_a_finding_without_its_disposition_says_so_on_both_paths(self):
+        _source, revision = self.revision(ONE)
+        self.lose(revision, disposition=True)
+        plain = self.delivery.render_message(revision)
+        self.assert_correction_form(plain)
+        self.assertIn("c-1: no disposition recorded", plain)
+        self.assertIn("1 finding without a disposition", section(plain, "FIX SCOPE"))
+        self.with_report(revision)
+        composed = self.delivery.render_message(revision)
+        self.assert_correction_form(composed)
+        self.assertIn("1 finding without a disposition", section(composed, "FIX SCOPE"))
 
 
 class NothingRuledViolatedOrOwed(_Revisions):
