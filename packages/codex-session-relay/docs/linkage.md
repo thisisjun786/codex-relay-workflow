@@ -188,6 +188,61 @@ incoming owner restates the outgoing owner and the exact unfinished set, so noth
 over silently. It is now a check the caller passes on the way to a refusal that explains the
 rest, rather than a licence to proceed.
 
+## Where an instruction stands
+
+A supervisor's instruction to a project is recorded by digest (`linkage-directive`), and with
+`--purpose` its envelope pointer says what it is for. The purpose decides what the instruction
+competes with (`envelope.directive_place`). Reading every two live instructions of different
+digests as contradictory made a relayed decision contest the assignment it was answering
+inside; on the installed relay that read as `instruction_conflict` for both of a supervisor's
+projects and held every report they owed upward for half an hour (CRW-124 G1, F-G1-2; CRW-230).
+
+| Purpose | Relation to the others |
+|---|---|
+| `project_assignment` | Sole: one live per scope. A later one replaces it explicitly |
+| `scope_correction` | Sole: one live per scope, whether or not it answers a message. It amends the assignment and stands beside it; a later correction replaces it explicitly |
+| `relayed_decision` | Stands beside the assignment and the correction. Two answering the same message with different digests compete |
+| `midpoint_check`, `resume`, `user_stop` | Stand beside everything. Two answering the same message with different digests compete |
+| none recorded | Cannot be placed, so it competes with every live instruction of another digest: the rule every row followed before |
+
+Two live instructions contest when their digests differ and they claim the same place: the same
+sole purpose, the same purpose answering the same message, or either with no recorded purpose.
+Every place holds one live row. The same instruction restated is not a contest - one digest is
+one instruction - but after a handover it would reach the store as a new row, because the id
+carries the link revision (see Identity). A purposed record of it is therefore refused as already
+in force: the predecessor's row stays live through the handover, so nothing needs recording, and a
+second live copy would leave a later replacement settling one of two. A successor that wants it
+in its own name settles the predecessor's row superseded first. A different instruction from the
+successor is refused like any competitor and names the predecessor's row. Reading a pair an older
+writer left, the walks treat one digest as one instruction and hold nothing for it.
+Replacing one is always explicit: settle the one in force `superseded` (`linkage-settle`),
+restate in the new instruction whatever of it still applies, and record the new one. `chosen`
+also takes a directive out of the live set, but it records the winner of a contest rather than
+a replacement. Two corrections are not merged, because the store keeps no order between them
+that a parent could apply: directives are read in recorded order and a tie falls to the id.
+
+Priority is guidance for the parent and the store never reads it: a user stop comes first; the
+live correction amends the live assignment; a relayed decision applies within both; a
+midpoint check or a resume asks for an answer or a restart and changes nothing about the work.
+
+An instruction recorded WITH a purpose is placed where it is recorded. One that would contest a
+live instruction is refused `link_conflict` before anything is written, naming the one in force
+(its id, purpose, answered message, origin, link revision and recording time) and the
+`linkage-settle` that replaces it, and the contest is retained in `linkage_conflicts` with both
+directive ids, so a retry converges on one row. An instruction recorded WITHOUT a purpose cannot
+say what it competes with, so it is recorded as it always was and any contest it makes is
+reported by the walks as `instruction_conflict`, which holds the reports above it and is named
+in `supervisor-standing` ([supervisor channel](supervisor-channel.md#a-report-the-hierarchy-is-holding)).
+A previous link revision's instruction counts like any other: a handover does not dispose of
+what the outgoing supervisor said, and the successor settles it when it replaces it.
+
+One limit stays. A directive's id is derived from its scope, origin, digest and link revision,
+so an instruction recorded without a purpose cannot be recorded again with one under the same
+digest: the second record is the same id, and the pointer check refuses it whether or not the
+first has been settled. Record the purposed instruction under a digest of its own (one computed
+over the purpose and the text, for example), after settling the old row if it is to stop being
+live.
+
 ## Reading
 
 `up()`, `down()` and `counterpart()` return a record and never raise for an absence, and they
@@ -258,7 +313,7 @@ a linkage that demonstrably exists.
 | `role_already_bound` | one task asked for a second live scope of a role it already holds |
 | `handover_unconfirmed` | no evidence, the wrong outgoing owner, or an outstanding set that does not match |
 | `handover_would_strand` | live work the handover cannot carry across, named row by row in the refusal |
-| `link_conflict` | the same link or binding asserted with different endpoints or another host; a supervising initiative also referencing its own project; a settled directive decided again differently |
+| `link_conflict` | the same link or binding asserted with different endpoints or another host; a supervising initiative also referencing its own project; a settled directive decided again differently; a purposed directive that would contest a live one for its place ([Where an instruction stands](#where-an-instruction-stands)) |
 | `link_not_active` | a status or disposition outside its vocabulary |
 
 ## What this is not
