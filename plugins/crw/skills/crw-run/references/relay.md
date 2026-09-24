@@ -473,7 +473,8 @@ projection, and its `nextExpectedAction` keeps `child_corrects` for a correction
 (`dispatched`). Before that it is `daemon_delivers_correction` while the correction is unsent,
 `daemon_confirms_correction` while a send is in flight or answered unusably, and
 `parent_recovers_held_correction` once it is held, including one stored where the child reads
-without waking it. A withhold for settings or a send outcome is not explained there; `status` reads
+without waking it. A correction a final event of its generation already answered reads
+`parent_reads_child_disposition`: the relay suppresses it, and the answer is in `dispositions-show`. A withhold for settings or a send outcome is not explained there; `status` reads
 it.
 
 Exit codes differ from `doctor` deliberately. `doctor` keeps exit 0 for an unreadable database

@@ -23,6 +23,7 @@ from .transport import (
     INBOX_ONLY,
     QUEUED,
     SENDING,
+    SUPERSEDED,
     WITHHELD_PRE_SEND,
 )
 
@@ -81,6 +82,12 @@ NEXT_ACTION = {
 CORRECTION_UNSENT_ACTION = "daemon_delivers_correction"
 CORRECTION_UNCONFIRMED_ACTION = "daemon_confirms_correction"
 CORRECTION_HELD_ACTION = "parent_recovers_held_correction"
+# A final event of the correction's generation already answered it (a failed, interrupted or
+# blocked reply, which leaves the assignment in needs_changes): the relay suppresses the
+# correction instead of sending it, and what is owed is the parent reading that answer, which
+# dispositions-show lists. The only supersession a correction delivery can carry is this one
+# (delivery._supersession_reason for a revision request).
+CORRECTION_ANSWERED_ACTION = "parent_reads_child_disposition"
 
 # delivery states in which nothing has been sent (dispositions.NOT_SENT uses the same three).
 NOT_SENT_STATES = (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND)
@@ -156,16 +163,19 @@ def correction_next_action(state, projection):
     """The next action for needs_changes, from the correction the same projection read.
 
     None leaves NEXT_ACTION's answer. A correction event always has its delivery row, because
-    ack.record_verdict inserts the event and queues it in one transaction. A state this rule has
-    no word for (a superseded correction) also leaves NEXT_ACTION's answer, and so does a
-    correction with a supersession note: a final event of its generation already answered it,
-    and the next attempt suppresses it instead of sending, so the relay is not delivering it.
+    ack.record_verdict inserts the event and queues it in one transaction. A correction with a
+    supersession note, or one the note has already been applied to, was answered by a final
+    event of its generation; that is checked first, because the note outranks the delivery
+    state (the state is left alone so reconciliation can still settle an outstanding send). A
+    state this rule has no word for leaves NEXT_ACTION's answer.
     """
     correction = projection["correction"]
     delivery = correction["delivery"]
-    if state != NEEDS_CHANGES or delivery is None or delivery["state"] in REACHED_STATES:
+    if state != NEEDS_CHANGES or delivery is None:
         return None
-    if correction.get("supersession") is not None:
+    if correction.get("supersession") is not None or delivery["state"] == SUPERSEDED:
+        return CORRECTION_ANSWERED_ACTION
+    if delivery["state"] in REACHED_STATES:
         return None
     reason = correction["undeliveredReason"] or {}
     if delivery["state"] == INBOX_ONLY or reason.get("source") == "deliveries.hold_reason":

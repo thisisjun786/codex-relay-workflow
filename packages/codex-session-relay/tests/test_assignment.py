@@ -804,8 +804,27 @@ class UnsentCorrection(AssignmentTestCase):
         """A final child event in the correction's generation supersedes the correction.
 
         The supersession is noted on the queued delivery, whose state is left alone, and the
-        next attempt suppresses it rather than sending. The relay is not going to deliver it.
+        next attempt suppresses it rather than sending. The relay is not going to deliver it,
+        and the child has already answered, so what is owed next is the parent reading that
+        answer - before the suppression is applied and after it.
         """
+        failed_event = self._child_answers_with_failure()
+        record, correction = self.read()
+        self.assertEqual(correction["delivery"]["state"], "queued")
+        self.assertIsNotNone(correction["supersession"])
+        self.assertEqual(record["state"], NEEDS_CHANGES)
+        self.assertEqual(record["nextExpectedAction"], "parent_reads_child_disposition")
+
+        self.clock.advance(1)
+        self.attempt(self.correction)
+        record, correction = self.read()
+        self.assertEqual(correction["delivery"]["state"], "superseded")
+        self.assertEqual(record["nextExpectedAction"], "parent_reads_child_disposition")
+        self.assertEqual(self.adapter.sends[-1][1], PARENT,
+                         "the suppressed correction was sent to the child")
+        self.assertIsNotNone(failed_event)
+
+    def _child_answers_with_failure(self):
         relationship = self.registry.get(self._rid)
         generation = relationship["executionGeneration"]
         self.registry.bind_anchor(
@@ -817,10 +836,7 @@ class UnsentCorrection(AssignmentTestCase):
         )
         self.accept(payload)
         self.delivery.enqueue(payload["eventId"])
-        record, correction = self.read()
-        self.assertEqual(correction["delivery"]["state"], "queued")
-        self.assertIsNotNone(correction["supersession"])
-        self.assertNotEqual(record["nextExpectedAction"], "daemon_delivers_correction")
+        return payload["eventId"]
 
     def test_an_identical_stamp_on_another_operation_is_not_guessed(self):
         self.adapter.threads[CHILD].archived = True
