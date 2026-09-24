@@ -77,6 +77,14 @@ bounded part to change), `PRESERVE` (the work and evidence that stay), and `REVE
 envelope subject, and the reproduction or review basis is the evidence field. A body missing a
 section is refused naming it, exactly as an assignment missing a DISPATCH-TASK-01 section is.
 
+The relay's own revision request, the one a `needs_changes` verdict opens, carries the same five
+sections, so the verdict path and a packet describe one correction. Both relay renderers build
+them from the verdict record and, where a work report is recorded, the parent's review:
+`FIX SCOPE` is exactly the findings ruled `needs_changes`, a finding ruled `verified` stays
+under `PRESERVE`, and one ruled `unverified` is evidence `REVERIFY AND RETURN` asks for. What
+that record cannot answer, such as a verdict naming no criterion or a finding given no
+disposition, is written in its section as `not recorded`, never left out.
+
 **The callback.** An object of `taskId`, `model` and `effort`: where to answer, and the pair the
 task being answered is currently authorized to run. It is an object because the pair is what
 goes stale. A parent whose model the user changed on 2026-09-23 runs another pair from then on,

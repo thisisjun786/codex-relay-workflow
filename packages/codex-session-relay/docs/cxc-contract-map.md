@@ -102,6 +102,12 @@ before it can start. The acknowledgement asymmetry is unchanged: contract v1 def
 acknowledgement for the parent-to-child direction, so the message says so and tells the
 child what does work instead.
 
+It also carries the correction form, `VIOLATED CRITERION`, `WHAT CHANGED`, `FIX SCOPE`,
+`PRESERVE` and `REVERIFY AND RETURN` (`cxc.CORRECTION_SECTIONS`), the sections a packet
+revision request is refused without. Every DISPATCH field that speaks about the findings
+points at `FIX SCOPE`, which names only what the parent ruled `needs_changes`, and a section
+the verdict record cannot answer says `not recorded` instead of disappearing.
+
 ## What this does not do
 
 It builds no dispatch mechanism, no state machine and no provider retry ladder; CXC owns all

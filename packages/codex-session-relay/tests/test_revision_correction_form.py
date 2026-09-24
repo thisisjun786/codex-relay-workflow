@@ -114,7 +114,7 @@ class OnlyWhatIsRuledViolatedIsInScope(_Revisions):
             self.assertIn(part, violated)
         scope = section(message, "FIX SCOPE")
         self.assertIn("only the 1 finding marked needs_changes", scope)
-        self.assertIn("verified or unverified", scope)
+        self.assertIn("verified, unverified findings are out of scope", scope)
         self.assertIn("1 finding marked unverified", section(message, "REVERIFY AND RETURN"))
 
     def test_every_composed_instruction_reads_the_findings_through_fix_scope(self):
@@ -133,7 +133,8 @@ class OnlyWhatIsRuledViolatedIsInScope(_Revisions):
         self.assertIn("FIX SCOPE does not name", section(message, "MUST NOT"))
         self.assertIn("fix what FIX SCOPE names", section(message, "DECISION BOUNDARY"))
         self.assertIn("everything FIX SCOPE does not name", section(message, "PRESERVE"))
-        self.assertIn("raised only in review", section(message, "FIX SCOPE"))
+        self.assertIn("verified, unverified and review-only findings are out of scope",
+                      section(message, "FIX SCOPE"))
 
 
 class WhatTheVerdictRecordCannotAnswer(_Revisions):
@@ -160,15 +161,17 @@ class WhatTheVerdictRecordCannotAnswer(_Revisions):
         self.assert_correction_form(message)
         self.assertNotIn("the verdict named no criterion", message)
         self.assertIn("only the 1 finding marked needs_changes", section(message, "FIX SCOPE"))
-        self.assertIn("1 finding carries no disposition", message)
+        self.assertIn("1 finding without a disposition: whether to change it is not recorded",
+                      message)
         self.assertIn("the review judged FAIL", section(message, "WHAT CHANGED"))
-        # Shortened hard, the gap and the whole return instruction are still there.
+        # Shortened hard (the forty unresolved items cannot all fit), the gap and the whole
+        # return instruction are still there.
         row = self.delivery.get(revision)
         receipt = self.intake.get(revision) or {}
-        tight = report.render_revision(row, receipt, "del-t-a1", stored, budget=2600)
+        tight = report.render_revision(row, receipt, "del-t-a1", stored, budget=3800)
         self.assertIn("omitted:", tight)
         self.assert_correction_form(tight)
-        self.assertIn("1 finding carries no disposition", tight)
+        self.assertIn("1 finding without a disposition", tight)
         for part in ("emit --relationship", "--outcome ready_for_review", "--artifact <path>"):
             self.assertIn(part, tight)
 
@@ -188,3 +191,38 @@ class ManyFindings(_Revisions):
         self.assertIn("omitted:", composed)
         self.assertIn("30 recorded findings", section(composed, "VIOLATED CRITERION"))
         self.assertIn("only the 30 findings marked needs_changes", section(composed, "FIX SCOPE"))
+
+
+class TheWorstLegalCorrectionStillRenders(_Revisions):
+    """Every unelidable field at its own maximum, and the correction sections on top of it.
+
+    The five sections are never shortened, so they raise the floor every revision report
+    renders from. A report record() accepts and the composer cannot fit is a correction stored
+    forever and delivered never, since rendering happens inside the delivery claim. So the
+    worst legal revision reports have to render at the default budget, and this fails if the
+    sections ever grow past it.
+    """
+
+    def heaviest(self, findings, review):
+        _source, revision = self.revision(findings)
+        self.with_report(revision, review=review, summary="s" * report.SUMMARY_MAX,
+                         next_action="n" * report.ACTION_MAX,
+                         cxc_reason="r" * report.REASON_MAX)
+        message = self.delivery.render_message(revision)
+        self.assert_correction_form(message)
+        self.assertLessEqual(len(message.encode("utf-8")), report.BUDGET)
+
+    def test_a_mixed_verdict_with_a_review(self):
+        self.heaviest(MIXED, {"kind": cxc.GO_WITH_FIXES, "blockers": 1,
+                              "findings": [{"id": "c-9", "verdict": "needs_changes",
+                                            "note": "z"}]})
+
+    def test_a_review_naming_every_disposition(self):
+        self.heaviest(None, {"kind": cxc.GO_WITH_FIXES, "blockers": 1,
+                             "findings": [{"id": "c-5", "verdict": "needs_changes", "note": "a"},
+                                          {"id": "c-6", "verdict": "unverified", "note": "b"},
+                                          {"id": "c-7", "verdict": "verified", "note": "c"},
+                                          {"id": "c-8", "note": "d"}]})
+
+    def test_nothing_named_at_all(self):
+        self.heaviest(None, {"kind": cxc.FAIL, "findings": []})
