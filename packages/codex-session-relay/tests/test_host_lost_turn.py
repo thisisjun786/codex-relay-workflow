@@ -1055,7 +1055,19 @@ class TheHostListsALostTurnAfterAReload(HostLossCase):
         self.daemon.tick()
         self.assertEqual(self.attempt_states(event_id), [HOST_LOST, DISPATCHED])
 
-    def test_a_message_the_host_types_unfamiliarly_still_blocks_the_loss(self):
+    def test_a_file_the_parent_wrote_with_the_request_id_does_not_veto_the_loss(self):
+        """Review of 8386c7fe: a fileChange is the parent's own work, not the delivered message."""
+        event_id, first, turn = self.dispatched()
+        self.host_reloads_losing(turn)
+        self.adapter.start_turn(PARENT, turn_id="parent-later", status="completed")
+        self.adapter.threads[PARENT].items.append(
+            ("parent-later", f"+ waiting on {first}", "fileChange"))
+        self.clock.advance(120)
+        self.daemon.tick()
+        self.assertEqual(self.attempt_states(event_id), [HOST_LOST, DISPATCHED])
+        self.assertEqual(len(self.adapter.sends), 2)
+
+    def test_a_message_the_host_types_unfamiliarly_is_named_and_not_sent_again(self):
         event_id, first, turn = self.dispatched()
         thread = self.adapter.threads[PARENT]
         message = next(item[1] for item in thread.items if item[0] == turn)
@@ -1065,6 +1077,12 @@ class TheHostListsALostTurnAfterAReload(HostLossCase):
         self.daemon.tick()
         self.assertEqual(self.attempt_states(event_id), [DISPATCHED])
         self.assertEqual(len(self.adapter.sends), 1)
+        self.assertEqual(self.attempts_for(event_id)[0]["recipient_scan"],
+                         "turn_check_undecided:token_in_other_item")
+        reading = self.reconciler.reconcile_attempt(first, self.adapter)["recipientTurn"]
+        self.assertEqual((reading["finding"], reading["undecided"]),
+                         ("unknown", "token_in_other_item"))
+        self.assertIn("hookPrompt", reading["detail"])
 
     def test_a_long_finished_turn_is_read_from_its_first_item(self):
         event_id, first, turn = self.dispatched()
@@ -1643,9 +1661,18 @@ class TheAdapterLooksBackOnlyToTheSend(unittest.TestCase):
         adapter = BridgeHostAdapter(call=call, page=8)
         self.assertFalse(adapter.find_token("thread", "del-x-a1", message_only=True).found)
         self.assertTrue(adapter.find_token("thread", "del-x-a1").found)
+        # Neither the message nor agent output: named, and taken for neither.
+        prompted = adapter.find_token_since("thread", "del-x-a1", older=())
+        self.assertFalse(prompted.found)
+        self.assertEqual((prompted.other_turn, prompted.other_kind), ("t2", "hookPrompt"))
+        # Agent output of every kind the host names is passed over, a written file included.
+        items[1] = _item("t2", "fileChange", "del-x-a1")
+        written = adapter.find_token_since("thread", "del-x-a1", older=())
+        self.assertFalse(written.found)
+        self.assertIsNone(written.other_kind)
+        # The message itself still counts behind an item of a type the relay does not know.
+        items[:] = [_item("t2", "someLaterKind", "del-x-a1"), _item("t1", "userMessage", "del-x-a1")]
         self.assertTrue(adapter.find_token_since("thread", "del-x-a1", older=()).found)
-        items[1] = _item("t2", "agentMessage", "del-x-a1")
-        self.assertFalse(adapter.find_token_since("thread", "del-x-a1", older=()).found)
 
 
 def _item(turn_id, kind, text):
