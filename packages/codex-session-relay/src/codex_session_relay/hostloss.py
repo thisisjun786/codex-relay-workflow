@@ -54,6 +54,9 @@ REPORT_ONLY = "report_only"
 LISTING_BOUNDED = "listing_bounded"
 LISTING_EMPTY = "listing_empty"
 TOKEN_SCAN_BOUNDED = "token_scan_bounded"
+# Not a question waiting answers either: the message is in the parent's items, so it is not sent
+# again, but the turn that would have acted on it is gone from the list (review 7).
+TOKEN_WITHOUT_TURN = "token_without_turn"
 NO_SEND_TIME = "no_send_time"
 NO_TURN = "no_turn"
 UNDECIDED_MARK = TURN_CHECK_UNDECIDED + ":"
@@ -77,7 +80,8 @@ def read_recipient_turn(adapter, clock, attempt, delivery, turn_id) -> dict:
     no answer was reached: an adapter that cannot list turns, an attempt without a send time, an
     unreadable host, or a send too recent to call its turn lost.
     undecided names the reasons waiting will not fix (listing_bounded, listing_empty,
-    token_scan_bounded, no_send_time, no_turn), and is None otherwise.
+    token_scan_bounded, no_send_time, no_turn), and is None otherwise. A present reading can
+    carry one too: token_without_turn, a delivered message whose turn the list no longer has.
     """
     reading = {"turnId": turn_id, "finding": UNKNOWN, "status": None, "detail": None,
                "undecided": None}
@@ -142,6 +146,7 @@ def read_recipient_turn(adapter, clock, attempt, delivery, turn_id) -> dict:
             finding=PRESENT,
             detail=f"the recipient does not list this turn, but this attempt's token is in its "
                    f"items (turn {scan.turn_id})",
+            undecided=TOKEN_WITHOUT_TURN,
         )
         return reading
     if not scan.exhausted:
@@ -168,10 +173,10 @@ def record_undecided(store, request_id, reading) -> int:
     Written only while the attempt is still a settled dispatch, and only when the recorded value
     changes, so a tick that learns nothing new writes nothing. Returns the rows changed.
     """
-    if reading["finding"] == PRESENT:
-        wanted = None
-    elif reading["finding"] == UNKNOWN and reading.get("undecided"):
+    if reading.get("undecided"):
         wanted = UNDECIDED_MARK + reading["undecided"]
+    elif reading["finding"] == PRESENT:
+        wanted = None
     else:
         return 0
     with store.transaction() as db:

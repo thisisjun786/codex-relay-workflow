@@ -478,14 +478,14 @@ is its generation's anchor, which is never rebound, so for revisions and merge-t
 check is reported and changes nothing. A lost revision anchor already shows up in observation
 health as an absent turn.
 
-The pass writes nothing while a turn is present. A turn listed as finished is not read again while
+The pass writes nothing while the turn is listed. A turn listed as finished is not read again while
 its delivery still waits for the acknowledgement. The daemon remembers those request ids in memory,
 and each tick asks the store about the page of them it checked longest ago, forgetting any whose
 delivery has since been acknowledged, held, lost or sent again. The memory therefore stays about the
 size of the deliveries still waiting. The pass resumes where the last one stopped and returns to
 the first waiting delivery only after reaching the last, so a long run of finished turns delays the
-deliveries behind it by a page a tick and never hides them. An in-progress turn, a token found
-without its turn row, and an unreadable host are read again on a later rotation, within the budget.
+deliveries behind it by a page a tick and never hides them. An in-progress turn and an unreadable
+host are read again on a later rotation, within the budget.
 
 Some readings cannot decide however long the relay waits: a listing that never reached the send,
 a listing with no turns at all once the send is more than 61 seconds old, a token scan that could
@@ -493,7 +493,10 @@ not cover the turns since it, or an attempt without a send time. An empty listin
 parent shows when the lost delivery was its only turn, and also what a host shows for a thread it
 answers for without its turns, so it is named and never taken for absence. These are recorded on
 the attempt as `turn_check_undecided:<reason>` (`listing_bounded`, `listing_empty`,
-`token_scan_bounded`, `no_send_time`). `status` reads the phase as
+`token_scan_bounded`, `no_send_time`). One more reading is named the same way although it
+decides the veto: the delivery's token is in the parent's items but its turn is gone from the
+list (`token_without_turn`). The message is there, so it is not sent again, but the turn that would
+have acted on it is gone, which the parent has to be able to see. `status` reads the phase as
 `awaiting_ack:turn_check_undecided`, and `assignment-show` carries the reason as
 `projection.completion.delivery.turnCheck`. Nothing is sent again on an undecided reading. The
 daemon reads such a row again after ten minutes. Only a later reading that decides clears the
