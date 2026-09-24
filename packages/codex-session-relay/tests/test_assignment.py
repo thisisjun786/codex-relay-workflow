@@ -761,6 +761,34 @@ class UnsentCorrection(AssignmentTestCase):
         self.assertEqual(correction["undeliveredReason"],
                          {"source": "deliveries.hold_reason", "value": "attempt_cap"})
 
+    def test_a_correction_stored_without_waking_the_child_is_the_parents_to_recover(self):
+        """inbox_only is stored where the child reads it, no turn woken, held and never retried."""
+        self.adapter.threads[CHILD].approval_policy = "on-request"
+        self.adapter.script("approval_policy")
+        self.assertEqual(self.attempt(self.correction)["deliveryState"], "inbox_only")
+        record, correction = self.read()
+        self.assertEqual(record["nextExpectedAction"], "parent_recovers_held_correction")
+        self.assertEqual(correction["undeliveredReason"],
+                         {"source": "deliveries.hold_reason", "value": "push_channel_closed"})
+
+    def test_a_correction_whose_send_is_uncertain_waits_on_the_relay_to_confirm_it(self):
+        self.adapter.script("transport_unknown")
+        self.assertEqual(self.attempt(self.correction)["deliveryState"], "held_uncertain")
+        record, _correction = self.read()
+        self.assertEqual(record["nextExpectedAction"], "daemon_confirms_correction")
+
+    def test_a_correction_claimed_and_not_yet_answered_waits_on_the_relay_to_confirm_it(self):
+        # What a claim leaves while its send is in flight, or after the process stopped mid-send.
+        self.store.db.execute(
+            "UPDATE deliveries SET state = 'sending', attempt_count = attempt_count + 1,"
+            " lease_owner = 'relay', lease_until = ? WHERE event_id = ?",
+            (self.clock.now() + 60, self.correction),
+        )
+        self.store.db.commit()
+        record, correction = self.read()
+        self.assertEqual(correction["delivery"]["state"], "sending")
+        self.assertEqual(record["nextExpectedAction"], "daemon_confirms_correction")
+
     def test_another_reading_of_the_same_task_does_not_move_this_events_reason(self):
         from codex_session_relay.lifecycle import ARCHIVED, Lifecycle, record
 

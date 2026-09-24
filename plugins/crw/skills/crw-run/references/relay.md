@@ -467,10 +467,12 @@ gone out: its hold, `relationship_not_active` for an assignment somebody stopped
 withhold that set its current state with the time it was recorded, for example `lifecycle_unknown`
 when the relay cannot establish whether the child is archived. `counts.correctionNotSent` and
 `counts.correctionWithheld` count them. `assignment-show` applies the same rule to its correction
-projection, and while the correction is unsent its `nextExpectedAction` is
-`daemon_delivers_correction`, or `parent_recovers_held_correction` once it is held; `child_corrects`
-means the correction went out. A withhold for settings or a send outcome is not explained there;
-`status` reads it.
+projection, and its `nextExpectedAction` keeps `child_corrects` for a correction that reached a turn
+(`dispatched`). Before that it is `daemon_delivers_correction` while the correction is unsent,
+`daemon_confirms_correction` while a send is in flight or answered unusably, and
+`parent_recovers_held_correction` once it is held, including one stored where the child reads
+without waking it. A withhold for settings or a send outcome is not explained there; `status` reads
+it.
 
 Exit codes differ from `doctor` deliberately. `doctor` keeps exit 0 for an unreadable database
 because determining before anything exists is not an error. This command exits 2 and prints the

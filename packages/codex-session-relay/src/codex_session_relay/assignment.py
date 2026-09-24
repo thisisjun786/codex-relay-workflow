@@ -15,7 +15,16 @@ import json
 
 from .currency import AMBIGUOUS, head_revision
 from .errors import RefusalReason
-from .transport import DEFERRED_BUSY, QUEUED, WITHHELD_PRE_SEND
+from .transport import (
+    ACKNOWLEDGED,
+    DEFERRED_BUSY,
+    DISPATCHED,
+    HELD_UNCERTAIN,
+    INBOX_ONLY,
+    QUEUED,
+    SENDING,
+    WITHHELD_PRE_SEND,
+)
 
 REQUESTED = "requested"
 RECEIVED = "received"
@@ -63,15 +72,22 @@ NEXT_ACTION = {
 }
 
 # What happens next while a needs_changes verdict's correction has not reached the child. The
-# child cannot correct what it was never sent: an unsent correction is the relay's to deliver,
-# and a held one is never retried (no command clears a hold; its recovery is a fresh execution
-# generation), so it is the parent's to recover. Derived, like NEXT_ACTION, from the one
-# statement that reads the correction's delivery.
+# child cannot correct what it was never sent, so child_corrects is kept for a correction whose
+# delivery reached a turn. An unsent correction is the relay's to deliver; one whose send is in
+# flight or answered unusably is the relay's to confirm (reconciliation settles it); and a held
+# one, including one stored where the child reads without waking it, is never retried (no
+# command clears a hold; its recovery is a fresh execution generation), so it is the parent's to
+# recover. Derived, like NEXT_ACTION, from the one statement that reads the correction's delivery.
 CORRECTION_UNSENT_ACTION = "daemon_delivers_correction"
+CORRECTION_UNCONFIRMED_ACTION = "daemon_confirms_correction"
 CORRECTION_HELD_ACTION = "parent_recovers_held_correction"
 
 # delivery states in which nothing has been sent (dispositions.NOT_SENT uses the same three).
 NOT_SENT_STATES = (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND)
+# delivery states whose send may or may not have reached the child (dispositions.SEND_UNCERTAIN).
+UNCONFIRMED_STATES = (SENDING, HELD_UNCERTAIN)
+# delivery states that establish the correction reached a turn.
+REACHED_STATES = (DISPATCHED, ACKNOWLEDGED)
 
 LIFECYCLE_WITHHOLD_SOURCE = "failed_operations.lifecycle_read"
 
@@ -140,16 +156,21 @@ def correction_next_action(state, projection):
     """The next action for needs_changes, from the correction the same projection read.
 
     None leaves NEXT_ACTION's answer. A correction event always has its delivery row, because
-    ack.record_verdict inserts the event and queues it in one transaction.
+    ack.record_verdict inserts the event and queues it in one transaction. A state this rule has
+    no word for (a superseded correction) also leaves NEXT_ACTION's answer.
     """
     correction = projection["correction"]
     delivery = correction["delivery"]
-    if state != NEEDS_CHANGES or delivery is None or delivery["state"] not in NOT_SENT_STATES:
+    if state != NEEDS_CHANGES or delivery is None or delivery["state"] in REACHED_STATES:
         return None
     reason = correction["undeliveredReason"] or {}
-    if reason.get("source") == "deliveries.hold_reason":
+    if delivery["state"] == INBOX_ONLY or reason.get("source") == "deliveries.hold_reason":
         return CORRECTION_HELD_ACTION
-    return CORRECTION_UNSENT_ACTION
+    if delivery["state"] in UNCONFIRMED_STATES:
+        return CORRECTION_UNCONFIRMED_ACTION
+    if delivery["state"] in NOT_SENT_STATES:
+        return CORRECTION_UNSENT_ACTION
+    return None
 
 
 class AssignmentView:
