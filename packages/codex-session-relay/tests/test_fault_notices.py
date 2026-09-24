@@ -871,3 +871,55 @@ class WhatDevinFoundOnTheSecondHead(NoticeCase):
         self.assertEqual(self.notification(held)["attempts"], 0, "never reserved while archived")
         self.assertEqual(len(self.upward()), 1)
         self.assertEqual(self.budget_used(), 1)
+
+
+class WhatTheFinalReviewFound(NoticeCase):
+    """Final review of 06ed9543: the relationship that addresses a notice and the one whose
+    wishes apply are one answer (anchor_relationship), so a relationship of another project
+    neither addresses the notice nor holds it back."""
+
+    def other_project(self):
+        from codex_session_relay.models import Endpoint
+        from codex_session_relay.registry import record_settings
+
+        from .support import HOST, task_settings
+
+        parent, supervisor = "01other-parent", "01other-supervisor"
+        for task, cwd in ((parent, "/other-parent"), (supervisor, "/other-supervisor")):
+            self.adapter.add_thread(task)
+            record_settings(self.store, self.clock, task, task_settings(cwd),
+                            source="creation_result")
+        self.linkage.register_supervision(
+            initiative_key="INI-2", project_key="PRJ-2",
+            supervisor=Endpoint(supervisor, HOST, cwd="/other-supervisor",
+                                cxc_session="cxc-other-supervisor"),
+            parent=Endpoint(parent, HOST, cwd="/other-parent", cxc_session="cxc-other-parent"))
+        return supervisor
+
+    def test_another_project_s_archived_parent_does_not_hold_the_notice_back(self):
+        supervisor = self.other_project()
+        self.adapter.threads[PARENT].archived = True
+        answer = self.ledger.record(faults.observation(
+            product=PRODUCT, fault_class="managed_start_failed", severity=faults.BROKEN,
+            signature={"cause": "start failed"}, occurrence_key="start:failed",
+            scope={"projectKey": "PRJ-2", "issueKey": ISSUE}, detail="start failed"))
+        self.tick()
+        notification = self.notification(answer["faultId"])
+        self.assertEqual(notification["state"], faults.DELIVERED, notification.get("eligibility"))
+        told = [one for one in self.adapter.sends if one[1] == supervisor]
+        self.assertEqual(len(told), 1, "PRJ-2's supervisor, once")
+        self.assertEqual(self.upward(), [], "never the supervisor of the project it is not in")
+        for _ in range(2):
+            self.tick(advance=3600)
+        self.assertEqual(len([one for one in self.adapter.sends if one[1] == supervisor]), 1)
+
+    def test_the_relationship_the_fault_s_project_holds_still_carries_its_wishes(self):
+        self.other_project()
+        self.registry.set_status(self.rid, "paused", actor="user")
+        fault = self.broken()
+        for _ in range(2):
+            self.tick(advance=3600)
+        notification = self.notification(fault)
+        self.assertEqual(notification["state"], faults.PENDING)
+        self.assertIn("paused", notification["eligibility"]["reason"])
+        self.assertEqual([one for one in self.adapter.sends if one[1] != PARENT], [])

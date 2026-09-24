@@ -953,12 +953,13 @@ deliverer is the seam between them and owns no rule. Each tick it:
 
 The level above is the one the live linkage names from what the notification is about: the
 fault's own relationship, else its issue's current one (`anchor_relationship`, the anchor
-eligibility reads) while that relationship lies under the project the fault's scope names, else
-- for a fault no relationship holds, such as a managed start that failed before its relationship
-existed, or one whose scope names another project than its issue's relationship - the project its
-scope names, when that project key is a plain identifier (`notice_facts`' anchor
-`project:<key>`). A relationship of another project never addresses it: that would tell the
-level above a project the fault is not filed under. Either way the project's live parent sends
+eligibility reads, and never one the linkage registers under another project than the fault's
+scope names), else - for a fault no relationship holds, such as a managed start that failed
+before its relationship existed, or one whose scope names another project than its issue's
+relationship - the project its scope names, when that project key is a plain identifier
+(`notice_facts`' anchor `project:<key>`). A relationship of another project neither
+addresses a notice nor holds it back: it is another project's assignment, and its level above
+and its wishes are that project's. Either way the project's live parent sends
 and the initiative's supervisor receives, exactly as a report does. A project-addressed notice has
 no relationship whose pause or contact applies, so the ledger's eligibility lets it through and
 the channel's own rules decide the rest: the supervisor's archive, pause or limit withholds it

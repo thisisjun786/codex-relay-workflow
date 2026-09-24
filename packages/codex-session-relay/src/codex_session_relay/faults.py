@@ -3318,8 +3318,12 @@ def anchor_relationship(db, fault):
     """The relationship a fault's notifications are about, or None.
 
     The fault's own signature relationship when that relationship exists, else the issue's
-    current relationship. One definition, read by _eligibility for whose wishes apply and by
-    the deliverer for where the level above is, so the two can never be about different
+    current relationship - and neither when the linkage registers it under another project
+    than the one the fault's scope names: that relationship is another project's assignment,
+    and a fault filed under this project is neither told to its level above nor held back by
+    its wishes. A relationship the linkage places under no project keeps its place, as it
+    always had. One definition, read by _eligibility for whose wishes apply and by the
+    deliverer for where the level above is, so the two can never be about different
     assignments.
     """
     relationship = _json(fault["signature"]).get("relationship")
@@ -3327,12 +3331,19 @@ def anchor_relationship(db, fault):
     if _named(relationship):
         row = db.execute("SELECT relationship_id, issue_key, status, parent_task_id FROM relationships"
                          " WHERE relationship_id = ?", (relationship,)).fetchone()
-    issue = _json(fault["scope"]).get("issueKey")
+    scope = _json(fault["scope"])
+    issue = scope.get("issueKey")
     if row is None and _named(issue):
         row = db.execute(
             "SELECT relationship_id, issue_key, status, parent_task_id FROM relationships"
             " WHERE issue_key = ? AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 1",
             (issue,)).fetchone()
+    project = scope.get("projectKey")
+    if row is not None and project:
+        placed = db.execute("SELECT project_key FROM relationship_scope"
+                            " WHERE relationship_id = ?", (row["relationship_id"],)).fetchone()
+        if placed is not None and placed["project_key"] != project:
+            return None
     return row
 
 
@@ -3448,16 +3459,6 @@ def notice_facts(db, notification):
     anchor = anchor_relationship(db, row)
     scope = _json(row["scope"])
     project = scope.get("projectKey")
-    if anchor is not None and project:
-        # A relationship addresses the notice only while it lies under the project the fault's
-        # scope names: an issue key that resolves to another project's relationship, or a
-        # fault moved to another project, is never told to the level above it left
-        # (never sideways). Whose wishes apply is still anchor_relationship's answer.
-        placed = db.execute("SELECT project_key FROM relationship_scope"
-                            " WHERE relationship_id = ?",
-                            (anchor["relationship_id"],)).fetchone()
-        if placed is None or placed["project_key"] != project:
-            anchor = None
     if anchor is not None:
         # The issue its relationship was registered for - the field every supervisor report
         # carries - never the observation's scope.
