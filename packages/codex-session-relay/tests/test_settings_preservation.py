@@ -189,6 +189,9 @@ class SettingsEstablishedBeforeAnySend(DeliveryTestCase):
 class AnApprovalPolicyThisTransportCannotCarry(DeliveryTestCase):
     """The rule read off the RECORD, where it decides the send, rather than off the response.
 
+    CRW-225 carries never AND on-request (settings.CARRIED_APPROVAL_POLICIES); these rows use
+    untrusted, which is still outside the set. The history below is the rule's own.
+
     It used to live in exactly one place: `mismatches` comparing what the HOST reported back.
     Nothing compared the recorded value, so a row recording `on-request` was registered, passed
     `require_usable()`, was built into resume params and sent - and what happened next was the
@@ -205,7 +208,7 @@ class AnApprovalPolicyThisTransportCannotCarry(DeliveryTestCase):
         alone: 7 and True and a granular object are all refused here, by the code that says the
         specific thing, instead of by the one that says only 'not a string'.
         """
-        for recorded in ("on-request", "untrusted", 7, True, {"mode": "on-request"}):
+        for recorded in ("untrusted", "never ", 7, True, {"mode": "on-request"}):
             with self.subTest(recorded=recorded):
                 stale = task_settings("/parent")
                 stale["approvalPolicy"] = recorded
@@ -219,7 +222,7 @@ class AnApprovalPolicyThisTransportCannotCarry(DeliveryTestCase):
                 # The value it actually holds: 'unsupported' does not tell an operator which
                 # row to repair or what the creation result put there.
                 self.assertIn(repr(recorded), refusal.detail)
-                self.assertIn("never", refusal.detail)
+                self.assertIn("'never' and 'on-request'", refusal.detail)
 
     def test_an_absent_policy_stays_incomplete_rather_than_unsupported(self):
         """Null is an absence, and absence has its own recovery: record the field.
@@ -245,12 +248,12 @@ class AnApprovalPolicyThisTransportCannotCarry(DeliveryTestCase):
         stale = task_settings("/parent", sandbox={"type": "externalSandbox"})
         del stale["cwd"]
         stale["model"] = 7
-        stale["approvalPolicy"] = "on-request"
+        stale["approvalPolicy"] = "untrusted"
 
         ladder = [
             (RefusalReason.SETTINGS_INCOMPLETE, "missing cwd"),
             (RefusalReason.SETTINGS_MISTYPED, "model is int, not str"),
-            (RefusalReason.UNSUPPORTED_APPROVAL_POLICY, "'on-request'"),
+            (RefusalReason.UNSUPPORTED_APPROVAL_POLICY, "'untrusted'"),
             (RefusalReason.UNSUPPORTED_SANDBOX_TYPE, "'externalSandbox'"),
         ]
         repairs = [
@@ -274,7 +277,7 @@ class AnApprovalPolicyThisTransportCannotCarry(DeliveryTestCase):
         under a policy the relay cannot service. Now nothing is claimed and nothing is sent, so
         the host's answer never enters it.
         """
-        interactive = task_settings("/parent", approvalPolicy="on-request")
+        interactive = task_settings("/parent", approvalPolicy="untrusted")
         _relationship, event_id = self.queued_event(settings=interactive)
         self.assertEqual(self.adapter.threads[PARENT].approval_policy, "never",
                          "the fixture host is the one that used to make this send succeed")
@@ -287,7 +290,7 @@ class AnApprovalPolicyThisTransportCannotCarry(DeliveryTestCase):
             ("delivery_withheld",),
         )[0]
         self.assertIn(RefusalReason.UNSUPPORTED_APPROVAL_POLICY.value, entry["detail"])
-        self.assertIn("on-request", entry["detail"])
+        self.assertIn("untrusted", entry["detail"])
         failure = self.store.all(
             "SELECT operation, error_code, retry_safe FROM failed_operations"
             " ORDER BY rowid DESC LIMIT 1",
@@ -308,7 +311,7 @@ class AnApprovalPolicyThisTransportCannotCarry(DeliveryTestCase):
             RefusalReason.UNSUPPORTED_APPROVAL_POLICY,
             lambda: record_settings(
                 self.store, self.clock, PARENT,
-                task_settings("/parent", approvalPolicy="on-request"),
+                task_settings("/parent", approvalPolicy="untrusted"),
                 source="creation_result",
             ),
         )
@@ -325,7 +328,7 @@ class AnApprovalPolicyThisTransportCannotCarry(DeliveryTestCase):
         One event carries both halves, which also proves the recovery: the withhold is not a
         permanent hold, and re-recording the row is what releases it.
         """
-        interactive = task_settings("/parent", approvalPolicy="on-request")
+        interactive = task_settings("/parent", approvalPolicy="untrusted")
         _relationship, recorded_event = self.queued_event(settings=interactive)
         self.assertIsNone(self.attempt(recorded_event))
         self.assertEqual(self.delivery_row(recorded_event)["state"], WITHHELD_PRE_SEND)
@@ -333,11 +336,11 @@ class AnApprovalPolicyThisTransportCannotCarry(DeliveryTestCase):
 
         record_settings(self.store, self.clock, PARENT, task_settings("/parent"),
                         source="creation_result")
-        self.adapter.threads[PARENT].approval_policy = "on-request"
+        self.adapter.threads[PARENT].approval_policy = "untrusted"
         self.adapter.script("approval_policy")
         record = self.attempt(recorded_event, now=self.clock.now() + 10_000)
         self.assertEqual(record["deliveryState"], INBOX_ONLY)
-        self.assertEqual(record["recipientApprovalPolicy"], "on-request")
+        self.assertEqual(record["recipientApprovalPolicy"], "untrusted")
         self.assertFalse(record["retrySafe"])
 
 
@@ -390,7 +393,7 @@ class RefusalClassification(DeliveryTestCase):
 
         reported = classify_operation_receipt({
             "requestId": "del-000000000000-a4", "status": "failed",
-            "resumed": {"approvalPolicy": "on-request"},
+            "resumed": {"approvalPolicy": "untrusted"},
             "error": "thread/resume: Interactive approvals unsupported",
             "rpcError": {"code": "unsupported_approval_policy", "message": "unsupported"},
         })
@@ -410,7 +413,7 @@ class RefusalClassification(DeliveryTestCase):
         """A permanently closed push channel must not become a retry loop."""
         facts = classify_operation_receipt({
             "requestId": "del-000000000000-a2", "status": "failed",
-            "resumed": {"approvalPolicy": "on-request"},
+            "resumed": {"approvalPolicy": "untrusted"},
             "error": "thread/resume: Interactive approvals unsupported; message withheld.",
             "rpcError": {"code": "unsupported_approval_policy", "message": "unsupported"},
         })
@@ -418,7 +421,7 @@ class RefusalClassification(DeliveryTestCase):
         self.assertFalse(facts.retry_safe)
         settings = TaskSettings(task_settings("/parent"))
         findings = settings.mismatches({
-            "approvalPolicy": "on-request",
+            "approvalPolicy": "untrusted",
             "sandbox": {"type": "dangerFullAccess"},
             "thread": {"environments": None},
         })

@@ -602,7 +602,7 @@ class GuardedSettingsSeam(unittest.TestCase):
         adapter.send_message("del-100000000000-a2", "thread-1", "hi", AUTHORIZED)
         resume = dict(calls[1][1])
         self.assertEqual(resume["sandbox"], "workspace-write")
-        self.assertEqual(resume["approvalPolicy"], "never")
+        self.assertNotIn("approvalPolicy", resume, "the relay never sets a thread's approval policy")
         self.assertEqual(resume["cwd"], WORKTREE)
         self.assertEqual(resume["runtimeWorkspaceRoots"], [WORKTREE])
         self.assertEqual(resume["model"], "anthropic/claude-opus-5")
@@ -752,11 +752,12 @@ class GuardedSettingsSeam(unittest.TestCase):
 
     # --------------------------------------------------------- approval policy
 
-    def test_a_non_never_approval_policy_is_inbox_only_not_a_settings_mismatch(self):
+    def test_a_policy_outside_the_carried_set_is_inbox_only_not_a_settings_mismatch(self):
+        """untrusted: never and on-request are carried since CRW-225 (test_on_request_delivery)."""
         from codex_session_relay.transport import INBOX_ONLY, classify_operation_receipt
 
         adapter, calls = self._adapter(
-            resume=authorized_resume_response(approvalPolicy="on-request"),
+            resume=authorized_resume_response(approvalPolicy="untrusted"),
         )
         receipt = adapter.send_message("del-500000000000-a1", "thread-1", "hi", AUTHORIZED)
         self.assertNotIn("turn/start", self._methods(calls))

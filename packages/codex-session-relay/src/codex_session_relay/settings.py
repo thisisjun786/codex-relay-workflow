@@ -82,15 +82,25 @@ UNSUPPORTED_APPROVAL_POLICY = "unsupported_approval_policy"
 # host ignored: re-record from a reading the user stands behind rather than retrying.
 SETTINGS_DIFFER_AFTER_LOAD = "settings_differ_after_load"
 
-# The only approval policy this transport can carry, on the record and in the response alike.
-# It was compared in one place only for a while -- against the resume RESPONSE -- and what
-# happened to a row recording anything else was then the host's choice: one that preserved the
-# requested policy answered it back, the finding below fired, and the push channel closed; one
-# that normalised it to never answered never, raised nothing, and the send completed. The record
-# already settles that, so require_usable() compares it too and refuses the row before a
-# registration stores it or a send prepares it. The response check stays, because only the host
-# can answer for what the host did with what it was asked for.
+# The approval policy a task this relay CREATES runs under (managed.py). It is not the set of
+# policies the transport can carry; that is CARRIED_APPROVAL_POLICIES below.
 AUTHORIZED_APPROVAL_POLICY = "never"
+
+# The approval policies a recipient can be on for this transport to wake it (CRW-225). Measured on
+# codex-cli 0.154.0, the host sends every approval request of a turn to each client subscribed to
+# the thread, replays a pending one to a client that resumes the thread later, and applies the first
+# answer; the bridge answers none. So a turn the relay starts on an on-request thread leaves every
+# approval with the thread's own approver, and the turn waits for it. untrusted and a granular
+# policy are not carried: they were not measured in that scope, and an untrusted thread asks even to
+# record a report. The record is compared against this set in require_usable() and the host's answer
+# in mismatches(); the relay never SENDS a policy on resume, so which of the two a thread is on is
+# the thread's own state, never something this transport chose.
+CARRIED_APPROVAL_POLICIES = ("never", "on-request")
+
+# A carried policy that differs from the record: delivered and noted, not refused. The difference is
+# the user's own change to the thread (nothing here sets a policy), and refusing it would leave the
+# very case CRW-225 exists for - a parent switched to on-request in its own client - undeliverable.
+APPROVAL_POLICY_DIFFERS_FROM_RECORD = "approval_policy_differs_from_record"
 
 
 def normalise_policy(policy):
@@ -271,17 +281,15 @@ class TaskSettings:
                 RefusalReason.SETTINGS_MISTYPED,
                 "; ".join(self._mistyped_detail(field) for field in wrong),
             )
-        if self.data["approvalPolicy"] != AUTHORIZED_APPROVAL_POLICY:
+        if self.data["approvalPolicy"] not in CARRIED_APPROVAL_POLICIES:
             # Meaning, after shape, and FIRST among the meaning gates, because mismatches()
             # decides this same field first: a row that is wrong in both this and its sandbox
             # gets one answer rather than two that depend on which surface refused it.
             #
-            # Compared against the RECORD and not only against the response, because the record
-            # settles the send on its own. Sent as recorded, a host that preserves the policy
-            # answers it back and the push channel closes, and one that normalises it answers
-            # never and the send completes -- so which of those happened was the host's choice
-            # about a fact this row already contained. The refusal is the same code the
-            # verification reports, so the two surfaces name one situation alike.
+            # Compared against the RECORD and not only against the response, because a row this
+            # transport cannot carry should never have been stored: refused here it is refused
+            # once, by whoever recorded it, rather than at every send. The refusal is the same
+            # code the verification reports, so the two surfaces name one situation alike.
             #
             # Not a type rule, which is why mistyped() leaves the field alone: this comparison
             # refuses every wrong value the field can hold, whatever its type, and says the
@@ -289,8 +297,8 @@ class TaskSettings:
             raise DeliveryRefused(
                 RefusalReason.UNSUPPORTED_APPROVAL_POLICY,
                 f"the recorded approvalPolicy is {self.data['approvalPolicy']!r}; this transport"
-                " cannot service an interactive approval, so only"
-                f" {AUTHORIZED_APPROVAL_POLICY!r} can be carried as recorded",
+                " carries only " + " and ".join(repr(p) for p in CARRIED_APPROVAL_POLICIES)
+                + ", leaving every approval a turn raises with the thread's own approver",
             )
         if self.sandbox_mode() is None:
             # Two wordings for one decision. sandbox_mode() alone decides; the shape test below
@@ -354,12 +362,16 @@ class TaskSettings:
         uses. This matters beyond the effort: ThreadResumeParams.sandbox is only a MODE, so a
         resume that sent the mode alone could not restore writable roots or the network flag, and
         would then compare against values it never asked for.
+
+        No approvalPolicy, on purpose (CRW-225). The host applies a resume's policy to a thread
+        that resume loads, so sending the recorded one would set it: a thread whose owner switched
+        it to on-request after it was recorded would be loaded under never, which is forcing
+        never. The thread's own policy is reported back and judged in mismatches() instead.
         """
         params = {
             "threadId": thread_id,
             "excludeTurns": True,
             "sandbox": self.sandbox_mode(),
-            "approvalPolicy": self.data["approvalPolicy"],
             "cwd": self.data["cwd"],
             "runtimeWorkspaceRoots": list(self.data["runtimeWorkspaceRoots"]),
             "model": self.data["model"],
@@ -382,16 +394,37 @@ class TaskSettings:
 
     # ------------------------------------------------------------ verifying
 
+    def approval_divergence(self, response):
+        """A carried policy the thread reports that is not the recorded one, as a note or None.
+
+        Read only after mismatches() found nothing, so the reported policy is one this transport
+        carries. It is delivered: nothing here sent a policy, so the difference is the thread's
+        own state (its owner switched it), and the turn's approvals go to that owner either way.
+        The note keeps the difference visible on the transport receipt so the record can be
+        re-recorded; it is not a refusal and not a retry.
+        """
+        if not isinstance(response, dict):
+            return None
+        observed = response.get("approvalPolicy")
+        recorded = self.data.get("approvalPolicy")
+        if observed == recorded or observed not in CARRIED_APPROVAL_POLICIES:
+            return None
+        return {"code": APPROVAL_POLICY_DIFFERS_FROM_RECORD, "field": "approvalPolicy",
+                "recorded": recorded, "observed": observed}
+
     def mismatches(self, response: dict, *, transmitted: bool = True) -> list:
         """Ordered findings against a resume response. Order is behaviour, not presentation.
 
-        The approval policy is checked FIRST. With an authorized policy of never, a returned
-        on-request is both a mismatch and the push-channel-closed case, and raising the generic
-        mismatch first would turn a permanently closed channel into a retry loop.
+        The approval policy is checked FIRST, against the set this transport carries, not against
+        the record. A returned policy outside that set (untrusted, granular) is the
+        push-channel-closed case, and raising the generic mismatch first would turn a permanently
+        closed channel into a retry loop. A carried policy is accepted even when it differs from
+        the record: nothing here sent a policy, so the difference is the thread's own state, and
+        approval_divergence() notes it without refusing.
 
         What is in question here is the HOST's answer, not the record's request. require_usable()
-        has already refused a record asking for anything else, so a finding on this line means
-        the host reported a policy the send did not ask for -- which is exactly the half only the
+        has already refused a record outside the carried set, so a finding on this line means the
+        host reported a policy this transport cannot carry -- which is exactly the half only the
         host can settle, and the half no rule on the record can pre-empt.
 
         Within each field, ABSENCE is decided before difference. A host that reported nothing has
@@ -399,8 +432,9 @@ class TaskSettings:
         host that reported something else, and the two need different answers from a caller.
 
         transmitted=False reads a resume that requested nothing (settings_free_resume_params).
-        The model, the effort, the whole sandbox policy, the approval policy, the cwd and the
-        environment selection are compared exactly as ever. The workspace roots are not: a load
+        The model, the effort, the whole sandbox policy, the cwd and the environment selection
+        are compared exactly as ever, and the approval policy against the carried set as on the
+        transmitted route. The workspace roots are not: a load
         that transmits nothing restores only what the host persists, and measured on the live
         host it brought a thread back with its roots reduced to its cwd while every other field
         held (CRW-215 live finding F2). So roots, at the top level and in each environment, may
@@ -420,13 +454,13 @@ class TaskSettings:
             # Not the closed-channel case: a policy we cannot see is not a policy we know is
             # interactive. It withholds, and stays eligible for a bounded pre-send retry.
             return [{"code": SETTING_UNOBSERVABLE, "field": "approvalPolicy",
-                     "expected": AUTHORIZED_APPROVAL_POLICY, "returned": None}]
-        if returned_policy != AUTHORIZED_APPROVAL_POLICY:
+                     "expected": self.data.get("approvalPolicy"), "returned": None}]
+        if not isinstance(returned_policy, str) or returned_policy not in CARRIED_APPROVAL_POLICIES:
             # A granular policy is an object; it is never copied into the frozen record, which
             # types this field as string or null. Contract v1 admits only a plain string.
             label = returned_policy if isinstance(returned_policy, str) else "granular"
             found.append({"code": UNSUPPORTED_APPROVAL_POLICY, "field": "approvalPolicy",
-                          "expected": AUTHORIZED_APPROVAL_POLICY, "returned": label,
+                          "expected": list(CARRIED_APPROVAL_POLICIES), "returned": label,
                           "returnedShape": type(returned_policy).__name__})
             return found
 

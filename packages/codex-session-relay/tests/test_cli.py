@@ -90,6 +90,33 @@ def _module_constants(tree):
     return found
 
 
+def _module_string_tuples(tree):
+    """Top-level NAME = ("a", "b", ...) assignments of text, read from the tree.
+
+    A constraint can be a MEMBERSHIP in such a set (CRW-225: the carried approval policies), and
+    each member is then one allowed value, exactly as the single literal of an equality is.
+    """
+    found = {}
+    for node in tree.body:
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Tuple) and node.value.elts
+                and all(isinstance(e, ast.Constant) and isinstance(e.value, str)
+                        for e in node.value.elts)):
+            found.setdefault(node.targets[0].id, tuple(e.value for e in node.value.elts))
+    return found
+
+
+def _members(node, tuples):
+    """The allowed values a membership test names: a module tuple constant or a literal tuple."""
+    if isinstance(node, ast.Name):
+        return tuples.get(node.id, ())
+    if isinstance(node, ast.Tuple) and all(
+            isinstance(e, ast.Constant) and isinstance(e.value, str) for e in node.elts):
+        return tuple(e.value for e in node.elts)
+    return ()
+
+
 def _evaluated_parts(node):
     """The parts of a nested definition that run in the ENCLOSING scope.
 
@@ -380,6 +407,7 @@ def value_constraints(tree, entries, owner="TaskSettings"):
     """
     defined = _definitions(tree)
     constants = _module_constants(tree)
+    tuples = _module_string_tuples(tree)
 
     def literal(node):
         if isinstance(node, ast.Constant):
@@ -391,6 +419,15 @@ def value_constraints(tree, entries, owner="TaskSettings"):
     def collect(function, reader):
         found = set()
         for node in _scoped(function):
+            if (isinstance(node, ast.Compare) and len(node.ops) == 1
+                    and isinstance(node.ops[0], (ast.In, ast.NotIn))):
+                # Membership in a fixed set: every member is an allowed value. Only the field on
+                # the left, which is the direction a membership constraint reads.
+                carried = reader.type_of(node.left)
+                if carried[0] == "extfield":
+                    found |= {(carried[1], value)
+                              for value in _members(node.comparators[0], tuples)}
+                continue
             if not (isinstance(node, ast.Compare) and len(node.ops) == 1
                     and isinstance(node.ops[0], (ast.Eq, ast.NotEq, ast.Is, ast.IsNot))):
                 continue
@@ -427,6 +464,7 @@ def recorded_constraints(tree, entries, owner="TaskSettings"):
     """
     defined = _definitions(tree)
     constants = _module_constants(tree)
+    tuples = _module_string_tuples(tree)
 
     def literal(node):
         if isinstance(node, ast.Constant):
@@ -438,6 +476,15 @@ def recorded_constraints(tree, entries, owner="TaskSettings"):
     def collect(function, reader):
         found = set()
         for node in _scoped(function):
+            if (isinstance(node, ast.Compare) and len(node.ops) == 1
+                    and isinstance(node.ops[0], (ast.In, ast.NotIn))):
+                # Membership in a fixed set: every member is an allowed value. Only the field on
+                # the left, which is the direction a membership constraint reads.
+                carried = reader.type_of(node.left)
+                if carried[0] == "field":
+                    found |= {(carried[1], value)
+                              for value in _members(node.comparators[0], tuples)}
+                continue
             if not (isinstance(node, ast.Compare) and len(node.ops) == 1
                     and isinstance(node.ops[0], (ast.Eq, ast.NotEq, ast.Is, ast.IsNot))):
                 continue
@@ -900,11 +947,11 @@ class SettingsCommands(CliBase):
         """
         refused = self.run_cli(
             "settings-record", "--task", PARENT,
-            "--settings", json.dumps(dict(self._settings(), approvalPolicy="on-request")),
+            "--settings", json.dumps(dict(self._settings(), approvalPolicy="untrusted")),
             expect=2,
         )
         self.assertEqual(refused["reason"], "unsupported_approval_policy")
-        self.assertIn("on-request", refused["detail"])
+        self.assertIn("untrusted", refused["detail"])
         self.assertIn("never", refused["detail"])
         shown = self.run_cli("settings-show", "--task", PARENT)
         self.assertFalse(shown["usable"], "the refused row reached the store")
@@ -2216,9 +2263,9 @@ class ParticipantAccessReceipts(CliBase):
         # the same as usable, and no host answer could tell us what it did with cwd: 7.
         mistyped = dict(self.settings(self.root), cwd=7)
         # Complete, well-typed, and refused for what a value MEANS rather than what it is: this
-        # transport cannot service an interactive approval, so the row cannot be carried as
-        # recorded whatever a host would have answered about it.
-        interactive = dict(self.settings(self.root), approvalPolicy="on-request")
+        # transport carries only never and on-request (CRW-225), so an untrusted row cannot be
+        # carried as recorded whatever a host would have answered about it.
+        interactive = dict(self.settings(self.root), approvalPolicy="untrusted")
 
         cases = {
             "an unsupported sandbox type": (
@@ -2229,7 +2276,7 @@ class ParticipantAccessReceipts(CliBase):
                 mistyped, "settings_mistyped", "cwd is int, not str",
             ),
             "an approval policy this transport cannot carry": (
-                interactive, "unsupported_approval_policy", "'on-request'",
+                interactive, "unsupported_approval_policy", "'untrusted'",
             ),
             "a list field recorded as something else": (
                 unusable_roots, "settings_mistyped", "runtimeWorkspaceRoots is int, not a list",
@@ -2384,11 +2431,11 @@ class ParticipantAccessReceipts(CliBase):
             "the extraction found fewer transformations than are known to be there",
         )
         self.assertGreaterEqual(
-            constraints, {("approvalPolicy", "never")},
+            constraints, {("approvalPolicy", "never"), ("approvalPolicy", "on-request")},
             "the value-constraint extraction found less than is known to be there",
         )
         self.assertGreaterEqual(
-            enforced, {("approvalPolicy", "never")},
+            enforced, {("approvalPolicy", "never"), ("approvalPolicy", "on-request")},
             "the recorded-constraint extraction found less than is known to be there",
         )
         self.assertEqual(
@@ -2803,6 +2850,7 @@ class FieldExtractionShapes(unittest.TestCase):
 
     FIXTURE = '''\
 AUTHORIZED = "never"
+CARRIED = ("never", "listed")
 
 
 def carry(value):
@@ -3057,6 +3105,12 @@ class TaskSettings:
             return None
         if self.data.get("recordedViaGet") != "never":
             return None
+        if response.get("memberShape") not in CARRIED:
+            return None
+        if self.data.get("recordedMember") not in CARRIED:
+            return None
+        if "never" in response.get("memberReversed"):
+            return None
         if AUTHORIZED == self.data.get("recordedChained") == "other":
             return None
         if self.data.get("recordedOrdered") < "never":
@@ -3139,6 +3193,8 @@ class TaskSettings:
             ("inline", "never"),
             ("isNotShape", "never"),
             ("isShape", "never"),
+            ("memberShape", "listed"),
+            ("memberShape", "never"),
             ("memoConstraint", "never"),
             ("subscripted", "never"),
             ("viaHelper", "never"),
@@ -3161,8 +3217,8 @@ class TaskSettings:
         response at one call and the record at another, which is the memoisation shape, so the
         same comparison inside it is a constraint on each. Its presence proves this walk follows
         the helper hop rather than reading only the entry body. The other two names appear on
-        the record side alone, so an extractor that matched the response would return nine names
-        instead of three and fail.
+        the record side alone, so an extractor that matched the response would return the response
+        names instead and fail.
 
         Out: a chained comparison, which is not one operator; an ordering comparison, which is
         not an equality; and a record read compared against a RESPONSE read rather than against
@@ -3172,6 +3228,8 @@ class TaskSettings:
         self.assertEqual(
             enforced,
             {("memoConstraint", "never"),
+             ("recordedMember", "listed"),
+             ("recordedMember", "never"),
              ("recordedSubscripted", "never"),
              ("recordedViaGet", "never")},
             "the recorded-constraint walk changed shape, or it is reading the response",

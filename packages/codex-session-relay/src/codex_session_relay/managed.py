@@ -69,11 +69,12 @@ def _settings(data, at):
     for field in ("model", "reasoningEffort"):
         _text(data[field], f"{at}.{field}", 500)
     if data["approvalPolicy"] != AUTHORIZED_APPROVAL_POLICY:
-        # This relay transport cannot service interactive approval or preserve it on
-        # resume. Refuse the unsupported path before creating any task. require_usable() below
-        # refuses the same value; this runs first so the message names the REQUEST field and
-        # nothing is created on the way to it. The literal is read from one definition rather
-        # than spelled a second time here, which is how the two could have drifted apart.
+        # A task this relay CREATES runs under never. That is a rule about what the relay
+        # creates, not about whom it can wake: an existing supervisor or parent on on-request is
+        # carried (settings.CARRIED_APPROVAL_POLICIES, CRW-225), because its approvals stay with
+        # its own approver. Refused before creating any task, so the message names the REQUEST
+        # field and nothing is created on the way to it. The literal is read from one definition
+        # rather than spelled a second time here, which is how the two could have drifted apart.
         raise ValueError(
             f"{at}.approvalPolicy must explicitly be {AUTHORIZED_APPROVAL_POLICY}"
             " for this transport"

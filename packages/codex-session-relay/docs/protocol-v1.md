@@ -101,7 +101,7 @@ prefix, because a busy refusal and an approval-policy refusal would otherwise be
 | transport outcome unknown | held_uncertain | unknown | no |
 | busy refusal before resume | deferred_busy | no | **yes** |
 | read or resume refusal before resume | withheld_pre_send | no | **yes** |
-| approval policy refusal after resume | inbox_only | no | no |
+| approval policy outside the carried set after resume | inbox_only | no | no |
 | reconnect failure | held_uncertain | unknown | no |
 | turn-start failure | held_uncertain | yes | no |
 | anything else | held_uncertain | unknown | no |
@@ -115,10 +115,12 @@ id would return the transport's cached failure forever.
 
 ### Dual channel
 
-The durable inbox is the guarantee. A parent whose approval policy is not "never" cannot be pushed
-to at all, so a push-only design would be undeliverable to exactly the interactive parents this
-exists to serve. The recipient's approval policy is recorded verbatim, so an audit can tell an
-inbox-only fallback from a push never attempted.
+The durable inbox is the guarantee. A push reaches a parent whose own approval policy is `never` or
+`on-request` (CRW-225): the turn the relay starts leaves every approval with the parent's own
+approver, because the host sends each request to every client subscribed to the thread and the
+bridge answers none. A parent on any other policy cannot be pushed to, so a push-only design
+would still leave it undeliverable. The recipient's approval policy is recorded verbatim, so an
+audit can tell an inbox-only fallback from a push never attempted.
 
 ## 4. Reconciliation
 
