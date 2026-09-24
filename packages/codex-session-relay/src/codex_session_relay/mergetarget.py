@@ -49,9 +49,10 @@ GITHUB = "github"
 _FULL_SHA = re.compile(r"\A(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 _GITHUB_SHA = re.compile(r"\A[0-9a-f]{40}\Z")
 _SLUG = re.compile(r"\A[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}\Z")
-#: Characters git reads as revision syntax or refuses in a ref name. show-ref's exact lookup
-#: would not evaluate them, but a name that needs them is not a branch this can mean.
-_REVISION_SYNTAX = ("~", "^", ":", "*", "[", "\\", "@{", "?")
+#: What git refuses anywhere in a ref name (git check-ref-format): control characters and
+#: space, and the characters it reads as revision syntax. show-ref's exact lookup would not
+#: evaluate them, but a name that needs them is not a branch this can mean.
+_GIT_REFUSED = re.compile(r"[\x00-\x20\x7f~^:?*\[\\]")
 
 #: The child's environment is rebuilt with these, and nothing else from the GIT_* namespace.
 _GIT_ENV = {"GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"}
@@ -68,21 +69,26 @@ class TargetUnreadable(Exception):
 
 
 def _branch(base_ref):
-    if not isinstance(base_ref, str) or base_ref != base_ref.strip():
-        # The turn's target key is derived from the raw string, so reading a stripped name
-        # could reach a branch the key does not name.
+    """A branch name as git allows one, read exactly as the claim spelled it.
+
+    Git's own ref-name rules, not a URL's: a local branch may be called topic#42, and refusing
+    it here would leave every turn on it unable to check or land. The forge path adds its own
+    URL restrictions on top (see _github). Surrounding whitespace is refused rather than
+    stripped, because the turn's target key is derived from the raw string and reading a
+    stripped name could reach a branch the key does not name.
+    """
+    if not isinstance(base_ref, str) or not base_ref or base_ref != base_ref.strip():
         raise TargetUnreadable(
             "a base ref is a branch name without surrounding whitespace, not " + repr(base_ref))
-    try:
-        branch = forge.branch_ref(base_ref)
-    except forge.ForgeUsage as error:
-        raise TargetUnreadable(str(error)) from error
-    if (branch.startswith("-") or branch.endswith("/") or branch.endswith(".lock")
-            or any(part in branch for part in _REVISION_SYNTAX)):
+    parts = base_ref.split("/")
+    if (_GIT_REFUSED.search(base_ref) or ".." in base_ref or "@{" in base_ref
+            or base_ref == "@" or base_ref.startswith("-") or base_ref.endswith(".")
+            or any(not part or part.startswith(".") or part.endswith(".lock")
+                   for part in parts)):
         raise TargetUnreadable(
             "a base ref is a plain branch name; " + repr(base_ref) + " carries revision syntax"
             " or a form git refuses, so it names no branch this can read exactly")
-    return branch
+    return base_ref
 
 
 def _run(argv, timeout, env):
@@ -142,6 +148,11 @@ class TargetReader:
         return {"sha": sha, "source": LOCAL_GIT, "reference": reference, "repository": path}
 
     def _github(self, slug, branch):
+        try:
+            # A URL path segment has stricter rules than a ref name (no # or %, for one).
+            forge.branch_ref(branch)
+        except forge.ForgeUsage as error:
+            raise TargetUnreadable(str(error)) from error
         reference = "refs/heads/" + branch
         host = os.environ.get("GH_HOST") or "github.com"
         try:

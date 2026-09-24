@@ -1730,9 +1730,11 @@ class TheBaseTheTargetActuallyReads(MergeTurnTestCase):
 
     def test_a_resolution_statement_that_disagrees_with_the_reading_is_refused(self):
         held = self.unknown()
-        self.refused(lambda: self.turns.resolve_unknown(
+        error = self.refused(lambda: self.turns.resolve_unknown(
             held["turnId"], actor=self.supervisor.task_id, observed_base_sha="base-9",
             pr_state="open", evidence="still open"), RefusalReason.MERGE_BASE_MISMATCH)
+        # The argument is required on resolve, so the refusal does not offer leaving it out.
+        self.assertNotIn("leave the statement out", error.detail)
         self.assertEqual(self.turns.turn(held["turnId"])["state"], "unknown")
 
     def test_an_unreadable_target_returns_an_open_candidate_without_a_base(self):
@@ -1931,6 +1933,22 @@ class TheBaseTheTargetActuallyReads(MergeTurnTestCase):
         self.assertTrue(answer["restated"])
         self.assertEqual([r["sequence"] for r in answer["baseRestatements"]],
                          [10 ** 18 + 1])
+
+    def test_corrections_stay_in_order_past_a_nineteen_digit_key(self):
+        """Devin review: a bound of eighteen digits restarted the sequence below a longer one."""
+        first = self.landed()
+        turn = first["turnId"]
+        self.legacy_row(turn, kind="attestation", key="restate-base:" + str(10 ** 18),
+                        evidence_kind="transport_accepted", evidence="old caller row")
+        self.legacy_row(turn, kind="transition", key="restate-base:" + str(10 ** 18 + 1),
+                        evidence_kind="landing_base_restated", states=("landed", "landed"),
+                        evidence=json.dumps({"turnId": turn, "sequence": 10 ** 18 + 1,
+                                             "from": "base-x", "to": self.POST,
+                                             "evidence": "earlier", "source": "fake"}))
+        self.r3_landing(first)
+        answer = self.restate(turn)
+        self.assertEqual([r["sequence"] for r in answer["baseRestatements"]],
+                         [10 ** 18 + 1, 10 ** 18 + 2])
 
     def test_rows_an_older_store_may_hold_neither_block_nor_pass_as_restatements(self):
         first = self.landed()

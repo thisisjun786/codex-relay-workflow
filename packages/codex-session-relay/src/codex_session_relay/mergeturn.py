@@ -75,9 +75,11 @@ READINESS_WITHDRAWN = "readiness_withdrawn"
 # can hold a forged one.
 LANDING_BASE_RESTATED = "landing_base_restated"
 RESTATE_PREFIX = "restate-base:"
-# The digits a restatement key's sequence may have. A longer run is some older caller's key:
-# it is never converted to a number (Python refuses past 4300 digits), only stepped around.
-_RESTATE_KEY = re.compile(r"\Arestate-base:([0-9]{1,18})\Z")
+# The digits a restatement key's sequence may have. Every key within this bound counts towards
+# the next sequence, so corrections stay in order whatever an older caller wrote. A longer run is
+# never converted: Python refuses to convert past 4300 digits either way (int() and str()), and
+# the bound leaves room for the next sequence to be written. Such a key is only stepped around.
+_RESTATE_KEY = re.compile(r"\Arestate-base:([0-9]{1,4000})\Z")
 
 # What this module writes, and therefore what nobody else may write through attest().
 #
@@ -1370,13 +1372,13 @@ class MergeTurn:
             incumbent=row["turn_id"], challenger=actor)
 
     @staticmethod
-    def _mismatch(row, actor, stated, reading, what):
+    def _mismatch(row, actor, stated, reading, what, *, optional=True):
         return Refusal(
             RefusalReason.MERGE_BASE_MISMATCH,
             "the base branch " + repr(row["base_ref"]) + " reads " + repr(reading["sha"])
             + " (" + str(reading.get("source")) + ") and " + what + " states " + repr(stated)
             + "; the relay records what the branch reads, so read it again and state it in"
-            " full, or leave the statement out",
+            " full" + (", or leave the statement out" if optional else ""),
             domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
             incumbent=reading["sha"], challenger=stated)
 
@@ -1864,8 +1866,10 @@ class MergeTurn:
                             row, actor, unread, "a merged outcome has no base to record; the"
                             " turn stays unknown")
                 elif not same_commit(observed_base_sha, reading["sha"]):
+                    # Required on resolve, so the refusal cannot suggest leaving it out.
                     refusal = self._mismatch(
-                        row, actor, observed_base_sha, reading, "--observed-base-sha")
+                        row, actor, observed_base_sha, reading, "--observed-base-sha",
+                        optional=False)
             if refusal is None:
                 self._close_in(
                     db, row, LANDED if landed else RETURNED,

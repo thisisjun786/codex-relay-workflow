@@ -86,8 +86,15 @@ class ReadingALocalRepository(RelayTestCase):
     def test_revision_syntax_is_never_evaluated(self):
         """rev-parse answers main~1 with the parent - the very pre-landing base."""
         self.repo.point("main", self.head)
-        for branch in ("main~1", "main^", "main@{1}", "-main", "main.lock", "ma*in", " main"):
+        for branch in ("main~1", "main^", "main@{1}", "-main", "main.lock", "ma*in", " main",
+                       "a..b", "x/.hidden", "a//b", "main.", "@", "ma in", "ma\tin", "x/"):
             self.unreadable(self.repo.path, branch)
+
+    def test_a_branch_git_allows_is_read_even_where_a_url_would_not_be(self):
+        """Devin review: topic#42 is a valid local branch; the URL validator refused it."""
+        for branch in ("topic#42", "50%off", "release/1.2"):
+            self.repo.point(branch, self.head)
+            self.assertEqual(self.reader.tip(self.repo.path, branch)["sha"], self.head)
 
     def test_a_branch_that_does_not_exist_is_unreadable_with_gits_reason(self):
         self.assertIn("refs/heads/nope", self.unreadable(self.repo.path, "nope"))
@@ -188,6 +195,11 @@ class ReadingAForge(RelayTestCase):
         for answer in answers:
             with self.assertRaises(TargetUnreadable, msg=repr(answer)):
                 self.reader(answer).tip("owner/repo", "dev")
+
+    def test_a_branch_a_forge_url_cannot_carry_starts_nothing(self):
+        with self.assertRaises(TargetUnreadable):
+            self.reader().tip("owner/repo", "topic#42")
+        self.assertEqual(self.calls, [])
 
     def test_a_repository_that_is_not_owner_name_starts_nothing(self):
         for repository in ("-owner/repo", "owner", "owner/repo/extra", "https://x/y"):
