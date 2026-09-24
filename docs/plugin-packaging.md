@@ -303,10 +303,10 @@ directory, nine of them still were half an hour later (the tenth had exited), an
 resumed twenty minutes after the add was given a bridge from the new directory. So the MCP reference
 can outlive its directory, as at the second replacement, or the host can resolve the declaration
 again against the new one, as at the first. The one restart seen came before a changed declaration's
-new trust was found in place, and the replacement that needed no new trust restarted nothing. The
-approval itself was not timed, only found done about ten seconds after the restart, and two
-replacements that differ in more than this do not establish a cause: what restarts the bridges is
-not measured.
+new trust was found in place, and at the replacement that needed no new trust none was seen to
+start. The approval itself was not timed, only found done about ten seconds after the restart, and
+two replacements that differ in more than this do not establish a cause: what restarts the bridges
+is not measured.
 
 A bridge started from the new directory runs under whatever the bridge record says at that moment,
 and the record lives in the Codex home, outside the cache. At the first replacement it was still
@@ -529,10 +529,10 @@ making its first policy registration as well, and step 8 says what that changes.
      `executionPolicy.digest` is the digest the record names, and a bridge with no policy reports
      `presence_only`;
    - whether the hook fires: end a turn in an ordinary task started after the add and find that
-     session and turn in the Stop journal, as the turn-specific reading in
+     session and turn in the Stop journal, as the step of
      [running the combination against a real host](runtime-install.md#running-the-combination-against-a-real-host)
-     does. A subagent's turn is no signal: on the measured host subagent turns recorded no Stop at
-     all;
+     that reads the journal records for one session and turn does. A subagent's turn is no signal:
+     on the measured host subagent turns recorded no Stop at all;
    - every running crw bridge, from `/proc`, the way both measured replacements were read. Run it as
      the user the App Server runs as; a bridge process whose directory or environment you may not
      read is listed as `UNREADABLE` rather than skipped. This is an operator reading, not a command
