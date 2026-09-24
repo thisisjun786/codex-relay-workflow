@@ -54,31 +54,20 @@ def details(problems):
     return [problem.detail for problem in problems]
 
 
-def shape_problems(review, checks, required=UNDECLARED, head_sha=None):
-    """Types and shapes, before any rule reads a value.
+def review_shape_problems(review):
+    """The review record's types and shapes, on their own (CRW-232).
 
-    The predicates below were written for a caller that had already validated its payload,
-    which is true of the merge turn and is not true of a child assembling a record for the
-    first time. Reading unvalidated data with them fails in the wrong way: a non-mapping entry
-    raises AttributeError out of `.get`, a non-numeric attempt raises ValueError out of
-    `int()`, and both escape as host exceptions rather than as something the producer is told.
-
-    Worse than an exception is a shape that passes. `threadsSeen` given as a string iterates
-    per CHARACTER, so "ab" beside totalCount 2 counts as two threads seen and the record
-    passes having enumerated nothing. Identifiers that are not strings are coerced by `str`
-    and start agreeing with each other. An attempt of 0 is turned into 1 by the `or 1`
-    fallback, so a run's real newest attempt can be hidden behind a zero. Every one of those
-    is the same silence-reads-as-satisfied failure R0 exists for, arriving through the type
-    system instead of through an absent key.
+    shape_problems asks this about the review among everything else a child's record carries.
+    The merge turn restates a review too, and needs this part alone: its checks keep the attempt
+    default the merge turn has always applied, so running the whole of shape_problems there
+    would change the checks contract in passing. One function, so both sides refuse the same
+    shapes with the same sentences.
     """
     problems = []
 
     def bad(detail):
         problems.append(Problem(MALFORMED, detail))
 
-    if head_sha is not None and (not isinstance(head_sha, str) or not head_sha.strip()):
-        bad("the head this evidence is about is a non-empty commit sha, not "
-            + repr(head_sha))
     if not isinstance(review, dict):
         bad("the review record is an object stating " + ", ".join(REVIEW_FIELDS)
             + ", not a " + type(review).__name__)
@@ -106,6 +95,36 @@ def shape_problems(review, checks, required=UNDECLARED, head_sha=None):
                         bad("threadsSeen entry " + str(position) + " is a thread identifier"
                             " string, not a " + type(one).__name__
                             + "; coercing it would let two different values agree")
+    return problems
+
+
+def shape_problems(review, checks, required=UNDECLARED, head_sha=None):
+    """Types and shapes, before any rule reads a value.
+
+    The predicates below were written for a caller that had already validated its payload. A
+    child assembling a record for the first time has not, and neither had the merge turn, which
+    restated a review straight into them until CRW-232 put review_shape_problems in front of
+    it. Reading unvalidated data with them fails in the wrong way: a non-mapping entry
+    raises AttributeError out of `.get`, a non-numeric attempt raises ValueError out of
+    `int()`, and both escape as host exceptions rather than as something the producer is told.
+
+    Worse than an exception is a shape that passes. `threadsSeen` given as a string iterates
+    per CHARACTER, so "ab" beside totalCount 2 counts as two threads seen and the record
+    passes having enumerated nothing. Identifiers that are not strings are coerced by `str`
+    and start agreeing with each other. An attempt of 0 is turned into 1 by the `or 1`
+    fallback, so a run's real newest attempt can be hidden behind a zero. Every one of those
+    is the same silence-reads-as-satisfied failure R0 exists for, arriving through the type
+    system instead of through an absent key.
+    """
+    problems = []
+
+    def bad(detail):
+        problems.append(Problem(MALFORMED, detail))
+
+    if head_sha is not None and (not isinstance(head_sha, str) or not head_sha.strip()):
+        bad("the head this evidence is about is a non-empty commit sha, not "
+            + repr(head_sha))
+    problems.extend(review_shape_problems(review))
     if required is not UNDECLARED:
         if not isinstance(required, (list, tuple, set, frozenset)):
             bad("the required check names are a list, not a " + type(required).__name__)
