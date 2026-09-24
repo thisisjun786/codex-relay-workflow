@@ -242,19 +242,22 @@ def settle(store, clock, request_id, reading, *, observation=None) -> dict:
             "holdReason": hold, "record": record}
 
 
+_AWAITING_SQL = (
+    "SELECT d.event_id, a.request_id FROM deliveries d"
+    " JOIN attempts a ON a.event_id = d.event_id AND a.attempt_no = d.attempt_count"
+    " WHERE d.kind = ? AND d.state = ? AND d.hold_reason IS NULL"
+    "   AND a.internal_state = 'settled' AND a.state = ?"
+    "   AND NOT EXISTS (SELECT 1 FROM acks k WHERE k.event_id = d.event_id)"
+)
+
+
 def awaiting_ack(store, *, after=None, limit):
     """Delivered completions still owed an acknowledgement, keyed by event, one page.
 
     The attempt is the delivery's CURRENT one, joined on the event as well as the number: every
     event's first attempt is number 1. A held, acknowledged or already-lost row is not a candidate.
     """
-    sql = (
-        "SELECT d.event_id, a.request_id FROM deliveries d"
-        " JOIN attempts a ON a.event_id = d.event_id AND a.attempt_no = d.attempt_count"
-        " WHERE d.kind = ? AND d.state = ? AND d.hold_reason IS NULL"
-        "   AND a.internal_state = 'settled' AND a.state = ?"
-        "   AND NOT EXISTS (SELECT 1 FROM acks k WHERE k.event_id = d.event_id)"
-    )
+    sql = _AWAITING_SQL
     params = [COMPLETION, DISPATCHED, DISPATCHED]
     if after is not None:
         sql += " AND d.event_id > ?"
@@ -262,3 +265,17 @@ def awaiting_ack(store, *, after=None, limit):
     sql += " ORDER BY d.event_id LIMIT ?"
     params.append(limit)
     return store.all(sql, tuple(params))
+
+
+def still_awaiting(store, request_ids):
+    """Which of these request ids are still a candidate of awaiting_ack, by the same test.
+
+    The caller bounds the list; the request id is the attempts table's key.
+    """
+    request_ids = list(request_ids)
+    if not request_ids:
+        return set()
+    marks = ", ".join("?" for _ in request_ids)
+    rows = store.all(_AWAITING_SQL + f" AND a.request_id IN ({marks})",
+                     (COMPLETION, DISPATCHED, DISPATCHED, *request_ids))
+    return {row["request_id"] for row in rows}

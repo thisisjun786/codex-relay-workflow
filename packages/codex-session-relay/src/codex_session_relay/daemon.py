@@ -11,6 +11,7 @@ why the gate below asks whether there is anything to learn before invoking anyth
 """
 
 import fcntl
+import itertools
 import json
 import os
 from dataclasses import dataclass, field
@@ -175,9 +176,10 @@ class RelayDaemon:
         # Where the recipient-turn check resumes, and the delivered completions whose turn the
         # host has already listed as finished. Both in memory, like _supervisor_after: a restart
         # costs one more read per delivery still awaiting its acknowledgement, and a tick that
-        # learns nothing new writes nothing.
+        # learns nothing new writes nothing. A dict for its order: _forget_departed asks about
+        # the entries it checked longest ago first.
         self._turn_check_after = None
-        self._turns_settled = set()
+        self._turns_settled = {}
         # Request ids whose last reading was undecided in a way waiting alone will not change,
         # and when to read them again. A schedule, not evidence: the reading itself decides.
         self._turns_undecided = {}
@@ -219,11 +221,15 @@ class RelayDaemon:
         An accepted turn/start is not a turn the host keeps: an App Server that dies before the
         turn reaches its rollout comes back without it, and the delivery would otherwise wait for
         an acknowledgement nobody can send. Bounded by max_turn_checks_per_tick lookups; the
-        candidates rotate from where the last pass stopped and wrap once, and a delivery whose
+        candidates rotate from where the last pass stopped and wrap once at the end, and a delivery whose
         turn was listed as finished is not read again, without spending the budget. An in-progress
         turn, a token found without its turn, and an unreadable host are all read again later.
         A reading that stays undecided however long it waits (hostloss.LISTING_BOUNDED and its
         kind) is named on the attempt and read again after UNDECIDED_RECHECK_SECONDS.
+
+        The rotation returns to the first candidate only after a short page, the end of the
+        candidates. A full page leaves the position inside it for the next tick, so a run of
+        finished turns delays a candidate behind it by a page a tick and never hides it.
         """
         budget = self.policy.max_turn_checks_per_tick
         if budget <= 0 or getattr(self.adapter, "find_dispatched_turn", None) is None:
@@ -233,23 +239,16 @@ class RelayDaemon:
         page = self.turn_check_page or max(64, budget * 16)
         after = self._turn_check_after
         try:
+            self._forget_departed(hostloss, page)
             rows = list(hostloss.awaiting_ack(self.store, after=after, limit=page))
-            # Whether this pass saw every candidate. Only then is a skip-set entry absent from
-            # the rows known to be no longer awaiting; pruning on a partial window forgot
-            # finished turns and spent the budget reading them again (Devin review).
-            complete = len(rows) < page
-            if after is not None:
-                head = list(hostloss.awaiting_ack(self.store, limit=page))
-                rows += [row for row in head if row["event_id"] <= after]
-                complete = complete and len(head) < page
+            # Wrapping after a full page as well sent the position back to the head whenever
+            # that page held only finished turns, and nothing past it was read again (review 3).
+            if after is not None and len(rows) < page:
+                rows += [row for row in hostloss.awaiting_ack(self.store, limit=page)
+                         if row["event_id"] <= after]
         except Exception as error:  # noqa: BLE001 - a tick never dies on one pass
             report.notes.append(f"recipient turn check could not list deliveries: {error}")
             return
-        if complete:
-            live = {row["request_id"] for row in rows}
-            self._turns_settled &= live
-            self._turns_undecided = {key: when for key, when in self._turns_undecided.items()
-                                     if key in live}
         spent = 0
         for row in rows:
             if spent >= budget:
@@ -271,7 +270,7 @@ class RelayDaemon:
             else:
                 self._turns_undecided.pop(row["request_id"], None)
             if reading["finding"] == hostloss.PRESENT and reading["status"] in hostloss.TERMINAL:
-                self._turns_settled.add(row["request_id"])
+                self._turns_settled[row["request_id"]] = None
             elif reading["finding"] == hostloss.UNKNOWN and (
                     reading["detail"] or "").startswith("unreadable"):
                 report.notes.append(
@@ -280,6 +279,29 @@ class RelayDaemon:
             if outcome.get("redelivery") in (hostloss.REQUEUED, hostloss.HELD):
                 report.turnsLost += 1
             report.turnsUndecided += outcome.get("undecidedChanged", 0)
+
+    def _forget_departed(self, hostloss, page) -> None:
+        """Drop remembered request ids whose delivery no longer awaits its acknowledgement.
+
+        A delivery leaves the candidates when it is acknowledged, held, lost or sent again, and
+        nothing tells these caches. Each tick asks the store about at most a page of each, the
+        entries checked longest ago, and moves those still awaiting to the back. A tick adds at
+        most the lookup budget, less than a page, so the caches stay about the size of the
+        deliveries still awaiting however long the daemon runs and whatever order the event ids
+        sort in. Pruning only after a pass that saw every candidate never pruned once the
+        candidates outgrew a page (review 3).
+        """
+        batch = list(itertools.islice(self._turns_settled, page))
+        batch += itertools.islice(self._turns_undecided, page)
+        if not batch:
+            return
+        live = hostloss.still_awaiting(self.store, batch)
+        for cache in (self._turns_settled, self._turns_undecided):
+            for request_id in batch:
+                if request_id in cache:
+                    value = cache.pop(request_id)
+                    if request_id in live:
+                        cache[request_id] = value
 
     def _sweep_faults(self, report) -> None:
         """Record what the store currently shows is broken, so nobody has to notice first.

@@ -476,9 +476,14 @@ is its generation's anchor, which is never rebound, so for revisions and merge-t
 check is reported and changes nothing. A lost revision anchor already shows up in observation
 health as an absent turn.
 
-The pass writes nothing while a turn is present. A turn listed as finished is not read again for
-the rest of the process's life. An in-progress turn, a token found without its turn row, and an
-unreadable host are read again on a later rotation, within the budget.
+The pass writes nothing while a turn is present. A turn listed as finished is not read again while
+its delivery still waits for the acknowledgement. The daemon remembers those request ids in memory,
+and each tick asks the store about the page of them it checked longest ago, forgetting any whose
+delivery has since been acknowledged, held, lost or sent again. The memory therefore stays about the
+size of the deliveries still waiting. The pass resumes where the last one stopped and returns to
+the first waiting delivery only after reaching the last, so a long run of finished turns delays the
+deliveries behind it by a page a tick and never hides them. An in-progress turn, a token found
+without its turn row, and an unreadable host are read again on a later rotation, within the budget.
 
 Some readings cannot decide however long the relay waits: a listing that never reached the send,
 a token scan that could not cover the turns since it, or an attempt without a send time. These
