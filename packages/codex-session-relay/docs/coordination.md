@@ -158,15 +158,51 @@ re-derives are not disagreeing about it; they are both going to regenerate it, a
 `region-show` lists such regions under `regenerate` with the command they come from. This
 pull request is itself in that situation with `scripts/crw_runtime/components.json`.
 
+## A base move reaches an agreement only when a party records it
+
+A region carries the revision it was proposed on, so an agreement is about a place in one tree.
+Nothing here watches a branch, and `merge-turn-land` records no revision mark: a mark is
+append-only with one successor per revision, while a landing's recorded base can still be
+corrected with `merge-turn-restate-base` (see above), so a mark written from a wrong reading could
+never be taken back. A registered parent of a project holding an agreement in the repository
+records the move with `region-restate-revision` once it has read the landed base, and before it
+answers or relies on an agreement standing on the older tree. Until somebody does, a late
+acceptance on the older tree stands; that is the contract, not an oversight.
+
+One revision has one successor, so only the first move starts at the proposal's revision. Every
+later move starts at the end of the recorded chain, which `region-show` reports per agreement as
+`currentRevision` and which a refused restatement names with the command to run. A move the chain
+already holds answers `alreadyRecorded` and writes no mark.
+
+After a move, settling an agreement on the older revision is refused as
+`agreement_revision_stale`, naming the chain's end, and either side carries it there with
+`region-reaffirm` (CRW-237). The successor keeps the original proposer, the constraint and both
+sides' conditions as written; the carrying side may restate only its own condition. Carrying
+accepts the carrier's side on the new tree. The other side's acceptance was given on the older
+tree and is not carried: the answer's `reaffirmation.awaitingAcceptance` names that side's parent,
+the reason (`acceptance_on_prior_revision` or `not_yet_accepted`) and the `region-settle` command,
+and `nextOwner` names that parent - or, with no single registered parent on that side, is left
+empty while the answer says what has to happen first. `statedOn` names the revision each text was
+written against and `textFromEarlierRevision` lists those from an older tree, because a line
+number inside one points there. The first version made the carrier the proposer, dropped both
+conditions and cleared the other acceptance without a word (CRW-124 G3).
+
+An acceptance takes no condition. One given to `region-settle` used to vanish; it is now refused,
+as `bad_invocation` at the command line.
+
 ## What this is not
-- **`reaffirm` spans three transactions, and that is a choice with a stated reason.** It
-  validates the chain and retires the predecessor in one, proposes the successor through the
-  ordinary `propose` path in a second, and links them in a third. Folding them would mean
-  duplicating the shape, overlap, peer and classification validation `propose` owns, and a
-  second copy of those rules going stale is the failure this package keeps closing. The
-  order is chosen so the reachable interruptions are a retired predecessor with no successor,
-  or a successor not yet pointing back - both recoverable by proposing again. Neither leaves
-  two live agreements on one carry-forward, which is the state the guard index cannot catch.
+- **`reaffirm` spans two transactions, and that is a choice with a stated reason.** The first
+  validates and records its refusals - ownership, an open agreement, a revision that actually
+  moved, the end of the recorded chain, a successor place free of another pair's overlap and of
+  this pair's own live agreement - and retires nothing. The second is the ordinary `propose`
+  path carrying the predecessor: in its one transaction it decides all of that again, checks that
+  the destination is the predecessor's own place, pair and link, retires the predecessor, inserts
+  the successor with the terms read from the row it retires, records what was carried in
+  `edit_reaffirmations` and links the two. Reusing `propose` keeps its shape, overlap, peer and
+  classification rules in one copy. The earlier three-transaction order retired first and
+  inserted later, so a base move or a same-pair proposal landing in between left a successor on a
+  superseded tree or nothing live at all; now an interruption or a lost race leaves the
+  predecessor live and the refusal recorded.
 - **A review record states every field or none of it counts.** `hasNextPage`, `pagesRead`,
   `totalCount`, `threadsSeen` and `unresolved` must all be present before any is read.
   Absent used to read as satisfied at every one of them, so a record saying nothing passed
