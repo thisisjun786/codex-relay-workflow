@@ -349,8 +349,9 @@ A delivery held on its recipient's settings says who recovers it and how. `statu
 `settingsHold` (kind `withheld`, `capped` or `channel_closed`, and the reason) and `recovery`
 (actor, command, next step, and what later deliveries need); assignment-show names the same actor
 as `operator_restores_recipient_settings` or `parent_recovers_settings_hold` (a revision request
-to the child the same way, except that one held at the cap keeps
-`parent_recovers_held_correction`, named for the settings code); the fault sweep
+to the child the same way, except that one held at the cap or stored by a closed channel keeps
+`parent_recovers_held_correction`, named for the settings code, and a stored revision request takes
+no acknowledgement); the fault sweep
 carries the same reason and recovery. A withheld hold is the operator's: run the named
 `settings-show`, then bring the recipient back under its recorded settings or re-record it with
 `--source user_transition` when the user changed it. A capped one is never sent again, so the

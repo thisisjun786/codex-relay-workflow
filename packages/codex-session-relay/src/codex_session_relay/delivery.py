@@ -2062,7 +2062,8 @@ class DeliveryService:
 
                 settings_hold = dict(reading["hold"], kind=reading["kind"])
                 recovery = settings_recovery_record(
-                    self.store, settings_hold, row["event_id"], row["recipient_task_id"])
+                    self.store, settings_hold, row["event_id"], row["recipient_task_id"],
+                    revision=row["kind"] == REVISION)
             items.append({
                 "eventId": row["event_id"],
                 "kind": row["kind"],

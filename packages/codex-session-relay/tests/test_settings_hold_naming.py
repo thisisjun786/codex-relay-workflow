@@ -25,8 +25,10 @@ from codex_session_relay import faultsweep
 from codex_session_relay.assignment import (
     OPERATOR_RESTORES_SETTINGS_ACTION,
     PARENT_RECOVERS_SETTINGS_HOLD_ACTION,
+    NEEDS_CHANGES,
     RECEIVED,
     completion_next_action,
+    correction_next_action,
 )
 from codex_session_relay.delivery import current_settings_hold
 from codex_session_relay.errors import DeliveryRefused, RefusalReason
@@ -128,6 +130,10 @@ class AWithheldSettingsHold(SettingsHoldCase):
         self.assertEqual(self.next_action(), "daemon_delivers")
         recovery = self.status_of(event_id)["recovery"]
         self.assertEqual((recovery["actor"], recovery["reason"]), ("daemon", "setting_unobservable"))
+        # assignment-show names the same recovery beside the daemon's action (Devin on 566eecb5).
+        shown = self.recovery()
+        self.assertEqual((shown.get("actor"), shown.get("reason"), shown.get("command")),
+                         (recovery["actor"], recovery["reason"], recovery["command"]))
 
 
 class ACappedSettingsHold(SettingsHoldCase):
@@ -194,6 +200,30 @@ class ACorrectionHeldOnTheChildsSettings(SettingsHoldCase):
         self.assert_show_event(recovery.get("command"), correction)
         self.assertTrue(recovery.get("laterDeliveries"))
         self.assertEqual(self.status_of(correction)["recovery"]["reason"], NOT_PRESERVED)
+
+
+    def test_a_correction_a_closed_channel_stored_is_named_for_its_settings_code(self):
+        """RED: assignment-show named only push_channel_closed, and status told the parent to
+        acknowledge a revision request, which takes no acknowledgement (Devin and the review
+        of 566eecb5)."""
+        from codex_session_relay.errors import AckRefused
+
+        _completion, correction = self.correction_after_needs_changes()
+        self.adapter.script("approval_policy")
+        self.attempt(correction)
+        self.assertEqual(self.delivery_row(correction)["state"], INBOX_ONLY)
+        self.assertEqual(self.next_action(), "parent_recovers_held_correction")
+        shown = self.recovery()
+        status = self.status_of(correction)["recovery"]
+        for recovery in (shown, status):
+            self.assertEqual((recovery.get("actor"), recovery.get("reason")),
+                             ("parent", "unsupported_approval_policy"))
+            self.assertIn("takes no acknowledgement", recovery.get("then") or "")
+            self.assertIn("generation-open", recovery.get("then") or "")
+            self.assert_show_event(recovery.get("command"), correction)
+            self.assertIn("never or on-request", recovery.get("laterDeliveries"))
+        with self.assertRaises(AckRefused):
+            self.ack.acknowledge(correction, ack_turn_id="t", ack_proof="p", accepted=True)
 
 
 class AClosedChannel(SettingsHoldCase):
@@ -457,10 +487,27 @@ class TheOrderOfTheNextAction(unittest.TestCase):
         self.assertEqual(completion_next_action(
             RECEIVED, self.projection(WITHHELD_PRE_SEND, "attempt_cap", kind="capped")),
             PARENT_RECOVERS_SETTINGS_HOLD_ACTION)
+        # A budget no window reopens comes first: nothing is sent until the policy changes, not
+        # even the retry that would re-read the recorded refusal (Devin on 566eecb5).
         never = {"reason": "hourly_cap", "reopensAt": None}
         self.assertEqual(completion_next_action(
             RECEIVED, self.projection(WITHHELD_PRE_SEND, None, host_lost=0, pacing=never)),
-            OPERATOR_RESTORES_SETTINGS_ACTION)
+            "operator_changes_send_policy")
+
+    def test_a_correction_asks_the_same_order(self):
+        """RED: a correction withheld on its child's settings read as the daemon's."""
+        def correction(pacing):
+            return {"correction": {
+                "eventId": "event-2", "supersession": None, "undeliveredReason": None,
+                "delivery": {"state": WITHHELD_PRE_SEND, "holdReason": None, "pacing": pacing,
+                             "settingsHold": {"kind": "withheld", "source": "pre_send",
+                                              "reason": NOT_PRESERVED}},
+            }}
+        self.assertEqual(correction_next_action(NEEDS_CHANGES, correction(None)),
+                         OPERATOR_RESTORES_SETTINGS_ACTION)
+        self.assertEqual(correction_next_action(
+            NEEDS_CHANGES, correction({"reason": "hourly_cap", "reopensAt": None})),
+            "operator_changes_send_policy")
 
 
 class AnAcceptedNarrowingIsWrittenDown(SettingsHoldCase):

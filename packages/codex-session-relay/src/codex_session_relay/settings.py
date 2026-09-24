@@ -136,6 +136,15 @@ HOLD_CAPPED_THEN = (
     " generation (generation-open) if the work still needs verifying"
 )
 HOLD_CHANNEL_THEN = "the report is stored where the recipient reads it: read it and acknowledge"
+# A revision request the child's approval policy stored without waking it. It takes no
+# acknowledgement (ack.py accepts one for a completion only), so the parent's path is the one a
+# held correction already has (CRW-231): read it here, and open a fresh execution generation if the
+# child still has to be given it (the review of 566eecb5).
+HOLD_CORRECTION_CHANNEL_THEN = (
+    "the revision request is stored where the child reads it, without waking the child, and it"
+    " takes no acknowledgement: read it, then open a fresh execution generation (generation-open)"
+    " if the child still has to be given it"
+)
 HOLD_UNDETERMINED_THEN = (
     "this state was recorded before its cause was written down, so the cause is not"
     " established here: read the event's attempts and their receipts, then settings-show;"
@@ -152,10 +161,11 @@ LATER_BY_OWNER = (
 )
 
 
-def settings_hold_recovery(kind, code, source) -> dict:
+def settings_hold_recovery(kind, code, source, *, revision=False) -> dict:
     """Who recovers a settings hold of this kind and code, and how: {actor, command, then,
     laterDeliveries}. kind is withheld, capped or channel_closed; source is the reader's
-    (attempt, pre_send or undetermined)."""
+    (attempt, pre_send or undetermined); revision says the delivery is a revision request to the
+    child rather than a completion, which only a closed channel reads differently."""
     if source == "undetermined":
         return {"actor": "operator", "command": SHOW_EVENT, "then": HOLD_UNDETERMINED_THEN,
                 "laterDeliveries": None}
@@ -163,7 +173,8 @@ def settings_hold_recovery(kind, code, source) -> dict:
         return {"actor": "parent", "command": SHOW_EVENT, "then": HOLD_CAPPED_THEN,
                 "laterDeliveries": LATER_BY_OPERATOR}
     if kind == "channel_closed":
-        return {"actor": "parent", "command": SHOW_EVENT, "then": HOLD_CHANNEL_THEN,
+        return {"actor": "parent", "command": SHOW_EVENT,
+                "then": HOLD_CORRECTION_CHANNEL_THEN if revision else HOLD_CHANNEL_THEN,
                 "laterDeliveries": LATER_BY_OWNER}
     if code in DAEMON_SETTINGS_CODES:
         return {"actor": "daemon", "command": SETTINGS_SHOW, "then": HOLD_DAEMON_THEN,
