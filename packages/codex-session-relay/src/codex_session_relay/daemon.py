@@ -26,11 +26,14 @@ from .policy import RetryPolicy
 from .receipts import ObservationOutcome, classify_observation
 from .scope import assert_assignment_delivery
 from .transport import DEFERRED_BUSY, DISPATCHED, HELD_UNCERTAIN, WITHHELD_PRE_SEND
+from .faults import DELIVERER_OWNER
 
 
 # Who a claim the daemon makes on a supervisor message belongs to. A claim is owned by its
 # attempt number and this name together, so a parent sending by hand beside it cannot settle it.
-DAEMON_OWNER = "relay-daemon"
+# The same name reserves the daemon's fault notifications, and the ledger keeps it the
+# deliverer's (faults.DELIVERER_OWNER).
+DAEMON_OWNER = DELIVERER_OWNER
 
 
 @dataclass

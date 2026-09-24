@@ -1075,3 +1075,22 @@ class WhatDevinFoundOnTheFinalHeads(NoticeCase):
             self.tick(advance=self.channel.policy.lifecycle_recheck_seconds + 1)
         self.assertEqual(self.one_notice()["hold_reason"], channel_module.PARKED_HOLD)
         self.assert_reports_flow(fault)
+
+
+class WhatTheSeventhFinalReviewFound(NoticeCase):
+    """Final review of aec54508: the deliverer's owner is its own. A reservation under it is
+    one made with the deliverer's transport predicate, so no other reserver can take the name
+    and have its send settled from the supervisor channel's silence (I-444)."""
+
+    def test_the_deliverer_s_owner_is_not_one_another_reserver_can_take(self):
+        from codex_session_relay.daemon import DAEMON_OWNER
+
+        fault = self.broken()
+        self.measure_parent()
+        with self.assertRaises(faults.FaultRefused):
+            self.ledger.reserve_notifications(owner=DAEMON_OWNER, limit=5)
+        self.assertEqual(self.notification(fault)["state"], faults.PENDING)
+        self.assertEqual(self.budget_used(), 0)
+        self.tick()
+        self.assertEqual(len(self.sent_for(self.notification(fault))), 1,
+                         "the deliverer itself still reserves and sends it, once")

@@ -140,6 +140,10 @@ MAX_EVIDENCE = 8
 MAX_EVIDENCE_BYTES = 4096
 MAX_ATTEMPTS = 8
 LEASE_SECONDS = 300.0
+# The notification reserver that is the relay daemon's deliverer, and nobody else: its
+# reservations carry its transport predicate (reserve_notifications refuses the name without
+# one), so a lapsed one may be settled from the supervisor channel's records.
+DELIVERER_OWNER = "relay-daemon"
 BASE_BACKOFF = 30.0
 MAX_BACKOFF = 900.0
 DEFAULT_WINDOW = 21600.0
@@ -3125,9 +3129,22 @@ class FaultLedger:
         It runs inside this call's write: it may read the store on its connection, and must
         neither open a transaction (the store refuses a nested one, and the refusal would roll
         back the whole batch) nor call a host (which would hold the write lock for as long).
+
+        The owner DELIVERER_OWNER is the daemon's deliverer's. It reserves with its transport
+        predicate, which makes the supervisor channel that reservation's transport, and so it
+        may settle a lapsed one from the channel's own records (I-444). A reservation under
+        that name without a predicate - the fault-notification-reserve command, any other
+        transport - is refused, so another reserver's send is never settled from the
+        channel's silence.
         """
         if not _named(owner):
             raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED, "a reservation has an owner")
+        if owner == DELIVERER_OWNER and deliverable is None:
+            raise FaultRefused(
+                RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                f"owner {owner!r} is the relay daemon's notification deliverer's: its"
+                f" reservations are settled from the supervisor channel's records, so a"
+                f" reserver with a transport of its own names itself")
         limit = _bounded(limit, "limit")
         moment = self.clock.now()
         stamp = self.clock.iso()

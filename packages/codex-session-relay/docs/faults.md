@@ -952,7 +952,9 @@ deliverer is the seam between them and owns no rule. Each tick it:
   uncertain and the first step settles it. Only reservations the deliverer's own owner made
   are settled this way: one another owner made (`fault-notification-reserve`, another
   transport) may have been sent by its own means, so it stays uncertain for that owner's
-  transport or `fault-notification-reconcile`.
+  transport or `fault-notification-reconcile`. The deliverer's owner, `relay-daemon`
+  (`DELIVERER_OWNER`), is its own: `reserve_notifications` refuses it to a reserver without
+  the deliverer's transport predicate, so the command line cannot take it.
 
 The level above is the one the live linkage names from what the notification is about: the
 fault's own relationship, else the current relationship of the issue it names - its scope's
