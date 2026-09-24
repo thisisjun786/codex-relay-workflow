@@ -606,11 +606,11 @@ and records no revision mark. A mark is append-only with one successor per revis
 landing's recorded base can still be corrected with `merge-turn-restate-base`; a mark written from
 a wrong reading could never be taken back.
 
-**Who records a move, and when.** The relay accepts a move from the registered parent of any
-project with an agreement in that repository, open or closed: it checks that history, not the
-agreement being moved, and a move reopens every agreement standing on that revision. In practice a
-party to those agreements records it once it has read the landed base, from its own `merge-turn-land` answer or from
-`merge-turn-show`, and before it answers, relies on, or asks its peer to act on an agreement
+**Who records a move, and when.** The relay accepts a move from the registered parent of any project
+with an agreement in that repository, open or closed: it checks that history, not the agreement
+being moved, and a move reopens every agreement standing on that revision. In practice a party to
+those agreements records it once it has read the landed base, from its own `merge-turn-land` answer
+or from `merge-turn-show`, and before it answers, relies on, or asks its peer to act on an agreement
 standing on the older revision. When the landing parent is a party it records the move right after
 landing; otherwise the party that reads the landing in its next pass does. Either party may, and a
 move the chain already records answers `alreadyRecorded` and writes no new mark (like any
@@ -641,11 +641,14 @@ first. Tell your peer through the pair route; its acceptance agrees the successo
 Reaffirming onto the revision an agreement already stands on is refused, as is carrying onto a
 place the same two projects already hold on the new revision.
 
-**Text written on an earlier tree.** `statedOn` names the revision the constraint and each
-condition were written against, and `textFromEarlierRevision` lists those carried from an earlier
-revision than the agreement's own. A line number in them points into that older tree. To change the
-terms themselves, the proposer withdraws or the other side declines with the condition it would
-accept, and a new proposal states them on the current revision. An acceptance takes no condition:
+**Text written on an earlier tree.** `statedOn` names the revision the constraint and each condition
+were written against, and `textFromEarlierRevision` lists those carried from an earlier revision
+than the agreement's own. A line number in them points into that older tree. A successor carried
+before the relay recorded carries says the same by following what it supersedes back while its
+constraint is unchanged. To change the terms themselves, the proposer withdraws or the other side
+declines with the condition it would accept, and a new proposal states them on the current revision.
+Only the task that proposed can withdraw; once its project has changed hands, the project's current
+parent releases or declines instead and proposes again. An acceptance takes no condition:
 `region-settle --disposition accepted --condition ...` is refused as `bad_invocation` rather than
 dropped.
 

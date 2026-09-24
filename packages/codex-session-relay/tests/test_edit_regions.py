@@ -886,6 +886,9 @@ class AReaffirmationCarriesWhatWasAgreed(EditRegionTestCase):
         self.assertEqual(
             [c["challenger"] for c in contests if c["reason"] == "scope_role_mismatch"],
             [self.alpha.task_id], "the refusal was recorded, not only raised")
+        self.assertEqual(
+            self.store.all("SELECT * FROM edit_regions WHERE base_revision = 'rev-2'", ()), [],
+            "fourth review: the refusal came after the region insert and left an orphan region")
 
     def test_an_acceptance_carrying_a_condition_is_refused_rather_than_dropped(self):
         original = self.proposed_by_beta()
@@ -895,6 +898,33 @@ class AReaffirmationCarriesWhatWasAgreed(EditRegionTestCase):
                 condition="alpha's terms")
         self.assertEqual(caught.exception.reason, RefusalReason.LINK_NOT_ACTIVE)
         self.assertIsNone(self.regions.agreement(original["agreementId"])["leftAcceptedAt"])
+
+    def test_a_successor_carried_before_carries_were_recorded_says_where_its_text_was_written(self):
+        """Fourth review: a successor the earlier reaffirm left in a store has no carry row.
+
+        Its constraint was copied verbatim from the agreement it supersedes, so reading it as
+        written on its own revision hid exactly the stale line numbers criterion 2 is about.
+        """
+        original = self.proposed_by_beta()
+        self.moved("rev-2")
+        # What that reaffirm wrote: an ordinary proposal on the new revision naming what it
+        # supersedes and copying the constraint, with nothing recorded about the carry.
+        legacy = self.regions.propose(
+            repository=REPO, base_revision="rev-2", path="src/a.py", region_kind="file",
+            left_project="PRJ-A", right_project="PRJ-B", peer_link_id=self.pair,
+            proposer_task_id=self.alpha.task_id, constraint_text=self.CONSTRAINT,
+            issue_key="CRW-1", supersedes=original["agreementId"])
+        self.assertEqual(legacy["statedOn"]["constraint"], REV)
+        self.assertEqual(legacy["textFromEarlierRevision"], ["constraint"])
+        shown = [r for r in self.regions.show(repository=REPO)["exclusive"]
+                 if r["agreementId"] == legacy["agreementId"]]
+        self.assertEqual(shown[0]["statedOn"]["constraint"], REV)
+        self.regions.restate_revision(
+            repository=REPO, from_revision="rev-2", to_revision="rev-3",
+            actor=self.beta.task_id)
+        carried = self.regions.reaffirm(
+            legacy["agreementId"], actor=self.beta.task_id, base_revision="rev-3")
+        self.assertEqual(carried["statedOn"]["constraint"], REV)
 
     def test_the_next_owner_follows_a_handover_while_the_carry_waits(self):
         """Review of the first head: nextOwner kept naming a parent that had handed over."""

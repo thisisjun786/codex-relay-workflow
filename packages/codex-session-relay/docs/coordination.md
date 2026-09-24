@@ -179,18 +179,20 @@ agreement stands on and no recorded move reaches is refused, naming where the ch
 it would start a chain no agreement follows; a closed agreement stands nowhere, and a repository
 with neither a live agreement nor a mark still takes its first one.
 
-After a move, settling an agreement on the older revision is refused as
-`agreement_revision_stale`, naming the chain's end, and either side carries it there with
-`region-reaffirm` (CRW-237). The successor keeps the original proposer, the constraint and both
-sides' conditions as written; the carrying side may restate only its own condition. Carrying
-accepts the carrier's side on the new tree. The other side's acceptance was given on the older
-tree and is not carried: the answer's `reaffirmation.awaitingAcceptance` names that side's parent,
-the reason (`acceptance_on_prior_revision` or `not_yet_accepted`) and the `region-settle` command,
-and `nextOwner` names that parent as it stands when read - or, with no single registered parent on
-that side, is left empty while the answer says what has to happen first. `statedOn` names the revision each text was
-written against and `textFromEarlierRevision` lists those from an older tree, because a line
-number inside one points there. The first version made the carrier the proposer, dropped both
-conditions and cleared the other acceptance without a word (CRW-124 G3).
+After a move, settling an agreement on the older revision is refused as `agreement_revision_stale`,
+naming the chain's end, and either side carries it there with `region-reaffirm` (CRW-237). The
+successor keeps the original proposer, the constraint and both sides' conditions as written; the
+carrying side may restate only its own condition. Carrying accepts the carrier's side on the new
+tree. The other side's acceptance was given on the older tree and is not carried: the answer's
+`reaffirmation.awaitingAcceptance` names that side's parent, the reason
+(`acceptance_on_prior_revision` or `not_yet_accepted`) and the `region-settle` command, and
+`nextOwner` names that parent as it stands when read - or, with no single registered parent on that
+side, is left empty while the answer says what has to happen first. `statedOn` names the revision
+each text was written against and `textFromEarlierRevision` lists those from an older tree, because
+a line number inside one points there. A successor carried before carries were recorded has no
+`edit_reaffirmations` row; its constraint was copied from what it supersedes, so the revision is
+found by following `supersedes` back while the text is unchanged. The first version made the carrier
+the proposer, dropped both conditions and cleared the other acceptance without a word (CRW-124 G3).
 
 An acceptance takes no condition. One given to `region-settle` used to vanish; it is now refused,
 as `bad_invocation` at the command line.

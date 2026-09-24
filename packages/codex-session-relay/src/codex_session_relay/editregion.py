@@ -90,6 +90,10 @@ NOT_YET_ACCEPTED = "not_yet_accepted"
 
 MARKS = ("SELECT from_revision, to_revision FROM edit_revision_marks"
          "  WHERE repository = ?")
+LINEAGE = ("SELECT agreement_id, supersedes, constraint_text, base_revision FROM edit_agreements"
+           "  WHERE repository = ?")
+ORIGINS = ("SELECT c.agreement_id, c.constraint_revision FROM edit_reaffirmations c"
+           "  JOIN edit_agreements a ON a.agreement_id = c.agreement_id WHERE a.repository = ?")
 # The destination a carry must share with the agreement it retires, named as the columns are.
 CARRIED_PLACE = (
     "repository", "path", "region_kind", "region_key", "region_class", "regenerate_from",
@@ -207,6 +211,7 @@ class EditRegions:
                 " WHERE a.repository = ?", (repository,))
         }
         exclusive, regenerate = [], []
+        lineage = {row["agreement_id"]: row for row in rows}
         for row in rows:
             if base_revision is not None and row["base_revision"] != base_revision:
                 continue
@@ -215,7 +220,8 @@ class EditRegions:
                 continue
             if path is not None and row["region_path"] != path:
                 continue
-            record = self._described(self._agreement_record(row), successors, carries)
+            record = self._described(
+                self._agreement_record(row), successors, carries, lineage)
             record["region"] = {
                 "path": row["region_path"], "regionKind": row["region_kind"],
                 "regionKey": row["region_key"] or None,
@@ -284,13 +290,13 @@ class EditRegions:
             "recordedBy": row["recorded_by"], "recordedAt": row["recorded_at"],
         }
 
-    def _described(self, record, successors=None, carries=None):
+    def _described(self, record, successors=None, carries=None, lineage=None):
         """What a record cannot say from its own columns (CRW-237).
 
         Which revision each of its texts was written against, where the recorded chain from its
         revision ends, and what a reaffirmation carried into it. A reader, so it opens no
-        transaction: show() passes the repository's marks and carries read once, and a single
-        record reads the two it needs.
+        transaction: show() passes the repository's marks, carries and lineage read once, and a
+        single record reads what it needs.
         """
         if successors is None:
             successors = self._successor_map(self.store.all(MARKS, (record["repository"],)))
@@ -302,8 +308,20 @@ class EditRegions:
         carry = carries.get(record["agreementId"])
         base = record["baseRevision"]
         if carry is None:
+            constraint = base
+            if record["supersedes"]:
+                # A successor a reaffirmation made before carries were recorded: its constraint
+                # was copied from the agreement it supersedes and says nothing of where.
+                if lineage is None:
+                    lineage = {row["agreement_id"]: row for row in self.store.all(
+                        LINEAGE, (record["repository"],))}
+                    origins = {row["agreement_id"]: row["constraint_revision"]
+                               for row in self.store.all(ORIGINS, (record["repository"],))}
+                else:
+                    origins = {key: row["constraint_revision"] for key, row in carries.items()}
+                constraint = self._written_on(record["agreementId"], lineage, origins)
             stated = {
-                "constraint": base,
+                "constraint": constraint,
                 "leftCondition": base if record["leftCondition"] is not None else None,
                 "rightCondition": base if record["rightCondition"] is not None else None,
             }
@@ -378,6 +396,27 @@ class EditRegions:
             if record["role"] == PARENT
         ]
         return owners[0] if len(owners) == 1 else None
+
+    @staticmethod
+    def _written_on(identifier, lineage, origins):
+        """The revision an agreement's constraint text was written against.
+
+        ``origins`` maps a carried successor to the revision its carry recorded. A successor
+        made before carries were recorded has no entry: its constraint was copied verbatim from
+        the agreement it supersedes, so the text is followed back while it stays the same. A
+        bounded walk over rows already read, like the revision chain.
+        """
+        cursor = lineage.get(identifier)
+        if cursor is None:
+            return None
+        for _step in range(len(lineage) + 1):
+            if cursor["agreement_id"] in origins:
+                return origins[cursor["agreement_id"]]
+            before = lineage.get(cursor["supersedes"] or "")
+            if before is None or before["constraint_text"] != cursor["constraint_text"]:
+                break
+            cursor = before
+        return cursor["base_revision"]
 
     # -------------------------------------------------------------- ownership
 
@@ -514,6 +553,25 @@ class EditRegions:
                     refusal = self._peer_refusal(
                         db, low, high, peer_link_id, proposer_task_id, identifier)
             if replay is None and refusal is None:
+                # The side the proposer OWNS, not the argument slot it arrived in. Reversed
+                # arguments made a proposer pre-accept the PEER's side, so it could then
+                # accept the remaining one itself and hold both. Decided before anything is
+                # written: ownership can be lost between the pre-flight check and this write (and
+                # a carry is decided only here), and a refusal after the region insert left the
+                # orphan region the comment above describes (CRW-237 review).
+                owned = self._owned_side(low, high, proposer_task_id)
+                if owned is None:
+                    # A None here used to fall through to the high side, so a proposer that had
+                    # just stopped owning the low project pre-accepted the PEER's - which is the
+                    # bug this line was added to fix, one race later.
+                    refusal = Refusal(
+                        RefusalReason.SCOPE_ROLE_MISMATCH,
+                        "task " + repr(proposer_task_id) + " no longer owns either "
+                        + repr(low) + " or " + repr(high) + "; the project changed hands"
+                        " while this proposal was being decided",
+                        domain=DOMAIN_EDIT_REGION, subject=repository,
+                        challenger=proposer_task_id)
+            if replay is None and refusal is None:
                 db.execute(
                     "INSERT INTO edit_regions (region_id, repository, base_revision, path,"
                     " region_kind, region_key, region_class, regenerate_from, recorded_at)"
@@ -534,56 +592,37 @@ class EditRegions:
                 ).fetchone()
                 tenure = (highest["top"] or 0) + 1
                 agreement = agreement_id(identifier, low, high, tenure)
-                # The side the proposer OWNS, not the argument slot it arrived in. Reversed
-                # arguments made a proposer pre-accept the PEER's side, so it could then
-                # accept the remaining one itself and hold both.
-                owned = self._owned_side(low, high, proposer_task_id)
-                if owned is None:
-                    # Ownership can be lost between the pre-flight check and this insert. A
-                    # None here used to fall through to the high side, so a proposer that had
-                    # just stopped owning the low project pre-accepted the PEER's - which is
-                    # the bug this line was added to fix, one race later.
-                    refusal = Refusal(
-                        RefusalReason.SCOPE_ROLE_MISMATCH,
-                        "task " + repr(proposer_task_id) + " no longer owns either "
-                        + repr(low) + " or " + repr(high) + "; the project changed hands"
-                        " while this proposal was being decided",
-                        domain=DOMAIN_EDIT_REGION, subject=repository,
-                        challenger=proposer_task_id)
-                    self.conflicts.record_in(db, refusal, at=now)
-                    agreement = None
-                else:
-                    terms = {
-                        "proposer": proposer_task_id, "constraint": constraint_text,
-                        "issue": issue_key, "next_owner": next_owner,
-                        "conditions": {low: None, high: None},
-                    }
-                    terms["conditions"][owned] = condition
-                    if predecessor is not None:
-                        terms = self._carried_terms(
-                            db, predecessor, owned, low, high, carry["restated"],
-                            region["base_revision"])
-                    db.execute(
-                        "INSERT INTO edit_agreements (agreement_id, region_id, repository,"
-                        " base_revision, left_project, right_project, peer_link_id,"
-                        " proposer_task_id, issue_key, constraint_text, left_condition,"
-                        " right_condition, left_accepted_at, right_accepted_at, next_owner,"
-                        " state, tenure, supersedes, proposed_at, updated_at)"
-                        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                        (agreement, identifier, region["repository"],
-                         region["base_revision"], low, high, peer_link_id, terms["proposer"],
-                         terms["issue"], terms["constraint"], terms["conditions"][low],
-                         terms["conditions"][high], now if owned == low else None,
-                         now if owned == high else None, terms["next_owner"], PROPOSED,
-                         tenure, supersedes, now, now),
-                    )
-                    self.store.journal(
-                        "edit_region_proposed", agreement,
-                        {"regionId": identifier, "path": clean, "pair": [low, high]}, at=now)
-                    if predecessor is not None:
-                        self._retire_carried(
-                            db, predecessor, agreement, proposer_task_id, owned, terms,
-                            region["base_revision"], now)
+                terms = {
+                    "proposer": proposer_task_id, "constraint": constraint_text,
+                    "issue": issue_key, "next_owner": next_owner,
+                    "conditions": {low: None, high: None},
+                }
+                terms["conditions"][owned] = condition
+                if predecessor is not None:
+                    terms = self._carried_terms(
+                        db, predecessor, owned, low, high, carry["restated"],
+                        region["base_revision"])
+                db.execute(
+                    "INSERT INTO edit_agreements (agreement_id, region_id, repository,"
+                    " base_revision, left_project, right_project, peer_link_id,"
+                    " proposer_task_id, issue_key, constraint_text, left_condition,"
+                    " right_condition, left_accepted_at, right_accepted_at, next_owner,"
+                    " state, tenure, supersedes, proposed_at, updated_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (agreement, identifier, region["repository"],
+                     region["base_revision"], low, high, peer_link_id, terms["proposer"],
+                     terms["issue"], terms["constraint"], terms["conditions"][low],
+                     terms["conditions"][high], now if owned == low else None,
+                     now if owned == high else None, terms["next_owner"], PROPOSED,
+                     tenure, supersedes, now, now),
+                )
+                self.store.journal(
+                    "edit_region_proposed", agreement,
+                    {"regionId": identifier, "path": clean, "pair": [low, high]}, at=now)
+                if predecessor is not None:
+                    self._retire_carried(
+                        db, predecessor, agreement, proposer_task_id, owned, terms,
+                        region["base_revision"], now)
             elif refusal is not None:
                 self.conflicts.record_in(db, refusal, at=now)
         if refusal is not None:
@@ -779,7 +818,14 @@ class EditRegions:
         else:
             revisions = {side: before if conditions[side] is not None else None
                          for side in (low, high)}
-            constraint_revision = before
+            # A predecessor carried before carries were recorded still holds a copied
+            # constraint; where that text was written is followed back, not assumed.
+            constraint_revision = before if not predecessor["supersedes"] else self._written_on(
+                predecessor["agreement_id"],
+                {row["agreement_id"]: row for row in db.execute(
+                    LINEAGE, (predecessor["repository"],)).fetchall()},
+                {row["agreement_id"]: row["constraint_revision"] for row in db.execute(
+                    ORIGINS, (predecessor["repository"],)).fetchall()})
         if restated is not None:
             conditions[owned] = restated
             revisions[owned] = revision
