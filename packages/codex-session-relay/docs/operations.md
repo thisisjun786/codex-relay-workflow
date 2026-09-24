@@ -474,8 +474,10 @@ App Server right after it accepted a delivery's turn and had the parent loaded a
 relay's check. The restarted host listed the lost turn back as interrupted, with none of its
 items, and the relay, which read any listed turn as present, never looked at it again. So a listed
 turn that has finished (completed, interrupted or failed) counts as present only when its own
-first eight items, read oldest first through `thread/items/list` with its `turnId`, hold this
-attempt's message. A finished turn listed without it is judged like an unlisted one, under the
+items, read oldest first through `thread/items/list` with its `turnId` (up to 2000 of them), hold
+this attempt's message. The message opens a turn it started, so one page is usually enough; a send
+folded into a turn already running sits further in. A finished turn listed without it is judged
+like an unlisted one, under the
 second and third conditions: the same allowance, the same scan since the send, the same loss and
 redelivery, with a `detail` that names the listed status. When the message turns up under another
 turn, the delivery is not sent again, but the reading carries no status, so the daemon does not
@@ -565,11 +567,14 @@ again, so the event waited for an acknowledgement for good while `assignment-sho
 
 `ack` now settles such a delivery first. With a host, once the proof checks, it reconciles the
 current attempt, and if that leaves the send uncertain it reads the acknowledging turn's own first
-items for the attempt's message: the parent acknowledged from inside the delivery turn, so that
-turn opens with the message however long it ran. A message found there is the same evidence as a
-token found in the thread (I-41); the acknowledgement itself never is. Once the delivery is
-confirmed, the acknowledgement is judged as usual. While it is not, or while the send is still in
-flight, the acknowledgement is kept exactly as authored, unverified, with
+2000 items, oldest first, for the attempt's message: the parent acknowledged from inside the
+delivery turn, so the message is in that turn however long it ran, at its start or, for a send
+folded into a turn already running, wherever the turn had got to. A message found there is the
+same evidence as a token found in the thread (I-41); the acknowledgement itself never is. Once
+the delivery is confirmed, the acknowledgement is judged as usual, and the turn the message was
+found in counts as the delivery's turn, so an acknowledgement from a folded turn that began
+before the send is not refused for its start time. While the delivery is not confirmed, or while
+the send is still in flight, the acknowledgement is kept exactly as authored, unverified, with
 `ack_evidence.last_reason` `delivery_unconfirmed`, and the delivery is left alone. The daemon
 confirms each kept acknowledgement's delivery through its turn, paced by the pending pass's
 backoff, and completes the acknowledgement in the same tick once the delivery is confirmed. A

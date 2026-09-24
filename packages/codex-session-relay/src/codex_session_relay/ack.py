@@ -267,7 +267,17 @@ class AckService:
 
         # The adapter read happens before the transaction, because it is I/O and must not be
         # held inside a write lock.
-        verification = self._verify_ack_turn(row, ack_turn_id, adapter)
+        try:
+            verification = self._verify_ack_turn(row, ack_turn_id, adapter)
+        except AckRefused as refusal:
+            # While the delivery is unconfirmed, the turn it reached is not known yet: a send can
+            # be folded into a parent turn that began before it, and that turn is where the parent
+            # acknowledges (review 2). Such an acknowledgement is kept below, never promoted
+            # here; the pending pass checks the chronology again once the delivery is confirmed.
+            if (row["state"] not in UNCONFIRMED
+                    or refusal.reason != RefusalReason.ACK_TURN_UNVERIFIED):
+                raise
+            verification = refusal
         event = self.intake.row(event_id)
         now = self.clock.iso()
 
@@ -300,6 +310,10 @@ class AckService:
             # check said. The acknowledgement is kept as authored, and the delivery is left for
             # reconciliation, after which the daemon or a verdict completes it (H0R3-F2).
             unconfirmed = fresh["state"] in UNCONFIRMED
+            if isinstance(verification, AckRefused) and not unconfirmed:
+                # Confirmed while the turn was read, and the chronology refused it: the answer the
+                # confirmed delivery would have given, and the parent can acknowledge again.
+                raise verification
             stored = "unverified_turn" if unconfirmed else verification
             # Always evaluated, including when upgrading an earlier unverified ack:
             # skipping it let a generation that advanced in between be accepted.
@@ -426,6 +440,10 @@ class AckService:
             dispatched_turn = None
             if attempt["record"]:
                 dispatched_turn = json.loads(attempt["record"]).get("turnId")
+            # A send confirmed from its message keeps its honest transport snapshot, which names no
+            # turn; the turn the message was found in is the delivery's (reconcile._settle_from_scan).
+            # A send folded into a turn begun before it is acknowledged from that turn (review 2).
+            dispatched_turn = dispatched_turn or row["dispatch_turn_id"]
             if ack_turn_id != dispatched_turn and certainly_before(turn.started_at, sent_at):
                 raise AckRefused(
                     RefusalReason.ACK_TURN_UNVERIFIED,

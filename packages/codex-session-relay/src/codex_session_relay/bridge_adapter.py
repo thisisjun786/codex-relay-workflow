@@ -32,8 +32,8 @@ import stat
 from pathlib import Path
 
 from .hostadapter import (
-    DISPATCHED_TURN_MAX_PAGES, HostUnavailable, ThreadFacts, TokenScan, TurnInfo, TurnPresence,
-    find_in_listing, find_token_in, find_token_in_turn_items, is_message,
+    DISPATCHED_TURN_MAX_PAGES, IN_TURN_ITEMS_MAX, HostUnavailable, ThreadFacts, TokenScan,
+    TurnInfo, TurnPresence, find_in_listing, find_token_in, find_token_in_turn_items, is_message,
 )
 from .settings import SETTINGS_DIFFER_AFTER_LOAD, SETTINGS_NOT_PRESERVED
 
@@ -418,12 +418,13 @@ class BridgeHostAdapter:
         return find_token_in(pages(), token, older)
 
     def find_token_in_turn(self, thread_id: str, token: str, *, turn_id: str,
-                           limit: int = 8) -> TokenScan:
-        """This attempt's message among one turn's first items (hostadapter.find_token_in_turn_items).
+                           limit: int = IN_TURN_ITEMS_MAX) -> TokenScan:
+        """This attempt's message among one turn's own items (hostadapter.find_token_in_turn_items).
 
-        thread/items/list filtered by the turn, oldest first: the delivered message opens the turn
-        it started, however many items the turn went on to produce, where a newest-first scan of
-        the thread bounded at 200 never reaches it in a long turn.
+        thread/items/list filtered by the turn, oldest first, paged with the forward cursor: the
+        delivered message opens a turn it started, so the first page finds it however many items
+        the turn went on to produce, where a newest-first scan of the thread bounded at 200 never
+        reaches it in a long turn; a send folded into a running turn is found further in.
         """
 
         def pages():

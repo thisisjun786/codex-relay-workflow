@@ -369,11 +369,12 @@ class Reconciler:
 
         This is reconciliation on demand for one delivery. The current attempt is reconciled as
         the daemon would; when that leaves it uncertain and the caller names the parent's turn,
-        that turn's own first items are read for this attempt's message
+        that turn's own items are read, oldest first, for this attempt's message
         (hostadapter.find_token_in_turn_items). Found, it is the evidence a token found in the
         thread already is (I-41), in a turn a thread-wide scan's bound may not reach: the parent
-        acknowledged from inside the delivery turn, so that turn opens with the message. The
-        acknowledgement itself is never evidence; a turn that holds no message confirms nothing.
+        acknowledged from inside the delivery turn, which opens with the message or, when the send
+        was folded into a turn already running, holds it further in. The acknowledgement itself is
+        never evidence; a turn that holds no message confirms nothing.
 
         Only a completion held_uncertain is read, so an ordinary acknowledgement makes no extra
         host call, and a delivery still sending is left to its sender. None when nothing was
@@ -416,7 +417,7 @@ class Reconciler:
             outcome["turnRead"] = f"unreadable: {type(error).__name__}: {error}"
             return outcome
         scan_detail = (f"found={scan.found} in turn {turn_id}, the acknowledging turn"
-                       f" ({scan.scanned} of its first items read)")
+                       f" ({scan.scanned} of its items read)")
         outcome["turnRead"] = scan_detail
         if not scan.found:
             return outcome

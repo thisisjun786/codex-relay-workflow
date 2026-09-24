@@ -18,8 +18,8 @@ its path does not change.
 
 A listed turn is not always a kept one (CRW-124 R3, H0R3-F1). A host that died on the accepted
 turn and was then asked to load the parent again lists the lost turn back, interrupted, with none
-of its items. So a listed turn that has finished counts as present only when its own first items
-hold this attempt's message (hostadapter.find_token_in_turn_items); one without it is read exactly
+of its items. So a listed turn that has finished counts as present only when its own items hold
+this attempt's message (hostadapter.find_token_in_turn_items); one without it is read exactly
 like an unlisted turn - the same allowance, the same token scan since the send, the same loss.
 A turn still in progress is present as listed and is read again until it finishes.
 
@@ -41,7 +41,7 @@ from datetime import datetime
 
 from .delivery import COMPLETION
 from .hostadapter import DISPATCH_TURN_SKEW_SECONDS, TURN_PRESENT, TURN_START_PRECISION_SECONDS
-from .hostadapter import ListingBounded, ListingEmpty
+from .hostadapter import IN_TURN_ITEMS_MAX, ListingBounded, ListingEmpty
 from .policy import HOST_LOST_TURN, TURN_CHECK_UNDECIDED
 from .transport import DISPATCHED, HELD_UNCERTAIN, QUEUED, assert_attempt_invariants
 
@@ -52,9 +52,11 @@ UNKNOWN = "unknown"
 # attempt's message. A reload lists a lost turn in one of these too, empty.
 TERMINAL = ("completed", "interrupted", "failed")
 TOKEN_SCAN_LIMIT = 200
-# How many of a finished turn's first items are read for this attempt's message. The message opens
-# the turn it started; the rest is for a host that puts something ahead of it.
-IN_TURN_SCAN_LIMIT = 8
+# How many of a turn's own items, oldest first, are read for this attempt's message. The message
+# opens a turn it started, so the first page is usually the only one read; a send folded into a turn
+# already running sits wherever the turn had got to, so the read pages on through the turn (review 2
+# of the CRW-224 follow-up).
+IN_TURN_SCAN_LIMIT = IN_TURN_ITEMS_MAX
 # The redelivery a loss leads to, or why none followed.
 REQUEUED = "queued"
 HELD = "held"

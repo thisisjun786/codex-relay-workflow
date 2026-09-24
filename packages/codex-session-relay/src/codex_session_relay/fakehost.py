@@ -11,8 +11,8 @@ No test sleeps. Time only moves when a test moves it.
 import hashlib
 
 from .hostadapter import (
-    USER_MESSAGE, ThreadFacts, TokenScan, TurnInfo, find_in_listing, find_token_in,
-    find_token_in_turn_items, is_message,
+    IN_TURN_ITEMS_MAX, USER_MESSAGE, ThreadFacts, TokenScan, TurnInfo, find_in_listing,
+    find_token_in, find_token_in_turn_items, is_message,
 )
 
 
@@ -159,7 +159,7 @@ class FakeHostAdapter:
         bound = min(limit, self.scan_limit or limit)
         return find_token_in([(items[:bound], bound < len(items))], token, older)
 
-    def find_token_in_turn(self, thread_id, token, *, turn_id, limit=8) -> TokenScan:
+    def find_token_in_turn(self, thread_id, token, *, turn_id, limit=IN_TURN_ITEMS_MAX) -> TokenScan:
         """The real adapter's rule over one turn's own items, oldest first, bounded like its read."""
         self._guard("find_token_in_turn")
         items = [_typed(item) for item in self.threads[thread_id].items if item[0] == turn_id]

@@ -64,6 +64,9 @@ TURN_ABSENT = "absent"
 # ids and start times only). Checks run from 61 s after a send, so a parent has rarely begun more
 # than a few turns by then; the bound is for a relay that was down while its parents kept working.
 DISPATCHED_TURN_MAX_PAGES = 20
+# How many of one turn's own items the in-turn read pages through, oldest first, before it stops
+# (find_token_in_turn): a long turn a send was folded into, with the message deep inside it.
+IN_TURN_ITEMS_MAX = 2000
 # The item type the host gives the message a turn/start delivered (App Server ThreadItem).
 USER_MESSAGE = "userMessage"
 # Every ThreadItem type App Server 0.154.0 names for the agent's own work, or for text the host
@@ -248,9 +251,9 @@ def find_token_in_turn_items(pages, token: str, turn_id: str) -> TokenScan:
     pages yields (items, another_page_follows) with items as in find_token_in. An item counts only
     when the host says it belongs to that turn and typed it as a user message (is_message): a
     host that ignored the turn filter answers with other turns' items, and an echo of the request
-    id in the turn's own command output is not the message. The message is a turn's first item,
-    so a few items read are enough, and a turn that does not have it is left to the thread-wide
-    reading (hostloss.py) rather than concluded lost here.
+    id in the turn's own command output is not the message. The message opens a turn it started,
+    and sits wherever a turn had got to when a send was folded into it; a turn that does not have
+    it is left to the thread-wide reading (hostloss.py) rather than concluded lost here.
     """
     scanned = 0
     for items, follows in pages:
@@ -292,7 +295,7 @@ class HostAdapter(Protocol):
     ) -> TokenScan: ...
 
     def find_token_in_turn(
-        self, thread_id: str, token: str, *, turn_id: str, limit: int = 8
+        self, thread_id: str, token: str, *, turn_id: str, limit: int = IN_TURN_ITEMS_MAX
     ) -> TokenScan: ...
 
     def recipient_fingerprint(self, thread_id: str, *, window: int = 8) -> str: ...

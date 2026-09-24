@@ -412,8 +412,8 @@ class RelayDaemon:
         """Confirm the delivery of each acknowledgement kept while its send was unconfirmed.
 
         CRW-124 R3 (H0R3-F2): the parent acknowledged from inside the delivery turn while the
-        relay still held the send as uncertain. That turn's own first items hold the message
-        wherever the thread-wide scan's bound ends, so the delivery is reconciled through it
+        relay still held the send as uncertain. That turn's own items hold the message wherever
+        the thread-wide scan's bound ends, so the delivery is reconciled through it
         (Reconciler.confirm_delivery), and the pending pass that follows completes the
         acknowledgement once the delivery is confirmed. Only kept acknowledgements whose check is
         due are read, so the pending pass's backoff paces the reads.
