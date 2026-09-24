@@ -343,7 +343,11 @@ class AssignmentView:
             relationship_id, generation, head, verdict, state
         )
         record["nextExpectedAction"] = (
-            correction_next_action(state, record["projection"]) or record["nextExpectedAction"]
+            # Disjoint states: the correction's answer is for needs_changes (CRW-222), the
+            # completion's for received and corrected (CRW-224); NEXT_ACTION answers the rest.
+            correction_next_action(state, record["projection"])
+            or completion_next_action(state, record["projection"])
+            or record["nextExpectedAction"]
         )
         return record
 
@@ -398,8 +402,12 @@ class AssignmentView:
         row = self.store.one(
             "SELECT e.stage AS stage,"
             "       d.event_id AS delivered, d.state AS delivery_state,"
-            "       d.hold_reason AS hold_reason,"
+            "       d.hold_reason AS hold_reason, d.dispatch_evidence AS dispatch_evidence,"
             "       a.request_id AS request_id, a.attempt_no AS attempt_no,"
+            "       a.state AS attempt_state, a.recipient_scan AS attempt_turn_check,"
+            "       v.last_reason AS ack_last_reason,"
+            "       (SELECT COUNT(*) FROM attempts h WHERE h.event_id = e.event_id"
+            "         AND h.state = 'host_lost_turn') AS host_lost_attempts,"
             "       k.event_id AS acked, k.verified AS ack_verified,"
             "       k.accepted AS ack_accepted, k.rejection_reason AS ack_rejection,"
             "       v.tier AS ack_tier,"
@@ -431,6 +439,19 @@ class AssignmentView:
                 "state": row["delivery_state"],
                 "requestId": row["request_id"],
                 "attemptNo": row["attempt_no"],
+                # The current attempt's own state, the delivery's evidence and hold, and how many
+                # of this event's attempts the host lost (hostloss.py). The count outlives the
+                # redelivery, so a completion that reached its parent the second time still says
+                # the first turn was lost.
+                "attemptState": row["attempt_state"],
+                "dispatchEvidence": row["dispatch_evidence"],
+                "holdReason": row["hold_reason"],
+                "hostLostAttempts": row["host_lost_attempts"],
+                # The current attempt's recipient-turn check, when it could not decide
+                # (turn_check_undecided:<reason>); None otherwise.
+                "turnCheck": (row["attempt_turn_check"]
+                              if (row["attempt_turn_check"] or "").startswith("turn_check_undecided:")
+                              else None),
             }
         record["ack"] = {
             # The parent's DISPOSITION, independent of whether the acknowledging turn could be
@@ -439,6 +460,8 @@ class AssignmentView:
             "accepted": bool(row["ack_accepted"]) if row["acked"] is not None else None,
             "rejectionReason": row["ack_rejection"] if row["acked"] is not None else None,
             "settlement": row["ack_verified"] if row["acked"] is not None else None,
+            # Why verification last declined to promote it, when it did (ack_evidence).
+            "lastReason": row["ack_last_reason"] if row["acked"] is not None else None,
             # A second axis, not a rewording of the first: settlement says whether the
             # acknowledgement closed, the tier says what it closed on, and no row at all is
             # unrecorded rather than unverified.
@@ -813,3 +836,69 @@ class AssignmentView:
             "SELECT 1 FROM events WHERE relationship_id = ? AND outcome = 'ready_for_review'",
             (relationship_id,),
         ) is not None
+
+# What completion_next_action answers. Each names the actor that moves the obligation next.
+AWAITING_ACK_ACTION = "parent_acknowledges"
+VERIFY_ACK_ACTION = "daemon_verifies_acknowledgement"
+REACKNOWLEDGE_ACTION = "parent_reacknowledges"
+RECONCILE_ACTION = "daemon_reconciles_delivery"
+HOST_LOST_REDELIVERY_ACTION = "daemon_redelivers_host_lost_turn"
+HOST_LOST_HELD_ACTION = "parent_recovers_host_lost_turn"
+# Verification's own "not yet": the host has not confirmed the acknowledging turn, and a process
+# with host access will try again. Any other reason it recorded is a refusal only a new
+# acknowledgement can answer.
+_VERIFICATION_PENDING = (None, "unverified_turn")
+
+
+def completion_next_action(state, projection):
+    """Who moves an unanswered completion next, read from its delivery row (CRW-224, H0-O1).
+
+    NEXT_ACTION answers from the assignment state alone, so a completion already delivered and
+    waiting for the parent's acknowledgement read daemon_delivers. This answers from the
+    completion's own delivery row and acknowledgement, which the one projection statement read
+    together, for the two states in which the parent has not claimed the report. First match:
+
+    - acknowledged: an accepted one waits for the parent to verify; a rejection is an answer and
+      is left to NEXT_ACTION;
+    - held, other than a closed push channel: nothing moves it automatically. After a host loss
+      it is the parent's to recover; a completion never lost keeps today's answer;
+    - held_uncertain or sending: an uncertain send or an unsettled claim, which reconciliation
+      settles; it is not a send;
+    - dispatched or inbox_only with an acknowledgement recorded: verification's, unless
+      verification refused it, which only a new acknowledgement answers;
+    - dispatched or inbox_only: the parent's to acknowledge;
+    - queued, deferred or withheld: the relay's to send, and after a host loss its to send again.
+
+    None leaves NEXT_ACTION's answer.
+    """
+    from .policy import PUSH_CHANNEL_CLOSED
+    from .transport import (
+        DEFERRED_BUSY, DISPATCHED, HELD_UNCERTAIN, INBOX_ONLY, QUEUED, SENDING, WITHHELD_PRE_SEND,
+    )
+
+    if state not in (RECEIVED, CORRECTED):
+        return None
+    completion = projection["completion"]
+    delivery = completion["delivery"]
+    if delivery is None:
+        return None
+    ack = completion["ack"] or {}
+    host_lost = (delivery.get("hostLostAttempts") or 0) > 0
+    settlement = ack.get("settlement")
+    if settlement == "verified":
+        return NEXT_ACTION[VERIFYING] if state == RECEIVED and ack.get("accepted") else None
+    hold = delivery.get("holdReason")
+    if hold and hold != PUSH_CHANNEL_CLOSED:
+        return HOST_LOST_HELD_ACTION if host_lost else None
+    where = delivery["state"]
+    if where in (HELD_UNCERTAIN, SENDING):
+        return RECONCILE_ACTION
+    if where in (DISPATCHED, INBOX_ONLY):
+        if settlement is not None:
+            if ack.get("lastReason") in _VERIFICATION_PENDING:
+                return VERIFY_ACK_ACTION
+            return REACKNOWLEDGE_ACTION
+        return AWAITING_ACK_ACTION
+    if where in (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND):
+        return HOST_LOST_REDELIVERY_ACTION if host_lost else NEXT_ACTION[RECEIVED]
+    return None

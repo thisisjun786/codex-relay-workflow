@@ -7,12 +7,21 @@ recipient's items, or a confirmed pre-send rejection.
 
 Elapsed time is not on that list, and there is no function here that takes a duration. An
 attempt with no affirmative evidence stays held and says precisely what it is missing.
+
+A receipt carrying a turn id is followed by one more read: the recipient's own turns, for that
+turn (hostloss.py, CRW-224). The receipt proves turn/start was answered, not that the host kept
+the turn. What the read finds is reported as recipientTurn; a completion whose turn the host lost
+is recorded host_lost_turn and queued once more. That is not evidence that a send landed, so it
+is not a fourth item on the list above: it is the host's own answer that the accepted turn is
+gone.
 """
 
 import json
 from enum import Enum
 
+from . import hostloss
 from .delivery import COMPLETION, REVISION, SENDING
+from .policy import HOST_LOST_TURN, TURN_CHECK_UNDECIDED
 from .transport import (
     DEFERRED_BUSY,
     DISPATCHED,
@@ -42,6 +51,15 @@ class Evidence(str, Enum):
     RECEIPT_TURN_ID = "receipt_turn_id"
     CONFIRMED_PRE_SEND_REJECTION = "confirmed_pre_send_rejection"
     NONE = "none"
+
+
+class _AttemptLost(Exception):
+    """The host-loss check recorded this attempt after reconciliation read it (PR #156 review).
+
+    Reconciliation reads first and writes later, outside one transaction; a daemon pass can
+    record the loss in between. Writing the receipt's settlement then would set the attempt back
+    to dispatched and erase the count that stops a third send, so the write refuses instead.
+    """
 
 
 class Reconciler:
@@ -115,6 +133,41 @@ class Reconciler:
         return [row["parent_task_id"] for row in rows]
 
     def reconcile_attempt(self, request_id: str, adapter, *, now=None) -> dict:
+        try:
+            return self._reconcile_attempt(request_id, adapter, now=now)
+        except _AttemptLost:
+            return self._recorded_loss(request_id)
+
+    def _recorded_loss(self, request_id: str, reading=None) -> dict:
+        """What a loss already recorded on this attempt says, without writing anything.
+
+        redelivery is what the recording journalled for this attempt - queued or held - and the
+        reading, when the caller took one, is reported beside it.
+        """
+        attempt = self.store.one("SELECT * FROM attempts WHERE request_id = ?", (request_id,))
+        redelivery = None
+        for row in self.store.all(
+            "SELECT detail FROM journal WHERE kind = ? AND subject = ? ORDER BY seq DESC",
+            (HOST_LOST_TURN, attempt["event_id"]),
+        ):
+            detail = json.loads(row["detail"])
+            if detail.get("requestId") == request_id:
+                redelivery = detail.get("redelivery")
+                break
+        outcome = {
+            # What the attempt was delivered on: an accepted receipt's turn id, or the token
+            # reconciliation found for an uncertain send (review 9).
+            "evidence": attempt["affirmative_evidence"] or Evidence.RECEIPT_TURN_ID.value,
+            "state": HOST_LOST_TURN,
+            "redelivery": redelivery, "record": json.loads(attempt["record"]),
+            "detail": "the host lost this attempt's turn and that is already recorded; nothing"
+                      " further was written",
+        }
+        if reading is not None:
+            outcome["recipientTurn"] = reading
+        return outcome
+
+    def _reconcile_attempt(self, request_id: str, adapter, *, now=None) -> dict:
         now = self.clock.now() if now is None else now
         attempt = self.store.one("SELECT * FROM attempts WHERE request_id = ?", (request_id,))
         if attempt is None:
@@ -132,8 +185,8 @@ class Reconciler:
             facts = classify_operation_receipt(receipt)
             operation_observation = f"{facts.transport_receipt_status}:{facts.delivery_state}"
             if facts.delivery_state == DISPATCHED:
-                return self._settle_from_receipt(
-                    attempt, delivery, facts, Evidence.RECEIPT_TURN_ID, operation_observation, now
+                return self._settle_dispatched(
+                    attempt, delivery, facts, operation_observation, adapter, now
                 )
             if facts.retry_safe:
                 return self._settle_from_receipt(
@@ -142,6 +195,10 @@ class Reconciler:
                 )
             if facts.transport_receipt_status != UNFINISHED:
                 operation_observation += " (not affirmative)"
+
+        if (attempt["state"] == HELD_UNCERTAIN
+                and attempt["affirmative_evidence"] == Evidence.TURN_FOUND.value):
+            return self._settle_confirmed(attempt, delivery, operation_observation, adapter)
 
         # Step two, only now: the recipient's real items.
         scan_detail = "not scanned"
@@ -163,6 +220,90 @@ class Reconciler:
         # exhausted one is not affirmative evidence of non-delivery. Either way: stay held.
         return self._stay_held(attempt, delivery, operation_observation, scan_detail, now)
 
+    def _settle_dispatched(self, attempt, delivery, facts, observation, adapter, now) -> dict:
+        """A receipt with a turn id, then the recipient's own turns for that turn (CRW-224).
+
+        The read comes first and outside any transaction, as every host read here does. An
+        attempt already recorded as lost - before this call or while it read - is reported and
+        left alone: _write refuses to settle it from its receipt again, which would put it back
+        to dispatched and erase the one count that stops a third send.
+        """
+        reading = hostloss.read_recipient_turn(
+            adapter, self.clock, attempt, delivery, facts.turn_id
+        )
+        try:
+            outcome = self._settle_from_receipt(
+                attempt, delivery, facts, Evidence.RECEIPT_TURN_ID, observation, now,
+                turns_checked=reading["finding"] != hostloss.UNKNOWN,
+            )
+        except _AttemptLost:
+            # Recorded already, or by the daemon between this read and this write.
+            return self._recorded_loss(attempt["request_id"], reading)
+        outcome["recipientTurn"] = reading
+        if reading["finding"] == HOST_LOST_TURN:
+            if delivery["kind"] == COMPLETION:
+                outcome.update(hostloss.settle(
+                    self.store, self.clock, attempt["request_id"], reading,
+                    observation=observation,
+                ))
+            else:
+                outcome["redelivery"] = hostloss.REPORT_ONLY
+        elif delivery["kind"] == COMPLETION:
+            hostloss.record_undecided(self.store, attempt["request_id"], reading)
+        return outcome
+
+    def _settle_confirmed(self, attempt, delivery, observation, adapter) -> dict:
+        """An uncertain send already confirmed from its token stays confirmed (review 9).
+
+        The token was found once, which is affirmative evidence (I-41); a later scan that does
+        not find it is not evidence against it, so the attempt is not written back to held with
+        evidence none, and a fresh confirmation does not write over its recorded undecided name.
+        What is left to ask is the daemon's question: does the parent still have the turn the
+        token was found in. A loss is recorded by hostloss.settle, which keeps turn_found.
+        """
+        record = json.loads(attempt["record"]) if attempt["record"] else {}
+        # The same turn check_dispatched_turn asks the daemon about.
+        turn_id = record.get("turnId") or delivery["dispatch_turn_id"]
+        reading = hostloss.read_recipient_turn(adapter, self.clock, attempt, delivery, turn_id)
+        outcome = {
+            "evidence": Evidence.TURN_FOUND.value, "state": attempt["state"],
+            "operationObservation": observation, "record": record,
+            "recipientTurn": reading,
+            "detail": "already confirmed from its token in the recipient's items; not scanned"
+                      " again",
+        }
+        if reading["finding"] == HOST_LOST_TURN:
+            if delivery["kind"] == COMPLETION:
+                outcome.update(hostloss.settle(
+                    self.store, self.clock, attempt["request_id"], reading,
+                    observation=observation,
+                ))
+            else:
+                outcome["redelivery"] = hostloss.REPORT_ONLY
+        elif delivery["kind"] == COMPLETION:
+            hostloss.record_undecided(self.store, attempt["request_id"], reading)
+        return outcome
+
+    def check_dispatched_turn(self, request_id: str, adapter) -> dict:
+        """The daemon's question for one delivered completion: does the host still have its turn?
+
+        Writes nothing unless the answer is that the host lost it.
+        """
+        attempt = self.store.one("SELECT * FROM attempts WHERE request_id = ?", (request_id,))
+        if attempt is None:
+            raise KeyError(request_id)
+        delivery = self.delivery.get(attempt["event_id"])
+        record = json.loads(attempt["record"]) if attempt["record"] else {}
+        turn_id = record.get("turnId") or delivery["dispatch_turn_id"]
+        reading = hostloss.read_recipient_turn(adapter, self.clock, attempt, delivery, turn_id)
+        outcome = {"eventId": attempt["event_id"], "requestId": request_id,
+                   "state": attempt["state"], "recipientTurn": reading}
+        if reading["finding"] == HOST_LOST_TURN:
+            outcome.update(hostloss.settle(self.store, self.clock, request_id, reading))
+        else:
+            outcome["undecidedChanged"] = hostloss.record_undecided(self.store, request_id, reading)
+        return outcome
+
     # --------------------------------------------------------------- outcomes
 
     def _is_current(self, attempt, delivery) -> bool:
@@ -175,7 +316,8 @@ class Reconciler:
             return False
         return delivery["state"] not in (DISPATCHED, "acknowledged", "superseded")
 
-    def _settle_from_receipt(self, attempt, delivery, facts, evidence, observation, now) -> dict:
+    def _settle_from_receipt(self, attempt, delivery, facts, evidence, observation, now, *,
+                             turns_checked=False) -> dict:
         """The transport itself settled, so the attempt record is re-derived honestly."""
         record = attempt_record(
             facts,
@@ -184,7 +326,7 @@ class Reconciler:
             status_before="unknown", observed_at=self.clock.iso(),
             reconciliation={
                 "operationReceiptChecked": True,
-                "recipientTurnsChecked": False,
+                "recipientTurnsChecked": turns_checked,
                 "affirmativeEvidence": evidence.value,
                 "checkedAt": self.clock.iso(),
             },
@@ -270,15 +412,25 @@ class Reconciler:
         current = self._is_current(attempt, delivery)
         anchor = None
         with self.store.transaction() as db:
-            db.execute(
+            updated = db.execute(
                 "UPDATE attempts SET internal_state = 'settled', state = ?, record = ?,"
-                " operation_observation = ?, recipient_scan = ?, affirmative_evidence = ?,"
-                " reconciled_at = ? WHERE request_id = ?",
+                " operation_observation = ?,"
+                # hostloss.record_undecided owns an undecided name on a dispatched attempt;
+                # settling the same dispatch from its receipt again keeps it, and only a reading
+                # that decides clears it.
+                " recipient_scan = CASE WHEN ? = ? AND recipient_scan LIKE ?"
+                "                       THEN recipient_scan ELSE ? END,"
+                " affirmative_evidence = ?,"
+                " reconciled_at = ? WHERE request_id = ? AND (state IS NULL OR state <> ?)",
                 (
-                    state, json.dumps(record), observation, scan_detail, evidence.value, now_iso,
-                    attempt["request_id"],
+                    state, json.dumps(record), observation,
+                    state, DISPATCHED, TURN_CHECK_UNDECIDED + ":%", scan_detail,
+                    evidence.value, now_iso, attempt["request_id"], HOST_LOST_TURN,
                 ),
-            )
+            ).rowcount
+            if updated != 1:
+                # Rolled back with the transaction: nothing of this settlement is written.
+                raise _AttemptLost()
             if current:
                 promoted = db.execute(
                     "UPDATE deliveries SET state = ?, next_eligible_at = ?, hold_reason = ?,"

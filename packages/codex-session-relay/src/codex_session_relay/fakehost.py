@@ -10,7 +10,7 @@ No test sleeps. Time only moves when a test moves it.
 
 import hashlib
 
-from .hostadapter import ThreadFacts, TokenScan, TurnInfo
+from .hostadapter import ThreadFacts, TokenScan, TurnInfo, find_in_listing, find_token_in
 
 
 class ProcessDied(Exception):
@@ -133,6 +133,19 @@ class FakeHostAdapter:
             if turn.turn_id == turn_id:
                 return turn
         return None
+
+    def find_dispatched_turn(self, thread_id, turn_id, *, sent_at):
+        """The real adapter's rule over this thread's turns, newest first, as one final page."""
+        self._guard("find_dispatched_turn")
+        newest_first = list(reversed(self.threads[thread_id].turns))
+        return find_in_listing([(newest_first, False)], turn_id, sent_at)
+
+    def find_token_since(self, thread_id, token, *, older, limit=200) -> TokenScan:
+        """The real adapter's rule over this thread's items, newest first, bounded like a scan."""
+        self._guard("find_token_since")
+        items = list(reversed(self.threads[thread_id].items))
+        bound = min(limit, self.scan_limit or limit)
+        return find_token_in([(items[:bound], bound < len(items))], token, older)
 
     def get_operation(self, request_id):
         self._guard("get_operation")

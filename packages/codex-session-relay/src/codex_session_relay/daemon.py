@@ -11,6 +11,7 @@ why the gate below asks whether there is anything to learn before invoking anyth
 """
 
 import fcntl
+import itertools
 import json
 import os
 from dataclasses import dataclass, field
@@ -34,6 +35,9 @@ from .faults import DELIVERER_OWNER
 # The same name reserves the daemon's fault notifications, and the ledger keeps it the
 # deliverer's (faults.DELIVERER_OWNER).
 DAEMON_OWNER = DELIVERER_OWNER
+# How long an undecided recipient-turn reading waits before it is read again (hostloss.py). Such a
+# reading will not change by waiting a tick, and each read can page far back through the parent.
+UNDECIDED_RECHECK_SECONDS = 600.0
 
 
 @dataclass
@@ -50,6 +54,11 @@ class TickReport:
     supervisorStaged: int = 0
     supervisorSent: int = 0
     notificationsDelivered: int = 0
+    # Delivered completions whose turn the host no longer had, each recorded and queued once
+    # more or held (hostloss.settle). A write, so it is part of quiet.
+    turnsLost: int = 0
+    # Undecided readings newly named on their attempt, or cleared (hostloss.record_undecided).
+    turnsUndecided: int = 0
     quiet: bool = True
     notes: list = field(default_factory=list)
 
@@ -64,6 +73,8 @@ class TickReport:
             "supervisorStaged": self.supervisorStaged,
             "supervisorSent": self.supervisorSent,
             "notificationsDelivered": self.notificationsDelivered,
+            "turnsLost": self.turnsLost,
+            "turnsUndecided": self.turnsUndecided,
             "quiet": self.quiet, "notes": self.notes,
         }
 
@@ -121,6 +132,10 @@ class SingleInstance:
 
 
 class RelayDaemon:
+    # How many delivered completions one recipient-turn pass lists at a time. None scales it
+    # with the budget; a test sets a small page to exercise a candidate set spanning pages.
+    turn_check_page = None
+
     def __init__(self, store, registry, intake, delivery, ack, reconciler, adapter, *,
                  policy=None, clock=None, log=None, faults=None, fault_scope=None,
                  fault_selection=None, supervisor_channel=None):
@@ -158,6 +173,16 @@ class RelayDaemon:
         # The fault notification deliverer, built on first use from whatever ledger and channel
         # the daemon holds then (both are also set by attribute), and rebuilt if either changes.
         self._notices = None
+        # Where the recipient-turn check resumes, and the delivered completions whose turn the
+        # host has already listed as finished. Both in memory, like _supervisor_after: a restart
+        # costs one more read per delivery still awaiting its acknowledgement, and a tick that
+        # learns nothing new writes nothing. A dict for its order: _forget_departed asks about
+        # the entries it checked longest ago first.
+        self._turn_check_after = None
+        self._turns_settled = {}
+        # Request ids whose last reading was undecided in a way waiting alone will not change,
+        # and when to read them again. A schedule, not evidence: the reading itself decides.
+        self._turns_undecided = {}
 
     # ------------------------------------------------------------------ tick
 
@@ -176,6 +201,8 @@ class RelayDaemon:
         # dispatch evidence is already committed.
         self._bind_anchors(report)
         self._verify_acks(report, now)
+        # Before delivery, so an obligation whose turn the host lost is sent again in this tick.
+        self._check_dispatched_turns(report, now)
         self._deliver(report, now)
         # After the parent-child deliveries, which share each recipient's budget with it: a
         # task that is both a parent and a supervisor hears its children first.
@@ -184,8 +211,97 @@ class RelayDaemon:
                             or report.deferred or report.acksVerified or report.anchorsBound
                             or report.requeued or report.faultsRecorded
                             or report.supervisorStaged or report.supervisorSent
-                            or report.notificationsDelivered)
+                            or report.notificationsDelivered or report.turnsLost
+                            or report.turnsUndecided)
         return report
+
+    def _check_dispatched_turns(self, report, now) -> None:
+        """Ask each parent whether the turn a delivered completion started still exists (CRW-224).
+
+        An accepted turn/start is not a turn the host keeps: an App Server that dies before the
+        turn reaches its rollout comes back without it, and the delivery would otherwise wait for
+        an acknowledgement nobody can send. Bounded by max_turn_checks_per_tick lookups; the
+        candidates rotate from where the last pass stopped and wrap once at the end, and a delivery whose
+        turn was listed as finished is not read again, without spending the budget. An in-progress
+        turn, a token found without its turn, and an unreadable host are all read again later.
+        A reading that stays undecided however long it waits (hostloss.LISTING_BOUNDED and its
+        kind) is named on the attempt and read again after UNDECIDED_RECHECK_SECONDS.
+
+        The rotation returns to the first candidate only after a short page, the end of the
+        candidates. A full page leaves the position inside it for the next tick, so a run of
+        finished turns delays a candidate behind it by a page a tick and never hides it.
+        """
+        budget = self.policy.max_turn_checks_per_tick
+        if budget <= 0 or getattr(self.adapter, "find_dispatched_turn", None) is None:
+            return
+        from . import hostloss
+
+        page = self.turn_check_page or max(64, budget * 16)
+        after = self._turn_check_after
+        try:
+            self._forget_departed(hostloss, page)
+            rows = list(hostloss.awaiting_ack(self.store, after=after, limit=page))
+            # Wrapping after a full page as well sent the position back to the head whenever
+            # that page held only finished turns, and nothing past it was read again (review 3).
+            if after is not None and len(rows) < page:
+                rows += [row for row in hostloss.awaiting_ack(self.store, limit=page)
+                         if row["event_id"] <= after]
+        except Exception as error:  # noqa: BLE001 - a tick never dies on one pass
+            report.notes.append(f"recipient turn check could not list deliveries: {error}")
+            return
+        spent = 0
+        for row in rows:
+            if spent >= budget:
+                break
+            self._turn_check_after = row["event_id"]
+            if row["request_id"] in self._turns_settled:
+                continue
+            if self._turns_undecided.get(row["request_id"], now) > now:
+                continue
+            spent += 1
+            try:
+                outcome = self.reconciler.check_dispatched_turn(row["request_id"], self.adapter)
+            except Exception as error:  # noqa: BLE001
+                report.notes.append(f"recipient turn check failed for {row['request_id']}: {error}")
+                continue
+            reading = outcome["recipientTurn"]
+            if reading.get("undecided"):
+                self._turns_undecided[row["request_id"]] = now + UNDECIDED_RECHECK_SECONDS
+            else:
+                self._turns_undecided.pop(row["request_id"], None)
+            if reading["finding"] == hostloss.PRESENT and reading["status"] in hostloss.TERMINAL:
+                self._turns_settled[row["request_id"]] = None
+            elif reading["finding"] == hostloss.UNKNOWN and (
+                    reading["detail"] or "").startswith("unreadable"):
+                report.notes.append(
+                    f"recipient turn unreadable for {row['request_id']}: {reading['detail']}"
+                )
+            if outcome.get("redelivery") in (hostloss.REQUEUED, hostloss.HELD):
+                report.turnsLost += 1
+            report.turnsUndecided += outcome.get("undecidedChanged", 0)
+
+    def _forget_departed(self, hostloss, page) -> None:
+        """Drop remembered request ids whose delivery no longer awaits its acknowledgement.
+
+        A delivery leaves the candidates when it is acknowledged, held, lost or sent again, and
+        nothing tells these caches. Each tick asks the store about at most a page of each, the
+        entries checked longest ago, and moves those still awaiting to the back. A tick adds at
+        most the lookup budget, less than a page, so the caches stay about the size of the
+        deliveries still awaiting however long the daemon runs and whatever order the event ids
+        sort in. Pruning only after a pass that saw every candidate never pruned once the
+        candidates outgrew a page (review 3).
+        """
+        batch = list(itertools.islice(self._turns_settled, page))
+        batch += itertools.islice(self._turns_undecided, page)
+        if not batch:
+            return
+        live = hostloss.still_awaiting(self.store, batch)
+        for cache in (self._turns_settled, self._turns_undecided):
+            for request_id in batch:
+                if request_id in cache:
+                    value = cache.pop(request_id)
+                    if request_id in live:
+                        cache[request_id] = value
 
     def _sweep_faults(self, report) -> None:
         """Record what the store currently shows is broken, so nobody has to notice first.

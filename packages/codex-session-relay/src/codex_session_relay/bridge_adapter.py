@@ -31,7 +31,10 @@ import sqlite3
 import stat
 from pathlib import Path
 
-from .hostadapter import HostUnavailable, ThreadFacts, TokenScan, TurnInfo
+from .hostadapter import (
+    DISPATCHED_TURN_MAX_PAGES, HostUnavailable, ThreadFacts, TokenScan, TurnInfo, TurnPresence,
+    find_in_listing, find_token_in,
+)
 from .settings import SETTINGS_DIFFER_AFTER_LOAD, SETTINGS_NOT_PRESERVED
 
 UNARCHIVED_CWD = "unarchived_cwd"
@@ -351,6 +354,60 @@ class BridgeHostAdapter:
             body = hashlib.sha256(_item_text(entry).encode("utf-8")).hexdigest()
             digest.update(f"{entry.get('turnId')}:{_item_id(entry)}:{body}|".encode())
         return digest.hexdigest()
+
+    def find_dispatched_turn(self, thread_id: str, turn_id: str, *, sent_at: float) -> TurnPresence:
+        """The turn a dispatch started, looked for among the turns begun since that send.
+
+        Newest first, which is thread/turns/list's default order, asked for explicitly anyway;
+        without items, because only the id, status and start time are read. read_turn pages the
+        same listing but can only conclude absence by exhausting it, so on a parent with more
+        turns than its bound it never can. Stopping at the first turn older than the send is what
+        makes absence answerable there (hostadapter.find_in_listing holds the rule).
+        """
+
+        def pages():
+            cursor = None
+            for _ in range(DISPATCHED_TURN_MAX_PAGES):
+                params = {"threadId": thread_id, "limit": self.page, "itemsView": "notLoaded",
+                          "sortDirection": "desc"}
+                if cursor:
+                    params["cursor"] = cursor
+                page = self._call("thread/turns/list", params)
+                cursor = page.get("nextCursor")
+                yield [
+                    TurnInfo(turn.get("id"), turn.get("status", "unknown"), turn.get("startedAt"))
+                    for turn in page.get("data", [])
+                ], bool(cursor)
+                if not cursor:
+                    return
+
+        return find_in_listing(pages(), turn_id, sent_at)
+
+    def find_token_since(self, thread_id: str, token: str, *, older, limit: int = 200) -> TokenScan:
+        """A token among the items since a send (hostadapter.find_token_in).
+
+        The same forward paging as find_token, but it stops as soon as it reaches an item of a
+        turn the listing showed began before the send (older), which is what lets "not found"
+        mean something: every newer item was read. Stopping at the bound first is reported as
+        not covered.
+        """
+
+        def pages():
+            cursor, read = None, 0
+            while read < limit:
+                params = {"threadId": thread_id, "sortDirection": "desc",
+                          "limit": min(self.page, limit - read)}
+                if cursor:
+                    params["cursor"] = cursor
+                page = self._call("thread/items/list", params)
+                entries = page.get("data", [])
+                read += len(entries)
+                cursor = page.get("nextCursor")
+                yield [(entry.get("turnId"), _item_text(entry)) for entry in entries], bool(cursor)
+                if not cursor or not entries:
+                    return
+
+        return find_token_in(pages(), token, older)
 
     # ----------------------------------------------------------------- writes
 

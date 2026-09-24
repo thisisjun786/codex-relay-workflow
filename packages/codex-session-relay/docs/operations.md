@@ -377,6 +377,9 @@ transport call.
 | `withheld:<operation>` | refused before any transport call, naming the operation that refused |
 | `turn_accepted` | the transport started a turn |
 | `awaiting_ack` | delivered, acknowledgement outstanding |
+| `awaiting_ack:turn_check_undecided` | delivered, acknowledgement outstanding, and the relay could not tell whether the host still has the delivery's turn; waiting will not tell it either (see "When the host loses an accepted turn") |
+| `redelivering:host_lost_turn` | the host lost the turn the last attempt started; the same event is queued for its next attempt |
+| `held:host_lost_turn` | the host lost the redelivery's turn as well; held, and nothing sends it again |
 | `awaiting_child_receipt` | a revision request was delivered; contract v1 defines no acknowledgement for that direction, so the child answers with its next completion receipt |
 | `awaiting_grant_acknowledgement` | a merge-turn grant was delivered and its turn has not recorded the acknowledgement; it is answered with `merge-turn-acknowledge`, never with an `ack` |
 | `grant_acknowledged` | the grant was acknowledged on its merge turn, in any delivery state (a parent can answer before the notice is sent) and including after that turn later landed or was returned |
@@ -435,6 +438,115 @@ Observation health is reported beside it: staged event ages, when each current a
 last successfully polled, and the backlog per assignment. A failed read updates the attempt
 time and never the success time, so an anchor whose first read failed reads as never polled
 rather than fresh. Process liveness is reported separately and is never counted as health.
+
+## When the host loses an accepted turn
+
+An accepted `turn/start` is a transport fact, not a turn the host keeps. CRW-124's H0 rehearsal
+stopped the App Server right after it accepted a delivery's turn: the rollout kept only
+`task_started`, the restarted host listed no such turn, and the delivery read
+`dispatched_awaiting_ack` for good. That is the same reading a lost acknowledgement gives, and
+nothing read the parent's turns to tell the two apart.
+
+The daemon now asks. For every delivered completion still waiting for its acknowledgement, a
+bounded pass (`max_turn_checks_per_tick`, 4 lookups a tick) looks for the attempt's turn in the
+parent's own turn list, newest first, among the turns begun since the send. That includes a
+completion whose send was uncertain and which reconciliation confirmed from its token in the
+parent's items: its attempt keeps the honest `held_uncertain` snapshot, and the turn looked for is
+the one the token was found in. The turn counts as lost only when:
+
+- the host answered: the listing ended, or reached a turn that began more than 61 seconds before
+  the send, without it. The lookup pages back through up to 1000 turns. An empty or unreadable
+  listing, or one that never reached the send, is no answer;
+- the send is more than 61 seconds old, which covers the host's whole-second start times and
+  a clock skew;
+- this attempt's delivery token is in none of the parent's items since the send. The scan reads
+  newest first and counts only when it reaches an item of a turn the listing showed began before
+  the send, or the end. Items of turns missing from the list are read like any other, because a
+  turn the host dropped from its list can keep its items. A found token means the message
+  arrived, whatever happened to the turn row. A scan that stops at its bound (200 items) first
+  has shown nothing.
+
+A lost acknowledgement fails the first condition: its turn is listed, interrupted, with the message
+in it. It keeps reading `awaiting_ack`, as before.
+
+A lost turn is recorded on the attempt as `host_lost_turn`, and the delivery is queued again, so the
+ordinary claim sends the next attempt of the same event under a new request id. If the host loses
+that turn too, the delivery is held as `held:host_lost_turn` and is not sent again. Recovering it
+is the parent's job: read the report with `show --event`, then open a fresh generation if the work
+still needs verifying. The lost attempts stay in `attemptDetail` with the state `host_lost_turn`.
+The fault sweep collects them as `delivery_stalled`, and the held row's hold as well, while the
+delivery is not dispatched. Only completions are recovered this way. A revision's dispatched turn
+is its generation's anchor, which is never rebound, so for revisions and merge-turn grants the
+check is reported and changes nothing. A lost revision anchor already shows up in observation
+health as an absent turn.
+
+The pass writes nothing while the turn is listed. A turn listed as finished is not read again while
+its delivery still waits for the acknowledgement. The daemon remembers those request ids in memory,
+and each tick asks the store about the page of them it checked longest ago, forgetting any whose
+delivery has since been acknowledged, held, lost or sent again. The memory therefore stays about the
+size of the deliveries still waiting. The pass resumes where the last one stopped and returns to
+the first waiting delivery only after reaching the last, so a long run of finished turns delays the
+deliveries behind it by a page a tick and never hides them. An in-progress turn and an unreadable
+host are read again on a later rotation, within the budget.
+
+Some readings cannot decide however long the relay waits: a listing that never reached the send,
+a listing with no turns at all once the send is more than 61 seconds old, a token scan that could
+not cover the turns since it, or an attempt without a send time. An empty listing is what a
+parent shows when the lost delivery was its only turn, and also what a host shows for a thread it
+answers for without its turns, so it is named and never taken for absence. These are recorded on
+the attempt as `turn_check_undecided:<reason>` (`listing_bounded`, `listing_empty`,
+`token_scan_bounded`, `no_send_time`). One more reading is named the same way although it
+decides the veto: the delivery's token is in the parent's items but its turn is gone from the
+list (`token_without_turn`). The message is there, so it is not sent again, but the turn that would
+have acted on it is gone, which the parent has to be able to see. `status` reads the phase as
+`awaiting_ack:turn_check_undecided`, and `assignment-show` carries the reason as
+`projection.completion.delivery.turnCheck`. Nothing is sent again on an undecided reading. The
+daemon reads such a row again after ten minutes. Only a later reading that decides clears the
+name. A reconcile whose own read fails, or that settles the same dispatch from its receipt again,
+keeps it. The parent can still acknowledge the delivery, or read the report with `show --event`
+and recover.
+
+Reconciliation reads first and writes later. If the daemon records a loss in between, the
+reconcile's own write refuses to overwrite it and reports the recorded loss, with its reading and
+the `redelivery` the loss recorded. Without that refusal, the attempt would go back to dispatched,
+and the one count that stops a third send would be lost.
+
+A send already confirmed from its token stays confirmed. When a later `reconcile` finds no
+accepted receipt, it does not scan the items again: not finding the token a second time is not
+evidence against the first find, and writing the attempt back with evidence `none` would also
+make a later loss record `none`. The reconcile asks only whether the parent still has the turn the
+token was found in, and a recorded loss reports the evidence the attempt was delivered on.
+
+`reconcile --request-id` runs the same read for a receipt that carries a turn id and reports it
+as `recipientTurn`: `{turnId, finding, status, detail}`, where the finding is `present`,
+`host_lost_turn` or `unknown`. `recipientTurnsChecked` in the record is true only when the host
+answered. For a completion it applies the same recovery, reporting `redelivery` as `queued`,
+`held` or `not_moved` (when an acknowledgement is already recorded, or the attempt is no longer
+the current one). Reconciling an attempt that was already found lost reports it again and
+changes nothing. `recover` reads the same way for an open attempt whose receipt now carries a
+turn id.
+
+`assignment-show` names who moves an unanswered completion next, taken from its own delivery row
+rather than from the assignment state alone. This applies in `received` and `corrected`:
+
+| Delivery | `nextExpectedAction` |
+|---|---|
+| acknowledged and accepted | `parent_verifies` |
+| held after a host loss, for any reason | `parent_recovers_host_lost_turn` |
+| `held_uncertain`, or a claim still `sending` | `daemon_reconciles_delivery` |
+| dispatched or `inbox_only`, acknowledgement recorded and not yet confirmed | `daemon_verifies_acknowledgement` |
+| dispatched or `inbox_only`, acknowledgement refused by verification | `parent_reacknowledges` |
+| dispatched or `inbox_only`, no acknowledgement | `parent_acknowledges` |
+| queued, deferred or withheld after a host loss | `daemon_redelivers_host_lost_turn` |
+| queued, deferred or withheld | `daemon_delivers` |
+
+`projection.completion.delivery.hostLostAttempts` counts the event's lost attempts and stays
+above zero after a redelivery reaches the parent. A verified rejection keeps the state's own
+answer, and so does a held completion that was never lost.
+
+Status: implemented, and tested against the fake host (`tests/test_host_lost_turn.py`). Whether
+the installed App Server lists turns the way this relies on is re-checked on the isolated
+host with CRW-124's K5 and H7 legs.
 
 ## What one tick guarantees
 
