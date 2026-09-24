@@ -267,6 +267,32 @@ a reason to act and not a refusal to report. The comparison is exact, so the obs
 written in the form the packet states it. `--applied` reads nothing and refuses an
 observation: the observation belongs to the check before it.
 
+The receive step for a packet naming an artifact, then, is:
+
+```bash
+# Check it with your own reading of the artifact:
+codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
+  --receiver <your task id> --ledger <your reception ledger> --observation <your reading>
+
+# After acting on it, and only then (no --observation):
+codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
+  --receiver <your task id> --ledger <your reception ledger> --applied
+```
+
+where the reading is, for a locator:
+
+```json
+{"source": "<who read it, how and when>", "artifactPath": "<path>",
+ "artifactDigest": "<its digest, in the form the packet states it>"}
+```
+
+and for a pull request:
+
+```json
+{"source": "<who read it, how and when>", "repository": "<owner/name>", "prNumber": 12,
+ "headSha": "<the head you read>"}
+```
+
 **The reception ledger** (`--ledger <file>`) is the receiver's own file, written by this command
 and read by nothing else. It names its receiver and a version, and a ledger naming another
 receiver is refused rather than read. It keeps each answered message id beside the content
