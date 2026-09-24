@@ -709,8 +709,10 @@ class DeliveryService:
         lines += ["", violated_heading(record, row["event_id"])]
         for item in findings[:MANIFEST_LINES]:
             note = item.get("note")
+            # A stored finding can lack its id or disposition; str() of either is None.
             lines.append(
-                f"  {item.get('id')}{restoration.label(item)}: {item.get('verdict')}"
+                f"  {item.get('id') or '(no id recorded)'}{restoration.label(item)}:"
+                f" {item.get('verdict') or 'no disposition recorded'}"
                 + (f" — {note}" if note else "")
             )
         overflow = _overflow_line(findings, row["event_id"])

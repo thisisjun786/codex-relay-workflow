@@ -2075,11 +2075,13 @@ def reverify_lines(receipt, event_id, review=None, *, proof=False) -> list:
 def return_lines(relationship_id, generation) -> list:
     """The hand-back, the same bytes on both paths.
 
-    A generation the record lacks is a placeholder the child has to fill from the full
-    record, never --generation None, which parses and names no generation.
+    A generation the record lacks is a placeholder the parent has to fill, never
+    --generation None, which parses and names no generation. It is the parent's to give
+    because the full record is the very receipt that lacks it, and no read command here
+    shows a relationship's current generation to its child.
     """
     absent = generation is None or generation == ""
-    shown = "<not recorded; read the full record>" if absent else generation
+    shown = "<not recorded; ask the parent>" if absent else generation
     return [
         "",
         "There is nothing to acknowledge. Contract v1 defines no acknowledgement for this",
