@@ -466,8 +466,30 @@ the one the token was found in. The turn counts as lost only when:
   arrived, whatever happened to the turn row. A scan that stops at its bound (200 items) first
   has shown nothing.
 
-A lost acknowledgement fails the first condition: its turn is listed, interrupted, with the message
-in it. It keeps reading `awaiting_ack`, as before.
+A lost acknowledgement keeps its turn: listed, interrupted, with the message in it. It reads
+present and keeps reading `awaiting_ack`, as before.
+
+A listed turn is not always a kept one. CRW-124's isolated re-check at R3 (H0R3-F1) stopped the
+App Server right after it accepted a delivery's turn and had the parent loaded again before the
+relay's check. The restarted host listed the lost turn back as interrupted, with none of its
+items, and the relay, which read any listed turn as present, never looked at it again. So a listed
+turn that has finished (completed, interrupted or failed) counts as present only when its own
+first eight items, read oldest first through `thread/items/list` with its `turnId`, hold this
+attempt's message. A finished turn listed without it is judged like an unlisted one, under the
+second and third conditions: the same allowance, the same scan since the send, the same loss and
+redelivery, with a `detail` that names the listed status. When the message turns up under another
+turn, the delivery is not sent again, but the reading carries no status, so the daemon does not
+keep it as settled and a later reload that empties that turn as well is still caught. A turn
+still in progress is present as listed and is read again once it finishes.
+
+The token has to be in the message itself, not in something the parent printed about it: relay
+commands such as `status` and `show` print request ids into the parent's own command output.
+Where the host gives item types, reconciliation's scan and the in-turn read count only a
+`userMessage` item. The loss veto ignores the items the host types as agent output
+(`commandExecution`, `agentMessage`, `functionCallOutput`, `mcpToolCall`, `dynamicToolCall`,
+`reasoning`, `plan`), so a message the host types some other way, such as a hook prompt, still
+blocks a loss. A host that gives no types is read by text, as before, and there a command's
+output can still be taken for the message.
 
 A lost turn is recorded on the attempt as `host_lost_turn`, and the delivery is queued again, so the
 ordinary claim sends the next attempt of the same event under a new request id. If the host loses
@@ -517,6 +539,36 @@ evidence against the first find, and writing the attempt back with evidence `non
 make a later loss record `none`. The reconcile asks only whether the parent still has the turn the
 token was found in, and a recorded loss reports the evidence the attempt was delivered on.
 
+More generally, an attempt row has several writers: the sender itself, the daemon's reconcile, a
+manual `reconcile`, and a confirmation through an acknowledging turn (below). Each settles only
+the attempt it read. A write is a compare-and-set over the attempt's settlement state, state and
+evidence as that reader saw them, so a reader that lost a race writes nothing and reports the
+attempt as it now stands (`changed`), and the daemon reconciles it again on the next tick. The
+sender settles its attempt only while it is still in flight; when a reconcile got there first,
+the sender's result reports `_settledElsewhere` and the delivery state that reconcile left, and
+the transport ledger keeps the receipt for the next reading. A reading that found no evidence
+never writes `none` over evidence already settled (`kept`).
+
+An acknowledgement can arrive before the relay has confirmed the delivery it answers. The R3
+re-check (H0R3-F2) cut the `turn/start` receipt while the host ran the delivery turn: the attempt
+settled `held_uncertain`, and the parent, inside that very turn, claimed the report and
+acknowledged it. The acknowledgement was refused because the delivery was not delivered yet,
+reconciliation confirmed the delivery seconds later from its token, and nothing asked the parent
+again, so the event waited for an acknowledgement for good while `assignment-show` read
+`parent_verifies`.
+
+`ack` now settles such a delivery first. With a host, once the proof checks, it reconciles the
+current attempt, and if that leaves the send uncertain it reads the acknowledging turn's own first
+items for the attempt's message: the parent acknowledged from inside the delivery turn, so that
+turn opens with the message however long it ran. A message found there is the same evidence as a
+token found in the thread (I-41); the acknowledgement itself never is. Once the delivery is
+confirmed, the acknowledgement is judged as usual. While it is not, or while the send is still in
+flight, the acknowledgement is kept exactly as authored, unverified, with
+`ack_evidence.last_reason` `delivery_unconfirmed`, and the delivery is left alone. The daemon
+confirms each kept acknowledgement's delivery through its turn, paced by the pending pass's
+backoff, and completes the acknowledgement in the same tick once the delivery is confirmed. A
+verdict completes it first. An ordinary acknowledgement makes no extra host read.
+
 `reconcile --request-id` runs the same read for a receipt that carries a turn id and reports it
 as `recipientTurn`: `{turnId, finding, status, detail}`, where the finding is `present`,
 `host_lost_turn` or `unknown`. `recipientTurnsChecked` in the record is true only when the host
@@ -527,14 +579,17 @@ changes nothing. `recover` reads the same way for an open attempt whose receipt 
 turn id.
 
 `assignment-show` names who moves an unanswered completion next, taken from its own delivery row
-rather than from the assignment state alone. This applies in `received` and `corrected`:
+rather than from the assignment state alone. This applies in `received`, `corrected` and
+`verifying`. A claim is not an acknowledgement: a parent can claim a report inside a delivery turn
+the relay has not confirmed, so a claimed completion reads `parent_verifies` only once its
+acknowledgement is verified.
 
 | Delivery | `nextExpectedAction` |
 |---|---|
-| acknowledged and accepted | `parent_verifies` |
+| acknowledged and accepted, or acknowledged after a claim | `parent_verifies` |
 | held after a host loss, for any reason | `parent_recovers_host_lost_turn` |
-| `held_uncertain`, or a claim still `sending` | `daemon_reconciles_delivery` |
-| dispatched or `inbox_only`, acknowledgement recorded and not yet confirmed | `daemon_verifies_acknowledgement` |
+| `held_uncertain`, or a claim still `sending`, with or without a kept acknowledgement | `daemon_reconciles_delivery` |
+| dispatched or `inbox_only`, acknowledgement recorded and not yet confirmed, or kept while the delivery was unconfirmed | `daemon_verifies_acknowledgement` |
 | dispatched or `inbox_only`, acknowledgement refused by verification | `parent_reacknowledges` |
 | dispatched or `inbox_only`, no acknowledgement | `parent_acknowledges` |
 | queued, deferred or withheld after a host loss | `daemon_redelivers_host_lost_turn` |
@@ -546,7 +601,8 @@ answer, and so does a held completion that was never lost.
 
 Status: implemented, and tested against the fake host (`tests/test_host_lost_turn.py`). Whether
 the installed App Server lists turns the way this relies on is re-checked on the isolated
-host with CRW-124's K5 and H7 legs.
+host with CRW-124's K5 and H7 legs, and the reload and lost-receipt cases with its K5c and K5u
+legs.
 
 ## What one tick guarantees
 

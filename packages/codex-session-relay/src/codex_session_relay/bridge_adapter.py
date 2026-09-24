@@ -33,7 +33,7 @@ from pathlib import Path
 
 from .hostadapter import (
     DISPATCHED_TURN_MAX_PAGES, HostUnavailable, ThreadFacts, TokenScan, TurnInfo, TurnPresence,
-    find_in_listing, find_token_in,
+    find_in_listing, find_token_in, find_token_in_turn_items, is_message,
 )
 from .settings import SETTINGS_DIFFER_AFTER_LOAD, SETTINGS_NOT_PRESERVED
 
@@ -317,8 +317,14 @@ class BridgeHostAdapter:
                 (thread_id, listing, cursor, int(exhausted), scanned, self.clock.iso()),
             )
 
-    def find_token(self, thread_id: str, token: str, *, limit: int = 200, turn_id=None) -> TokenScan:
-        """Forward paging with the forward cursor, and honest exhaustion."""
+    def find_token(self, thread_id: str, token: str, *, limit: int = 200, turn_id=None,
+                   message_only: bool = False) -> TokenScan:
+        """Forward paging with the forward cursor, and honest exhaustion.
+
+        message_only counts only an item the host typed as a user message (or left untyped):
+        what reconciliation takes as proof that a send arrived. The default keeps every item,
+        which is what a readback of the relay's own staged line needs.
+        """
         cursor, scanned = None, 0
         while scanned < limit:
             params = {
@@ -334,6 +340,8 @@ class BridgeHostAdapter:
             entries = page.get("data", [])
             for entry in entries:
                 scanned += 1
+                if message_only and not is_message(_item_kind(entry)):
+                    continue
                 if token in _item_text(entry):
                     return TokenScan(True, entry.get("turnId"), False, scanned)
             cursor = page.get("nextCursor")
@@ -403,11 +411,37 @@ class BridgeHostAdapter:
                 entries = page.get("data", [])
                 read += len(entries)
                 cursor = page.get("nextCursor")
-                yield [(entry.get("turnId"), _item_text(entry)) for entry in entries], bool(cursor)
+                yield _triples(entries), bool(cursor)
                 if not cursor or not entries:
                     return
 
         return find_token_in(pages(), token, older)
+
+    def find_token_in_turn(self, thread_id: str, token: str, *, turn_id: str,
+                           limit: int = 8) -> TokenScan:
+        """This attempt's message among one turn's first items (hostadapter.find_token_in_turn_items).
+
+        thread/items/list filtered by the turn, oldest first: the delivered message opens the turn
+        it started, however many items the turn went on to produce, where a newest-first scan of
+        the thread bounded at 200 never reaches it in a long turn.
+        """
+
+        def pages():
+            cursor, read = None, 0
+            while read < limit:
+                params = {"threadId": thread_id, "turnId": turn_id, "sortDirection": "asc",
+                          "limit": min(self.page, limit - read)}
+                if cursor:
+                    params["cursor"] = cursor
+                page = self._call("thread/items/list", params)
+                entries = page.get("data", [])
+                read += len(entries)
+                cursor = page.get("nextCursor")
+                yield _triples(entries), bool(cursor)
+                if not cursor or not entries:
+                    return
+
+        return find_token_in_turn_items(pages(), token, turn_id)
 
     # ----------------------------------------------------------------- writes
 
@@ -490,6 +524,18 @@ def _item_text(entry) -> str:
                 return item[key]
         return json.dumps(item, sort_keys=True, default=str)
     return json.dumps(entry, sort_keys=True, default=str)
+
+
+def _item_kind(entry):
+    """The host's type for this item (ThreadItem.type), or None when it gives none."""
+    item = entry.get("item") if isinstance(entry, dict) else None
+    kind = item.get("type") if isinstance(item, dict) else None
+    return kind if isinstance(kind, str) else None
+
+
+def _triples(entries) -> list:
+    """thread/items/list entries as the (turn id, text, type) the token rules read."""
+    return [(entry.get("turnId"), _item_text(entry), _item_kind(entry)) for entry in entries]
 
 
 def _item_id(entry) -> str:

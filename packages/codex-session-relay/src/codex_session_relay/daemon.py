@@ -395,6 +395,7 @@ class RelayDaemon:
         advanced or whose relationship paused while the evidence was missing is left exactly as
         the parent wrote it and reports why, rather than being promoted on turn evidence alone.
         """
+        self._confirm_kept_acks(report, now)
         try:
             results = self.ack.verify_pending_acks(self.adapter, now=now)
         except Exception as error:  # noqa: BLE001 - a tick never dies on one pass
@@ -406,6 +407,38 @@ class RelayDaemon:
                 report.notes.append(
                     f"acknowledgement {result['eventId']} not promoted: {result['reason']}"
                 )
+
+    def _confirm_kept_acks(self, report, now) -> None:
+        """Confirm the delivery of each acknowledgement kept while its send was unconfirmed.
+
+        CRW-124 R3 (H0R3-F2): the parent acknowledged from inside the delivery turn while the
+        relay still held the send as uncertain. That turn's own first items hold the message
+        wherever the thread-wide scan's bound ends, so the delivery is reconciled through it
+        (Reconciler.confirm_delivery), and the pending pass that follows completes the
+        acknowledgement once the delivery is confirmed. Only kept acknowledgements whose check is
+        due are read, so the pending pass's backoff paces the reads.
+        """
+        kept = getattr(self.ack, "kept_unconfirmed", None)
+        confirm = getattr(self.reconciler, "confirm_delivery", None)
+        if self.adapter is None or kept is None or confirm is None:
+            return
+        try:
+            rows = kept(now, limit=8)
+        except Exception as error:  # noqa: BLE001 - a tick never dies on one pass
+            report.notes.append(f"kept acknowledgement pass failed: {error}")
+            return
+        for event_id, turn_id in rows:
+            try:
+                outcome = confirm(event_id, self.adapter, turn_id=turn_id)
+            except Exception as error:  # noqa: BLE001
+                report.notes.append(f"kept acknowledgement {event_id} not confirmed: {error}")
+                continue
+            outcome = outcome or {}
+            turn_read = outcome.get("turnRead") or ""
+            problem = outcome.get("error") or (
+                turn_read if turn_read.startswith("unreadable") else None)
+            if problem:
+                report.notes.append(f"kept acknowledgement {event_id} not confirmed: {problem}")
 
     def run(self, *, max_ticks=None, deadline=None, stop=None, sleep=None) -> list:
         """Bounded by construction.
@@ -910,6 +943,10 @@ class RelayDaemon:
 
     @staticmethod
     def _reads_were_complete(outcome) -> bool:
+        if outcome.get("changed"):
+            # Another reader settled the attempt while this one read it, and nothing was
+            # written (I-37): the attempt as it now stands is owed a reading of its own.
+            return False
         observation = outcome.get("operationObservation", "")
         scan = outcome.get("recipientScan", "")
         if "unreadable" in observation or "unreadable" in scan:

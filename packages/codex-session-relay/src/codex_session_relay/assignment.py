@@ -344,7 +344,8 @@ class AssignmentView:
         )
         record["nextExpectedAction"] = (
             # Disjoint states: the correction's answer is for needs_changes (CRW-222), the
-            # completion's for received and corrected (CRW-224); NEXT_ACTION answers the rest.
+            # completion's for received, corrected and verifying (CRW-224); NEXT_ACTION answers
+            # the rest.
             correction_next_action(state, record["projection"])
             or completion_next_action(state, record["projection"])
             or record["nextExpectedAction"]
@@ -845,9 +846,10 @@ RECONCILE_ACTION = "daemon_reconciles_delivery"
 HOST_LOST_REDELIVERY_ACTION = "daemon_redelivers_host_lost_turn"
 HOST_LOST_HELD_ACTION = "parent_recovers_host_lost_turn"
 # Verification's own "not yet": the host has not confirmed the acknowledging turn, and a process
-# with host access will try again. Any other reason it recorded is a refusal only a new
-# acknowledgement can answer.
-_VERIFICATION_PENDING = (None, "unverified_turn")
+# with host access will try again; or the acknowledgement was kept while the relay had not
+# confirmed the delivery (ack.DELIVERY_UNCONFIRMED), and the daemon completes it now that it has.
+# Any other reason it recorded is a refusal only a new acknowledgement can answer.
+_VERIFICATION_PENDING = (None, "unverified_turn", "delivery_unconfirmed")
 
 
 def completion_next_action(state, projection):
@@ -856,10 +858,13 @@ def completion_next_action(state, projection):
     NEXT_ACTION answers from the assignment state alone, so a completion already delivered and
     waiting for the parent's acknowledgement read daemon_delivers. This answers from the
     completion's own delivery row and acknowledgement, which the one projection statement read
-    together, for the two states in which the parent has not claimed the report. First match:
+    together, for the states in which the parent has not ruled on the report: received and
+    corrected, and verifying - claimed, which is not acknowledged: a parent can claim inside a
+    delivery turn the relay has not confirmed, and its acknowledgement then waits on the relay
+    (CRW-124 R3, H0R3-F2). First match:
 
     - acknowledged: an accepted one waits for the parent to verify; a rejection is an answer and
-      is left to NEXT_ACTION;
+      is left to NEXT_ACTION, as is every acknowledged claim (parent_verifies);
     - held, other than a closed push channel: nothing moves it automatically. After a host loss
       it is the parent's to recover; a completion never lost keeps today's answer;
     - held_uncertain or sending: an uncertain send or an unsettled claim, which reconciliation
@@ -876,7 +881,7 @@ def completion_next_action(state, projection):
         DEFERRED_BUSY, DISPATCHED, HELD_UNCERTAIN, INBOX_ONLY, QUEUED, SENDING, WITHHELD_PRE_SEND,
     )
 
-    if state not in (RECEIVED, CORRECTED):
+    if state not in (RECEIVED, CORRECTED, VERIFYING):
         return None
     completion = projection["completion"]
     delivery = completion["delivery"]

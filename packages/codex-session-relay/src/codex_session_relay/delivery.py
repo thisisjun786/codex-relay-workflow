@@ -1155,7 +1155,16 @@ class DeliveryService:
             status_before=_status_for_record(observation),
             observed_at=self.clock.iso(),
         )
-        self._settle(event_id, request_id, record, facts, previously_observed, now)
+        elsewhere = self._settle(event_id, request_id, record, facts, previously_observed, now)
+        if elsewhere is not None:
+            # Another reader settled this attempt while the send was in flight (I-37). What it
+            # recorded stands; the transport ledger keeps this send's receipt for the next
+            # reconciliation to read.
+            result = json.loads(elsewhere["record"]) if elsewhere["record"] else dict(record)
+            result["_settledElsewhere"] = True
+            result["_deliveryState"] = elsewhere["delivery_state"]
+            result["_lifecycle"] = observation.deliverable
+            return result
         result = dict(record)
         result["_turnPreviouslyObserved"] = previously_observed
         result["_turnOrigin"] = "steered_observed_turn" if previously_observed else (
@@ -1390,7 +1399,17 @@ class DeliveryService:
                 at=self.clock.iso(),
             )
 
-    def _settle(self, event_id, request_id, record, facts, previously_observed, now) -> None:
+    def _settle(self, event_id, request_id, record, facts, previously_observed, now):
+        """Settle this send's own attempt from its receipt, if nothing else settled it first.
+
+        The send runs outside any transaction, and a reconciliation - the daemon's, a manual one,
+        a confirmation through an acknowledging turn - can read and settle the same attempt while
+        it is in flight, from the ledger or the recipient's items. Writing this receipt over that
+        would undo evidence another reader established (I-37): a turn it found would be set back
+        to held with no turn. So the attempt is settled only while still in flight; otherwise
+        nothing is written to it or the delivery, and the stored attempt and delivery state are
+        returned. None when this settlement was written.
+        """
         assert_attempt_invariants(record)
         state = facts.delivery_state
         hold = None
@@ -1408,11 +1427,29 @@ class DeliveryService:
         # held_uncertain and dispatched are never rescheduled: one has no evidence yet and the
         # other already reached a turn.
         with self.store.transaction() as db:
-            db.execute(
+            settled = db.execute(
                 "UPDATE attempts SET internal_state = 'settled', state = ?, record = ?,"
-                " observed_at = ? WHERE request_id = ?",
+                " observed_at = ? WHERE request_id = ? AND internal_state = 'in_flight'",
                 (state, json.dumps(record), record["observedAt"], request_id),
-            )
+            ).rowcount
+            if settled != 1:
+                stored = db.execute(
+                    "SELECT a.record, a.state, a.affirmative_evidence,"
+                    "       d.state AS delivery_state"
+                    "  FROM attempts a JOIN deliveries d ON d.event_id = a.event_id"
+                    " WHERE a.request_id = ?",
+                    (request_id,),
+                ).fetchone()
+                self.store.journal(
+                    "delivery_attempt_settled_elsewhere", event_id,
+                    {
+                        "requestId": request_id, "receiptState": state,
+                        "storedState": stored["state"] if stored else None,
+                        "storedEvidence": stored["affirmative_evidence"] if stored else None,
+                    },
+                    at=self.clock.iso(),
+                )
+                return stored
             db.execute(
                 "UPDATE deliveries SET state = ?, next_eligible_at = ?, hold_reason = ?,"
                 " dispatch_evidence = ?, dispatch_turn_id = ?, lease_owner = NULL,"
@@ -1431,6 +1468,7 @@ class DeliveryService:
                 },
                 at=self.clock.iso(),
             )
+        return None
 
     def mark_superseded(self, event_id: str, *, reason: str = SUPERSEDED_HOLD) -> None:
         """Withdraw a delivery the recipient cannot already be acting on.

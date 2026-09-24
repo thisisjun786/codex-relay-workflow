@@ -58,6 +58,33 @@ TURN_ABSENT = "absent"
 # ids and start times only). Checks run from 61 s after a send, so a parent has rarely begun more
 # than a few turns by then; the bound is for a relay that was down while its parents kept working.
 DISPATCHED_TURN_MAX_PAGES = 20
+# The item type the host gives the message a turn/start delivered (App Server ThreadItem).
+USER_MESSAGE = "userMessage"
+# The item types the host gives an agent's own output. A relay command that prints a request id -
+# status, show, reconcile - puts it in one of these, and that is the parent reading about the
+# delivery, not the delivery (CRW-224 follow-up, H0R3).
+AGENT_OUTPUT = frozenset({
+    "commandExecution", "agentMessage", "functionCallOutput", "mcpToolCall", "dynamicToolCall",
+    "reasoning", "plan",
+})
+
+
+def is_message(kind) -> bool:
+    """Positive evidence that a delivery arrived: the host typed the item as a user message.
+
+    An untyped item still counts, because a host that reports no types has always been read by
+    its text alone.
+    """
+    return kind is None or kind == USER_MESSAGE
+
+
+def may_be_message(kind) -> bool:
+    """What can still block a loss: anything the host did not type as agent output.
+
+    Wider than is_message on purpose. A message the host types some other way (a hook prompt)
+    has still reached the recipient, and a loss is concluded only when nothing like it is there.
+    """
+    return kind not in AGENT_OUTPUT
 
 
 class ListingBounded(HostUnavailable):
@@ -92,6 +119,9 @@ class TurnPresence:
 
     older names the listed turns known to have begun before the send: the one the listing stopped
     at and the older ones on its page. Only their items end a token scan (find_token_in).
+    A match reads on to the first of them as well, never counting the matched turn, so a listed
+    turn that turns out to lack its message can be judged like an absent one. Reading on that
+    fails or reaches the bound first leaves older empty and the match standing.
     """
 
     finding: str
@@ -113,16 +143,16 @@ def find_in_listing(pages, turn_id: str, sent_at: float) -> TurnPresence:
     cutoff = sent_at - TURN_START_PRECISION_SECONDS - DISPATCH_TURN_SKEW_SECONDS
     scanned = 0
     seen = []
+    pages = iter(pages)
     for turns, follows in pages:
         for index, turn in enumerate(turns):
             scanned += 1
             if turn.turn_id == turn_id:
-                return TurnPresence(TURN_PRESENT, turn, scanned, "matched", tuple(seen))
+                older = _older_after_match(turns[index + 1:], follows, pages, cutoff)
+                return TurnPresence(TURN_PRESENT, turn, scanned, "matched", tuple(seen), older)
             if turn.started_at is not None and turn.started_at <= cutoff:
-                older = tuple(other.turn_id for other in turns[index:]
-                              if other.started_at is not None and other.started_at <= cutoff)
                 return TurnPresence(TURN_ABSENT, None, scanned, "older_than_send", tuple(seen),
-                                    older)
+                                    _older(turns[index:], cutoff))
             seen.append(turn.turn_id)
         if not follows:
             if not scanned:
@@ -136,25 +166,78 @@ def find_in_listing(pages, turn_id: str, sent_at: float) -> TurnPresence:
     )
 
 
+def _older(turns, cutoff) -> tuple:
+    return tuple(turn.turn_id for turn in turns
+                 if turn.started_at is not None and turn.started_at <= cutoff)
+
+
+def _older_after_match(rest, follows, pages, cutoff) -> tuple:
+    """After a match, the turns begun before the send: read on to the first of them.
+
+    The match is already the answer, so nothing here may take it away: a failed read or the page
+    bound reached first gives (), which leaves a later token scan to the end of the items or its
+    own bound.
+    """
+    try:
+        while True:
+            for index, turn in enumerate(rest):
+                if turn.started_at is not None and turn.started_at <= cutoff:
+                    return _older(rest[index:], cutoff)
+            if not follows:
+                return ()
+            rest, follows = next(pages)
+    except StopIteration:
+        return ()
+    except Exception:  # noqa: BLE001 - the match stands; only the extra history is missing
+        return ()
+
+
 def find_token_in(pages, token: str, older) -> TokenScan:
     """A token among a thread's items since a send, newest first: the rule both adapters apply.
 
-    pages yields (items, another_page_follows), each item a (turn id, text) pair, newest first.
+    pages yields (items, another_page_follows), each item a (turn id, text, type) triple, newest
+    first; the type is the host's item type, or None when it gives none.
     older names the turns the listing showed began before the send (TurnPresence.older).
     exhausted means covered: the scan reached an item of one of them, or the end of the items,
     so every newer item was read. An item of any other turn is read, listed or not: a turn the
     host dropped from its list can keep its items, and taking one for older history stopped the
     scan in front of a token that was there (review 6). A scan that stops at its bound first has
     not covered them, and not finding the token there shows nothing (I-42).
+
+    A token counts in any item the host did not type as agent output (may_be_message): a relay
+    command that printed the request id is not the message, and a loss it vetoed was reported
+    as delivered (H0R3).
     """
     boundary = set(older)
     scanned = 0
     for items, follows in pages:
-        for owner, text in items:
+        for owner, text, kind in items:
             if owner is not None and owner in boundary:
                 return TokenScan(False, None, True, scanned)
             scanned += 1
-            if token in text:
+            if may_be_message(kind) and token in text:
+                return TokenScan(True, owner, False, scanned)
+        if not follows:
+            return TokenScan(False, None, True, scanned)
+    return TokenScan(False, None, False, scanned)
+
+
+def find_token_in_turn_items(pages, token: str, turn_id: str) -> TokenScan:
+    """This attempt's message among one turn's own items, oldest first: the rule both adapters
+    apply to thread/items/list filtered by that turn.
+
+    pages yields (items, another_page_follows) with items as in find_token_in. An item counts only
+    when the host says it belongs to that turn and typed it as a user message (is_message): a
+    host that ignored the turn filter answers with other turns' items, and an echo of the request
+    id in the turn's own command output is not the message. The message is a turn's first item,
+    so a few items read are enough, and a turn that does not have it is left to the thread-wide
+    reading (hostloss.py) rather than concluded lost here.
+    """
+    scanned = 0
+    for items, follows in pages:
+        for owner, text, kind in items:
+            scanned += 1
+            if owner == turn_id and is_message(kind) and token in text:
                 return TokenScan(True, owner, False, scanned)
         if not follows:
             return TokenScan(False, None, True, scanned)
@@ -185,7 +268,12 @@ class HostAdapter(Protocol):
     def get_operation(self, request_id: str) -> dict | None: ...
 
     def find_token(
-        self, thread_id: str, token: str, *, limit: int = 200, turn_id: str | None = None
+        self, thread_id: str, token: str, *, limit: int = 200, turn_id: str | None = None,
+        message_only: bool = False,
+    ) -> TokenScan: ...
+
+    def find_token_in_turn(
+        self, thread_id: str, token: str, *, turn_id: str, limit: int = 8
     ) -> TokenScan: ...
 
     def recipient_fingerprint(self, thread_id: str, *, window: int = 8) -> str: ...

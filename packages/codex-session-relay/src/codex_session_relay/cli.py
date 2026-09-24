@@ -1609,12 +1609,30 @@ def cmd_ack(services, args) -> dict:
     What it cannot do offline is establish that the turn is real, so the record says so, it
     does not close the attempt, and it cannot yet produce a verdict. A process that holds host
     access completes it later with verify-acks.
+
+    An acknowledgement of a delivery the relay has not confirmed - the host ran the delivery turn
+    but the turn/start receipt was lost (CRW-124 R3, H0R3-F2) - first has that delivery
+    reconciled, reading the acknowledging turn's own items for the message. Confirmed, it is
+    judged as usual; still unconfirmed, it is kept as authored and completed once the delivery
+    is confirmed. The proof is checked first, locally, so a wrong one makes no host read.
     """
+    adapter = getattr(services, "adapter", None)
+    reconciler = getattr(services, "reconciler", None)
+    if (adapter is not None and reconciler is not None
+            and args.ack_proof == derive_ack_proof(args.event, args.ack_turn)):
+        reconciler.confirm_delivery(args.event, adapter, turn_id=args.ack_turn)
     record = services.ack.acknowledge(
         args.event, ack_turn_id=args.ack_turn, ack_proof=args.ack_proof,
-        accepted=not args.reject, rejection_reason=args.reject, adapter=services.adapter,
+        accepted=not args.reject, rejection_reason=args.reject, adapter=adapter,
     )
-    if record.get("_verified") != "verified":
+    if record.get("_deliveryUnconfirmed"):
+        record["_note"] = (
+            "kept as the parent's authored acknowledgement: the relay has not confirmed this"
+            f" delivery yet ({record['_deliveryUnconfirmed']}). The daemon completes it once the"
+            " delivery is confirmed, and a verdict completes it first; nothing needs to be"
+            " acknowledged or sent again."
+        )
+    elif record.get("_verified") != "verified":
         record["_note"] = (
             "recorded as the parent's authored intent; this turn is not established yet, so it"
             " does not close the attempt and cannot yet produce a verdict. Run verify-acks from"
@@ -2197,6 +2215,7 @@ def cmd_verdict(services, args) -> dict:
                 # the only place that words it.
                 continue
             item[restoration.FIELD] = True
+    _complete_kept_acknowledgement(services, args.event)
     record = services.ack.record_verdict(
         args.event, verdict=args.verdict, verdict_turn_id=args.verdict_turn,
         criteria=criteria or None, findings=findings or None, reason=args.reason,
@@ -2209,6 +2228,28 @@ def cmd_verdict(services, args) -> dict:
     # key here would be a contract violation dressed as observability - which is what the
     # comment this replaces claimed not to be doing while doing it.
     return dict(record, _restoration=services.ack.restoration_of(args.event))
+
+
+def _complete_kept_acknowledgement(services, event_id) -> None:
+    """Before a verdict, complete an acknowledgement kept while its delivery was unconfirmed.
+
+    The parent may rule in the turn it acknowledged in, before the daemon's next pass: the
+    delivery is confirmed through the acknowledging turn and the acknowledgement completed, so
+    the verdict is judged on that. Without a host, or with nothing kept, this does nothing and
+    the verdict answers as it always has.
+    """
+    adapter = getattr(services, "adapter", None)
+    kept_turn = getattr(services.ack, "kept_turn", None)
+    complete = getattr(services.ack, "complete_pending", None)
+    if adapter is None or kept_turn is None or complete is None:
+        return
+    turn_id = kept_turn(event_id)
+    if turn_id is None:
+        return
+    reconciler = getattr(services, "reconciler", None)
+    if reconciler is not None:
+        reconciler.confirm_delivery(event_id, adapter, turn_id=turn_id)
+    complete(event_id, adapter)
 
 
 def cmd_show(services, args) -> dict:

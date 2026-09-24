@@ -14,6 +14,16 @@ the turn. What the read finds is reported as recipientTurn; a completion whose t
 is recorded host_lost_turn and queued once more. That is not evidence that a send landed, so it
 is not a fourth item on the list above: it is the host's own answer that the accepted turn is
 gone.
+
+A turn found carrying this attempt's token means the host typed that item as the message
+(hostadapter.is_message): a relay command the parent ran that printed the request id is its
+reading about the delivery, not the delivery (CRW-224 follow-up).
+
+Every settlement written here is a compare-and-set over the attempt as it was read, because the
+reads come first and outside the transaction and another reader - the sender itself, the daemon,
+a manual reconcile, a confirmation through an acknowledging turn - may settle the same attempt in
+between. A reading that lost that race writes nothing and reports the attempt as it now stands,
+and one that found no evidence never writes over evidence already settled (I-37).
 """
 
 import json
@@ -60,6 +70,18 @@ class _AttemptLost(Exception):
     record the loss in between. Writing the receipt's settlement then would set the attempt back
     to dispatched and erase the count that stops a third send, so the write refuses instead.
     """
+
+
+class _AttemptChanged(Exception):
+    """The attempt is not the one this reconciliation read, or it already holds evidence.
+
+    moved says another reader settled it in between. Otherwise it is already settled on
+    affirmative evidence, and a reading that found none does not write over it.
+    """
+
+    def __init__(self, moved: bool):
+        super().__init__("moved" if moved else "kept")
+        self.moved = moved
 
 
 class Reconciler:
@@ -137,6 +159,37 @@ class Reconciler:
             return self._reconcile_attempt(request_id, adapter, now=now)
         except _AttemptLost:
             return self._recorded_loss(request_id)
+        except _AttemptChanged as changed:
+            return self._as_it_stands(request_id, changed)
+
+    def _as_it_stands(self, request_id: str, changed, reading=None) -> dict:
+        """What another reader settled while this one read, reported without writing (I-37).
+
+        changed marks the race, and the daemon's gate reads it as a pass that did not complete,
+        so the next tick reconciles the attempt as it now stands. kept marks a reading that found
+        no evidence against an attempt already settled on some.
+        """
+        attempt = self.store.one("SELECT * FROM attempts WHERE request_id = ?", (request_id,))
+        delivery = self.delivery.get(attempt["event_id"])
+        outcome = {
+            "evidence": attempt["affirmative_evidence"] or Evidence.NONE.value,
+            "state": attempt["state"],
+            "deliveryState": delivery["state"],
+            "record": json.loads(attempt["record"]) if attempt["record"] else None,
+        }
+        if changed.moved:
+            outcome["changed"] = True
+            outcome["detail"] = ("another reader settled this attempt while this one read it;"
+                                 " nothing was written, and the attempt as it now stands is"
+                                 " reported")
+        else:
+            outcome["kept"] = True
+            outcome["detail"] = (f"this attempt is already settled on"
+                                 f" {attempt['affirmative_evidence']}; a reading that found no"
+                                 f" evidence does not write over it")
+        if reading is not None:
+            outcome["recipientTurn"] = reading
+        return outcome
 
     def _recorded_loss(self, request_id: str, reading=None) -> dict:
         """What a loss already recorded on this attempt says, without writing anything.
@@ -204,7 +257,7 @@ class Reconciler:
         scan_detail = "not scanned"
         try:
             scan = adapter.find_token(
-                delivery["recipient_thread_id"], request_id, limit=SCAN_LIMIT
+                delivery["recipient_thread_id"], request_id, limit=SCAN_LIMIT, message_only=True,
             )
             scan_detail = (
                 f"found={scan.found} exhausted={scan.exhausted} scanned={scan.scanned}"
@@ -239,6 +292,8 @@ class Reconciler:
         except _AttemptLost:
             # Recorded already, or by the daemon between this read and this write.
             return self._recorded_loss(attempt["request_id"], reading)
+        except _AttemptChanged as changed:
+            return self._as_it_stands(attempt["request_id"], changed, reading)
         outcome["recipientTurn"] = reading
         if reading["finding"] == HOST_LOST_TURN:
             if delivery["kind"] == COMPLETION:
@@ -302,6 +357,80 @@ class Reconciler:
             outcome.update(hostloss.settle(self.store, self.clock, request_id, reading))
         else:
             outcome["undecidedChanged"] = hostloss.record_undecided(self.store, request_id, reading)
+        return outcome
+
+    def confirm_delivery(self, event_id: str, adapter, *, turn_id=None):
+        """Settle an uncertain completion send before the parent's acknowledgement is judged.
+
+        CRW-124 R3 (H0R3-F2): the host ran the delivery turn but the relay lost the turn/start
+        receipt, so the delivery was held_uncertain while the parent, inside that very turn,
+        claimed and acknowledged it. The acknowledgement was refused, reconciliation confirmed
+        the delivery seconds later, and nothing asked the parent again.
+
+        This is reconciliation on demand for one delivery. The current attempt is reconciled as
+        the daemon would; when that leaves it uncertain and the caller names the parent's turn,
+        that turn's own first items are read for this attempt's message
+        (hostadapter.find_token_in_turn_items). Found, it is the evidence a token found in the
+        thread already is (I-41), in a turn a thread-wide scan's bound may not reach: the parent
+        acknowledged from inside the delivery turn, so that turn opens with the message. The
+        acknowledgement itself is never evidence; a turn that holds no message confirms nothing.
+
+        Only a completion held_uncertain is read, so an ordinary acknowledgement makes no extra
+        host call, and a delivery still sending is left to its sender. None when nothing was
+        read; read errors are reported in the outcome, never raised.
+        """
+        delivery = self.delivery.find(event_id)
+        if (delivery is None or delivery["kind"] != COMPLETION
+                or delivery["state"] != HELD_UNCERTAIN):
+            return None
+        current = self.store.one(
+            "SELECT request_id FROM attempts WHERE event_id = ? AND attempt_no = ?",
+            (event_id, delivery["attempt_count"]),
+        )
+        if current is None:
+            return None
+        request_id = current["request_id"]
+        outcome = {"eventId": event_id, "requestId": request_id}
+        try:
+            reconciled = self.reconcile_attempt(request_id, adapter)
+        except Exception as error:  # noqa: BLE001 - reported, never raised
+            outcome["error"] = f"reconcile: {type(error).__name__}: {error}"
+            return outcome
+        outcome["reconciled"] = {k: v for k, v in reconciled.items() if k != "record"}
+        if not turn_id:
+            return outcome
+        # Read again: reconcile_attempt has just written both, and whatever it or another reader
+        # settled is what this decides on.
+        delivery = self.delivery.find(event_id)
+        attempt = self.store.one("SELECT * FROM attempts WHERE request_id = ?", (request_id,))
+        if (delivery is None or delivery["state"] != HELD_UNCERTAIN
+                or delivery["attempt_count"] != attempt["attempt_no"]
+                or attempt["internal_state"] != "settled" or attempt["state"] != HELD_UNCERTAIN):
+            return outcome
+        try:
+            scan = adapter.find_token_in_turn(
+                delivery["recipient_thread_id"], request_id, turn_id=turn_id,
+                limit=hostloss.IN_TURN_SCAN_LIMIT,
+            )
+        except Exception as error:  # noqa: BLE001
+            outcome["turnRead"] = f"unreadable: {type(error).__name__}: {error}"
+            return outcome
+        scan_detail = (f"found={scan.found} in turn {turn_id}, the acknowledging turn"
+                       f" ({scan.scanned} of its first items read)")
+        outcome["turnRead"] = scan_detail
+        if not scan.found:
+            return outcome
+        try:
+            settled = self._settle_from_scan(
+                attempt, delivery, scan,
+                reconciled.get("operationObservation") or attempt["operation_observation"],
+                scan_detail, self.clock.now(),
+            )
+        except (_AttemptLost, _AttemptChanged) as raced:
+            outcome["confirmed"] = None
+            outcome["detail"] = f"the attempt was settled elsewhere first ({type(raced).__name__})"
+            return outcome
+        outcome["confirmed"] = {k: v for k, v in settled.items() if k != "record"}
         return outcome
 
     # --------------------------------------------------------------- outcomes
@@ -421,16 +550,33 @@ class Reconciler:
                 " recipient_scan = CASE WHEN ? = ? AND recipient_scan LIKE ?"
                 "                       THEN recipient_scan ELSE ? END,"
                 " affirmative_evidence = ?,"
-                " reconciled_at = ? WHERE request_id = ? AND (state IS NULL OR state <> ?)",
+                " reconciled_at = ? WHERE request_id = ? AND (state IS NULL OR state <> ?)"
+                # The attempt this reconciliation read, and no other (I-37): the sender's own
+                # settlement, a confirmation through an acknowledging turn or another reconcile
+                # may have settled it since. In-flight attempts carry no evidence, hence IS.
+                "   AND internal_state IS ? AND state IS ? AND affirmative_evidence IS ?"
+                # And a reading that found nothing never replaces evidence already settled.
+                "   AND NOT (? = ? AND affirmative_evidence IS NOT NULL"
+                "            AND affirmative_evidence <> ?)",
                 (
                     state, json.dumps(record), observation,
                     state, DISPATCHED, TURN_CHECK_UNDECIDED + ":%", scan_detail,
                     evidence.value, now_iso, attempt["request_id"], HOST_LOST_TURN,
+                    attempt["internal_state"], attempt["state"], attempt["affirmative_evidence"],
+                    evidence.value, Evidence.NONE.value, Evidence.NONE.value,
                 ),
             ).rowcount
             if updated != 1:
                 # Rolled back with the transaction: nothing of this settlement is written.
-                raise _AttemptLost()
+                now_row = db.execute(
+                    "SELECT internal_state, state, affirmative_evidence FROM attempts"
+                    " WHERE request_id = ?", (attempt["request_id"],),
+                ).fetchone()
+                if now_row is not None and now_row["state"] == HOST_LOST_TURN:
+                    raise _AttemptLost()
+                raise _AttemptChanged(moved=now_row is None or (
+                    now_row["internal_state"], now_row["state"], now_row["affirmative_evidence"]
+                ) != (attempt["internal_state"], attempt["state"], attempt["affirmative_evidence"]))
             if current:
                 promoted = db.execute(
                     "UPDATE deliveries SET state = ?, next_eligible_at = ?, hold_reason = ?,"

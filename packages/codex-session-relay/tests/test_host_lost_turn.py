@@ -1117,7 +1117,12 @@ class AnAcknowledgementBeforeTheSendIsConfirmed(HostLossCase):
         event_id, request_id, turn = self.uncertain_delivery(message=False)
         self.ack.claim_verification(event_id, turn_id=turn)
         self.cli_ack(event_id, turn)
-        # The host catches up: the delivery turn now shows the message.
+        # A tick before the host catches up leaves it kept, and backs its check off.
+        self.clock.advance(1)
+        self.daemon.tick()
+        self.assertEqual(self.delivery_row(event_id)["state"], HELD_UNCERTAIN)
+        # The host catches up: the delivery turn now shows the message. One tick, well inside
+        # that backoff, reconciles the send and completes the acknowledgement.
         self.adapter.threads[PARENT].items.append((turn, f"requestId: {request_id}"))
         self.clock.advance(5)
         self.daemon.tick()
@@ -1405,6 +1410,73 @@ class EverySettlementIsACompareAndSet(HostLossCase):
         self.assertEqual((row["state"], row["dispatch_turn_id"]), (DISPATCHED, started["turn"]))
         self.assertEqual(self.evidence_of(event_id), ["turn_found"])
 
+    def test_a_reconcile_that_read_the_send_in_flight_cannot_undo_the_senders_settlement(self):
+        """Sender first: a reconcile in another process reads the attempt while it is in flight
+        and finds nothing, and the sender's accepted result lands before that reconcile writes."""
+        import threading
+
+        from codex_session_relay.delivery import DeliveryService
+        from codex_session_relay.receipts import ReceiptIntake
+        from codex_session_relay.reconcile import Reconciler
+        from codex_session_relay.registry import Registry
+        from codex_session_relay.store import Store
+
+        self.parent_history()
+        _relationship, event_id = self.queued_event()
+        read_done, settled = threading.Event(), threading.Event()
+        seen, errors = {}, []
+        adapter, clock, path = self.adapter, self.clock, self.store.path
+
+        class WaitsForTheSender:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def find_token(self, *args, **kwargs):
+                scan = self._inner.find_token(*args, **kwargs)
+                read_done.set()
+                settled.wait(timeout=10)
+                return scan
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+        def reconcile(request_id):
+            store = Store(path)
+            try:
+                registry = Registry(store, clock)
+                intake = ReceiptIntake(store, registry, clock)
+                delivery = DeliveryService(store, registry, intake, clock)
+                seen["outcome"] = Reconciler(store, registry, delivery, clock).reconcile_attempt(
+                    request_id, WaitsForTheSender(adapter))
+            except Exception as error:  # noqa: BLE001 - recorded and asserted below
+                errors.append(error)
+                read_done.set()
+            finally:
+                store.close()
+
+        class ReconcileReadsDuringTheSend:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def send_message(self, request_id, *args, **kwargs):
+                seen["thread"] = threading.Thread(target=reconcile, args=(request_id,))
+                seen["thread"].start()
+                read_done.wait(timeout=10)
+                return self._inner.send_message(request_id, *args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+        result = self.delivery.attempt(event_id, ReconcileReadsDuringTheSend(adapter))
+        settled.set()
+        seen["thread"].join(timeout=30)
+        self.assertEqual(errors, [])
+        self.assertEqual(result["deliveryState"], DISPATCHED)
+        self.assertTrue(seen["outcome"].get("changed"))
+        self.assertEqual(self.attempt_states(event_id), [DISPATCHED])
+        row = self.delivery_row(event_id)
+        self.assertEqual((row["state"], row["dispatch_turn_id"]), (DISPATCHED, result["turnId"]))
+
     def test_a_later_reconcile_that_cannot_read_the_receipt_keeps_a_pre_send_rejection(self):
         self.parent_history()
         _relationship, event_id = self.queued_event()
@@ -1559,7 +1631,8 @@ class TheAdapterLooksBackOnlyToTheSend(unittest.TestCase):
                     "nextCursor": None}
 
         scan = BridgeHostAdapter(call=call, page=8).find_token_in_turn("thread", "tok", turn_id="t1")
-        self.assertEqual((scan.found, scan.exhausted), (False, True))
+        self.assertFalse(scan.found)
+        self.assertTrue(scan.exhausted)
 
     def test_the_thread_reads_tell_the_message_from_agent_output(self):
         items = [_item("t2", "commandExecution", "del-x-a1"), _item("t2", "hookPrompt", "del-x-a1")]
