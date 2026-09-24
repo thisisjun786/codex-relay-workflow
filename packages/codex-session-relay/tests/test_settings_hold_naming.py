@@ -266,11 +266,13 @@ class APreSendRefusal(SettingsHoldCase):
         [recovery] = self.evidence(observation, "recovery")
         self.assertEqual(recovery["actor"], "operator")
 
-    def test_a_role_gate_refusal_names_its_own_repair(self):
+    def test_a_role_gate_refusal_points_at_the_repair_its_refusal_names(self):
         """RED: the role gate's refusals were told to restore or re-record the recipient's
-        settings, which changes neither (Devin on 1f0f5a89)."""
-        for reason, step in ((RefusalReason.ROLE_POLICY_UNCONFIGURED, "restart"),
-                             (RefusalReason.ROLE_BINDING_MISMATCH, "do not re-record")):
+        settings (Devin on 1f0f5a89), and then one fixed repair per code, which each code's other
+        cause cannot use (the review of fa2bacf7): the recovery names every repair the gate can
+        give and sends the operator to the one its refusal names."""
+        for reason in (RefusalReason.ROLE_POLICY_UNCONFIGURED, RefusalReason.ROLE_BINDING_MISMATCH,
+                       RefusalReason.SETTINGS_RECORD_STALE_FOR_ROLE):
             with self.subTest(reason=reason.value):
                 _relationship, event_id = self.queued_event()
                 row = self.delivery_row(event_id)
@@ -282,8 +284,12 @@ class APreSendRefusal(SettingsHoldCase):
                                  ("pre_send", reason.value))
                 recovery = item["recovery"]
                 self.assertEqual(recovery["actor"], "operator")
-                self.assertIn(step, recovery["then"])
-                self.assertNotIn("settings-record --source", recovery["then"])
+                self.assertIn("lastFailedOperation.detail", recovery["then"])
+                for repair in ("declare the role", "restart", "fix the binding or the creation",
+                               "re-record from a user-attributed source"):
+                    self.assertIn(repair, recovery["then"])
+                self.assertNotIn("do not re-record", recovery["then"])
+                self.assertNotIn("bring the recipient back", recovery["then"])
                 self.assertEqual(self.recovery().get("then"), recovery["then"])
                 self.clock.advance(1)
 
@@ -404,6 +410,8 @@ class ReconciliationNamesTheCauseToo(SettingsHoldCase):
         hold = self.status_of(event_id)["settingsHold"]
         self.assertEqual((hold["source"], hold["reason"], hold["requestId"]),
                          ("attempt", NOT_PRESERVED, attempt["request_id"]))
+        # Its field too, from the receipt's findings as the sender reads them (Devin on fa2bacf7).
+        self.assertEqual(hold["field"], "runtimeWorkspaceRoots")
         self.assertEqual(self.next_action(), OPERATOR_RESTORES_SETTINGS_ACTION)
 
     def test_a_code_that_is_not_text_names_no_cause_and_the_attempt_settles(self):

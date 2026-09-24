@@ -275,6 +275,10 @@ class Reconciler:
                 return self._settle_from_receipt(
                     attempt, delivery, facts, Evidence.CONFIRMED_PRE_SEND_REJECTION,
                     operation_observation, now,
+                    # The field-level findings the receipt keeps, as the sender reads them, so
+                    # a refusal settled here names its field too (Devin on fa2bacf7).
+                    settings_findings=(receipt.get("settingsFindings")
+                                       if isinstance(receipt, dict) else None),
                 )
             if facts.transport_receipt_status != UNFINISHED:
                 operation_observation += " (not affirmative)"
@@ -514,7 +518,8 @@ class Reconciler:
         return delivery["state"] not in (DISPATCHED, "acknowledged", "superseded")
 
     def _settle_from_receipt(self, attempt, delivery, facts, evidence, observation, now, *,
-                             turns_checked=False, settings_notes=None) -> dict:
+                             turns_checked=False, settings_notes=None,
+                             settings_findings=None) -> dict:
         """The transport itself settled, so the attempt record is re-derived honestly."""
         record = attempt_record(
             facts,
@@ -545,8 +550,8 @@ class Reconciler:
             dispatch_turn_id=facts.turn_id,
             # This attempt's settings cause, read from the receipt reconciliation just classified,
             # so an attempt a crash left for reconciliation is named as exactly as one the sender
-            # settled itself (CRW-235). The field is not in the classified facts; none is claimed.
-            settings_refusal=settings_refusal_of(facts),
+            # settled itself (CRW-235), its field from the receipt's findings as the sender's is.
+            settings_refusal=settings_refusal_of(facts, settings_findings),
             settings_notes=settings_notes,
         )
         return _with_anchor(

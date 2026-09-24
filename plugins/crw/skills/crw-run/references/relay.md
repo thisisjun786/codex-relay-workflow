@@ -356,10 +356,12 @@ operator's: run the named `settings-show`, then bring the recipient back under i
 settings or re-record it with `--source user_transition` when the user changed it. The exception is
 a host answer that left a setting out (`setting_unobservable`, `environments_unknown`): the daemon
 may clear it on its own next pass, so the recovery names the daemon and assignment-show keeps the
-daemon's action. The role gate's refusals name their own repair: `role_policy_unconfigured` is
-fixed by giving the relay process its role policy and restarting it, `role_binding_mismatch` by
-fixing the binding or the creation, and re-recording settings fixes neither; a refusal of the
-record itself (missing, incomplete, mistyped, or behind its role) is fixed by recording it again.
+daemon's action. A role gate refusal (`role_policy_unconfigured`, `role_binding_mismatch`,
+`settings_record_stale_for_role`) can have more than one cause, so its recovery points at the repair
+the refusal names in `status` (`lastFailedOperation.detail`): declaring the role, giving the relay
+process its policy and restarting it, fixing the binding or the creation, or re-recording from a
+user-attributed source. A refusal of the record itself (missing, incomplete, mistyped) is fixed by
+recording it again.
 A capped one is never sent again, so the parent reads the stored report with the
 named `show --event`. A send budget that never reopens is named before any settings hold
 (`operator_changes_send_policy`), because until the policy changes nothing is sent. A hold recorded

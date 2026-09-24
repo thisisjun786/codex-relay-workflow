@@ -2114,7 +2114,7 @@ def settings_refusal_of(facts, findings=None):
 
     A cause exists only when the resume refused on a code this transport decides settings by
     (ATTEMPT_SETTINGS_CODES). The field is the first finding's, when the receipt carries them;
-    reconciliation, which reads classified facts only, records none.
+    reconciliation passes the findings of the receipt it read, as the sender does.
     """
     code = getattr(facts, "rpc_error_code", None)
     # A host can answer with a code that is not text; it is no settings code, and a set lookup on
