@@ -38,9 +38,9 @@ from .transport import (
 from .policy import PUSH_CHANNEL_CLOSED, SUPERSEDED as SUPERSEDED_HOLD
 from . import NO_DELIVERABLE, envelope, restoration, rolepolicy
 from .report import (
-    NO_NOTE, compose_revision, fix_scope_lines, known, preserve_lines, read as read_work_report,
-    render_completion, render_revision, required_for_candidate, return_lines, reverify_lines,
-    violated_heading, what_changed_lines,
+    NO_NOTE, compose_revision, fix_scope_lines, inline, known, preserve_lines,
+    read as read_work_report, render_completion, render_revision, required_for_candidate,
+    return_lines, reverify_lines, violated_heading, what_changed_lines,
 )
 
 COMPLETION = "completion_event"
@@ -710,15 +710,16 @@ class DeliveryService:
         for item in findings[:MANIFEST_LINES]:
             note = item.get("note")
             # A stored finding can lack its id or disposition; str() of either is None. It can
-            # lack its note legitimately (no registered criteria), and then says so.
+            # lack its note legitimately (no registered criteria), and then says so. Each value
+            # stays on this line (report.inline), so none of them can open a heading.
             lines.append(
-                f"  {item.get('id') or '(no id recorded)'}{restoration.label(item)}:"
-                f" {item.get('verdict') or 'no disposition recorded'}"
-                + (f" — {note}" if note else f" — {NO_NOTE}")
+                f"  {inline(item.get('id') or '(no id recorded)')}{restoration.label(item)}:"
+                f" {inline(item.get('verdict') or 'no disposition recorded')}"
+                + (f" — {inline(note)}" if note else f" — {NO_NOTE}")
             )
         overflow = _overflow_line(findings, row["event_id"])
         if overflow:
-            lines.append(overflow)
+            lines.append(inline(overflow))
         lines += what_changed_lines(record)
         lines += fix_scope_lines(record)
         lines += ["", *preserve_lines()]

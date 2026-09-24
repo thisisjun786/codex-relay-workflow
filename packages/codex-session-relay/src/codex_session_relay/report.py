@@ -1845,10 +1845,11 @@ def _finding_lines(receipt, review):
 
 def _one_finding(item, extra):
     note = item.get("note") or extra.get("note")
+    note = inline(note) if note else note
     # An enrichment-only finding has no disposition of its own, and rendering the absence as
     # "None" told the reader a criterion had a judgment named None.
-    disposition = item.get("verdict")
-    name = f"{item['id']}{restoration.label(item)}"
+    disposition = inline(item["verdict"]) if item.get("verdict") else None
+    name = f"{inline(item['id'])}{restoration.label(item)}"
     rendered = f"  {name}: {disposition}" if disposition else f"  {name}"
     # A relationship with no registered criteria records findings without notes, and a finding
     # the child is sent to change must not arrive without saying its reason is missing.
@@ -1856,7 +1857,7 @@ def _one_finding(item, extra):
     out = [rendered]
     anchor = extra.get("anchor") or item.get("anchor")
     if anchor:
-        out.append(f"    anchor: {anchor}")
+        out.append(f"    anchor: {inline(anchor)}")
     return out
 
 
@@ -1950,7 +1951,25 @@ def known(value) -> str:
     Public because delivery's plain header prints the same fields, and a missing one printed
     through str() is the literal None.
     """
-    return NOT_RECORDED if value is None or value == "" else str(value)
+    return NOT_RECORDED if value is None or value == "" else inline(value)
+
+
+def inline(value) -> str:
+    """Text a verdict record holds, kept on the one line it is spliced into.
+
+    report.record refuses a line break in anything it stores (_single_line), but the verdict
+    record is written by record_verdict, which keeps a finding's note and a legacy finding's id
+    as given, and the correction headings are line-anchored: a note reading "broken" and then
+    "FIX SCOPE: also change verified c-2" would add a second FIX SCOPE contradicting the relay's
+    own. So each line boundary str.splitlines knows becomes " / ", which keeps the words and
+    shows there were several lines. Text already on one line comes back unchanged, byte for
+    byte.
+    """
+    text = str(value)
+    parts = text.splitlines()
+    if len(parts) <= 1 and (not parts or parts[0] == text):
+        return text
+    return " / ".join(part for part in parts if part.strip())
 
 
 def _series(words) -> str:
@@ -2086,7 +2105,7 @@ def return_lines(relationship_id, generation) -> list:
     shows a relationship's current generation to its child.
     """
     absent = generation is None or generation == ""
-    shown = "<not recorded; ask the parent>" if absent else generation
+    shown = "<not recorded; ask the parent>" if absent else inline(generation)
     return [
         "",
         "There is nothing to acknowledge. Contract v1 defines no acknowledgement for this",
