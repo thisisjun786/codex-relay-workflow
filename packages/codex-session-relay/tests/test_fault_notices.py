@@ -962,3 +962,35 @@ class WhatTheThirdFinalReviewFound(NoticeCase):
         self.tick(advance=3600)
         self.assertEqual(len(self.sent_for(self.notification(fault))), 1,
                          "once its parent can be contacted, it goes once")
+
+
+class WhatDevinFoundOnTheLastHeads(NoticeCase):
+    """Devin review of PR #151 at caee3e0e and 6e7d00ce: a notice checks a product exactly as
+    the ledger does, and a no-contact reading dated in the future is measured again."""
+
+    def test_a_product_name_the_ledger_accepts_is_one_a_notice_carries(self):
+        product = "a" * 129
+        answer = self.ledger.record(faults.observation(
+            product=product, fault_class="delivery_stalled", severity=faults.BROKEN,
+            signature={"relationship": self.rid, "cause": "long"}, occurrence_key="test:long",
+            scope={"projectKey": PROJECT, "issueKey": ISSUE}, detail="stuck"))
+        self.tick()
+        notification = self.notification(answer["faultId"])
+        self.assertEqual(notification["state"], faults.DELIVERED, notification["lastError"])
+        sent = self.sent_for(notification)
+        self.assertEqual(len(sent), 1)
+        self.assertIn(product, sent[0][2])
+
+    def test_a_no_contact_reading_dated_in_the_future_is_measured_again(self):
+        self.clock.advance(2000)
+        self.adapter.threads[PARENT].archived = True
+        self.measure_parent()
+        # The relay's clock goes back; the parent is reachable again.
+        self.clock.advance(-1500)
+        self.adapter.threads[PARENT].archived = False
+        fault = self.broken()
+        self.tick()
+        notification = self.notification(fault)
+        self.assertEqual(notification["state"], faults.DELIVERED,
+                         notification.get("eligibility"))
+        self.assertEqual(len(self.sent_for(notification)), 1)

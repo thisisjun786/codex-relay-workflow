@@ -3413,14 +3413,14 @@ _HEX_ID = re.compile(r"[0-9a-f]{1,64}")
 
 def unfit_notice(notice):
     """The first of a notice's own values that is not what the ledger writes, by name, or None:
-    class and product as plain identifiers, severity, state and kind from their enums, the fault
-    id as hex. A class registered before class names had to be identifiers, or a row a hand
-    edit changed, is not carried; the notice waits (I-448). The value itself is never echoed."""
+    class and product as the ledger checks them (register_class, _check_product), severity,
+    state and kind from their enums, the fault id as hex. A class registered before class names
+    had to be identifiers, or a row a hand edit changed, is not carried; the notice waits
+    (I-448). The value itself is never echoed."""
     checks = (
         ("faultClass", lambda v: isinstance(v, str) and len(v) <= 128
          and PRODUCT_NAME.match(v) is not None),
-        ("product", lambda v: isinstance(v, str) and len(v) <= 128
-         and PRODUCT_NAME.match(v) is not None),
+        ("product", lambda v: isinstance(v, str) and PRODUCT_NAME.match(v) is not None),
         ("severity", lambda v: v in SEVERITIES),
         ("faultState", lambda v: v in STATES),
         ("kind", lambda v: v in NOTICE_KINDS),

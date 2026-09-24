@@ -178,8 +178,9 @@ class NoticeDeliverer:
     @staticmethod
     def _unmeasured(contact, now):
         """Whether the ledger's eligibility read no current observation of the parent: none,
-        one without a time, or one older than the window it treats as current - a stored
-        'cannot be contacted' included, which is otherwise never read again."""
+        one without a time, one older than the window it treats as current, or one dated in the
+        future beyond the tolerance supervision.contactable allows (a clock that went back) - a
+        stored 'cannot be contacted' included, which is otherwise never read again."""
         if not contact:
             return False
         if contact.get("contactable") is None:
@@ -187,7 +188,10 @@ class NoticeDeliverer:
         if contact.get("contactable") is True:
             return False
         moment = intent.moment(contact.get("observedAt"))
-        return moment is None or now - moment.timestamp() > supervision.CONTACT_FRESH_FOR
+        if moment is None:
+            return True
+        age = now - moment.timestamp()
+        return age > supervision.CONTACT_FRESH_FOR or age < -supervision.CONTACT_FUTURE_TOLERANCE
 
     def _measure(self, adapter, task):
         """The host observation delivery records when it reaches a task, recorded the same way."""
