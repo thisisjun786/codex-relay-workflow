@@ -136,7 +136,10 @@ changes what the next one sees.
    may hold the same file; two issues holding the same region at once is a collision.
 4. Read-back. After writing, fetch every item the plan touched — the issues and their
    relations, and any project, milestone, document or label it wrote — and compare what is
-   observed against what was intended. Report both lists with IDs. An intended relation or
+   observed against what was intended. An implementation issue's project is one of those fields:
+   an issue observed with no project, or in a project other than the one intended, is an
+   incomplete write, and a team, a product-family label or a relation does not stand in for it.
+   Report both lists with IDs. An intended relation or
    field that is absent is an incomplete write: repair it on the same IDs rather than
    creating the item again. Where the connector cannot read something back, report it
    written, unverified, and do not claim it exists.
