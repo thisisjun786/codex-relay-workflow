@@ -36,7 +36,7 @@ from .delivery import COMPLETION
 from .hostadapter import DISPATCH_TURN_SKEW_SECONDS, TURN_PRESENT, TURN_START_PRECISION_SECONDS
 from .hostadapter import ListingBounded, ListingEmpty
 from .policy import HOST_LOST_TURN, TURN_CHECK_UNDECIDED
-from .transport import DISPATCHED, QUEUED, assert_attempt_invariants
+from .transport import DISPATCHED, HELD_UNCERTAIN, QUEUED, assert_attempt_invariants
 
 PRESENT = "present"
 UNKNOWN = "unknown"
@@ -60,6 +60,10 @@ TOKEN_WITHOUT_TURN = "token_without_turn"
 NO_SEND_TIME = "no_send_time"
 NO_TURN = "no_turn"
 UNDECIDED_MARK = TURN_CHECK_UNDECIDED + ":"
+# The attempt states a delivered completion's current attempt can have: dispatched on an accepted
+# receipt, or held_uncertain when reconciliation confirmed it from the token in the parent's items
+# and kept the honest transport snapshot (reconcile._settle_from_scan). Both are checked the same.
+DELIVERED_ATTEMPT_STATES = (DISPATCHED, HELD_UNCERTAIN)
 
 
 class _Raced(Exception):
@@ -184,7 +188,8 @@ def record_undecided(store, request_id, reading) -> int:
             "SELECT internal_state, state, recipient_scan FROM attempts WHERE request_id = ?",
             (request_id,),
         ).fetchone()
-        if row is None or row["internal_state"] != "settled" or row["state"] != DISPATCHED:
+        if (row is None or row["internal_state"] != "settled"
+                or row["state"] not in DELIVERED_ATTEMPT_STATES):
             return 0
         current = row["recipient_scan"]
         if wanted is None and not (current or "").startswith(UNDECIDED_MARK):
@@ -200,8 +205,10 @@ def settle(store, clock, request_id, reading, *, observation=None) -> dict:
     """Record the loss and put the obligation back, in one guarded transaction.
 
     The delivery moves only while it is still a completion dispatched on THIS attempt, unheld and
-    unacknowledged; the attempt only while it is still settled as dispatched. Anything else means
-    somebody moved first - a recorded acknowledgement, a later attempt - and nothing is written.
+    unacknowledged; the attempt only while it is still settled in a delivered state. Anything else
+    means somebody moved first - a recorded acknowledgement, a later attempt - and nothing is
+    written. The attempt keeps the evidence it was delivered on: an accepted receipt's turn id, or
+    the token reconciliation found.
     An earlier attempt of the same event already lost to the host turns the requeue into a hold:
     one redelivery per obligation, never a third send.
     """
@@ -231,12 +238,14 @@ def settle(store, clock, request_id, reading, *, observation=None) -> dict:
                         "redeliveryDetail": "the delivery is no longer this attempt's unheld,"
                                             " unacknowledged dispatch"}
             record = json.loads(attempt["record"])
+            # What the delivery was settled on, unchanged: turn/start returned this turn id, or
+            # reconciliation found the token. The loss is the attempt's state, not a rewrite of
+            # its evidence.
+            evidence = attempt["affirmative_evidence"] or "receipt_turn_id"
             record["reconciliation"] = {
                 "operationReceiptChecked": observation is not None,
                 "recipientTurnsChecked": True,
-                # What the transport showed, unchanged: turn/start returned this turn id. The
-                # loss is the attempt's state, not a rewrite of its evidence.
-                "affirmativeEvidence": "receipt_turn_id",
+                "affirmativeEvidence": evidence,
                 "checkedAt": now_iso,
             }
             assert_attempt_invariants(record)
@@ -244,9 +253,9 @@ def settle(store, clock, request_id, reading, *, observation=None) -> dict:
                 "UPDATE attempts SET state = ?, record = ?,"
                 " operation_observation = COALESCE(?, operation_observation),"
                 " recipient_scan = ?, affirmative_evidence = ?, reconciled_at = ?"
-                " WHERE request_id = ? AND internal_state = 'settled' AND state = ?",
+                " WHERE request_id = ? AND internal_state = 'settled' AND state IN (?, ?)",
                 (HOST_LOST_TURN, json.dumps(record), observation, reading["detail"],
-                 "receipt_turn_id", now_iso, request_id, DISPATCHED),
+                 evidence, now_iso, request_id, *DELIVERED_ATTEMPT_STATES),
             ).rowcount
             if marked != 1:
                 raise _Raced()
@@ -267,7 +276,7 @@ _AWAITING_SQL = (
     "SELECT d.event_id, a.request_id FROM deliveries d"
     " JOIN attempts a ON a.event_id = d.event_id AND a.attempt_no = d.attempt_count"
     " WHERE d.kind = ? AND d.state = ? AND d.hold_reason IS NULL"
-    "   AND a.internal_state = 'settled' AND a.state = ?"
+    "   AND a.internal_state = 'settled' AND a.state IN (?, ?)"
     "   AND NOT EXISTS (SELECT 1 FROM acks k WHERE k.event_id = d.event_id)"
 )
 
@@ -277,9 +286,11 @@ def awaiting_ack(store, *, after=None, limit):
 
     The attempt is the delivery's CURRENT one, joined on the event as well as the number: every
     event's first attempt is number 1. A held, acknowledged or already-lost row is not a candidate.
+    A delivery confirmed from its token is, although its attempt stays held_uncertain (Devin
+    review of e8ff3f44).
     """
     sql = _AWAITING_SQL
-    params = [COMPLETION, DISPATCHED, DISPATCHED]
+    params = [COMPLETION, DISPATCHED, *DELIVERED_ATTEMPT_STATES]
     if after is not None:
         sql += " AND d.event_id > ?"
         params.append(after)
@@ -298,5 +309,5 @@ def still_awaiting(store, request_ids):
         return set()
     marks = ", ".join("?" for _ in request_ids)
     rows = store.all(_AWAITING_SQL + f" AND a.request_id IN ({marks})",
-                     (COMPLETION, DISPATCHED, DISPATCHED, *request_ids))
+                     (COMPLETION, DISPATCHED, *DELIVERED_ATTEMPT_STATES, *request_ids))
     return {row["request_id"] for row in rows}
