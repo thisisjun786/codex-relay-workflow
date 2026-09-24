@@ -89,6 +89,9 @@ class TurnPresence:
 
     seen names every listed turn read before the stop: the turns begun since the send, which is
     where the delivered message could be if it is anywhere.
+
+    older names the listed turns known to have begun before the send: the one the listing stopped
+    at and the older ones on its page. Only their items end a token scan (find_token_in).
     """
 
     finding: str
@@ -96,6 +99,7 @@ class TurnPresence:
     scanned: int
     stop: str
     seen: tuple = ()
+    older: tuple = ()
 
 
 def find_in_listing(pages, turn_id: str, sent_at: float) -> TurnPresence:
@@ -110,12 +114,15 @@ def find_in_listing(pages, turn_id: str, sent_at: float) -> TurnPresence:
     scanned = 0
     seen = []
     for turns, follows in pages:
-        for turn in turns:
+        for index, turn in enumerate(turns):
             scanned += 1
             if turn.turn_id == turn_id:
                 return TurnPresence(TURN_PRESENT, turn, scanned, "matched", tuple(seen))
             if turn.started_at is not None and turn.started_at <= cutoff:
-                return TurnPresence(TURN_ABSENT, None, scanned, "older_than_send", tuple(seen))
+                older = tuple(other.turn_id for other in turns[index:]
+                              if other.started_at is not None and other.started_at <= cutoff)
+                return TurnPresence(TURN_ABSENT, None, scanned, "older_than_send", tuple(seen),
+                                    older)
             seen.append(turn.turn_id)
         if not follows:
             if not scanned:
@@ -129,20 +136,22 @@ def find_in_listing(pages, turn_id: str, sent_at: float) -> TurnPresence:
     )
 
 
-def find_token_in(pages, token: str, turns) -> TokenScan:
-    """A token among the items of the given turns, newest first: the rule both adapters apply.
+def find_token_in(pages, token: str, older) -> TokenScan:
+    """A token among a thread's items since a send, newest first: the rule both adapters apply.
 
     pages yields (items, another_page_follows), each item a (turn id, text) pair, newest first.
-    exhausted means covered: the scan reached an item of a turn outside the set - a turn begun
-    before the send - or the end of the items, so every item of those turns was read. A scan that
-    stops at its bound first has not covered them, and not finding the token there shows nothing
-    (I-42).
+    older names the turns the listing showed began before the send (TurnPresence.older).
+    exhausted means covered: the scan reached an item of one of them, or the end of the items,
+    so every newer item was read. An item of any other turn is read, listed or not: a turn the
+    host dropped from its list can keep its items, and taking one for older history stopped the
+    scan in front of a token that was there (review 6). A scan that stops at its bound first has
+    not covered them, and not finding the token there shows nothing (I-42).
     """
-    allowed = set(turns)
+    boundary = set(older)
     scanned = 0
     for items, follows in pages:
         for owner, text in items:
-            if owner is not None and owner not in allowed:
+            if owner is not None and owner in boundary:
                 return TokenScan(False, None, True, scanned)
             scanned += 1
             if token in text:
@@ -168,7 +177,7 @@ class HostAdapter(Protocol):
     ) -> TurnPresence: ...
 
     def find_token_since(
-        self, thread_id: str, token: str, *, turns, limit: int = 200
+        self, thread_id: str, token: str, *, older, limit: int = 200
     ) -> TokenScan: ...
 
     def send_message(self, request_id: str, thread_id: str, message: str) -> dict: ...

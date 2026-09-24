@@ -383,12 +383,13 @@ class BridgeHostAdapter:
 
         return find_in_listing(pages(), turn_id, sent_at)
 
-    def find_token_since(self, thread_id: str, token: str, *, turns, limit: int = 200) -> TokenScan:
-        """A token among the items of the turns begun since a send (hostadapter.find_token_in).
+    def find_token_since(self, thread_id: str, token: str, *, older, limit: int = 200) -> TokenScan:
+        """A token among the items since a send (hostadapter.find_token_in).
 
-        The same forward paging as find_token, but it stops as soon as it reaches an item of an
-        older turn, which is what lets "not found" mean something: every item of the given turns
-        was read. Stopping at the bound first is reported as not covered.
+        The same forward paging as find_token, but it stops as soon as it reaches an item of a
+        turn the listing showed began before the send (older), which is what lets "not found"
+        mean something: every newer item was read. Stopping at the bound first is reported as
+        not covered.
         """
 
         def pages():
@@ -406,7 +407,7 @@ class BridgeHostAdapter:
                 if not cursor or not entries:
                     return
 
-        return find_token_in(pages(), token, turns)
+        return find_token_in(pages(), token, older)
 
     # ----------------------------------------------------------------- writes
 

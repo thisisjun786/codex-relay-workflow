@@ -9,11 +9,12 @@ parent's turns, so the child's report was lost silently and looked exactly like 
 The reading here asks the recipient's own turn list for the dispatched turn among the turns begun
 since the send (hostadapter.find_in_listing). A loss is concluded only from the host's answer, only
 once the send is older than the allowance a whole-second start time and a clock skew need, and only
-when a scan of every item of the turns begun since the send shows this attempt's token is not
-there (hostadapter.find_token_in): a found token means the message reached the recipient whatever
-happened to the turn row, and a scan that stopped at its bound has shown nothing (I-42). A lost
-ACK keeps its turn in the list, interrupted, with the message in it, so it reads present and its
-path does not change.
+when a scan of every item newer than the history the listing showed began before the send finds
+no token of this attempt (hostadapter.find_token_in). Items of turns missing from the list are read
+too, since a dropped turn can keep its items. A found token means the message reached the recipient
+whatever happened to the turn row, and a scan that stopped at its bound has shown nothing (I-42).
+A lost ACK keeps its turn in the list, interrupted, with the message in it, so it reads present and
+its path does not change.
 
 A reading that cannot reach an answer by waiting - the listing never reached the send, the listing
 is empty once the send is past the allowance, the token scan could not cover the turns since it,
@@ -128,7 +129,7 @@ def read_recipient_turn(adapter, clock, attempt, delivery, turn_id) -> dict:
         )
         return reading
     try:
-        scan = token_since(thread, attempt["request_id"], turns=presence.seen + (turn_id,),
+        scan = token_since(thread, attempt["request_id"], older=presence.older,
                            limit=TOKEN_SCAN_LIMIT)
     except Exception as error:  # noqa: BLE001
         reading["detail"] = (
@@ -146,8 +147,8 @@ def read_recipient_turn(adapter, clock, attempt, delivery, turn_id) -> dict:
     if not scan.exhausted:
         reading.update(
             detail=f"undecided: the recipient does not list this turn, and {scan.scanned} items "
-                   f"did not cover the {len(presence.seen)} turns begun since the send, so the "
-                   f"token's absence is not shown",
+                   f"did not reach history older than the send, so the token's absence is not "
+                   f"shown",
             undecided=TOKEN_SCAN_BOUNDED,
         )
         return reading
@@ -155,7 +156,8 @@ def read_recipient_turn(adapter, clock, attempt, delivery, turn_id) -> dict:
         finding=HOST_LOST_TURN,
         detail=f"the recipient's turn list has no such turn ({presence.stop} after "
                f"{presence.scanned} turns) and this attempt's token is not among the "
-               f"{scan.scanned} items of the {len(presence.seen)} turns begun since the send",
+               f"{scan.scanned} items since the send ({len(presence.seen)} listed turns begun "
+               f"since it)",
     )
     return reading
 

@@ -140,12 +140,12 @@ class FakeHostAdapter:
         newest_first = list(reversed(self.threads[thread_id].turns))
         return find_in_listing([(newest_first, False)], turn_id, sent_at)
 
-    def find_token_since(self, thread_id, token, *, turns, limit=200) -> TokenScan:
+    def find_token_since(self, thread_id, token, *, older, limit=200) -> TokenScan:
         """The real adapter's rule over this thread's items, newest first, bounded like a scan."""
         self._guard("find_token_since")
         items = list(reversed(self.threads[thread_id].items))
         bound = min(limit, self.scan_limit or limit)
-        return find_token_in([(items[:bound], bound < len(items))], token, turns)
+        return find_token_in([(items[:bound], bound < len(items))], token, older)
 
     def get_operation(self, request_id):
         self._guard("get_operation")

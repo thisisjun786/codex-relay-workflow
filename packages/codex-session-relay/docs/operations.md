@@ -457,10 +457,12 @@ lost only when:
   listing, or one that never reached the send, is no answer;
 - the send is more than 61 seconds old, which covers the host's whole-second start times and
   a clock skew;
-- this attempt's delivery token is in none of the items of the turns begun since the send. The
-  scan reads newest first and counts only when it reaches an item of an older turn, or the end,
-  having read every item of those turns. A found token means the message arrived, whatever
-  happened to the turn row. A scan that stops at its bound (200 items) first has shown nothing.
+- this attempt's delivery token is in none of the parent's items since the send. The scan reads
+  newest first and counts only when it reaches an item of a turn the listing showed began before
+  the send, or the end. Items of turns missing from the list are read like any other, because a
+  turn the host dropped from its list can keep its items. A found token means the message
+  arrived, whatever happened to the turn row. A scan that stops at its bound (200 items) first
+  has shown nothing.
 
 A lost acknowledgement fails the first condition: its turn is listed, interrupted, with the message
 in it. It keeps reading `awaiting_ack`, as before.
