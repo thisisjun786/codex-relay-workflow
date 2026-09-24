@@ -200,6 +200,26 @@ class HostLossCase(DeliveryTestCase):
         return SimpleNamespace(ack=self.ack, reconciler=self.reconciler,
                                adapter=adapter or self.adapter)
 
+    def folded_delivery(self, *, message=True, earlier=0, later=0):
+        """K5u into a running turn: the send was folded into a parent turn begun two minutes
+        before it, and the relay lost the turn/start receipt."""
+        self.parent_history()
+        _relationship, event_id = self.queued_event()
+        self.adapter.start_turn(PARENT, turn_id="folded", status="inProgress")
+        thread = self.adapter.threads[PARENT]
+        thread.items.extend(("folded", f"earlier work {n}", "commandExecution")
+                            for n in range(earlier))
+        self.clock.advance(120)
+        self.adapter.script("in_progress")
+        request_id = self.attempt(event_id)["requestId"]
+        self.assertEqual(self.delivery_row(event_id)["state"], HELD_UNCERTAIN)
+        if message:
+            thread.items.append(("folded", f"[codex-session-relay] verification request\n"
+                                           f"requestId: {request_id}"))
+        thread.items.extend(("folded", f"later work {n}", "commandExecution")
+                            for n in range(later))
+        return event_id, request_id
+
     def cli_ack(self, event_id, turn_id, *, adapter=None):
         from types import SimpleNamespace
         from codex_session_relay import cli
@@ -1246,6 +1266,39 @@ class AnAcknowledgementBeforeTheSendIsConfirmed(HostLossCase):
         outcome = self.reconciler.reconcile_attempt(request_id, self.adapter)
         self.assertEqual(outcome["state"], HELD_UNCERTAIN)
         self.assertEqual(self.delivery_row(event_id)["state"], HELD_UNCERTAIN)
+
+    def test_an_ack_from_the_turn_the_send_was_folded_into_is_verified(self):
+        """Review 2 of 50020bdf: the turn began before the send, and the message is in it."""
+        event_id, request_id = self.folded_delivery()
+        record = self.cli_ack(event_id, "folded")
+        self.assertEqual(record["_verified"], "verified")
+        row = self.delivery_row(event_id)
+        self.assertEqual((row["state"], row["dispatch_turn_id"]), (ACKNOWLEDGED, "folded"))
+        self.assertEqual(len(self.adapter.sends), 1)
+
+    def test_an_ack_from_a_folded_turn_is_kept_until_the_send_is_confirmed(self):
+        event_id, request_id = self.folded_delivery(message=False)
+        record = self.cli_ack(event_id, "folded")
+        self.assertEqual(record["_verified"], "unverified_turn")
+        self.assertEqual(self.ack_row(event_id)["last_reason"], "delivery_unconfirmed")
+        self.adapter.threads[PARENT].items.append(("folded", f"requestId: {request_id}"))
+        self.clock.advance(5)
+        self.daemon.tick()
+        self.assertEqual(self.delivery_row(event_id)["state"], ACKNOWLEDGED)
+        self.assertEqual(len(self.adapter.sends), 1)
+
+    def test_a_message_deep_in_a_folded_turn_is_found_through_the_ack_turn(self):
+        """Review 2: ten items before the folded message and 250 after it, past both scans."""
+        event_id, request_id = self.folded_delivery(earlier=10, later=250)
+        record = self.cli_ack(event_id, "folded")
+        self.assertEqual(record["_verified"], "verified")
+        self.assertEqual(self.delivery_row(event_id)["state"], ACKNOWLEDGED)
+        # The same turn, finished, reads present from its own items and is not left undecided.
+        self.adapter.finish_turn(PARENT, "folded", "completed")
+        self.clock.advance(120)
+        reading = self.reconciler.check_dispatched_turn(request_id, self.adapter)["recipientTurn"]
+        self.assertEqual((reading["finding"], reading["status"], reading["undecided"]),
+                         ("present", "completed", None))
 
 
 class EverySettlementIsACompareAndSet(HostLossCase):
