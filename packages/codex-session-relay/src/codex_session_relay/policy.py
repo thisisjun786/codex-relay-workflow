@@ -49,6 +49,22 @@ HOURLY_CAP = "hourly_cap"
 RATE_WINDOW_SECONDS = 3600
 
 
+def pacing_holding(pacing, next_eligible_at):
+    """The pacing, when the recipient's budget is what holds the delivery; otherwise None.
+
+    A delivery also waits out its own backoff (a busy recipient, a pre-send failure). When that ends
+    later than the budget reopens, the backoff is what holds it, and naming the budget would give a
+    reopen time the delivery cannot use (Devin on bb1b6af6). A budget that never reopens (a cap of
+    zero) holds it whatever its backoff says.
+    """
+    if pacing is None:
+        return None
+    if (pacing["reopensAt"] is None or next_eligible_at is None
+            or next_eligible_at <= pacing["reopensAt"]):
+        return pacing
+    return None
+
+
 @dataclass(frozen=True)
 class RetryPolicy:
     busy_base_seconds: float = 15.0

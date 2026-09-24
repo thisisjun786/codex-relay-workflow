@@ -784,20 +784,23 @@ class TheHourlyCapIsNamedWithItsReopenTime(UnknownSendCase):
         """Independent review of 668890b0: the correction's answer and reconcile's redelivery
         answer still named the daemon under a cap of zero."""
         from codex_session_relay.assignment import AssignmentView
-        from codex_session_relay.delivery import DeliveryService
         from codex_session_relay.policy import RetryPolicy
-        from codex_session_relay.reconcile import Reconciler
 
         _completion, correction = self.correction_after_needs_changes()
         policy = RetryPolicy(max_sends_per_recipient_per_hour=0)
         view = AssignmentView(self.store, self.registry, self.clock, policy=policy)
         self.assertEqual(view.state(self._rid)["nextExpectedAction"],
                          "operator_changes_send_policy")
-        # A completion lost to an uncertain send and queued again, under the same policy.
+
+    def test_reconcile_names_the_operator_for_a_redelivery_a_zero_cap_refuses(self):
+        from codex_session_relay.delivery import DeliveryService
+        from codex_session_relay.policy import RetryPolicy
+        from codex_session_relay.reconcile import Reconciler
+
         event_id, first = self.unknown_send()
         self.clock.advance(120)
         delivery = DeliveryService(self.store, self.registry, self.intake, self.clock,
-                                   policy=policy)
+                                   policy=RetryPolicy(max_sends_per_recipient_per_hour=0))
         outcome = Reconciler(self.store, self.registry, delivery, self.clock).reconcile_attempt(
             first, self.adapter)
         self.assertEqual((outcome["state"], outcome.get("nextExpectedAction")),

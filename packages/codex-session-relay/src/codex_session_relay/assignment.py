@@ -15,6 +15,7 @@ import json
 
 from .currency import AMBIGUOUS, head_revision
 from .errors import RefusalReason
+from .policy import pacing_holding
 from .transport import (
     ACKNOWLEDGED,
     DEFERRED_BUSY,
@@ -183,8 +184,15 @@ def correction_next_action(state, projection):
     if delivery["state"] in UNCONFIRMED_STATES:
         return CORRECTION_UNCONFIRMED_ACTION
     if delivery["state"] in NOT_SENT_STATES:
-        return CORRECTION_UNSENT_ACTION
+        # A budget that never reopens (a cap of zero) is the operator's, not the relay's.
+        return SEND_POLICY_ACTION if never_reopens(delivery.get("pacing")) else (
+            CORRECTION_UNSENT_ACTION)
     return None
+
+
+def never_reopens(pacing) -> bool:
+    """A pacing that no window reopens: a cap of zero. The one rule every answer asks."""
+    return bool(pacing) and pacing.get("reason") == "hourly_cap" and pacing.get("reopensAt") is None
 
 
 class AssignmentView:
@@ -357,7 +365,8 @@ class AssignmentView:
             or completion_next_action(state, record["projection"])
             or record["nextExpectedAction"]
         )
-        recovery = parent_recovery(record["nextExpectedAction"], record["projection"])
+        recovery = parent_recovery(record["nextExpectedAction"], record["projection"],
+                                   store_directory(self.store))
         if recovery is not None:
             record["recovery"] = recovery
         return record
@@ -416,6 +425,7 @@ class AssignmentView:
             "SELECT e.stage AS stage,"
             "       d.event_id AS delivered, d.state AS delivery_state,"
             "       d.hold_reason AS hold_reason, d.dispatch_evidence AS dispatch_evidence,"
+            "       d.next_eligible_at AS next_eligible_at,"
             "       a.request_id AS request_id, a.attempt_no AS attempt_no,"
             "       a.state AS attempt_state, a.recipient_scan AS attempt_turn_check,"
             "       v.last_reason AS ack_last_reason,"
@@ -481,8 +491,9 @@ class AssignmentView:
                               else None),
                 # Why an unsent delivery waits on its recipient's send budget, and when that
                 # reopens (RetryPolicy.pacing); None when the budget is not what holds it.
-                "pacing": (self.policy.pacing(now, sends=row["rate_sends"],
-                                              last=row["rate_last"])
+                "pacing": (pacing_holding(self.policy.pacing(now, sends=row["rate_sends"],
+                                                             last=row["rate_last"]),
+                                          row["next_eligible_at"])
                            if row["delivery_state"] in NOT_SENT_STATES and not row["hold_reason"]
                            else None),
             }
@@ -969,8 +980,7 @@ def completion_next_action(state, projection):
             return REACKNOWLEDGE_ACTION
         return AWAITING_ACK_ACTION
     if where in (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND):
-        pacing = delivery.get("pacing") or {}
-        if pacing.get("reason") == "hourly_cap" and pacing.get("reopensAt") is None:
+        if never_reopens(delivery.get("pacing")):
             return SEND_POLICY_ACTION
         if host_lost:
             return HOST_LOST_REDELIVERY_ACTION
@@ -978,7 +988,27 @@ def completion_next_action(state, projection):
     return None
 
 
-def parent_recovery(action, projection):
+def store_directory(store):
+    """The directory that selects this store with --state, as every line written for a later
+    reader names it (supervisorchannel.SupervisorChannel.state_directory)."""
+    import os
+
+    return os.path.dirname(os.path.abspath(str(store.path)))
+
+
+def recovery_command(state_directory, event_id) -> str:
+    """show --event for this event, run by this relay on this store, quoted for a POSIX shell.
+
+    A bare show opens whatever store its shell selects, which is not this one whenever it was chosen
+    with --state or the environment override (Devin on bb1b6af6); the supervisor channel renders
+    every line it writes for a later reader the same way.
+    """
+    from .supervisorchannel import _command, relay_program
+
+    return _command(*relay_program(), "--state", state_directory, "show", "--event", event_id)
+
+
+def parent_recovery(action, projection, state_directory):
     """How the parent recovers a completion nothing will deliver automatically any more, or None.
 
     Named beside nextExpectedAction so the actor comes with the command that supports it (CRW-231
@@ -997,6 +1027,6 @@ def parent_recovery(action, projection):
     return {
         "actor": "parent",
         "reason": delivery.get("holdReason") or delivery.get("state"),
-        "command": f"codex-session-relay show --event {anchored['eventId']}",
+        "command": recovery_command(state_directory, anchored["eventId"]),
         "then": PARENT_RECOVERY_THEN,
     }

@@ -307,6 +307,15 @@ class Reconciler:
         if scanned and answer is not None:
             reading = hostloss.read_unknown_send(adapter, self.clock, attempt, delivery,
                                                  receipt=answer)
+            if (reading["finding"] == UNKNOWN_SEND_LOST
+                    and hostloss.acknowledged(self.store.db, attempt)):
+                # The parent answered this attempt, so it is never sent again; but nothing on the
+                # host shows the delivery, so it is held for the parent by name rather than left
+                # as a wait (independent review of 668890b0).
+                reading = dict(reading, finding=hostloss.UNKNOWN, undecided=(
+                    hostloss.ACKNOWLEDGED_WITHOUT_TRACE), detail=(
+                    "undecided: an acknowledgement answers this attempt, but the recipient keeps"
+                    " no trace of the message; not sent again"))
             if reading["finding"] == hostloss.PRESENT:
                 # The message reached the recipient after the thread-wide scan read past it.
                 found = TokenScan(True, reading["turnId"], False, 0)
@@ -343,8 +352,14 @@ class Reconciler:
             " JOIN deliveries d ON d.event_id = a.event_id WHERE a.request_id = ?",
             (request_id,),
         )
+        budget = None
+        if outcome.get("redelivery") == hostloss.REQUEUED:
+            from .delivery import send_pacing
+
+            budget = send_pacing(self.store.db, self.policy, delivery["recipient_task_id"],
+                                 self.clock.now())
         outcome.update(_awaiting(delivery["kind"], outcome, reading, stored,
-                                 event_id=attempt["event_id"]))
+                                 event_id=attempt["event_id"], store=self.store, budget=budget))
         return outcome
 
     def _settle_dispatched(self, attempt, delivery, facts, observation, adapter, now) -> dict:
@@ -798,17 +813,30 @@ def _receipt_answer(facts):
     return hostloss.SETTLED_RECEIPT
 
 
-def _awaiting(kind, outcome, reading, stored=None, *, event_id=None) -> dict:
+def _awaiting(kind, outcome, reading, stored=None, *, event_id=None, store=None,
+              budget=None) -> dict:
     """Who moves an uncertain send next and why, with the supporting command when it is the
-    parent's (CRW-231). See _next_for."""
+    parent's (CRW-231). See _next_for. A redelivery its recipient's budget refuses in every
+    window (a cap of zero) is the operator's, as assignment-show says."""
+    from .assignment import never_reopens
+
     answer = _next_for(kind, outcome, reading, stored)
-    if answer.get("nextExpectedAction") in _PARENT_ACTIONS() and event_id is not None:
-        from .assignment import PARENT_RECOVERY_THEN
+    if never_reopens(budget):
+        return {"nextExpectedAction": _SEND_POLICY_ACTION(), "reason": budget["reason"]}
+    if (answer.get("nextExpectedAction") in _PARENT_ACTIONS() and event_id is not None
+            and store is not None):
+        from .assignment import PARENT_RECOVERY_THEN, recovery_command, store_directory
 
         answer["recovery"] = {"actor": "parent", "reason": answer.get("reason"),
-                              "command": f"codex-session-relay show --event {event_id}",
+                              "command": recovery_command(store_directory(store), event_id),
                               "then": PARENT_RECOVERY_THEN}
     return answer
+
+
+def _SEND_POLICY_ACTION():
+    from .assignment import SEND_POLICY_ACTION
+
+    return SEND_POLICY_ACTION
 
 
 def _PARENT_ACTIONS():

@@ -19,7 +19,7 @@ from .identity import (
     merge_turn_grant_event_id as derive_grant_event_id, request_id as derive_request_id,
 )
 from .lifecycle import UNKNOWN as LIFECYCLE_UNKNOWN, hold_reason_for, observe, record as record_lifecycle
-from .policy import RetryPolicy
+from .policy import RetryPolicy, pacing_holding
 from .registry import ACTIVE as RELATIONSHIP_ACTIVE
 from .scope import assert_assignment_delivery, check_recipient
 from .transport import (
@@ -2000,7 +2000,7 @@ class DeliveryService:
                 recipient = row["recipient_task_id"]
                 if recipient not in paced:
                     paced[recipient] = send_pacing(self.store.db, self.policy, recipient, now)
-                pacing = paced[recipient]
+                pacing = pacing_holding(paced[recipient], row["next_eligible_at"])
             items.append({
                 "eventId": row["event_id"],
                 "kind": row["kind"],

@@ -100,6 +100,10 @@ OBSERVATION_BY_STATE = {
     SUPERSEDED_STATE: WAS_SUPERSEDED,
 }
 
+# The states of an attempt the host lost, or kept no trace of, after which the same event is
+# queued again (policy.HOST_LOST_TURN, policy.UNKNOWN_SEND_LOST).
+LOST_ATTEMPT_STATES = ("host_lost_turn", "unknown_send_lost")
+
 OBSERVATION_DETAIL = {
     NOT_SENT: "the delivery exists and nothing has been sent yet",
     SEND_UNCERTAIN: "a send is in flight or answered unusably, which is not evidence of "
@@ -509,6 +513,14 @@ def _observation(row):
             return UNRECOGNISED, (
                 "the delivery records state " + repr(row["delivery_state"])
                 + ", which this reader has no word for; read it with status"
+            )
+        if observation == NOT_SENT and row["attempt_state"] in LOST_ATTEMPT_STATES:
+            # Queued again after its current attempt was lost (hostloss.py): something was sent,
+            # and the host lost it or kept no trace of it, so "nothing has been sent" would deny
+            # what currentAttempt records (independent review of 668890b0, CRW-231).
+            return observation, (
+                "an earlier attempt was lost (" + row["attempt_state"] + ", see currentAttempt);"
+                " the same event is queued and its next attempt has not been sent"
             )
         return observation, OBSERVATION_DETAIL[observation]
     if row["intent_event"] is not None:

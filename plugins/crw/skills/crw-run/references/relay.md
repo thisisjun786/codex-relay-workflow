@@ -445,7 +445,7 @@ Delivery is two questions, reported separately, beside the store's own `state`.
 | --- | --- |
 | `unmeasured` | a final event with no delivery row and no delivery intent. Nothing establishes whether a delivery was ever attempted or even wanted; absence also covers `--no-enqueue` and an event stranded by an old generation, so it is never read as "not delivered" |
 | `refused_pre_queue` | delivery was wanted and refused for a reason that may not last, with its attempts and last error |
-| `not_sent` | the delivery exists and nothing has been sent |
+| `not_sent` | the delivery exists and nothing has been sent, or an earlier attempt was lost and the next one has not been sent yet (`currentAttempt.state` names the loss, and the detail says so) |
 | `send_uncertain` | a send is in flight or answered unusably, which is not evidence of non-delivery |
 | `stored_not_woken` | left where the recipient reads it with no turn woken |
 | `dispatched` | the transport accepted a send and there is a turn id for it |

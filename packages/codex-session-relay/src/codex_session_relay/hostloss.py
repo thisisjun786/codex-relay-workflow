@@ -103,6 +103,10 @@ RECEIPT_MISSING = "receipt_missing"
 # nothing that could apply it later.
 RECIPIENT_LOADED = "recipient_loaded"
 NOT_LOADED = "notLoaded"
+# Nor is a send the parent acknowledged: it answered this attempt, so the message reached it one way
+# or another, and a second copy is never sent; but nothing on the host shows the delivery either
+# (independent review of 668890b0).
+ACKNOWLEDGED_WITHOUT_TRACE = "acknowledged_without_trace"
 # How the transport answered for an uncertain send's request id (read_unknown_send's receipt).
 SETTLED_RECEIPT = "settled"
 UNSETTLED_RECEIPT = "unsettled"
@@ -125,6 +129,25 @@ def _epoch(stamp):
         return datetime.fromisoformat(stamp).timestamp()
     except (TypeError, ValueError):
         return None
+
+
+def _fold_candidate(presence, sent_at):
+    """The newest listed turn begun before the send, which a turn/start could have steered: one
+    the listing counted as seen because it began inside the allowance, or else the turn it stopped
+    at. A turn with no start time cannot be placed and is not chosen; the since-send scan reads it."""
+    for turn in presence.seen_turns:
+        if turn.started_at is not None and turn.started_at <= sent_at + TURN_START_PRECISION_SECONDS:
+            return turn
+    return presence.stop_turn
+
+
+def acknowledged(db, attempt) -> bool:
+    """Is an acknowledgement recorded that answers this attempt (the rule awaiting_ack applies)?"""
+    return db.execute(
+        "SELECT 1 FROM acks k WHERE k.event_id = ?"
+        "   AND (k.verified = 'verified' OR ? IS NULL OR k.ack_at >= ?)",
+        (attempt["event_id"], attempt["sent_at"], attempt["sent_at"]),
+    ).fetchone() is not None
 
 
 def earlier_losses(db, event_id, request_id) -> int:
@@ -446,13 +469,15 @@ def read_unknown_send(adapter, clock, attempt, delivery, *, receipt=SETTLED_RECE
     except Exception as error:  # noqa: BLE001 - an unreadable host is its own answer
         reading.update(detail=f"unreadable: {type(error).__name__}: {error}", pending=True)
         return reading
-    # The turn the listing stopped at began before the send, and a turn/start that found it still
-    # running folded the message into it instead of starting a turn (Devin on d369a9e7): its items
-    # are read below, and while it runs it is one of the turns a reading waits for.
-    folded = presence.stop_turn
+    # The newest turn begun before the send is the one a turn/start that found it still running
+    # folded the message into instead of starting a turn (Devin on d369a9e7): the turn the listing
+    # stopped at, or one begun inside the allowance before the send, which the listing counts as
+    # seen (independent review of 668890b0). Its own items are read below, and while it runs it is
+    # one of the turns a reading waits for.
+    folded = _fold_candidate(presence, sent_at)
     running = [turn.turn_id for turn in presence.seen_turns if turn.status not in TERMINAL]
-    if folded is not None and folded.status not in TERMINAL:
-        running.append(folded.turn_id)
+    if presence.stop_turn is not None and presence.stop_turn.status not in TERMINAL:
+        running.append(presence.stop_turn.turn_id)
     if running:
         # Possibly the send's own turn, with its message not readable yet; and a turn that ends
         # can still leave the message behind. Read again once it has ended.
@@ -471,6 +496,25 @@ def read_unknown_send(adapter, clock, attempt, delivery, *, receipt=SETTLED_RECE
                        detail=f"this attempt's message is in the recipient's items since the "
                               f"send (turn {scan.turn_id}, {scan.scanned} items read)")
         return reading
+    own = None
+    if folded is not None:
+        # The scan above stops at this turn's items when it began before the allowance, and
+        # reads only its newest items when it began inside it; the thread-wide scan's 200 newest
+        # may not reach the message either when the turn ran on after it. Its own items, oldest
+        # first, are where a folded send's message is, however long the turn went on.
+        try:
+            own = in_turn(thread, attempt["request_id"], turn_id=folded.turn_id,
+                          limit=IN_TURN_SCAN_LIMIT)
+        except Exception as error:  # noqa: BLE001
+            reading.update(detail=f"unreadable: the items of turn {folded.turn_id}, the one the "
+                                  f"send could have been folded into, could not be read: "
+                                  f"{type(error).__name__}: {error}", pending=True)
+            return reading
+        if own.found:
+            reading.update(finding=PRESENT, turnId=folded.turn_id,
+                           detail=f"this attempt's message is in turn {folded.turn_id}, begun "
+                                  f"before the send, which the send was folded into")
+            return reading
     if scan.other_kind is not None:
         reading.update(
             detail=f"undecided: this attempt's token is in the recipient's items only in an item "
@@ -486,23 +530,7 @@ def read_unknown_send(adapter, clock, attempt, delivery, *, receipt=SETTLED_RECE
             undecided=TOKEN_SCAN_BOUNDED,
         )
         return reading
-    if folded is not None:
-        # The scan above stops at this turn's items, and the thread-wide scan's 200 newest may
-        # not reach the message either when the turn ran on after it. Its own items, oldest
-        # first, are where a folded send's message is, however long the turn went on.
-        try:
-            own = in_turn(thread, attempt["request_id"], turn_id=folded.turn_id,
-                          limit=IN_TURN_SCAN_LIMIT)
-        except Exception as error:  # noqa: BLE001
-            reading.update(detail=f"unreadable: the items of turn {folded.turn_id}, the one the "
-                                  f"send could have been folded into, could not be read: "
-                                  f"{type(error).__name__}: {error}", pending=True)
-            return reading
-        if own.found:
-            reading.update(finding=PRESENT, turnId=folded.turn_id,
-                           detail=f"this attempt's message is in turn {folded.turn_id}, begun "
-                                  f"before the send, which the send was folded into")
-            return reading
+    if own is not None:
         if not own.exhausted:
             reading.update(
                 detail=f"undecided: turn {folded.turn_id}, begun before the send, could have "

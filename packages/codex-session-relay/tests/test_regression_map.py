@@ -232,6 +232,11 @@ SUMMARIES = {
     # either alone. main reads it to apply the service's declared role policy before the
     # snapshot; test_store_reception.py runs the check with and without each.
     ("cli.py", None, "_receives_against_the_store", "function"): ((False,), (), ()),
+    # A pacing no window reopens: a spent hourly cap of zero. The false side is reachable from any
+    # one input alone - no pacing, the minimum gap, a cap with a reopen time (CRW-231).
+    # test_unknown_send_lost.py reaches it true for a completion, a correction and reconcile's
+    # redelivery answer under a cap of zero, and false for every capped delivery with a window.
+    ("assignment.py", None, "never_reopens", "function"): ((False,), (), ()),
     # Replay equality folds entries, digest, source and mode; public tests independently
     # vary each input and assert that a stored set is preserved on refusal.
     ("criteria.py", None, "_same_registration", "function"): ((False,), (), ()),
@@ -347,6 +352,9 @@ FOLD_FREE_BOOLEANS = (
     ("delivery.py", None, "_rate_limited", "function"),
     # Membership of the item type in the agent-output deny-list, negated: one input, no fold.
     ("hostadapter.py", None, "may_be_message", "function"),
+    # Whether one acknowledgement row answers the attempt: the row's existence, and the rule is
+    # the query's (CRW-231).
+    ("hostloss.py", None, "acknowledged", "function"),
     ("lifecycle.py", None, "is_busy", "function"),
     ("lifecycle.py", None, "may_send", "function"),
     ("scope.py", None, "at_least", "function"),
