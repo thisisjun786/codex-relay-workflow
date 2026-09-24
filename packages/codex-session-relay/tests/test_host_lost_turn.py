@@ -498,6 +498,35 @@ class ReconcileReportsTheRecipientTurn(HostLossCase):
         self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
         self.assertEqual(self.status_of(event_id)["phase"], "awaiting_ack:turn_check_undecided")
 
+    def test_a_parent_whose_only_turn_was_lost_names_its_empty_listing(self):
+        """Review 4 of 272e240e: an empty turn list read as a transient failure for ever.
+
+        When the lost delivery turn was the parent's only turn, the listing is empty. That is no
+        evidence the turn is gone, but it is no transient either, and nothing named it: the
+        delivery read dispatched_awaiting_ack, exactly like a lost acknowledgement.
+        """
+        _relationship, event_id = self.queued_event()
+        record = self.attempt(event_id)
+        self.assertEqual(record["deliveryState"], DISPATCHED)
+        self.host_loses(record["turnId"])
+        self.assertEqual(self.adapter.threads[PARENT].turns, [])
+        self.clock.advance(5)
+        self.daemon.tick()
+        self.assertEqual(self.status_of(event_id)["phase"], "awaiting_ack")
+        self.clock.advance(120)
+        report = self.daemon.tick().as_dict()
+        self.assertEqual(report.get("turnsUndecided"), 1)
+        self.assertEqual(self.status_of(event_id)["phase"], "awaiting_ack:turn_check_undecided")
+        self.assertEqual(self.completion_delivery().get("turnCheck"),
+                         "turn_check_undecided:listing_empty")
+        outcome = self.reconciler.reconcile_attempt(record["requestId"], self.adapter)
+        reading = outcome.get("recipientTurn", {})
+        self.assertEqual((reading.get("finding"), reading.get("undecided")),
+                         ("unknown", "listing_empty"))
+        self.assertEqual(outcome["record"]["reconciliation"]["recipientTurnsChecked"], False)
+        self.assertEqual(len(self.adapter.sends), 1)
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+
     def test_an_undecided_reading_is_cleared_once_the_turn_is_found(self):
         event_id, first, _turn = self.dispatched()
         with self.store.transaction() as db:
