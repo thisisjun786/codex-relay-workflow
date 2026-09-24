@@ -590,12 +590,17 @@ store reading, exactly as a child checks what it receives
 ([the typed form these fields travel in](task-packet.md#the-typed-form-these-fields-travel-in)):
 
     codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
-      --receiver <own task id> --ledger <own reception ledger> --observation <forge reading>
+      --receiver <own task id> --ledger <own reception ledger> --observation <observation file>
 
-The observation is where you read the pull request's repository, number and head, with its
-source; the store never holds a head. Go on only where the answer is accepted and `act` is
-true, and once the steps below have run, record that you acted on it with the same
-`packet-check` and `--applied`, so a report arriving again is not acted on twice. Then:
+The observation is your own reading of the artifact the report names, which the store never
+holds: for a pull request `{"source": "<who read it, how and when>", "repository":
+"<owner/name>", "prNumber": <n>, "headSha": "<head>"}`, and for a deliverable that is not a pull
+request `{"source": "<who read it, how and when>", "artifactPath": "<path>", "artifactDigest":
+"<the digest you computed, in the form the packet states it>"}`. Without it the answer is
+unavailable on the artifact, which means read it and check again, not go on. Go on only where
+the answer is accepted and `act` is true, and once the steps below have run, record that you
+acted on it with the same `packet-check` and `--applied`, without `--observation`, so a
+report arriving again is not acted on twice. Then:
 
     codex-session-relay --state "$RELAY_STATE" claim     --event <id> --turn <own turn>
     codex-session-relay --state "$RELAY_STATE" ack-proof --event <id> --turn <own turn>
@@ -1033,10 +1038,17 @@ One command reads it, and the receiver runs it against its own store reading.
 codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
   --receiver <your task id> --ledger <your reception ledger> [--observation <file>]
 
+# A packet naming an artifact (a correction, resume, acceptance, integration result, or a
+# completion or review_ready report) is checked with your own reading of that artifact, which
+# the store never holds; the reading's shape is below.
+codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
+  --receiver <your task id> --ledger <your reception ledger> --observation <your reading>
+
 # Offline, against a reading you supply yourself. The answer says recordSource: supplied.
 codex-session-relay packet-check --packet <file> --record <file>
 
-# After you acted on an accepted packet: record it applied in your ledger. Reads no store.
+# After you acted on an accepted packet: record it applied in your ledger. Reads the packet
+# and your ledger, never the store, and refuses --observation.
 codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
   --receiver <your task id> --ledger <your reception ledger> --applied
 ```
@@ -1051,9 +1063,14 @@ it launches, so the check does not depend on your shell's environment; two diffe
 files refuse the check, and a daemon still running on an earlier policy shows it in
 `service status` as `launchPolicy.runningDigest`), and the execution mode from the
 receiver's own ledger. `--applied` reads neither the store nor the policy. The answer says
-`recordSource: store` and gives each field's `provenance`. The pull request head is a forge
-reading the store does not hold; it comes only from `--observation`, a JSON file with its own
-`source`, and without one the head is a gap. The ledger is how a repeat is applied once: `act`
+`recordSource: store` and gives each field's `provenance`. No artifact is a store fact: a pull
+request's repository, number and head are a forge reading, and a deliverable's path and digest
+are a reading of the file. Either comes only from `--observation`, a JSON file with its own
+`source` - `{"source": ..., "artifactPath": ..., "artifactDigest": ...}` for a locator, with
+the digest in the form the packet states it, or `{"source": ..., "repository": ...,
+"prNumber": ..., "headSha": ...}` for a pull request. Without one those fields are gaps and the
+answer is unavailable: read the artifact yourself and check the same packet again with it,
+rather than acting on it or reporting it as refused. The ledger is how a repeat is applied once: `act`
 is true while today's answer is accepted and the ledger holds no application for that packet,
 and the relationship is not paused (then `actHeld` says it waits for `relationship-resume`);
 `--applied` records one after the receiver acted, and without a ledger `act` is always false.

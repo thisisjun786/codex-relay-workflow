@@ -257,6 +257,43 @@ any of `repository`, `prNumber`, `headSha`, `artifactPath`, `artifactDigest`. Wi
 pull request's head is a gap and the answer is unavailable. A locator is compared with the
 observed path and digest and is never asked for a head.
 
+That holds for every artifact a packet names, not only a pull request's head. A locator's path
+and digest are a reading of the file, and the store holds neither, so a correction, a resume,
+an acceptance, an integration result or a report checked without an observation comes back
+unavailable on `artifact.path` and `artifact.digest` (or on the pull request's
+`artifact.repository`, `artifact.number` and `artifact.headSha`). The receiver's answer to that
+is to read the artifact itself and check the same packet again with `--observation`; it is not
+a reason to act and not a refusal to report. The comparison is exact, so the observed digest is
+written in the form the packet states it. `--applied` reads the packet and the receiver's
+ledger, never the store, and refuses an observation: the observation belongs to the check
+before it.
+
+The receive step for a packet naming an artifact, then, is:
+
+```bash
+# Check it with your own reading of the artifact:
+codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
+  --receiver <your task id> --ledger <your reception ledger> --observation <your reading>
+
+# After acting on it, and only then (no --observation):
+codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
+  --receiver <your task id> --ledger <your reception ledger> --applied
+```
+
+where the reading is, for a locator:
+
+```json
+{"source": "<who read it, how and when>", "artifactPath": "<path>",
+ "artifactDigest": "<its digest, in the form the packet states it>"}
+```
+
+and for a pull request:
+
+```json
+{"source": "<who read it, how and when>", "repository": "<owner/name>", "prNumber": 12,
+ "headSha": "<the head you read>"}
+```
+
 **The reception ledger** (`--ledger <file>`) is the receiver's own file, written by this command
 and read by nothing else. It names its receiver and a version, and a ledger naming another
 receiver is refused rather than read. It keeps each answered message id beside the content
@@ -294,8 +331,8 @@ which reads no store and is refused unless this ledger answered this very packet
 content) as accepted and some check of it said `act`: a packet only ever answered held, as
 on a paused relationship, told the receiver not to act, so it has nothing applied to record,
 while a held replay after an `act` does not take back what the receiver was already told. `act`
-is true when today's answer is accepted and no application is
-recorded. So a receiver that checked and then stopped before acting gets the instruction back
+is true when a ledger was named, today's answer is accepted, no application is recorded and
+the relationship is not paused (below). So a receiver that checked and then stopped before acting gets the instruction back
 on the next arrival rather than losing it, and a correction applied once is not applied again.
 Nothing is acted on while the relationship is paused: the packet is current and accepted, but
 `act` is false and `actHeld` says it waits for `relationship-resume`, because nothing proceeds
