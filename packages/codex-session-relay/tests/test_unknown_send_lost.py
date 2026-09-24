@@ -475,4 +475,3 @@ class TheHourlyCapIsNamedWithItsReopenTime(UnknownSendCase):
         record = self.attempt(event_id)
         self.assertEqual(record["deliveryState"], DISPATCHED)
         self.assertIsNone(self.status_of(event_id).get("pacing"))
-
