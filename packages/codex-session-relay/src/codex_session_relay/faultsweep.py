@@ -718,15 +718,24 @@ def _attempt_settings_cause(store, event_id, request_id):
     Written by this revision on every settlement (delivery_attempted by the sender, reconciled by
     reconciliation) as settingsRefusal, null for one that was not a settings refusal; an older
     row without the key names nothing (CRW-235)."""
-    row = store.one(
-        "SELECT detail FROM journal"
-        " WHERE (subject = ? AND kind = 'delivery_attempted'"
-        "        AND (CASE WHEN json_valid(detail)"
-        "             THEN json_extract(detail, '$.requestId') END) = ?)"
-        "    OR (subject = ? AND kind = 'reconciled')"
-        " ORDER BY seq DESC LIMIT 1",
-        (event_id, request_id, request_id),
-    )
+    # Two probes through journal_subject, the later one read; the unary + keeps the planner off
+    # journal_kind, which would scan every row of that kind and sort them (the review of ee24c936).
+    rows = [one for one in (
+        store.one(
+            "SELECT seq, detail FROM journal"
+            " WHERE subject = ? AND +kind = 'delivery_attempted'"
+            "   AND (CASE WHEN json_valid(detail)"
+            "        THEN json_extract(detail, '$.requestId') END) = ?"
+            " ORDER BY seq DESC LIMIT 1",
+            (event_id, request_id),
+        ),
+        store.one(
+            "SELECT seq, detail FROM journal WHERE subject = ? AND +kind = 'reconciled'"
+            " ORDER BY seq DESC LIMIT 1",
+            (request_id,),
+        ),
+    ) if one is not None]
+    row = max(rows, key=lambda one: one["seq"]) if rows else None
     try:
         detail = json.loads(row["detail"]) if row is not None and row["detail"] else {}
     except (TypeError, ValueError):

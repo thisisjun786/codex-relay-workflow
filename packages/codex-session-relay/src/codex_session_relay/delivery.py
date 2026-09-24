@@ -2116,8 +2116,10 @@ def settings_refusal_of(facts, findings=None):
     reconciliation, which reads classified facts only, records none.
     """
     code = getattr(facts, "rpc_error_code", None)
+    # A host can answer with a code that is not text; it is no settings code, and a set lookup on
+    # an unhashable one would stop the attempt from settling at all (the review of ee24c936).
     if getattr(facts, "failed_operation", None) != "thread/resume" \
-            or code not in ATTEMPT_SETTINGS_CODES:
+            or not isinstance(code, str) or code not in ATTEMPT_SETTINGS_CODES:
         return None
     field = None
     if isinstance(findings, list) and findings and isinstance(findings[0], dict):
@@ -2135,16 +2137,21 @@ _LATEST_SETTLED = (
 SETTINGS_HOLD_COLUMNS = (
     "{delivery}.state AS sh_state, {delivery}.hold_reason AS sh_hold_reason,"
     " " + _LATEST_SETTLED.format(tag="sha", event="{event}") + " AS sh_request,"
+    # The two settlement rows, each probed through journal_subject: (subject, seq) orders the
+    # probe, and the unary + keeps the planner off journal_kind, which would scan every row of
+    # that kind and sort them (the review of ee24c936). settings_hold_reading takes the later.
     " (SELECT json_object('seq', shj.seq, 'detail', shj.detail) FROM journal shj"
-    "   WHERE (shj.subject = {event} AND shj.kind = 'delivery_attempted'"
-    "          AND (CASE WHEN json_valid(shj.detail)"
-    "               THEN json_extract(shj.detail, '$.requestId') END)"
-    "              = " + _LATEST_SETTLED.format(tag="shb", event="{event}") + ")"
-    "      OR (shj.kind = 'reconciled'"
-    "          AND shj.subject = " + _LATEST_SETTLED.format(tag="shc", event="{event}") + ")"
-    "   ORDER BY shj.seq DESC LIMIT 1) AS sh_settlement,"
+    "   WHERE shj.subject = {event} AND +shj.kind = 'delivery_attempted'"
+    "     AND (CASE WHEN json_valid(shj.detail)"
+    "          THEN json_extract(shj.detail, '$.requestId') END)"
+    "         = " + _LATEST_SETTLED.format(tag="shb", event="{event}") +
+    "   ORDER BY shj.seq DESC LIMIT 1) AS sh_settled_sent,"
+    " (SELECT json_object('seq', shr.seq, 'detail', shr.detail) FROM journal shr"
+    "   WHERE shr.subject = " + _LATEST_SETTLED.format(tag="shc", event="{event}") +
+    "     AND +shr.kind = 'reconciled'"
+    "   ORDER BY shr.seq DESC LIMIT 1) AS sh_settled_reconciled,"
     " (SELECT json_object('seq', shp.seq, 'detail', shp.detail) FROM journal shp"
-    "   WHERE shp.subject = {event} AND shp.kind = '" + PRESEND_WITHHELD + "'"
+    "   WHERE shp.subject = {event} AND +shp.kind = '" + PRESEND_WITHHELD + "'"
     "   ORDER BY shp.seq DESC LIMIT 1) AS sh_presend,"
     " (SELECT shf.occurred_at FROM failed_operations shf WHERE shf.scope_key = {event}"
     "   AND shf.operation = 'settings_check') AS sh_settings_at,"
@@ -2209,7 +2216,9 @@ def settings_hold_reading(row) -> dict:
     if kind is None:
         return reading
     reading["kind"] = kind
-    settlement = _packed(row["sh_settlement"])
+    settled = [one for one in (_packed(row["sh_settled_sent"]),
+                               _packed(row["sh_settled_reconciled"])) if one is not None]
+    settlement = max(settled, key=lambda one: one[0]) if settled else None
     presend = _packed(row["sh_presend"])
     if presend is not None and (settlement is None or presend[0] > settlement[0]):
         detail = presend[1]

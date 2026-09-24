@@ -262,11 +262,11 @@ class TheCurrentCauseWhateverTheClock(SettingsHoldCase):
 
 
 class ReconciliationNamesTheCauseToo(SettingsHoldCase):
-    def test_a_settings_refusal_settled_only_by_reconciliation_is_named(self):
-        """RED: an attempt a crash left for reconciliation carried no cause at all."""
+    def left_for_reconciliation(self, outcome):
+        """An attempt the relay stopped before settling, with the transport's receipt kept."""
         self.parent_history()
         _relationship, event_id = self.queued_event()
-        self.adapter.script(NOT_PRESERVED)
+        self.adapter.script(outcome)
         settle = self.delivery._settle
 
         def stopped(*args, **kwargs):
@@ -278,12 +278,33 @@ class ReconciliationNamesTheCauseToo(SettingsHoldCase):
         self.delivery._settle = settle
         [attempt] = self.attempts_for(event_id)
         self.assertEqual(attempt["internal_state"], "in_flight")
+        return event_id, attempt
+
+    def test_a_settings_refusal_settled_only_by_reconciliation_is_named(self):
+        """RED: an attempt a crash left for reconciliation carried no cause at all."""
+        event_id, attempt = self.left_for_reconciliation(NOT_PRESERVED)
         self.reconciler.reconcile_attempt(attempt["request_id"], self.adapter)
         self.assertEqual(self.delivery_row(event_id)["state"], WITHHELD_PRE_SEND)
         hold = self.status_of(event_id)["settingsHold"]
         self.assertEqual((hold["source"], hold["reason"], hold["requestId"]),
                          ("attempt", NOT_PRESERVED, attempt["request_id"]))
         self.assertEqual(self.next_action(), OPERATOR_RESTORES_SETTINGS_ACTION)
+
+    def test_a_code_that_is_not_text_names_no_cause_and_the_attempt_settles(self):
+        """RED: the settings-cause lookup raised on a resume refusal whose code is an object, so
+        reconciliation could not settle the attempt. A malformed host answer is no settings
+        refusal; the attempt settles as the pre-send withhold it is and names no cause."""
+        event_id, attempt = self.left_for_reconciliation("resume_fail")
+        self.adapter.ledger[attempt["request_id"]]["rpcError"]["code"] = {"number": -32000}
+        self.reconciler.reconcile_attempt(attempt["request_id"], self.adapter)
+        [attempt] = self.attempts_for(event_id)
+        self.assertEqual(attempt["internal_state"], "settled")
+        self.assertEqual(self.delivery_row(event_id)["state"], WITHHELD_PRE_SEND)
+        settled = self.store.one(
+            "SELECT detail FROM journal WHERE subject = ? AND kind = 'reconciled'",
+            (attempt["request_id"],))
+        self.assertIsNone(json.loads(settled["detail"])["settingsRefusal"])
+        self.assertIsNone(self.status_of(event_id)["settingsHold"])
 
 
 class RowsRecordedBeforeThisRevision(SettingsHoldCase):
