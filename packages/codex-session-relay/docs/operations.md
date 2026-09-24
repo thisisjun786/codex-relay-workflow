@@ -511,6 +511,12 @@ reconcile's own write refuses to overwrite it and reports the recorded loss, wit
 the `redelivery` the loss recorded. Without that refusal, the attempt would go back to dispatched,
 and the one count that stops a third send would be lost.
 
+A send already confirmed from its token stays confirmed. When a later `reconcile` finds no
+accepted receipt, it does not scan the items again: not finding the token a second time is not
+evidence against the first find, and writing the attempt back with evidence `none` would also
+make a later loss record `none`. The reconcile asks only whether the parent still has the turn the
+token was found in, and a recorded loss reports the evidence the attempt was delivered on.
+
 `reconcile --request-id` runs the same read for a receipt that carries a turn id and reports it
 as `recipientTurn`: `{turnId, finding, status, detail}`, where the finding is `present`,
 `host_lost_turn` or `unknown`. `recipientTurnsChecked` in the record is true only when the host

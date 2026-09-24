@@ -155,7 +155,10 @@ class Reconciler:
                 redelivery = detail.get("redelivery")
                 break
         outcome = {
-            "evidence": Evidence.RECEIPT_TURN_ID.value, "state": HOST_LOST_TURN,
+            # What the attempt was delivered on: an accepted receipt's turn id, or the token
+            # reconciliation found for an uncertain send (review 9).
+            "evidence": attempt["affirmative_evidence"] or Evidence.RECEIPT_TURN_ID.value,
+            "state": HOST_LOST_TURN,
             "redelivery": redelivery, "record": json.loads(attempt["record"]),
             "detail": "the host lost this attempt's turn and that is already recorded; nothing"
                       " further was written",
@@ -192,6 +195,10 @@ class Reconciler:
                 )
             if facts.transport_receipt_status != UNFINISHED:
                 operation_observation += " (not affirmative)"
+
+        if (attempt["state"] == HELD_UNCERTAIN
+                and attempt["affirmative_evidence"] == Evidence.TURN_FOUND.value):
+            return self._settle_confirmed(attempt, delivery, operation_observation, adapter)
 
         # Step two, only now: the recipient's real items.
         scan_detail = "not scanned"
@@ -233,6 +240,38 @@ class Reconciler:
             # Recorded already, or by the daemon between this read and this write.
             return self._recorded_loss(attempt["request_id"], reading)
         outcome["recipientTurn"] = reading
+        if reading["finding"] == HOST_LOST_TURN:
+            if delivery["kind"] == COMPLETION:
+                outcome.update(hostloss.settle(
+                    self.store, self.clock, attempt["request_id"], reading,
+                    observation=observation,
+                ))
+            else:
+                outcome["redelivery"] = hostloss.REPORT_ONLY
+        elif delivery["kind"] == COMPLETION:
+            hostloss.record_undecided(self.store, attempt["request_id"], reading)
+        return outcome
+
+    def _settle_confirmed(self, attempt, delivery, observation, adapter) -> dict:
+        """An uncertain send already confirmed from its token stays confirmed (review 9).
+
+        The token was found once, which is affirmative evidence (I-41); a later scan that does
+        not find it is not evidence against it, so the attempt is not written back to held with
+        evidence none, and a fresh confirmation does not write over its recorded undecided name.
+        What is left to ask is the daemon's question: does the parent still have the turn the
+        token was found in. A loss is recorded by hostloss.settle, which keeps turn_found.
+        """
+        record = json.loads(attempt["record"]) if attempt["record"] else {}
+        # The same turn check_dispatched_turn asks the daemon about.
+        turn_id = record.get("turnId") or delivery["dispatch_turn_id"]
+        reading = hostloss.read_recipient_turn(adapter, self.clock, attempt, delivery, turn_id)
+        outcome = {
+            "evidence": Evidence.TURN_FOUND.value, "state": attempt["state"],
+            "operationObservation": observation, "record": record,
+            "recipientTurn": reading,
+            "detail": "already confirmed from its token in the recipient's items; not scanned"
+                      " again",
+        }
         if reading["finding"] == HOST_LOST_TURN:
             if delivery["kind"] == COMPLETION:
                 outcome.update(hostloss.settle(
