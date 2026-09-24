@@ -227,6 +227,35 @@ class TheHostLostTheAcceptedTurn(HostLossCase):
         self.assertTrue(all(counting.lookups.count(turn) > 1 for turn in turns[2:]))
         self.assertEqual(len(self.adapter.sends), 5)
 
+    def test_a_finished_turn_is_read_once_even_when_the_candidates_span_pages(self):
+        """Devin review of 7b90b974: pruning the skip set per page re-read finished turns.
+
+        Every turn is finished, so a pass that forgets any of them reads it again whatever
+        order the event ids sort in: with a page of two, the third and fourth candidates fall
+        outside the window the pass after them lists.
+        """
+        self.parent_history()
+        turns = []
+        for index in range(5):
+            relationship = self.register(issue_key=f"REL-{index + 2}",
+                                         dispatch_request_id=f"dispatch-{index + 2}")
+            self._rid = relationship["relationshipId"]
+            payload = self.ready_payload(
+                relationship, [self.artifact(f"out-{index}.txt", f"deliverable {index}")])
+            self.accept(payload)
+            self.delivery.enqueue(payload["eventId"])
+            turns.append(self.attempt(payload["eventId"])["turnId"])
+            self.clock.advance(10)
+        for turn in turns:
+            self.adapter.finish_turn(PARENT, turn, "completed")
+        counting = CountingLookups(self.adapter)
+        daemon = self.daemon_with(RetryPolicy(max_turn_checks_per_tick=2, max_sends_per_tick=0),
+                                  adapter=counting)
+        daemon.turn_check_page = 2
+        for _ in range(8):
+            daemon.tick()
+        self.assertEqual(sorted(counting.lookups), sorted(turns))
+
 
 class ReconcileReportsTheRecipientTurn(HostLossCase):
     def test_reconcile_names_the_loss_and_queues_the_redelivery_without_sending(self):
@@ -295,6 +324,9 @@ class ReconcileReportsTheRecipientTurn(HostLossCase):
         outcome = self.reconciler.reconcile_attempt(first, racing)
         self.assertEqual(racing.fired, 1)
         self.assertEqual(outcome.get("state"), HOST_LOST)
+        # The answer says what the racing check found and did, not only that the row stood.
+        self.assertEqual(outcome.get("recipientTurn", {}).get("finding"), HOST_LOST)
+        self.assertEqual(outcome.get("redelivery"), "queued")
         self.assertEqual(self.attempt_states(event_id), [HOST_LOST])
         self.assertEqual(self.delivery_row(event_id)["state"], QUEUED)
         self.assertEqual(self.journalled(HOST_LOST), 1)
@@ -402,6 +434,23 @@ class ReconcileReportsTheRecipientTurn(HostLossCase):
         self.clock.advance(120)
         self.daemon.tick()
         self.assertEqual(self.status_of(event_id)["phase"], "awaiting_ack")
+
+    def test_an_undecided_name_survives_a_reconcile_whose_read_fails(self):
+        """Review of 7b90b974: reconciliation's own settlement must not erase the name.
+
+        Only a reading that decides clears it; a failed read decides nothing.
+        """
+        event_id, first, _turn = self.dispatched()
+        with self.store.transaction() as db:
+            db.execute("UPDATE attempts SET recipient_scan = ? WHERE request_id = ?",
+                       ("turn_check_undecided:listing_bounded", first))
+        self.clock.advance(120)
+        self.adapter.fail_reads("find_dispatched_turn")
+        outcome = self.reconciler.reconcile_attempt(first, self.adapter)
+        self.assertEqual(outcome.get("recipientTurn", {}).get("finding"), "unknown")
+        self.assertEqual(self.status_of(event_id)["phase"], "awaiting_ack:turn_check_undecided")
+        self.assertEqual(self.completion_delivery().get("turnCheck"),
+                         "turn_check_undecided:listing_bounded")
 
     def test_the_daemon_records_an_undecided_reading_once(self):
         event_id, _first, turn = self.dispatched()

@@ -131,6 +131,10 @@ class SingleInstance:
 
 
 class RelayDaemon:
+    # How many delivered completions one recipient-turn pass lists at a time. None scales it
+    # with the budget; a test sets a small page to exercise a candidate set spanning pages.
+    turn_check_page = None
+
     def __init__(self, store, registry, intake, delivery, ack, reconciler, adapter, *,
                  policy=None, clock=None, log=None, faults=None, fault_scope=None,
                  fault_selection=None, supervisor_channel=None):
@@ -226,20 +230,26 @@ class RelayDaemon:
             return
         from . import hostloss
 
-        page = max(64, budget * 16)
+        page = self.turn_check_page or max(64, budget * 16)
         after = self._turn_check_after
         try:
             rows = list(hostloss.awaiting_ack(self.store, after=after, limit=page))
+            # Whether this pass saw every candidate. Only then is a skip-set entry absent from
+            # the rows known to be no longer awaiting; pruning on a partial window forgot
+            # finished turns and spent the budget reading them again (Devin review).
+            complete = len(rows) < page
             if after is not None:
-                rows += [row for row in hostloss.awaiting_ack(self.store, limit=page)
-                         if row["event_id"] <= after]
+                head = list(hostloss.awaiting_ack(self.store, limit=page))
+                rows += [row for row in head if row["event_id"] <= after]
+                complete = complete and len(head) < page
         except Exception as error:  # noqa: BLE001 - a tick never dies on one pass
             report.notes.append(f"recipient turn check could not list deliveries: {error}")
             return
-        live = {row["request_id"] for row in rows}
-        self._turns_settled &= live
-        self._turns_undecided = {key: when for key, when in self._turns_undecided.items()
-                                 if key in live}
+        if complete:
+            live = {row["request_id"] for row in rows}
+            self._turns_settled &= live
+            self._turns_undecided = {key: when for key, when in self._turns_undecided.items()
+                                     if key in live}
         spent = 0
         for row in rows:
             if spent >= budget:
