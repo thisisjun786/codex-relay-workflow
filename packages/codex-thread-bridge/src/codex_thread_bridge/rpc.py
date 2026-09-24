@@ -181,6 +181,9 @@ class AppServer:
         # bridge decided no approval" should be evidence a caller can read, not a claim it has
         # to take on trust.
         self._refused = deque(maxlen=REFUSED_REQUESTS_KEPT)
+        # The refusals alone, under their own bound, so the compatibility view (refusals_since)
+        # keeps the refusals it used to keep however many approvals arrive after them.
+        self._refusals = deque(maxlen=REFUSED_REQUESTS_KEPT)
         # One monotonic sequence for BOTH outcomes, across the whole connection, so a caller can
         # mark a point and ask about every request recorded after it, and learn how many of them
         # the bound no longer holds. The deque's own length cannot do that once it wraps.
@@ -238,8 +241,7 @@ class AppServer:
         A left approval is not a refusal, so a caller still on this name must never read one as
         one; requests_since is the inclusive stream.
         """
-        recent = [entry for entry in self._refused
-                  if entry["index"] > mark and entry["answered"] == REFUSED]
+        recent = [entry for entry in self._refusals if entry["index"] > mark]
         mine = [entry for entry in recent if entry["threadId"] == thread_id]
         unattributed = [entry for entry in recent if entry["threadId"] is None]
         return {
@@ -258,17 +260,18 @@ class AppServer:
         method = message.get("method")
         thread_id = params.get("threadId")
         self.server_requests_total += 1
-        self._refused.append(
-            {
-                "index": self.server_requests_total,
-                "method": method,
-                "approval": method in APPROVAL_METHODS,
-                "threadId": thread_id if isinstance(thread_id, str) else None,
-                "turnId": params.get("turnId") if isinstance(params.get("turnId"), str) else None,
-                "answered": answered,
-                "at": time.time(),
-            }
-        )
+        entry = {
+            "index": self.server_requests_total,
+            "method": method,
+            "approval": method in APPROVAL_METHODS,
+            "threadId": thread_id if isinstance(thread_id, str) else None,
+            "turnId": params.get("turnId") if isinstance(params.get("turnId"), str) else None,
+            "answered": answered,
+            "at": time.time(),
+        }
+        self._refused.append(entry)
+        if answered == REFUSED:
+            self._refusals.append(entry)
 
     async def connect(self):
         async with self._connect_lock:

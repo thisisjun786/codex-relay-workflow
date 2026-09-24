@@ -173,3 +173,20 @@ async def test_the_refusal_stream_keeps_its_old_meaning(bridge, fake_server, tmp
     refusals = bridge.rpc.refusals_since(mark, thread_id)
     assert [e["method"] for e in refusals["thisThread"]] == ["item/tool/call"]
     assert refusals["approvalsRefusedForThisThread"] == 0
+
+
+async def test_a_burst_of_approvals_does_not_evict_an_earlier_refusal(bridge, fake_server, tmp_path):
+    """RED (Devin, PR #157): left approvals shared the refusal buffer, so more of them than its
+    bound pushed an earlier refusal out of the compatibility view that used to keep it."""
+    fake, _ = fake_server
+    thread_id = await on_request_thread(bridge, fake, tmp_path)
+    mark = bridge.rpc.refusal_mark()
+    fake.approval_request_on_turn = ["item/tool/call"] + [
+        "item/commandExecution/requestApproval"] * (REFUSED_REQUESTS_KEPT + 3)
+    result = await send(bridge, "burst", thread_id, "report",
+                        expected_settings={"approval_policy": "on-request"})
+    await settle(bridge, thread_id)
+    refusals = bridge.rpc.refusals_since(mark, thread_id)
+    assert [e["method"] for e in refusals["thisThread"]] == ["item/tool/call"]
+    report = result["approvalRequests"]
+    assert report["notRetained"] == 4, "the inclusive stream still reports its own gap"
