@@ -2198,7 +2198,10 @@ def settings_hold_reading(row) -> dict:
     - attempt: the row's settingsRefusal key decides, null meaning none;
     - otherwise the transition was recorded before this revision (no key, no marker): no hold
       when the event has no settings_check failure row or a strictly later lifecycle_read one,
-      else an undetermined one. Nothing is inferred beyond that.
+      else an undetermined one; and a closed channel (inbox_only) always an undetermined one,
+      because only a settings refusal (the approval policy) closes it and that refusal records
+      its failure under thread/resume, never settings_check (the review of aa9724f4). Nothing
+      is inferred beyond that.
 
     definitive is True when the chosen row is this revision's evidence (attempt or pre_send), so
     a status phase can stop inferring from the failure rows there. The key is tested for
@@ -2241,7 +2244,9 @@ def settings_hold_reading(row) -> dict:
         return reading
     reading["chosen"] = "legacy" if row["sh_request"] is not None else None
     settings_at, lifecycle_at = row["sh_settings_at"], row["sh_lifecycle_at"]
-    if settings_at is not None and not (lifecycle_at is not None and lifecycle_at > settings_at):
+    if kind == "channel_closed" or (
+            settings_at is not None and not (lifecycle_at is not None
+                                             and lifecycle_at > settings_at)):
         reading["hold"] = {"source": "undetermined", "reason": None, "field": None,
                            "requestId": None}
     return reading

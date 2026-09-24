@@ -402,6 +402,24 @@ class RowsRecordedBeforeThisRevision(SettingsHoldCase):
         [fault_recovery] = self.evidence(observation, "recovery")
         self.assertEqual(fault_recovery["reason"], "undetermined")
 
+    def test_a_closed_channel_whose_cause_was_never_written_down_is_undetermined(self):
+        """RED: an inbox_only row from before this revision carries no settings_check failure
+        row (the closed channel records its failure under thread/resume), so it was named no hold
+        and no recovery at all, although only a settings refusal closes the channel."""
+        event_id = self.refused("approval_policy")
+        self.strip_this_revisions_records(event_id)
+        item = self.status_of(event_id)
+        self.assertEqual(item["phase"], "channel_closed")
+        self.assertEqual((item["settingsHold"]["kind"], item["settingsHold"]["source"],
+                          item["settingsHold"]["reason"]),
+                         ("channel_closed", "undetermined", None))
+        self.assertEqual(item["recovery"]["reason"], "undetermined")
+        self.assert_show_event(item["recovery"]["command"], event_id)
+        self.assertEqual(self.next_action(), "parent_acknowledges")
+        recovery = self.recovery()
+        self.assertEqual(recovery.get("reason"), "undetermined")
+        self.assert_show_event(recovery.get("command"), event_id)
+
     def test_a_strictly_later_lifecycle_withhold_is_no_settings_hold(self):
         """GREEN: a later lifecycle withhold recorded before this revision names no settings hold."""
         event_id = self.refused()

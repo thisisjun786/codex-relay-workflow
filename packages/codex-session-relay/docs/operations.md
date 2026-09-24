@@ -416,7 +416,8 @@ settlement row of the latest settled attempt (`settingsRefusal`, written by the 
 reconciliation) or a pre-send withhold that took effect (`delivery_presend_withheld`), whichever
 came later in the journal. Two limits follow. A state recorded before this revision has neither,
 so its hold is named `undetermined`, with the event's attempts and receipts as the path and no
-claim of a settings fix; a strictly later lifecycle withhold still clears it. And the reader
+claim of a settings fix; a strictly later lifecycle withhold still clears it, and a closed channel,
+which only a settings refusal produces, is always named `undetermined`. And the reader
 trusts the newest recorded transition, so a pre-send withhold that a still-running older relay
 program writes after a newer program's settlement, which only an upgrade window allows (the
 service holds one daemon per store, but a relay CLI is not under that lock), is read as the
