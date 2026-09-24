@@ -2009,7 +2009,7 @@ class DeliveryService:
                 "kind": row["kind"],
                 "recipient": row["recipient_task_id"],
                 "state": row["state"],
-                "reported": _reported_state(row, ack, grant),
+                "reported": _reported_state(row, ack, grant, superseded),
                 "attempts": row["attempt_count"],
                 "holdReason": row["hold_reason"],
                 "nextEligibleAt": row["next_eligible_at"],
@@ -2252,7 +2252,7 @@ def _required_for_notice(record, required):
     )
 
 
-def _reported_state(row, ack, grant=None) -> str:
+def _reported_state(row, ack, grant=None, superseded=None) -> str:
     """What an operator should read, as distinct from the raw state.
 
     An inbox-only event is stored and NOT woken, and saying so plainly is the point: a durable
@@ -2265,6 +2265,11 @@ def _reported_state(row, ack, grant=None) -> str:
     notice is sent, since it reads its own claims on entry, and the send path then suppresses
     the notice, so a suppressed row is exactly where an answered grant is reported most often;
     its hold_reason stays on the row for whoever reconciles it.
+
+    superseded is the delivery's supersession note, which the phase reads too. A held uncertain
+    send whose obligation it records as overtaken reports that, not its hold: nothing is owed on
+    it any more, and naming the hold told the parent to recover a report a later generation had
+    already replaced (CRW-124 R5 O-R5-1).
     """
     if ack is not None and ack["verified"] == "verified" and ack["accepted"]:
         return "acknowledged"
@@ -2285,6 +2290,8 @@ def _reported_state(row, ack, grant=None) -> str:
         # A hold on an uncertain send is the parent's (unknown_send_lost or
         # unknown_send_undecided, CRW-231); without one the evidence may still come.
         if row["hold_reason"]:
+            if superseded is not None:
+                return f"superseded:{superseded['reason']}"
             return f"held:{row['hold_reason']}"
         return "held_uncertain_awaiting_evidence"
     if row["state"] == QUEUED and row["dispatch_evidence"] == HOST_LOST_TURN \

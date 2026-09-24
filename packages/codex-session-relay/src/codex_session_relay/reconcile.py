@@ -792,16 +792,33 @@ def _awaiting(kind, outcome, reading, stored=None, *, event_id=None, store=None)
     Only for an outcome this reconciliation left uncertain; a promotion or a pre-send rejection is
     answered by the delivery state it wrote. The reconciled event need not be its assignment's
     head, so the words are taken from assignment.py rather than from a projection.
+
+    A delivery its obligation no longer stands for - a later generation, a correction its
+    generation already answered - is asked about first, by the send path's own rule
+    (delivery.supersession_reason), because nothing is owed on it whatever its hold says: the
+    answer is the supersession, as status reports it, and no recovery is named (CRW-124 R5
+    O-R5-1). The row itself is left reconcilable, as the send path leaves it.
     """
     from .assignment import (
-        CORRECTION_HELD_ACTION, CORRECTION_UNCONFIRMED_ACTION, PARENT_RECOVERY_THEN,
-        RECONCILE_ACTION, UNKNOWN_SEND_HELD_ACTION, UNKNOWN_SEND_UNDECIDED_ACTION,
-        recovery_command, store_directory,
+        CORRECTION_ANSWERED_ACTION, CORRECTION_HELD_ACTION, CORRECTION_UNCONFIRMED_ACTION,
+        PARENT_RECOVERY_THEN, RECONCILE_ACTION, UNKNOWN_SEND_HELD_ACTION,
+        UNKNOWN_SEND_UNDECIDED_ACTION, recovery_command, store_directory,
     )
+    from .currency import SUPERSEDED as SUPERSEDED_REVISION
+    from .delivery import supersession_reason
 
     if outcome.get("state") != HELD_UNCERTAIN:
         return {}
     correction = kind == REVISION
+    superseded = (supersession_reason(store.db, event_id)
+                  if event_id is not None and store is not None else None)
+    if superseded is not None:
+        # "none" is assignment's word for nothing owed (NEXT_ACTION); a correction its
+        # generation answered is the parent's to read, as correction_next_action says.
+        return {"nextExpectedAction": (CORRECTION_ANSWERED_ACTION
+                                       if correction and superseded == SUPERSEDED_REVISION
+                                       else "none"),
+                "reason": f"superseded:{superseded}"}
     hold = stored["hold_reason"] if stored is not None else None
     mark = stored["recipient_scan"] if stored is not None else None
     if hold == UNKNOWN_SEND_LOST:

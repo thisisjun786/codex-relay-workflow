@@ -80,10 +80,18 @@ BUSY_ATTEMPT = DEFERRED_BUSY
 BUSY_HOLD = BUSY_CAP
 # Holds only the parent can recover: no send, retry or reconciliation moves them any more
 # (hostloss.py). A held row is BROKEN on the hold page as soon as it is read, like a capped one.
-# The retry page would say so too, but a delivery held on its first attempt shares that page's
-# occurrence key with the hold page, so the hold page's severity is the one the ledger records
-# (CRW-231: an uncertain send held unknown_send_undecided stayed observed at degraded).
 PARENT_HOLDS = (HOST_LOST_TURN, UNKNOWN_SEND_LOST, UNKNOWN_SEND_UNDECIDED)
+# The holds named on an uncertain send's settled attempt after the fact (hostloss.read_unknown_send):
+# the retry page reads that attempt as soon as it settles, degraded, and the hold comes only after
+# the start-time allowance. So the hold is its own occurrence - delivery:<request>:held:<hold> - and
+# the ledger records it, escalating the fault to broken and naming the hold, whatever the retry page
+# recorded first (CRW-124 R5 F-R5-1: under the attempt's own key it was dropped as already recorded
+# and the fault stayed degraded). From then on the attempt is the hold page's alone: the retry page
+# skips a delivery's current attempt while it carries one of these holds, so a later retry-page
+# occurrence cannot replace the detail that names the hold. A host_lost_turn hold is written in the
+# same settlement that ends a dispatched attempt the retry page never read, so it keeps the
+# attempt's key (CRW-224).
+UNKNOWN_SEND_HOLDS = (UNKNOWN_SEND_LOST, UNKNOWN_SEND_UNDECIDED)
 # How many attempts make a delivery one that is RETRYING rather than one in flight. A first
 # attempt is ordinary; a second means the first did not land.
 RETRYING_ATTEMPTS = 2
@@ -593,13 +601,16 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None,
             continue
         capped = (row["attempt_count"] or 0) >= policy.max_attempts
         parked = row["hold_reason"] in PARENT_HOLDS
+        occurrence = f"delivery:{row['last_request'] or row['event_id']}"
+        if row["hold_reason"] in UNKNOWN_SEND_HOLDS:
+            occurrence += f":held:{row['hold_reason']}"
         signature = {"recipient": row["recipient_task_id"],
                      "attemptState": row["last_state"]}
         observations.append(faults.observation(
             product=product, fault_class="delivery_stalled",
             severity=faults.BROKEN if capped or parked else faults.DEGRADED,
             signature=signature,
-            occurrence_key=f"delivery:{row['last_request'] or row['event_id']}",
+            occurrence_key=occurrence,
             scope=scope_of(store, row["relationship_id"], scope, cache),
             detail=(f"a delivery to {row['recipient_task_id']} is held:"
                     f" {row['hold_reason']}" if row["hold_reason"] else
@@ -653,10 +664,16 @@ def retry_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> di
         # outcome is settled too, and stays eligible: nobody could establish that it landed.
         "   AND a.internal_state = 'settled'"
         "   AND a.state IS NOT NULL AND a.state NOT IN (?,?,?)"
+        # The attempt an uncertain send's hold was named on is the hold page's once the hold is
+        # there (UNKNOWN_SEND_HOLDS); a claim needs no hold, so while one stands the delivery's
+        # current attempt is that attempt. Earlier attempts are still read. COALESCE because a
+        # NULL hold would make the whole NOT(...) NULL and drop every unheld attempt.
+        "   AND NOT (COALESCE(d.hold_reason, '') IN (?,?) AND a.attempt_no = d.attempt_count)"
         "   AND " + _NOT_SUPERSEDED.format(d="d") +
         "   AND a.rowid > ? AND a.rowid <= ?"
         " ORDER BY a.rowid LIMIT ?",
-        (*SETTLED_DELIVERY, "dispatched", "inbox_only", BUSY_ATTEMPT, after or 0, until, limit),
+        (*SETTLED_DELIVERY, "dispatched", "inbox_only", BUSY_ATTEMPT, *UNKNOWN_SEND_HOLDS,
+         after or 0, until, limit),
     )
     cache = {}
     current = {}
