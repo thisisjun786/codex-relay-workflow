@@ -1853,3 +1853,24 @@ class TheReceiveStepForAPacketNamingAnArtifact(StoreReception):
         self.assertEqual(self.gap_fields(answer),
                          ["artifact.headSha", "artifact.number", "artifact.repository"])
         self.assertFalse(answer["act"], answer)
+
+    def test_a_held_replay_is_not_told_it_is_acted_on(self):
+        # A replay not yet recorded applied, on a paused relationship: accepted, act held. The
+        # repeat's reason cannot know the pause, so it may not promise action either way.
+        relationship = self.registered()
+        rid = relationship["relationshipId"]
+        ledger = os.path.join(self.tmp, "child-ledger.json")
+        path = os.path.join(self.tmp, "answer.txt")
+        one, digest = self.locator_correction(relationship, path)
+        mine = {"source": "the child's own sha256 of answer.txt in this test",
+                "artifactPath": path, "artifactDigest": digest}
+        _code, first = self.packet_check(one, receiver_id=CHILD, ledger=ledger, observation=mine)
+        self.assertTrue(first["act"], first)
+        self.registry.set_status(rid, "paused", actor=PARENT)
+        _code, held = self.packet_check(one, receiver_id=CHILD, ledger=ledger, observation=mine)
+        self.assertEqual(held["disposition"], packets.ACCEPTED, held)
+        self.assertFalse(held["act"], held)
+        self.assertIn("paused", held.get("actHeld", ""), held)
+        self.assertEqual(held["repeat"]["state"], packets.REPLAY)
+        self.assertNotIn("acted on while", held["repeat"]["reason"])
+        self.assertIn("today's answer decides act", held["repeat"]["reason"])
