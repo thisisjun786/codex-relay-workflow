@@ -706,7 +706,7 @@ class DeliveryService:
         # restoration accounting (restoration.project_cap in _render_and_account) is arithmetic
         # over exactly this list.
         findings = record.get("criteria") or []
-        lines += ["", violated_heading(record, row["event_id"])]
+        lines += ["", violated_heading(record)]
         for item in findings[:MANIFEST_LINES]:
             note = item.get("note")
             # A stored finding can lack its id or disposition; str() of either is None.
@@ -719,9 +719,9 @@ class DeliveryService:
         if overflow:
             lines.append(overflow)
         lines += what_changed_lines(record)
-        lines += fix_scope_lines(record, row["event_id"])
+        lines += fix_scope_lines(record)
         lines += ["", *preserve_lines()]
-        lines += reverify_lines(record, row["event_id"])
+        lines += reverify_lines(record)
         lines += return_lines(row["relationship_id"], record.get("executionGeneration"))
         lines += ["", f"Full record: codex-session-relay show --event {row['event_id']}"]
         return NEWLINE.join(lines)

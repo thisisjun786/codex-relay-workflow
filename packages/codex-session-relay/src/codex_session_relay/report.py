@@ -1627,7 +1627,10 @@ def compose_revision(row, receipt, request, report, *, budget=BUDGET, context=No
     head = [
         "[codex-session-relay] revision request",
     ]
-    head.append(f"TASK: {report['summary']}")
+    # The summary is the parent's free text, like its next action below, recorded without any
+    # check against the findings; within FIX SCOPE it cannot ask for a finding ruled met.
+    # No section name is followed by a colon here, so no reader takes this line for a heading.
+    head.append(f"TASK: the parent's summary (FIX SCOPE bounds it): {report['summary']}")
     # The status and its reason belong here too. The contract map says a report carries them
     # and the correction direction was dropping both without saying it had.
     head.append(f"cxc: {report['cxcStatus']} - {report['cxcReason']}")
@@ -1636,10 +1639,10 @@ def compose_revision(row, receipt, request, report, *, budget=BUDGET, context=No
     # Kept beside its lines rather than recomputed later. The composer reports which findings
     # its shortening left standing, and it can only do that if it was told which line belonged
     # to which finding before it started removing them.
-    finding_lines, finding_owners = _finding_lines(receipt, review, event_id)
+    finding_lines, finding_owners = _finding_lines(receipt, review)
     what_changed = what_changed_lines(receipt, review, composed=True)
-    fix_scope = fix_scope_lines(receipt, event_id, review, composed=True)
-    reverify = (reverify_lines(receipt, event_id, review, proof=True)
+    fix_scope = fix_scope_lines(receipt, review, composed=True)
+    reverify = (reverify_lines(receipt, review, proof=True)
                 + return_lines(row["relationship_id"], generation))
 
     sections = [
@@ -1786,7 +1789,7 @@ def _unresolved_lines(report):
     return lines
 
 
-def _finding_lines(receipt, review, event_id):
+def _finding_lines(receipt, review):
     """The recorded verdict decides WHICH criteria; the review only enriches them.
 
     A revision event already carries the parent findings in its own receipt, written by
@@ -1810,7 +1813,7 @@ def _finding_lines(receipt, review, event_id):
     enrichment = {}
     for item in (review or {}).get("findings") or []:
         enrichment[item["id"]] = item
-    heading = violated_heading(receipt, event_id, review)
+    heading = violated_heading(receipt, review)
     if not authoritative and not enrichment:
         return ["", heading], [None, None]
 
@@ -1952,17 +1955,18 @@ def _series(words) -> str:
     return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
 
 
-def _not_recorded(what, event_id) -> str:
-    # The full record is named where the message ends (Full record: show --event ...), so the
-    # gap points there instead of spelling the command out once per section.
-    return f"{NOT_RECORDED}: {what}; read the full record of {event_id} or ask the parent"
+def _not_recorded(what) -> str:
+    # Every gap this names is one the full record cannot fill either: it is the verdict record
+    # these sections were read from, plus the work report whose review they already consulted.
+    # So the answer is the parent's to give, and pointing at the record would be a dead end.
+    return f"{NOT_RECORDED}: {what}; ask the parent"
 
 
-def violated_heading(receipt, event_id, review=None) -> str:
+def violated_heading(receipt, review=None) -> str:
     """VIOLATED CRITERION, with what each of the findings under it asks, counted over all."""
     findings, origin = correction_source(receipt, review)
     if origin is None:
-        return "VIOLATED CRITERION: " + _not_recorded("the verdict named no criterion", event_id)
+        return "VIOLATED CRITERION: " + _not_recorded("the verdict named no criterion")
     counts = _counts(findings)
     tally = ", ".join(part for part in (
         f"{counts[FIX]} marked needs_changes" if counts[FIX] else "",
@@ -2001,7 +2005,7 @@ def what_changed_lines(receipt, review=None, *, composed=False) -> list:
             f" turn {known(receipt.get('verdictTurnId'))}"]
 
 
-def fix_scope_lines(receipt, event_id, review=None, *, composed=False) -> list:
+def fix_scope_lines(receipt, review=None, *, composed=False) -> list:
     """FIX SCOPE: only what the parent ruled violated.
 
     The statement is the heading line, and a finding without a disposition is named on the
@@ -2017,7 +2021,7 @@ def fix_scope_lines(receipt, event_id, review=None, *, composed=False) -> list:
     findings, origin = correction_source(receipt, review)
     if origin is None:
         return ["", "FIX SCOPE: " + _not_recorded(
-            "no criterion was named, so nothing bounds a change", event_id)]
+            "no criterion was named, so nothing bounds a change")]
     counts = _counts(findings)
     unruled = "FIX SCOPE: no finding is marked needs_changes, so nothing is ruled violated"
     if counts[FIX]:
@@ -2031,7 +2035,7 @@ def fix_scope_lines(receipt, event_id, review=None, *, composed=False) -> list:
         heading = unruled + "; change nothing until the parent settles the findings below"
     else:
         heading = "FIX SCOPE: " + _not_recorded(
-            "what to change, since every finding is marked verified", event_id)
+            "what to change, since every finding is marked verified")
     lines = ["", heading]
     if counts[UNDECIDED]:
         undecided = counts[UNDECIDED]
@@ -2044,7 +2048,7 @@ def fix_scope_lines(receipt, event_id, review=None, *, composed=False) -> list:
     return lines
 
 
-def reverify_lines(receipt, event_id, review=None, *, proof=False) -> list:
+def reverify_lines(receipt, review=None, *, proof=False) -> list:
     """REVERIFY AND RETURN, one statement: what to check again, then return_lines' hand-back.
 
     Each clause is asked of this section's own reader; when the findings ask for nothing to
@@ -2052,8 +2056,7 @@ def reverify_lines(receipt, event_id, review=None, *, proof=False) -> list:
     """
     findings, origin = correction_source(receipt, review)
     if origin is None:
-        clauses = ["what to re-check is " + _not_recorded("the verdict named no criterion",
-                                                        event_id)]
+        clauses = ["what to re-check is " + _not_recorded("the verdict named no criterion")]
     else:
         counts = _counts(findings)
         clauses = []
@@ -2068,7 +2071,7 @@ def reverify_lines(receipt, event_id, review=None, *, proof=False) -> list:
                            f" {_findings(counts[UNDECIDED])} without a disposition")
         if not clauses:
             clauses.append("what to re-check is " + _not_recorded(
-                "every finding is marked verified", event_id))
+                "every finding is marked verified"))
     return ["", "REVERIFY AND RETURN: " + "; ".join(clauses + ["then hand back as below"])]
 
 

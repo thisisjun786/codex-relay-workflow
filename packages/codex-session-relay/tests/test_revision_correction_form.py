@@ -148,7 +148,7 @@ class OnlyWhatIsRuledViolatedIsInScope(_Revisions):
         self.assert_correction_form(message)
         task = next(line for line in message.splitlines() if line.startswith("TASK:"))
         self.assertEqual(
-            task, "TASK: the parent's summary, within FIX SCOPE: Fix c-1 and c-2 before"
+            task, "TASK: the parent's summary (FIX SCOPE bounds it): Fix c-1 and c-2 before"
                   " resubmission")
 
 
@@ -185,10 +185,10 @@ class WhatTheVerdictRecordCannotAnswer(_Revisions):
                       message)
         self.assertIn("the review judged FAIL", section(message, "WHAT CHANGED"))
         # Shortened hard (the forty unresolved items cannot all fit), the gap and the whole
-        # return instruction are still there. This report renders from 2864 bytes.
+        # return instruction are still there. This report renders from 2908 bytes.
         row = self.delivery.get(revision)
         receipt = self.intake.get(revision) or {}
-        tight = report.render_revision(row, receipt, "del-t-a1", stored, budget=2900)
+        tight = report.render_revision(row, receipt, "del-t-a1", stored, budget=2950)
         self.assertIn("omitted:", tight)
         self.assert_correction_form(tight)
         self.assertIn("1 finding without a disposition", tight)
