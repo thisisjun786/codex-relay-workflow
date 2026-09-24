@@ -377,6 +377,7 @@ transport call.
 | `withheld:<operation>` | refused before any transport call, naming the operation that refused |
 | `turn_accepted` | the transport started a turn |
 | `awaiting_ack` | delivered, acknowledgement outstanding |
+| `awaiting_ack:turn_check_undecided` | delivered, acknowledgement outstanding, and the relay could not tell whether the host still has the delivery's turn; waiting will not tell it either (see "When the host loses an accepted turn") |
 | `redelivering:host_lost_turn` | the host lost the turn the last attempt started; the same event is queued for its next attempt |
 | `held:host_lost_turn` | the host lost the redelivery's turn as well; held, and nothing sends it again |
 | `awaiting_child_receipt` | a revision request was delivered; contract v1 defines no acknowledgement for that direction, so the child answers with its next completion receipt |
@@ -452,12 +453,14 @@ parent's own turn list, newest first, among the turns begun since the send. The 
 lost only when:
 
 - the host answered: the listing ended, or reached a turn that began more than 61 seconds before
-  the send, without it. An empty or unreadable listing, or a bounded scan that never reached the
-  send, is no answer;
+  the send, without it. The lookup pages back through up to 1000 turns. An empty or unreadable
+  listing, or one that never reached the send, is no answer;
 - the send is more than 61 seconds old, which covers the host's whole-second start times and
   a clock skew;
-- this attempt's delivery token is not among the parent's newest 200 items. A token found there
-  means the message arrived, whatever happened to the turn row.
+- this attempt's delivery token is in none of the items of the turns begun since the send. The
+  scan reads newest first and counts only when it reaches an item of an older turn, or the end,
+  having read every item of those turns. A found token means the message arrived, whatever
+  happened to the turn row. A scan that stops at its bound (200 items) first has shown nothing.
 
 A lost acknowledgement fails the first condition: its turn is listed, interrupted, with the message
 in it. It keeps reading `awaiting_ack`, as before.
@@ -476,6 +479,19 @@ health as an absent turn.
 The pass writes nothing while a turn is present. A turn listed as finished is not read again for
 the rest of the process's life. An in-progress turn, a token found without its turn row, and an
 unreadable host are read again on a later rotation, within the budget.
+
+Some readings cannot decide however long the relay waits: a listing that never reached the send,
+a token scan that could not cover the turns since it, or an attempt without a send time. These
+are recorded on the attempt as `turn_check_undecided:<reason>` (`listing_bounded`,
+`token_scan_bounded`, `no_send_time`). `status` reads the phase as
+`awaiting_ack:turn_check_undecided`, and `assignment-show` carries the reason as
+`projection.completion.delivery.turnCheck`. Nothing is sent again on an undecided reading. The
+daemon reads such a row again after ten minutes, and a later reading that decides clears the name.
+The parent can still acknowledge the delivery, or read the report with `show --event` and recover.
+
+Reconciliation reads first and writes later. If the daemon records a loss in between, the
+reconcile's own write refuses to overwrite it and reports the recorded loss. Without that refusal,
+the attempt would go back to dispatched, and the one count that stops a third send would be lost.
 
 `reconcile --request-id` runs the same read for a receipt that carries a turn id and reports it
 as `recipientTurn`: `{turnId, finding, status, detail}`, where the finding is `present`,
