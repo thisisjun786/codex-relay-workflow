@@ -592,10 +592,12 @@ store reading, exactly as a child checks what it receives
     codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
       --receiver <own task id> --ledger <own reception ledger> --observation <observation file>
 
-The observation is where you read the pull request's repository, number and head, with its
-source, or, for a deliverable that is not a pull request, its path and the digest you computed
-yourself in the form the packet states it; the store never holds either. Without it the answer
-is unavailable on the artifact, which means read it and check again, not go on. Go on only where
+The observation is your own reading of the artifact the report names, which the store never
+holds: for a pull request `{"source": "<who read it, how and when>", "repository":
+"<owner/name>", "prNumber": <n>, "headSha": "<head>"}`, and for a deliverable that is not a pull
+request `{"source": "<who read it, how and when>", "artifactPath": "<path>", "artifactDigest":
+"<the digest you computed, in the form the packet states it>"}`. Without it the answer is
+unavailable on the artifact, which means read it and check again, not go on. Go on only where
 the answer is accepted and `act` is true, and once the steps below have run, record that you
 acted on it with the same `packet-check` and `--applied`, without `--observation`, so a
 report arriving again is not acted on twice. Then:
@@ -1033,16 +1035,20 @@ One command reads it, and the receiver runs it against its own store reading.
 ```bash
 # Does this packet carry what its purpose requires, and does it agree with what YOUR store says?
 # Opens the store read-only, reaches no host, writes only your own reception ledger.
-# A packet naming an artifact (a correction, resume, acceptance, integration result or report)
-# needs --observation: your own reading of it, which the store never holds (see below).
 codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
   --receiver <your task id> --ledger <your reception ledger> [--observation <file>]
+
+# A packet naming an artifact (a correction, resume, acceptance, integration result, or a
+# completion or review_ready report) is checked with your own reading of that artifact, which
+# the store never holds; the reading's shape is below.
+codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
+  --receiver <your task id> --ledger <your reception ledger> --observation <your reading>
 
 # Offline, against a reading you supply yourself. The answer says recordSource: supplied.
 codex-session-relay packet-check --packet <file> --record <file>
 
-# After you acted on an accepted packet: record it applied in your ledger. Reads no store,
-# and refuses --observation.
+# After you acted on an accepted packet: record it applied in your ledger. Reads the packet
+# and your ledger, never the store, and refuses --observation.
 codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
   --receiver <your task id> --ledger <your reception ledger> --applied
 ```

@@ -402,8 +402,8 @@ codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
 codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
   --receiver <your task id> --ledger <your reception ledger> --observation <your reading>
 
-# After acting on it, and only then. No --observation here: --applied reads nothing and
-# refuses one.
+# After acting on it, and only then. No --observation here: --applied reads the packet and
+# your ledger, never the store, and refuses one.
 codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
   --receiver <your task id> --ledger <your reception ledger> --applied
 ```

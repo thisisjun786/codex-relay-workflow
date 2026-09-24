@@ -264,8 +264,9 @@ unavailable on `artifact.path` and `artifact.digest` (or on the pull request's
 `artifact.repository`, `artifact.number` and `artifact.headSha`). The receiver's answer to that
 is to read the artifact itself and check the same packet again with `--observation`; it is not
 a reason to act and not a refusal to report. The comparison is exact, so the observed digest is
-written in the form the packet states it. `--applied` reads nothing and refuses an
-observation: the observation belongs to the check before it.
+written in the form the packet states it. `--applied` reads the packet and the receiver's
+ledger, never the store, and refuses an observation: the observation belongs to the check
+before it.
 
 The receive step for a packet naming an artifact, then, is:
 
