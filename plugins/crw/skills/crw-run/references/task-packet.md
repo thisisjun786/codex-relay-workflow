@@ -197,9 +197,13 @@ Execution:
 - [Only when a relay holds this assignment:] before acting on the assignment, correction or
   resume packet you received, run the store-backed `packet-check` described in
   [the typed form these fields travel in](#the-typed-form-these-fields-travel-in) with your
-  own task id and reception ledger, act only on an accepted answer whose `act` is true, and
-  once you have acted, record it with the same command and `--applied` (refused unless the
-  a check of that packet said `act`).
+  own task id and reception ledger. A packet that names an artifact - every correction and
+  every resume does - is checked with `--observation` holding your own reading of that
+  artifact, because no store holds one. Act only on an accepted answer whose `act` is true.
+  An unavailable answer is not permission to act: read what it lists as unread and check
+  again, which for an artifact means observing it yourself. Once you have acted, record it
+  with the same command and `--applied`, without `--observation` (refused unless a check of
+  that packet said `act`).
 - [Only when a relay holds this assignment:] emit your completion receipt for this
   generation over the actual deliverable paths, from inside your own turn, against
   the shared state directory. Offline that receipt is STAGED until an independent
@@ -387,7 +391,19 @@ its own task id and its own reception ledger:
 codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
   --receiver <your task id> --ledger <your reception ledger> [--observation <file>]
 
-# After acting on it, and only then:
+# A packet that names an artifact: a correction, a resume, an acceptance, an integration
+# result, or a completion or review_ready report. Write your own reading of the artifact first,
+# with where and when you read it, and check with it. For a file or other deliverable:
+#   {"source": "<who read it, how, when>", "artifactPath": "<path>",
+#    "artifactDigest": "<its digest, in the form the packet states it>"}
+# For a pull request:
+#   {"source": "<who read it, how, when>", "repository": "<owner/name>", "prNumber": <n>,
+#    "headSha": "<head>"}
+codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
+  --receiver <your task id> --ledger <your reception ledger> --observation <your reading>
+
+# After acting on it, and only then. No --observation here: --applied reads the packet and
+# your ledger, never the store, and refuses one.
 codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
   --receiver <your task id> --ledger <your reception ledger> --applied
 ```
@@ -402,17 +418,24 @@ answer at all - which is neither of the
 other two, because a receiver that could not check something has not checked it, and
 treating that as acceptance is how an unverifiable instruction becomes an applied one. Act
 only where the answer is accepted and `act` is true; report a refusal by its field, and
-resolve an unavailable one by reading what was missing rather than proceeding. The pull
-request head is never a store fact, so it comes only from an observation file naming where
-it was read. On a paused relationship the answer is accepted with `act` false and
+resolve an unavailable one by reading what was missing rather than proceeding. An artifact is
+never a store fact - neither a pull request's repository, number and head nor a file's path
+and digest - so it comes only from an observation file you wrote from your own reading,
+naming where and when you read it, with the digest in the form the packet states it (the
+check compares the two as written). A packet naming an artifact checked without one comes
+back unavailable on those fields (`artifact.path` and `artifact.digest`, or the pull
+request's `artifact.repository`, `artifact.number` and `artifact.headSha`): read the
+artifact and check the same packet again with `--observation`. That is neither acting on
+it nor a refusal to report. On a paused relationship the answer is accepted with `act` false and
 `actHeld`: wait for `relationship-resume` and check the same packet again then.
 
 A correction arriving twice is applied once. The ledger keeps each answered message id beside
 the content it asked for and whether you recorded acting on it, so a repeat is answered from
 today's reading with the earlier disposition beside it, while one id asking for something
 different is refused as a collision. An accepted answer is not an applied one: `act` stays
-true on a repeat until you record the application with `--applied`, so a check you made just
-before a restart does not lose the instruction. If you stopped after acting but before
+true on a repeat until you record the application with `--applied` (while the relationship
+is paused it is held instead, as above), so a check you made just before a restart does not
+lose the instruction. If you stopped after acting but before
 recording it, read your own work first; where the instruction is already in it, record it
 applied instead of acting again. The ledger also keeps the mode the accepted assignment gave,
 which is how a later resume or report is checked against it.

@@ -1469,11 +1469,18 @@ def repeat(one, answered) -> dict:
         return {"state": FIRST, "messageId": identifier, "contentDigest": content_digest(one)}
     mine = content_digest(one)
     if str(prior.get("contentDigest")) == mine:
+        applied = prior.get("applied") is True
         return {"state": REPLAY, "messageId": identifier, "contentDigest": mine,
-                "disposition": prior.get("disposition"), "applied": prior.get("applied") is True,
+                "disposition": prior.get("disposition"), "applied": applied,
                 "answeredDigest": mine,
-                "reason": "this id was answered already and asks for the same thing, so it is"
-                          " not acted on twice"}
+                # Which of the two a replay is bounds act (settle_repeat), so the reason says
+                # that one. A replay not yet recorded applied is not promised action: today's
+                # answer decides, and a paused relationship holds act even when it is accepted.
+                "reason": ("this id was answered already and asks for the same thing, and it is"
+                           " recorded applied, so it is not acted on again") if applied else
+                          ("this id was answered already and asks for the same thing; nothing"
+                           " records it applied yet, so today's answer decides act until"
+                           " --applied records it")}
     return {"state": COLLISION, "messageId": identifier, "contentDigest": mine,
             "disposition": prior.get("disposition"),
             "answeredDigest": prior.get("contentDigest"),
