@@ -939,8 +939,9 @@ deliverer is the seam between them and owns no rule. Each tick it:
   repeated - only a verified `supervisor-read` settles it;
 - reads, without writing, a page of pending notifications (rotating across ticks) and asks
   whether any can go now, measuring a parent whose contact eligibility could not read (the host
-  observation delivery itself records) and keeping on a notification why it waits, only when
-  that changes;
+  observation delivery itself records; a parent the host cannot answer about is its own
+  notifications' reason to wait, and the pass goes on) and keeping on a notification why it
+  waits, only when that changes;
 - when something can go, reserves - at most what the reports left of the pass's per-tick send
   cap, `max_supervisor_sends_per_tick`, where a report attempt that raised after its transport
   started counts as sent - (`reserve_notifications` with its `deliverable` predicate),
@@ -987,7 +988,9 @@ Limits, stated rather than papered over:
   or whose project has no live owner or no supervising initiative, has no level above to tell.
   Its notification waits pending with that reason until one exists.
 - A notice the channel has capped (a busy or attempt cap) waits with the cap named, and needs
-  the same act that releases a capped report.
+  the same act that releases a capped report - or a handover: a cap, a recheck and a backoff
+  are about the task the message is addressed to, so once the level above is somebody else the
+  next staging re-addresses the never-sent message and releases them, as for a report.
 - Notifications are keyed per fault, kind and cycle. A blocking notice already delivered is not
   followed by one saying its fault later withdrew, and a fault that flaps within one cycle after
   its blocking notice went is told once. Whether a withdrawal after a delivered blocking notice

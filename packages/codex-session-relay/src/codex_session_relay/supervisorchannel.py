@@ -1494,24 +1494,31 @@ class SupervisorChannel:
                         "messageId": message_id, "message": dict(self.get(message_id)),
                         "recipient": resolution["recipient"], "sender": resolution["sender"]}
             frozen = json.loads(row["packet"])
-            moved = not _addressed_as(row, live) or row["relationship_id"] != relation
+            # A handover moves the level above; a moved anchor may not. The former releases the
+            # former recipient's bounds - a cap, a recheck, a backoff were about THAT task - as
+            # _readdress does for a report; the latter, like a restatement, keeps them.
+            moving = not _addressed_as(row, live)
+            moved = moving or row["relationship_id"] != relation
             if (packet == frozen and not moved and row["hold_reason"] is None):
                 return {"schema": VERSION, "staged": False, "messageId": row["message_id"],
                         "reason": "this notification is already staged; one notification is"
                                   " one message", "message": dict(row),
                         "recipient": row["recipient_task_id"], "sender": row["sender_task_id"]}
-            released = row["hold_reason"] in (PARKED_HOLD, UNADDRESSED_HOLD)
+            released = row["hold_reason"] in (PARKED_HOLD, UNADDRESSED_HOLD) and not moving
+            bounds = (" state = ?, next_eligible_at = NULL, hold_reason = NULL," if moving
+                      else " hold_reason = CASE WHEN hold_reason IN (?,?) THEN NULL"
+                           " ELSE hold_reason END,")
             cursor = db.execute(
                 "UPDATE supervisor_messages SET packet = ?, relationship_id = ?, sender_task_id = ?,"
-                " recipient_task_id = ?, project_key = ?, hold_reason = CASE WHEN hold_reason"
-                " IN (?,?) THEN NULL ELSE hold_reason END, updated_at = ?"
+                " recipient_task_id = ?, project_key = ?," + bounds + " updated_at = ?"
                 " WHERE message_id = ? AND state IN (?,?,?) AND packet = ?"
                 "   AND relationship_id = ? AND sender_task_id = ? AND recipient_task_id = ?"
                 "   AND NOT EXISTS (SELECT 1 FROM supervisor_attempts a"
                 "                    WHERE a.message_id = supervisor_messages.message_id"
                 "                      AND (a.send_attempted <> 'no' OR a.retry_safe = 0))",
                 (json.dumps(packet, ensure_ascii=False, sort_keys=True), relation, live["sender"],
-                 live["recipient"], live["projectKey"], PARKED_HOLD, UNADDRESSED_HOLD, at,
+                 live["recipient"], live["projectKey"],
+                 *((QUEUED,) if moving else (PARKED_HOLD, UNADDRESSED_HOLD)), at,
                  row["message_id"], *CLAIMABLE, row["packet"], row["relationship_id"],
                  row["sender_task_id"], row["recipient_task_id"]))
             if cursor.rowcount != 1:
@@ -1524,6 +1531,8 @@ class SupervisorChannel:
                                    {"from": row["recipient_task_id"], "to": live["recipient"],
                                     "fromRelationship": row["relationship_id"],
                                     "toRelationship": relation,
+                                    "releasedHold": row["hold_reason"] if moving else None,
+                                    "releasedState": row["state"] if moving else None,
                                     "reason": "the notice was never sent and what it is about"
                                               " or the level above moved, so it goes to the one"
                                               " there now"}, at=at)

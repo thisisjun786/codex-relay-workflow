@@ -587,7 +587,10 @@ and refuses as it refuses a relationship (no owner, two owners, no supervisor, a
 walk). Such a row's `relationship_id` holds that `project:<key>` anchor; a relationship id never
 takes that shape. A row none of whose attempts can have sent is
 restated, re-addressed (to another relationship or project too) or released from its park by the next
-staging; one that may have been sent is returned as it is. The issue is optional in both of its
+staging; one that may have been sent is returned as it is. A re-address to another sender,
+supervisor or project releases the former recipient's bounds (a cap, a recheck, a backoff), as
+`_readdress` does for a report; a notice whose anchor moved under the same hierarchy keeps them.
+The issue is optional in both of its
 purposes (`fault_notice`, `fault_decision`): a fault about a project and no issue still goes.
 
 A notice is owed only while its notification is reserved under a live lease, because that

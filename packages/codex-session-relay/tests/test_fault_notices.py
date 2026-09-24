@@ -751,3 +751,64 @@ class WhatTheSeventhAuditFound(NoticeCase):
             self.assertNotIn(SECRET, sent[0][2])
             self.assertNotIn(SECRET.lower(), sent[0][2])
             self.assertIn("an issue is published", sent[0][2])
+
+
+class WhatDevinFoundOnTheFirstHead(NoticeCase):
+    """Devin review of PR #151 at 70f81a60: a bound about a former supervisor does not keep a
+    notice from the one there now (the channel's own re-address rule), and a parent the host
+    cannot observe does not stall every other notification."""
+
+    def test_a_capped_notice_goes_to_the_supervisor_who_took_over(self):
+        import dataclasses
+
+        from codex_session_relay.models import Endpoint
+
+        from .support import HOST
+        from .test_supervisor_channel import SUCCESSOR
+
+        self.channel.policy = dataclasses.replace(self.channel.policy, busy_max_attempts=1)
+        self.adapter.set_status(SUPERVISOR, "active")
+        fault = self.broken()
+        self.tick()
+        self.assertEqual(self.one_notice()["hold_reason"], "busy_cap")
+        self.adapter.add_thread(SUCCESSOR)
+        self.linkage.handover(
+            role="supervisor", scope_key=INITIATIVE, expect_task_id=SUPERVISOR,
+            endpoint=Endpoint(SUCCESSOR, HOST, cwd="/successor", cxc_session="cxc-next"),
+            acknowledged=[], evidence="the initiative changed hands", actor="a test")
+        for _ in range(2):
+            self.tick(advance=3600)
+        notification = self.notification(fault)
+        self.assertEqual(notification["state"], faults.DELIVERED, notification["lastError"])
+        told = [thread for _r, thread, _m, _o in self.adapter.sends
+                if thread in (SUPERVISOR, SUCCESSOR)]
+        self.assertEqual(told, [SUCCESSOR], "the successor, once; the former supervisor never")
+        row = self.one_notice()
+        self.assertEqual((row["recipient_task_id"], row["hold_reason"]), (SUCCESSOR, None))
+        self.assertEqual(self.budget_used(), 1)
+
+    def test_a_parent_the_host_cannot_observe_does_not_hold_other_notices_back(self):
+        original = lifecycle.observe
+
+        def observe(adapter, task, **kw):
+            if task == PARENT:
+                raise ConnectionError("the host did not answer")
+            return original(adapter, task, **kw)
+
+        stuck = self.broken()
+        other = self.ledger.record(faults.observation(
+            product=PRODUCT, fault_class="managed_start_failed", severity=faults.BROKEN,
+            signature={"issueKey": "REL-77", "receiptStatus": "failed"},
+            occurrence_key="managed:other",
+            scope={"projectKey": PROJECT, "issueKey": "REL-77"}, detail="start failed"))
+        with mock.patch.object(lifecycle, "observe", side_effect=observe):
+            self.tick()
+        self.assertEqual(self.notification(other["faultId"])["state"], faults.DELIVERED)
+        waiting = self.notification(stuck)
+        self.assertEqual(waiting["state"], faults.PENDING)
+        self.assertIn("could not be observed", waiting["lastError"] or "")
+        self.assertNotIn(SECRET, waiting["lastError"] or "")
+        self.assertEqual(self.budget_used(), 1, "only what went spent anything")
+        self.tick(advance=3600)
+        self.assertEqual(self.notification(stuck)["state"], faults.DELIVERED,
+                         "measured and sent once the host answers")

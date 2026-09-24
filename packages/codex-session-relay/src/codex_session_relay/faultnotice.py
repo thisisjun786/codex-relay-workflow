@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 
 from . import faults, intent, lifecycle, supervision
 from .errors import DeliveryRefused
-from .supervisorchannel import CLAIMABLE, PARKED_HOLD, READ, UNADDRESSED_HOLD
+from .supervisorchannel import CLAIMABLE, PARKED_HOLD, READ, UNADDRESSED_HOLD, _addressed_as
 from .transport import DISPATCHED, SENDING
 
 # How many pending or uncertain notifications one tick reads, a page at a time, resuming after the
@@ -96,12 +96,6 @@ class NoticeDeliverer:
             if row["state"] not in CLAIMABLE:
                 return ("its message " + row["message_id"] + " is " + row["state"]
                         + ": a send may be under way, and it is settled from that send's answer")
-            if row["hold_reason"] not in (None, PARKED_HOLD, UNADDRESSED_HOLD):
-                return ("its message " + row["message_id"] + " is held by the supervisor"
-                        " channel: " + row["hold_reason"])
-            if row["next_eligible_at"] is not None and row["next_eligible_at"] > now:
-                return ("the supervisor channel rechecks the level above at "
-                        + _at(row["next_eligible_at"]) + self._because(row["message_id"]))
         if not relation:
             return ("no relationship this store holds places fault " + notification["faultId"]
                     + " under a project, and its scope names no project, so there is no level"
@@ -118,6 +112,18 @@ class NoticeDeliverer:
         if unfit is not None:
             return ("the " + unfit + " the linkage names is not a plain identifier, so no notice"
                     " can carry it; fault-show has the fault")
+        if row is not None and _addressed_as(row, resolution):
+            # The bounds the channel put on the message - a busy or attempt cap, a lifecycle
+            # recheck, a backoff - are about the task it is addressed to, so they hold only
+            # while that is still the level above. Addressed to a former sender or supervisor,
+            # they went with the handover: the next staging re-addresses the message and
+            # releases them, exactly as the channel re-addresses a report.
+            if row["hold_reason"] not in (None, PARKED_HOLD, UNADDRESSED_HOLD):
+                return ("its message " + row["message_id"] + " is held by the supervisor"
+                        " channel: " + row["hold_reason"])
+            if row["next_eligible_at"] is not None and row["next_eligible_at"] > now:
+                return ("the supervisor channel rechecks the level above at "
+                        + _at(row["next_eligible_at"]) + self._because(row["message_id"]))
         # Ahead of its row in the recipient's queue, or - addressed to another recipient until
         # its next staging, or not staged yet - of any message to the recipient of now.
         same = row is not None and row["recipient_task_id"] == resolution["recipient"]
@@ -134,24 +140,40 @@ class NoticeDeliverer:
         page = self.ledger.notifications(state=faults.PENDING, limit=PAGE,
                                          after=self._pending_after)
         self._pending_after = page["next"]
-        ready, measured = False, set()
+        ready, measured, unobserved = False, set(), {}
         for one in page["notifications"]:
             eligibility = one.get("eligibility") or {}
             if not eligibility.get("eligible"):
                 parent = eligibility.get("parentTaskId")
-                if (parent and parent not in measured
+                if (parent and parent not in measured and parent not in unobserved
                         and self._unmeasured(eligibility.get("contact"), now)):
-                    measured.add(parent)
-                    self._measure(adapter, parent)
-                    answer["measured"] += 1
-                    ready = True
+                    try:
+                        self._measure(adapter, parent)
+                    except Exception as error:  # noqa: BLE001 - one parent, not the pass
+                        # A host that cannot answer about one parent is that parent's
+                        # notifications' reason to wait, not every other notification's: the
+                        # pass goes on, and the next tick asks the host again.
+                        unobserved[parent] = ("its parent " + parent + " could not be observed"
+                                              " (" + type(error).__name__ + "), so whether it"
+                                              " can be contacted is unknown")
+                    else:
+                        measured.add(parent)
+                        answer["measured"] += 1
+                        ready = True
+                if parent in unobserved:
+                    self._wait(one, unobserved[parent], answer)
                 continue
             reason = self.waiting_for(one, now=now)
             if reason is None:
                 ready = True
-            elif self.ledger.notification_waiting(one["notificationId"], reason=reason)["changed"]:
-                answer["waiting"].append((one["notificationId"], reason))
+            else:
+                self._wait(one, reason, answer)
         return ready
+
+    def _wait(self, one, reason, answer):
+        """Keep why a notification waits on it, written only when that changes."""
+        if self.ledger.notification_waiting(one["notificationId"], reason=reason)["changed"]:
+            answer["waiting"].append((one["notificationId"], reason))
 
     @staticmethod
     def _unmeasured(contact, now):
