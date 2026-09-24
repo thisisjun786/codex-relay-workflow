@@ -132,22 +132,22 @@ UNSUPPORTED_SANDBOX_TYPE = "unsupported_sandbox_type"
 APPROVAL_POLICIES = ("never", "on-request", "untrusted")
 
 # The only policy under which nothing can ever ask this bridge for a decision. Every other policy
-# means the thread may raise an approval request mid-turn that this bridge refuses and cannot
-# route to the thread's own approver.
+# means the thread may raise an approval request mid-turn, which this bridge leaves unanswered for
+# the thread's own approver.
 UNATTENDED_APPROVAL_POLICY = "never"
 
 APPROVAL_LIMITS = (
-    "This bridge services no approval. It answers every server-to-client request with a refusal, "
-    "so it never grants one and a report message never stands in for an approval that was not "
-    "given. It also holds no route back to the thread's own approver, which is a fact about this "
-    "bridge. That no such method exists in the protocol at all, by which a second client hands "
-    "an approval request to the client that owns the thread, is an inspection of codex-cli "
-    "0.154.0 rather than a reading of the connected server. Either way the statement stops "
-    "there: whether the host "
-    "independently surfaces the same request to the owning client is NOT established here, so "
-    "nothing here says the approver saw it and nothing here says they did not. Delivering a "
-    "report and servicing the code execution a report may provoke are separate capabilities, "
-    "and only the first one is claimed."
+    "This bridge answers no approval request: it never grants one, never denies one, and a "
+    "report message never stands in for one. Measured on codex-cli 0.154.0, the host sends each "
+    "approval request of a turn to every client subscribed to the thread, replays a pending one "
+    "to a client that resumes the thread later, and applies the first answer from any of them, "
+    "an error answer as a denial. An answer from this bridge would therefore decide for the "
+    "thread's approver, so it records each request and leaves it unanswered; the thread's own "
+    "client decides it, now or when it next opens the thread, and the turn waits until then. "
+    "That measurement is of that release, not a reading of the connected server, and how a "
+    "particular client such as Desktop presents a request it did not ask for is not "
+    "established here. Delivering a report and servicing the code execution a report may "
+    "provoke are separate capabilities, and only the first one is claimed."
 )
 
 # thread/read reports model, reasoningEffort, cwd, environments and projectId, and nothing about
@@ -502,11 +502,12 @@ class SettingsContract:
             "preservation": "omitted_from_resume",
             "interactive": interactive,
             "servicedByThisBridge": False,
-            "onApprovalRequest": "refused_not_routed",
+            "onApprovalRequest": "left_for_thread_approver",
             "meaning": (
-                "This thread may ask for an approval during the turn. This bridge refuses every "
-                "such request and has no route for handing it to the thread's own approver, so "
-                "nothing this bridge does can turn such a request into an approval."
+                "This thread may ask for an approval during the turn. This bridge answers none; "
+                "the host sends the request to every client subscribed to the thread, the "
+                "thread's own included, and applies the first answer, so the decision stays with "
+                "the thread's approver and the turn waits until it is made."
                 if interactive
                 else "Nothing on this thread can ask for an approval, so delivery and approval "
                 "cannot be confused here."

@@ -175,7 +175,8 @@ What happens at send time:
 | resume returns a different sandbox, cwd, roots, model or effort | withheld, `settings_not_preserved`, no turn started |
 | resume returns no value for one of them | withheld, `setting_unobservable`, no turn started |
 | resume returns `environments: null` | withheld, `environments_unknown` |
-| resume returns an approval policy other than `never` | `inbox_only`: stored, not woken |
+| resume returns an approval policy other than `never` or `on-request` | `inbox_only`: stored, not woken |
+| resume returns `never` or `on-request` and it differs from the record | the turn begins; the difference is noted on the transport receipt as `approval_policy_differs_from_record` |
 | resume returns no approval policy at all | withheld, `setting_unobservable`, still retryable |
 | resume matches | the turn begins, carrying no overrides |
 

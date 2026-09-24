@@ -69,11 +69,12 @@ def _settings(data, at):
     for field in ("model", "reasoningEffort"):
         _text(data[field], f"{at}.{field}", 500)
     if data["approvalPolicy"] != AUTHORIZED_APPROVAL_POLICY:
-        # This relay transport cannot service interactive approval or preserve it on
-        # resume. Refuse the unsupported path before creating any task. require_usable() below
-        # refuses the same value; this runs first so the message names the REQUEST field and
-        # nothing is created on the way to it. The literal is read from one definition rather
-        # than spelled a second time here, which is how the two could have drifted apart.
+        # A task this relay CREATES runs under never. That is a rule about what the relay
+        # creates, not about whom it can wake: an existing supervisor or parent on on-request is
+        # carried (settings.CARRIED_APPROVAL_POLICIES, CRW-225), because its approvals stay with
+        # its own approver. Refused before creating any task, so the message names the REQUEST
+        # field and nothing is created on the way to it. The literal is read from one definition
+        # rather than spelled a second time here, which is how the two could have drifted apart.
         raise ValueError(
             f"{at}.approvalPolicy must explicitly be {AUTHORIZED_APPROVAL_POLICY}"
             " for this transport"
@@ -384,7 +385,8 @@ class ManagedStart:
         if not marker.valid_segment(task) or not marker.valid_segment(standby):
             return self.result("incomplete", "creation", "creation_identity_unobserved")
         creation = receipt.get("creation")
-        if not isinstance(creation, dict) or settings.mismatches(creation):
+        if not isinstance(creation, dict) or settings.mismatches(
+                creation, exact_approval_policy=True):
             return self.result("refused", "creation", "creation_settings_unverified")
         self.row = self.registry.record_start_receipt(request["requestId"],
                                                       identity["request_fingerprint"], receipt)
@@ -448,7 +450,7 @@ class ManagedStart:
         if (not marker.valid_segment(task) or creation.get("turnId")
                 or not isinstance(effects, list) or "thread/start" not in effects
                 or "turn/start" in effects or not isinstance(observed, dict)
-                or settings.mismatches(observed)):
+                or settings.mismatches(observed, exact_approval_policy=True)):
             return creation
         request_id = "managed-standby-" + hashlib.sha256(
             self.request["requestId"].encode()).hexdigest()

@@ -1072,9 +1072,8 @@ async def test_capabilities_stops_answering_what_it_never_asked(bridge, fake_ser
     was read downstream as "this host cannot". The third said this bridge does not set a goal
     while it calls thread/goal/set to pause one; exposure answers that pair precisely. Null
     would fix none of it: null is falsy in both languages this response is read from, so the
-    careless reading survives intact, and this payload already spends null on
-    routeToOriginalApprover for a route that is known not to exist. So the key is gone, and
-    there is nothing left here to quote.
+    careless reading survives intact. So the key is gone, and there is nothing left here to
+    quote.
     """
     reported = await bridge.capabilities()
     assert gone not in reported["capabilities"]

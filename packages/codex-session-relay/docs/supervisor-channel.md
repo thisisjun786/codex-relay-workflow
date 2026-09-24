@@ -677,8 +677,9 @@ until somebody else loaded the supervisor (CRW-215 live finding F1). The transpo
 such a recipient, loaded or not, with nothing requested - `{threadId, excludeTurns}`, the
 bridge's own nothing-requested form - so an unloaded thread loads under its own persisted state
 and a loaded one reports it, and that answer is compared with the recorded authorization before
-any turn. The model, the effort, the whole sandbox policy, the approval policy, the cwd and the
-environment selection must equal the record. A difference refuses as
+any turn. The model, the effort, the whole sandbox policy, the cwd and the environment selection
+must equal the record; the approval policy must be one the transport carries (never or on-request,
+I-460), and one that differs from the record is delivered and noted rather than refused. A difference refuses as
 `settings_differ_after_load`, retry-safe and with no turn started, and since nothing was
 transmitted that could have caused it, the remedy is to re-record the supervisor from a reading
 the user stands behind. The workspace roots are the one relaxation: a load restores only what the
@@ -807,7 +808,8 @@ goes out only if it is staged and sent before the assignment is archived. A supe
 assignment is not affected, because its successor holds the edge.
 
 A push the recipient's policy refuses is not a send here. The transport answers `inbox_only`
-when the recipient's thread reports an approval policy it cannot serve, after the resume and
+when the recipient's thread reports an approval policy it cannot serve (anything but `never` and
+`on-request`, I-460; an on-request supervisor is pushed to like any other), after the resume and
 before any turn, so nothing reached the supervisor's thread. For parent-child traffic that
 answer names the durable inbox item the child reads; this channel has no inbox anybody is told
 to read, so the attempt is recorded as a refusal before sending, retry-safe, with the

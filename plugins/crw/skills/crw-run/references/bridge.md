@@ -268,11 +268,14 @@ declares `never`, so an idle supervisor whose policy is `on-request` is refused 
 return a result to one. The resume carries no `approvalPolicy`, so this never changes a
 task's policy, and a policy that is not the declared one refuses before any turn starts,
 which is how a task whose state moved under you is caught rather than written to.
-Declaring an interactive policy buys delivery, not approval servicing: the bridge grants no
-approval, refuses every approval request, and has no route to that task's own approver, so
-nothing it does turns such a request into an approval. Whether the host surfaces the same
-request to the client that owns the task is not established, so do not read this either way.
-Receiving a report and running code are separate, and only the first is claimed.
+Declaring an interactive policy buys delivery, not approval servicing: the bridge answers no
+approval request at all, neither granting nor denying one. Measured on codex-cli 0.154.0, the
+host sends each request to every client subscribed to the task and applies the first answer,
+so the task's own client decides it, and a pending one is shown again to a client that opens
+the task later; until then the turn waits. How Desktop presents a request it did not start is
+confirmed on the installed host, not here. Receiving a report and running code are separate,
+and only the first is claimed. The relay carries an on-request supervisor or parent the same
+way (CRW-225).
 
 The `settings` receipt describes what the host reported at creation or at the
 resume, not a guarantee about the dispatched turn: no host-side exclusivity is

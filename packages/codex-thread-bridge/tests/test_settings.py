@@ -787,14 +787,13 @@ async def test_a_declared_delivery_still_leaves_a_setter_host_untouched(
     assert result["status"] == "accepted" and fake.count("turn/start") == 1
 
 
-async def test_an_approval_request_during_the_turn_is_refused_and_never_decided(
-    bridge, fake_server, tmp_path
-):
+async def test_an_approval_request_during_the_turn_is_left_undecided(bridge, fake_server, tmp_path):
     """Delivering a report and servicing the code it provokes are different capabilities.
 
-    The bridge answers an approval request with a JSON-RPC error, which declines to decide.
-    Answering in the approval vocabulary would write a verdict in the approver's own type and
-    make this bridge the approver.
+    The bridge answers an approval request not at all: measured on codex-cli 0.154.0 the host
+    applies the first answer from any subscribed client, an error as a denial, so any answer here
+    would decide for the thread's approver. test_approval_routing.py covers every method and the
+    replay on resume.
     """
     fake, _ = fake_server
     created = await create(bridge, "c", str(tmp_path))
@@ -804,17 +803,12 @@ async def test_an_approval_request_during_the_turn_is_refused_and_never_decided(
         bridge, "m", created["threadId"], "please proceed",
         expected_settings={"approval_policy": "on-request"},
     )
+    await bridge.read_thread(created["threadId"])
     assert result["status"] == "accepted"
-    answers = fake.client_answers
-    assert answers, "the host asked for an approval and got no answer at all"
-    assert all("error" in answer for answer in answers), answers
-    assert all("result" not in answer for answer in answers), answers
-    # Nothing that could be read as a decision in the approval vocabulary.
-    text = json.dumps(answers)
-    for decision in ("approved", "accept", "acceptForSession", "denied", "decline"):
-        assert decision not in text, f"{decision!r} would make this bridge the approver"
+    assert fake.server_requests, "the fake raised no request, so nothing was tested"
+    assert fake.client_answers == [], "no answer at all: not a refusal, not a decision"
     assert result["approvals"]["servicedByThisBridge"] is False
-    assert result["approvals"]["onApprovalRequest"] == "refused_not_routed"
+    assert result["approvals"]["onApprovalRequest"] == "left_for_thread_approver"
 
 
 async def test_a_refused_send_is_preserved_as_undelivered(bridge, fake_server, tmp_path):

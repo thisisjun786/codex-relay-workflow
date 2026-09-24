@@ -420,7 +420,7 @@ SUMMARY_SITES = (
      " the absence of a turn/start and the refusal code, and each caller names the difference"
      " that refusal is about"),
     ("test_bridge_adapter.py",
-     "test_a_non_never_approval_policy_is_inbox_only_not_a_settings_mismatch", "retry_safe",
+     "test_a_policy_outside_the_carried_set_is_inbox_only_not_a_settings_mismatch", "retry_safe",
      False, "self.assertFalse(facts.retry_safe, 'a closed push channel is not a retry loop')",
      "paired: the refusal code is asserted beside it, so this names which of the several"
      " not-retry-safe refusals produced the value"),

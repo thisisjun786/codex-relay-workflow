@@ -1138,8 +1138,9 @@ async def _guarded_send(rpc, ledger, request_id, thread_id, message, settings, *
                 receipt["settingsFindings"] = findings
                 # Only a DIFFERENCE is renamed. An absent answer, an unknown environment
                 # selection, an unexpected permission profile and an interactive approval
-                # policy keep their own codes, because each already says something more
-                # specific than "differs" and the approval one decides the inbox route.
+                # policy this transport cannot carry keep their own codes, because each already
+                # says something more specific than "differs" and the approval one decides the
+                # inbox route.
                 code = (SETTINGS_DIFFER_AFTER_LOAD if first["code"] == SETTINGS_NOT_PRESERVED
                         else first["code"])
                 raise _Refusal("thread/resume", {
@@ -1168,6 +1169,15 @@ async def _guarded_send(rpc, ledger, request_id, thread_id, message, settings, *
                     "message": f"{first['code']}: {first['field']} returned"
                                f" {first.get('returned')!r}; message withheld",
                 })
+
+        # A carried approval policy that is not the recorded one is delivered on either route and
+        # noted here, so the record can be re-recorded (CRW-225). Nothing was sent that could set
+        # it: neither resume carries an approvalPolicy, so the difference is the thread's own.
+        divergence = getattr(settings, "approval_divergence", None)
+        note = divergence(resumed) if divergence is not None else None
+        if note is not None:
+            receipt["settingsNotes"] = [note]
+            ledger.save(receipt)
 
         if before_start is not None:
             # After the verified resume and before any turn. A pause that appears during the

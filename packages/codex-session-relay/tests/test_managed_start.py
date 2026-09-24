@@ -426,6 +426,26 @@ class ManagedEntry(ManagedStartFixture):
         self.assertEqual(self.host.sent, 0)
         self.assertEqual(self.store.one("SELECT count(*) FROM relationships")[0], 0)
 
+    def test_a_child_created_on_another_carried_policy_is_refused(self):
+        """RED (Devin, PR #157): the relay CARRIES on-request recipients, but a child it CREATES
+        was asked for never, so a creation that came back on-request is not the child requested."""
+        self.host.settings = copy.deepcopy(self.request["child"]["settings"])
+        self.host.settings["approvalPolicy"] = "on-request"
+        result = self.start.run(self.request)
+        self.assertEqual(result["reason"], "creation_settings_unverified")
+        self.assertEqual(self.host.sent, 0)
+        self.assertEqual(self.store.one("SELECT count(*) FROM relationships")[0], 0)
+
+    def test_a_shell_created_on_another_carried_policy_gets_no_standby_turn(self):
+        """RED (Devin, PR #157): standby recovery sends a first turn only to a shell that is
+        exactly the child requested, and never-requested is not on-request."""
+        self.host.settings = copy.deepcopy(self.request["child"]["settings"])
+        self.host.settings["approvalPolicy"] = "on-request"
+        self.partial_creation()
+        result = self.start.run(self.request)
+        self.assertNotEqual(result.get("state"), "admitted", result)
+        self.assertEqual(self.host.sent, 0, "a standby turn went to a shell nobody requested")
+
     def test_every_behavior_input_change_rejects_same_request_without_business(self):
         self.host.standby = "inProgress"
         self.start.run(self.request)

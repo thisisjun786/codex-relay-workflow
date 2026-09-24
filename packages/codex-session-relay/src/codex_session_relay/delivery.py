@@ -2029,9 +2029,9 @@ def authorized_settings(store, task_id: str, runtime_status=None):
     """The recorded settings, validated, for any sender that resumes a task.
 
     Absence, incompleteness, a non-string cwd, model or reasoningEffort, and an approvalPolicy
-    this transport cannot carry all refuse -- the last one on the record rather than on what a
-    host later reports back, because a row asking for an interactive policy settles the send
-    whatever the host would have answered.
+    this transport cannot carry (anything but never and on-request, CRW-225) all refuse -- the
+    last one on the record rather than on what a host later reports back, because such a row
+    settles the send whatever the host would have answered.
 
     A module function rather than a method, because this class is no longer the only thing that
     sends. The bridge refuses a send carrying no settings precisely so that nothing inherits a
