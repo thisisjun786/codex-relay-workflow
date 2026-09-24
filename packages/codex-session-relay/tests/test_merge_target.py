@@ -313,3 +313,48 @@ class TheCommandLineAgainstARealTarget(RelayTestCase):
             cli.main(["merge-turn-restate-base", "--help"])
         self.assertEqual(caught.exception.code, 0)
         self.assertIn("--observed-base-sha", buffer.getvalue())
+
+    def rows(self):
+        """Every row of every table in the store the commands wrote."""
+        db = sqlite3.connect(os.path.join(self.state, "relay.sqlite3"))
+        try:
+            names = [name for (name,) in db.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")]
+            return {name: sorted(repr(row) for row in db.execute('SELECT * FROM "' + name + '"'))
+                    for name in names}
+        finally:
+            db.close()
+
+    def test_a_malformed_review_is_refused_by_name_and_the_restated_one_merges(self):
+        """CRW-232: the CRW-124 G1c call, through the command a parent runs.
+
+        The parent restated threadsSeen as the forge's count and unresolved as a list, and the
+        command ended as exit 3 {error: host, TypeError}, which reads as a broken relay. It is
+        refused by name, exit 2, naming the field and the shape it should have, and no row of
+        the store changes, so correcting the argument and checking again is the whole recovery.
+        An absent field keeps its own refusal, and the record the parent restated next merges.
+        """
+        self.ok("linkage-bind", "--role", "parent", "--scope", "PRJ-A", "--task", "task-alpha",
+                "--host", "host-a")
+        turn = self.claim(self.a1)
+        command = list(self.check(turn, self.a1, self.base))
+        at = command.index("--review") + 1
+        stated = {"hasNextPage": False, "pagesRead": 1, "totalCount": 1}
+        for review, fragment in (
+                (dict(stated, threadsSeen=1, unresolved=[]),
+                 "threadsSeen is a list of thread identifiers, not a int"),
+                (dict(stated, threadsSeen=["thread-1"], unresolved=[]),
+                 "unresolved is a whole number, not a list"),
+        ):
+            command[at] = json.dumps(review)
+            before = self.rows()
+            refused = self.refused("merge_evidence_malformed", *command)
+            self.assertIn(fragment, refused["detail"])
+            self.assertEqual(self.rows(), before)
+
+        command[at] = json.dumps(dict(stated, unresolved=0))
+        unstated = self.refused("merge_review_incomplete", *command)
+        self.assertIn("does not state threadsSeen", unstated["detail"])
+
+        command[at] = GREEN
+        self.assertEqual(self.ok(*command)["state"], "merging")

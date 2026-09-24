@@ -171,6 +171,11 @@ pull request is itself in that situation with `scripts/crw_runtime/components.js
   `totalCount`, `threadsSeen` and `unresolved` must all be present before any is read.
   Absent used to read as satisfied at every one of them, so a record saying nothing passed
   the whole check.
+  Each also has its type: `hasNextPage` true or false, the two counts and `unresolved` whole
+  numbers, `threadsSeen` a list of thread identifier strings. `merge-turn-check` asks that
+  first (CRW-232) and refuses a wrong one as `merge_evidence_malformed` before it reads the
+  turn or the target, recording nothing, because a count given as `threadsSeen` raised as a
+  host fault and a string `threadsSeen` or a list `unresolved` passed.
 - **Every identity here is asserted, not authenticated.** `--actor`, `--task` and the forge
   evidence passed to `merge-turn-check` are all caller-supplied, and this package has no
   transport authentication to check them against. What the ownership rules buy is that a
