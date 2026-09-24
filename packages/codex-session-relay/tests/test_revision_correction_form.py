@@ -169,6 +169,18 @@ class WhatTheVerdictRecordCannotAnswer(_Revisions):
             self.assertIn("ask the parent", section(message, name))
             self.assertNotIn("full record", section(message, name))
 
+    def test_a_finding_without_a_note_says_its_reason_is_not_recorded(self):
+        # A relationship with no registered criteria records needs_changes without a note, so
+        # FIX SCOPE would send the child to change c-1 with nothing saying what is wrong with it.
+        _source, revision = self.revision([{"id": "c-1", "verdict": "needs_changes"}])
+        plain = self.delivery.render_message(revision)
+        self.assert_correction_form(plain)
+        self.assertIn("c-1: needs_changes — no note recorded; ask the parent", plain)
+        self.with_report(revision)
+        composed = self.delivery.render_message(revision)
+        self.assert_correction_form(composed)
+        self.assertIn("c-1: needs_changes - no note recorded; ask the parent", composed)
+
     def test_a_review_is_the_source_when_the_verdict_recorded_none(self):
         _source, revision = self.revision(None)
         stored = self.with_report(revision, review={
