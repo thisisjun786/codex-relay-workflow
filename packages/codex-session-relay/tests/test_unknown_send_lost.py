@@ -20,6 +20,7 @@ host lost afterwards (CRW-224, host_lost_turn); and a delivery waiting on the re
 cap (O-H0R4-2), staged by filling the recipient's window.
 """
 
+import json
 import os
 import shlex
 import unittest
@@ -894,3 +895,158 @@ class TheHourlyCapIsNamedWithItsReopenTime(UnknownSendCase):
         record = self.attempt(event_id)
         self.assertEqual(record["deliveryState"], DISPATCHED)
         self.assertIsNone(self.status_of(event_id).get("pacing"))
+
+class AHoldReachesItsFaultWhateverTheSweepSawFirst(UnknownSendCase):
+    """CRW-124 R5 F-R5-1: in live timing the fault sweep reads the settled uncertain attempt about
+    twenty seconds after the send, before the 61 s allowance lets any reading name a hold, and
+    records it degraded. The hold, named later, has to reach the same fault as broken and name
+    itself whatever the sweep recorded first."""
+
+    def stall(self):
+        return self.store.one("SELECT * FROM fault_ledger WHERE fault_class = 'delivery_stalled'")
+
+    def keys(self):
+        return sorted(row["occurrence_key"] for row in self.store.all(
+            "SELECT o.occurrence_key FROM fault_occurrences o"
+            "  JOIN fault_ledger f ON f.fault_id = o.fault_id"
+            " WHERE f.fault_class = 'delivery_stalled'"))
+
+    def publications(self):
+        return [(row["trigger_key"], row["summary"]) for row in self.store.all(
+            "SELECT p.trigger_key, p.summary FROM fault_publications p"
+            "  JOIN fault_ledger f ON f.fault_id = p.fault_id"
+            " WHERE f.fault_class = 'delivery_stalled' ORDER BY p.rowid")]
+
+    def assert_broken_naming(self, hold):
+        self.assertEqual(self.fault_states(), [(faults.OPEN, faults.BROKEN)])
+        self.assertIn(f"is held: {hold}", self.stall()["detail"])
+
+    def test_a_hold_named_after_the_sweep_recorded_its_attempt_breaks_the_fault(self):
+        event_id, first = self.unknown_send()
+        self.clock.advance(20)
+        self.assertEqual(self.fault_states(), [(faults.OBSERVED, faults.DEGRADED)])
+        self.ticks(1)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assert_broken_naming(UNKNOWN_LOST)
+        # Two readings of one attempt: the attempt, and the hold named on it.
+        self.assertEqual(self.keys(), [f"delivery:{first}", f"delivery:{first}:held:{UNKNOWN_LOST}"])
+        self.assertEqual(self.stall()["occurrence_count"], 2)
+        opened = [summary for trigger, summary in self.publications() if trigger == "open"]
+        self.assertTrue(opened, self.publications())
+        self.assertIn("severity: broken", opened[-1])
+        self.assertIn(f"is held: {UNKNOWN_LOST}", opened[-1])
+        self.assertEqual(self.sends_to(), [first])
+
+    def test_an_undecided_hold_named_after_the_sweep_breaks_the_fault_too(self):
+        event_id, first = self.unknown_send(history=False)
+        self.clock.advance(20)
+        self.assertEqual(self.fault_states(), [(faults.OBSERVED, faults.DEGRADED)])
+        self.ticks(1)
+        self.assert_held(event_id, first, UNDECIDED, f"{UNDECIDED}:listing_empty")
+        self.assert_broken_naming(UNDECIDED)
+
+    def test_a_fault_already_open_degraded_escalates_when_the_hold_is_named(self):
+        """The R5 shape: earlier occurrences for the same recipient and attempt state had already
+        opened the fault degraded when this hold was named."""
+        event_id, first = self.unknown_send()
+        self.clock.advance(20)
+        batch = faultsweep.sweep(self.store)
+        seen = [entry for entry in batch["observations"]
+                if entry["faultClass"] == "delivery_stalled"]
+        self.assertEqual([entry["occurrenceKey"] for entry in seen], [f"delivery:{first}"])
+        ledger = faults.FaultLedger(self.store, self.clock)
+        faultsweep.record_all(ledger, batch, store=self.store)
+        for n in (1, 2):
+            ledger.record(dict(seen[0], occurrenceKey=f"delivery:earlier-{n}"))
+        self.assertEqual(self.fault_states(), [(faults.OPEN, faults.DEGRADED)])
+        self.ticks(1)
+        self.assert_broken_naming(UNKNOWN_LOST)
+        escalated = [summary for trigger, summary in self.publications()
+                     if trigger == "escalate:broken"]
+        self.assertTrue(escalated, self.publications())
+        self.assertIn(f"is held: {UNKNOWN_LOST}", escalated[-1])
+
+    def test_a_hold_named_before_any_sweep_keeps_its_name_through_later_sweeps(self):
+        event_id, first = self.unknown_send()
+        self.ticks(1)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assert_broken_naming(UNKNOWN_LOST)
+        self.clock.advance(700)
+        self.assert_broken_naming(UNKNOWN_LOST)
+        self.assertEqual(self.keys(), [f"delivery:{first}:held:{UNKNOWN_LOST}"])
+        self.assertEqual(self.stall()["occurrence_count"], 1)
+
+    def test_a_host_lost_turn_held_after_two_losses_keeps_its_keys(self):
+        """CRW-224 unchanged: each lost attempt is one occurrence under its own request id."""
+        event_id, first, turn = self.dispatched()
+        self.host_loses(turn)
+        self.ticks(1)
+        second = self.attempts_for(event_id)[1]
+        self.host_loses(json.loads(second["record"])["turnId"])
+        self.ticks(4)
+        self.assertEqual(self.delivery_row(event_id)["hold_reason"], HOST_LOST)
+        self.fault_states()
+        self.assertEqual(self.keys(), [f"delivery:{first}", f"delivery:{second['request_id']}"])
+
+    def test_an_unknown_send_held_after_a_host_loss_reads_both_attempts(self):
+        event_id, first, turn = self.dispatched()
+        self.host_loses(turn)
+        self.adapter.script("transport_unknown")
+        self.ticks(1)
+        second = self.attempts_for(event_id)[1]["request_id"]
+        self.adapter.set_status(PARENT, "notLoaded")
+        self.ticks(3)
+        self.assert_held(event_id, second, UNKNOWN_LOST, NO_TRACE)
+        self.fault_states()
+        self.assertEqual(self.keys(),
+                         [f"delivery:{first}", f"delivery:{second}:held:{UNKNOWN_LOST}"])
+
+
+class ASupersededHoldNamesTheSupersession(UnknownSendCase):
+    """CRW-124 R5 O-R5-1: after the parent recovered by opening a new generation, reconcile on the
+    old generation's held attempt still named parent_recovers_unknown_send_lost, while status
+    called the delivery superseded. Nothing is owed on it any more."""
+
+    def test_a_held_send_a_new_generation_replaced_names_the_supersession(self):
+        event_id, first = self.unknown_send()
+        self.ticks(1)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.adapter.start_turn(CHILD, turn_id="turn-dispatch-2", status="inProgress")
+        self.registry.open_generation(self._rid, dispatch_request_id="dispatch-2",
+                                      reason="needs_changes_revision",
+                                      dispatch_turn_id="turn-dispatch-2")
+        outcome = self.reconciler.reconcile_attempt(first, self.adapter)
+        self.assertEqual((outcome.get("nextExpectedAction"), outcome.get("reason")),
+                         ("none", "superseded:stale_generation"))
+        self.assertNotIn("recovery", outcome)
+        item = self.status_of(event_id)
+        self.assertEqual((item["phase"], item["reported"]),
+                         ("superseded:stale_generation", "superseded:stale_generation"))
+        self.ticks(3, seconds=700)
+        self.assertEqual(self.sends_to(), [first])
+
+    def test_a_held_correction_its_generation_answered_names_the_child_disposition(self):
+        _completion, correction = self.correction_after_needs_changes()
+        self.adapter.start_turn(CHILD, turn_id="child-earlier", status="completed")
+        self.clock.advance(300)
+        self.adapter.script("transport_unknown")
+        record = self.attempt(correction)
+        self.adapter.set_status(CHILD, "notLoaded")
+        self.clock.advance(120)
+        self.reconciler.reconcile_attempt(record["requestId"], self.adapter)
+        row = self.delivery_row(correction)
+        self.assertEqual((row["state"], row["hold_reason"]), (HELD_UNCERTAIN, UNKNOWN_LOST))
+        # The App Server applied the unanswered turn/start after all; the operator binds the
+        # generation to the turn its dispatch receipt names (generation-bind), and the child
+        # answers the generation with a final event of its own.
+        self.adapter.start_turn(CHILD, turn_id="child-late", status="failed")
+        self.registry.bind_anchor(self._rid, 2, dispatch_turn_id="child-late",
+                                  source="dispatch_receipt")
+        relationship = self.registry.get(self._rid)
+        turn = self.assigned_turn("failed", thread=CHILD, turn="child-late")
+        self.accept(self.execution_payload(relationship, "failed", generation=2, turn=turn))
+        outcome = self.reconciler.reconcile_attempt(record["requestId"], self.adapter)
+        self.assertEqual((outcome.get("nextExpectedAction"), outcome.get("reason")),
+                         ("parent_reads_child_disposition", "superseded:superseded_revision"))
+        self.assertNotIn("recovery", outcome)
+        self.assertEqual(self.sends_to(CHILD), [record["requestId"]])
