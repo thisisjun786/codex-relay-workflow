@@ -257,10 +257,35 @@ class APreSendRefusal(SettingsHoldCase):
                          ("pre_send", RefusalReason.SETTINGS_UNAVAILABLE.value))
         self.assertEqual(item["recovery"]["actor"], "operator")
         self.assert_settings_show(item["recovery"]["command"])
+        # The record itself was refused: the step is the record, not the thread (Devin on
+        # 1f0f5a89 found the same gap for the role gate).
+        self.assertIn("record it again from the creation result", item["recovery"]["then"])
+        self.assertNotIn("bring the recipient back", item["recovery"]["then"])
         self.assertEqual(self.next_action(), OPERATOR_RESTORES_SETTINGS_ACTION)
         [observation] = self.observations(faultsweep.refusal_faults, event_id)
         [recovery] = self.evidence(observation, "recovery")
         self.assertEqual(recovery["actor"], "operator")
+
+    def test_a_role_gate_refusal_names_its_own_repair(self):
+        """RED: the role gate's refusals were told to restore or re-record the recipient's
+        settings, which changes neither (Devin on 1f0f5a89)."""
+        for reason, step in ((RefusalReason.ROLE_POLICY_UNCONFIGURED, "restart"),
+                             (RefusalReason.ROLE_BINDING_MISMATCH, "do not re-record")):
+            with self.subTest(reason=reason.value):
+                _relationship, event_id = self.queued_event()
+                row = self.delivery_row(event_id)
+                self.delivery._withhold_settings(
+                    event_id, self.clock.now(), DeliveryRefused(reason, "gate"),
+                    attempts=row["attempt_count"], row=row)
+                item = self.status_of(event_id)
+                self.assertEqual((item["settingsHold"]["source"], item["settingsHold"]["reason"]),
+                                 ("pre_send", reason.value))
+                recovery = item["recovery"]
+                self.assertEqual(recovery["actor"], "operator")
+                self.assertIn(step, recovery["then"])
+                self.assertNotIn("settings-record --source", recovery["then"])
+                self.assertEqual(self.recovery().get("then"), recovery["then"])
+                self.clock.advance(1)
 
     def test_a_withhold_that_did_not_take_effect_earns_no_recovery(self):
         """GREEN: its refusal is still counted, and nothing names a hold the row is not in."""

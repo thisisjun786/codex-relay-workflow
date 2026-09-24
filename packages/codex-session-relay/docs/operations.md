@@ -400,7 +400,11 @@ the recipient reads it); the source says where the cause was read. `recovery` is
 command, then, laterDeliveries}` with the command rendered for this store: a withheld hold is the
 operator's (`settings-show --task <recipient>`, then bring the recipient back under its recorded
 settings or re-record it with `--source user_transition`), except a host answer that left a
-setting out, which the daemon may clear itself; a capped or closed-channel hold is the parent's
+setting out, which the daemon may clear itself, and the role gate's two refusals, which name their
+own repair (`role_policy_unconfigured`: give the relay process its role policy and restart it;
+`role_binding_mismatch`: fix the binding or the creation, never re-record over it) and a refusal
+of the record itself (missing, incomplete, mistyped, an unsupported sandbox type, or behind its
+role's pair), whose step is recording it again; a capped or closed-channel hold is the parent's
 (`show --event` for the stored report), with the operator's or the thread owner's step for later
 deliveries. assignment-show names the same actor as `operator_restores_recipient_settings` or
 `parent_recovers_settings_hold`, for a completion and for a revision request to the child alike

@@ -159,6 +159,32 @@ LATER_BY_OWNER = (
     "for later deliveries, the thread's owner switches it back to an approval policy this"
     " transport carries (never or on-request)"
 )
+# Refusals whose repair is not the thread's settings, each with its own step (Devin on 1f0f5a89):
+# the role gate's two (docs/role-execution-policy.md, "What each refusal means"), which neither
+# bringing the thread back under its record nor re-recording it repairs, and the record's own
+# refusals, where there is no record to bring the thread back under.
+HOLD_REFUSAL_THEN = {
+    RefusalReason.ROLE_POLICY_UNCONFIGURED.value: (
+        "the sending relay process has no declared role policy and the recipient is role-bound:"
+        " set the role policy variable for the relay process and restart it, and the withheld"
+        " delivery resumes by itself; re-recording settings does not change this"
+    ),
+    RefusalReason.ROLE_BINDING_MISMATCH.value: (
+        "the task's cited role and its bound role disagree, or its recorded pair is not that"
+        " role's pair: fix the binding or the creation; do not re-record over it"
+    ),
+    # The record itself refused before any host call: there is nothing to bring the thread back
+    # under, so the step is the record (settings-show names what is missing or wrong).
+    **{code: (
+        "the recipient's authorization record was refused before any host call (missing,"
+        " incomplete, mistyped, a sandbox type this transport cannot carry, or behind its role's"
+        " current pair): record it again from the creation result or a user-attributed source"
+        " (settings-record --source user_transition), and the next pass reads it again"
+    ) for code in (RefusalReason.SETTINGS_UNAVAILABLE.value, RefusalReason.SETTINGS_INCOMPLETE.value,
+                   RefusalReason.SETTINGS_MISTYPED.value,
+                   RefusalReason.UNSUPPORTED_SANDBOX_TYPE.value,
+                   RefusalReason.SETTINGS_RECORD_STALE_FOR_ROLE.value)},
+}
 
 
 def settings_hold_recovery(kind, code, source, *, revision=False) -> dict:
@@ -169,15 +195,20 @@ def settings_hold_recovery(kind, code, source, *, revision=False) -> dict:
     if source == "undetermined":
         return {"actor": "operator", "command": SHOW_EVENT, "then": HOLD_UNDETERMINED_THEN,
                 "laterDeliveries": None}
+    role_then = HOLD_REFUSAL_THEN.get(code)
     if kind == "capped":
         return {"actor": "parent", "command": SHOW_EVENT, "then": HOLD_CAPPED_THEN,
-                "laterDeliveries": LATER_BY_OPERATOR}
+                "laterDeliveries": ("for later deliveries, " + role_then) if role_then
+                else LATER_BY_OPERATOR}
     if kind == "channel_closed":
         return {"actor": "parent", "command": SHOW_EVENT,
                 "then": HOLD_CORRECTION_CHANNEL_THEN if revision else HOLD_CHANNEL_THEN,
                 "laterDeliveries": LATER_BY_OWNER}
     if code in DAEMON_SETTINGS_CODES:
         return {"actor": "daemon", "command": SETTINGS_SHOW, "then": HOLD_DAEMON_THEN,
+                "laterDeliveries": None}
+    if role_then:
+        return {"actor": "operator", "command": SETTINGS_SHOW, "then": role_then,
                 "laterDeliveries": None}
     return {"actor": "operator", "command": SETTINGS_SHOW, "then": HOLD_OPERATOR_THEN,
             "laterDeliveries": None}
