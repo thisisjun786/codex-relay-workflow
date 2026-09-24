@@ -131,6 +131,8 @@ class TurnPresence:
     seen names every listed turn read before the stop: the turns begun since the send, which is
     where the delivered message could be if it is anywhere. seen_turns carries the same turns with
     their status and start, so a reader can tell whether any of them is still running (CRW-231).
+    stop_turn is the turn an older_than_send listing stopped at: the newest turn begun before the
+    send, and so the one turn a turn/start could have steered, which leaves its message there.
 
     older names the listed turns known to have begun before the send: the one the listing stopped
     at and the older ones on its page. Only their items end a token scan (find_token_in).
@@ -146,6 +148,7 @@ class TurnPresence:
     seen: tuple = ()
     older: tuple = ()
     seen_turns: tuple = ()
+    stop_turn: TurnInfo | None = None
 
 
 def find_in_listing(pages, turn_id: str, sent_at: float) -> TurnPresence:
@@ -174,7 +177,7 @@ def find_in_listing(pages, turn_id: str, sent_at: float) -> TurnPresence:
                                     tuple(seen_turns))
             if turn.started_at is not None and turn.started_at <= cutoff:
                 return TurnPresence(TURN_ABSENT, None, scanned, "older_than_send", tuple(seen),
-                                    _older(turns[index:], cutoff), tuple(seen_turns))
+                                    _older(turns[index:], cutoff), tuple(seen_turns), turn)
             seen.append(turn.turn_id)
             seen_turns.append(turn)
         if not follows:

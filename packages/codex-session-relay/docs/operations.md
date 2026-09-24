@@ -657,10 +657,13 @@ which could never settle it, and the only signal was a `delivery_stalled` fault 
 publish threshold. The child's report never reached the parent.
 
 Reconciliation now asks the recipient one more question for such a send. It applies when the
-transport settled the receipt with no turn id and nothing affirmative: `outcome_unknown`, or a
-failed `initialize` or `turn/start` it cannot call a refusal. An `in_progress_or_unknown` receipt is
-still the transport's to answer and is not read this way; neither is a missing or unreadable one.
-Once the thread-wide scan has not found the message, the relay reads the recipient's turns begun
+receipt carries no turn id and nothing affirmative. Only a receipt the transport settled, such as
+`outcome_unknown` or a failed `initialize` or `turn/start` it cannot call a refusal, allows a loss.
+An `in_progress_or_unknown` receipt, which a transport that crashed mid-request leaves for good, and
+a missing one are read the same way. Where the recipient keeps no trace, they are held undecided as
+`receipt_unsettled` or `receipt_missing` instead: the transport never said the send was over, so
+nothing sends it again, and a receipt that settles later lets the ordinary rule decide. An
+unreadable receipt takes no reading. Once the thread-wide scan has not found the message, the relay reads the recipient's turns begun
 since the send and its items since the send, by the same rules as the lost-turn check above: the
 same 61-second allowance, the same listing back to the first turn that began before the send, and
 the same token scan, which passes over agent output and names a token found only in another item
@@ -670,7 +673,13 @@ type. The send is concluded lost (`unknown_send_lost`) only when all of these ho
 - the listing reached the send, and no turn begun since it is still running. A running turn could
   be the send's own with its message not readable yet, so the relay reads again once it ends;
 - the scan covered every item since the send and found neither the message nor another item
-  carrying its token.
+  carrying its token;
+- the newest turn begun before the send, the one turn a `turn/start` could have steered, has
+  ended and its own items, read oldest first up to 2000, do not hold the message. The since-send
+  scan stops at that turn's items, and when the turn ran on after the message, the thread-wide
+  scan's 200 newest items do not reach it either. While that turn still runs, the relay reads
+  again once it ends. If it ran past 2000 items, the send is held undecided rather than
+  redelivered.
 
 Whether the host never received the message or received it and lost it, the recipient does not
 have it, and a completion is treated like one whose accepted turn the host lost. The attempt's
@@ -686,7 +695,8 @@ An acknowledgement that answers the attempt, or a later attempt, leaves everythi
 
 Some readings cannot decide however long the relay waits: a listing that never reached the send,
 a listing with no turns at all, a scan that could not cover the items since the send, the token
-only in an item that is neither the message nor agent output, or an attempt with no send time. The
+only in an item that is neither the message nor agent output, an attempt with no send time, or a
+receipt the transport never settled or does not hold. The
 delivery then stays `held_uncertain` and is held under `unknown_send_undecided`, with the reason on
 the attempt as `unknown_send_undecided:<reason>` and in `assignment-show` as
 `projection.completion.delivery.turnCheck`. Nothing sends it again. A later reading that decides
@@ -694,7 +704,10 @@ replaces the hold: a message found confirms the delivery from its token as befor
 scan with no trace records the loss. A reading that is merely not ready - the send too recent, a
 turn still running, the host unreadable - keeps the attempt `held_uncertain` with the answer
 `daemon_reconciles_delivery`, which is then true: the daemon reads the attempt again on its next
-tick instead of waiting for the recipient's items to change. Every settlement that leaves an
+tick instead of waiting for the recipient's items to change. An undecided hold is read again every
+ten minutes too, like an undecided turn check, because a turn list that changes without new items
+leaves the daemon's fingerprint as it was; a pass that reads nothing new keeps the hold, and
+`reconcile` still names the parent for it. Every settlement that leaves an
 attempt `held_uncertain` without evidence also clears the row's dispatch evidence and turn, as
 the sender's own settlement of such a receipt does, so a host loss's value never stays on a row
 whose current send is uncertain.
@@ -726,7 +739,10 @@ from 16:42:25Z until the 17:00Z window opened. Nothing named the cap or when it 
 `status` now carries `pacing` on such a delivery, and a plain queued one reads the phase
 `awaiting_send:hourly_cap`. `assignment-show` carries the same block as
 `projection.completion.delivery.pacing` (and on the correction's delivery), read in the same
-statement as the delivery, so the reason and `reopensAt` agree with the row. Its
+statement as the delivery and against the budget the delivery service paces by, so the reason and
+`reopensAt` agree with the row. A spent cap is named before the gap when both hold, because the cap
+is what keeps the delivery waiting. A cap of zero reopens at no time, and `pacing.detail` says only
+a changed policy reopens it. Its
 `nextExpectedAction` stays `daemon_delivers`, which is true: the daemon sends it once the window
 reopens. A delivery refused by the hourly cap, before or inside its claim, is rescheduled to the
 window's end; one refused by the minimum gap keeps the gap from now.

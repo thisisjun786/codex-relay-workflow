@@ -141,18 +141,24 @@ class RetryPolicy:
 
         sends is the count in now's window and last the newest send the gap reaches, as rate_windows
         bounds them. The one rule every reader applies, so status, assignment-show and the claim cannot
-        disagree about why a delivery waits (CRW-224 H7, O-H0R4-2). reopensAt is None for a cap of zero,
-        which refuses every send in every window. A clock-ahead row in a later window can still refuse
-        the send at reopensAt; that is read then, like every other pacing.
+        disagree about why a delivery waits (CRW-124 H7, O-H0R4-2). A spent cap is named before the
+        gap: when both hold, the cap is what keeps the delivery waiting, and its window's end (or the
+        gap's, if later) is when it reopens. reopensAt is None for a cap of zero, which refuses every
+        send in every window, and says so. A clock-ahead row in a later window can still refuse the
+        send at reopensAt; that is read then, like every other pacing.
         """
         window, _earliest = self.rate_windows(now)
         sends = sends or 0
         cap = self.max_sends_per_recipient_per_hour
         gap_ends = None if last is None else last + self.min_send_interval_seconds
         reading = {"sends": sends, "cap": cap, "windowStart": window}
+        if sends >= cap:
+            if cap <= 0:
+                return {"reason": HOURLY_CAP, "reopensAt": None, **reading,
+                        "detail": "a cap of zero refuses every send; only a changed policy"
+                                  " reopens it"}
+            reopens = max(window + RATE_WINDOW_SECONDS, gap_ends or 0)
+            return {"reason": HOURLY_CAP, "reopensAt": reopens, **reading}
         if gap_ends is not None and now < gap_ends:
             return {"reason": MIN_SEND_INTERVAL, "reopensAt": gap_ends, **reading}
-        if sends >= cap:
-            reopens = None if cap <= 0 else max(window + RATE_WINDOW_SECONDS, gap_ends or 0)
-            return {"reason": HOURLY_CAP, "reopensAt": reopens, **reading}
         return None

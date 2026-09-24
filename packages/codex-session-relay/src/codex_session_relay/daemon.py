@@ -38,6 +38,18 @@ DAEMON_OWNER = DELIVERER_OWNER
 # How long an undecided recipient-turn reading waits before it is read again (hostloss.py). Such a
 # reading will not change by waiting a tick, and each read can page far back through the parent.
 UNDECIDED_RECHECK_SECONDS = 600.0
+# The name an undecided reading of an uncertain send leaves on its attempt (hostloss.py).
+UNKNOWN_UNDECIDED_MARK = "unknown_send_undecided:"
+
+
+def _age(stamp, now) -> float:
+    """Seconds since an ISO stamp the store wrote; an unreadable one is treated as due."""
+    from datetime import datetime
+
+    try:
+        return now - datetime.fromisoformat(stamp).timestamp()
+    except (TypeError, ValueError):
+        return float("inf")
 
 
 @dataclass
@@ -986,6 +998,14 @@ class RelayDaemon:
         if row is None or row["retry_required"]:
             # Owed work is recorded, not inferred. A failure last tick means we reconcile now
             # even if every reading looks identical.
+            return True, fingerprint
+        if (attempt["recipient_scan"] or "").startswith(UNKNOWN_UNDECIDED_MARK) and (
+                _age(row["updated_at"], self.clock.now())
+                >= UNDECIDED_RECHECK_SECONDS):
+            # An uncertain send held undecided (hostloss.read_unknown_send) turns on the
+            # recipient's turn list, which the fingerprint does not read: a turn that shows up
+            # without items changes nothing here. So it is read again on the same interval as
+            # an undecided turn check, whatever the fingerprint says (Devin on d369a9e7).
             return True, fingerprint
         return fingerprint != row["fingerprint"], fingerprint
 

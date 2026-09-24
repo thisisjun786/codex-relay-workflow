@@ -254,8 +254,10 @@ class Reconciler:
         operation_observation = "missing"
         receipt = None
         facts = None
+        receipt_read = False
         try:
             receipt = adapter.get_operation(request_id)
+            receipt_read = True
         except Exception as error:
             operation_observation = f"unreadable: {type(error).__name__}: {error}"
         if receipt is not None:
@@ -295,12 +297,16 @@ class Reconciler:
         except Exception as error:
             scan_detail = f"unreadable: {type(error).__name__}: {error}"
 
-        # Step three, for a send the transport settled without an answer: the recipient's turns
-        # and items since the send (CRW-231). Not gated on the thread-wide scan's exhaustion: the
-        # since-send scan decides its own coverage, and names a bound it could not pass.
+        # Step three, for a send with no turn id and nothing affirmative: the recipient's turns and
+        # items since the send (CRW-231). Not gated on the thread-wide scan's exhaustion: the
+        # since-send scan decides its own coverage, and names a bound it could not pass. Only a
+        # receipt the transport settled allows a loss; an unsettled or missing one is held by name
+        # where it would find no trace. An unreadable receipt takes no reading at all.
         reading = None
-        if scanned and _unanswered(facts):
-            reading = hostloss.read_unknown_send(adapter, self.clock, attempt, delivery)
+        answer = _receipt_answer(facts) if receipt_read else None
+        if scanned and answer is not None:
+            reading = hostloss.read_unknown_send(adapter, self.clock, attempt, delivery,
+                                                 receipt=answer)
             if reading["finding"] == hostloss.PRESENT:
                 # The message reached the recipient after the thread-wide scan read past it.
                 found = TokenScan(True, reading["turnId"], False, 0)
@@ -322,7 +328,15 @@ class Reconciler:
             ))
         if reading is not None:
             outcome["recipientTrace"] = reading
-        outcome.update(_awaiting(delivery["kind"], outcome, reading))
+        # Who moves it next is read from what is now stored, not only from this pass's reading: a
+        # pass that could not read keeps an earlier undecided hold, and the delivery is still the
+        # parent's (Devin on d369a9e7).
+        stored = self.store.one(
+            "SELECT d.hold_reason, a.recipient_scan FROM attempts a"
+            " JOIN deliveries d ON d.event_id = a.event_id WHERE a.request_id = ?",
+            (request_id,),
+        )
+        outcome.update(_awaiting(delivery["kind"], outcome, reading, stored))
         return outcome
 
     def _settle_dispatched(self, attempt, delivery, facts, observation, adapter, now) -> dict:
@@ -745,19 +759,25 @@ class Reconciler:
         }
 
 
-def _unanswered(facts) -> bool:
-    """A receipt the transport settled with no turn id and no affirmative evidence.
+def _receipt_answer(facts):
+    """How the transport answered for an uncertain send with no turn id, or None when it did.
 
-    outcome_unknown, or a failed initialize or turn/start it cannot call a refusal: turn/start may
-    have gone out and nothing will answer it now. An unfinished receipt is still the transport's to
-    answer, and a missing or unreadable one says nothing, so neither is read further here.
+    settled: outcome_unknown, or a failed initialize or turn/start it cannot call a refusal -
+    turn/start may have gone out and nothing will answer it now. unsettled: in_progress_or_unknown,
+    which a transport that crashed mid-request leaves for good. missing: the transport holds no
+    receipt for the request id. None for a receipt carrying a turn id or a retry-safe rejection,
+    which the steps before this one settle.
     """
-    return (facts is not None and facts.delivery_state == HELD_UNCERTAIN
-            and facts.transport_receipt_status != UNFINISHED
-            and not facts.turn_id and not facts.retry_safe)
+    if facts is None:
+        return hostloss.MISSING_RECEIPT
+    if facts.delivery_state != HELD_UNCERTAIN or facts.turn_id or facts.retry_safe:
+        return None
+    if facts.transport_receipt_status == UNFINISHED:
+        return hostloss.UNSETTLED_RECEIPT
+    return hostloss.SETTLED_RECEIPT
 
 
-def _awaiting(kind, outcome, reading) -> dict:
+def _awaiting(kind, outcome, reading, stored=None) -> dict:
     """Who moves an uncertain send next, and why, in the words assignment-show uses (CRW-231).
 
     Only for outcomes this reconciliation left uncertain or lost; a promotion or a pre-send
@@ -786,6 +806,11 @@ def _awaiting(kind, outcome, reading) -> dict:
         return {"nextExpectedAction": (CORRECTION_HELD_ACTION if correction
                                        else UNKNOWN_SEND_UNDECIDED_ACTION),
                 "reason": hostloss.UNKNOWN_UNDECIDED_MARK + reading["undecided"]}
+    if stored is not None and stored["hold_reason"] == UNKNOWN_SEND_UNDECIDED:
+        # Held undecided by an earlier reading, and this pass decided nothing.
+        return {"nextExpectedAction": (CORRECTION_HELD_ACTION if correction
+                                       else UNKNOWN_SEND_UNDECIDED_ACTION),
+                "reason": stored["recipient_scan"] or UNKNOWN_SEND_UNDECIDED}
     return {"nextExpectedAction": (CORRECTION_UNCONFIRMED_ACTION if correction
                                    else RECONCILE_ACTION),
             "reason": (reading or {}).get("detail") or outcome.get("missing")}

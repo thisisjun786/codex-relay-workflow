@@ -285,34 +285,63 @@ class TheListingSinceASendWithNoTurnId(unittest.TestCase):
         self.assertEqual([turn.status for turn in presence.seen_turns], ["completed"])
 
 
-class ASendTheTransportHasNotAnsweredIsNotReadAsLost(UnknownSendCase):
-    """The rule reads only a receipt the transport settled. An unfinished one is still the
-    transport's to answer, and no receipt at all says nothing: neither is ever redelivered."""
+class ASendTheTransportHasNotAnsweredIsHeldNotRedelivered(UnknownSendCase):
+    """Only a receipt the transport settled allows a loss. An unfinished one - what a transport
+    that crashed mid-request leaves for good - or none at all is held for the parent by name where
+    the recipient keeps no trace, and is never sent again (independent review of d369a9e7)."""
 
-    def test_an_unfinished_receipt_stays_the_daemons_to_reconcile(self):
+    def unfinished(self):
         self.parent_history()
         _relationship, event_id = self.queued_event()
         self.adapter.script("in_progress")
-        first = self.attempt(event_id)["requestId"]
+        return event_id, self.attempt(event_id)["requestId"]
+
+    def test_an_unfinished_receipt_is_held_for_the_parent_by_name(self):
+        event_id, first = self.unfinished()
         self.clock.advance(120)
         outcome = self.reconciler.reconcile_attempt(first, self.adapter)
-        self.assertNotIn("recipientTrace", outcome)
-        self.assertEqual(outcome.get("nextExpectedAction"), "daemon_reconciles_delivery")
+        self.assertEqual((outcome.get("nextExpectedAction"), outcome.get("reason")),
+                         ("parent_recovers_unknown_send_undecided",
+                          "unknown_send_undecided:receipt_unsettled"))
         self.ticks(3)
+        row = self.delivery_row(event_id)
+        self.assertEqual((row["state"], row["hold_reason"]), (HELD_UNCERTAIN, UNDECIDED))
+        self.assertEqual(self.next_action(), "parent_recovers_unknown_send_undecided")
         self.assertEqual(self.attempt_states(event_id), [HELD_UNCERTAIN])
         self.assertEqual(len(self.adapter.sends), 1)
 
-    def test_a_claim_with_no_receipt_stays_the_daemons_to_reconcile(self):
+    def test_a_receipt_that_settles_later_lets_the_rule_decide(self):
+        event_id, first = self.unfinished()
+        self.ticks(1)
+        self.assertEqual(self.delivery_row(event_id)["hold_reason"], UNDECIDED)
+        # The transport comes back and settles the request as sent with no answer.
+        self.adapter.ledger[first] = dict(self.adapter.ledger[first], status="outcome_unknown",
+                                          error="TransportError: turn/start: no answer")
+        self.ticks(1)
+        self.assertEqual(self.attempt_states(event_id), [UNKNOWN_LOST, DISPATCHED])
+        self.assertEqual(len(self.adapter.sends), 2)
+
+    def test_a_claim_with_no_receipt_is_held_for_the_parent_by_name(self):
         self.parent_history()
         _relationship, event_id = self.queued_event()
         _attempt_no, request_id, _message = self.delivery._claim(
             event_id, now=self.clock.now(), owner="relay", recipient=PARENT)
         self.clock.advance(120)
         outcome = self.reconciler.reconcile_attempt(request_id, self.adapter)
-        self.assertNotIn("recipientTrace", outcome)
-        self.assertEqual(outcome.get("nextExpectedAction"), "daemon_reconciles_delivery")
+        self.assertEqual((outcome.get("nextExpectedAction"), outcome.get("reason")),
+                         ("parent_recovers_unknown_send_undecided",
+                          "unknown_send_undecided:receipt_missing"))
         self.assertEqual(self.attempt_states(event_id), [HELD_UNCERTAIN])
         self.assertEqual(self.adapter.sends, [])
+
+    def test_an_unreadable_receipt_takes_no_reading(self):
+        event_id, first = self.unfinished()
+        self.clock.advance(120)
+        self.adapter.fail_reads("get_operation")
+        outcome = self.reconciler.reconcile_attempt(first, self.adapter)
+        self.assertNotIn("recipientTrace", outcome)
+        self.assertEqual(outcome.get("nextExpectedAction"), "daemon_reconciles_delivery")
+        self.assertIsNone(self.delivery_row(event_id)["hold_reason"])
 
 
 class AnUndecidedReadingIsHeldByName(UnknownSendCase):
@@ -573,6 +602,45 @@ class TheHourlyCapIsNamedWithItsReopenTime(UnknownSendCase):
         self.delivery._rate_limited = lambda recipient, at: False
         self.assertIsNone(self.attempt(event_id, now=now))
         self.assertEqual(self.delivery_row(event_id)["next_eligible_at"], window + 3600)
+
+    def test_a_spent_cap_is_named_before_the_gap_when_both_hold(self):
+        """Independent review of d369a9e7: with the cap spent and a send a moment ago, the gap was
+        named and the reopen time was five seconds away rather than the window's end."""
+        _relationship, event_id = self.queued_event()
+        now = self.clock.now()
+        window = int(now // 3600) * 3600
+        self.store.db.execute(
+            "INSERT INTO recipient_rate (recipient_task_id, window_start, sends, last_send_at)"
+            " VALUES (?,?,?,?)",
+            (PARENT, window, self.delivery.policy.max_sends_per_recipient_per_hour, now - 1))
+        self.store.db.commit()
+        self.assertIsNone(self.attempt(event_id, now=now))
+        item = self.status_of(event_id)
+        self.assertEqual(((item.get("pacing") or {}).get("reason"),
+                          (item.get("pacing") or {}).get("reopensAt"), item["phase"],
+                          item["nextEligibleAt"]),
+                         ("hourly_cap", window + 3600, "awaiting_send:hourly_cap", window + 3600))
+
+    def test_a_cap_of_zero_says_nothing_reopens_it_but_a_changed_policy(self):
+        from codex_session_relay.policy import RetryPolicy
+
+        pacing = RetryPolicy(max_sends_per_recipient_per_hour=0).pacing(
+            self.clock.now(), sends=0, last=None)
+        self.assertEqual((pacing["reason"], pacing["reopensAt"]), ("hourly_cap", None))
+        self.assertIn("changed policy", pacing.get("detail") or "")
+
+    def test_assignment_show_reads_the_budget_the_delivery_service_paces_by(self):
+        from types import SimpleNamespace
+        from codex_session_relay import cli
+        from codex_session_relay.delivery import DeliveryService
+        from codex_session_relay.policy import RetryPolicy
+
+        services = cli.Services(SimpleNamespace(state=self.tmp + "/cli-state", socket=None))
+        services._store = self.store
+        services._delivery = DeliveryService(
+            self.store, self.registry, self.intake, self.clock,
+            policy=RetryPolicy(max_sends_per_recipient_per_hour=0))
+        self.assertIs(services.assignments.policy, services.delivery.policy)
 
     def test_the_delivery_goes_out_when_the_window_reopens(self):
         event_id, now, window = self.capped()
