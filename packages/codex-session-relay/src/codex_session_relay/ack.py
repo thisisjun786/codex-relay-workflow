@@ -22,16 +22,36 @@ from .currency import (
     SUPERSEDED,
     currency_of,
 )
-from .delivery import COMPLETION, MANIFEST_LINES, REVISION
+from .delivery import COMPLETION, MANIFEST_LINES, REVISION, SENDING
 from .errors import AckRefused, RefusalReason, RelayError
 from .identity import (
     ack_proof as derive_ack_proof,
     revision_request_event_id,
     sha256_hex,
 )
-from .transport import ACKNOWLEDGED, DISPATCHED, INBOX_ONLY
+from .transport import ACKNOWLEDGED, DISPATCHED, HELD_UNCERTAIN, INBOX_ONLY
 
 VERDICTS = ("verified", "needs_changes", "unverified", "aborted")
+# A delivery the relay has not confirmed yet: an uncertain send reconciliation has not settled,
+# or a send still in flight. The parent may already be acting on it - the host ran the delivery
+# turn and only the turn/start receipt was lost (CRW-124 R3, H0R3-F2) - so its acknowledgement is
+# kept as authored rather than refused, and completed once the delivery is confirmed.
+UNCONFIRMED = (HELD_UNCERTAIN, SENDING)
+DELIVERY_UNCONFIRMED = "delivery_unconfirmed"
+# Why a kept acknowledgement is not promoted: it was authored before the attempt it would close
+# was sent, so it cannot be about that attempt, and only a new acknowledgement answers it.
+ACK_PREDATES_ATTEMPT = "ack_predates_attempt"
+_PENDING_COLUMNS = (
+    "SELECT a.event_id, a.ack_turn_id, a.ack_at, a.accepted,"
+    "       COALESCE(e.attempts, 0) AS attempts, e.last_reason, e.fingerprint,"
+    "       e.next_check_at"
+)
+
+
+def _delivery_basis(row) -> tuple:
+    """What a turn check was made against: the delivery's state, its current attempt and the
+    turn that attempt reached. A check read against one of these is evidence about it only."""
+    return (row["state"], row["attempt_count"], row["dispatch_turn_id"])
 
 # A currency answer names its own reason; this maps it onto the refusal taxonomy so a caller
 # that cannot act on an exception type can still act on the reason string.
@@ -239,10 +259,11 @@ class AckService:
         existing = self.store.one("SELECT * FROM acks WHERE event_id = ?", (event_id,))
         if existing is not None and existing["verified"] == "verified":
             return self._settled_ack(existing)
-        if row["state"] not in (DISPATCHED, INBOX_ONLY):
+        if row["state"] not in (DISPATCHED, INBOX_ONLY) + UNCONFIRMED:
             raise AckRefused(
                 RefusalReason.NOT_CLAIMABLE,
-                f"{event_id!r} is {row['state']!r}; only a delivered event is acknowledged",
+                f"{event_id!r} is {row['state']!r}; only a delivered event, or one whose send is"
+                " still being confirmed, is acknowledged",
             )
 
         expected = derive_ack_proof(event_id, ack_turn_id)
@@ -255,7 +276,17 @@ class AckService:
 
         # The adapter read happens before the transaction, because it is I/O and must not be
         # held inside a write lock.
-        verification = self._verify_ack_turn(row, ack_turn_id, adapter)
+        try:
+            verification = self._verify_ack_turn(row, ack_turn_id, adapter)
+        except AckRefused as refusal:
+            # While the delivery is unconfirmed, the turn it reached is not known yet: a send can
+            # be folded into a parent turn that began before it, and that turn is where the parent
+            # acknowledges (review 2). Such an acknowledgement is kept below, never promoted
+            # here; the pending pass checks the chronology again once the delivery is confirmed.
+            if (row["state"] not in UNCONFIRMED
+                    or refusal.reason != RefusalReason.ACK_TURN_UNVERIFIED):
+                raise
+            verification = refusal.reason.value
         event = self.intake.row(event_id)
         now = self.clock.iso()
 
@@ -276,12 +307,25 @@ class AckService:
             if already is not None and already["verified"] == "verified":
                 return self._settled_ack(already)
             fresh = self.delivery.find(event_id)
-            if fresh is None or fresh["state"] not in (DISPATCHED, INBOX_ONLY, ACKNOWLEDGED):
+            if fresh is None or fresh["state"] not in (
+                    DISPATCHED, INBOX_ONLY, ACKNOWLEDGED) + UNCONFIRMED:
                 raise AckRefused(
                     RefusalReason.NOT_CLAIMABLE,
                     f"{event_id!r} became {fresh['state'] if fresh else 'absent'!r} before this "
                     "acknowledgement could be written",
                 )
+            # Decided from this row, under the lock, never from the read above: a delivery the
+            # relay has not confirmed is not closed by an acknowledgement, whatever the turn
+            # check said, and neither is one that moved while the turn was read - confirmed,
+            # sent again, or reaching another turn (review 3). The check was evidence about the
+            # delivery as it was read, so the acknowledgement is kept as authored and checked
+            # again against the delivery as it is: the pending pass takes it at once once the
+            # delivery is confirmed, and a verdict completes it first (H0R3-F2).
+            unconfirmed = fresh["state"] in UNCONFIRMED
+            moved = _delivery_basis(fresh) != _delivery_basis(row)
+            kept = unconfirmed or moved
+            why = fresh["state"] if unconfirmed else "changed while its turn was read"
+            stored = "unverified_turn" if kept else verification
             # Always evaluated, including when upgrading an earlier unverified ack:
             # skipping it let a generation that advanced in between be accepted.
             computed = self.evaluate(event_id)
@@ -318,31 +362,44 @@ class AckService:
                 " ack_at=excluded.ack_at",
                 (
                     event_id, json.dumps(record), ack_turn_id, int(bool(accepted)),
-                    verification, rejection_reason, now,
+                    stored, rejection_reason, now,
                 ),
             )
-            if verification == "verified":
+            if stored == "verified":
                 db.execute(
                     "UPDATE deliveries SET state = ?, updated_at = ? WHERE event_id = ?",
                     (ACKNOWLEDGED, now, event_id),
                 )
-            self._write_ack_evidence(
-                db, event_id,
-                tier="host_read" if verification == "verified" else "unverified",
-                detail=None if verification == "verified" else (
-                    "no host adapter in this process" if adapter is None
-                    else "the host did not confirm this turn"
-                ),
-                reason=None if verification == "verified" else verification,
-                now=now,
-            )
+            if kept:
+                self._write_ack_evidence(
+                    db, event_id, tier="unverified",
+                    detail=f"kept as authored: the relay could not yet confirm this delivery for"
+                           f" the turn it read ({why}), and completes the acknowledgement once it"
+                           f" does",
+                    reason=DELIVERY_UNCONFIRMED, now=now,
+                )
+            else:
+                self._write_ack_evidence(
+                    db, event_id,
+                    tier="host_read" if verification == "verified" else "unverified",
+                    detail=None if verification == "verified" else (
+                        "no host adapter in this process" if adapter is None
+                        else "the host did not confirm this turn"
+                    ),
+                    reason=None if verification == "verified" else verification,
+                    now=now,
+                )
+            journalled = {"accepted": bool(accepted), "verified": stored,
+                          "reason": rejection_reason}
+            if kept:
+                journalled["deliveryUnconfirmed"] = why
             self.store.journal(
-                "acknowledged", event_id,
-                {"accepted": bool(accepted), "verified": verification, "reason": rejection_reason},
-                at=now,
+                "acknowledged", event_id, journalled, at=now,
             )
         result = dict(record)
-        result["_verified"] = verification
+        result["_verified"] = stored
+        if kept:
+            result["_deliveryUnconfirmed"] = why
         return result
 
     @staticmethod
@@ -395,6 +452,13 @@ class AckService:
             dispatched_turn = None
             if attempt["record"]:
                 dispatched_turn = json.loads(attempt["record"]).get("turnId")
+            # A send confirmed from its message keeps its honest transport snapshot, which names no
+            # turn; the turn the message was found in is the delivery's (reconcile._settle_from_scan),
+            # and it belongs to this attempt only when this attempt was confirmed that way. A send
+            # folded into a turn begun before it is acknowledged from that turn (review 2); a turn
+            # an earlier attempt reached is not this attempt's (review 3).
+            if not dispatched_turn and attempt["affirmative_evidence"] == "turn_found":
+                dispatched_turn = row["dispatch_turn_id"]
             if ack_turn_id != dispatched_turn and certainly_before(turn.started_at, sent_at):
                 raise AckRefused(
                     RefusalReason.ACK_TURN_UNVERIFIED,
@@ -752,17 +816,74 @@ class AckService:
         return json.loads(row["detail"])
 
     def _pending_acks(self, *, limit, now) -> list:
+        """Acknowledgements still to complete, due by their backoff.
+
+        One kept while its delivery was unconfirmed is taken as soon as the delivery is
+        confirmed, backoff or not: that was the one fact it waited for, not a refusal to repeat.
+        """
         rows = self.store.all(
-            "SELECT a.event_id, a.ack_turn_id, a.accepted,"
-            "       COALESCE(e.attempts, 0) AS attempts, e.last_reason, e.fingerprint,"
-            "       e.next_check_at"
+            _PENDING_COLUMNS +
             "  FROM acks a LEFT JOIN ack_evidence e ON e.event_id = a.event_id"
+            "  LEFT JOIN deliveries d ON d.event_id = a.event_id"
             " WHERE a.verified = 'unverified_turn'"
-            "   AND (e.next_check_at IS NULL OR e.next_check_at <= ?)"
+            "   AND (e.next_check_at IS NULL OR e.next_check_at <= ?"
+            "        OR (e.last_reason = ? AND d.state IN (?, ?)))"
             " ORDER BY COALESCE(e.next_check_at, 0), a.event_id LIMIT ?",
-            (now, limit),
+            (now, DELIVERY_UNCONFIRMED, DISPATCHED, INBOX_ONLY, limit),
         )
         return [dict(row) for row in rows]
+
+    def kept_unconfirmed(self, now=None, *, limit: int = 8) -> list:
+        """(event id, acknowledging turn) of each acknowledgement kept while its delivery is
+        still unconfirmed and whose check is due.
+
+        What the daemon confirms through the acknowledging turn (Reconciler.confirm_delivery)
+        before completing it; the pending pass's backoff paces it.
+        """
+        now = self.clock.now() if now is None else now
+        rows = self.store.all(
+            "SELECT a.event_id, a.ack_turn_id FROM acks a"
+            "  JOIN ack_evidence e ON e.event_id = a.event_id"
+            "  JOIN deliveries d ON d.event_id = a.event_id"
+            " WHERE a.verified = 'unverified_turn' AND e.last_reason = ? AND d.state = ?"
+            "   AND (e.next_check_at IS NULL OR e.next_check_at <= ?)"
+            " ORDER BY COALESCE(e.next_check_at, 0), a.event_id LIMIT ?",
+            (DELIVERY_UNCONFIRMED, HELD_UNCERTAIN, now, limit),
+        )
+        return [(row["event_id"], row["ack_turn_id"]) for row in rows]
+
+    def _kept(self, event_id):
+        return self.store.one(
+            _PENDING_COLUMNS +
+            "  FROM acks a JOIN ack_evidence e ON e.event_id = a.event_id"
+            " WHERE a.event_id = ? AND a.verified = 'unverified_turn' AND e.last_reason = ?",
+            (event_id, DELIVERY_UNCONFIRMED),
+        )
+
+    def kept_turn(self, event_id: str):
+        """The acknowledging turn of an acknowledgement kept while its delivery was unconfirmed,
+        or None when this event has no such acknowledgement."""
+        row = self._kept(event_id)
+        return row["ack_turn_id"] if row is not None else None
+
+    def complete_pending(self, event_id: str, adapter, *, now=None):
+        """Complete one kept acknowledgement now, exactly as the pending pass would.
+
+        A verdict on an event whose acknowledgement was kept while its delivery was unconfirmed
+        calls this first (after confirming the delivery), so the parent's ruling does not wait
+        for the daemon's next pass. None when there is nothing kept for this event.
+        """
+        now = self.clock.now() if now is None else now
+        pending = self._kept(event_id)
+        row = self.delivery.find(event_id)
+        if pending is None or row is None:
+            return None
+        pending = dict(pending)
+        try:
+            verification = self._verify_ack_turn(row, pending["ack_turn_id"], adapter)
+        except AckRefused as refusal:
+            verification = refusal.reason.value if refusal.reason else "ack_turn_unverified"
+        return self._settle_pending_ack(event_id, pending, verification, now, basis=row)
 
     def _pending_backoff(self, attempt_no: int) -> float:
         return min(900.0, 30.0 * (2 ** max(0, attempt_no - 1)))
@@ -816,18 +937,33 @@ class AckService:
                 verification = self._verify_ack_turn(row, pending["ack_turn_id"], adapter)
             except AckRefused as refusal:
                 verification = refusal.reason.value if refusal.reason else "ack_turn_unverified"
-            results.append(self._settle_pending_ack(event_id, pending, verification, now))
+            results.append(self._settle_pending_ack(event_id, pending, verification, now,
+                                                    basis=row))
         return results
 
-    def _settle_pending_ack(self, event_id, pending, verification, now) -> dict:
+    def _settle_pending_ack(self, event_id, pending, verification, now, *, basis=None) -> dict:
         stamp = self.clock.iso()
         with self.store.transaction() as db:
             fresh_ack = self.store.one("SELECT * FROM acks WHERE event_id = ?", (event_id,))
             if fresh_ack is None or fresh_ack["verified"] == "verified":
                 return {"eventId": event_id, "outcome": "already_settled"}
+            if (fresh_ack["ack_turn_id"] != pending["ack_turn_id"]
+                    or fresh_ack["ack_at"] != pending["ack_at"]):
+                # The parent acknowledged again while the old turn was being read. What was read
+                # is evidence about the old acknowledgement only, so the new one is left exactly
+                # as written, for its own pass.
+                return {"eventId": event_id, "outcome": "replaced"}
             fresh = self.delivery.find(event_id)
+            if (basis is not None and fresh is not None
+                    and _delivery_basis(fresh) != _delivery_basis(basis)):
+                # The delivery moved while the turn was read (review 3). The reading is evidence
+                # about the delivery as it was, so nothing is written and the next pass reads the
+                # turn again against the delivery as it is.
+                return {"eventId": event_id, "outcome": "changed"}
             blocker = None
-            if fresh is None or fresh["state"] not in (DISPATCHED, INBOX_ONLY, ACKNOWLEDGED):
+            if fresh is not None and fresh["state"] in UNCONFIRMED:
+                blocker = DELIVERY_UNCONFIRMED
+            elif fresh is None or fresh["state"] not in (DISPATCHED, INBOX_ONLY, ACKNOWLEDGED):
                 blocker = "delivery_state_changed"
             else:
                 try:
@@ -836,6 +972,20 @@ class AckService:
                     computed = refusal.reason.value if refusal.reason else "not_claimable"
                 if fresh_ack["accepted"] and computed:
                     blocker = computed
+            if blocker is None and fresh is not None:
+                # An acknowledgement answers an attempt it could have read (hostloss._AWAITING_SQL):
+                # one authored before the attempt it would close was sent - kept for an earlier
+                # attempt that never sent - is not promoted for this one, even from a turn this
+                # attempt was folded into (review 4). The parent acknowledges again. Both stamps
+                # are fixed-width UTC, so they compare as text; an attempt with no send time keeps
+                # the older rule.
+                current = db.execute(
+                    "SELECT sent_at FROM attempts WHERE event_id = ? AND attempt_no = ?",
+                    (event_id, fresh["attempt_count"]),
+                ).fetchone()
+                if (current is not None and current["sent_at"] is not None
+                        and fresh_ack["ack_at"] < current["sent_at"]):
+                    blocker = ACK_PREDATES_ATTEMPT
             fingerprint = self._pending_fingerprint(event_id, fresh)
 
             if blocker is None and verification == "verified":

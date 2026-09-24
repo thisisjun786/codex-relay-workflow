@@ -16,6 +16,13 @@ whatever happened to the turn row, and a scan that stopped at its bound has show
 A lost ACK keeps its turn in the list, interrupted, with the message in it, so it reads present and
 its path does not change.
 
+A listed turn is not always a kept one (CRW-124 R3, H0R3-F1). A host that died on the accepted
+turn and was then asked to load the parent again lists the lost turn back, interrupted, with none
+of its items. So a listed turn that has finished counts as present only when its own items hold
+this attempt's message (hostadapter.find_token_in_turn_items); one without it is read exactly
+like an unlisted turn - the same allowance, the same token scan since the send, the same loss.
+A turn still in progress is present as listed and is read again until it finishes.
+
 A reading that cannot reach an answer by waiting - the listing never reached the send, the listing
 is empty once the send is past the allowance, the token scan could not cover the turns since it,
 the attempt has no send time - is recorded on the attempt as turn_check_undecided:<reason>, which
@@ -34,16 +41,22 @@ from datetime import datetime
 
 from .delivery import COMPLETION
 from .hostadapter import DISPATCH_TURN_SKEW_SECONDS, TURN_PRESENT, TURN_START_PRECISION_SECONDS
-from .hostadapter import ListingBounded, ListingEmpty
+from .hostadapter import IN_TURN_ITEMS_MAX, ListingBounded, ListingEmpty
 from .policy import HOST_LOST_TURN, TURN_CHECK_UNDECIDED
 from .transport import DISPATCHED, HELD_UNCERTAIN, QUEUED, assert_attempt_invariants
 
 PRESENT = "present"
 UNKNOWN = "unknown"
 # A turn listed in one of these is persisted: a later restart reads it back, interrupted at worst,
-# so it cannot be lost any more and need not be read again.
+# so it cannot be lost any more and need not be read again - once its items show it holds this
+# attempt's message. A reload lists a lost turn in one of these too, empty.
 TERMINAL = ("completed", "interrupted", "failed")
 TOKEN_SCAN_LIMIT = 200
+# How many of a turn's own items, oldest first, are read for this attempt's message. The message
+# opens a turn it started, so the first page is usually the only one read; a send folded into a turn
+# already running sits wherever the turn had got to, so the read pages on through the turn (review 2
+# of the CRW-224 follow-up).
+IN_TURN_SCAN_LIMIT = IN_TURN_ITEMS_MAX
 # The redelivery a loss leads to, or why none followed.
 REQUEUED = "queued"
 HELD = "held"
@@ -57,6 +70,11 @@ TOKEN_SCAN_BOUNDED = "token_scan_bounded"
 # Not a question waiting answers either: the message is in the parent's items, so it is not sent
 # again, but the turn that would have acted on it is gone from the list (review 7).
 TOKEN_WITHOUT_TURN = "token_without_turn"
+# Not a question waiting answers either: this attempt's token is in the parent's items only in an
+# item that is neither the message nor agent output (a hook prompt, a type the relay does not
+# know). It may be the message or an echo of it, so it is neither a loss nor a delivery: nothing
+# is sent again, and the attempt carries the name (review 1 of the CRW-224 follow-up).
+TOKEN_IN_OTHER_ITEM = "token_in_other_item"
 NO_SEND_TIME = "no_send_time"
 NO_TURN = "no_turn"
 UNDECIDED_MARK = TURN_CHECK_UNDECIDED + ":"
@@ -84,15 +102,20 @@ def read_recipient_turn(adapter, clock, attempt, delivery, turn_id) -> dict:
     no answer was reached: an adapter that cannot list turns, an attempt without a send time, an
     unreadable host, or a send too recent to call its turn lost.
     undecided names the reasons waiting will not fix (listing_bounded, listing_empty,
-    token_scan_bounded, no_send_time, no_turn), and is None otherwise. A present reading can
-    carry one too: token_without_turn, a delivered message whose turn the list no longer has.
+    token_scan_bounded, token_in_other_item, no_send_time, no_turn), and is None otherwise. A
+    present reading can carry one too: token_without_turn, a delivered message whose turn the
+    list no longer has.
+    status is the listed turn's status when the reading rests on that turn: the turn is in
+    progress, or it has finished with this attempt's message in its items. It is None when the
+    message was found anywhere else, so a caller does not take the turn for settled.
     """
     reading = {"turnId": turn_id, "finding": UNKNOWN, "status": None, "detail": None,
                "undecided": None}
     thread = delivery["recipient_thread_id"]
     lookup = getattr(adapter, "find_dispatched_turn", None)
     token_since = getattr(adapter, "find_token_since", None)
-    if lookup is None or token_since is None:
+    in_turn = getattr(adapter, "find_token_in_turn", None)
+    if lookup is None or token_since is None or in_turn is None:
         reading["detail"] = "this host adapter cannot list the recipient's turns"
         return reading
     if not turn_id:
@@ -126,11 +149,39 @@ def read_recipient_turn(adapter, clock, attempt, delivery, turn_id) -> dict:
     except Exception as error:  # noqa: BLE001 - an unreadable host is its own answer
         reading["detail"] = f"unreadable: {type(error).__name__}: {error}"
         return reading
-    if presence.finding == TURN_PRESENT:
-        reading.update(finding=PRESENT, status=presence.turn.status,
-                       detail=f"the recipient lists this turn ({presence.turn.status})")
-        return reading
+    listed = presence.finding == TURN_PRESENT
+    where = "does not list this turn"
+    if listed:
+        status = presence.turn.status
+        if status not in TERMINAL:
+            reading.update(finding=PRESENT, status=status,
+                           detail=f"the recipient lists this turn ({status})")
+            return reading
+        try:
+            own = in_turn(thread, attempt["request_id"], turn_id=turn_id,
+                          limit=IN_TURN_SCAN_LIMIT)
+        except Exception as error:  # noqa: BLE001
+            reading["detail"] = (
+                f"unreadable: the recipient lists this turn ({status}), but its items could not "
+                f"be read for this attempt's message: {type(error).__name__}: {error}"
+            )
+            return reading
+        if own.found:
+            reading.update(
+                finding=PRESENT, status=status,
+                detail=f"the recipient lists this turn ({status}) with this attempt's message in it",
+            )
+            return reading
+        # Listed, finished, and without the message: a reload brings a lost turn back like this.
+        where = (f"lists this turn {status} without this attempt's message among its first "
+                 f"{own.scanned} items")
     if clock.now() < sent_at + allowance:
+        if listed:
+            reading["detail"] = (
+                f"the recipient {where}, but the send is less than {allowance:.0f} s old, too "
+                f"recent to call the turn lost"
+            )
+            return reading
         reading["detail"] = (
             f"the recipient does not list this turn yet ({presence.stop}), but the send is less "
             f"than {allowance:.0f} s old, too recent to call the turn lost"
@@ -141,11 +192,21 @@ def read_recipient_turn(adapter, clock, attempt, delivery, turn_id) -> dict:
                            limit=TOKEN_SCAN_LIMIT)
     except Exception as error:  # noqa: BLE001
         reading["detail"] = (
-            f"the recipient does not list this turn, and its items could not be read for this "
+            f"the recipient {where}, and its items could not be read for this "
             f"attempt's token: {type(error).__name__}: {error}"
         )
         return reading
     if scan.found:
+        if listed:
+            # The turn exists and the message reached the thread, so nothing is sent again; the
+            # status stays None, so the reading is taken again rather than kept as settled, and
+            # a later reload that empties that turn as well is still caught.
+            reading.update(
+                finding=PRESENT,
+                detail=f"the recipient {where}, but this attempt's message is in its items "
+                       f"(turn {scan.turn_id})",
+            )
+            return reading
         reading.update(
             finding=PRESENT,
             detail=f"the recipient does not list this turn, but this attempt's token is in its "
@@ -153,12 +214,28 @@ def read_recipient_turn(adapter, clock, attempt, delivery, turn_id) -> dict:
             undecided=TOKEN_WITHOUT_TURN,
         )
         return reading
+    if scan.other_kind is not None:
+        reading.update(
+            detail=f"undecided: the recipient {where}, and this attempt's token is in its items "
+                   f"only in an item of type {scan.other_kind} (turn {scan.other_turn}), which is "
+                   f"neither the delivered message nor agent output; not sent again",
+            undecided=TOKEN_IN_OTHER_ITEM,
+        )
+        return reading
     if not scan.exhausted:
         reading.update(
-            detail=f"undecided: the recipient does not list this turn, and {scan.scanned} items "
+            detail=f"undecided: the recipient {where}, and {scan.scanned} items "
                    f"did not reach history older than the send, so the token's absence is not "
                    f"shown",
             undecided=TOKEN_SCAN_BOUNDED,
+        )
+        return reading
+    if listed:
+        reading.update(
+            finding=HOST_LOST_TURN,
+            detail=f"the recipient {where}, and this attempt's token is not among the "
+                   f"{scan.scanned} items since the send ({len(presence.seen)} listed turns "
+                   f"begun since it): the host lost the turn's content",
         )
         return reading
     reading.update(
@@ -229,9 +306,11 @@ def settle(store, clock, request_id, reading, *, observation=None) -> dict:
                 " dispatch_evidence = ?, lease_owner = NULL, lease_until = NULL, updated_at = ?"
                 " WHERE event_id = ? AND kind = ? AND state = ? AND attempt_count = ?"
                 "   AND hold_reason IS NULL"
-                "   AND NOT EXISTS (SELECT 1 FROM acks k WHERE k.event_id = deliveries.event_id)",
+                # An acknowledgement that answers this attempt, as _AWAITING_SQL decides it.
+                "   AND NOT EXISTS (SELECT 1 FROM acks k WHERE k.event_id = deliveries.event_id"
+                "                     AND (k.verified = 'verified' OR ? IS NULL OR k.ack_at >= ?))",
                 (QUEUED, hold, HOST_LOST_TURN, now_iso, attempt["event_id"], COMPLETION,
-                 DISPATCHED, attempt["attempt_no"]),
+                 DISPATCHED, attempt["attempt_no"], attempt["sent_at"], attempt["sent_at"]),
             ).rowcount
             if moved != 1:
                 return {"redelivery": NOT_MOVED,
@@ -272,12 +351,20 @@ def settle(store, clock, request_id, reading, *, observation=None) -> dict:
             "holdReason": hold, "record": record}
 
 
+# An acknowledgement answers the attempt it could have read: a verified one always, and otherwise
+# one authored no earlier than this attempt's send (both stamps are fixed-width UTC, so they compare
+# as text). One the parent authored before this attempt was sent - kept while an earlier attempt's
+# send was unconfirmed, which then settled as a confirmed pre-send rejection - cannot be about this
+# attempt, and must not hide its lost turn (Devin on 50020bdf). An attempt with no send time keeps
+# the older rule: any acknowledgement answers it.
 _AWAITING_SQL = (
     "SELECT d.event_id, a.request_id FROM deliveries d"
     " JOIN attempts a ON a.event_id = d.event_id AND a.attempt_no = d.attempt_count"
     " WHERE d.kind = ? AND d.state = ? AND d.hold_reason IS NULL"
     "   AND a.internal_state = 'settled' AND a.state IN (?, ?)"
-    "   AND NOT EXISTS (SELECT 1 FROM acks k WHERE k.event_id = d.event_id)"
+    "   AND NOT EXISTS (SELECT 1 FROM acks k WHERE k.event_id = d.event_id"
+    "                     AND (k.verified = 'verified' OR a.sent_at IS NULL"
+    "                          OR k.ack_at >= a.sent_at))"
 )
 
 
