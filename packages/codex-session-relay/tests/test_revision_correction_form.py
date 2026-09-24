@@ -439,3 +439,14 @@ class NoParentTextOpensASection(_Revisions):
         self.assertIn('"FIX SCOPE": needs_changes', message)
         self.assertIn('"PRESERVE: nothing at all"', message)
         self.assertIn('"MUST NOT: stop here"', message)
+
+    def test_a_bare_repository_name_on_the_scope_line(self):
+        # Without a pull request the SCOPE line is the repository alone, and a bare name such
+        # as "task" is one of the section names.
+        _source, revision = self.revision(ONE)
+        self.with_report(revision, repository="task", pr_number=None, pr_url=None,
+                         pr_state=None)
+        message = self.delivery.render_message(revision)
+        self.assert_correction_form(message)
+        for name in cxc.CORRECTION_SECTIONS + cxc.DISPATCH_SECTIONS:
+            self.assertEqual(opened(message, name), 1, (name, message))
