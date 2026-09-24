@@ -1850,8 +1850,9 @@ def _one_finding(item, extra):
     disposition = item.get("verdict")
     name = f"{item['id']}{restoration.label(item)}"
     rendered = f"  {name}: {disposition}" if disposition else f"  {name}"
-    if note:
-        rendered += f" - {note}"
+    # A relationship with no registered criteria records findings without notes, and a finding
+    # the child is sent to change must not arrive without saying its reason is missing.
+    rendered += f" - {note}" if note else f" - {NO_NOTE}"
     out = [rendered]
     anchor = extra.get("anchor") or item.get("anchor")
     if anchor:
@@ -1908,6 +1909,7 @@ def preserve_lines():
 FIX, EVIDENCE_OWED, MET = "needs_changes", "unverified", "verified"
 UNDECIDED = None
 NOT_RECORDED = "not recorded"
+NO_NOTE = "no note recorded; ask the parent"
 
 
 def correction_source(receipt, review=None) -> tuple:

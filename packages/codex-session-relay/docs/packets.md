@@ -83,7 +83,7 @@ them from the verdict record and, where a work report is recorded, the parent's 
 `FIX SCOPE` is exactly the findings ruled `needs_changes`, a finding ruled `verified` stays
 under `PRESERVE`, and one ruled `unverified` is evidence `REVERIFY AND RETURN` asks for. What
 that record cannot answer, such as a verdict naming no criterion or a finding given no
-disposition, is written in its section as `not recorded`, never left out.
+disposition or no note, is written where it belongs as not recorded, never left out.
 
 **The callback.** An object of `taskId`, `model` and `effort`: where to answer, and the pair the
 task being answered is currently authorized to run. It is an object because the pair is what

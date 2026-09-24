@@ -38,7 +38,7 @@ from .transport import (
 from .policy import PUSH_CHANNEL_CLOSED, SUPERSEDED as SUPERSEDED_HOLD
 from . import NO_DELIVERABLE, envelope, restoration, rolepolicy
 from .report import (
-    compose_revision, fix_scope_lines, known, preserve_lines, read as read_work_report,
+    NO_NOTE, compose_revision, fix_scope_lines, known, preserve_lines, read as read_work_report,
     render_completion, render_revision, required_for_candidate, return_lines, reverify_lines,
     violated_heading, what_changed_lines,
 )
@@ -709,11 +709,12 @@ class DeliveryService:
         lines += ["", violated_heading(record)]
         for item in findings[:MANIFEST_LINES]:
             note = item.get("note")
-            # A stored finding can lack its id or disposition; str() of either is None.
+            # A stored finding can lack its id or disposition; str() of either is None. It can
+            # lack its note legitimately (no registered criteria), and then says so.
             lines.append(
                 f"  {item.get('id') or '(no id recorded)'}{restoration.label(item)}:"
                 f" {item.get('verdict') or 'no disposition recorded'}"
-                + (f" — {note}" if note else "")
+                + (f" — {note}" if note else f" — {NO_NOTE}")
             )
         overflow = _overflow_line(findings, row["event_id"])
         if overflow:
