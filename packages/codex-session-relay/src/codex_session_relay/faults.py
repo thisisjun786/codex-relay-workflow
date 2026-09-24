@@ -3448,6 +3448,16 @@ def notice_facts(db, notification):
     anchor = anchor_relationship(db, row)
     scope = _json(row["scope"])
     project = scope.get("projectKey")
+    if anchor is not None and project:
+        # A relationship addresses the notice only while it lies under the project the fault's
+        # scope names: an issue key that resolves to another project's relationship, or a
+        # fault moved to another project, is never told to the level above it left
+        # (never sideways). Whose wishes apply is still anchor_relationship's answer.
+        placed = db.execute("SELECT project_key FROM relationship_scope"
+                            " WHERE relationship_id = ?",
+                            (anchor["relationship_id"],)).fetchone()
+        if placed is None or placed["project_key"] != project:
+            anchor = None
     if anchor is not None:
         # The issue its relationship was registered for - the field every supervisor report
         # carries - never the observation's scope.

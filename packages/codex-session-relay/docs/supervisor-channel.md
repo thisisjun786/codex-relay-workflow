@@ -581,8 +581,9 @@ supervisor reads for itself, confirmed.
 notification's own. A second staging - another process, a restart, another relationship
 addressing it - finds the same row, and the store refuses a second one by a unique index
 (`supervisor_messages_one_notice`). It is addressed by `resolve()` from the relationship the
-notification is about now, like a report, or - for a fault no relationship holds - from the
-project its scope names: `resolve("project:<key>")` walks up from that project's one live owner,
+notification is about now, like a report, while that relationship lies under the project the
+fault's scope names, or - for a fault no relationship holds, or one scoped to another project -
+from the project its scope names: `resolve("project:<key>")` walks up from that project's one live owner,
 and refuses as it refuses a relationship (no owner, two owners, no supervisor, a contested
 walk). Such a row's `relationship_id` holds that `project:<key>` anchor; a relationship id never
 takes that shape. A row none of whose attempts can have sent is

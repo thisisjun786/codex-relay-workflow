@@ -529,7 +529,13 @@ class WhatTheThirdAuditFound(NoticeCase):
             super().setUp()
 
     def test_a_project_key_that_is_not_an_identifier_is_never_sent(self):
-        fault = self.broken()
+        # The fault names the project its relationship is registered under, so that
+        # relationship addresses it and the linkage's project key is what gets checked.
+        fault = self.ledger.record(faults.observation(
+            product=PRODUCT, fault_class="delivery_stalled", severity=faults.BROKEN,
+            signature={"relationship": self.rid, "cause": "stuck"}, occurrence_key="test:stuck",
+            scope={"projectKey": "PRJ-1 token=" + SECRET, "issueKey": ISSUE},
+            detail="deliveries to the parent are not moving"))["faultId"]
         self.tick()
         notification = self.notification(fault)
         self.assertEqual(notification["state"], faults.PENDING)
@@ -812,3 +818,56 @@ class WhatDevinFoundOnTheFirstHead(NoticeCase):
         self.tick(advance=3600)
         self.assertEqual(self.notification(stuck)["state"], faults.DELIVERED,
                          "measured and sent once the host answers")
+
+
+class WhatDevinFoundOnTheSecondHead(NoticeCase):
+    """Devin review of PR #151 at d76c7a4b: a relationship registered under another project
+    than the one the fault's scope names never addresses its notice (never sideways)."""
+
+    def test_an_issue_s_relationship_in_another_project_does_not_address_the_notice(self):
+        answer = self.ledger.record(faults.observation(
+            product=PRODUCT, fault_class="delivery_stalled", severity=faults.BROKEN,
+            signature={"cause": "elsewhere"}, occurrence_key="test:elsewhere",
+            scope={"projectKey": "PRJ-OTHER", "issueKey": ISSUE}, detail="stuck"))
+        for _ in range(2):
+            self.tick(advance=3600)
+        notification = self.notification(answer["faultId"])
+        self.assertEqual(self.upward(), [], "never to another project's supervisor")
+        self.assertEqual(self.notice_rows(), [])
+        self.assertEqual(notification["state"], faults.PENDING)
+        self.assertIn("no live project owner", notification["lastError"] or "")
+        self.assertEqual(self.budget_used(), 0)
+
+    def test_a_fault_moved_to_another_project_is_not_told_to_the_one_it_left(self):
+        fault = self.broken()
+        self.ledger.move(fault, scope={"projectKey": "PRJ-OTHER", "issueKey": ISSUE})
+        for _ in range(2):
+            self.tick(advance=3600)
+        self.assertEqual(self.upward(), [])
+        self.assertEqual(self.notification(fault)["state"], faults.PENDING)
+        self.ledger.move(fault, scope={"projectKey": PROJECT, "issueKey": ISSUE})
+        self.tick(advance=3600)
+        self.assertEqual(len(self.sent_for(self.notification(fault))), 1,
+                         "back under the relationship's project, it goes there once")
+
+    def test_an_archived_parent_holds_back_only_its_own_notices(self):
+        # Devin's second finding on d76c7a4b, answered: the parent measured by the pre-pass is
+        # recorded before the reservation, which reads eligibility from the store in its own
+        # transaction, so the same tick sees the new answer - and nothing else waits on it.
+        self.adapter.threads[PARENT].archived = True
+        held = self.broken()
+        other = self.ledger.record(faults.observation(
+            product=PRODUCT, fault_class="managed_start_failed", severity=faults.BROKEN,
+            signature={"issueKey": "REL-77", "receiptStatus": "failed"},
+            occurrence_key="managed:other",
+            scope={"projectKey": PROJECT, "issueKey": "REL-77"}, detail="start failed"))
+        self.tick()
+        self.assertEqual(self.notification(other["faultId"])["state"], faults.DELIVERED)
+        waiting = self.notification(held)
+        self.assertEqual(waiting["state"], faults.PENDING)
+        self.assertIn("recipient_archived", waiting["eligibility"]["reason"])
+        for _ in range(3):
+            self.tick(advance=3600)
+        self.assertEqual(self.notification(held)["attempts"], 0, "never reserved while archived")
+        self.assertEqual(len(self.upward()), 1)
+        self.assertEqual(self.budget_used(), 1)
