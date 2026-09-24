@@ -49,6 +49,7 @@ def a_row(**overrides) -> dict:
         "correction_attempts": None, "correction_hold": None,
         "correction_next_eligible_at": None, "correction_lifecycle_withhold": None,
         "correction_lifecycle_recorded_at": None, "correction_lifecycle_next_retry_at": None,
+        "correction_supersession_reason": None, "correction_supersession_applied": None,
     }
     row.update(overrides)
     return row
@@ -741,6 +742,19 @@ class TheCorrectionBlock(unittest.TestCase):
     def test_a_state_this_reader_has_no_word_for_is_said_so(self):
         child = only_child([a_correction("teleported")])
         self.assertEqual(child["correction"]["delivery"]["observation"], "state_unrecognised")
+
+    def test_a_correction_the_child_already_answered_is_superseded_and_not_counted(self):
+        """A supersession note outranks the state, as it does for events."""
+        answer = derived([a_correction(
+            **LIFECYCLE_RECORD, correction_supersession_reason="superseded_revision",
+            correction_supersession_applied=0)])
+        correction = answer["children"][0]["correction"]
+        self.assertEqual(correction["delivery"]["observation"], "superseded")
+        self.assertEqual(correction["delivery"]["state"], "withheld_pre_send")
+        self.assertEqual(correction["delivery"]["supersession"],
+                         {"reason": "superseded_revision", "applied": False})
+        self.assertEqual(answer["counts"]["correctionNotSent"], 0)
+        self.assertEqual(answer["counts"]["correctionWithheld"], 0)
 
 
 class TheCorrectionAgainstARealStore(DeliveryTestCase):

@@ -157,11 +157,15 @@ def correction_next_action(state, projection):
 
     None leaves NEXT_ACTION's answer. A correction event always has its delivery row, because
     ack.record_verdict inserts the event and queues it in one transaction. A state this rule has
-    no word for (a superseded correction) also leaves NEXT_ACTION's answer.
+    no word for (a superseded correction) also leaves NEXT_ACTION's answer, and so does a
+    correction with a supersession note: a final event of its generation already answered it,
+    and the next attempt suppresses it instead of sending, so the relay is not delivering it.
     """
     correction = projection["correction"]
     delivery = correction["delivery"]
     if state != NEEDS_CHANGES or delivery is None or delivery["state"] in REACHED_STATES:
+        return None
+    if correction.get("supersession") is not None:
         return None
     reason = correction["undeliveredReason"] or {}
     if delivery["state"] == INBOX_ONLY or reason.get("source") == "deliveries.hold_reason":
@@ -369,7 +373,8 @@ class AssignmentView:
 
     def _anchored(self, event_id, generation) -> dict:
         record = {"eventId": event_id, "executionGeneration": generation,
-                  "event": None, "delivery": None, "ack": None, "undeliveredReason": None}
+                  "event": None, "delivery": None, "ack": None, "undeliveredReason": None,
+                  "supersession": None}
         if event_id is None:
             # A null is an answer. A row borrowed from another generation is not.
             record["detail"] = "this generation has no such event"
@@ -392,6 +397,7 @@ class AssignmentView:
             "       lf.error_code AS lifecycle_withhold,"
             "       lf.occurred_at AS lifecycle_recorded_at,"
             "       lf.next_retry_at AS lifecycle_next_retry_at,"
+            "       sx.reason AS supersession_reason, sx.applied AS supersession_applied,"
             "       (SELECT reason FROM refusals WHERE event_id = e.event_id"
             "         ORDER BY id DESC LIMIT 1) AS refusal_reason"
             "  FROM events e"
@@ -400,6 +406,7 @@ class AssignmentView:
             "                      AND a.attempt_no = d.attempt_count"
             "  LEFT JOIN acks k ON k.event_id = e.event_id"
             "  LEFT JOIN ack_evidence v ON v.event_id = e.event_id"
+            "  LEFT JOIN delivery_supersession sx ON sx.event_id = e.event_id"
             "  LEFT JOIN relationships r ON r.relationship_id = e.relationship_id"
             + LIFECYCLE_WITHHOLD_JOIN.format(alias="lf", event="e", delivery="d") +
             " WHERE e.event_id = ?",
@@ -428,6 +435,13 @@ class AssignmentView:
             "evidenceTier": row["ack_tier"] if row["ack_tier"] is not None else "unrecorded",
         }
         record["undeliveredReason"] = undelivered_reason(row)
+        # A newer final event of the same generation replaced this delivery. Reported beside the
+        # delivery state, which is left alone so reconciliation can still settle an outstanding
+        # send; the note comes from the same statement as the state it annotates.
+        record["supersession"] = (
+            {"reason": row["supersession_reason"], "applied": bool(row["supersession_applied"])}
+            if row["supersession_reason"] is not None else None
+        )
         return record
 
     def _resolve(self, row, head, verdict, relationship_id, generation, current_mark,

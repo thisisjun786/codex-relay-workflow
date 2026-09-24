@@ -800,6 +800,28 @@ class UnsentCorrection(AssignmentTestCase):
         _record, correction = self.read()
         self.assertEqual(correction["undeliveredReason"]["value"], ARCHIVED)
 
+    def test_a_correction_the_child_already_answered_is_not_awaiting_delivery(self):
+        """A final child event in the correction's generation supersedes the correction.
+
+        The supersession is noted on the queued delivery, whose state is left alone, and the
+        next attempt suppresses it rather than sending. The relay is not going to deliver it.
+        """
+        relationship = self.registry.get(self._rid)
+        generation = relationship["executionGeneration"]
+        self.registry.bind_anchor(
+            self._rid, generation, dispatch_turn_id="revision-turn", source="dispatch_receipt",
+        )
+        payload = self.execution_payload(
+            relationship, "failed", generation=generation,
+            turn=self.assigned_turn("failed", turn="revision-turn"),
+        )
+        self.accept(payload)
+        self.delivery.enqueue(payload["eventId"])
+        record, correction = self.read()
+        self.assertEqual(correction["delivery"]["state"], "queued")
+        self.assertIsNotNone(correction["supersession"])
+        self.assertNotEqual(record["nextExpectedAction"], "daemon_delivers_correction")
+
     def test_an_identical_stamp_on_another_operation_is_not_guessed(self):
         self.adapter.threads[CHILD].archived = True
         self.withhold()
