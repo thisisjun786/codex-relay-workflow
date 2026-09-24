@@ -1269,14 +1269,15 @@ nothing cached; one this run may not search is not read as empty. The check read
 the cache, which is not proof of what a running App Server loaded, so the order on a host is:
 install the runtime, update the plugin package, restart Codex so it loads the package, register,
 then start a new thread and read `get_capabilities`. The restart is how this order makes sure the
-package is loaded; at the one replacement measured, the App Server started bridges from the new
-package without one. A version-1 record already in place cannot take
+package is loaded; at the two replacements measured, the App Server needed none: at the first it
+started bridges from the new package within about a minute, and at the second it started one when
+a thread resumed. A version-1 record already in place cannot take
 a policy; it is moved aside and the registration made again. A bridge started between the package
 update and the registration runs under the record as it is then: with the version-1 record still in
-place it checks no role, and with no record it does not start. Where this was measured the
-version-1 record was still in place, the package add itself started bridges again from the new
-directory within about a minute, and those bridges kept running without the policy until the host
-started them again. So after registering, read `get_capabilities` in the threads that were loaded
+place it checks no role, and with no record it does not start. At the first measured replacement
+the version-1 record was still in place when bridges started again from the new directory about a
+minute after the add, and those bridges kept running without the policy until the host started them
+again. So after registering, read `get_capabilities` in the threads that were loaded
 during the update as well as in a new one; [updating safely](plugin-packaging.md#updating-safely)
 gives the orders, what each costs, and the checks. An installed runtime older than the digest variable still
 reads the policy file, and the launcher's own digest check is then the only digest check.
@@ -1289,16 +1290,20 @@ keeps the bridge it spawned. The launcher's own bytes arrive with a plugin packa
 picking that up follows Codex's plugin reload rule. Neither is established on a host until a new
 thread's `get_capabilities` reports the digest the record names.
 
-A package replacement reaches threads that are already running. Measured once on Codex Desktop
-0.154.0, about a minute after `codex plugin add` the App Server started bridges again from the new
-version directory without restarting itself, and each read the record as it stood at that moment. No
-field of the record ties it to a version directory or a payload, and the launcher finds it six
-directories above its own file, so a launcher in any version directory under the same Codex home
-reads the same record. Once the record is version 2, a replacement whose launcher reads it the way
-the current one does starts those bridges under the policy. That was measured in an isolated Codex
-home, which also showed no record, a changed policy file and a launcher older than version 2 each
-starting no bridge at all. See
-[what one replacement measured](plugin-packaging.md#what-one-replacement-measured).
+A package replacement may or may not reach threads that are already running. Two replacements were
+measured on Codex Desktop 0.154.0. At the first, about a minute after `codex plugin add`, the App
+Server started bridges again from the new version directory without restarting itself, and each
+read the record as it stood at that moment. At the second none was seen to start: the bridges
+already running kept running from the removed directory, and a thread that resumed was given one
+from the new directory. What decides between the two was not
+measured. No field of the record ties it to a version directory or a payload, and the launcher
+finds it six directories above its own file, so a launcher in any version directory under the same
+Codex home reads the same record. Once the record is version 2, a bridge started from a new version
+directory whose launcher reads it the way the current one does carries the policy. That was
+measured on the host, for the bridge a thread got when it resumed after the second replacement,
+and in an isolated Codex home, which also showed no record, a changed policy file and a launcher
+older than version 2 each starting no bridge at all. See
+[what two replacements measured](plugin-packaging.md#what-two-replacements-measured).
 
 The property that fixes is a round trip, not three cases: **what the writer emits, the reader reads
 back unchanged, and a rerun then answers `LINKED`** — including values carrying backslashes, quotes,
