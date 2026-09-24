@@ -22,11 +22,14 @@ import os
 
 from codex_session_relay import cli, linkage, supervision
 from codex_session_relay.errors import RefusalReason
+from codex_session_relay.models import Endpoint
 
+from .support import HOST
 from .test_supervisor_autosend import DaemonChannelCase
 from .test_supervisor_channel import INITIATIVE, PROJECT, SUPERVISOR, _Reader
 
 LINK = linkage.link_id(linkage.EXECUTION, linkage.INITIATIVE, INITIATIVE, linkage.PROJECT, PROJECT)
+SUCCESSOR = "01supervisor-successor"
 
 
 def relay(*argv):
@@ -46,10 +49,10 @@ class DirectiveCase(DaemonChannelCase):
     def state(self):
         return os.path.dirname(str(self.store.path))
 
-    def direct(self, digest, purpose=None, *, correlation=None, expect=0):
+    def direct(self, digest, purpose=None, *, correlation=None, expect=0, task=SUPERVISOR):
         """What the supervisor runs to record one instruction."""
         argv = ["--state", self.state(), "linkage-directive", "--scope-kind", "project",
-                "--scope", PROJECT, "--from-task", SUPERVISOR, "--from-scope", INITIATIVE,
+                "--scope", PROJECT, "--from-task", task, "--from-scope", INITIATIVE,
                 "--link", LINK, "--digest", digest]
         if purpose is not None:
             argv += ["--purpose", purpose]
@@ -199,6 +202,25 @@ class ARealConflictIsRefusedWhereItIsRecorded(DirectiveCase):
         self.assertEqual(len(self.live()), 2)
         self.assertEqual(len(self.contested()), 2)
 
+    def test_the_same_assignment_restated_after_a_handover_is_not_a_competitor(self):
+        """One digest is one instruction. A successor's identical re-issue is its own record on
+        the new link revision and stands with the predecessor's; a different one is refused and
+        names the row the predecessor left live."""
+        first = self.direct("d-assignment", "project_assignment")
+        self.linkage.handover(
+            role=linkage.SUPERVISOR, scope_key=INITIATIVE, expect_task_id=SUPERVISOR,
+            endpoint=Endpoint(SUCCESSOR, HOST, cwd="/successor", cxc_session="cxc-successor"),
+            acknowledged=[], evidence="the supervisor was replaced", actor="test")
+
+        again = self.direct("d-assignment", "project_assignment", task=SUCCESSOR)
+        refused = self.direct("d-other", "project_assignment", task=SUCCESSOR, expect=2)
+
+        self.assertNotEqual(again["directiveId"], first["directiveId"])
+        self.assertEqual(sorted(self.live()), sorted([first["directiveId"], again["directiveId"]]))
+        self.assertEqual(self.contested(), [])
+        self.assertIn(first["directiveId"], refused["detail"])
+        self.assertIn("link revision 1", refused["detail"])
+
 
 class AHeldReportIsNamedWhereTheOperatorLooks(DirectiveCase):
     def contest(self):
@@ -229,6 +251,15 @@ class AHeldReportIsNamedWhereTheOperatorLooks(DirectiveCase):
     def test_a_report_already_sent_is_not_called_held(self):
         one, message_id = self.staged()
         self.channel.attempt(message_id, self.adapter)
+        self.contest()
+        self.assertEqual(self.held(), [])
+
+    def test_a_report_already_recorded_is_not_called_held(self):
+        """Recorded under its id, it is suppressed for that reason; the hierarchy holds nothing."""
+        owed = self.obligation()
+        code, answer = relay("--state", self.state(), "supervisor-report-recorded", "--event",
+                             owed["basis"]["eventId"])
+        self.assertEqual(code, 0, answer)
         self.contest()
         self.assertEqual(self.held(), [])
 
