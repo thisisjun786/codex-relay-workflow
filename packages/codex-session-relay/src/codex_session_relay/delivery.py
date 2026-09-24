@@ -38,7 +38,7 @@ from .transport import (
 from .policy import PUSH_CHANNEL_CLOSED, SUPERSEDED as SUPERSEDED_HOLD
 from . import NO_DELIVERABLE, envelope, restoration, rolepolicy
 from .report import (
-    NO_NOTE, compose_revision, fix_scope_lines, inline, known, preserve_lines,
+    NO_NOTE, compose_revision, fix_scope_lines, inline, known, preserve_lines, unheaded,
     read as read_work_report, render_completion, render_revision, required_for_candidate,
     return_lines, reverify_lines, violated_heading, what_changed_lines,
 )
@@ -713,7 +713,8 @@ class DeliveryService:
             # lack its note legitimately (no registered criteria), and then says so. Each value
             # stays on this line (report.inline), so none of them can open a heading.
             lines.append(
-                f"  {inline(item.get('id') or '(no id recorded)')}{restoration.label(item)}:"
+                f"  {unheaded(inline(item.get('id') or '(no id recorded)'))}"
+                f"{restoration.label(item)}:"
                 f" {inline(item.get('verdict') or 'no disposition recorded')}"
                 + (f" — {inline(note)}" if note else f" — {NO_NOTE}")
             )

@@ -1781,11 +1781,13 @@ def _unresolved_lines(report):
         return ["", "unresolved: none"]
     lines = ["", "unresolved:"]
     for item in entries:
+        # unheaded: the section reader steps over this dash, so an entry that names a section
+        # would open one.
         if isinstance(item, str):
-            lines.append(f"  - {item}")
+            lines.append(f"  - {unheaded(item)}")
         else:
             note = item.get("note") or ""
-            lines.append(f"  - {item.get('id')}: {note}".rstrip(": "))
+            lines.append(f"  - {unheaded(item.get('id'))}: {note}".rstrip(": "))
     return lines
 
 
@@ -1849,7 +1851,7 @@ def _one_finding(item, extra):
     # An enrichment-only finding has no disposition of its own, and rendering the absence as
     # "None" told the reader a criterion had a judgment named None.
     disposition = inline(item["verdict"]) if item.get("verdict") else None
-    name = f"{inline(item['id'])}{restoration.label(item)}"
+    name = f"{unheaded(inline(item['id']))}{restoration.label(item)}"
     rendered = f"  {name}: {disposition}" if disposition else f"  {name}"
     # A relationship with no registered criteria records findings without notes, and a finding
     # the child is sent to change must not arrive without saying its reason is missing.
@@ -1970,6 +1972,26 @@ def inline(value) -> str:
     if len(parts) <= 1 and (not parts or parts[0] == text):
         return text
     return " / ".join(part for part in parts if part.strip())
+
+
+# What cxc.section_problems takes a line for, and the verdict line REVIEW-OUTPUT-01 keeps last.
+HEADINGS = cxc.CORRECTION_SECTIONS + cxc.DISPATCH_SECTIONS + ("VERDICT",)
+
+
+def unheaded(value) -> str:
+    """Parent text that begins a line, kept from opening a section of its own.
+
+    The section reader takes a line for a heading when, past any list or emphasis markers, it
+    is a section name or starts with one and a colon. A legacy verdict records any id, so a
+    finding called FIX SCOPE rendered as "FIX SCOPE: needs_changes", a second FIX SCOPE beside
+    the relay's own; an unresolved item or an evidence check does the same from the work report.
+    Such text is quoted, which the reader does not step over. Anything else comes back unchanged.
+    """
+    text = str(value)
+    probe = text.strip().lstrip("-*#>").strip().strip("*`_").upper()
+    if any(probe == name or probe.startswith(name + ":") for name in HEADINGS):
+        return f'"{text}"'
+    return text
 
 
 def _series(words) -> str:
@@ -2125,9 +2147,9 @@ def _proof_lines(report):
         lines.append("  re-run what this review ran, and report command, exit code and result:")
         for item in entries:
             if isinstance(item, str):
-                lines.append(f"    {item}")
+                lines.append(f"    {unheaded(item)}")
             else:
-                lines.append(f"    {item.get('check', '')}")
+                lines.append(f"    {unheaded(item.get('check', ''))}")
     else:
         lines.append("  state the command, its exit code and what it showed, for each finding"
                      " FIX SCOPE or REVERIFY AND RETURN names")

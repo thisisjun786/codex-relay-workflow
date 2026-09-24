@@ -85,7 +85,9 @@ under `PRESERVE`, and one ruled `unverified` is evidence `REVERIFY AND RETURN` a
 that record cannot answer, such as a verdict naming no criterion or a finding given no
 disposition or no note, is written where it belongs as not recorded, never left out.
 The verdict record keeps a finding's id and note as the parent gave them, so each is held to its
-own line, its line breaks shown as ` / `, and none can open a section heading of its own.
+own line, its line breaks shown as ` / `. Parent text that begins a line and would read as a
+section heading (a finding id such as `FIX SCOPE`, an unresolved item, an evidence check) is
+quoted, so no section opens twice.
 
 **The callback.** An object of `taskId`, `model` and `effort`: where to answer, and the pair the
 task being answered is currently authorized to run. It is an object because the pair is what
