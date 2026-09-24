@@ -189,6 +189,39 @@ class TheHostLostTheAcceptedTurn(HostLossCase):
         self.daemon.tick()
         self.assertEqual(self.attempt_states(event_id)[0], HOST_LOST)
 
+    def test_a_completion_confirmed_by_its_token_is_checked_like_an_accepted_one(self):
+        """Devin review of e8ff3f44 (thread 4092237821): the check read only accepted sends.
+
+        An uncertain send that reconciliation confirmed from the token in the parent's items
+        advances the delivery to dispatched while its attempt keeps the honest held_uncertain
+        snapshot. The candidate query asked for dispatched attempts only, so if the host then
+        lost that turn, the report waited for an acknowledgement nobody could send.
+        """
+        self.parent_history()
+        _relationship, event_id = self.queued_event()
+        self.adapter.script("in_progress")
+        request_id = self.attempt(event_id)["requestId"]
+        turn = self.adapter.start_turn(PARENT, status="completed", text=f"...{request_id}...")
+        confirmed = self.reconciler.reconcile_attempt(request_id, self.adapter)
+        self.assertEqual(confirmed["evidence"], "turn_found")
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        self.assertEqual(self.attempt_states(event_id), [HELD_UNCERTAIN])
+        self.host_loses(turn.turn_id)
+        self.clock.advance(120)
+        report = self.daemon.tick().as_dict()
+        self.assertEqual(report.get("turnsLost"), 1)
+        attempts = self.attempts_for(event_id)
+        self.assertEqual([row["state"] for row in attempts], [HOST_LOST, DISPATCHED])
+        self.assertEqual(len(self.adapter.sends), 2)
+        # The lost attempt keeps the evidence it was confirmed on.
+        lost = json.loads(attempts[0]["record"])
+        self.assertEqual(lost["reconciliation"]["affirmativeEvidence"], "turn_found")
+        self.assertEqual(lost["deliveryState"], HELD_UNCERTAIN)
+        for _ in range(3):
+            self.clock.advance(120)
+            self.daemon.tick()
+        self.assertEqual(len(self.adapter.sends), 2)
+
     def test_a_tick_whose_only_change_is_the_loss_is_not_quiet(self):
         event_id, _first, turn = self.dispatched()
         self.host_loses(turn)
