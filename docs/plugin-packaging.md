@@ -495,15 +495,16 @@ making its first policy registration as well, and step 8 says what that changes.
        names = [hooks] if isinstance(hooks, str) else list(hooks or [])
        return names, [(root / name).read_bytes() for name in names]
    candidate, installed = declared(sys.argv[1]), declared(sys.argv[2])
-   if not candidate[0]:
-       print("no hook declared")
+   if not any(json.loads(data).get("hooks", {}).get("Stop") for data in candidate[1]):
+       print("no Stop hook declared")
    else:
        print("unchanged" if candidate == installed else "changed")
    EOF
    ```
 
-   `no hook declared` means the candidate carries no Stop hook at all, so the completion hook
-   would stop firing after the add; that is not an update this procedure covers, so do not add it.
+   `no Stop hook declared` means none of the candidate's hook declarations has a Stop event, so
+   the completion hook would stop firing after the add; that is not an update this procedure covers,
+   so do not add it.
    `unchanged` means the stored trust carries over, as it did at the second measured replacement.
    `changed` means expect to trust the hook again in Codex after step 5, as at the first; that was
    measured for a change to the command text, what a change elsewhere in the file does was not, and
@@ -653,9 +654,10 @@ A rollback past the bridge record's version installs, and then its launcher refu
 launcher that predates version 2 starts no bridge under a version-2 record: measured in isolation,
 where the older package's `codex plugin add` succeeded and every start of its bridge exited 2. So
 a bridge started after such a rollback, at the add or when a thread resumes, is refused, and that
-thread has no bridge tools until the record is replaced with a version-1 one, which starts bridges
-that check no role. A bridge already running may keep going from the removed directory, as all of
-them did at the second measured replacement, with the policy it started under.
+thread has no bridge tools. A version-1 record in place of the version-2 one lets bridges started
+after it run, and they check no role; whether the host starts a refused bridge again was not
+measured. A bridge already running may keep going from the removed directory, as all of them did at
+the second measured replacement, with the policy it started under.
 
 Removing the plugin deletes the cached version directory and the plugin entry in
 `config.toml`. It leaves the marketplace registration, so removing that is a
