@@ -14,9 +14,10 @@ cap (O-H0R4-2), staged by filling the recipient's window.
 """
 
 import json
+import unittest
 
 from codex_session_relay import faults, faultsweep
-from codex_session_relay.hostadapter import ListingBounded
+from codex_session_relay.hostadapter import TURN_ABSENT, ListingBounded, TurnInfo, find_in_listing
 from codex_session_relay.transport import DISPATCHED, HELD_UNCERTAIN, QUEUED
 
 from .support import CHILD, PARENT
@@ -218,6 +219,16 @@ class AnUnknownSendTheHostKeptNoTraceOf(UnknownSendCase):
         self.assertEqual(len(self.adapter.sends), 1)
 
 
+class TheListingSinceASendWithNoTurnId(unittest.TestCase):
+    def test_a_listed_turn_without_an_id_is_not_taken_for_the_sends_turn(self):
+        presence = find_in_listing(
+            [([TurnInfo(None, "completed", 100.0), TurnInfo("older", "completed", 10.0)], False)],
+            None, 150.0)
+        self.assertEqual((presence.finding, presence.stop, presence.seen, presence.older),
+                         (TURN_ABSENT, "older_than_send", (None,), ("older",)))
+        self.assertEqual([turn.status for turn in presence.seen_turns], ["completed"])
+
+
 class ASendTheTransportHasNotAnsweredIsNotReadAsLost(UnknownSendCase):
     """The rule reads only a receipt the transport settled. An unfinished one is still the
     transport's to answer, and no receipt at all says nothing: neither is ever redelivered."""
@@ -310,6 +321,25 @@ class AnUndecidedReadingIsHeldByName(UnknownSendCase):
         self.assertEqual(self.attempt_states(event_id)[0], UNKNOWN_LOST)
         self.assertIsNone(self.delivery_row(event_id)["hold_reason"])
         self.assertEqual(len(self.adapter.sends), 2)
+
+    def test_a_pass_that_cannot_decide_keeps_the_undecided_hold(self):
+        event_id, first = self.unknown_send(history=False)
+        self.ticks(1)
+        self.assert_held_undecided(event_id, first, "listing_empty")
+        # The parent starts a turn that is still running: the next reading is not ready, which
+        # decides nothing, so the name and the hold stay. Reconciled directly: nothing the
+        # daemon's gate fingerprints changed, so a tick would not reach the reading at all.
+        self.adapter.start_turn(PARENT, status="inProgress")
+        self.clock.advance(20)
+        pending = self.reconciler.reconcile_attempt(first, self.adapter)
+        self.assertTrue(pending["recipientTrace"]["pending"])
+        self.assert_held_undecided(event_id, first, "listing_empty")
+        # A pass whose own read fails takes no reading at all, and keeps them too.
+        self.adapter.fail_reads("find_token")
+        unread = self.reconciler.reconcile_attempt(first, self.adapter)
+        self.assertNotIn("recipientTrace", unread)
+        self.assert_held_undecided(event_id, first, "listing_empty")
+        self.assertEqual(len(self.adapter.sends), 1)
 
     def test_a_message_found_later_clears_the_undecided_hold(self):
         event_id, first = self.unknown_send()
