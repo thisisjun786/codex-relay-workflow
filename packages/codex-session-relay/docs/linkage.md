@@ -199,19 +199,22 @@ projects and held every report they owed upward for half an hour (CRW-124 G1, F-
 
 | Purpose | Relation to the others |
 |---|---|
-| `project_assignment` | Sole: never two different live ones per scope. A later version replaces it explicitly |
-| `scope_correction` | Sole: never two different live ones per scope, whether or not they answer a message. It amends the assignment and stands beside it; a later correction replaces it explicitly |
+| `project_assignment` | Sole: one live per scope. A later one replaces it explicitly |
+| `scope_correction` | Sole: one live per scope, whether or not it answers a message. It amends the assignment and stands beside it; a later correction replaces it explicitly |
 | `relayed_decision` | Stands beside the assignment and the correction. Two answering the same message with different digests compete |
 | `midpoint_check`, `resume`, `user_stop` | Stand beside everything. Two answering the same message with different digests compete |
 | none recorded | Cannot be placed, so it competes with every live instruction of another digest: the rule every row followed before |
 
 Two live instructions contest when their digests differ and they claim the same place: the same
 sole purpose, the same purpose answering the same message, or either with no recorded purpose.
-The same instruction restated is not a contest: one digest is one instruction. After a handover a
-successor re-issuing it records its own row on the new link revision (the id carries the revision
-so the two stay distinguishable, see Identity), and the two rows stand together as the same
-instruction said twice; a successor issuing a DIFFERENT one is refused and names the
-predecessor's row.
+Every place holds one live row. The same instruction restated is not a contest - one digest is
+one instruction - but after a handover it would reach the store as a new row, because the id
+carries the link revision (see Identity). A purposed record of it is therefore refused as already
+in force: the predecessor's row stays live through the handover, so nothing needs recording, and a
+second live copy would leave a later replacement settling one of two. A successor that wants it
+in its own name settles the predecessor's row superseded first. A different instruction from the
+successor is refused like any competitor and names the predecessor's row. Reading a pair an older
+writer left, the walks treat one digest as one instruction and hold nothing for it.
 Replacing one is always explicit: settle the one in force `superseded` (`linkage-settle`),
 restate in the new instruction whatever of it still applies, and record the new one. `chosen`
 also takes a directive out of the live set, but it records the winner of a contest rather than

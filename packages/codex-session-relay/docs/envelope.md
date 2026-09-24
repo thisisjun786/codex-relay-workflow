@@ -89,7 +89,7 @@ is refused with the contest retained. An operator's note in that column, and any
 written before this contract, are stored and read exactly as they are, with an unknown kind.
 
 The pointer's purpose also places the instruction (`directive_place`, CRW-230): a scope keeps
-no two different live `project_assignment`s or `scope_correction`s, one answer per message and
+one live `project_assignment` and one live `scope_correction`, one answer per message and
 purpose, and every other instruction stands beside them; a row with no pointer cannot be placed
 and competes with every live row of another digest, as all rows did before. `record_directive`
 refuses a purposed instruction that would compete for a place already held, and the walks report

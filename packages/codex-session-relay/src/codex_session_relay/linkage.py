@@ -1415,7 +1415,7 @@ class Linkage:
                     # left for every walk to report as a conflict that holds the level above.
                     refusal = self._competitor_in(
                         db, scope_kind=scope_kind, scope_key=scope_key, digest=digest,
-                        reference=reference, challenger=did)
+                        reference=reference, challenger=did, revision=edge["revision"])
                     if refusal is not None:
                         self._record_conflict_in(db, refusal, at=now)
                     else:
@@ -1443,17 +1443,26 @@ class Linkage:
             self.store.one("SELECT * FROM scope_directives WHERE directive_id = ?", (did,)))
 
     @staticmethod
-    def _competitor_in(db, *, scope_kind, scope_key, digest, reference, challenger):
+    def _competitor_in(db, *, scope_kind, scope_key, digest, reference, challenger, revision):
         """The refusal a new directive owes when a live one already holds its place, or None.
 
         Only an instruction recorded WITH a purpose is placed here. One recorded without a purpose
         cannot say what it competes with, so it is recorded as it always was and any contest it
         makes is reported by the walks - the contract the rows written before this one rely on.
 
+        A place holds one live row. A different instruction there competes; the SAME one - one
+        digest, reaching this insert only because the link revision moved, as it does in a
+        handover - is refused too, as already in force: the predecessor's row stays live through
+        the handover, so there is nothing to record, and a second live row would leave a later
+        replacement settling one of two copies and missing the other. The walks read a pair of
+        one digest as one instruction and do not hold reports for it; this keeps a new one from
+        forming.
+
         Read on the caller's connection, inside the write transaction that would insert the row,
         so two supervisors recording at once cannot both find the place empty.
         """
-        if envelope.directive_place(reference) is None:
+        place = envelope.directive_place(reference)
+        if place is None:
             return None
         incoming = {"digest": digest, "reference": reference}
         for row in db.execute(
@@ -1464,16 +1473,32 @@ class Linkage:
         ).fetchall():
             why = _directive_contest(row, incoming)
             if why is None:
-                continue
+                if envelope.directive_place(row["reference"]) != place:
+                    continue
+                why = "restated"
             held = envelope.parse_reference(row["reference"])
             recorded = ("directive " + repr(row["directive_id"]) + ", recorded "
                         + str(row["recorded_at"]) + " by " + repr(row["from_task_id"])
                         + " on link revision " + str(row["revision"]))
+            if why == "restated":
+                what = (scope_kind + " " + repr(scope_key) + " already has this same "
+                        + held["purpose"] + " live (" + recorded + ", the same digest). It"
+                        " stays in force through the link's move to revision " + str(revision)
+                        + ", so there is nothing to record, and a second live copy would leave"
+                        " a later replacement settling one of two")
+                return _Refusal(
+                    RefusalReason.LINK_CONFLICT,
+                    what + ". Nothing was recorded and the contest is retained. To re-issue it"
+                    " in your own name, settle it first - codex-session-relay linkage-settle"
+                    " --directive " + row["directive_id"] + " --disposition superseded --actor"
+                    " <your task id> - then record this one again",
+                    scope_kind=scope_kind, scope_key=scope_key,
+                    incumbent=row["directive_id"], challenger=challenger)
             if why == "sole":
                 what = (scope_kind + " " + repr(scope_key) + " already has a live "
-                        + held["purpose"] + " (" + recorded + "). A scope never keeps two"
-                        " different live " + held["purpose"] + "s: a second version would leave"
-                        " the parent two of it with no recorded order between them")
+                        + held["purpose"] + " (" + recorded + "). A scope keeps one live "
+                        + held["purpose"] + ", and a second would leave the parent two versions"
+                        " of it with no recorded order between them")
             elif why == "answer":
                 what = (scope_kind + " " + repr(scope_key) + " already has a live "
                         + held["purpose"] + " answering " + repr(held["correlationId"]) + " ("
