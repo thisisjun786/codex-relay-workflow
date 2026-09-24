@@ -15,10 +15,11 @@ happened to the turn row, and a scan that stopped at its bound has shown nothing
 ACK keeps its turn in the list, interrupted, with the message in it, so it reads present and its
 path does not change.
 
-A reading that cannot reach an answer by waiting - the listing never reached the send, the token
-scan could not cover the turns since it, the attempt has no send time - is recorded on the attempt
-as turn_check_undecided:<reason>, which status names, rather than left to look like an ordinary
-wait. It is cleared when a later reading decides.
+A reading that cannot reach an answer by waiting - the listing never reached the send, the listing
+is empty once the send is past the allowance, the token scan could not cover the turns since it,
+the attempt has no send time - is recorded on the attempt as turn_check_undecided:<reason>, which
+status names, rather than left to look like an ordinary wait. It is cleared when a later reading
+decides.
 
 Recovery is the ordinary claim path, once. The delivery goes back to queued and the next attempt of
 the same event is sent under a new request id; if the host loses that turn too, the delivery is
@@ -32,7 +33,7 @@ from datetime import datetime
 
 from .delivery import COMPLETION
 from .hostadapter import DISPATCH_TURN_SKEW_SECONDS, TURN_PRESENT, TURN_START_PRECISION_SECONDS
-from .hostadapter import ListingBounded
+from .hostadapter import ListingBounded, ListingEmpty
 from .policy import HOST_LOST_TURN, TURN_CHECK_UNDECIDED
 from .transport import DISPATCHED, QUEUED, assert_attempt_invariants
 
@@ -50,6 +51,7 @@ REPORT_ONLY = "report_only"
 # Why an unknown reading will not resolve by waiting. These are recorded by name; every other
 # unknown - an unreadable host, a send too recent - is simply read again later.
 LISTING_BOUNDED = "listing_bounded"
+LISTING_EMPTY = "listing_empty"
 TOKEN_SCAN_BOUNDED = "token_scan_bounded"
 NO_SEND_TIME = "no_send_time"
 NO_TURN = "no_turn"
@@ -73,8 +75,8 @@ def read_recipient_turn(adapter, clock, attempt, delivery, turn_id) -> dict:
     finding is present, host_lost_turn or unknown. unknown is not an answer, and detail says why
     no answer was reached: an adapter that cannot list turns, an attempt without a send time, an
     unreadable host, or a send too recent to call its turn lost.
-    undecided names the reasons waiting will not fix (listing_bounded, token_scan_bounded,
-    no_send_time, no_turn), and is None otherwise.
+    undecided names the reasons waiting will not fix (listing_bounded, listing_empty,
+    token_scan_bounded, no_send_time, no_turn), and is None otherwise.
     """
     reading = {"turnId": turn_id, "finding": UNKNOWN, "status": None, "detail": None,
                "undecided": None}
@@ -94,10 +96,23 @@ def read_recipient_turn(adapter, clock, attempt, delivery, turn_id) -> dict:
         reading.update(detail="the attempt has no send time, so absence cannot be bounded",
                        undecided=NO_SEND_TIME)
         return reading
+    allowance = TURN_START_PRECISION_SECONDS + DISPATCH_TURN_SKEW_SECONDS
     try:
         presence = lookup(thread, turn_id, sent_at=sent_at)
     except ListingBounded as error:
         reading.update(detail=f"undecided: {error}", undecided=LISTING_BOUNDED)
+        return reading
+    except ListingEmpty as error:
+        # A parent whose only turn was the lost delivery lists nothing, and will go on listing
+        # nothing: name it rather than read it as a transient failure for ever (review 4). Not
+        # before the allowance, when an empty list may still be the host catching up.
+        if clock.now() < sent_at + allowance:
+            reading["detail"] = (
+                f"the recipient lists no turns yet, and the send is less than {allowance:.0f} s "
+                f"old: {error}"
+            )
+        else:
+            reading.update(detail=f"undecided: {error}", undecided=LISTING_EMPTY)
         return reading
     except Exception as error:  # noqa: BLE001 - an unreadable host is its own answer
         reading["detail"] = f"unreadable: {type(error).__name__}: {error}"
@@ -106,7 +121,6 @@ def read_recipient_turn(adapter, clock, attempt, delivery, turn_id) -> dict:
         reading.update(finding=PRESENT, status=presence.turn.status,
                        detail=f"the recipient lists this turn ({presence.turn.status})")
         return reading
-    allowance = TURN_START_PRECISION_SECONDS + DISPATCH_TURN_SKEW_SECONDS
     if clock.now() < sent_at + allowance:
         reading["detail"] = (
             f"the recipient does not list this turn yet ({presence.stop}), but the send is less "

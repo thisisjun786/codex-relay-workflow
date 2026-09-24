@@ -486,8 +486,11 @@ deliveries behind it by a page a tick and never hides them. An in-progress turn,
 without its turn row, and an unreadable host are read again on a later rotation, within the budget.
 
 Some readings cannot decide however long the relay waits: a listing that never reached the send,
-a token scan that could not cover the turns since it, or an attempt without a send time. These
-are recorded on the attempt as `turn_check_undecided:<reason>` (`listing_bounded`,
+a listing with no turns at all once the send is more than 61 seconds old, a token scan that could
+not cover the turns since it, or an attempt without a send time. An empty listing is what a
+parent shows when the lost delivery was its only turn, and also what a host shows for a thread it
+answers for without its turns, so it is named and never taken for absence. These are recorded on
+the attempt as `turn_check_undecided:<reason>` (`listing_bounded`, `listing_empty`,
 `token_scan_bounded`, `no_send_time`). `status` reads the phase as
 `awaiting_ack:turn_check_undecided`, and `assignment-show` carries the reason as
 `projection.completion.delivery.turnCheck`. Nothing is sent again on an undecided reading. The

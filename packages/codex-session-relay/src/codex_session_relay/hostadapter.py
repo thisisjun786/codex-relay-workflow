@@ -68,6 +68,16 @@ class ListingBounded(HostUnavailable):
     """
 
 
+class ListingEmpty(HostUnavailable):
+    """The recipient listed no turns at all.
+
+    Not evidence of absence either: a thread the host answers for without its turns lists the
+    same. But a parent whose only turn was the lost delivery lists exactly this for good, so the
+    relay names it once the send is past the start-time allowance instead of retrying it as if it
+    were transient.
+    """
+
+
 @dataclass(frozen=True)
 class TurnPresence:
     """What a recipient's own turn list says about the turn a dispatch started.
@@ -109,7 +119,7 @@ def find_in_listing(pages, turn_id: str, sent_at: float) -> TurnPresence:
             seen.append(turn.turn_id)
         if not follows:
             if not scanned:
-                raise HostUnavailable(
+                raise ListingEmpty(
                     "the recipient's turn list is empty, which does not show that a turn is gone"
                 )
             return TurnPresence(TURN_ABSENT, None, scanned, "listing_end", tuple(seen))
