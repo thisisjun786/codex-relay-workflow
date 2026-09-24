@@ -38,7 +38,7 @@ from .transport import (
 from .policy import PUSH_CHANNEL_CLOSED, SUPERSEDED as SUPERSEDED_HOLD
 from . import NO_DELIVERABLE, envelope, restoration, rolepolicy
 from .report import (
-    compose_revision, fix_scope_lines, preserve_lines, read as read_work_report,
+    compose_revision, fix_scope_lines, known, preserve_lines, read as read_work_report,
     render_completion, render_revision, required_for_candidate, return_lines, reverify_lines,
     violated_heading, what_changed_lines,
 )
@@ -693,10 +693,11 @@ class DeliveryService:
             f"requestId: {request}",
             f"eventId: {row['event_id']}",
             f"relationshipId: {row['relationship_id']}",
-            f"executionGeneration: {record.get('executionGeneration')}  (new)",
-            f"supersedesEvent: {record.get('supersedesEvent')}",
-            f"supersedesRevisionHash: {record.get('supersedesRevisionHash')}",
-            f"verdict: {record.get('verdict')}",
+            # known(): a field the record lacks reads as not recorded, never as None.
+            f"executionGeneration: {known(record.get('executionGeneration'))}  (new)",
+            f"supersedesEvent: {known(record.get('supersedesEvent'))}",
+            f"supersedesRevisionHash: {known(record.get('supersedesRevisionHash'))}",
+            f"verdict: {known(record.get('verdict'))}",
         ]
         # The correction form (cxc.CORRECTION_SECTIONS), built by the same report functions the
         # composed rendering uses, so a child reads one shape of correction whichever path

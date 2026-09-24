@@ -1194,9 +1194,9 @@ class FinalLine(Directions):
             **a_report(handoff=None, cxc_status=cxc.NEEDS_HUMAN, cxc_reason="incomplete",
                        unresolved=[f"open item {n} with some length to it" for n in range(40)])
         )
-        # The correction sections are never shortened, so they raise the floor this report
-        # renders from; 3800 still cannot hold the forty unresolved items.
-        message = report.render_revision(row, receipt, "del-p-a1", stored, budget=3800)
+        # With the correction sections in it this report renders from 2563 bytes and in full
+        # at 4448, so 2600 still forces the forty unresolved items out.
+        message = report.render_revision(row, receipt, "del-p-a1", stored, budget=2600)
         self.assertIn("omitted:", message, "something had to go")
         # show returns the receipt and the work report, not template prose, so these lines
         # are recoverable nowhere once dropped.

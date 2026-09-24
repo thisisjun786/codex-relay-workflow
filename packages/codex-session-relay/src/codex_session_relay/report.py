@@ -1866,7 +1866,7 @@ def _scope_lines(report, generation):
         lines.append(f"  head {report['headSha']}")
     if report.get("criteriaDigest"):
         lines.append(f"  criteria {report['criteriaDigest']}")
-    lines.append(f"  execution generation {generation} (new)")
+    lines.append(f"  execution generation {known(generation)} (new)")
     return lines
 
 
@@ -1939,8 +1939,17 @@ def _findings(count, noun="finding") -> str:
     return f"{count} {noun}" + ("" if count == 1 else "s")
 
 
-def _known(value) -> str:
+def known(value) -> str:
+    """A record field as the message shows it: its value, or the words for its absence.
+
+    Public because delivery's plain header prints the same fields, and a missing one printed
+    through str() is the literal None.
+    """
     return NOT_RECORDED if value is None or value == "" else str(value)
+
+
+def _series(words) -> str:
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
 
 
 def _not_recorded(what, event_id) -> str:
@@ -1975,9 +1984,9 @@ def what_changed_lines(receipt, review=None, *, composed=False) -> list:
     marker to add: the superseded revision and the turn are in the full record, and a review's
     judgment rides on the same line. The plain rendering has no budget and names them.
     """
-    heading = (f"WHAT CHANGED: submission {_known(receipt.get('supersedesEvent'))} ruled"
-               f" {_known(receipt.get('verdict'))} and superseded, generation"
-               f" {_known(receipt.get('executionGeneration'))} opened")
+    heading = (f"WHAT CHANGED: submission {known(receipt.get('supersedesEvent'))} ruled"
+               f" {known(receipt.get('verdict'))} and superseded, generation"
+               f" {known(receipt.get('executionGeneration'))} opened")
     if review and review.get("kind"):
         # A count only where one is recorded: a FAIL review carries none, and cxc.verdict_line
         # refuses a count on it.
@@ -1988,8 +1997,8 @@ def what_changed_lines(receipt, review=None, *, composed=False) -> list:
     if composed:
         return ["", heading]
     return ["", heading,
-            f"  superseded revision {_known(receipt.get('supersedesRevisionHash'))}, ruled in"
-            f" turn {_known(receipt.get('verdictTurnId'))}"]
+            f"  superseded revision {known(receipt.get('supersedesRevisionHash'))}, ruled in"
+            f" turn {known(receipt.get('verdictTurnId'))}"]
 
 
 def fix_scope_lines(receipt, event_id, review=None, *, composed=False) -> list:
@@ -1999,20 +2008,30 @@ def fix_scope_lines(receipt, event_id, review=None, *, composed=False) -> list:
     line after it, because whether to change it is exactly what the message must keep saying.
     Every line here is the section's floor. The boundary line repeats DECISION BOUNDARY for
     the plain rendering, which has none; the composed message states it there instead.
+
+    With nothing marked needs_changes the verdict ruled nothing violated, and what is left to
+    say depends on what else it recorded: evidence owed, findings still undecided, or, when
+    every finding is marked verified, no answer at all, which is said as not recorded. It
+    never points at REVERIFY AND RETURN for something that section does not ask.
     """
     findings, origin = correction_source(receipt, review)
     if origin is None:
         return ["", "FIX SCOPE: " + _not_recorded(
             "no criterion was named, so nothing bounds a change", event_id)]
     counts = _counts(findings)
+    unruled = "FIX SCOPE: no finding is marked needs_changes, so nothing is ruled violated"
     if counts[FIX]:
+        excluded = ["verified", "unverified"] + (
+            ["review-only"] if origin == "verdict" and review else [])
         heading = (f"FIX SCOPE: only the {_findings(counts[FIX])} marked needs_changes, shown"
-                   " or not; verified, unverified"
-                   + (" and review-only" if origin == "verdict" and review else "")
-                   + " findings are out of scope")
+                   f" or not; {_series(excluded)} findings are out of scope")
+    elif counts[EVIDENCE_OWED]:
+        heading = unruled + "; change nothing but the evidence REVERIFY AND RETURN asks for"
+    elif counts[UNDECIDED]:
+        heading = unruled + "; change nothing until the parent settles the findings below"
     else:
-        heading = ("FIX SCOPE: no finding is marked needs_changes, so nothing is ruled violated;"
-                   " change nothing but the evidence REVERIFY AND RETURN asks for")
+        heading = "FIX SCOPE: " + _not_recorded(
+            "what to change, since every finding is marked verified", event_id)
     lines = ["", heading]
     if counts[UNDECIDED]:
         undecided = counts[UNDECIDED]
@@ -2026,7 +2045,11 @@ def fix_scope_lines(receipt, event_id, review=None, *, composed=False) -> list:
 
 
 def reverify_lines(receipt, event_id, review=None, *, proof=False) -> list:
-    """REVERIFY AND RETURN, one statement: what to check again, then return_lines' hand-back."""
+    """REVERIFY AND RETURN, one statement: what to check again, then return_lines' hand-back.
+
+    Each clause is asked of this section's own reader; when the findings ask for nothing to
+    be re-checked or shown, that is the gap it names, rather than a pointer back at FIX SCOPE.
+    """
     findings, origin = correction_source(receipt, review)
     if origin is None:
         clauses = ["what to re-check is " + _not_recorded("the verdict named no criterion",
@@ -2040,20 +2063,30 @@ def reverify_lines(receipt, event_id, review=None, *, proof=False) -> list:
         if counts[EVIDENCE_OWED]:
             clauses.append(f"show evidence for the {_findings(counts[EVIDENCE_OWED])}"
                            " marked unverified")
+        if counts[UNDECIDED]:
+            clauses.append("settle with the parent whether to change the"
+                           f" {_findings(counts[UNDECIDED])} without a disposition")
         if not clauses:
-            clauses.append("settle with the parent what FIX SCOPE says is not recorded")
+            clauses.append("what to re-check is " + _not_recorded(
+                "every finding is marked verified", event_id))
     return ["", "REVERIFY AND RETURN: " + "; ".join(clauses + ["then hand back as below"])]
 
 
 def return_lines(relationship_id, generation) -> list:
-    """The hand-back, the same bytes on both paths."""
+    """The hand-back, the same bytes on both paths.
+
+    A generation the record lacks is a placeholder the child has to fill from the full
+    record, never --generation None, which parses and names no generation.
+    """
+    absent = generation is None or generation == ""
+    shown = "<not recorded; read the full record>" if absent else generation
     return [
         "",
         "There is nothing to acknowledge. Contract v1 defines no acknowledgement for this",
         "direction and the relay refuses one by kind, so there is no proof to compute and",
         "no acknowledgement to send.",
         "Answer with your next completion receipt under the new generation:",
-        f"  emit --relationship {relationship_id} --generation {generation} --attempt <n>",
+        f"  emit --relationship {relationship_id} --generation {shown} --attempt <n>",
         "       --outcome ready_for_review --turn-thread <your task id> --turn-id <your turn>",
         "       --artifact <path> [--continues-anchor <this generation dispatch turn>]",
     ]

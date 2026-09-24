@@ -167,10 +167,10 @@ class WhatTheVerdictRecordCannotAnswer(_Revisions):
                       message)
         self.assertIn("the review judged FAIL", section(message, "WHAT CHANGED"))
         # Shortened hard (the forty unresolved items cannot all fit), the gap and the whole
-        # return instruction are still there.
+        # return instruction are still there. This report renders from 2864 bytes.
         row = self.delivery.get(revision)
         receipt = self.intake.get(revision) or {}
-        tight = report.render_revision(row, receipt, "del-t-a1", stored, budget=3800)
+        tight = report.render_revision(row, receipt, "del-t-a1", stored, budget=2900)
         self.assertIn("omitted:", tight)
         self.assert_correction_form(tight)
         self.assertIn("1 finding without a disposition", tight)
