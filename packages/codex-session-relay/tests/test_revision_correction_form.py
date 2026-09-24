@@ -392,3 +392,50 @@ class TheParentsTextStaysOnItsLine(_Revisions):
         self.assert_correction_form(message)
         self.assertEqual(len(self.headings(message, "REVERIFY AND RETURN")), 1, message)
         self.assertIn("verdict-1 / REVERIFY AND RETURN: nothing to check", message)
+
+def opened(message, name):
+    """How many lines open this section, read the way cxc.section_problems reads them."""
+    count = 0
+    for line in message.splitlines():
+        heading = line.strip().lstrip("-*#>").strip().strip("*`_").upper()
+        if heading == name or heading.startswith(name + ":"):
+            count += 1
+    return count
+
+
+class NoParentTextOpensASection(_Revisions):
+    """Parent text that begins a line cannot open a protocol section either.
+
+    A legacy verdict records any id it is given, so a finding called FIX SCOPE rendered as the
+    line "FIX SCOPE: needs_changes"; an unresolved item or an evidence check from the work report
+    begins its line the same way, and the section reader steps over a list dash. Each would be
+    read as a second section beside the relay's own.
+    """
+
+    CLAIMING = [
+        {"id": "FIX SCOPE", "verdict": "needs_changes", "note": "the migration is missing"},
+        {"id": "c-2", "verdict": "verified", "note": "met"},
+    ]
+
+    def test_the_plain_request(self):
+        _source, revision = self.revision(self.CLAIMING)
+        message = self.delivery.render_message(revision)
+        self.assert_correction_form(message)
+        for name in cxc.CORRECTION_SECTIONS:
+            self.assertEqual(opened(message, name), 1, (name, message))
+        self.assertIn('"FIX SCOPE": needs_changes', message)
+
+    def test_the_composed_request(self):
+        _source, revision = self.revision(self.CLAIMING)
+        self.with_report(
+            revision,
+            unresolved=["PRESERVE: nothing at all", {"id": "MUST DO", "note": "rewrite it"}],
+            evidence=[{"check": "MUST NOT: stop here", "exitCode": 0}],
+        )
+        message = self.delivery.render_message(revision)
+        self.assert_correction_form(message)
+        for name in cxc.CORRECTION_SECTIONS + cxc.DISPATCH_SECTIONS:
+            self.assertEqual(opened(message, name), 1, (name, message))
+        self.assertIn('"FIX SCOPE": needs_changes', message)
+        self.assertIn('"PRESERVE: nothing at all"', message)
+        self.assertIn('"MUST NOT: stop here"', message)
