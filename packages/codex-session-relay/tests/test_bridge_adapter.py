@@ -243,6 +243,10 @@ class ArchiveDiscovery(RelayTestCase):
 
     def _rpc(self, *, cwd_rows=(), unarchived_rows=(), archived_rows=()):
         def handler(params):
+            if params.get("sourceKinds"):
+                # The exec listings. These cases are about the default listings, so the exec
+                # listings are empty and the default path stays the one under test.
+                return {"data": [], "nextCursor": None}
             if params.get("archived") is True:
                 return {"data": list(archived_rows), "nextCursor": None}
             if params.get("cwd"):
@@ -277,7 +281,7 @@ class ArchiveDiscovery(RelayTestCase):
         pages = {}
 
         def handler(params):
-            if params.get("archived") is True or params.get("cwd"):
+            if params.get("archived") is True or params.get("cwd") or params.get("sourceKinds"):
                 return {"data": [], "nextCursor": None}
             cursor = params.get("cursor")
             index = 0 if cursor is None else int(cursor)
@@ -298,6 +302,110 @@ class ArchiveDiscovery(RelayTestCase):
         # The next pass resumes rather than re-reading the same prefix.
         self.assertIs(adapter.is_archived(THREAD, cwd=None), False)
         self.assertGreater(max(pages["seen"]), 3)
+
+
+# The sources App Server 0.154.0 lists when sourceKinds is omitted or empty:
+# INTERACTIVE_SESSION_SOURCES in codex-rs/rollout/src/lib.rs is Cli, VSCode and two custom
+# sources, and none of them is an exec thread.
+DEFAULT_LISTED_SOURCES = ("cli", "vscode")
+
+
+def emulated_thread_list(threads):
+    """thread/list answered the way the installed App Server 0.154.0 answers it.
+
+    codex-rs/app-server/src/filters.rs compute_source_filters: an omitted or empty sourceKinds
+    lists the interactive sources only, and a list naming a non-interactive kind such as exec is
+    applied as a filter over every source. archived true lists archived threads only, anything
+    else unarchived ones; cwd matches exactly. Each thread is a dict with id, source and
+    optionally archived and cwd. Pages are cut by limit with an integer cursor.
+    """
+    def handler(params):
+        kinds = params.get("sourceKinds") or None
+        archived = params.get("archived") is True
+        rows = [thread for thread in threads if bool(thread.get("archived")) is archived]
+        if params.get("cwd"):
+            rows = [thread for thread in rows if thread.get("cwd") == params["cwd"]]
+        allowed = DEFAULT_LISTED_SOURCES if kinds is None else tuple(kinds)
+        rows = [thread for thread in rows if thread["source"] in allowed]
+        start = int(params.get("cursor") or 0)
+        limit = params.get("limit") or 50
+        end = start + limit
+        return {
+            "data": [{"id": thread["id"], "source": thread["source"]} for thread in rows[start:end]],
+            "nextCursor": str(end) if end < len(rows) else None,
+        }
+
+    return handler
+
+
+class ExecSourceDiscovery(RelayTestCase):
+    """CRW-222: an exec-source thread is absent from the default listing, and still resolves.
+
+    The c6 child of CRW-5 was created by codex exec --worktree. The default thread/list omitted
+    it, so its archive state stayed unknown and every correction to it was withheld as
+    lifecycle_unknown. These cases drive the real adapter logic against a listing that behaves
+    like the installed App Server.
+    """
+
+    OTHERS = [{"id": f"other-{index}", "source": "vscode"} for index in range(3)]
+
+    def _adapter(self, threads, **kwargs):
+        rpc = FakeRpc({"thread/list": emulated_thread_list(self.OTHERS + threads)})
+        adapter = BridgeHostAdapter(call=rpc, store=self.store, clock=self.clock, **kwargs)
+        return adapter, rpc
+
+    def test_a_live_exec_thread_missing_from_the_default_listing_reads_not_archived(self):
+        adapter, _rpc = self._adapter([{"id": THREAD, "source": "exec"}])
+        self.assertIs(adapter.is_archived(THREAD, cwd=None), False)
+
+    def test_an_archived_exec_thread_reads_archived(self):
+        adapter, _rpc = self._adapter([{"id": THREAD, "source": "exec", "archived": True}])
+        self.assertIs(adapter.is_archived(THREAD, cwd=None), True)
+
+    def test_the_exec_listings_ask_for_exec_and_repair_nothing(self):
+        adapter, rpc = self._adapter([{"id": THREAD, "source": "exec"}])
+        adapter.is_archived(THREAD, cwd=None)
+        kinds = [params.get("sourceKinds") for _method, params in rpc.calls
+                 if "sourceKinds" in params]
+        self.assertTrue(kinds, "no listing named a source kind")
+        self.assertTrue(all(value == ["exec"] for value in kinds), kinds)
+        for _method, params in rpc.calls:
+            self.assertIs(params.get("useStateDbOnly"), True)
+
+    def test_a_thread_found_by_its_cwd_costs_one_default_listing(self):
+        adapter, rpc = self._adapter([{"id": THREAD, "source": "vscode", "cwd": "/w"}])
+        self.assertIs(adapter.is_archived(THREAD, cwd="/w"), False)
+        self.assertEqual(len(rpc.calls), 1)
+        self.assertNotIn("sourceKinds", rpc.calls[0][1])
+
+    def test_an_archived_default_thread_is_found_before_any_exec_listing(self):
+        adapter, rpc = self._adapter([{"id": THREAD, "source": "vscode", "archived": True}])
+        self.assertIs(adapter.is_archived(THREAD, cwd="/elsewhere"), True)
+        self.assertFalse(any("sourceKinds" in params for _method, params in rpc.calls))
+
+    def test_a_cli_thread_still_resolves_through_the_default_listing(self):
+        adapter, _rpc = self._adapter([{"id": THREAD, "source": "cli"}])
+        self.assertIs(adapter.is_archived(THREAD, cwd=None), False)
+
+    def test_an_app_server_thread_stays_unknown_as_it_was(self):
+        """appServer is outside the default listing too; this change leaves its answer alone."""
+        adapter, _rpc = self._adapter([{"id": THREAD, "source": "appServer"}])
+        self.assertIsNone(adapter.is_archived(THREAD, cwd=None))
+
+    def test_a_thread_in_no_listing_is_unknown_and_every_listing_keeps_its_cursor(self):
+        adapter, _rpc = self._adapter([])
+        self.assertIsNone(adapter.is_archived(THREAD, cwd=None))
+        listings = {row["listing"] for row in self.store.all(
+            "SELECT listing FROM discovery_cursors WHERE task_id = ?", (THREAD,))}
+        self.assertEqual(
+            listings, {"archived", "archived:exec", "unarchived_all:exec", "unarchived_all"})
+
+    def test_an_exec_listing_past_the_bound_resumes_on_the_next_check(self):
+        many = [{"id": f"exec-{index}", "source": "exec"} for index in range(6)]
+        adapter, _rpc = self._adapter(many + [{"id": THREAD, "source": "exec"}], page=1)
+        self.assertIsNone(adapter.is_archived(THREAD, cwd=None),
+                          "four pages of one row do not reach the seventh exec thread")
+        self.assertIs(adapter.is_archived(THREAD, cwd=None), False)
 
 
 if __name__ == "__main__":

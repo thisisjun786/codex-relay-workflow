@@ -214,6 +214,36 @@ class DeliveryTestCase(RelayTestCase):
         self.delivery.enqueue(event_id)
         return relationship, event_id
 
+    def correction_after_needs_changes(self):
+        """A delivered, acknowledged completion ruled needs_changes, and the correction it queued.
+
+        Returns (completion event id, correction event id). ack.record_verdict opens the next
+        generation and queues the revision request to the child in one transaction, so the
+        correction always has its delivery row, queued and unsent.
+        """
+        from codex_session_relay import identity
+        from codex_session_relay.delivery import REVISION
+
+        _relationship, event_id = self.queued_event(recipients=[PARENT, CHILD])
+        self.attempt(event_id)
+        self.clock.advance(5)
+        turn = self.adapter.start_turn(PARENT, turn_id="ack-turn", status="inProgress")
+        self.ack.acknowledge(
+            event_id, ack_turn_id=turn.turn_id,
+            ack_proof=identity.ack_proof(event_id, turn.turn_id), accepted=True,
+            adapter=self.adapter,
+        )
+        self.ack.record_verdict(
+            event_id, verdict="needs_changes", verdict_turn_id="v1",
+            findings=[{"id": "c1", "verdict": "needs_changes", "note": "fix the shape"}],
+        )
+        row = self.store.one(
+            "SELECT event_id FROM deliveries WHERE relationship_id = ? AND kind = ?",
+            (self._rid, REVISION),
+        )
+        self.clock.advance(1)
+        return event_id, row["event_id"]
+
     def attempt(self, event_id, *, now=None):
         return self.delivery.attempt(event_id, self.adapter, now=now)
 

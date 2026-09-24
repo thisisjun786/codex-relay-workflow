@@ -1033,3 +1033,154 @@ class ARefusalOnTheSharedGapDefers(DeliveryTestCase):
         del self.delivery._rate_limited
         record = self.attempt(event_id, now=row["next_eligible_at"])
         self.assertEqual(record["deliveryState"], DISPATCHED)
+
+
+
+class ExecAwareHost:
+    """The fake host for everything except the archive check, which is the real adapter logic.
+
+    A plain delegating object, as CountedHostReads is. The archive answer comes from
+    BridgeHostAdapter.is_archived over a thread/list emulated after App Server 0.154.0, whose
+    default listing has no exec thread in it.
+    """
+
+    def __init__(self, fake, archive):
+        self._fake = fake
+        self._archive = archive
+
+    def is_archived(self, thread_id, *, cwd=None):
+        return self._archive.is_archived(thread_id, cwd=cwd)
+
+    def __getattr__(self, name):
+        return getattr(self._fake, name)
+
+
+class ExecSourceRecipient(DeliveryTestCase):
+    """CRW-222 through the real delivery path: a correction to a child created by codex exec.
+
+    CRW-5 c6 withheld exactly this correction every minute as lifecycle_unknown and never sent
+    it, because the archive check could not see the exec-source child in any listing it asked.
+    """
+
+    def _host(self, *, child_archived=False):
+        from codex_session_relay.bridge_adapter import BridgeHostAdapter
+
+        from .test_bridge_adapter import FakeRpc, emulated_thread_list
+
+        threads = [
+            {"id": PARENT, "source": "vscode"},
+            {"id": CHILD, "source": "exec", "archived": child_archived},
+        ]
+        rpc = FakeRpc({"thread/list": emulated_thread_list(threads)})
+        return ExecAwareHost(
+            self.adapter, BridgeHostAdapter(call=rpc, store=self.store, clock=self.clock),
+        )
+
+    def _lifecycle_failure(self, event_id):
+        return self.store.one(
+            "SELECT * FROM failed_operations WHERE scope_key = ? AND operation = 'lifecycle_read'",
+            (event_id,),
+        )
+
+    def test_a_correction_to_a_live_exec_child_is_delivered(self):
+        _completion, correction = self.correction_after_needs_changes()
+        record = self.delivery.attempt(correction, self._host())
+        self.assertIsNotNone(record, "the correction was withheld instead of sent")
+        self.assertEqual(record["deliveryState"], DISPATCHED)
+        observed = self.store.one(
+            "SELECT * FROM recipient_lifecycle WHERE task_id = ?", (CHILD,))
+        self.assertEqual(observed["archived"], 0)
+        self.assertIsNone(self._lifecycle_failure(correction))
+
+    def test_an_archived_exec_child_is_withheld_with_its_relationship_recorded(self):
+        _completion, correction = self.correction_after_needs_changes()
+        self.assertIsNone(self.delivery.attempt(correction, self._host(child_archived=True)))
+        self.assertEqual(self.delivery_row(correction)["state"], WITHHELD_PRE_SEND)
+        failure = self._lifecycle_failure(correction)
+        self.assertEqual(failure["error_code"], ARCHIVED)
+        self.assertEqual(failure["relationship_id"], self._rid)
+        self.assertEqual(failure["parent_task_id"], PARENT)
+
+    def test_a_failure_row_recorded_without_its_relationship_is_filled_by_the_next_withhold(self):
+        """The c6 store holds exactly such a row; the next withhold of that event repairs it."""
+        _completion, correction = self.correction_after_needs_changes()
+        self.store.db.execute(
+            "INSERT INTO failed_operations (scope_key, operation, detail, error_code,"
+            " occurred_at) VALUES (?, 'lifecycle_read', 'lifecycle_unknown',"
+            " 'lifecycle_unknown', ?)",
+            (correction, self.clock.iso()),
+        )
+        self.store.db.commit()
+        self.clock.advance(1)
+        self.delivery.attempt(correction, self._host(child_archived=True))
+        failure = self._lifecycle_failure(correction)
+        self.assertEqual(failure["relationship_id"], self._rid)
+        self.assertEqual(failure["parent_task_id"], PARENT)
+
+
+class WithholdRecordsItsTransition(DeliveryTestCase):
+    """CRW-222: a pre-send withhold writes its failure row with the transition it describes.
+
+    Written first, in a transaction of its own, the row survived a guarded UPDATE that matched
+    nothing because another worker had already moved the delivery on, and it then described a
+    withhold that never took effect.
+    """
+
+    def _row(self, event_id, operation):
+        return self.store.one(
+            "SELECT * FROM failed_operations WHERE scope_key = ? AND operation = ?",
+            (event_id, operation),
+        )
+
+    def _claimed_during_the_host_read(self, event_id):
+        original = self.adapter.read_goal_status
+
+        def claimed_meanwhile(thread_id):
+            # Another worker claims the delivery between this worker's reading and its write.
+            self.store.db.execute(
+                "UPDATE deliveries SET state = 'sending', attempt_count = attempt_count + 1"
+                " WHERE event_id = ?",
+                (event_id,),
+            )
+            self.store.db.commit()
+            return original(thread_id)
+
+        self.adapter.read_goal_status = claimed_meanwhile
+
+    def test_a_lifecycle_withhold_overtaken_by_a_claim_records_nothing(self):
+        _relationship, event_id = self.queued_event()
+        self.adapter.fail_reads("is_archived")
+        self._claimed_during_the_host_read(event_id)
+        self.assertIsNone(self.attempt(event_id))
+        self.assertEqual(self.delivery_row(event_id)["state"], "sending")
+        self.assertIsNone(self._row(event_id, "lifecycle_read"))
+
+    def test_a_settings_withhold_overtaken_by_a_claim_records_nothing(self):
+        _relationship, event_id = self.queued_event(settings=None)
+        self._claimed_during_the_host_read(event_id)
+        self.assertIsNone(self.attempt(event_id))
+        self.assertEqual(self.delivery_row(event_id)["state"], "sending")
+        self.assertIsNone(self._row(event_id, "settings_check"))
+
+    def test_a_busy_deferral_overtaken_by_a_claim_records_nothing(self):
+        _relationship, event_id = self.queued_event()
+        self.adapter.threads[PARENT].status = "active"
+        self._claimed_during_the_host_read(event_id)
+        self.assertIsNone(self.attempt(event_id))
+        self.assertEqual(self.delivery_row(event_id)["state"], "sending")
+        self.assertIsNone(self._row(event_id, "parent_busy"))
+
+    def test_a_withhold_and_its_record_carry_one_stamp(self):
+        """Two clock reads differ in production; this clock moves on every read to show it."""
+        _relationship, event_id = self.queued_event()
+        self.adapter.threads[PARENT].archived = True
+        original = self.clock.iso
+
+        def ticking():
+            self.clock.advance(0.000001)
+            return original()
+
+        self.clock.iso = ticking
+        self.assertIsNone(self.attempt(event_id))
+        updated = self.delivery_row(event_id)["updated_at"]
+        self.assertEqual(self._row(event_id, "lifecycle_read")["occurred_at"], updated)

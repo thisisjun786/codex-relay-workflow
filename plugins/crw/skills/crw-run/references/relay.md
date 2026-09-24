@@ -460,6 +460,18 @@ recipient's own turn list, `observed_claimed` when an acknowledgement is recorde
 read, and `unmeasured` when neither an acknowledgement nor its evidence exists — including behind a
 `dispatched` send, because a dispatch proves the send was accepted and never that anybody read it.
 
+Per child it also reports `correction`: the correction this generation's `needs_changes` verdict
+queued for the child. The relay produced it, so it is not among `events`. Its
+`delivery.observation` uses the words above, and `undeliveredReason` says why an unsent one has not
+gone out: its hold, `relationship_not_active` for an assignment somebody stopped, or the lifecycle
+withhold that set its current state with the time it was recorded, for example `lifecycle_unknown`
+when the relay cannot establish whether the child is archived. `counts.correctionNotSent` and
+`counts.correctionWithheld` count them. `assignment-show` applies the same rule to its correction
+projection, and while the correction is unsent its `nextExpectedAction` is
+`daemon_delivers_correction`, or `parent_recovers_held_correction` once it is held; `child_corrects`
+means the correction went out. A withhold for settings or a send outcome is not explained there;
+`status` reads it.
+
 Exit codes differ from `doctor` deliberately. `doctor` keeps exit 0 for an unreadable database
 because determining before anything exists is not an error. This command exits 2 and prints the
 whole payload, because a coordinator asking which children are blocked and checking only the exit
