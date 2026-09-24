@@ -1866,7 +1866,8 @@ def _one_finding(item, extra):
 def _scope_lines(report, generation):
     lines = ["", "SCOPE:"]
     reference = pr_ref(report)
-    lines.append(f"  {reference}" if reference else f"  {report['repository']}")
+    # The line begins with the repository, which record() holds to one line but not to a slug.
+    lines.append(f"  {unheaded(reference or report['repository'])}")
     if report.get("baseSha"):
         lines.append(f"  base {report.get('baseRef') or ''} {report['baseSha']}".rstrip())
     if report.get("headSha"):
