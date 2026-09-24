@@ -237,6 +237,12 @@ class NoticeDeliverer:
         self._uncertain_after = page["next"]
         for one in page["notifications"]:
             notification = one["notificationId"]
+            if one.get("owner") != self.owner:
+                # Reserved by another owner - the fault-notification-reserve command, another
+                # transport - which may have sent it by its own means. The absence of a
+                # message on this channel proves nothing about that send, so it stays uncertain
+                # for its owner's transport or fault-notification-reconcile to settle (I-444).
+                continue
             row = self.channel.notice_message(notification)
             if row is not None and row["state"] == SENDING:
                 # A claim whose process died: settled exactly as attempt() would first - queued

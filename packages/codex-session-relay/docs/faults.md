@@ -949,7 +949,10 @@ deliverer is the seam between them and owns no rule. Each tick it:
   attempts it and settles it: `ack_notification` on the channel's recorded dispatch,
   `fail_notification` only when the channel proves nothing was sent (the message is then parked
   until its next reservation), and nothing when a send may have landed - the lease lapses to
-  uncertain and the first step settles it.
+  uncertain and the first step settles it. Only reservations the deliverer's own owner made
+  are settled this way: one another owner made (`fault-notification-reserve`, another
+  transport) may have been sent by its own means, so it stays uncertain for that owner's
+  transport or `fault-notification-reconcile`.
 
 The level above is the one the live linkage names from what the notification is about: the
 fault's own relationship, else the current relationship of the issue it names - its scope's

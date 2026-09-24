@@ -1021,3 +1021,57 @@ class WhatTheFifthFinalReviewFound(NoticeCase):
         self.assertEqual(notification["state"], faults.PENDING)
         self.assertIn("product", notification["lastError"] or "")
         self.assertEqual(self.upward(), [])
+
+
+class WhatDevinFoundOnTheFinalHeads(NoticeCase):
+    """Devin review of PR #151 at 46ef7ed2 and a78d49fa: a reservation another owner made is
+    that owner's to settle, and a notice moved where nobody is above holds no report back."""
+
+    def test_a_reservation_another_owner_made_is_never_settled_as_absent(self):
+        fault = self.broken()
+        self.measure_parent()
+        taken = self.ledger.reserve_notifications(owner="external", limit=5)["reserved"]
+        self.assertEqual([one["faultId"] for one in taken], [fault])
+        # Its owner sent it through a transport of its own and lost the answer.
+        self.clock.advance(faults.LEASE_SECONDS + 1)
+        for _ in range(3):
+            self.tick(advance=600)
+        notification = self.notification(fault)
+        self.assertEqual(notification["state"], faults.UNCERTAIN)
+        self.assertEqual(self.upward(), [], "what may have been sent is never sent again")
+        self.assertEqual(self.notice_rows(), [])
+
+    def assert_reports_flow(self, fault):
+        self.completed()
+        for _ in range(2):
+            self.tick(advance=self.channel.policy.lifecycle_recheck_seconds + 1)
+        sent = [one["obligation_kind"] for one in self.messages() if one["state"] == DISPATCHED]
+        self.assertEqual(sent, ["completion"], "the report to the former supervisor goes")
+        self.assertEqual(self.notification(fault)["state"], faults.PENDING)
+
+    def test_a_notice_moved_where_nobody_is_above_holds_no_report_back(self):
+        self.adapter.threads[SUPERVISOR].archived = True
+        fault = self.broken()
+        self.tick()
+        self.assertEqual(self.one_notice()["hold_reason"], channel_module.PARKED_HOLD,
+                         "a notice whose attempt sent nothing is parked")
+        self.ledger.move(fault, scope={"projectKey": "PRJ-UNBOUND", "issueKey": ISSUE})
+        self.adapter.threads[SUPERVISOR].archived = False
+        self.assert_reports_flow(fault)
+
+    def test_a_staging_that_fails_after_the_reservation_holds_no_report_back(self):
+        self.adapter.threads[SUPERVISOR].archived = True
+        fault = self.broken()
+        self.tick()
+        self.adapter.threads[SUPERVISOR].archived = False
+        original = channel_module.SupervisorChannel.stage_notice
+
+        def moved_meanwhile(channel, notice):
+            self.ledger.move(fault, scope={"projectKey": "PRJ-UNBOUND", "issueKey": ISSUE})
+            return original(channel, faults.notice_facts(self.store.db,
+                                                         notice["notificationId"]))
+        with mock.patch.object(channel_module.SupervisorChannel, "stage_notice",
+                               moved_meanwhile):
+            self.tick(advance=self.channel.policy.lifecycle_recheck_seconds + 1)
+        self.assertEqual(self.one_notice()["hold_reason"], channel_module.PARKED_HOLD)
+        self.assert_reports_flow(fault)
