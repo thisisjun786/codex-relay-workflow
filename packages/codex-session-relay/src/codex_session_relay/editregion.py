@@ -43,6 +43,7 @@ in a file this work may not edit.
 """
 
 import posixpath
+import shlex
 
 from .coordination import DOMAIN_EDIT_REGION, Conflicts, Refusal, derive, exact
 from .errors import CoordinationError, RefusalReason
@@ -139,6 +140,15 @@ def followup_id(agreement, trigger_text):
 
 def mark_id(repository, from_revision, to_revision):
     return derive("rvm", repository, from_revision, to_revision)
+
+
+def command_line(*words):
+    """A command an answer tells somebody to run, quoted so that it runs as printed.
+
+    Task ids, revisions and repositories are caller-chosen text; one holding a space split
+    into two arguments when pasted, and the command the answer named then failed (Devin review).
+    """
+    return " ".join(shlex.quote(str(word)) for word in words)
 
 
 def overlap(left, right):
@@ -381,8 +391,9 @@ class EditRegions:
             prior = predecessor[prior_column] if predecessor is not None else None
             key = record[project]
             parent = self._sole_parent(key)
-            command = ("region-settle --agreement " + record["agreementId"] + " --actor "
-                       + parent + " --disposition accepted") if parent else None
+            command = command_line(
+                "region-settle", "--agreement", record["agreementId"], "--actor", parent,
+                "--disposition", "accepted") if parent else None
             return {
                 "project": key, "task": parent,
                 "reason": ACCEPTANCE_ON_PRIOR_REVISION if prior else NOT_YET_ACCEPTED,
@@ -390,7 +401,7 @@ class EditRegions:
                 "command": command,
                 "precondition": None if parent else (
                     repr(key) + " has no single registered parent; the parent that takes it"
-                    " runs region-settle --agreement " + record["agreementId"]
+                    " runs " + command_line("region-settle", "--agreement", record["agreementId"])
                     + " --actor <that task> --disposition accepted"),
             }
         return None
@@ -953,9 +964,9 @@ class EditRegions:
                         "this agreement stands on " + repr(row["base_revision"])
                         + ", which was restated to " + repr(superseded["to_revision"])
                         + "; the recorded chain from it ends at " + repr(end) + ". Reaffirm it"
-                        " on the current revision before settling it: region-reaffirm"
-                        " --agreement " + identifier + " --actor " + actor + " --revision "
-                        + end,
+                        " on the current revision before settling it: " + command_line(
+                            "region-reaffirm", "--agreement", identifier, "--actor", actor,
+                            "--revision", end),
                         domain=DOMAIN_EDIT_REGION, subject=row["repository"],
                         incumbent=row["base_revision"], challenger=actor)
             if refusal is None and disposition == WITHDRAWN \
@@ -1151,8 +1162,9 @@ class EditRegions:
                     + repr(existing["to_revision"]) + " by " + repr(existing["actor"])
                     + "; one revision has one successor and a second would leave two chains"
                     " nobody can order. A later move is recorded from the end of the recorded"
-                    " chain, which is " + repr(end) + ": region-restate-revision --repository "
-                    + repository + " --from-revision " + end + " --to-revision " + to_revision,
+                    " chain, which is " + repr(end) + ": " + command_line(
+                        "region-restate-revision", "--repository", repository,
+                        "--from-revision", end, "--to-revision", to_revision),
                     domain=DOMAIN_EDIT_REGION, subject=repository,
                     incumbent=existing["to_revision"], challenger=to_revision)
                 self.conflicts.record_in(db, refusal, at=now)
