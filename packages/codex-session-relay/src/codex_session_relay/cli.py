@@ -1642,9 +1642,27 @@ def cmd_ack(services, args) -> dict:
 
 
 def cmd_verify_acks(services, args) -> dict:
-    """Complete acknowledgements authored without a host, re-checking disposition as it goes."""
+    """Complete acknowledgements authored without a host, re-checking disposition as it goes.
+
+    One kept while its delivery was unconfirmed has that delivery confirmed first, through the
+    acknowledging turn, exactly as the daemon's pass does (RelayDaemon._confirm_kept_acks), so a
+    manual run completes what the daemon would (Devin on 8c876676).
+    """
     _require_adapter(services)
-    return {"results": services.ack.verify_pending_acks(services.adapter, limit=args.limit)}
+    confirmations = []
+    kept = getattr(services.ack, "kept_unconfirmed", None)
+    reconciler = getattr(services, "reconciler", None)
+    if kept is not None and reconciler is not None:
+        for event_id, turn_id in kept(limit=args.limit):
+            outcome = reconciler.confirm_delivery(event_id, services.adapter, turn_id=turn_id)
+            if outcome is not None:
+                confirmations.append({key: outcome[key] for key in
+                                      ("eventId", "requestId", "confirmed", "turnRead", "error")
+                                      if key in outcome})
+    result = {"results": services.ack.verify_pending_acks(services.adapter, limit=args.limit)}
+    if confirmations:
+        result["confirmations"] = confirmations
+    return result
 
 
 def cmd_criteria_register(services, args) -> dict:

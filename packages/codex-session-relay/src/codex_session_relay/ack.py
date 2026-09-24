@@ -38,6 +38,9 @@ VERDICTS = ("verified", "needs_changes", "unverified", "aborted")
 # kept as authored rather than refused, and completed once the delivery is confirmed.
 UNCONFIRMED = (HELD_UNCERTAIN, SENDING)
 DELIVERY_UNCONFIRMED = "delivery_unconfirmed"
+# Why a kept acknowledgement is not promoted: it was authored before the attempt it would close
+# was sent, so it cannot be about that attempt, and only a new acknowledgement answers it.
+ACK_PREDATES_ATTEMPT = "ack_predates_attempt"
 _PENDING_COLUMNS = (
     "SELECT a.event_id, a.ack_turn_id, a.ack_at, a.accepted,"
     "       COALESCE(e.attempts, 0) AS attempts, e.last_reason, e.fingerprint,"
@@ -969,6 +972,20 @@ class AckService:
                     computed = refusal.reason.value if refusal.reason else "not_claimable"
                 if fresh_ack["accepted"] and computed:
                     blocker = computed
+            if blocker is None and fresh is not None:
+                # An acknowledgement answers an attempt it could have read (hostloss._AWAITING_SQL):
+                # one authored before the attempt it would close was sent - kept for an earlier
+                # attempt that never sent - is not promoted for this one, even from a turn this
+                # attempt was folded into (review 4). The parent acknowledges again. Both stamps
+                # are fixed-width UTC, so they compare as text; an attempt with no send time keeps
+                # the older rule.
+                current = db.execute(
+                    "SELECT sent_at FROM attempts WHERE event_id = ? AND attempt_no = ?",
+                    (event_id, fresh["attempt_count"]),
+                ).fetchone()
+                if (current is not None and current["sent_at"] is not None
+                        and fresh_ack["ack_at"] < current["sent_at"]):
+                    blocker = ACK_PREDATES_ATTEMPT
             fingerprint = self._pending_fingerprint(event_id, fresh)
 
             if blocker is None and verification == "verified":

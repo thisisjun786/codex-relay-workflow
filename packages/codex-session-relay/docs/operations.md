@@ -583,10 +583,13 @@ the send is still in flight, the acknowledgement is kept exactly as authored, un
 holds when the delivery moved while the acknowledging turn was read: confirmed, sent again, or
 reaching another turn. The turn check was evidence about the delivery as it was, so the
 acknowledgement is kept and checked again against the delivery as it is, and a turn an earlier
-attempt reached never stands in for the current attempt's. The daemon
+attempt reached never stands in for the current attempt's. An acknowledgement authored before
+the current attempt was sent, kept for an earlier attempt that turned out never to have been sent,
+is not promoted for it even from a turn the new attempt was folded into: it is withheld as
+`ack_predates_attempt`, `assignment-show` reads `parent_reacknowledges`, and a new acknowledgement settles it. The daemon
 confirms each kept acknowledgement's delivery through its turn, paced by the pending pass's
-backoff, and completes the acknowledgement in the same tick once the delivery is confirmed. A
-verdict completes it first. An ordinary acknowledgement makes no extra host read.
+backoff, and completes the acknowledgement in the same tick once the delivery is confirmed.
+`verify-acks` run by hand does the same, and a verdict completes it first. An ordinary acknowledgement makes no extra host read.
 
 `reconcile --request-id` runs the same read for a receipt that carries a turn id and reports it
 as `recipientTurn`: `{turnId, finding, status, detail}`, where the finding is `present`,
