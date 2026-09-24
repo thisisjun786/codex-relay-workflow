@@ -14,6 +14,8 @@ cap (O-H0R4-2), staged by filling the recipient's window.
 """
 
 import json
+import os
+import shlex
 import unittest
 
 from codex_session_relay import faults, faultsweep
@@ -85,6 +87,13 @@ class UnknownSendCase(HostLossCase):
 
     def recovery(self):
         return self.assignments.state(self._rid).get("recovery") or {}
+
+    def assert_reads_the_event_from_this_store(self, command, event_id):
+        """The recovery line runs a relay on THIS store: a shell without the original --state or
+        environment override would otherwise open another one (Devin on bb1b6af6)."""
+        argv = shlex.split(command or "")
+        store_dir = os.path.dirname(os.path.abspath(str(self.store.path)))
+        self.assertEqual(argv[-5:], ["--state", store_dir, "show", "--event", event_id])
 
     def fill_window(self, now):
         window = int(now // 3600) * 3600
@@ -222,8 +231,7 @@ class AnUnknownSendTheHostKeptNoTraceOf(UnknownSendCase):
         self.assertEqual((item["phase"], item["reported"]),
                          ("held:unknown_send_lost", "held:unknown_send_lost"))
         self.assertEqual(self.next_action(), "parent_recovers_unknown_send_lost")
-        self.assertEqual(self.recovery().get("command"),
-                         f"codex-session-relay show --event {event_id}")
+        self.assert_reads_the_event_from_this_store(self.recovery().get("command"), event_id)
 
     def test_an_unknown_loss_after_a_host_lost_turn_is_held_and_claims_no_dispatch(self):
         event_id, _first, turn = self.dispatched()
@@ -428,8 +436,7 @@ class AnUndecidedReadingIsHeldByName(UnknownSendCase):
                          ("held:unknown_send_undecided", "held:unknown_send_undecided"))
         self.assertEqual(self.next_action(), "parent_recovers_unknown_send_undecided")
         self.assertEqual(self.completion_delivery().get("turnCheck"), f"{UNDECIDED}:{reason}")
-        self.assertEqual(self.recovery().get("command"),
-                         f"codex-session-relay show --event {event_id}")
+        self.assert_reads_the_event_from_this_store(self.recovery().get("command"), event_id)
 
     def test_a_parent_listing_no_turns_holds_the_send_by_name(self):
         event_id, first = self.unknown_send(history=False)
@@ -584,8 +591,8 @@ class ACorrectionLostTheSameWayIsTheParentsToRecover(UnknownSendCase):
         self.clock.advance(120)
         outcome = self.reconciler.reconcile_attempt(record["requestId"], self.adapter)
         self.assertEqual(outcome.get("nextExpectedAction"), "parent_recovers_held_correction")
-        self.assertEqual((outcome.get("recovery") or {}).get("command"),
-                         f"codex-session-relay show --event {correction}")
+        self.assert_reads_the_event_from_this_store((outcome.get("recovery") or {}).get("command"),
+                                                    correction)
         row = self.delivery_row(correction)
         self.assertEqual((row["state"], row["hold_reason"]), (QUEUED, UNKNOWN_LOST))
         self.ticks(2)
@@ -593,8 +600,7 @@ class ACorrectionLostTheSameWayIsTheParentsToRecover(UnknownSendCase):
                           if send[1] == CHILD], [record["requestId"]])
         self.assertEqual(self.next_action(), "parent_recovers_held_correction")
         # Independent review of bb1b6af6: the parent is named with the command that supports it.
-        self.assertEqual(self.recovery().get("command"),
-                         f"codex-session-relay show --event {correction}")
+        self.assert_reads_the_event_from_this_store(self.recovery().get("command"), correction)
 
 
 class TheFourCasesReadApart(UnknownSendCase):
@@ -739,6 +745,19 @@ class TheHourlyCapIsNamedWithItsReopenTime(UnknownSendCase):
             self.store, self.registry, self.intake, self.clock,
             policy=RetryPolicy(max_sends_per_recipient_per_hour=0))
         self.assertIs(services.assignments.policy, services.delivery.policy)
+
+    def test_a_delivery_held_by_its_own_later_backoff_is_not_reported_as_paced(self):
+        """Devin on bb1b6af6: a delivery waiting out its own backoff past the window's end is held
+        by that backoff, not by the recipient's spent cap."""
+        event_id, now, window = self.capped()
+        later = window + 3600 + 1800
+        with self.store.transaction() as db:
+            db.execute("UPDATE deliveries SET state = 'deferred_busy', next_eligible_at = ?"
+                       " WHERE event_id = ?", (later, event_id))
+        item = self.status_of(event_id)
+        self.assertEqual((item.get("pacing"), item["phase"], item["nextEligibleAt"]),
+                         (None, "parent_busy", later))
+        self.assertIsNone(self.completion_delivery().get("pacing"))
 
     def test_the_delivery_goes_out_when_the_window_reopens(self):
         event_id, now, window = self.capped()
