@@ -452,7 +452,11 @@ bounded pass (`max_turn_checks_per_tick`, 4 lookups a tick) looks for the attemp
 parent's own turn list, newest first, among the turns begun since the send. That includes a
 completion whose send was uncertain and which reconciliation confirmed from its token in the
 parent's items: its attempt keeps the honest `held_uncertain` snapshot, and the turn looked for is
-the one the token was found in. The turn counts as lost only when:
+the one the token was found in. "Still waiting" means no acknowledgement answers the attempt: a
+verified one, or one authored no earlier than the attempt's send. An acknowledgement kept while an
+earlier attempt's send was unconfirmed, whose send then turned out never to have happened (a
+confirmed pre-send rejection), was authored before this attempt existed and does not hide its
+lost turn. The turn counts as lost only when:
 
 - the host answered: the listing ended, or reached a turn that began more than 61 seconds before
   the send, without it. The lookup pages back through up to 1000 turns. An empty or unreadable

@@ -1323,6 +1323,29 @@ class AnAcknowledgementBeforeTheSendIsConfirmed(HostLossCase):
                          ["withheld_pre_send", HOST_LOST, DISPATCHED])
         self.assertEqual(len(self.adapter.sends), 3)
 
+    def test_an_ack_authored_after_the_send_keeps_the_delivery_out_of_the_turn_pass(self):
+        """The control beside the one above: an acknowledgement the parent authored after this
+        attempt was sent answers it, verified or not, and the pass does not read its turn."""
+        event_id, _first, turn = self.dispatched()
+        self.clock.advance(5)
+        self.ack.acknowledge(event_id, ack_turn_id="ack-later",
+                             ack_proof=identity.ack_proof(event_id, "ack-later"), accepted=True,
+                             adapter=None)
+        reads = []
+        lookup = self.adapter.find_dispatched_turn
+
+        def counted(*args, **kwargs):
+            reads.append(args)
+            return lookup(*args, **kwargs)
+
+        self.adapter.find_dispatched_turn = counted
+        self.host_loses(turn)
+        self.clock.advance(120)
+        self.daemon.tick()
+        self.assertEqual(reads, [])
+        self.assertEqual(self.attempt_states(event_id), [DISPATCHED])
+        self.assertEqual(len(self.adapter.sends), 1)
+
 
 class EverySettlementIsACompareAndSet(HostLossCase):
     """D10: an attempt row has several writers (the sender, the daemon's and a manual reconcile,

@@ -306,9 +306,11 @@ def settle(store, clock, request_id, reading, *, observation=None) -> dict:
                 " dispatch_evidence = ?, lease_owner = NULL, lease_until = NULL, updated_at = ?"
                 " WHERE event_id = ? AND kind = ? AND state = ? AND attempt_count = ?"
                 "   AND hold_reason IS NULL"
-                "   AND NOT EXISTS (SELECT 1 FROM acks k WHERE k.event_id = deliveries.event_id)",
+                # An acknowledgement that answers this attempt, as _AWAITING_SQL decides it.
+                "   AND NOT EXISTS (SELECT 1 FROM acks k WHERE k.event_id = deliveries.event_id"
+                "                     AND (k.verified = 'verified' OR ? IS NULL OR k.ack_at >= ?))",
                 (QUEUED, hold, HOST_LOST_TURN, now_iso, attempt["event_id"], COMPLETION,
-                 DISPATCHED, attempt["attempt_no"]),
+                 DISPATCHED, attempt["attempt_no"], attempt["sent_at"], attempt["sent_at"]),
             ).rowcount
             if moved != 1:
                 return {"redelivery": NOT_MOVED,
@@ -349,12 +351,20 @@ def settle(store, clock, request_id, reading, *, observation=None) -> dict:
             "holdReason": hold, "record": record}
 
 
+# An acknowledgement answers the attempt it could have read: a verified one always, and otherwise
+# one authored no earlier than this attempt's send (both stamps are fixed-width UTC, so they compare
+# as text). One the parent authored before this attempt was sent - kept while an earlier attempt's
+# send was unconfirmed, which then settled as a confirmed pre-send rejection - cannot be about this
+# attempt, and must not hide its lost turn (Devin on 50020bdf). An attempt with no send time keeps
+# the older rule: any acknowledgement answers it.
 _AWAITING_SQL = (
     "SELECT d.event_id, a.request_id FROM deliveries d"
     " JOIN attempts a ON a.event_id = d.event_id AND a.attempt_no = d.attempt_count"
     " WHERE d.kind = ? AND d.state = ? AND d.hold_reason IS NULL"
     "   AND a.internal_state = 'settled' AND a.state IN (?, ?)"
-    "   AND NOT EXISTS (SELECT 1 FROM acks k WHERE k.event_id = d.event_id)"
+    "   AND NOT EXISTS (SELECT 1 FROM acks k WHERE k.event_id = d.event_id"
+    "                     AND (k.verified = 'verified' OR a.sent_at IS NULL"
+    "                          OR k.ack_at >= a.sent_at))"
 )
 
 
