@@ -1083,6 +1083,11 @@ CREATE INDEX IF NOT EXISTS supervisor_messages_eligible ON supervisor_messages
 CREATE INDEX IF NOT EXISTS supervisor_messages_recipient ON supervisor_messages
     (recipient_task_id, staged_at);
 CREATE INDEX IF NOT EXISTS supervisor_messages_event ON supervisor_messages (event_id);
+-- One fault notification is one supervisor message (supervisorchannel.NOTICE): its obligation
+-- id is the notification id, and a second staging of the same notification - another process,
+-- a restart, another relationship addressing it - finds this row instead of adding one.
+CREATE UNIQUE INDEX IF NOT EXISTS supervisor_messages_one_notice
+    ON supervisor_messages (obligation_id) WHERE obligation_kind = 'fault_notification';
 
 -- What a child's own relay recorded here beside the marker facts it writes (declarations.py).
 -- The relay daemon reads no marker file, so a turn that ended without a report is invisible

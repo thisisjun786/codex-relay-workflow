@@ -79,7 +79,7 @@ def a_reading(mode, **facts):
 
 
 # What every occasion must carry, written out from the packet contract (docs/packets.md,
-# "Fourteen occasions, not two") as literals. The sweep runs over THIS table, and a test pins
+# "Sixteen occasions, not two") as literals. The sweep runs over THIS table, and a test pins
 # packets.REQUIRED_BY_PURPOSE to it, so dropping a field from the validator's table fails here
 # rather than silently shrinking the sweep that was supposed to catch it.
 CANONICAL_REQUIRED = {
@@ -100,6 +100,10 @@ CANONICAL_REQUIRED = {
     ("parent_to_supervisor", "completion"): ("issue", "generation", "evidence"),
     ("parent_to_supervisor", "blocked"): ("issue", "evidence"),
     ("parent_to_supervisor", "decision_request"): ("issue", "decision", "evidence"),
+    # A fault notice names an issue when its fault sits under one and requires none (CRW-205
+    # criterion 7): a fault can be about a project and no issue.
+    ("parent_to_supervisor", "fault_notice"): ("evidence",),
+    ("parent_to_supervisor", "fault_decision"): ("decision", "evidence"),
 }
 
 # How each required field is supplied to compose.
@@ -505,6 +509,9 @@ def _read_keys(direction, purpose):
     keys = {"relationId", packets.RECORD_TASK_KEY[sender_role],
             packets.RECORD_TASK_KEY[recipient_role], "issue", "relationRevision",
             "relationStatus"}
+    if packets.ISSUE not in required:
+        # A purpose that does not require the issue, built without one, states none to compare.
+        keys.discard("issue")
     if direction in (P2C, C2P):
         keys.add(packets.DISPATCH_REQUEST)  # which tenure the packet belongs to
     if packets.GENERATION in required:
@@ -575,6 +582,7 @@ class RequiredFieldSweep(_Reading):
 # the record agrees with, a stale one, the record key that answers it, the gap that key's
 # absence leaves and the mismatch a stale value is refused as.
 STATED = {
+    packets.ISSUE: ("issue", ISSUE, "CRW-999", "issue", "issue", packets.WRONG_ISSUE),
     packets.GENERATION: ("generation", GENERATION, GENERATION + 1, "generation",
                          "generation", packets.STALE_GENERATION),
     packets.CRITERIA_DIGEST: ("criteria_digest", DIGEST, "e" * 64, "criteriaDigest",

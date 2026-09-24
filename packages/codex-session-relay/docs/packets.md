@@ -11,7 +11,7 @@ transport carries.
 parent owes the level above; a supervisor's instruction downward is still carried by the
 envelope alone. `receiver.py` is what the receiver reads for itself before it acts on one.
 
-## Fourteen occasions, not two
+## Sixteen occasions, not two
 
 The envelope shipped with one purpose in each direction, so five different child reports and
 six different parent messages rendered as two words. A blocked turn and a candidate offered
@@ -33,12 +33,21 @@ for review both said completion; the message that STARTS the work had no name at
 | parent to supervisor | completion | notification | issue, generation, evidence |
 | parent to supervisor | blocked | notification | issue, evidence |
 | parent to supervisor | decision_request | decision | issue, decision, evidence |
+| parent to supervisor | fault_notice | notification | evidence (issue when the fault sits under one) |
+| parent to supervisor | fault_decision | decision | decision, evidence (issue when the fault sits under one) |
 
 The restraint is load-bearing in two rows. An **assignment** does not require a generation,
 because a newly created child's registration needs a task id creation has not returned yet
 and the assignment is what gets sent before it exists; demanding one would refuse every
 legitimate first dispatch. A **progress** note requires nothing but the issue, because
 demanding a head from a child with nothing to show yet is how a plausible value gets made up.
+
+A **fault notice** and a **fault decision** do not require an issue. A fault can be about a
+project and no issue - a managed start that never produced a relationship - and demanding one
+would invent an issue or hold the notice for good. Each names the issue when its fault sits
+under one, and only as an identifier. A receiver holds a stated issue to its record as it holds
+any stated field; one these two purposes do not state is not compared, since the packet made no
+claim about an issue.
 
 A **resume** requires the policy for the opposite reason. Model, effort, sandbox and approval
 travel as settings and a receipt reads them back. The workflow has no transport field
@@ -50,7 +59,7 @@ nothing about what it corrects is a correction the child answers from memory. Th
 against the correction form below rather than against DISPATCH-TASK-01, and the evidence is
 where the reproduction or the review finding it rests on can be read.
 
-The three upward rows are the ones [the supervisor channel](supervisor-channel.md) sends. A
+The upward rows are the ones [the supervisor channel](supervisor-channel.md) sends; the two fault rows carry the relay's own fault notifications (see [faults](faults.md)), naming the issue the fault sits under and where it is readable, never the fault's recorded detail. A
 completion upward is NOT required to carry an artifact, because a noop completion has none and
 a research assignment may have only a locator; it carries the pull request when the work report
 names one whole. `status_response` has no row at all, and the absence is deliberate: `body`

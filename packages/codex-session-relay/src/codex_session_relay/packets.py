@@ -118,6 +118,14 @@ REQUIRED_BY_PURPOSE = {
     # there is a problem and not where to look at it has been told half of it.
     (envelope.PARENT_TO_SUPERVISOR, "blocked"): (ISSUE, EVIDENCE),
     (envelope.PARENT_TO_SUPERVISOR, "decision_request"): (ISSUE, DECISION, EVIDENCE),
+    # A fault notice says where the fault is readable; a fault decision also says what is being
+    # decided. The issue is carried when the fault sits under one and is not required: a fault
+    # can be about a project and no issue (a managed start that never produced a
+    # relationship), and requiring one is how an issue gets invented or the notice never goes.
+    # The fault's own recorded detail and evidence are not fields here: what travels upward is
+    # what the fault is, and the pointer.
+    (envelope.PARENT_TO_SUPERVISOR, "fault_notice"): (EVIDENCE,),
+    (envelope.PARENT_TO_SUPERVISOR, "fault_decision"): (DECISION, EVIDENCE),
     # status_response is deliberately absent, and the absence is the honest answer rather
     # than an oversight. BODY here is a dispatch instruction, checked against DISPATCH-TASK-01
     # by cxc.dispatch_problems, so requiring it of an answer would refuse every real answer;
@@ -937,8 +945,13 @@ def _reception(one, region, record, problems, gaps) -> dict:
         _compare(problems, gaps, WRONG_RECIPIENT, "recipient.taskId",
                  (region.get("recipient") or {}).get("taskId"), expected_recipient,
                  "a packet addressed to another task is not this task's instruction")
-    _compare(problems, gaps, WRONG_ISSUE, ISSUE, one.get(ISSUE), record.get(ISSUE),
-             "the issue binding is what makes this the assignment it claims to be")
+    if ISSUE in required_for(region["direction"], region["purpose"]) \
+            or _present(one.get(ISSUE)) is not None:
+        # Held to the record wherever the purpose requires it, and wherever it is stated. The
+        # two fault purposes require none - a fault can be about a project and no issue - and
+        # one that states none has made no claim about an issue to compare.
+        _compare(problems, gaps, WRONG_ISSUE, ISSUE, one.get(ISSUE), record.get(ISSUE),
+                 "the issue binding is what makes this the assignment it claims to be")
     _liveness(problems, gaps, record)
     if not first and region["direction"] in (envelope.PARENT_TO_CHILD,
                                               envelope.CHILD_TO_PARENT) \

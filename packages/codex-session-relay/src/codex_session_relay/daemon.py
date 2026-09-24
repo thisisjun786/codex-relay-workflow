@@ -26,11 +26,14 @@ from .policy import RetryPolicy
 from .receipts import ObservationOutcome, classify_observation
 from .scope import assert_assignment_delivery
 from .transport import DEFERRED_BUSY, DISPATCHED, HELD_UNCERTAIN, WITHHELD_PRE_SEND
+from .faults import DELIVERER_OWNER
 
 
 # Who a claim the daemon makes on a supervisor message belongs to. A claim is owned by its
 # attempt number and this name together, so a parent sending by hand beside it cannot settle it.
-DAEMON_OWNER = "relay-daemon"
+# The same name reserves the daemon's fault notifications, and the ledger keeps it the
+# deliverer's (faults.DELIVERER_OWNER).
+DAEMON_OWNER = DELIVERER_OWNER
 
 
 @dataclass
@@ -46,6 +49,7 @@ class TickReport:
     faultsRecorded: int = 0
     supervisorStaged: int = 0
     supervisorSent: int = 0
+    notificationsDelivered: int = 0
     quiet: bool = True
     notes: list = field(default_factory=list)
 
@@ -59,6 +63,7 @@ class TickReport:
             "faultsRecorded": self.faultsRecorded,
             "supervisorStaged": self.supervisorStaged,
             "supervisorSent": self.supervisorSent,
+            "notificationsDelivered": self.notificationsDelivered,
             "quiet": self.quiet, "notes": self.notes,
         }
 
@@ -150,6 +155,9 @@ class RelayDaemon:
         # where its next page starts. In memory for the same reason.
         self._supervisor_send_after = None
         self._last_refusal = None
+        # The fault notification deliverer, built on first use from whatever ledger and channel
+        # the daemon holds then (both are also set by attribute), and rebuilt if either changes.
+        self._notices = None
 
     # ------------------------------------------------------------------ tick
 
@@ -175,7 +183,8 @@ class RelayDaemon:
         report.quiet = not (report.observed or report.reconciled or report.delivered
                             or report.deferred or report.acksVerified or report.anchorsBound
                             or report.requeued or report.faultsRecorded
-                            or report.supervisorStaged or report.supervisorSent)
+                            or report.supervisorStaged or report.supervisorSent
+                            or report.notificationsDelivered)
         return report
 
     def _sweep_faults(self, report) -> None:
@@ -982,14 +991,53 @@ class RelayDaemon:
             for one in answer["staged"]:
                 if one.get("staged") or one.get("readdressed") or one.get("restated"):
                     report.supervisorStaged += 1
-        self._send_upward(channel, report, now)
+        sent = self._send_upward(channel, report, now)
+        # After the reports: a notice staged now is younger than every report already waiting
+        # for the same supervisor, and the channel sends each recipient's oldest first.
+        # And within the same per-tick send cap: the notices get what the reports left of it.
+        self._deliver_notices(channel, report, now,
+                              max(0, self.policy.max_supervisor_sends_per_tick - sent))
 
-    def _send_upward(self, channel, report, now) -> None:
+    def _deliver_notices(self, channel, report, now, limit) -> None:
+        """Fault notifications to the level above (CRW-205 criterion 7), with nobody asking.
+
+        Only with a fault ledger as well as the channel: the ledger decides what is owed and
+        whether it may go (reservation), the channel how it goes; faultnotice is the seam. A
+        notification that waits is carried as a note on the tick its reason appears or changes.
+
+        limit is what the reports left of max_supervisor_sends_per_tick: a notice is one attempt
+        at one supervisor message, so the pass's one cap bounds both (I-250).
+        """
+        if self.faults is None:
+            return
+        deliverer = self._notices
+        if deliverer is None or deliverer.ledger is not self.faults or deliverer.channel is not channel:
+            from .faultnotice import NoticeDeliverer
+
+            deliverer = self._notices = NoticeDeliverer(self.faults, channel, owner=DAEMON_OWNER)
+        try:
+            answer = deliverer.tick(self.adapter, now=now,
+                                    limit=limit)
+        except Exception as error:  # noqa: BLE001 - a tick never dies on one pass
+            report.notes.append(f"fault notifications not delivered: {error}")
+            return
+        report.notificationsDelivered += answer["delivered"]
+        # Returned to pending with nothing sent: a deferral, as a supervisor report's is.
+        report.deferred += answer["returned"]
+        # A parent measured for eligibility is a host observation this tick made and recorded,
+        # so a tick that made one is not quiet.
+        report.observed += answer["measured"]
+        for notification, reason in answer["waiting"]:
+            report.notes.append(f"fault notification {notification} waits: {reason}")
+
+    def _send_upward(self, channel, report, now) -> int:
+        """Attempt each recipient's oldest eligible message; returns how many attempts reached
+        the claim and the transport - what max_supervisor_sends_per_tick bounds."""
         from .supervisorchannel import CLAIMABLE, SENDING
 
         budget = self.policy.max_supervisor_sends_per_tick
         if budget <= 0:
-            return
+            return 0
         # Each recipient's OLDEST eligible message, oldest first. The claim lets only that one go
         # anyway, and reading every eligible row let one recipient's backlog - withheld again on
         # every recheck - fill the whole window each tick, so a report to anybody else was never
@@ -1046,9 +1094,16 @@ class RelayDaemon:
                 report.skipped += 1
                 continue
             try:
+                started = self._transports_started(row["message_id"])
                 record = channel.attempt(row["message_id"], self.adapter, now=now,
                                          owner=DAEMON_OWNER)
             except Exception as error:  # noqa: BLE001 - a refusal is an answer, not a crash
+                # An attempt whose transport started before it raised may have sent: it spends
+                # the tick's allowance like any attempt that reached the transport (I-250). One
+                # whose count cannot be read is taken to have.
+                after = self._transports_started(row["message_id"])
+                if started is None or after is None or after != started:
+                    attempted += 1
                 report.notes.append(
                     f"supervisor report {row['message_id']} not sent: {error}")
                 struggling.add(recipient)
@@ -1075,8 +1130,19 @@ class RelayDaemon:
             else:
                 struggling.add(recipient)
                 report.deferred += 1
+        return attempted
 
     # ----------------------------------------------------------------- state
+
+    def _transports_started(self, message_id):
+        """How many attempts at this supervisor message stamped their transport start - the
+        write committed before a transport is called - or None when that cannot be read."""
+        try:
+            return self.store.one(
+                "SELECT COUNT(*) AS n FROM supervisor_attempts WHERE message_id = ?"
+                "   AND transport_started_at IS NOT NULL", (message_id,))["n"]
+        except Exception:  # noqa: BLE001 - unreadable is answered by the caller, conservatively
+            return None
 
     def _active_relationships(self) -> list:
         rows = self.store.all(

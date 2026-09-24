@@ -951,6 +951,17 @@ A send whose response never came back is held as `held_uncertain` and is never r
 supervisor's `supervisor-read` can still settle it, and does only when its transcript holds
 that attempt's delivery token - its request id and a random part drawn when the send was claimed - in a turn that began no earlier than the transport; `supervisor-show` then records how it was settled.
 
+The daemon also carries the relay's fault notifications up this channel (CRW-205 criterion 7),
+only while the fault ledger has reserved them, so the assignment's pause, archive and no-contact
+and the product's notification budget still decide what goes. One arrives with purpose
+`fault_notice` - a broken fault opened, or a fault resolved; no answer is owed - or
+`fault_decision`, a decision about a fault that is the user's to make, relayed like any
+`decision_request`. It names the fault's class, severity and state and the issue once published,
+and points at `fault-show --fault <id>` on the sender's store; the fault's recorded evidence does
+not travel. The same `supervisor-read` records that one arrived. A fault the relay cannot place
+under a project with a supervisor is not sent anywhere else; it waits, with the reason on the
+notification (`fault-notifications`).
+
 Once a message about an event has been sent upward, that event's work report no longer
 changes: the relay refuses a correction to it, in place, as a new submission or as a first
 report, because the bytes that went up described it and point at it for evidence. Before the send a

@@ -25,7 +25,7 @@ recipient can be reached.
 A **purpose** is why the message was sent, and each direction has its own set. The supervisor
 sends a project assignment, a midpoint check, a resume, a scope correction, a relayed decision
 or a user stop. The parent sends a completion, a block, a decision request or a status
-response. A purpose belongs to one direction and carries one kind, so a caller cannot label a
+response, and the relay's fault ledger sends through it a fault notice or a fault decision. A purpose belongs to one direction and carries one kind, so a caller cannot label a
 completion as an instruction: `kind_of` derives it and refuses a pairing that does not exist.
 
 A relayed decision is a request rather than a decision. Jun has already decided; what the
