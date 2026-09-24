@@ -1078,6 +1078,22 @@ from a turn of its own, runs `supervisor-read`, and nothing reads back on its be
 the digest rather than leaving it to be written by hand. A pointer belonging to another
 instruction is refused with the contest retained, and one digest cannot carry two purposes.
 
+The purpose also decides what an instruction competes with. A project keeps one live
+`project_assignment` and one live `scope_correction` (answering a message or not). After a
+handover the predecessor's instructions stay in force, so do not restate them: an identical one
+is refused as already live, and to issue it in your own name you settle the old one first. A
+`relayed_decision`, `midpoint_check`, `resume` or `user_stop` stands beside them, and only
+two of one purpose answering the same `--correlation` with different digests compete. Record
+every instruction with `--purpose`: one without it cannot be placed and contests every live
+instruction of another digest, which holds every report the project owes upward. A second
+assignment or correction is refused where it is recorded, naming the one in force; to replace
+it, restate in the new instruction whatever of the old one still applies, run
+`linkage-settle --directive <id> --disposition superseded --actor <your task id>`, then record
+the new one. Settle only an instruction that is really replaced: settling is a decision the parent
+reads. A report the hierarchy is holding shows in `supervisor-standing` as a `report_held` gap
+with its reason; the package's `docs/linkage.md` ("Where an instruction stands") has the full
+relation table.
+
 The packet a parent and a child exchange sits on that same envelope and adds what the
 occasion requires: `relay-packet/1`, in the package's own `docs/packets.md`, with the
 workflow rule in [the typed form these fields travel in](task-packet.md#the-typed-form-these-fields-travel-in).

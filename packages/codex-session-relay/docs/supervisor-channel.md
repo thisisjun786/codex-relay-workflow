@@ -400,6 +400,37 @@ meets either refusal. The hold is derived: staging and the next attempt release 
 message once `resolve()` names its endpoints again, and staging re-addresses one that was never
 sent. Order is kept among the messages that have an addressee.
 
+### A report the hierarchy is holding
+
+Staging refuses a report whose hierarchy is not settled, and the obligation stays standing: a
+contested instruction (`link_conflict`), a drifting owner (`relation_owner_drift`), two
+candidates above (`duplicate_scope_owner`), nobody above (`unregistered_scope`) or a store that
+could not be read (`relation_unreadable`). The daemon's pass keeps only what it staged, so on
+the installed relay two projects' reports were refused on every tick for half an hour while
+`supervisor-standing` listed them as owed, with no gap and a healthy service (CRW-124 G1,
+F-G1-2; CRW-230).
+
+`supervisor-standing` now names every such hold in `gaps`:
+
+    {"schema": "supervisor-obligation/1", "gap": "report_held", "relationId": "rel-...",
+     "obligationIds": ["..."], "reason": "link_conflict", "detail": "the hierarchy above ..."}
+
+It is the refusal `resolve()` gives, asked of `resolve()` itself once per relation
+(`SupervisorChannel.report_holds`) rather than of a copy of its rule, so the reason and detail
+are the ones staging would give. Only reports that have not gone out are listed: no message yet,
+or one still claimable whatever hold it carries (a send-budget hold is a reason not to restage,
+not a sign the report left). A report on its way, sent, read or held uncertain has left staging,
+and `supervisor-show` is where its fate is read. Nowhere to send is a hold with its own reason:
+the obligation is owed all the same, which is the difference this channel keeps between having
+nobody to report to and not owing a report. The obligation's own `decision` is unchanged;
+`report: true` still answers whether the fact is news, and the gap answers why it has not gone.
+
+The hold is released by settling the hierarchy, never by this reading. An instruction contest
+recorded through `linkage-directive --purpose` is refused where it is recorded
+([Where an instruction stands](linkage.md#where-an-instruction-stands)), so what still produces
+`link_conflict` here is an instruction recorded without a purpose or a store written before that
+rule.
+
 ### Who moves a message out of sending
 
 A message leaves `sending` only through the claim that holds it: this message, this attempt

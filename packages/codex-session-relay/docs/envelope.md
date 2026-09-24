@@ -88,6 +88,14 @@ nothing to drift, and a pointer that derives something else belongs to another i
 is refused with the contest retained. An operator's note in that column, and any directive
 written before this contract, are stored and read exactly as they are, with an unknown kind.
 
+The pointer's purpose also places the instruction (`directive_place`, CRW-230): a scope keeps
+one live `project_assignment` and one live `scope_correction`, one answer per message and
+purpose, and every other instruction stands beside them; a row with no pointer cannot be placed
+and competes with every live row of another digest, as all rows did before. `record_directive`
+refuses a purposed instruction that would compete for a place already held, and the walks report
+a contest only between instructions that do. The relation table, the priority a parent applies
+and the replacement procedure are in [Where an instruction stands](linkage.md#where-an-instruction-stands).
+
 ## supervisor-obligation/1
 
 Three things are news for the level above: a completion, a new real block, and a decision only

@@ -463,7 +463,7 @@ Global options come BEFORE the subcommand:
 | `linkage-peer` | join two project parents, symmetrically and outside the hierarchy |
 | `linkage-outstanding` | exactly the unfinished work a replacement owner must acknowledge |
 | `linkage-handover` | replace a scope's owner, only by restating the owner and that work |
-| `linkage-directive` / `linkage-settle` | record an instruction by digest and origin; settle one without erasing the other |
+| `linkage-directive` / `linkage-settle` | record an instruction by digest and origin, placed by its `--purpose` so one competing for a place already held is refused where it is recorded; settle one without erasing the other |
 | `linkage-up` / `linkage-down` | walk the hierarchy either way, with its gaps and contention |
 | `linkage-counterpart` | who a message is really addressing, and every problem with the reference |
 | `emit` | emit a completion receipt over real artifacts |

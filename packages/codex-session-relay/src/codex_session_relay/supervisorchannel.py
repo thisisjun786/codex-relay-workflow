@@ -1318,6 +1318,60 @@ class SupervisorChannel:
         return {"schema": VERSION, "projectKey": project_key, "staged": staged,
                 "refused": refused, "skipped": skipped, "gaps": standing["gaps"]}
 
+    def report_holds(self, standing) -> list:
+        """Each report the hierarchy is holding, named, for the reading an operator makes.
+
+        Staging refuses a report whose hierarchy is not settled - a contested instruction, a
+        drifting owner, two candidates above, nobody above at all - and the obligation stays
+        standing, which is right. But the daemon's pass keeps only what it staged, so on the
+        installed relay two projects' reports were refused on every tick for half an hour while
+        supervisor-standing listed them as owed with no gap (CRW-124 G1, F-G1-2; CRW-230). This is
+        that same refusal, asked of resolve() itself rather than of a copy of its rule, and
+        returned as a gap naming the reason, the relation and the obligations it holds.
+
+        Only reports the hierarchy is actually keeping back are held. With no message yet, that
+        is an obligation whose own decision says a report is due: one already recorded under its
+        id (supervisor-report-recorded) is suppressed for that reason, not by the hierarchy, and
+        naming the hierarchy would misstate why nothing goes. With a message, it is one still
+        claimable, whatever hold it carries - a send-budget hold is a reason not to restage it,
+        not a sign it left. One on its way, sent, read or held uncertain has left staging, and
+        calling it held would contradict what supervisor-show says happened to it.
+
+        The messages are read once for the whole list: supervisor_messages has no index on the
+        obligation, so a read per obligation would scan the table once each. Then one resolve()
+        per relation, which is the read staging would make anyway.
+        """
+        obligations = standing.get("standing") or []
+        newest = {}
+        identifiers = [one["obligationId"] for one in obligations]
+        for start in range(0, len(identifiers), 500):
+            chunk = identifiers[start:start + 500]
+            for row in self.store.all(
+                    "SELECT obligation_id, state FROM supervisor_messages WHERE obligation_id IN ("
+                    + ",".join("?" * len(chunk)) + ") ORDER BY staged_at", tuple(chunk)):
+                # Ascending, so the last row seen for an obligation is its newest.
+                newest[row["obligation_id"]] = row["state"]
+        waiting = {}
+        for obligation in obligations:
+            state = newest.get(obligation["obligationId"])
+            if state is None and not (obligation.get("decision") or {}).get("report"):
+                continue
+            if state is not None and state not in CLAIMABLE:
+                continue
+            waiting.setdefault(obligation["relationId"], []).append(obligation["obligationId"])
+        holds = []
+        for relation, owed in waiting.items():
+            try:
+                self.resolve(relation)
+            except DeliveryRefused as refusal:
+                holds.append({
+                    "schema": supervision.SCHEMA, "gap": "report_held", "relationId": relation,
+                    "obligationIds": owed,
+                    "reason": refusal.reason.value if refusal.reason else None,
+                    "detail": refusal.detail,
+                })
+        return holds
+
     def store_readings(self, project_key, observations=()) -> list:
         """The owed omissions this store derives for a project, beside a caller's readings.
 
