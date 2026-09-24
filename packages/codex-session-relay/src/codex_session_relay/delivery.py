@@ -35,7 +35,7 @@ from .transport import (
     attempt_record,
     classify_operation_receipt,
 )
-from .policy import PUSH_CHANNEL_CLOSED, SUPERSEDED as SUPERSEDED_HOLD
+from .policy import HOST_LOST_TURN, PUSH_CHANNEL_CLOSED, SUPERSEDED as SUPERSEDED_HOLD
 from . import NO_DELIVERABLE, envelope, restoration, rolepolicy
 from .report import (
     NO_NOTE, compose_revision, fix_scope_lines, inline, known, preserve_lines, unheaded,
@@ -66,6 +66,8 @@ NOTICE_OUTCOMES_SQL = "(" + ", ".join("'" + name + "'" for name in RELAY_NOTICE_
 # it IS answered by the child's reply.
 EXECUTION_ONLY_OUTCOMES = ("failed", "interrupted", "blocked_needs_input")
 CLAIMABLE = (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND)
+# What status reports for a delivery queued again because the host lost its last turn.
+REDELIVERING_HOST_LOST = "redelivering:" + HOST_LOST_TURN
 
 # linkage.PROJECT and linkage.ISSUE, spelled here rather than imported. linkage reaches registry
 # and assignment from inside its own functions, and delivery is reached from registry, so a
@@ -2052,6 +2054,9 @@ def _message_status(row, record) -> str:
         return "prepared"
     if row["state"] in (DISPATCHED, "acknowledged"):
         return "dispatched"
+    if row["state"] == HOST_LOST_TURN:
+        # The host accepted this attempt's turn and no longer has it (hostloss.py).
+        return HOST_LOST_TURN
     if record and record.get("sendAttempted") == "no":
         return "confirmed_unsent"
     return "uncertain"
@@ -2140,6 +2145,9 @@ def _reported_state(row, ack, grant=None) -> str:
         return "dispatched_awaiting_ack"
     if row["state"] == HELD_UNCERTAIN:
         return "held_uncertain_awaiting_evidence"
+    if row["state"] == QUEUED and row["dispatch_evidence"] == HOST_LOST_TURN \
+            and not row["hold_reason"]:
+        return REDELIVERING_HOST_LOST
     if row["hold_reason"]:
         return f"held:{row['hold_reason']}"
     return row["state"]
@@ -2327,6 +2335,11 @@ def _phase(row, attempts, ack, failure=None, superseded=None, grant=None) -> str
         # and it may already need reconciliation, so awaiting_receipt would point at the
         # child when the open question is about a send this relay made.
         return "in_flight"
+    if row["state"] == QUEUED and row["dispatch_evidence"] == HOST_LOST_TURN:
+        # Queued again because the host lost the turn the last attempt started (hostloss.py).
+        # The name lasts while the row waits; once the next attempt settles, the phase is that
+        # attempt's, and the lost one keeps host_lost_turn in its own state.
+        return REDELIVERING_HOST_LOST
     if row["state"] == QUEUED:
         # A delivery row exists, so the receipt was already collected and accepted. What is
         # outstanding is this relay reaching the recipient, not the child producing anything.

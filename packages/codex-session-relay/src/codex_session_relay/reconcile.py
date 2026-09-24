@@ -7,12 +7,21 @@ recipient's items, or a confirmed pre-send rejection.
 
 Elapsed time is not on that list, and there is no function here that takes a duration. An
 attempt with no affirmative evidence stays held and says precisely what it is missing.
+
+A receipt carrying a turn id is followed by one more read: the recipient's own turns, for that
+turn (hostloss.py, CRW-224). The receipt proves turn/start was answered, not that the host kept
+the turn. What the read finds is reported as recipientTurn; a completion whose turn the host lost
+is recorded host_lost_turn and queued once more. That is not evidence that a send landed, so it
+is not a fourth item on the list above: it is the host's own answer that the accepted turn is
+gone.
 """
 
 import json
 from enum import Enum
 
+from . import hostloss
 from .delivery import COMPLETION, REVISION, SENDING
+from .policy import HOST_LOST_TURN
 from .transport import (
     DEFERRED_BUSY,
     DISPATCHED,
@@ -132,8 +141,8 @@ class Reconciler:
             facts = classify_operation_receipt(receipt)
             operation_observation = f"{facts.transport_receipt_status}:{facts.delivery_state}"
             if facts.delivery_state == DISPATCHED:
-                return self._settle_from_receipt(
-                    attempt, delivery, facts, Evidence.RECEIPT_TURN_ID, operation_observation, now
+                return self._settle_dispatched(
+                    attempt, delivery, facts, operation_observation, adapter, now
                 )
             if facts.retry_safe:
                 return self._settle_from_receipt(
@@ -163,6 +172,53 @@ class Reconciler:
         # exhausted one is not affirmative evidence of non-delivery. Either way: stay held.
         return self._stay_held(attempt, delivery, operation_observation, scan_detail, now)
 
+    def _settle_dispatched(self, attempt, delivery, facts, observation, adapter, now) -> dict:
+        """A receipt with a turn id, then the recipient's own turns for that turn (CRW-224).
+
+        The read comes first and outside any transaction, as every host read here does. An
+        attempt already recorded as lost is reported and left alone: settling it from its
+        receipt again would put it back to dispatched and erase the one count that stops a
+        third send.
+        """
+        reading = hostloss.read_recipient_turn(
+            adapter, self.clock, attempt, delivery, facts.turn_id
+        )
+        if attempt["state"] == HOST_LOST_TURN:
+            return {"evidence": Evidence.RECEIPT_TURN_ID.value, "state": HOST_LOST_TURN,
+                    "recipientTurn": reading, "record": json.loads(attempt["record"])}
+        outcome = self._settle_from_receipt(
+            attempt, delivery, facts, Evidence.RECEIPT_TURN_ID, observation, now,
+            turns_checked=reading["finding"] != hostloss.UNKNOWN,
+        )
+        outcome["recipientTurn"] = reading
+        if reading["finding"] == HOST_LOST_TURN:
+            if delivery["kind"] == COMPLETION:
+                outcome.update(hostloss.settle(
+                    self.store, self.clock, attempt["request_id"], reading,
+                    observation=observation,
+                ))
+            else:
+                outcome["redelivery"] = hostloss.REPORT_ONLY
+        return outcome
+
+    def check_dispatched_turn(self, request_id: str, adapter) -> dict:
+        """The daemon's question for one delivered completion: does the host still have its turn?
+
+        Writes nothing unless the answer is that the host lost it.
+        """
+        attempt = self.store.one("SELECT * FROM attempts WHERE request_id = ?", (request_id,))
+        if attempt is None:
+            raise KeyError(request_id)
+        delivery = self.delivery.get(attempt["event_id"])
+        record = json.loads(attempt["record"]) if attempt["record"] else {}
+        turn_id = record.get("turnId") or delivery["dispatch_turn_id"]
+        reading = hostloss.read_recipient_turn(adapter, self.clock, attempt, delivery, turn_id)
+        outcome = {"eventId": attempt["event_id"], "requestId": request_id,
+                   "state": attempt["state"], "recipientTurn": reading}
+        if reading["finding"] == HOST_LOST_TURN:
+            outcome.update(hostloss.settle(self.store, self.clock, request_id, reading))
+        return outcome
+
     # --------------------------------------------------------------- outcomes
 
     def _is_current(self, attempt, delivery) -> bool:
@@ -175,7 +231,8 @@ class Reconciler:
             return False
         return delivery["state"] not in (DISPATCHED, "acknowledged", "superseded")
 
-    def _settle_from_receipt(self, attempt, delivery, facts, evidence, observation, now) -> dict:
+    def _settle_from_receipt(self, attempt, delivery, facts, evidence, observation, now, *,
+                             turns_checked=False) -> dict:
         """The transport itself settled, so the attempt record is re-derived honestly."""
         record = attempt_record(
             facts,
@@ -184,7 +241,7 @@ class Reconciler:
             status_before="unknown", observed_at=self.clock.iso(),
             reconciliation={
                 "operationReceiptChecked": True,
-                "recipientTurnsChecked": False,
+                "recipientTurnsChecked": turns_checked,
                 "affirmativeEvidence": evidence.value,
                 "checkedAt": self.clock.iso(),
             },

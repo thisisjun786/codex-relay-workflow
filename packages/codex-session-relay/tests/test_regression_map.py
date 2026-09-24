@@ -450,6 +450,11 @@ SUMMARY_SITES = (
      False, "self.assertFalse(report.quiet)",
      "redundant rather than wrong: the condition the name states is carried by the send-list"
      " assertions above it, and this line on its own pins none of the seven counters"),
+    ("test_host_lost_turn.py", "test_a_tick_whose_only_change_is_the_loss_is_not_quiet",
+     "quiet", False, "self.assertFalse(report.quiet)",
+     "the fold is the subject: the line above asserts every other counter as_dict carries is 0,"
+     " so false can only come from turnsLost reaching the disjunction quiet reduces; mutation"
+     " evidence drops turnsLost from the fold and this case fails"),
     ("test_guard_property.py", "test_marker_commands_are_exempt_from_the_store_selection_refusal",
      "_reads_no_selected_store", True,
      "self.assertTrue(cli._reads_no_selected_store(Namespace(handler=cli.cmd_intent_register,"

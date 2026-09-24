@@ -50,6 +50,9 @@ class TickReport:
     supervisorStaged: int = 0
     supervisorSent: int = 0
     notificationsDelivered: int = 0
+    # Delivered completions whose turn the host no longer had, each recorded and queued once
+    # more or held (hostloss.settle). A write, so it is part of quiet.
+    turnsLost: int = 0
     quiet: bool = True
     notes: list = field(default_factory=list)
 
@@ -64,6 +67,7 @@ class TickReport:
             "supervisorStaged": self.supervisorStaged,
             "supervisorSent": self.supervisorSent,
             "notificationsDelivered": self.notificationsDelivered,
+            "turnsLost": self.turnsLost,
             "quiet": self.quiet, "notes": self.notes,
         }
 
@@ -158,6 +162,12 @@ class RelayDaemon:
         # The fault notification deliverer, built on first use from whatever ledger and channel
         # the daemon holds then (both are also set by attribute), and rebuilt if either changes.
         self._notices = None
+        # Where the recipient-turn check resumes, and the delivered completions whose turn the
+        # host has already listed as finished. Both in memory, like _supervisor_after: a restart
+        # costs one more read per delivery still awaiting its acknowledgement, and a tick that
+        # learns nothing new writes nothing.
+        self._turn_check_after = None
+        self._turns_settled = set()
 
     # ------------------------------------------------------------------ tick
 
@@ -176,6 +186,8 @@ class RelayDaemon:
         # dispatch evidence is already committed.
         self._bind_anchors(report)
         self._verify_acks(report, now)
+        # Before delivery, so an obligation whose turn the host lost is sent again in this tick.
+        self._check_dispatched_turns(report)
         self._deliver(report, now)
         # After the parent-child deliveries, which share each recipient's budget with it: a
         # task that is both a parent and a supervisor hears its children first.
@@ -184,8 +196,58 @@ class RelayDaemon:
                             or report.deferred or report.acksVerified or report.anchorsBound
                             or report.requeued or report.faultsRecorded
                             or report.supervisorStaged or report.supervisorSent
-                            or report.notificationsDelivered)
+                            or report.notificationsDelivered or report.turnsLost)
         return report
+
+    def _check_dispatched_turns(self, report) -> None:
+        """Ask each parent whether the turn a delivered completion started still exists (CRW-224).
+
+        An accepted turn/start is not a turn the host keeps: an App Server that dies before the
+        turn reaches its rollout comes back without it, and the delivery would otherwise wait for
+        an acknowledgement nobody can send. Bounded by max_turn_checks_per_tick lookups; the
+        candidates rotate from where the last pass stopped and wrap once, and a delivery whose
+        turn was listed as finished is not read again, without spending the budget. An in-progress
+        turn, a token found without its turn, and an unreadable host are all read again later.
+        """
+        budget = self.policy.max_turn_checks_per_tick
+        if budget <= 0 or getattr(self.adapter, "find_dispatched_turn", None) is None:
+            return
+        from . import hostloss
+
+        page = max(64, budget * 16)
+        after = self._turn_check_after
+        try:
+            rows = list(hostloss.awaiting_ack(self.store, after=after, limit=page))
+            if after is not None:
+                rows += [row for row in hostloss.awaiting_ack(self.store, limit=page)
+                         if row["event_id"] <= after]
+        except Exception as error:  # noqa: BLE001 - a tick never dies on one pass
+            report.notes.append(f"recipient turn check could not list deliveries: {error}")
+            return
+        self._turns_settled &= {row["request_id"] for row in rows}
+        spent = 0
+        for row in rows:
+            if spent >= budget:
+                break
+            self._turn_check_after = row["event_id"]
+            if row["request_id"] in self._turns_settled:
+                continue
+            spent += 1
+            try:
+                outcome = self.reconciler.check_dispatched_turn(row["request_id"], self.adapter)
+            except Exception as error:  # noqa: BLE001
+                report.notes.append(f"recipient turn check failed for {row['request_id']}: {error}")
+                continue
+            reading = outcome["recipientTurn"]
+            if reading["finding"] == hostloss.PRESENT and reading["status"] in hostloss.TERMINAL:
+                self._turns_settled.add(row["request_id"])
+            elif reading["finding"] == hostloss.UNKNOWN and (
+                    reading["detail"] or "").startswith("unreadable"):
+                report.notes.append(
+                    f"recipient turn unreadable for {row['request_id']}: {reading['detail']}"
+                )
+            if outcome.get("redelivery") in (hostloss.REQUEUED, hostloss.HELD):
+                report.turnsLost += 1
 
     def _sweep_faults(self, report) -> None:
         """Record what the store currently shows is broken, so nobody has to notice first.

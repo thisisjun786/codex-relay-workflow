@@ -12,6 +12,15 @@ PUSH_CHANNEL_CLOSED = "push_channel_closed"
 RELATIONSHIP_INACTIVE = "relationship_inactive"
 SUPERSEDED = "superseded"
 RECIPIENT_UNDELIVERABLE = "recipient_undeliverable"
+# The host accepted an attempt's turn/start and no longer has that turn: the recipient's own
+# turn list holds no such turn among the turns begun since the send (hostloss.py, CRW-224). One
+# word in three places, all about the same loss: the lost attempt's state, the dispatch evidence
+# of a delivery queued again because of it, and the hold of a delivery whose redelivery was lost
+# as well. It is never a delivery state - the delivery itself goes back to queued - which is why
+# it lives with the hold reasons rather than beside transport's states. The attempt's frozen
+# record keeps deliveryState dispatched, because turn/start did return that turn id; this word is
+# what the host said about the turn afterwards.
+HOST_LOST_TURN = "host_lost_turn"
 
 
 @dataclass(frozen=True)
@@ -32,6 +41,10 @@ class RetryPolicy:
     # Turn reads are the scarce thing in an observation pass, so they are capped directly
     # rather than implied by a per-relationship slice that grows with the relationship count.
     max_turn_reads_per_tick: int = 8
+    # Recipient-turn lookups for delivered completions still awaiting their acknowledgement
+    # (daemon._check_dispatched_turns). Separate from the observation reads above: those watch
+    # children, these ask a parent whether the turn a delivery started still exists.
+    max_turn_checks_per_tick: int = 4
     min_relationship_share: int = 2
     max_sends_per_parent_per_tick: int = 2
     # The automatic supervisor pass (CRW-215). Projects are re-derived per tick, so their count

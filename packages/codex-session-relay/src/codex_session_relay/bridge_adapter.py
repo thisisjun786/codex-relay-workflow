@@ -23,7 +23,9 @@ import sqlite3
 import stat
 from pathlib import Path
 
-from .hostadapter import HostUnavailable, ThreadFacts, TokenScan, TurnInfo
+from .hostadapter import (
+    HostUnavailable, ThreadFacts, TokenScan, TurnInfo, TurnPresence, find_in_listing,
+)
 from .settings import SETTINGS_DIFFER_AFTER_LOAD, SETTINGS_NOT_PRESERVED
 
 UNARCHIVED_CWD = "unarchived_cwd"
@@ -327,6 +329,34 @@ class BridgeHostAdapter:
             body = hashlib.sha256(_item_text(entry).encode("utf-8")).hexdigest()
             digest.update(f"{entry.get('turnId')}:{_item_id(entry)}:{body}|".encode())
         return digest.hexdigest()
+
+    def find_dispatched_turn(self, thread_id: str, turn_id: str, *, sent_at: float) -> TurnPresence:
+        """The turn a dispatch started, looked for among the turns begun since that send.
+
+        Newest first, which is thread/turns/list's default order, asked for explicitly anyway;
+        without items, because only the id, status and start time are read. read_turn pages the
+        same listing but can only conclude absence by exhausting it, so on a parent with more
+        turns than its bound it never can. Stopping at the first turn older than the send is what
+        makes absence answerable there (hostadapter.find_in_listing holds the rule).
+        """
+
+        def pages():
+            cursor = None
+            for _ in range(MAX_PAGES_PER_CHECK):
+                params = {"threadId": thread_id, "limit": self.page, "itemsView": "notLoaded",
+                          "sortDirection": "desc"}
+                if cursor:
+                    params["cursor"] = cursor
+                page = self._call("thread/turns/list", params)
+                cursor = page.get("nextCursor")
+                yield [
+                    TurnInfo(turn.get("id"), turn.get("status", "unknown"), turn.get("startedAt"))
+                    for turn in page.get("data", [])
+                ], bool(cursor)
+                if not cursor:
+                    return
+
+        return find_in_listing(pages(), turn_id, sent_at)
 
     # ----------------------------------------------------------------- writes
 
