@@ -1627,10 +1627,10 @@ def cmd_ack(services, args) -> dict:
     )
     if record.get("_deliveryUnconfirmed"):
         record["_note"] = (
-            "kept as the parent's authored acknowledgement: the relay has not confirmed this"
-            f" delivery yet ({record['_deliveryUnconfirmed']}). The daemon completes it once the"
-            " delivery is confirmed, and a verdict completes it first; nothing needs to be"
-            " acknowledged or sent again."
+            "kept as the parent's authored acknowledgement: the relay could not yet confirm this"
+            f" delivery for the turn it read ({record['_deliveryUnconfirmed']}). The daemon"
+            " completes it once the delivery is confirmed, and a verdict completes it first;"
+            " nothing needs to be acknowledged or sent again."
         )
     elif record.get("_verified") != "verified":
         record["_note"] = (

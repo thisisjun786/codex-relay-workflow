@@ -579,7 +579,11 @@ the delivery is confirmed, the acknowledgement is judged as usual, and the turn 
 found in counts as the delivery's turn, so an acknowledgement from a folded turn that began
 before the send is not refused for its start time. While the delivery is not confirmed, or while
 the send is still in flight, the acknowledgement is kept exactly as authored, unverified, with
-`ack_evidence.last_reason` `delivery_unconfirmed`, and the delivery is left alone. The daemon
+`ack_evidence.last_reason` `delivery_unconfirmed`, and the delivery is left alone. The same
+holds when the delivery moved while the acknowledging turn was read: confirmed, sent again, or
+reaching another turn. The turn check was evidence about the delivery as it was, so the
+acknowledgement is kept and checked again against the delivery as it is, and a turn an earlier
+attempt reached never stands in for the current attempt's. The daemon
 confirms each kept acknowledgement's delivery through its turn, paced by the pending pass's
 backoff, and completes the acknowledgement in the same tick once the delivery is confirmed. A
 verdict completes it first. An ordinary acknowledgement makes no extra host read.
