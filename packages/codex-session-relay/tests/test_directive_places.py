@@ -202,24 +202,54 @@ class ARealConflictIsRefusedWhereItIsRecorded(DirectiveCase):
         self.assertEqual(len(self.live()), 2)
         self.assertEqual(len(self.contested()), 2)
 
-    def test_the_same_assignment_restated_after_a_handover_is_not_a_competitor(self):
-        """One digest is one instruction. A successor's identical re-issue is its own record on
-        the new link revision and stands with the predecessor's; a different one is refused and
-        names the row the predecessor left live."""
-        first = self.direct("d-assignment", "project_assignment")
+    def hand_over(self):
         self.linkage.handover(
             role=linkage.SUPERVISOR, scope_key=INITIATIVE, expect_task_id=SUPERVISOR,
             endpoint=Endpoint(SUCCESSOR, HOST, cwd="/successor", cxc_session="cxc-successor"),
             acknowledged=[], evidence="the supervisor was replaced", actor="test")
 
-        again = self.direct("d-assignment", "project_assignment", task=SUCCESSOR)
-        refused = self.direct("d-other", "project_assignment", task=SUCCESSOR, expect=2)
+    def test_a_place_keeps_one_live_row_across_a_handover(self):
+        """The handover moves the link revision, so the successor's identical re-issue would be a
+        new directive id. It is refused as already in force rather than kept as a second copy,
+        and a different assignment is refused naming the row the predecessor left live."""
+        first = self.direct("d-assignment", "project_assignment")
+        self.hand_over()
 
-        self.assertNotEqual(again["directiveId"], first["directiveId"])
-        self.assertEqual(sorted(self.live()), sorted([first["directiveId"], again["directiveId"]]))
+        restated = self.direct("d-assignment", "project_assignment", task=SUCCESSOR, expect=2)
+        other = self.direct("d-other", "project_assignment", task=SUCCESSOR, expect=2)
+
+        for refused in (restated, other):
+            self.assertEqual(refused["reason"], RefusalReason.LINK_CONFLICT.value)
+            self.assertIn(first["directiveId"], refused["detail"])
+            self.assertIn("link revision 1", refused["detail"])
+        self.assertIn("already has this same project_assignment", restated["detail"])
+        self.assertEqual(self.live(), [first["directiveId"]])
+
+        # In its own name, once the predecessor's row is settled.
+        self.settle(first["directiveId"])
+        mine = self.direct("d-assignment", "project_assignment", task=SUCCESSOR)
+        self.assertEqual(self.live(), [mine["directiveId"]])
+        self.assertNotEqual(mine["directiveId"], first["directiveId"])
+
+    def test_a_pair_of_one_digest_an_older_writer_left_holds_no_report(self):
+        """Reading: one digest is one instruction, so an existing pair is no contest."""
+        first = self.direct("d-assignment", "project_assignment")
+        self.hand_over()
+        # The row an older writer would have added on the new revision, beside the first.
+        self.store.db.execute(
+            "INSERT INTO scope_directives (directive_id, scope_kind, scope_key, from_task_id,"
+            " from_scope_key, link_id, link_kind, digest, reference, revision, disposition,"
+            " decided_by, decided_at, recorded_at)"
+            " SELECT ?, scope_kind, scope_key, ?, from_scope_key, link_id, link_kind, digest,"
+            " reference, revision + 1, NULL, NULL, NULL, recorded_at"
+            " FROM scope_directives WHERE directive_id = ?",
+            ("dir-restated-by-an-older-writer", SUCCESSOR, first["directiveId"]))
+        self.assertEqual(len(self.live()), 2)
+        self.completed()
+
         self.assertEqual(self.contested(), [])
-        self.assertIn(first["directiveId"], refused["detail"])
-        self.assertIn("link revision 1", refused["detail"])
+        self.assertEqual(self.held(), [])
+        self.assertEqual(self.counts(self.tick())[0], 1, "the report is staged")
 
 
 class AHeldReportIsNamedWhereTheOperatorLooks(DirectiveCase):
