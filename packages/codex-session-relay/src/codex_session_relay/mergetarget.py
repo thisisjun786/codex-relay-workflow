@@ -7,7 +7,8 @@ the merge, and their verified successors were refused with no way back. A value 
 check depends on is not something to take on trust when the thing it describes can be read.
 
 So the merge turn reads ONE fact from the target - the commit its base branch points at - at the
-three moments it records one: a landing, the resolution of an unknown outcome, and a restatement.
+four moments it records one: the currency check before merging, a landing, the resolution of an
+unknown outcome, and a restatement.
 Nothing else about the target is read here. Checks and review are still restated by the caller
 and cross-checked by mergeevidence; this module has no opinion about whether a candidate may
 merge.
@@ -21,7 +22,9 @@ pre-landing base this exists to stop recording. Discovery is off (--git-dir), so
 some other repository cannot read that repository's branch instead. Every GIT_* variable is
 removed from the child's environment, because several of them change what git sees. The path
 has to be the repository the merge goes INTO; a working clone's branch can be behind or ahead of
-it, and nothing here can tell.
+it, and nothing here can tell. A linked worktree's .git is a file naming its git directory;
+git follows that pointer itself when it is given as --git-dir, so the worktree reads the
+repository's own branches.
 
 An OWNER/NAME is a GitHub repository, read through forge.Forge: argv, GET only, validated, the
 same reader merge-evidence uses.

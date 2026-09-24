@@ -106,6 +106,11 @@ to restate, so it can also carry a commit written outside the relay after the la
 `merge-turn-check` is refused because the last landing recorded a different base, its detail
 names that landing, this command, and who may run it.
 
+Each reading is taken before the command's transaction, never inside it, so a branch that moves
+between the reading and the write is recorded as it was read. That errs one way only: the next
+candidate is refused against an older base until the landing is restated. The merge itself
+still relies on the forge's own expected-head guard.
+
 What this does not establish: `landedSha` is the holder's statement and is not checked for
 containment in the branch, so a merge that failed while another write moved the branch is
 recorded as landed, with the true base. On a resolved landing `landedSha` is the candidate head,

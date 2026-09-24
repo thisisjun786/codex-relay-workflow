@@ -116,6 +116,27 @@ class ReadingALocalRepository(RelayTestCase):
         self.assertEqual(self.reader.tip(work, "main")["sha"],
                          git("-C", work, "rev-parse", "HEAD"))
 
+    def test_a_linked_worktree_reads_the_repositorys_branch(self):
+        """Devin review: a linked worktree's .git is a FILE naming its git directory.
+
+        Passed as --git-dir, git follows that pointer itself; this pins that it keeps doing so.
+        """
+        work = os.path.join(self.tmp, "work-repo")
+        git("init", "--quiet", "-b", "main", work)
+        git("-C", work, "commit", "--quiet", "--allow-empty", "-m", "tip")
+        linked = os.path.join(self.tmp, "linked")
+        git("-C", work, "worktree", "add", "--quiet", "-b", "side", linked)
+        self.assertTrue(os.path.isfile(os.path.join(linked, ".git")))
+        self.assertEqual(self.reader.tip(linked, "main")["sha"],
+                         git("-C", work, "rev-parse", "main"))
+
+    def test_a_dot_git_file_that_names_no_directory_is_unreadable(self):
+        odd = os.path.join(self.tmp, "odd")
+        os.makedirs(odd)
+        with open(os.path.join(odd, ".git"), "w", encoding="utf-8") as handle:
+            handle.write("not a pointer\n")
+        self.unreadable(odd, "main")
+
     def test_the_callers_git_environment_does_not_redirect_the_read(self):
         other = Repository(os.path.join(self.tmp, "other.git"))
         other.point("main", other.commit("elsewhere"))
