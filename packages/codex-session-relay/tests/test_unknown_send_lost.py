@@ -204,6 +204,62 @@ class AnUnknownSendTheHostKeptNoTraceOf(UnknownSendCase):
         self.assertEqual(self.attempt_states(event_id)[0], UNKNOWN_LOST)
         self.assertEqual(len(self.adapter.sends), 2)
 
+    def folded_unknown_send(self, *, later, running=False):
+        """The send was folded into a parent turn begun two minutes before it (a steer), and the
+        App Server died before answering; the turn went on writing LATER items after the
+        message, so the thread-wide scan's 200 newest items no longer reach it."""
+        self.parent_history()
+        _relationship, event_id = self.queued_event()
+        self.adapter.start_turn(PARENT, turn_id="folded", status="inProgress")
+        self.clock.advance(120)
+        self.adapter.script("transport_unknown")
+        first = self.attempt(event_id)["requestId"]
+        thread = self.adapter.threads[PARENT]
+        thread.items.append(("folded", f"[codex-session-relay] verification request\n"
+                                       f"requestId: {first}"))
+        thread.items.extend(("folded", f"later work {n}", "commandExecution")
+                            for n in range(later))
+        if not running:
+            self.adapter.finish_turn(PARENT, "folded", "completed")
+        return event_id, first
+
+    def test_a_send_folded_into_an_older_turn_is_found_there_and_not_sent_again(self):
+        """Devin on d369a9e7: the since-send scan stops at a turn begun before the send, and a
+        turn/start that steered that turn put the message in it."""
+        event_id, first = self.folded_unknown_send(later=205)
+        self.ticks(1)
+        self.assertEqual(self.evidence_of(event_id), ["turn_found"])
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        self.ticks(3)
+        self.assertEqual(self.attempt_states(event_id), [HELD_UNCERTAIN])
+        self.assertEqual(len(self.adapter.sends), 1)
+
+    def test_an_older_turn_still_running_holds_the_decision(self):
+        event_id, first = self.folded_unknown_send(later=205, running=True)
+        self.adapter.threads[PARENT].items = [
+            item for item in self.adapter.threads[PARENT].items if first not in item[1]]
+        self.ticks(1)
+        self.assertEqual(self.attempt_states(event_id), [HELD_UNCERTAIN])
+        self.assertIsNone(self.delivery_row(event_id)["hold_reason"])
+        self.assertEqual(self.next_action(), "daemon_reconciles_delivery")
+        self.assertEqual(len(self.adapter.sends), 1)
+
+    def test_an_older_turn_too_long_to_read_through_holds_the_send_by_name(self):
+        event_id, first = self.folded_unknown_send(later=0)
+        thread = self.adapter.threads[PARENT]
+        # The message sits past the in-turn read's bound, behind 2000 items of the same turn.
+        message = thread.items.pop()
+        thread.items.extend(("folded", f"earlier work {n}", "commandExecution")
+                            for n in range(2000))
+        thread.items.append(message)
+        thread.items.extend(("folded", f"later work {n}", "commandExecution") for n in range(205))
+        self.ticks(1)
+        row = self.delivery_row(event_id)
+        self.assertEqual((row["state"], row["hold_reason"]), (HELD_UNCERTAIN, UNDECIDED))
+        self.assertEqual(self.completion_delivery().get("turnCheck"),
+                         f"{UNDECIDED}:token_scan_bounded")
+        self.assertEqual(len(self.adapter.sends), 1)
+
     def test_a_message_that_lands_between_the_two_scans_confirms_the_send(self):
         event_id, first = self.unknown_send()
         self.clock.advance(3)
@@ -333,13 +389,33 @@ class AnUndecidedReadingIsHeldByName(UnknownSendCase):
         self.clock.advance(20)
         pending = self.reconciler.reconcile_attempt(first, self.adapter)
         self.assertTrue(pending["recipientTrace"]["pending"])
+        # Still held for the parent, and the answer says so (Devin on d369a9e7).
+        self.assertEqual(pending.get("nextExpectedAction"),
+                         "parent_recovers_unknown_send_undecided")
         self.assert_held_undecided(event_id, first, "listing_empty")
         # A pass whose own read fails takes no reading at all, and keeps them too.
         self.adapter.fail_reads("find_token")
         unread = self.reconciler.reconcile_attempt(first, self.adapter)
         self.assertNotIn("recipientTrace", unread)
+        self.assertEqual((unread.get("nextExpectedAction"), unread.get("reason")),
+                         ("parent_recovers_unknown_send_undecided",
+                          "unknown_send_undecided:listing_empty"))
         self.assert_held_undecided(event_id, first, "listing_empty")
         self.assertEqual(len(self.adapter.sends), 1)
+
+    def test_an_undecided_hold_is_read_again_later_though_the_items_did_not_change(self):
+        """Devin on d369a9e7: the gate fingerprints the parent's items, and a turn that shows up
+        without any leaves them unchanged, so an undecided reading was never taken again."""
+        event_id, first = self.unknown_send(history=False)
+        self.ticks(1)
+        self.assert_held_undecided(event_id, first, "listing_empty")
+        self.adapter.start_turn(PARENT, status="completed")
+        self.ticks(1, seconds=30)
+        self.assertEqual(self.attempt_states(event_id), [HELD_UNCERTAIN])
+        self.ticks(1, seconds=600)
+        self.assertEqual(self.attempt_states(event_id)[0], UNKNOWN_LOST)
+        self.assertIsNone(self.delivery_row(event_id)["hold_reason"])
+        self.assertEqual(len(self.adapter.sends), 2)
 
     def test_a_message_found_later_clears_the_undecided_hold(self):
         event_id, first = self.unknown_send()
