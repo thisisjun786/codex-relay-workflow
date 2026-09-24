@@ -1318,6 +1318,44 @@ class SupervisorChannel:
         return {"schema": VERSION, "projectKey": project_key, "staged": staged,
                 "refused": refused, "skipped": skipped, "gaps": standing["gaps"]}
 
+    def report_holds(self, standing) -> list:
+        """Each report the hierarchy is holding, named, for the reading an operator makes.
+
+        Staging refuses a report whose hierarchy is not settled - a contested instruction, a
+        drifting owner, two candidates above, nobody above at all - and the obligation stays
+        standing, which is right. But the daemon's pass keeps only what it staged, so on the
+        installed relay two projects' reports were refused on every tick for half an hour while
+        supervisor-standing listed them as owed with no gap (CRW-124 G1, F-G1-2; CRW-230). This is
+        that same refusal, asked of resolve() itself rather than of a copy of its rule, and
+        returned as a gap naming the reason, the relation and the obligations it holds.
+
+        Only reports that have not gone out are held: no message yet, or one still claimable,
+        whatever hold it carries - a send-budget hold is a reason not to restage it, not a sign
+        it left. One on its way, sent, read or held uncertain has left staging, and calling it
+        held would contradict what supervisor-show says happened to it. One resolve() per
+        relation, which is the read staging would make anyway.
+        """
+        waiting = {}
+        for obligation in standing.get("standing") or []:
+            row = self.store.one(
+                "SELECT state FROM supervisor_messages WHERE obligation_id = ?"
+                " ORDER BY staged_at DESC LIMIT 1", (obligation["obligationId"],))
+            if row is not None and row["state"] not in CLAIMABLE:
+                continue
+            waiting.setdefault(obligation["relationId"], []).append(obligation["obligationId"])
+        holds = []
+        for relation, owed in waiting.items():
+            try:
+                self.resolve(relation)
+            except DeliveryRefused as refusal:
+                holds.append({
+                    "schema": supervision.SCHEMA, "gap": "report_held", "relationId": relation,
+                    "obligationIds": owed,
+                    "reason": refusal.reason.value if refusal.reason else None,
+                    "detail": refusal.detail,
+                })
+        return holds
+
     def store_readings(self, project_key, observations=()) -> list:
         """The owed omissions this store derives for a project, beside a caller's readings.
 

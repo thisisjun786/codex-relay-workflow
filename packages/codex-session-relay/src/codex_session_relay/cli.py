@@ -1134,9 +1134,14 @@ def cmd_supervisor_standing(services, args) -> dict:
 
     readings = [_observation_file(path) for path in args.observation or []]
     readings += services.supervisor_channel.store_readings(args.project, readings)
-    return supervision.status_answer(
+    answer = supervision.status_answer(
         services.store, services.linkage, services.assignments, args.project,
         observations=readings)
+    # A report the hierarchy holds is named here, beside what is owed (CRW-230). The daemon's pass
+    # keeps only what it staged, so without this a report refused on every tick read as owed and
+    # unremarkable to the one reader who could see that something was wrong.
+    answer["gaps"].extend(services.supervisor_channel.report_holds(answer))
+    return answer
 
 
 def cmd_supervisor_report_recorded(services, args) -> dict:
@@ -4122,7 +4127,12 @@ def build_parser() -> argparse.ArgumentParser:
                            help="derive the envelope pointer for this instruction instead of"
                                 " writing --reference by hand. The pointer's message id is"
                                 " computed from this link and digest, so a pointer belonging"
-                                " to another instruction is refused")
+                                 " to another instruction is refused. The purpose also places"
+                                 " it: a scope keeps one live project_assignment and one live"
+                                 " scope_correction, one answer per message and purpose, and"
+                                 " the rest stand beside them. An instruction competing for a"
+                                 " place already held is refused here, naming the live one and"
+                                 " the linkage-settle that replaces it")
     directive.add_argument("--correlation",
                            help="the message this instruction answers, when it answers one")
 
@@ -4139,7 +4149,8 @@ def build_parser() -> argparse.ArgumentParser:
     standing = subparsers.add_parser(
         "supervisor-standing",
         help="what a project still owes upward, with the project's own reading beside it."
-             " This answers an explicit question and is not suppressed by anything")
+             " This answers an explicit question and is not suppressed by anything. A report"
+             " the hierarchy is holding is named in gaps as report_held, with the reason")
     standing.add_argument("--project", required=True)
     standing.add_argument("--observation", action="append",
                           help="a reporting-observation/1 file from reporting-show. A turn that"

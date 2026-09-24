@@ -616,3 +616,49 @@ def contradiction(text, *, link_id, digest):
         return (f"the reference carries messageId {parsed['messageId']}, but this link and "
                 f"digest derive {expected}; the pointer belongs to another instruction")
     return None
+
+# ------------------------------------------------------------ where an instruction stands
+
+# What a supervisor's instruction competes with, decided by its recorded purpose (CRW-230).
+# Reading every two live instructions of different digests as contradictory made a relayed
+# decision contest the assignment it was answering inside, and the level above then heard
+# nothing for half an hour (CRW-124 G1, F-G1-2). The relations, which linkage enforces:
+#
+#   - A project has at most ONE live assignment and ONE live scope correction. A second of either
+#     would leave the parent two versions of the same thing with no recorded order between them
+#     (directives are read in recorded order, and a tie falls to the directive id), so a later
+#     one replaces the earlier explicitly: the earlier is settled superseded and anything of it
+#     still in force is restated in the later. That holds for a correction whether or not it
+#     answers a message; a correction is the current statement of scope, not a reply.
+#   - Every other purpose stands beside them. A relayed decision, a midpoint check, a resume and
+#     a user stop are occasions inside the assignment, not rival versions of it. Two of one
+#     purpose that answer the SAME message with different digests are two answers to one
+#     question, and compete; answers to different messages do not.
+#   - An instruction whose purpose was never recorded (no reference, an operator's note, a row
+#     from before this contract) cannot be placed, so it competes with every live instruction
+#     of another digest - exactly the rule that applied to every row before.
+#
+# Priority is for the parent reading them, and the store never consults it: a user stop comes
+# first; the one live scope correction amends the one live assignment; a relayed decision
+# applies within both; a midpoint check or a resume asks for an answer or a restart and changes
+# nothing about what the work is.
+SOLE_DIRECTIVES = frozenset({"project_assignment", "scope_correction"})
+
+
+def directive_place(reference):
+    """Where the instruction behind a stored reference stands, or None when that is unknown.
+
+    ("sole", purpose) for the one place a scope keeps per sole purpose; ("answer", purpose,
+    correlation) for an answer to one message; ("own", messageId) for an occasion that competes
+    with nothing of another digest. None for a reference that is not one of ours, and for one
+    that names another direction, which contradiction() refuses at record time and only an older
+    writer or a hand edit leaves behind.
+    """
+    parsed = parse_reference(reference)
+    if parsed is None or parsed["direction"] != SUPERVISOR_TO_PARENT:
+        return None
+    if parsed["purpose"] in SOLE_DIRECTIVES:
+        return ("sole", parsed["purpose"])
+    if parsed["correlationId"] is not None:
+        return ("answer", parsed["purpose"], parsed["correlationId"])
+    return ("own", parsed["messageId"])

@@ -147,7 +147,8 @@ def _pointer_disagreement(stored, incoming):
                 + repr(second["purpose"]) + " and the correlation "
                 + repr(second["correlationId"]) + " you are asking for have nowhere to go on"
                 " it. The recorded instruction is preserved; a later one is recorded as its"
-                " own directive with its own digest")
+                " own directive with its own digest. Settling the recorded one does not free"
+                " this digest: the id is derived from it, live or settled")
     if (first["purpose"], first["correlationId"]) == (second["purpose"],
                                                       second["correlationId"]):
         return None
@@ -160,6 +161,30 @@ def _pointer_disagreement(stored, incoming):
             + " and the incoming pointer names " + repr(second["purpose"])
             + "; one digest cannot be two instructions, so the later one is recorded as its"
             " own directive with its own digest")
+
+
+def _directive_contest(first, second):
+    """Why two live directives of one scope compete for one place, or None when they do not.
+
+    The place comes from each one's recorded purpose (envelope.directive_place, CRW-230), so a
+    relayed decision stands beside the assignment it answers inside instead of contradicting it.
+    Deciding on the digest alone read every two live instructions as a contest, and on the
+    installed relay that held every upward report of two projects for half an hour.
+
+    The answer is the kind of place both claim - "sole" or "answer" - or "purpose_unknown" when
+    either one cannot be placed, which is the old digest-only rule kept for exactly the rows it
+    was written for. Either argument may be a store row or a directive record: both spell the two
+    fields this reads the same way.
+    """
+    if first["digest"] == second["digest"]:
+        return None
+    here = envelope.directive_place(first["reference"])
+    there = envelope.directive_place(second["reference"])
+    if here is None or there is None:
+        return "purpose_unknown"
+    if here != there:
+        return None
+    return here[0]
 
 
 class _Refusal:
@@ -1385,20 +1410,29 @@ class Linkage:
                     )
                     self._record_conflict_in(db, refusal, at=now)
                 else:
-                    db.execute(
-                        "INSERT INTO scope_directives (directive_id, scope_kind, scope_key,"
-                        " from_task_id, from_scope_key, link_id, link_kind, digest, reference,"
-                        " revision, disposition, decided_by, decided_at, recorded_at)"
-                        " VALUES (?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL,?)",
-                        (did, scope_kind, scope_key, from_task_id, from_scope_key,
-                         link_id_value, edge["link_kind"], digest, reference, edge["revision"],
-                         now),
-                    )
-                    self.store.journal(
-                        "directive_recorded", did,
-                        {"scopeKey": scope_key, "fromScopeKey": from_scope_key,
-                         "linkKind": edge["link_kind"]}, at=now,
-                    )
+                    # A new row, so this is where it is placed. A competitor is refused here,
+                    # where the supervisor still holds the instruction, rather than recorded and
+                    # left for every walk to report as a conflict that holds the level above.
+                    refusal = self._competitor_in(
+                        db, scope_kind=scope_kind, scope_key=scope_key, digest=digest,
+                        reference=reference, challenger=did)
+                    if refusal is not None:
+                        self._record_conflict_in(db, refusal, at=now)
+                    else:
+                        db.execute(
+                            "INSERT INTO scope_directives (directive_id, scope_kind, scope_key,"
+                            " from_task_id, from_scope_key, link_id, link_kind, digest,"
+                            " reference, revision, disposition, decided_by, decided_at,"
+                            " recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL,?)",
+                            (did, scope_kind, scope_key, from_task_id, from_scope_key,
+                             link_id_value, edge["link_kind"], digest, reference,
+                             edge["revision"], now),
+                        )
+                        self.store.journal(
+                            "directive_recorded", did,
+                            {"scopeKey": scope_key, "fromScopeKey": from_scope_key,
+                             "linkKind": edge["link_kind"]}, at=now,
+                        )
             else:
                 self._record_conflict_in(db, refusal, at=now)
         if refusal is not None:
@@ -1407,6 +1441,59 @@ class Linkage:
             "SELECT * FROM scope_directives WHERE directive_id = ?", (did,)
         ) and self._directive_record(
             self.store.one("SELECT * FROM scope_directives WHERE directive_id = ?", (did,)))
+
+    @staticmethod
+    def _competitor_in(db, *, scope_kind, scope_key, digest, reference, challenger):
+        """The refusal a new directive owes when a live one already holds its place, or None.
+
+        Only an instruction recorded WITH a purpose is placed here. One recorded without a purpose
+        cannot say what it competes with, so it is recorded as it always was and any contest it
+        makes is reported by the walks - the contract the rows written before this one rely on.
+
+        Read on the caller's connection, inside the write transaction that would insert the row,
+        so two supervisors recording at once cannot both find the place empty.
+        """
+        if envelope.directive_place(reference) is None:
+            return None
+        incoming = {"digest": digest, "reference": reference}
+        for row in db.execute(
+            "SELECT * FROM scope_directives"
+            "  WHERE scope_kind = ? AND scope_key = ? AND disposition IS NULL"
+            "  ORDER BY recorded_at, directive_id",
+            (scope_kind, scope_key),
+        ).fetchall():
+            why = _directive_contest(row, incoming)
+            if why is None:
+                continue
+            held = envelope.parse_reference(row["reference"])
+            recorded = ("directive " + repr(row["directive_id"]) + ", recorded "
+                        + str(row["recorded_at"]) + " by " + repr(row["from_task_id"])
+                        + " on link revision " + str(row["revision"]))
+            if why == "sole":
+                what = (scope_kind + " " + repr(scope_key) + " already has a live "
+                        + held["purpose"] + " (" + recorded + "). A scope keeps one live "
+                        + held["purpose"] + ", and a second would leave the parent two versions"
+                        " of it with no recorded order between them")
+            elif why == "answer":
+                what = (scope_kind + " " + repr(scope_key) + " already has a live "
+                        + held["purpose"] + " answering " + repr(held["correlationId"]) + " ("
+                        + recorded + "). One message takes one answer of each purpose")
+            else:
+                what = (scope_kind + " " + repr(scope_key) + " has a live directive whose"
+                        " purpose was never recorded (" + recorded + ", reference "
+                        + repr(row["reference"]) + "), so this one cannot be placed beside it and"
+                        " the two would read as contradictory instructions")
+            return _Refusal(
+                RefusalReason.LINK_CONFLICT,
+                what + ". Recorded, the two would hold every report the project owes upward"
+                " until one was settled, so nothing was recorded and the contest is retained."
+                " To replace it, settle it first - codex-session-relay linkage-settle"
+                " --directive " + row["directive_id"] + " --disposition superseded --actor"
+                " <your task id> - restating in this instruction whatever of it still applies,"
+                " then record this one again",
+                scope_kind=scope_kind, scope_key=scope_key,
+                incumbent=row["directive_id"], challenger=challenger)
+        return None
 
     def settle_directive(self, directive_id_value, disposition, *, decided_by, reason=None):
         """Settle one directive without rewriting it, so the instruction that lost stays read."""
@@ -1474,19 +1561,24 @@ class Linkage:
             "SELECT * FROM scope_directives WHERE directive_id = ?", (directive_id_value,)))
 
     def contested_directives(self, scope_kind, scope_key):
-        """Undisposed directives of differing digests from different origins.
+        """Undisposed directives that compete for one place, each one that takes part in a contest.
 
         Two supervisors can agree about who the parent is and still instruct it differently, so
-        this is decided on the digest rather than on ownership.
+        this is decided on the instructions rather than on ownership - and on WHERE each stands,
+        not on the digest alone (CRW-230): a relayed decision beside the assignment it answers
+        inside is two instructions the parent applies together, not a contradiction.
         """
         open_ones = [d for d in self.directives(scope_kind, scope_key)
                      if d["disposition"] is None]
-        # Decided on the digest alone. Only the execution supervisor can instruct, so two
+        # Not decided on the origin. Only the execution supervisor can instruct, so two
         # conflicting instructions are usually ITS successive ones rather than two origins;
         # requiring two origins meant the ordinary conflict was never reported.
-        if len({d["digest"] for d in open_ones}) > 1:
-            return open_ones
-        return []
+        contesting = set()
+        for index, first in enumerate(open_ones):
+            for second in open_ones[index + 1:]:
+                if _directive_contest(first, second) is not None:
+                    contesting.update((first["directiveId"], second["directiveId"]))
+        return [d for d in open_ones if d["directiveId"] in contesting]
 
     # ------------------------------------------------------------------- peer
 
