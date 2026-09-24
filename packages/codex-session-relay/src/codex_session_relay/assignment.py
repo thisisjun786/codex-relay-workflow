@@ -15,6 +15,7 @@ import json
 
 from .currency import AMBIGUOUS, head_revision
 from .errors import RefusalReason
+from .policy import pacing_holding
 from .transport import (
     ACKNOWLEDGED,
     DEFERRED_BUSY,
@@ -183,12 +184,19 @@ def correction_next_action(state, projection):
     if delivery["state"] in UNCONFIRMED_STATES:
         return CORRECTION_UNCONFIRMED_ACTION
     if delivery["state"] in NOT_SENT_STATES:
-        return CORRECTION_UNSENT_ACTION
+        # A budget that never reopens (a cap of zero) is the operator's, not the relay's.
+        return SEND_POLICY_ACTION if never_reopens(delivery.get("pacing")) else (
+            CORRECTION_UNSENT_ACTION)
     return None
 
 
+def never_reopens(pacing) -> bool:
+    """A pacing that no window reopens: a cap of zero. The one rule every answer asks."""
+    return bool(pacing) and pacing.get("reason") == "hourly_cap" and pacing.get("reopensAt") is None
+
+
 class AssignmentView:
-    def __init__(self, store, registry, clock, *, criteria=None, linkage=None):
+    def __init__(self, store, registry, clock, *, criteria=None, linkage=None, policy=None):
         self.store = store
         self.registry = registry
         self.clock = clock
@@ -203,6 +211,13 @@ class AssignmentView:
         # derivation lifted one level rather than a second opinion about it. Absent, the
         # project reading says it cannot answer instead of guessing.
         self.linkage = linkage
+        # The send budget a delivery's pacing is read against (CRW-231). The same default every
+        # other reader of the budget uses when none is configured.
+        if policy is None:
+            from .policy import RetryPolicy
+
+            policy = RetryPolicy()
+        self.policy = policy
 
     def project_state(self, project_key: str) -> dict:
         """What an approved project scope's children actually say, as a reading not a verdict.
@@ -350,6 +365,10 @@ class AssignmentView:
             or completion_next_action(state, record["projection"])
             or record["nextExpectedAction"]
         )
+        recovery = parent_recovery(record["nextExpectedAction"], record["projection"],
+                                   store_directory(self.store))
+        if recovery is not None:
+            record["recovery"] = recovery
         return record
 
     def _projection(self, relationship_id, generation, head, verdict, state) -> dict:
@@ -400,15 +419,25 @@ class AssignmentView:
         # an acknowledgement that never coexisted with it, which is exactly the combination
         # this projection exists to make impossible. The attempt joins on attempt_count so the
         # request id is the CURRENT attempt's, not whichever row sorted first after a retry.
+        now = self.clock.now()
+        window, earliest = self.policy.rate_windows(now)
         row = self.store.one(
             "SELECT e.stage AS stage,"
             "       d.event_id AS delivered, d.state AS delivery_state,"
             "       d.hold_reason AS hold_reason, d.dispatch_evidence AS dispatch_evidence,"
+            "       d.next_eligible_at AS next_eligible_at,"
             "       a.request_id AS request_id, a.attempt_no AS attempt_no,"
             "       a.state AS attempt_state, a.recipient_scan AS attempt_turn_check,"
             "       v.last_reason AS ack_last_reason,"
             "       (SELECT COUNT(*) FROM attempts h WHERE h.event_id = e.event_id"
             "         AND h.state = 'host_lost_turn') AS host_lost_attempts,"
+            # The recipient's send budget, read in the same snapshot as the delivery it paces
+            # (delivery.send_pacing reads the same two rows; RetryPolicy.pacing judges them).
+            "       (SELECT sends FROM recipient_rate WHERE recipient_task_id = d.recipient_task_id"
+            "         AND window_start = ?) AS rate_sends,"
+            "       (SELECT MAX(last_send_at) FROM recipient_rate"
+            "         WHERE recipient_task_id = d.recipient_task_id"
+            "           AND window_start BETWEEN ? AND ?) AS rate_last,"
             "       k.event_id AS acked, k.verified AS ack_verified,"
             "       k.accepted AS ack_accepted, k.rejection_reason AS ack_rejection,"
             "       v.tier AS ack_tier,"
@@ -429,7 +458,7 @@ class AssignmentView:
             "  LEFT JOIN relationships r ON r.relationship_id = e.relationship_id"
             + LIFECYCLE_WITHHOLD_JOIN.format(alias="lf", event="e", delivery="d") +
             " WHERE e.event_id = ?",
-            (event_id,),
+            (window, earliest, window, event_id),
         )
         if row is None:
             record["detail"] = "the store holds no such event"
@@ -448,11 +477,19 @@ class AssignmentView:
                 "dispatchEvidence": row["dispatch_evidence"],
                 "holdReason": row["hold_reason"],
                 "hostLostAttempts": row["host_lost_attempts"],
-                # The current attempt's recipient-turn check, when it could not decide
-                # (turn_check_undecided:<reason>); None otherwise.
+                # The current attempt's recipient check, when it named something: the turn
+                # check's turn_check_undecided:<reason>, or an uncertain send's
+                # unknown_send_lost:no_trace or unknown_send_undecided:<reason>; None otherwise.
                 "turnCheck": (row["attempt_turn_check"]
-                              if (row["attempt_turn_check"] or "").startswith("turn_check_undecided:")
+                              if (row["attempt_turn_check"] or "").startswith(UNDECIDED_CHECKS)
                               else None),
+                # Why an unsent delivery waits on its recipient's send budget, and when that
+                # reopens (RetryPolicy.pacing); None when the budget is not what holds it.
+                "pacing": (pacing_holding(self.policy.pacing(now, sends=row["rate_sends"],
+                                                             last=row["rate_last"]),
+                                          row["next_eligible_at"])
+                           if row["delivery_state"] in NOT_SENT_STATES and not row["hold_reason"]
+                           else None),
             }
         record["ack"] = {
             # The parent's DISPOSITION, independent of whether the acknowledging turn could be
@@ -845,6 +882,23 @@ REACKNOWLEDGE_ACTION = "parent_reacknowledges"
 RECONCILE_ACTION = "daemon_reconciles_delivery"
 HOST_LOST_REDELIVERY_ACTION = "daemon_redelivers_host_lost_turn"
 HOST_LOST_HELD_ACTION = "parent_recovers_host_lost_turn"
+# An uncertain send the recipient keeps no trace of, or whose reading cannot decide
+# (hostloss.read_unknown_send, CRW-231): never sent again, and the parent's to recover.
+UNKNOWN_SEND_HELD_ACTION = "parent_recovers_unknown_send_lost"
+UNKNOWN_SEND_UNDECIDED_ACTION = "parent_recovers_unknown_send_undecided"
+# A delivery the recipient's send budget refuses in every window: a cap of zero. The daemon cannot
+# send it under that policy; only whoever sets the policy can (CRW-231, review of bb1b6af6).
+SEND_POLICY_ACTION = "operator_changes_send_policy"
+# What the parent does to recover a completion nothing will deliver automatically any more. The
+# report is in this store whatever happened to the message, so the parent reads it here and, if
+# the work still needs verifying, opens a fresh execution generation.
+PARENT_RECOVERY_ACTIONS = (HOST_LOST_HELD_ACTION, UNKNOWN_SEND_HELD_ACTION,
+                           UNKNOWN_SEND_UNDECIDED_ACTION)
+PARENT_RECOVERY_THEN = ("read the report, then open a fresh execution generation"
+                        " (generation-open) if the work still needs verifying")
+# The recipient-check names a current attempt can carry (hostloss): the turn check's, and an
+# uncertain send's.
+UNDECIDED_CHECKS = ("turn_check_undecided:", "unknown_send_lost:", "unknown_send_undecided:")
 # Verification's own "not yet": the host has not confirmed the acknowledging turn, and a process
 # with host access will try again; or the acknowledgement was kept while the relay had not
 # confirmed the delivery (ack.DELIVERY_UNCONFIRMED), and the daemon completes it now that it has.
@@ -865,18 +919,23 @@ def completion_next_action(state, projection):
 
     - acknowledged: an accepted one waits for the parent to verify; a rejection is an answer and
       is left to NEXT_ACTION, as is every acknowledged claim (parent_verifies);
-    - held, other than a closed push channel: nothing moves it automatically. After a host loss
-      it is the parent's to recover; a completion never lost keeps today's answer;
+    - held, other than a closed push channel: nothing moves it automatically. A hold named for a
+      loss is the parent's to recover under that loss's name (host_lost_turn, unknown_send_lost,
+      unknown_send_undecided, CRW-231); any other hold after a host loss is the parent's to
+      recover; a completion never lost keeps today's answer;
     - held_uncertain or sending: an uncertain send or an unsettled claim, which reconciliation
       settles; it is not a send;
     - dispatched or inbox_only with an acknowledgement recorded: verification's, unless
       verification refused it, which only a new acknowledgement answers;
     - dispatched or inbox_only: the parent's to acknowledge;
-    - queued, deferred or withheld: the relay's to send, and after a host loss its to send again.
+    - queued, deferred or withheld: the relay's to send, and after a host loss its to send again;
+      under a budget no window reopens (a cap of zero), the operator's.
 
     None leaves NEXT_ACTION's answer.
     """
-    from .policy import PUSH_CHANNEL_CLOSED
+    from .policy import (
+        HOST_LOST_TURN, PUSH_CHANNEL_CLOSED, UNKNOWN_SEND_LOST, UNKNOWN_SEND_UNDECIDED,
+    )
     from .transport import (
         DEFERRED_BUSY, DISPATCHED, HELD_UNCERTAIN, INBOX_ONLY, QUEUED, SENDING, WITHHELD_PRE_SEND,
     )
@@ -894,6 +953,11 @@ def completion_next_action(state, projection):
         return NEXT_ACTION[VERIFYING] if state == RECEIVED and ack.get("accepted") else None
     hold = delivery.get("holdReason")
     if hold and hold != PUSH_CHANNEL_CLOSED:
+        named = {HOST_LOST_TURN: HOST_LOST_HELD_ACTION,
+                 UNKNOWN_SEND_LOST: UNKNOWN_SEND_HELD_ACTION,
+                 UNKNOWN_SEND_UNDECIDED: UNKNOWN_SEND_UNDECIDED_ACTION}.get(hold)
+        if named is not None:
+            return named
         return HOST_LOST_HELD_ACTION if host_lost else None
     where = delivery["state"]
     if where in (HELD_UNCERTAIN, SENDING):
@@ -905,5 +969,51 @@ def completion_next_action(state, projection):
             return REACKNOWLEDGE_ACTION
         return AWAITING_ACK_ACTION
     if where in (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND):
+        if never_reopens(delivery.get("pacing")):
+            return SEND_POLICY_ACTION
         return HOST_LOST_REDELIVERY_ACTION if host_lost else NEXT_ACTION[RECEIVED]
     return None
+
+
+def store_directory(store):
+    """The directory that selects this store with --state, as every line written for a later
+    reader names it (supervisorchannel.SupervisorChannel.state_directory)."""
+    import os
+
+    return os.path.dirname(os.path.abspath(str(store.path)))
+
+
+def recovery_command(state_directory, event_id) -> str:
+    """show --event for this event, run by this relay on this store, quoted for a POSIX shell.
+
+    A bare show opens whatever store its shell selects, which is not this one whenever it was chosen
+    with --state or the environment override (Devin on bb1b6af6); the supervisor channel renders
+    every line it writes for a later reader the same way.
+    """
+    from .supervisorchannel import _command, relay_program
+
+    return _command(*relay_program(), "--state", state_directory, "show", "--event", event_id)
+
+
+def parent_recovery(action, projection, state_directory):
+    """How the parent recovers a completion nothing will deliver automatically any more, or None.
+
+    Named beside nextExpectedAction so the actor comes with the command that supports it (CRW-231
+    criterion 1): the report is kept in this store whatever happened to the message, so show
+    --event reads it; a fresh generation is the parent's next step when the work still needs
+    verifying.
+    """
+    if action == CORRECTION_HELD_ACTION:
+        # The correction the parent must recover, by the same command (review of bb1b6af6).
+        anchored = projection["correction"]
+    elif action in PARENT_RECOVERY_ACTIONS:
+        anchored = projection["completion"]
+    else:
+        return None
+    delivery = anchored["delivery"] or {}
+    return {
+        "actor": "parent",
+        "reason": delivery.get("holdReason") or delivery.get("state"),
+        "command": recovery_command(state_directory, anchored["eventId"]),
+        "then": PARENT_RECOVERY_THEN,
+    }

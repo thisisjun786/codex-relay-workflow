@@ -15,6 +15,14 @@ is recorded host_lost_turn and queued once more. That is not evidence that a sen
 is not a fourth item on the list above: it is the host's own answer that the accepted turn is
 gone.
 
+A receipt with no turn id and nothing affirmative - outcome_unknown, a failed initialize or
+turn/start - is followed by the same kind of read once the thread-wide scan has not found the
+message: the recipient's turns and items since the send, and the turn the send could have been
+folded into (hostloss.read_unknown_send, CRW-231). It never leads to a second send. A recipient that
+keeps no trace of the message holds the delivery unknown_send_lost for the parent; a reading that
+cannot decide by waiting holds it unknown_send_undecided; either is named on the attempt, and the
+attempt stays held_uncertain, so a message found later still confirms it and clears the hold.
+
 A turn found carrying this attempt's token means the host typed that item as the message
 (hostadapter.is_message): a relay command the parent ran that printed the request id is its
 reading about the delivery, not the delivery (CRW-224 follow-up).
@@ -31,7 +39,10 @@ from enum import Enum
 
 from . import hostloss
 from .delivery import COMPLETION, REVISION, SENDING
-from .policy import HOST_LOST_TURN, TURN_CHECK_UNDECIDED
+from .hostadapter import TokenScan
+from .policy import (
+    HOST_LOST_TURN, TURN_CHECK_UNDECIDED, UNKNOWN_SEND_LOST, UNKNOWN_SEND_UNDECIDED,
+)
 from .transport import (
     DEFERRED_BUSY,
     DISPATCHED,
@@ -189,6 +200,18 @@ class Reconciler:
                                  f" evidence does not write over it")
         if reading is not None:
             outcome["recipientTurn"] = reading
+        if (attempt["state"] == HELD_UNCERTAIN and delivery["state"] == HELD_UNCERTAIN
+                and delivery["attempt_count"] == attempt["attempt_no"]
+                and (attempt["affirmative_evidence"] or Evidence.NONE.value)
+                == Evidence.NONE.value):
+            # Still uncertain, and whatever the other reader named is what holds it now: the
+            # answer names who moves it and why, as the pass that wrote it did (independent
+            # review of c86dc362).
+            outcome.update(_awaiting(
+                delivery["kind"], outcome, None,
+                {"hold_reason": delivery["hold_reason"], "recipient_scan": attempt["recipient_scan"]},
+                event_id=attempt["event_id"], store=self.store,
+            ))
         return outcome
 
     def _recorded_loss(self, request_id: str, reading=None) -> dict:
@@ -230,8 +253,11 @@ class Reconciler:
         # Step one, always: the operation receipt for this exact request id.
         operation_observation = "missing"
         receipt = None
+        facts = None
+        receipt_read = False
         try:
             receipt = adapter.get_operation(request_id)
+            receipt_read = True
         except Exception as error:
             operation_observation = f"unreadable: {type(error).__name__}: {error}"
         if receipt is not None:
@@ -255,6 +281,7 @@ class Reconciler:
 
         # Step two, only now: the recipient's real items.
         scan_detail = "not scanned"
+        scanned = False
         try:
             scan = adapter.find_token(
                 delivery["recipient_thread_id"], request_id, limit=SCAN_LIMIT, message_only=True,
@@ -266,12 +293,46 @@ class Reconciler:
                 return self._settle_from_scan(
                     attempt, delivery, scan, operation_observation, scan_detail, now
                 )
+            scanned = True
         except Exception as error:
             scan_detail = f"unreadable: {type(error).__name__}: {error}"
 
+        # Step three, for a send with no turn id and nothing affirmative: the recipient's turns and
+        # items since the send, and the turn it could have been folded into (CRW-231). Not gated
+        # on the thread-wide scan's exhaustion: the since-send reading decides its own coverage and
+        # names a bound it could not pass. An unreadable receipt takes no reading.
+        reading = None
+        answer = _receipt_answer(facts) if receipt_read else None
+        if scanned and answer is not None:
+            reading = hostloss.read_unknown_send(adapter, self.clock, attempt, delivery,
+                                                 receipt=answer)
+            if reading["finding"] == hostloss.PRESENT:
+                # The message reached the recipient where the thread-wide scan did not look.
+                found = TokenScan(True, reading["turnId"], False, 0)
+                outcome = self._settle_from_scan(
+                    attempt, delivery, found, operation_observation,
+                    f"found since the send in turn {reading['turnId']}", now,
+                )
+                outcome["recipientTrace"] = reading
+                return outcome
+
         # A bounded scan that did not exhaust the history has not shown absence, and even an
-        # exhausted one is not affirmative evidence of non-delivery. Either way: stay held.
-        return self._stay_held(attempt, delivery, operation_observation, scan_detail, now)
+        # exhausted one is not affirmative evidence of non-delivery. Either way: stay held. What
+        # the reading found names the hold, and never sends anything again.
+        outcome = self._stay_held(attempt, delivery, operation_observation, scan_detail, now,
+                                  reading=reading)
+        if reading is not None:
+            outcome["recipientTrace"] = reading
+        # Who moves it next is read from what is now stored as well as from this pass's reading:
+        # a pass that decided nothing keeps an earlier hold, which is still the parent's.
+        stored = self.store.one(
+            "SELECT d.hold_reason, a.recipient_scan FROM attempts a"
+            " JOIN deliveries d ON d.event_id = a.event_id WHERE a.request_id = ?",
+            (request_id,),
+        )
+        outcome.update(_awaiting(delivery["kind"], outcome, reading, stored,
+                                 event_id=attempt["event_id"], store=self.store))
+        return outcome
 
     def _settle_dispatched(self, attempt, delivery, facts, observation, adapter, now) -> dict:
         """A receipt with a turn id, then the recipient's own turns for that turn (CRW-224).
@@ -509,7 +570,20 @@ class Reconciler:
             anchor,
         )
 
-    def _stay_held(self, attempt, delivery, observation, scan_detail, now) -> dict:
+    def _stay_held(self, attempt, delivery, observation, scan_detail, now, *,
+                   reading=None) -> dict:
+        """Settle the attempt held_uncertain with no evidence, and say why it is held.
+
+        A reading of an uncertain send (hostloss.read_unknown_send) that found no trace holds the
+        delivery unknown_send_lost, and one that cannot decide holds it unknown_send_undecided;
+        either names itself on the attempt. Any other pass keeps a name and hold an earlier reading
+        left, and otherwise writes no hold, so an attempt no reading was taken for never gains one.
+
+        The row's dispatch evidence and turn are cleared, as the sender's own settlement of a
+        held_uncertain receipt clears them: the current attempt has neither, and a value an
+        earlier attempt left (a host loss's) must not stay on a row whose current send is
+        uncertain (CRW-231).
+        """
         record = json.loads(attempt["record"]) if attempt["record"] else _unfinished_record(
             attempt, delivery, self.clock.iso()
         )
@@ -519,9 +593,19 @@ class Reconciler:
             "affirmativeEvidence": Evidence.NONE.value,
             "checkedAt": self.clock.iso(),
         }
+        mark, hold = scan_detail, None
+        if reading is not None and reading.get("undecided"):
+            mark = hostloss.UNKNOWN_UNDECIDED_MARK + reading["undecided"]
+            hold = UNKNOWN_SEND_UNDECIDED
+        elif reading is not None and reading["finding"] == UNKNOWN_SEND_LOST:
+            mark, hold = hostloss.UNKNOWN_LOST_MARK, UNKNOWN_SEND_LOST
+        # A reading that names a hold was taken against the attempt as this pass read it, so it
+        # is written only over that: another pass that read the host later and named its own
+        # hold first keeps it, and this one reports the attempt as it stands (Devin on aaa190a6).
         self._write(
-            attempt, delivery, record, HELD_UNCERTAIN, Evidence.NONE, observation, scan_detail,
-            None,
+            attempt, delivery, record, HELD_UNCERTAIN, Evidence.NONE, observation, mark, None,
+            hold=hold, keep_unknown=hold is None, clear_dispatch=True,
+            expect_scan=hold is not None,
         )
         return {
             "evidence": Evidence.NONE.value,
@@ -537,7 +621,7 @@ class Reconciler:
 
     def _write(self, attempt, delivery, record, state, evidence, observation, scan_detail,
                next_eligible, *, aggregate=None, dispatch_evidence=None, dispatch_turn_id=None,
-               hold=None):
+               hold=None, keep_unknown=False, clear_dispatch=False, expect_scan=False):
         now_iso = self.clock.iso()
         current = self._is_current(attempt, delivery)
         anchor = None
@@ -547,8 +631,11 @@ class Reconciler:
                 " operation_observation = ?,"
                 # hostloss.record_undecided owns an undecided name on a dispatched attempt;
                 # settling the same dispatch from its receipt again keeps it, and only a reading
-                # that decides clears it.
-                " recipient_scan = CASE WHEN ? = ? AND recipient_scan LIKE ?"
+                # that decides clears it. An uncertain send's name (unknown_send_lost or
+                # unknown_send_undecided) is kept the same way by a pass that took no reading or
+                # found nothing new (keep_unknown, CRW-231).
+                " recipient_scan = CASE WHEN (? = ? AND recipient_scan LIKE ?)"
+                "                         OR (? AND ? = ? AND recipient_scan LIKE ?)"
                 "                       THEN recipient_scan ELSE ? END,"
                 " affirmative_evidence = ?,"
                 " reconciled_at = ? WHERE request_id = ? AND (state IS NULL OR state <> ?)"
@@ -558,36 +645,49 @@ class Reconciler:
                 "   AND internal_state IS ? AND state IS ? AND affirmative_evidence IS ?"
                 # And a reading that found nothing never replaces evidence already settled.
                 "   AND NOT (? = ? AND affirmative_evidence IS NOT NULL"
-                "            AND affirmative_evidence <> ?)",
+                "            AND affirmative_evidence <> ?)"
+                # And a reading that names a hold only over the name this pass read (expect_scan).
+                "   AND (? = 0 OR recipient_scan IS ?)",
                 (
                     state, json.dumps(record), observation,
-                    state, DISPATCHED, TURN_CHECK_UNDECIDED + ":%", scan_detail,
+                    state, DISPATCHED, TURN_CHECK_UNDECIDED + ":%",
+                    int(keep_unknown), state, HELD_UNCERTAIN,
+                    hostloss.UNKNOWN_MARK_PREFIX + "%", scan_detail,
                     evidence.value, now_iso, attempt["request_id"], HOST_LOST_TURN,
                     attempt["internal_state"], attempt["state"], attempt["affirmative_evidence"],
                     evidence.value, Evidence.NONE.value, Evidence.NONE.value,
+                    int(expect_scan), attempt["recipient_scan"],
                 ),
             ).rowcount
             if updated != 1:
                 # Rolled back with the transaction: nothing of this settlement is written.
                 now_row = db.execute(
-                    "SELECT internal_state, state, affirmative_evidence FROM attempts"
+                    "SELECT internal_state, state, affirmative_evidence, recipient_scan FROM attempts"
                     " WHERE request_id = ?", (attempt["request_id"],),
                 ).fetchone()
                 if now_row is not None and now_row["state"] == HOST_LOST_TURN:
                     raise _AttemptLost()
                 raise _AttemptChanged(moved=now_row is None or (
                     now_row["internal_state"], now_row["state"], now_row["affirmative_evidence"]
-                ) != (attempt["internal_state"], attempt["state"], attempt["affirmative_evidence"]))
+                ) != (attempt["internal_state"], attempt["state"], attempt["affirmative_evidence"])
+                    or (expect_scan and now_row["recipient_scan"] != attempt["recipient_scan"]))
             if current:
                 promoted = db.execute(
-                    "UPDATE deliveries SET state = ?, next_eligible_at = ?, hold_reason = ?,"
-                    " dispatch_evidence = ?,"
-                    " dispatch_turn_id = COALESCE(?, dispatch_turn_id), lease_owner = NULL,"
+                    "UPDATE deliveries SET state = ?, next_eligible_at = ?,"
+                    # A pass that decided nothing keeps the hold an uncertain send's reading set.
+                    " hold_reason = CASE WHEN ? AND hold_reason IN (?, ?) THEN hold_reason"
+                    "                    ELSE ? END,"
+                    " dispatch_evidence = CASE WHEN ? THEN NULL ELSE ? END,"
+                    " dispatch_turn_id = CASE WHEN ? THEN NULL"
+                    "                         ELSE COALESCE(?, dispatch_turn_id) END,"
+                    " lease_owner = NULL,"
                     " lease_until = NULL, updated_at = ? WHERE event_id = ? AND attempt_count = ?"
                     "   AND state NOT IN (?, 'acknowledged', 'superseded')",
                     (
-                        aggregate or state, next_eligible, hold,
-                        dispatch_evidence or delivery["dispatch_evidence"], dispatch_turn_id,
+                        aggregate or state, next_eligible,
+                        int(keep_unknown), UNKNOWN_SEND_LOST, UNKNOWN_SEND_UNDECIDED, hold,
+                        int(clear_dispatch), dispatch_evidence or delivery["dispatch_evidence"],
+                        int(clear_dispatch), dispatch_turn_id,
                         now_iso, attempt["event_id"], attempt["attempt_no"], DISPATCHED,
                     ),
                 ).rowcount
@@ -665,6 +765,60 @@ class Reconciler:
             "awaitingAck": dispatched,
             "resent": [],
         }
+
+
+def _receipt_answer(facts):
+    """How the transport answered for an uncertain send with no turn id, or None when it did.
+
+    settled: outcome_unknown, or a failed initialize or turn/start it cannot call a refusal -
+    turn/start may have gone out and nothing will answer it now. unsettled: in_progress_or_unknown,
+    which a transport that crashed mid-request leaves for good. missing: the transport holds no
+    receipt for the request id. None for a receipt carrying a turn id or a retry-safe rejection,
+    which the steps before this one settle.
+    """
+    if facts is None:
+        return hostloss.MISSING_RECEIPT
+    if facts.delivery_state != HELD_UNCERTAIN or facts.turn_id or facts.retry_safe:
+        return None
+    if facts.transport_receipt_status == UNFINISHED:
+        return hostloss.UNSETTLED_RECEIPT
+    return hostloss.SETTLED_RECEIPT
+
+
+def _awaiting(kind, outcome, reading, stored=None, *, event_id=None, store=None) -> dict:
+    """Who moves an uncertain send next and why, in the words assignment-show uses (CRW-231), with
+    the supporting command when it is the parent's.
+
+    Only for an outcome this reconciliation left uncertain; a promotion or a pre-send rejection is
+    answered by the delivery state it wrote. The reconciled event need not be its assignment's
+    head, so the words are taken from assignment.py rather than from a projection.
+    """
+    from .assignment import (
+        CORRECTION_HELD_ACTION, CORRECTION_UNCONFIRMED_ACTION, PARENT_RECOVERY_THEN,
+        RECONCILE_ACTION, UNKNOWN_SEND_HELD_ACTION, UNKNOWN_SEND_UNDECIDED_ACTION,
+        recovery_command, store_directory,
+    )
+
+    if outcome.get("state") != HELD_UNCERTAIN:
+        return {}
+    correction = kind == REVISION
+    hold = stored["hold_reason"] if stored is not None else None
+    mark = stored["recipient_scan"] if stored is not None else None
+    if hold == UNKNOWN_SEND_LOST:
+        action, reason = UNKNOWN_SEND_HELD_ACTION, UNKNOWN_SEND_LOST
+    elif hold == UNKNOWN_SEND_UNDECIDED:
+        action, reason = UNKNOWN_SEND_UNDECIDED_ACTION, mark or UNKNOWN_SEND_UNDECIDED
+    else:
+        return {"nextExpectedAction": (CORRECTION_UNCONFIRMED_ACTION if correction
+                                       else RECONCILE_ACTION),
+                "reason": (reading or {}).get("detail") or outcome.get("missing")}
+    answer = {"nextExpectedAction": CORRECTION_HELD_ACTION if correction else action,
+              "reason": reason}
+    if event_id is not None and store is not None:
+        answer["recovery"] = {"actor": "parent", "reason": reason,
+                              "command": recovery_command(store_directory(store), event_id),
+                              "then": PARENT_RECOVERY_THEN}
+    return answer
 
 
 def _unfinished_record(attempt, delivery, observed_at) -> dict:

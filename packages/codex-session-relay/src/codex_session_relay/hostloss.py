@@ -34,6 +34,19 @@ the same event is sent under a new request id; if the host loses that turn too, 
 held under host_lost_turn and nothing sends it again. Only a completion is recovered: it is the one
 kind waiting for an acknowledgement, and a revision's dispatch turn is its generation's anchor,
 which is never rebound. Other kinds are read and reported, and changed in nothing.
+
+A send that returned no turn id at all is read the same way (CRW-231), and is never sent again.
+CRW-124's H0-R4 K5ctl killed the App Server after turn/start went out and before its answer was
+read: the receipt said outcome_unknown with no turn id, the restarted host kept nothing of the
+message, and reconciliation held the attempt awaiting evidence that could never come while naming
+the daemon. read_unknown_send asks the recipient's turns since the send and its items since the
+send, under the same allowance and the same scan as the loss above, and reads every turn the send
+could have been folded into. Nothing shows that a turn/start whose answer never came back can no
+longer be applied by a live App Server, so no reading here allows a second send: a recipient that
+keeps no trace of the message holds the delivery unknown_send_lost for the parent, and a reading no
+wait can decide holds it unknown_send_undecided, both named on the attempt. The delivery stays
+held_uncertain and is still reconciled, so a message that turns up later confirms it and clears the
+hold.
 """
 
 import json
@@ -42,7 +55,7 @@ from datetime import datetime
 from .delivery import COMPLETION
 from .hostadapter import DISPATCH_TURN_SKEW_SECONDS, TURN_PRESENT, TURN_START_PRECISION_SECONDS
 from .hostadapter import IN_TURN_ITEMS_MAX, ListingBounded, ListingEmpty
-from .policy import HOST_LOST_TURN, TURN_CHECK_UNDECIDED
+from .policy import HOST_LOST_TURN, TURN_CHECK_UNDECIDED, UNKNOWN_SEND_LOST, UNKNOWN_SEND_UNDECIDED
 from .transport import DISPATCHED, HELD_UNCERTAIN, QUEUED, assert_attempt_invariants
 
 PRESENT = "present"
@@ -78,6 +91,19 @@ TOKEN_IN_OTHER_ITEM = "token_in_other_item"
 NO_SEND_TIME = "no_send_time"
 NO_TURN = "no_turn"
 UNDECIDED_MARK = TURN_CHECK_UNDECIDED + ":"
+# Not questions waiting answers either, for an uncertain send the recipient keeps no trace of: the
+# transport never settled its receipt, or holds none (read_unknown_send).
+RECEIPT_UNSETTLED = "receipt_unsettled"
+RECEIPT_MISSING = "receipt_missing"
+# How the transport answered for an uncertain send's request id (read_unknown_send's receipt).
+SETTLED_RECEIPT = "settled"
+UNSETTLED_RECEIPT = "unsettled"
+MISSING_RECEIPT = "missing"
+# The names an uncertain send's reading leaves on its attempt: no trace of it, or no decision.
+UNKNOWN_LOST_MARK = UNKNOWN_SEND_LOST + ":no_trace"
+UNKNOWN_UNDECIDED_MARK = UNKNOWN_SEND_UNDECIDED + ":"
+# Every name read_unknown_send leaves; a pass that decides nothing keeps whichever is there.
+UNKNOWN_MARK_PREFIX = "unknown_send_"
 # The attempt states a delivered completion's current attempt can have: dispatched on an accepted
 # receipt, or held_uncertain when reconciliation confirmed it from the token in the parent's items
 # and kept the honest transport snapshot (reconcile._settle_from_scan). Both are checked the same.
@@ -398,3 +424,181 @@ def still_awaiting(store, request_ids):
     rows = store.all(_AWAITING_SQL + f" AND a.request_id IN ({marks})",
                      (COMPLETION, DISPATCHED, *DELIVERED_ATTEMPT_STATES, *request_ids))
     return {row["request_id"] for row in rows}
+
+
+def _fold_candidates(presence, sent_at):
+    """Every listed turn a turn/start could have steered, newest first.
+
+    Each turn the listing counted as seen that began no later than the send (inside the allowance,
+    since the host reports whole seconds), and the turn the listing stopped at, the newest begun
+    before the allowance. The send was folded into whichever of them was running when it went out,
+    and a turn begun just after the send says nothing about which that was (independent review of
+    aaa190a6), so every one of them is read. A turn begun after the send, or with no start time,
+    is left to the since-send scan, which covers it whole or says that it did not.
+    """
+    turns = [turn for turn in presence.seen_turns
+             if turn.started_at is not None
+             and turn.started_at <= sent_at + TURN_START_PRECISION_SECONDS]
+    if presence.stop_turn is not None:
+        turns.append(presence.stop_turn)
+    return turns
+
+
+def read_unknown_send(adapter, clock, attempt, delivery, *, receipt=SETTLED_RECEIPT) -> dict:
+    """What the recipient's own turns and items say about a send that returned no turn id (CRW-231).
+
+    Reads only; writes nothing. Called for an attempt whose operation receipt the transport settled
+    without affirmative evidence (outcome_unknown, or a failed initialize or turn/start it cannot call
+    a refusal) once reconciliation's thread-wide scan has not found the message.
+
+    finding is present (the message is in the recipient's items since the send; turnId names the
+    turn), unknown_send_lost, or unknown. No trace is concluded only from the host's answer, only
+    once the send is older than the start-time allowance, only when no turn begun since the send is
+    still running, and only when a scan of every item since the send, and of every turn the send
+    could have been folded into, finds no message and no other item carrying the token: the rule
+    read_recipient_turn applies to a lost accepted turn. It is a reason to hold the delivery for the
+    parent, never to send it again: a live App Server can still apply a turn/start whose answer
+    never came back, and nothing here shows it will not (independent reviews of bb1b6af6 and
+    c367abb7).
+    pending is True for an unknown a later reading can decide - a send too recent, a turn still
+    running, an unreadable host - and the daemon reads it again on its next tick. undecided names the
+    reasons waiting will not fix, as for the turn check.
+
+    receipt says how the transport answered for this request id: settled (outcome_unknown, or a
+    failed initialize or turn/start), unsettled (in_progress_or_unknown, a row a crashed transport
+    leaves behind) or missing (no row at all). Only a settled receipt allows the no-trace finding.
+    With the others the same reading is taken, and where it would find no trace it is undecided
+    under the receipt's name instead: the transport has not said the send is over, and a receipt
+    that settles later lets the ordinary rule decide.
+    """
+    reading = {"turnId": None, "finding": UNKNOWN, "detail": None, "undecided": None,
+               "pending": False}
+    thread = delivery["recipient_thread_id"]
+    lookup = getattr(adapter, "find_dispatched_turn", None)
+    token_since = getattr(adapter, "find_token_since", None)
+    in_turn = getattr(adapter, "find_token_in_turn", None)
+    if lookup is None or token_since is None or in_turn is None:
+        reading["detail"] = "this host adapter cannot list the recipient's turns"
+        return reading
+    sent_at = _epoch(attempt["sent_at"])
+    if sent_at is None:
+        reading.update(detail="the attempt has no send time, so absence cannot be bounded",
+                       undecided=NO_SEND_TIME)
+        return reading
+    allowance = TURN_START_PRECISION_SECONDS + DISPATCH_TURN_SKEW_SECONDS
+    if clock.now() < sent_at + allowance:
+        reading.update(detail=f"the send is less than {allowance:.0f} s old, too recent to call "
+                              f"it lost; read again", pending=True)
+        return reading
+    try:
+        presence = lookup(thread, None, sent_at=sent_at)
+    except ListingBounded as error:
+        reading.update(detail=f"undecided: {error}", undecided=LISTING_BOUNDED)
+        return reading
+    except ListingEmpty as error:
+        reading.update(detail=f"undecided: {error}", undecided=LISTING_EMPTY)
+        return reading
+    except Exception as error:  # noqa: BLE001 - an unreadable host is its own answer
+        reading.update(detail=f"unreadable: {type(error).__name__}: {error}", pending=True)
+        return reading
+    # A turn/start that found a turn still running folded the message into it instead of starting
+    # one (Devin on d369a9e7). That turn is the one the listing stopped at, or one begun inside the
+    # allowance up to the send, which the listing counts as seen (independent reviews of 668890b0
+    # and aaa190a6). Their own items are read below, and while one runs it is one of the turns a
+    # reading waits for.
+    folded = _fold_candidates(presence, sent_at)
+    running = [turn.turn_id for turn in presence.seen_turns if turn.status not in TERMINAL]
+    if presence.stop_turn is not None and presence.stop_turn.status not in TERMINAL:
+        running.append(presence.stop_turn.turn_id)
+    if running:
+        # Possibly the send's own turn, with its message not readable yet; and a turn that ends
+        # can still leave the message behind. Read again once it has ended.
+        reading.update(detail=f"a turn begun since the send is still running ({running[0]}); "
+                              f"read again once it ends", pending=True)
+        return reading
+    try:
+        scan = token_since(thread, attempt["request_id"], older=presence.older,
+                           limit=TOKEN_SCAN_LIMIT)
+    except Exception as error:  # noqa: BLE001
+        reading.update(detail=f"unreadable: the recipient's items could not be read for this "
+                              f"attempt's token: {type(error).__name__}: {error}", pending=True)
+        return reading
+    if scan.found:
+        reading.update(finding=PRESENT, turnId=scan.turn_id,
+                       detail=f"this attempt's message is in the recipient's items since the "
+                              f"send (turn {scan.turn_id}, {scan.scanned} items read)")
+        return reading
+    owns = []
+    for turn in folded:
+        # The scan above stops at the items of the turn the listing stopped at, and reads only the
+        # newest items of one begun inside the allowance; the thread-wide scan's 200 newest may not
+        # reach the message either when the turn ran on after it. A turn's own items, oldest
+        # first, are where a folded send's message is, however long the turn went on.
+        try:
+            own = in_turn(thread, attempt["request_id"], turn_id=turn.turn_id,
+                          limit=IN_TURN_SCAN_LIMIT)
+        except Exception as error:  # noqa: BLE001
+            reading.update(detail=f"unreadable: the items of turn {turn.turn_id}, one the send "
+                                  f"could have been folded into, could not be read: "
+                                  f"{type(error).__name__}: {error}", pending=True)
+            return reading
+        if own.found:
+            reading.update(finding=PRESENT, turnId=turn.turn_id,
+                           detail=f"this attempt's message is in turn {turn.turn_id}, begun by "
+                                  f"the send, which the send was folded into")
+            return reading
+        owns.append((turn, own))
+    for turn, own in owns:
+        if own.other_kind is not None:
+            # The token in such a turn only in an item that is neither the message nor agent output
+            # (a hook prompt, a type the relay does not know): named, as in the scan below
+            # (independent review of c367abb7).
+            reading.update(
+                detail=f"undecided: this attempt's token is in turn {turn.turn_id}, which the send "
+                       f"could have been folded into, only in an item of type {own.other_kind}, "
+                       f"which is neither the delivered message nor agent output; not sent again",
+                undecided=TOKEN_IN_OTHER_ITEM,
+            )
+            return reading
+    if scan.other_kind is not None:
+        reading.update(
+            detail=f"undecided: this attempt's token is in the recipient's items only in an item "
+                   f"of type {scan.other_kind} (turn {scan.other_turn}), which is neither the "
+                   f"delivered message nor agent output; not sent again",
+            undecided=TOKEN_IN_OTHER_ITEM,
+        )
+        return reading
+    if not scan.exhausted:
+        reading.update(
+            detail=f"undecided: {scan.scanned} items did not reach history older than the send, "
+                   f"so the token's absence is not shown",
+            undecided=TOKEN_SCAN_BOUNDED,
+        )
+        return reading
+    for turn, own in owns:
+        if not own.exhausted:
+            reading.update(
+                detail=f"undecided: turn {turn.turn_id}, begun by the send, could have taken it, "
+                       f"and its first {own.scanned} items did not reach its end",
+                undecided=TOKEN_SCAN_BOUNDED,
+            )
+            return reading
+    if receipt != SETTLED_RECEIPT:
+        said = ("the transport holds no receipt for this request id" if receipt == MISSING_RECEIPT
+                else "the transport has not settled this request's receipt"
+                     " (in_progress_or_unknown)")
+        reading.update(
+            detail=f"undecided: the recipient keeps no trace of this send, but {said}",
+            undecided=RECEIPT_MISSING if receipt == MISSING_RECEIPT else RECEIPT_UNSETTLED,
+        )
+        return reading
+    reading.update(
+        finding=UNKNOWN_SEND_LOST,
+        detail=f"the recipient keeps no trace of this send: its turn list ({presence.stop} after "
+               f"{presence.scanned} turns) shows {len(presence.seen)} turns begun since it, none "
+               f"running, and this attempt's token is not among the {scan.scanned} items since it"
+               + (f" nor in {', '.join(turn.turn_id for turn in folded)}, the turns begun by it"
+                  if folded else "")
+               + "; held for the parent, never sent again",
+    )
+    return reading

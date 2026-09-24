@@ -38,6 +38,19 @@ DAEMON_OWNER = DELIVERER_OWNER
 # How long an undecided recipient-turn reading waits before it is read again (hostloss.py). Such a
 # reading will not change by waiting a tick, and each read can page far back through the parent.
 UNDECIDED_RECHECK_SECONDS = 600.0
+# The names an uncertain send's reading leaves on its attempt (hostloss.UNKNOWN_MARK_PREFIX):
+# unknown_send_lost:no_trace or unknown_send_undecided:<reason>.
+UNKNOWN_MARK_PREFIX = "unknown_send_"
+
+
+def _age(stamp, now) -> float:
+    """Seconds since an ISO stamp the store wrote; an unreadable one is treated as due."""
+    from datetime import datetime
+
+    try:
+        return now - datetime.fromisoformat(stamp).timestamp()
+    except (TypeError, ValueError):
+        return float("inf")
 
 
 @dataclass
@@ -947,6 +960,12 @@ class RelayDaemon:
             # Another reader settled the attempt while this one read it, and nothing was
             # written (I-37): the attempt as it now stands is owed a reading of its own.
             return False
+        if (outcome.get("recipientTrace") or {}).get("pending"):
+            # The recipient's turns since an uncertain send could not decide yet: the send is too
+            # recent, a turn begun since it is still running, or the host could not be read
+            # (hostloss.read_unknown_send, CRW-231). Nothing the gate fingerprints has to change
+            # for that to resolve, so the reading is owed on the next tick rather than cached.
+            return False
         observation = outcome.get("operationObservation", "")
         scan = outcome.get("recipientScan", "")
         if "unreadable" in observation or "unreadable" in scan:
@@ -980,6 +999,15 @@ class RelayDaemon:
         if row is None or row["retry_required"]:
             # Owed work is recorded, not inferred. A failure last tick means we reconcile now
             # even if every reading looks identical.
+            return True, fingerprint
+        if (attempt["recipient_scan"] or "").startswith(UNKNOWN_MARK_PREFIX) and (
+                _age(row["updated_at"], self.clock.now())
+                >= UNDECIDED_RECHECK_SECONDS):
+            # An uncertain send held for the parent (hostloss.read_unknown_send) turns on the
+            # recipient's turn list, which the fingerprint does not read: a turn that shows up
+            # without items changes nothing here. So it is read again on the same interval as
+            # an undecided turn check, whatever the fingerprint says (Devin on d369a9e7), and a
+            # message that turns up late still confirms it.
             return True, fingerprint
         return fingerprint != row["fingerprint"], fingerprint
 

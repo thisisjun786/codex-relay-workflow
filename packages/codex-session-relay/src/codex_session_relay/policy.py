@@ -26,6 +26,42 @@ HOST_LOST_TURN = "host_lost_turn"
 # send time. Recorded on the attempt as "turn_check_undecided:<reason>" (hostloss.record_undecided)
 # and read by status as awaiting_ack:turn_check_undecided, so it is named rather than silent.
 TURN_CHECK_UNDECIDED = "turn_check_undecided"
+# An uncertain send the recipient keeps no trace of (hostloss.read_unknown_send, CRW-231). turn/start
+# went out, no usable answer came back and no turn id with it, and once the send is past the start-time
+# allowance the recipient's own turns and items since it, and the turn it could have been folded into,
+# show nothing of it. The hold of such a delivery, which stays held_uncertain: nothing shows that a live
+# App Server cannot still apply the turn/start, so it is never sent again, and the parent recovers the
+# report; a message that turns up later still confirms it. Named on the attempt as
+# "unknown_send_lost:no_trace". Never an attempt state and never dispatch evidence.
+UNKNOWN_SEND_LOST = "unknown_send_lost"
+# An uncertain send whose reading cannot decide however long the relay waits: the same reasons the turn
+# check names (a listing that never reached the send, an empty listing, a token scan that could not cover
+# the items since it, the token only in an item that is neither the message nor agent output, no send
+# time). The delivery stays held_uncertain, so a message found later still confirms it, and carries this
+# hold so that nothing reads it as a wait the daemon will end. The attempt names the reason as
+# "unknown_send_undecided:<reason>".
+UNKNOWN_SEND_UNDECIDED = "unknown_send_undecided"
+# Why a recipient may not be woken now (RetryPolicy.pacing). Neither is a hold or a failure: the delivery
+# waits and goes out once the reading reopens (I-225).
+MIN_SEND_INTERVAL = "min_send_interval"
+HOURLY_CAP = "hourly_cap"
+RATE_WINDOW_SECONDS = 3600
+
+
+def pacing_holding(pacing, next_eligible_at):
+    """The pacing, when the recipient's budget is what holds the delivery; otherwise None.
+
+    A delivery also waits out its own backoff (a busy recipient, a pre-send failure). When that ends
+    later than the budget reopens, the backoff is what holds it, and naming the budget would give a
+    reopen time the delivery cannot use (Devin on bb1b6af6). A budget that never reopens (a cap of
+    zero) holds it whatever its backoff says.
+    """
+    if pacing is None:
+        return None
+    if (pacing["reopensAt"] is None or next_eligible_at is None
+            or next_eligible_at <= pacing["reopensAt"]):
+        return pacing
+    return None
 
 
 @dataclass(frozen=True)
@@ -103,3 +139,41 @@ class RetryPolicy:
 
     def cap_reason(self, reason: str) -> str:
         return BUSY_CAP if reason == "busy" else ATTEMPT_CAP
+
+    def rate_windows(self, now: float) -> tuple:
+        """The hour window a send at now is counted in, and the earliest window the gap reaches.
+
+        The gap is read across windows, because last_send_at lives on the hour's row and two sends a
+        second apart can straddle the boundary; only the windows the gap can reach are read, never a
+        later one (delivery.send_refusal).
+        """
+        window = int(now // RATE_WINDOW_SECONDS) * RATE_WINDOW_SECONDS
+        reach = RATE_WINDOW_SECONDS * (1 + int(self.min_send_interval_seconds // RATE_WINDOW_SECONDS))
+        return window, window - reach
+
+    def pacing(self, now: float, *, sends, last):
+        """Why a recipient may not be woken at now, and when that reading reopens, or None.
+
+        sends is the count in now's window and last the newest send the gap reaches, as rate_windows
+        bounds them. The one rule every reader applies, so status, assignment-show and the claim cannot
+        disagree about why a delivery waits (CRW-124 H7, O-H0R4-2). A spent cap is named before the
+        gap: when both hold, the cap is what keeps the delivery waiting, and its window's end (or the
+        gap's, if later) is when it reopens. reopensAt is None for a cap of zero, which refuses every
+        send in every window, and says so. A clock-ahead row in a later window can still refuse the
+        send at reopensAt; that is read then, like every other pacing.
+        """
+        window, _earliest = self.rate_windows(now)
+        sends = sends or 0
+        cap = self.max_sends_per_recipient_per_hour
+        gap_ends = None if last is None else last + self.min_send_interval_seconds
+        reading = {"sends": sends, "cap": cap, "windowStart": window}
+        if sends >= cap:
+            if cap <= 0:
+                return {"reason": HOURLY_CAP, "reopensAt": None, **reading,
+                        "detail": "a cap of zero refuses every send; only a changed policy"
+                                  " reopens it"}
+            reopens = max(window + RATE_WINDOW_SECONDS, gap_ends or 0)
+            return {"reason": HOURLY_CAP, "reopensAt": reopens, **reading}
+        if gap_ends is not None and now < gap_ends:
+            return {"reason": MIN_SEND_INTERVAL, "reopensAt": gap_ends, **reading}
+        return None
