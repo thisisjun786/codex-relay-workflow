@@ -90,6 +90,32 @@ class HostLossCase(DeliveryTestCase):
         self.assertEqual(record["deliveryState"], DISPATCHED)
         return event_id, record["requestId"], record["turnId"]
 
+    def completions(self, count):
+        """COUNT delivered completions to one parent, in event-id order, the order the pass reads."""
+        self.parent_history()
+        delivered = []
+        for index in range(count):
+            relationship = self.register(issue_key=f"REL-{index + 2}",
+                                         dispatch_request_id=f"dispatch-{index + 2}")
+            self._rid = relationship["relationshipId"]
+            payload = self.ready_payload(
+                relationship, [self.artifact(f"out-{index}.txt", f"deliverable {index}")])
+            self.accept(payload)
+            self.delivery.enqueue(payload["eventId"])
+            record = self.attempt(payload["eventId"])
+            self.assertEqual(record["deliveryState"], DISPATCHED)
+            delivered.append((payload["eventId"], record["requestId"], record["turnId"]))
+            self.clock.advance(10)
+        return sorted(delivered)
+
+    def acknowledge(self, event_id, ack_turn_id):
+        ack_turn = self.adapter.start_turn(PARENT, turn_id=ack_turn_id, status="inProgress")
+        self.ack.acknowledge(
+            event_id, ack_turn_id=ack_turn.turn_id,
+            ack_proof=identity.ack_proof(event_id, ack_turn.turn_id), accepted=True,
+            adapter=self.adapter,
+        )
+
     def host_loses(self, turn_id, *, items=True):
         """K5: the App Server died before the accepted turn reached the rollout."""
         thread = self.adapter.threads[PARENT]
@@ -255,6 +281,52 @@ class TheHostLostTheAcceptedTurn(HostLossCase):
         for _ in range(8):
             daemon.tick()
         self.assertEqual(sorted(counting.lookups), sorted(turns))
+
+    def test_a_delivery_behind_two_pages_of_finished_turns_is_still_reached(self):
+        """Review 3 of c0338f96: the pass wrapped after a full page as well as a short one.
+
+        Once the first two pages held only finished turns, every tick walked the second page,
+        wrapped to the first and stopped where it began, so a lost turn on the third page was
+        never read and its report waited for an acknowledgement nobody could send.
+        """
+        delivered = self.completions(5)
+        for _event, _request, turn in delivered[:4]:
+            self.adapter.finish_turn(PARENT, turn, "completed")
+        lost_event, _request, lost_turn = delivered[4]
+        self.host_loses(lost_turn)
+        self.clock.advance(120)
+        daemon = self.daemon_with(RetryPolicy(max_turn_checks_per_tick=4))
+        daemon.turn_check_page = 2
+        for _ in range(6):
+            daemon.tick()
+            self.clock.advance(20)
+        self.assertEqual(self.attempt_states(lost_event), [HOST_LOST, DISPATCHED])
+        self.assertEqual(len(self.adapter.sends), 6)
+
+    def test_the_finished_turns_remembered_are_only_those_still_awaiting(self):
+        """Review 3 of c0338f96: the memory of finished turns was pruned only when every
+        candidate fit one page.
+
+        With more candidates than that, an acknowledged delivery stayed remembered for the life
+        of the process, and a daemon under steady traffic grew with everything it had delivered.
+        """
+        delivered = self.completions(5)
+        for _event, _request, turn in delivered:
+            self.adapter.finish_turn(PARENT, turn, "completed")
+        self.clock.advance(120)
+        daemon = self.daemon_with(RetryPolicy(max_turn_checks_per_tick=4, max_sends_per_tick=0))
+        daemon.turn_check_page = 2
+        for _ in range(4):
+            daemon.tick()
+        acknowledged = {request for _event, request, _turn in delivered[:3]}
+        self.assertLessEqual(acknowledged, set(daemon._turns_settled))
+        for index, (event_id, _request, _turn) in enumerate(delivered[:3]):
+            self.acknowledge(event_id, f"ack-{index}")
+        for _ in range(4):
+            self.clock.advance(20)
+            daemon.tick()
+        self.assertEqual(set(daemon._turns_settled) & acknowledged, set())
+        self.assertEqual(len(self.adapter.sends), 5)
 
 
 class ReconcileReportsTheRecipientTurn(HostLossCase):
