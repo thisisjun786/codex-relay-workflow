@@ -105,6 +105,24 @@ class CountingReads:
         return getattr(self._inner, name)
 
 
+class ActsDuringTheTurnRead:
+    """Runs something else first, once, when an acknowledgement's turn is read: another process
+    moving the delivery while the relay is reading the parent's turn."""
+
+    def __init__(self, inner, action):
+        self._inner = inner
+        self._action = action
+
+    def read_turn(self, thread_id, turn_id):
+        action, self._action = self._action, None
+        if action is not None:
+            action()
+        return self._inner.read_turn(thread_id, turn_id)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
 class HostLossCase(DeliveryTestCase):
     def setUp(self):
         super().setUp()
@@ -1623,6 +1641,91 @@ def _pre_send_rejection(request_id):
     """The transport's attributable pre-send refusal, as the ledger records it."""
     return {"requestId": request_id, "status": "failed", "error": "thread/read: transport refused",
             "rpcError": {"code": "internal", "message": "refused"}}
+
+
+class AnAcknowledgementIsJudgedAgainstTheDeliveryItRead(HostLossCase):
+    """Review 3 of 230abd1f: a turn check made against the delivery as it was is not trusted for
+    the delivery as it is. The acknowledgement is kept and checked again, never refused for a
+    reading that no longer holds and never promoted on one."""
+
+    def lose_first_turn_and_requeue(self):
+        event_id, first, lost = self.dispatched()
+        self.host_reloads_losing(lost)
+        self.clock.advance(120)
+        self.daemon_with(RetryPolicy(max_sends_per_tick=0)).tick()
+        self.assertEqual(self.attempt_states(event_id), [HOST_LOST])
+        self.clock.advance(10)
+        return event_id, lost
+
+    def test_a_folded_send_confirmed_during_the_read_keeps_the_ack_and_completes_it(self):
+        event_id, request_id = self.folded_delivery()
+        record = self.ack.acknowledge(
+            event_id, ack_turn_id="folded", ack_proof=identity.ack_proof(event_id, "folded"),
+            accepted=True, adapter=ActsDuringTheTurnRead(
+                self.adapter, lambda: self.reconciler.reconcile_attempt(request_id, self.adapter)))
+        self.assertEqual(record["_verified"], "unverified_turn")
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        self.clock.advance(5)
+        self.daemon.tick()
+        self.assertEqual(self.delivery_row(event_id)["state"], ACKNOWLEDGED)
+
+    def test_an_ack_naming_a_lost_turn_cannot_close_the_redelivery_confirmed_during_its_read(self):
+        event_id, lost = self.lose_first_turn_and_requeue()
+        ack, reconciler, adapter = self.ack, self.reconciler, self.adapter
+        seen = {}
+
+        class AcksWithTheLostTurnDuringTheSend:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def send_message(self, request_id, *args, **kwargs):
+                receipt = self._inner.send_message(request_id, *args, **kwargs)
+                seen["ack"] = ack.acknowledge(
+                    event_id, ack_turn_id=lost, ack_proof=identity.ack_proof(event_id, lost),
+                    accepted=True, adapter=ActsDuringTheTurnRead(
+                        adapter, lambda: reconciler.reconcile_attempt(request_id, adapter)))
+                return receipt
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+        self.delivery.attempt(event_id, AcksWithTheLostTurnDuringTheSend(adapter))
+        self.assertEqual(seen["ack"]["_verified"], "unverified_turn")
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        self.clock.advance(5)
+        self.daemon.tick()
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        self.assertEqual(self.ack_row(event_id)["last_reason"], "ack_turn_unverified")
+        self.assertEqual(self.next_action(), "parent_reacknowledges")
+
+    def test_an_ack_is_not_promoted_onto_an_attempt_sent_during_its_read(self):
+        event_id, first, lost = self.dispatched()
+        self.host_reloads_losing(lost)
+        self.clock.advance(120)
+
+        def lose_and_resend():
+            self.reconciler.check_dispatched_turn(first, self.adapter)
+            self.delivery.attempt(event_id, self.adapter)
+
+        record = self.ack.acknowledge(
+            event_id, ack_turn_id=lost, ack_proof=identity.ack_proof(event_id, lost),
+            accepted=True, adapter=ActsDuringTheTurnRead(self.adapter, lose_and_resend))
+        self.assertEqual(self.attempt_states(event_id), [HOST_LOST, DISPATCHED])
+        self.assertEqual(record["_verified"], "unverified_turn")
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+
+    def test_a_pending_ack_read_against_a_delivery_that_moved_is_checked_again(self):
+        event_id, request_id = self.folded_delivery()
+        self.ack.acknowledge(event_id, ack_turn_id="folded",
+                             ack_proof=identity.ack_proof(event_id, "folded"), accepted=True,
+                             adapter=None)
+        results = self.ack.verify_pending_acks(ActsDuringTheTurnRead(
+            self.adapter, lambda: self.reconciler.reconcile_attempt(request_id, self.adapter)))
+        self.assertEqual([r.get("outcome") for r in results], ["changed"])
+        self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+        self.assertEqual([r.get("outcome") for r in self.ack.verify_pending_acks(self.adapter)],
+                         ["verified"])
+        self.assertEqual(self.delivery_row(event_id)["state"], ACKNOWLEDGED)
 
 
 def _pages(*pages):
