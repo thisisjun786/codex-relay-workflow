@@ -259,6 +259,12 @@ SUMMARIES = {
     ("packets.py", None, "_refusals_unreadable", "function"):
         ((True,), (("return: False", 1),), ()),
     ("receipts.py", None, "deliverable", "function"): ((False,), (), ()),
+    # Whether an uncertain send moved on while its loss was being settled: gone, settled on
+    # evidence, or its delivery past held_uncertain on this attempt, so the true side is reachable
+    # from any one input alone (CRW-231). test_unknown_send_lost.py's lost-race case reaches it
+    # true through a confirmation from the token; an acknowledgement that answers the attempt
+    # leaves every input as read and reaches it false.
+    ("reconcile.py", None, "_moved_since", "function"): ((True,), (), ()),
     ("scope.py", None, "is_within", "function"):
         ((True,), (("return: path.startswith('/')", 1),), ()),
     ("service.py", None, "_holder_is_ours", "function"):

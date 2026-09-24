@@ -1283,11 +1283,14 @@ class DeliveryService:
 
         An hourly cap reopens when its window ends, and the delivery waits for exactly that, so
         its nextEligibleAt names the reopen time instead of moving on by the gap every tick
-        (CRW-231, O-H0R4-2). The minimum gap is a few seconds and keeps the gap from now.
+        (CRW-231, O-H0R4-2). A cap of zero never reopens and is read again at each window's end.
+        The minimum gap is a few seconds and keeps the gap from now.
         """
         pacing = send_pacing(self.store.db, self.policy, recipient, now)
-        if pacing is not None and pacing["reason"] == HOURLY_CAP and pacing["reopensAt"]:
-            return pacing["reopensAt"]
+        if pacing is not None and pacing["reason"] == HOURLY_CAP:
+            # A cap of zero reopens at no time; it is read again once a window, not every gap,
+            # and the operator is named for it (assignment.completion_next_action).
+            return pacing["reopensAt"] or pacing["windowStart"] + 3600
         return now + self.policy.min_send_interval_seconds
 
     def _reschedule(self, event_id: str, state: str, when: float, *, attempts: int) -> None:

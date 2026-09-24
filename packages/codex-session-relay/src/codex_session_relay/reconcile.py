@@ -323,9 +323,16 @@ class Reconciler:
         outcome = self._stay_held(attempt, delivery, operation_observation, scan_detail, now,
                                   reading=reading)
         if reading is not None and reading["finding"] == UNKNOWN_SEND_LOST:
-            outcome.update(hostloss.settle_unknown_send(
+            settled = hostloss.settle_unknown_send(
                 self.store, self.clock, request_id, reading, observation=operation_observation,
-            ))
+            )
+            outcome.update(settled)
+            if settled.get("redelivery") == hostloss.NOT_MOVED and self._moved_since(
+                    request_id, attempt["attempt_no"]):
+                # Another reader settled the send between the held write above and the loss
+                # (independent review of bb1b6af6): report what it left, and let the daemon's gate
+                # read it again, rather than an uncertain send that is no longer there.
+                return self._as_it_stands(request_id, _AttemptChanged(moved=True), reading)
         if reading is not None:
             outcome["recipientTrace"] = reading
         # Who moves it next is read from what is now stored, not only from this pass's reading: a
@@ -336,7 +343,8 @@ class Reconciler:
             " JOIN deliveries d ON d.event_id = a.event_id WHERE a.request_id = ?",
             (request_id,),
         )
-        outcome.update(_awaiting(delivery["kind"], outcome, reading, stored))
+        outcome.update(_awaiting(delivery["kind"], outcome, reading, stored,
+                                 event_id=attempt["event_id"]))
         return outcome
 
     def _settle_dispatched(self, attempt, delivery, facts, observation, adapter, now) -> dict:
@@ -575,6 +583,19 @@ class Reconciler:
             anchor,
         )
 
+    def _moved_since(self, request_id, attempt_no) -> bool:
+        """Is the send no longer this attempt's uncertain one: settled on evidence, or the delivery
+        moved past held_uncertain on this attempt."""
+        row = self.store.one(
+            "SELECT a.state, a.affirmative_evidence, d.state AS delivery_state, d.attempt_count"
+            "  FROM attempts a JOIN deliveries d ON d.event_id = a.event_id"
+            " WHERE a.request_id = ?", (request_id,),
+        )
+        return row is None or (
+            row["state"] != HELD_UNCERTAIN
+            or row["affirmative_evidence"] not in (None, Evidence.NONE.value)
+            or row["delivery_state"] != HELD_UNCERTAIN or row["attempt_count"] != attempt_no)
+
     def _stay_held(self, attempt, delivery, observation, scan_detail, now, *,
                    reading=None) -> dict:
         """Settle the attempt held_uncertain with no evidence, and say why it is held.
@@ -777,7 +798,26 @@ def _receipt_answer(facts):
     return hostloss.SETTLED_RECEIPT
 
 
-def _awaiting(kind, outcome, reading, stored=None) -> dict:
+def _awaiting(kind, outcome, reading, stored=None, *, event_id=None) -> dict:
+    """Who moves an uncertain send next and why, with the supporting command when it is the
+    parent's (CRW-231). See _next_for."""
+    answer = _next_for(kind, outcome, reading, stored)
+    if answer.get("nextExpectedAction") in _PARENT_ACTIONS() and event_id is not None:
+        from .assignment import PARENT_RECOVERY_THEN
+
+        answer["recovery"] = {"actor": "parent", "reason": answer.get("reason"),
+                              "command": f"codex-session-relay show --event {event_id}",
+                              "then": PARENT_RECOVERY_THEN}
+    return answer
+
+
+def _PARENT_ACTIONS():
+    from .assignment import CORRECTION_HELD_ACTION, PARENT_RECOVERY_ACTIONS
+
+    return PARENT_RECOVERY_ACTIONS + (CORRECTION_HELD_ACTION,)
+
+
+def _next_for(kind, outcome, reading, stored=None) -> dict:
     """Who moves an uncertain send next, and why, in the words assignment-show uses (CRW-231).
 
     Only for outcomes this reconciliation left uncertain or lost; a promotion or a pre-send

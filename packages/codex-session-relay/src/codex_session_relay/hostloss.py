@@ -97,6 +97,12 @@ NO_TURN = "no_turn"
 # transport never settled its receipt, or holds none, so a loss is not concluded (read_unknown_send).
 RECEIPT_UNSETTLED = "receipt_unsettled"
 RECEIPT_MISSING = "receipt_missing"
+# Nor is a recipient the host still holds live state for: a live App Server can still apply a
+# turn/start whose answer never came back, so its absence now does not show it will stay absent
+# (independent review of bb1b6af6). Only a notLoaded recipient - what K5ctl's restart left - holds
+# nothing that could apply it later.
+RECIPIENT_LOADED = "recipient_loaded"
+NOT_LOADED = "notLoaded"
 # How the transport answered for an uncertain send's request id (read_unknown_send's receipt).
 SETTLED_RECEIPT = "settled"
 UNSETTLED_RECEIPT = "unsettled"
@@ -395,7 +401,10 @@ def read_unknown_send(adapter, clock, attempt, delivery, *, receipt=SETTLED_RECE
     turn), unknown_send_lost, or unknown. A loss is concluded only from the host's answer, only once
     the send is older than the start-time allowance, only when no turn begun since the send is still
     running, and only when a scan of every item since the send finds no message and no other item
-    carrying the token: the rule read_recipient_turn applies to a lost accepted turn.
+    carrying the token: the rule read_recipient_turn applies to a lost accepted turn. One more thing is
+    asked, because a live App Server can still apply a turn/start whose answer never came back: the
+    recipient's host must hold no live state for it (notLoaded, as after K5ctl's restart). A loaded
+    recipient is held undecided (recipient_loaded) for the parent instead.
     pending is True for an unknown a later reading can decide - a send too recent, a turn still
     running, an unreadable host - and the daemon reads it again on its next tick. undecided names the
     reasons waiting will not fix, as for the turn check.
@@ -511,12 +520,27 @@ def read_unknown_send(adapter, clock, attempt, delivery, *, receipt=SETTLED_RECE
             undecided=RECEIPT_MISSING if receipt == MISSING_RECEIPT else RECEIPT_UNSETTLED,
         )
         return reading
+    try:
+        runtime = adapter.read_thread(thread).runtime_status
+    except Exception as error:  # noqa: BLE001
+        reading.update(detail=f"unreadable: the recipient's runtime status could not be read: "
+                              f"{type(error).__name__}: {error}", pending=True)
+        return reading
+    if runtime != NOT_LOADED:
+        reading.update(
+            detail=f"undecided: the recipient keeps no trace of this send, but its host holds live "
+                   f"state for it (status {runtime}), so the original turn/start could still be "
+                   f"applied; it is not called lost and nothing sends it again",
+            undecided=RECIPIENT_LOADED,
+        )
+        return reading
     reading.update(
         finding=UNKNOWN_SEND_LOST,
         detail=f"the recipient keeps no trace of this send: its turn list ({presence.stop} after "
                f"{presence.scanned} turns) shows {len(presence.seen)} turns begun since it, none "
                f"running, and this attempt's token is not among the {scan.scanned} items since it"
-               + (f" nor in turn {folded.turn_id}, the turn running before it" if folded else ""),
+               + (f" nor in turn {folded.turn_id}, the turn running before it" if folded else "")
+               + ", and its host holds no live state for it (notLoaded)",
     )
     return reading
 

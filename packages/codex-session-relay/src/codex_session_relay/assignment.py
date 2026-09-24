@@ -883,6 +883,9 @@ HOST_LOST_HELD_ACTION = "parent_recovers_host_lost_turn"
 UNKNOWN_SEND_REDELIVERY_ACTION = "daemon_redelivers_unknown_send_lost"
 UNKNOWN_SEND_HELD_ACTION = "parent_recovers_unknown_send_lost"
 UNKNOWN_SEND_UNDECIDED_ACTION = "parent_recovers_unknown_send_undecided"
+# A delivery the recipient's send budget refuses in every window: a cap of zero. The daemon cannot
+# send it under that policy; only whoever sets the policy can (CRW-231, review of bb1b6af6).
+SEND_POLICY_ACTION = "operator_changes_send_policy"
 # What the parent does to recover a completion nothing will deliver automatically any more. The
 # report is in this store whatever happened to the message, so the parent reads it here and, if
 # the work still needs verifying, opens a fresh execution generation.
@@ -966,6 +969,9 @@ def completion_next_action(state, projection):
             return REACKNOWLEDGE_ACTION
         return AWAITING_ACK_ACTION
     if where in (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND):
+        pacing = delivery.get("pacing") or {}
+        if pacing.get("reason") == "hourly_cap" and pacing.get("reopensAt") is None:
+            return SEND_POLICY_ACTION
         if host_lost:
             return HOST_LOST_REDELIVERY_ACTION
         return UNKNOWN_SEND_REDELIVERY_ACTION if unknown_lost else NEXT_ACTION[RECEIVED]
@@ -980,13 +986,17 @@ def parent_recovery(action, projection):
     --event reads it; a fresh generation is the parent's next step when the work still needs
     verifying.
     """
-    if action not in PARENT_RECOVERY_ACTIONS:
+    if action == CORRECTION_HELD_ACTION:
+        # The correction the parent must recover, by the same command (review of bb1b6af6).
+        anchored = projection["correction"]
+    elif action in PARENT_RECOVERY_ACTIONS:
+        anchored = projection["completion"]
+    else:
         return None
-    completion = projection["completion"]
-    delivery = completion["delivery"] or {}
+    delivery = anchored["delivery"] or {}
     return {
         "actor": "parent",
-        "reason": delivery.get("holdReason"),
-        "command": f"codex-session-relay show --event {completion['eventId']}",
+        "reason": delivery.get("holdReason") or delivery.get("state"),
+        "command": f"codex-session-relay show --event {anchored['eventId']}",
         "then": PARENT_RECOVERY_THEN,
     }

@@ -628,6 +628,7 @@ acknowledgement is verified.
 | held `unknown_send_lost`, or held for another reason after such a loss and no host loss | `parent_recovers_unknown_send_lost` |
 | held `unknown_send_undecided` | `parent_recovers_unknown_send_undecided` |
 | queued, deferred or withheld after an uncertain send was lost, and no host loss | `daemon_redelivers_unknown_send_lost` |
+| queued, deferred or withheld under a send budget with an hourly cap of zero | `operator_changes_send_policy` |
 | queued, deferred or withheld | `daemon_delivers` |
 
 `projection.completion.delivery.hostLostAttempts` counts the event's lost attempts and stays
@@ -635,8 +636,9 @@ above zero after a redelivery reaches the parent. `unknownSendLostAttempts` coun
 sends the parent kept no trace of in the same way. A hold named for a loss is read under that name
 first, so an event that lost an uncertain send and then the redelivery's accepted turn reads
 `parent_recovers_host_lost_turn`, and the reverse order reads `parent_recovers_unknown_send_lost`.
-Whenever the answer is one of the three `parent_recovers_*` actions above, `assignment-show` also
-carries `recovery`: `{actor: parent, reason, command: "codex-session-relay show --event <id>",
+Whenever the answer is one of the three `parent_recovers_*` actions above, or a correction's
+`parent_recovers_held_correction` (naming the correction's event), `assignment-show` also carries
+`recovery`: `{actor: parent, reason, command: "codex-session-relay show --event <id>",
 then}`. The report is in this store whatever happened to the message, so the parent reads it
 there and opens a fresh execution generation if the work still needs verifying. A verified rejection keeps the state's own
 answer, and so does a held completion that was never lost.
@@ -679,7 +681,11 @@ type. The send is concluded lost (`unknown_send_lost`) only when all of these ho
   scan stops at that turn's items, and when the turn ran on after the message, the thread-wide
   scan's 200 newest items do not reach it either. While that turn still runs, the relay reads
   again once it ends. If it ran past 2000 items, the send is held undecided rather than
-  redelivered.
+  redelivered;
+- the recipient's host holds no live state for it: `thread/read` reports it `notLoaded`, as K5ctl's
+  restart left the parent. A live App Server can still apply a `turn/start` whose answer never came
+  back, so absence alone does not show the message will stay absent. A loaded recipient is held
+  undecided as `recipient_loaded` for the parent instead.
 
 Whether the host never received the message or received it and lost it, the recipient does not
 have it, and a completion is treated like one whose accepted turn the host lost. The attempt's
@@ -691,12 +697,15 @@ turn: an event that already lost an attempt either way is held under the word of
 lost this way is held at once rather than redelivered, like every kind the relay does not recover
 by itself, so a correction reads `parent_recovers_held_correction`. The loss writes no dispatch
 evidence and clears any an earlier attempt left, because nothing showed that this send arrived.
-An acknowledgement that answers the attempt, or a later attempt, leaves everything unchanged.
+An acknowledgement that answers the attempt (verified, or authored no earlier than its send), or a
+later attempt, leaves everything unchanged. If another reader settles the send between this
+reading's held write and the loss, reconcile reports the attempt as it now stands (`changed`) and
+the daemon reads it again.
 
 Some readings cannot decide however long the relay waits: a listing that never reached the send,
 a listing with no turns at all, a scan that could not cover the items since the send, the token
-only in an item that is neither the message nor agent output, an attempt with no send time, or a
-receipt the transport never settled or does not hold. The
+only in an item that is neither the message nor agent output, an attempt with no send time, a
+receipt the transport never settled or does not hold, or a recipient its host still holds. The
 delivery then stays `held_uncertain` and is held under `unknown_send_undecided`, with the reason on
 the attempt as `unknown_send_undecided:<reason>` and in `assignment-show` as
 `projection.completion.delivery.turnCheck`. Nothing sends it again. A later reading that decides
@@ -715,7 +724,8 @@ whose current send is uncertain.
 `reconcile --request-id` reports the reading as `recipientTrace`: `{finding, detail, undecided,
 pending, turnId}`, where the finding is `present`, `unknown_send_lost` or `unknown`. Beside it,
 for an outcome it left uncertain or lost, it names who moves the send next and why:
-`nextExpectedAction` and `reason`, in the words `assignment-show` uses. The daemon counts the
+`nextExpectedAction` and `reason`, in the words `assignment-show` uses, and `recovery` with the
+`show --event` command whenever the answer is the parent's. The daemon counts the
 redelivery in `reconciled`, like any other settlement.
 
 A hold only the parent can recover (`host_lost_turn`, `unknown_send_lost`,
@@ -742,7 +752,8 @@ from 16:42:25Z until the 17:00Z window opened. Nothing named the cap or when it 
 statement as the delivery and against the budget the delivery service paces by, so the reason and
 `reopensAt` agree with the row. A spent cap is named before the gap when both hold, because the cap
 is what keeps the delivery waiting. A cap of zero reopens at no time, and `pacing.detail` says only
-a changed policy reopens it. Its
+a changed policy reopens it: such a delivery is read again once a window rather than every few
+seconds, and `assignment-show` names `operator_changes_send_policy`. Otherwise its
 `nextExpectedAction` stays `daemon_delivers`, which is true: the daemon sends it once the window
 reopens. A delivery refused by the hourly cap, before or inside its claim, is rescheduled to the
 window's end; one refused by the minimum gap keeps the gap from now.

@@ -160,6 +160,27 @@ class AnUnknownSendTheHostKeptNoTraceOf(UnknownSendCase):
         self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
         self.assertEqual(len(self.adapter.sends), 1)
 
+    def test_an_acknowledgement_that_answers_the_attempt_stops_the_redelivery(self):
+        """The parent acknowledged after the send, so it read this attempt, whatever its items
+        show now: the loss is not settled and nothing is sent again."""
+        from codex_session_relay import identity
+
+        event_id, first = self.unknown_send()
+        self.clock.advance(5)
+        ack_turn = self.adapter.start_turn(PARENT, turn_id="ack-turn", status="completed")
+        self.ack.acknowledge(event_id, ack_turn_id=ack_turn.turn_id,
+                             ack_proof=identity.ack_proof(event_id, ack_turn.turn_id),
+                             accepted=True, adapter=self.adapter)
+        self.assertEqual(self.ack_row(event_id)["last_reason"], "delivery_unconfirmed")
+        self.clock.advance(120)
+        outcome = self.reconciler.reconcile_attempt(first, self.adapter)
+        self.assertEqual((outcome["state"], outcome.get("redelivery")),
+                         (HELD_UNCERTAIN, "not_moved"))
+        self.assertNotIn("changed", outcome)
+        self.assertEqual(self.delivery_row(event_id)["state"], HELD_UNCERTAIN)
+        self.ticks(2)
+        self.assertEqual(len(self.adapter.sends), 1)
+
     def test_reconcile_names_the_loss_and_the_actor_that_moves_it_without_sending(self):
         event_id, first = self.unknown_send()
         self.clock.advance(120)
@@ -559,6 +580,7 @@ class ACorrectionLostTheSameWayIsTheParentsToRecover(UnknownSendCase):
         self.adapter.script("transport_unknown")
         record = self.attempt(correction)
         self.assertEqual(self.delivery_row(correction)["state"], HELD_UNCERTAIN)
+        self.adapter.set_status(CHILD, "notLoaded")
         self.clock.advance(120)
         outcome = self.reconciler.reconcile_attempt(record["requestId"], self.adapter)
         self.assertEqual(outcome.get("nextExpectedAction"), "parent_recovers_held_correction")
