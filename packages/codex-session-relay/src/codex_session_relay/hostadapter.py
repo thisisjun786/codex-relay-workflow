@@ -129,7 +129,10 @@ class TurnPresence:
     send, has not shown that the turn is gone.
 
     seen names every listed turn read before the stop: the turns begun since the send, which is
-    where the delivered message could be if it is anywhere.
+    where the delivered message could be if it is anywhere. seen_turns carries the same turns with
+    their status and start, so a reader can tell whether any of them is still running (CRW-231).
+    stop_turn is the turn an older_than_send listing stopped at: the newest turn begun before the
+    send, and so the one turn a turn/start could have steered, which leaves its message there.
 
     older names the listed turns known to have begun before the send: the one the listing stopped
     at and the older ones on its page. Only their items end a token scan (find_token_in).
@@ -144,6 +147,8 @@ class TurnPresence:
     stop: str
     seen: tuple = ()
     older: tuple = ()
+    seen_turns: tuple = ()
+    stop_turn: TurnInfo | None = None
 
 
 def find_in_listing(pages, turn_id: str, sent_at: float) -> TurnPresence:
@@ -153,29 +158,38 @@ def find_in_listing(pages, turn_id: str, sent_at: float) -> TurnPresence:
     compared before the cutoff: a start that steered a turn begun before the send returns that
     turn's id, and that turn was the newest the thread had, so no older turn precedes it. A turn
     with no start time never serves as the cutoff.
+
+    turn_id None lists the turns since a send that returned no turn id (hostloss.read_unknown_send):
+    nothing matches it, not even a listed turn the host gave no id, so the listing ends at the first
+    turn older than the send or at its end.
     """
     cutoff = sent_at - TURN_START_PRECISION_SECONDS - DISPATCH_TURN_SKEW_SECONDS
     scanned = 0
     seen = []
+    seen_turns = []
     pages = iter(pages)
     for turns, follows in pages:
         for index, turn in enumerate(turns):
             scanned += 1
-            if turn.turn_id == turn_id:
+            if turn_id is not None and turn.turn_id == turn_id:
                 older = _older_after_match(turns[index + 1:], follows, pages, cutoff)
-                return TurnPresence(TURN_PRESENT, turn, scanned, "matched", tuple(seen), older)
+                return TurnPresence(TURN_PRESENT, turn, scanned, "matched", tuple(seen), older,
+                                    tuple(seen_turns))
             if turn.started_at is not None and turn.started_at <= cutoff:
                 return TurnPresence(TURN_ABSENT, None, scanned, "older_than_send", tuple(seen),
-                                    _older(turns[index:], cutoff))
+                                    _older(turns[index:], cutoff), tuple(seen_turns), turn)
             seen.append(turn.turn_id)
+            seen_turns.append(turn)
         if not follows:
             if not scanned:
                 raise ListingEmpty(
                     "the recipient's turn list is empty, which does not show that a turn is gone"
                 )
-            return TurnPresence(TURN_ABSENT, None, scanned, "listing_end", tuple(seen))
+            return TurnPresence(TURN_ABSENT, None, scanned, "listing_end", tuple(seen),
+                                seen_turns=tuple(seen_turns))
+    subject = "the send's turn" if turn_id is None else f"turn {turn_id!r}"
     raise ListingBounded(
-        f"turn {turn_id!r} was not among {scanned} turns and the bounded listing never reached "
+        f"{subject} was not among {scanned} turns and the bounded listing never reached "
         "the send; this is not evidence of absence"
     )
 
@@ -253,17 +267,24 @@ def find_token_in_turn_items(pages, token: str, turn_id: str) -> TokenScan:
     host that ignored the turn filter answers with other turns' items, and an echo of the request
     id in the turn's own command output is not the message. The message opens a turn it started,
     and sits wherever a turn had got to when a send was folded into it; a turn that does not have
-    it is left to the thread-wide reading (hostloss.py) rather than concluded lost here.
+    it is left to the thread-wide reading (hostloss.py) rather than concluded lost here. As in
+    find_token_in, the first item of that turn carrying the token in a type that is neither the
+    message nor agent output is named as other_turn and other_kind (CRW-231).
     """
     scanned = 0
+    other = (None, None)
     for items, follows in pages:
         for owner, text, kind in items:
             scanned += 1
-            if owner == turn_id and is_message(kind) and token in text:
+            if owner != turn_id or not may_be_message(kind) or token not in text:
+                continue
+            if is_message(kind):
                 return TokenScan(True, owner, False, scanned)
+            if other == (None, None):
+                other = (owner, kind)
         if not follows:
-            return TokenScan(False, None, True, scanned)
-    return TokenScan(False, None, False, scanned)
+            return TokenScan(False, None, True, scanned, *other)
+    return TokenScan(False, None, False, scanned, *other)
 
 
 class HostAdapter(Protocol):

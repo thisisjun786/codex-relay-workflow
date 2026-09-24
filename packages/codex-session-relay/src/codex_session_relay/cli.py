@@ -329,6 +329,9 @@ class Services:
                 # Without this every production project_state() answered "unreadable" without
                 # looking at a single assignment, so the reading existed only in its own tests.
                 linkage=self.linkage,
+                # The budget the delivery service paces its claims by, so assignment-show's
+                # pacing can never disagree with status's (CRW-231).
+                policy=self.delivery.policy,
             )
         return self._assignments
 

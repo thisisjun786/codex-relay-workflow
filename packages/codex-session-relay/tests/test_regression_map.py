@@ -232,6 +232,11 @@ SUMMARIES = {
     # either alone. main reads it to apply the service's declared role policy before the
     # snapshot; test_store_reception.py runs the check with and without each.
     ("cli.py", None, "_receives_against_the_store", "function"): ((False,), (), ()),
+    # A pacing no window reopens: a spent hourly cap of zero. The false side is reachable from any
+    # one input alone - no pacing, the minimum gap, a cap with a reopen time (CRW-231).
+    # test_unknown_send_lost.py reaches it true for a completion and a correction under a cap of
+    # zero, and false for every capped delivery with a window.
+    ("assignment.py", None, "never_reopens", "function"): ((False,), (), ()),
     # Replay equality folds entries, digest, source and mode; public tests independently
     # vary each input and assert that a stored set is preserved on refusal.
     ("criteria.py", None, "_same_registration", "function"): ((False,), (), ()),
