@@ -293,10 +293,23 @@ was sent while materializing the thread lands it where policy says it belongs. A
 resume could restore a value the user has since changed. The relay's transport loads such a
 recipient with a resume that requests nothing, compares what the host reports with the record
 before any turn, and refuses a difference as `settings_differ_after_load`, retry-safe with
-nothing started; re-record from a reading the user stands behind rather than retrying. The
-workspace roots may come back narrower than recorded, because a load does not restore them, and
-never wider. The bridge's own tool path still refuses the unloaded case, so an operator message
-to an unloaded supervisor through the bridge waits until the host has it loaded.
+nothing started; re-record from a reading the user stands behind rather than retrying.
+
+The workspace roots are the one setting read differently, on both routes. A resume never changes
+the roots of a thread the host already has loaded: the thread keeps the roots of whichever load
+brought it in, and a plain load, such as another task's bridge message to a `notLoaded`
+recipient, brings it in with its cwd as the only root. So the roots, at the top level and in each
+environment, may come back narrower than recorded and never wider: always after a resume that
+requested nothing, and after a resume that carried the recorded settings when the transport's own
+read found the recipient loaded (`idle`) just before it. A resume that carried the settings to a
+recipient read as `notLoaded` loads it itself, and its roots must come back exact. Every other
+setting is compared exactly on both routes, and a root the record does not name is refused on
+both. A delivery accepted on narrower roots is still delivered, and its transport receipt says so
+under `settingsNotes` (`runtime_roots_narrower_than_record`, with the recorded and observed
+roots and the status read before the resume): a recipient running on fewer roots than recorded
+may lack write access to one the record names, which is a reason to look, not to withhold. The
+bridge's own tool path still refuses the unloaded case, so an operator message to an unloaded
+supervisor through the bridge waits until the host has it loaded.
 
 Reading the state before choosing is what keeps those apart, and it is also what a report must
 not skip: a send accepted on a resumed recipient, a steer accepted into a live turn, and a

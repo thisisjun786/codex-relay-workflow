@@ -285,9 +285,15 @@ skip that comparison. Transmitting such a pair could restore a value the user ha
 The relay's own transport therefore transmits nothing to such a recipient, loaded or not: it
 resumes it with nothing requested, which loads an unloaded thread under its own state, and
 compares what the host reports with the record before any turn, refusing a difference as
-`settings_differ_after_load`. The workspace roots, which a load does not restore, may come back
-narrower than recorded and never wider. The bridge's tool path below still refuses the unloaded
-case, because it reads no binding and does not load a thread without transmitting.
+`settings_differ_after_load`. The workspace roots, which a load does not restore and a resume
+never changes on a thread the host already has loaded, may come back narrower than recorded and
+never wider. The same holds on the transmitted route when the transport read the recipient as
+loaded (`idle`) just before the resume: that is how a parent that another task's bridge message
+loaded with its cwd as the only root is still reached, instead of being withheld as
+`settings_not_preserved` until the attempt cap. A resume that loads the recipient itself must
+return the roots exact, a root the record does not name is refused on either route, and an
+accepted narrowing is noted on the transport receipt. The bridge's tool path below still refuses
+the unloaded case, because it reads no binding and does not load a thread without transmitting.
 
 This guard is only as good as what the sender says, and the bridge is explicit about where that
 stops. It reads no scope binding, so on a send that names no role it cannot tell an unnamed
