@@ -26,7 +26,7 @@ import json
 import math
 from unittest import mock
 
-from codex_session_relay import intent, omitted
+from codex_session_relay import cli, intent, omitted
 from codex_session_relay.admission import admit_explicitly
 from codex_session_relay.models import Endpoint, TurnRef
 from codex_session_relay.policy import RetryPolicy
@@ -117,8 +117,10 @@ class ASharedHost(StoreOmissionCase):
                               grace=self.grace if grace is None else grace, turn=turn)
 
     def shown(self, command, *extra):
-        code, answer = relay("--state", self.state_directory(), command,
-                             "--relationship", self.rid, *extra)
+        """The real command line, in process, reading at this case's clock rather than the host's."""
+        with mock.patch.object(cli, "SystemClock", lambda: self.clock):
+            code, answer = relay("--state", self.state_directory(), command,
+                                 "--relationship", self.rid, *extra)
         self.assertEqual(code, 0, answer)
         return answer
 
@@ -275,8 +277,13 @@ class ANormalEmitOnTheBusinessTurn(ASharedHost):
 
         self.assertEqual(self.intake.row(payload["eventId"])["stage"], "final",
                          "the reported turn waited for the rotation to come round")
-        self.assertTrue([one for one in self.adapter.sends if one[1] == PARENT],
-                        "the parent was not told within the bound")
+        # Queued to the parent in the same tick. The send itself then passes the parent's own
+        # gates (this fixture binds the parent as a role with no role policy readable, so it is
+        # withheld there); that path is the delivery's, not the observation's.
+        self.assertIsNotNone(self.store.one(
+            "SELECT 1 FROM deliveries WHERE event_id = ? AND recipient_task_id = ?",
+            (payload["eventId"], PARENT)), "the parent's delivery was not queued within the bound")
+        self.assertEqual(len(self.upward()), 1, "the completion did not go up within the bound")
         self.assertFalse(self.derive()["owed"])
 
 
@@ -503,8 +510,9 @@ class AssignmentShowByIssue(ASharedHost):
 
         self.business_turn_starts()
         self.tick(advance=TICK)
-        code, answer = relay("--state", self.state_directory(), "assignment-show",
-                             "--issue", ISSUE)
+        with mock.patch.object(cli, "SystemClock", lambda: self.clock):
+            code, answer = relay("--state", self.state_directory(), "assignment-show",
+                                 "--issue", ISSUE)
         self.assertEqual(code, 0, answer)
         mine = [one for one in answer.get("assignments", [])
                 if one.get("relationshipId") == self.rid]
@@ -638,8 +646,6 @@ class TheHostListingItReads(DeliveryTestCase):
         self.assertEqual(page.cursor, "more")
         adapter.recent_threads(50, cursor="more")
         self.assertEqual(calls[-1][1].get("cursor"), "more")
-
-
 
 
 

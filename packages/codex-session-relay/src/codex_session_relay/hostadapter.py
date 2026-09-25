@@ -51,6 +51,29 @@ class ThreadFacts:
     can_accept_input: bool | None
 
 
+@dataclass(frozen=True)
+class ThreadActivity:
+    """One thread in a host-wide listing: its runtime status and when the host last updated it.
+
+    status is the host's status type (active, idle, notLoaded, systemError, or unknown). A running
+    thread is active and its updated_at moves every few seconds; a thread whose turn ended reads
+    idle or notLoaded with updated_at at the whole second of that turn's end (measured on 0.154.0,
+    CRW-238). updated_at is seconds since the epoch, or None when the host gave none.
+    """
+
+    thread_id: str
+    status: str
+    updated_at: float | None
+
+
+@dataclass(frozen=True)
+class ThreadActivityPage:
+    """One page of that listing, newest-updated first, and the cursor of the next (or None)."""
+
+    threads: tuple
+    cursor: str | None
+
+
 # How far before the relay's own send stamp a turn's start may read and still be the turn that
 # send started. The host reports whole seconds and the relay microseconds (ack.certainly_before
 # allows the same second); the skew covers two clocks on one host. A turn that began earlier than
@@ -297,6 +320,9 @@ class HostAdapter(Protocol):
     def list_turn_ids(self, thread_id: str, limit: int = 20) -> list: ...
 
     def read_turn(self, thread_id: str, turn_id: str) -> TurnInfo | None: ...
+
+    # Optional. An adapter without it leaves the daemon's frontier in least-recently-read order.
+    def recent_threads(self, limit: int, cursor: str | None = None) -> ThreadActivityPage: ...
 
     def find_dispatched_turn(
         self, thread_id: str, turn_id: str, *, sent_at: float

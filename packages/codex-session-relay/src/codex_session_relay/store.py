@@ -691,6 +691,15 @@ CREATE INDEX IF NOT EXISTS deliveries_relationship_created ON deliveries
 CREATE INDEX IF NOT EXISTS attempts_open ON attempts (internal_state);
 CREATE INDEX IF NOT EXISTS events_relationship ON events (relationship_id, execution_generation);
 CREATE INDEX IF NOT EXISTS events_stage ON events (stage, turn_id);
+-- The admitted-turn pager reads ONE assignment's admissions in insertion order (CRW-238). SQLite
+-- keeps the rowid as every index's last column, so this is (relationship_id, rowid) and a rowid
+-- range after the equality is an index range, never a walk over other assignments' rows.
+CREATE INDEX IF NOT EXISTS generation_turns_relationship ON generation_turns (relationship_id);
+-- The newest bound admission of one generation, the turn omitted.derive evaluates. A bound row's
+-- evidence is one constant per generation, so equality on it and the time order after it make
+-- the lookup a single seek however many admissions the generation holds (CRW-238).
+CREATE INDEX IF NOT EXISTS generation_turns_bound ON generation_turns
+    (relationship_id, execution_generation, evidence, admitted_at);
 CREATE INDEX IF NOT EXISTS lineage_generation ON revision_lineage
     (relationship_id, execution_generation);
 CREATE INDEX IF NOT EXISTS relationships_issue ON relationships (issue_key, status);

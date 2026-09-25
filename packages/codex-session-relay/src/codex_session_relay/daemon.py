@@ -17,6 +17,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import omitted
 from .delivery import COMPLETION, REVISION
 from .admission import BOUND_ADMISSION_SQL
 from .errors import (
@@ -51,6 +52,16 @@ def _age(stamp, now) -> float:
         return now - datetime.fromisoformat(stamp).timestamp()
     except (TypeError, ValueError):
         return float("inf")
+
+
+def _epoch(stamp):
+    """Seconds since the epoch of an ISO stamp the store wrote, or None when there is none."""
+    from datetime import datetime
+
+    try:
+        return datetime.fromisoformat(stamp).timestamp()
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass
@@ -196,6 +207,13 @@ class RelayDaemon:
         # Request ids whose last reading was undecided in a way waiting alone will not change,
         # and when to read them again. A schedule, not evidence: the reading itself decides.
         self._turns_undecided = {}
+        # The host-wide thread listing's watermark: page 1's newest updatedAt at the last listing
+        # that reached its end (CRW-238), in host seconds. In memory: after a restart the first
+        # listing starts from the oldest last read of an open frontier turn instead.
+        self._activity_since = None
+        # Frontier turns whose child the listing saw stop since their last read, first in line
+        # until read once. Keyed (relationship, turn); entries no longer open are dropped.
+        self._stopped = {}
 
     # ------------------------------------------------------------------ tick
 
@@ -483,63 +501,202 @@ class RelayDaemon:
     # --------------------------------------------------------------- observe
 
     def _observe(self, report, now) -> None:
-        """Detect terminal turns and settle what they decide, without re-reporting old news."""
+        """Detect terminal turns and settle what they decide, without re-reporting old news.
+
+        Two passes share max_turn_reads_per_tick. The frontier goes first (CRW-238): for every
+        active assignment the turn omitted.derive evaluates - its newest bound admission - and its
+        anchor, while unsettled, with those whose child stopped running read before the rest.
+        Then the relationship rotation spends what is left on everything else worth reading.
+        The rotation's width and share come from what is left, so it never selects a turn it
+        cannot read, and a turn the frontier read this tick is not read again.
+        """
         relationships = self._active_relationships()
         if not relationships:
             return
         budget = self.policy.max_turn_reads_per_tick
+        read_now = {}
+        # One less than the budget at most, so the rotation always keeps a read.
+        frontier = max(0, min(self.policy.frontier_reads_per_tick, budget - 1))
+        remaining = budget - self._observe_frontier(relationships, report, frontier, read_now)
+        if remaining <= 0:
+            return
         # How many relationships this tick can serve properly. Serving ALL of them would mean
         # promising every current anchor a read, which stops being possible the moment the
         # relationship count passes the budget. Rotating which ones are served keeps the
         # promise finite instead of impossible.
         served = max(1, min(len(relationships),
-                            budget // max(1, self.policy.min_relationship_share)))
+                            remaining // max(1, self.policy.min_relationship_share)))
         start = self._cursor("relationships", len(relationships))
         order = [relationships[(start + offset) % len(relationships)]
                  for offset in range(len(relationships))]
-        share = max(1, budget // served)
+        share = max(1, remaining // served)
         reads = 0
         for relationship in order[:served]:
-            thread = relationship["child"]["taskId"]
-            for turn_id in self._turns_to_poll(relationship, share):
-                if reads >= budget:
+            done = read_now.get(relationship["relationshipId"], frozenset())
+            for turn_id in self._turns_to_poll(relationship, share, exclude=done):
+                if reads >= remaining:
                     break
                 reads += 1
-                try:
-                    turn = self.adapter.read_turn(thread, turn_id)
-                except Exception as error:
-                    report.notes.append(f"turn read failed for {turn_id}: {error}")
-                    self._record_poll(relationship, turn_id, status=None, error=error)
-                    continue
-                self._record_poll(
-                    relationship, turn_id,
-                    status=turn.status if turn is not None else "absent",
-                    # An absent turn is not a successful poll. Recording it as one refreshed
-                    # last_polled_at on every tick, and observation_health reads only poll
-                    # freshness and settlement - so an anchor the host says is gone, which can
-                    # never settle, reported healthy forever.
-                    error=None if turn is not None else "the host reports this turn absent",
-                )
-                if turn is None or turn.status not in ("completed", "failed", "interrupted"):
-                    continue
-                reference = TurnRef(thread, turn.turn_id, turn.status)
-                # Already observed is not already finished. A receipt written just after the
-                # completion was seen still has to be resolved, so the observation alone is
-                # no longer enough to skip the turn.
-                if self._already_observed(
-                    reference, relationship["relationshipId"],
-                ) and not self.intake.staged_events(
-                    thread_id=thread, turn_id=turn_id,
-                    relationship_id=relationship["relationshipId"],
-                ):
-                    continue
-                self._settle_turn(relationship, reference, report)
+                self._read_turn(relationship, turn_id, report)
         # Advanced whether or not anything was read. Advancing only on a read would let a
         # window of relationships with nothing to do pin the cursor, and every relationship
         # behind them would wait forever - the same starvation one level up.
         self._advance_cursor("relationships", served, len(relationships))
 
-    def _turns_to_poll(self, relationship, share: int) -> list:
+    def _read_turn(self, relationship, turn_id, report) -> None:
+        """Read one turn from the host, record that it was looked at, and settle a terminal one."""
+        thread = relationship["child"]["taskId"]
+        try:
+            turn = self.adapter.read_turn(thread, turn_id)
+        except Exception as error:
+            report.notes.append(f"turn read failed for {turn_id}: {error}")
+            self._record_poll(relationship, turn_id, status=None, error=error)
+            return
+        self._record_poll(
+            relationship, turn_id,
+            status=turn.status if turn is not None else "absent",
+            # An absent turn is not a successful poll. Recording it as one refreshed
+            # last_polled_at on every tick, and observation_health reads only poll
+            # freshness and settlement - so an anchor the host says is gone, which can
+            # never settle, reported healthy forever.
+            error=None if turn is not None else "the host reports this turn absent",
+        )
+        if turn is None or turn.status not in ("completed", "failed", "interrupted"):
+            return
+        reference = TurnRef(thread, turn.turn_id, turn.status)
+        # Already observed is not already finished. A receipt written just after the
+        # completion was seen still has to be resolved, so the observation alone is
+        # no longer enough to skip the turn.
+        if self._already_observed(
+            reference, relationship["relationshipId"],
+        ) and not self.intake.staged_events(
+            thread_id=thread, turn_id=turn_id,
+            relationship_id=relationship["relationshipId"],
+        ):
+            return
+        self._settle_turn(relationship, reference, report)
+
+    # ---------------------------------------------------------------- frontier
+
+    def _frontier_turns(self, relationship) -> list:
+        """The current anchor and the newest bound admission of the current generation.
+
+        The newest admission is the turn omitted.derive evaluates, found by the same seek, so
+        its cost does not grow with the generation's admissions. The anchor is the turn derive
+        evaluates when nothing was admitted, and the one a dispatch waits on either way.
+        """
+        generation = relationship["executionGeneration"]
+        anchor = next((one["dispatchTurnId"] for one in relationship["generations"]
+                       if one["executionGeneration"] == generation), None)
+        turns = [anchor] if anchor else []
+        newest = omitted.newest_admission(self.store.one, relationship["relationshipId"],
+                                          generation, anchor)
+        if newest and newest["turn"] not in turns:
+            turns.append(newest["turn"])
+        return turns
+
+    def _last_attempt(self, relationship, turn_id):
+        """When the daemon last tried to read this turn under the current generation, or None."""
+        row = self.store.one(
+            "SELECT last_attempt_at FROM poll_observations WHERE relationship_id = ?"
+            " AND execution_generation = ? AND turn_id = ?",
+            (relationship["relationshipId"], relationship["executionGeneration"], turn_id),
+        )
+        return row["last_attempt_at"] if row else None
+
+    def _observe_frontier(self, relationships, report, limit, read_now) -> int:
+        """Read up to limit open frontier turns, stopped children first; return reads spent.
+
+        Open means unsettled for its own assignment (_worth_polling). A turn is stopped when the
+        host's thread listing shows its child no longer active and updated at or after the
+        relay's last read of it (updatedAt is whole seconds, so one second of slack), or when an
+        earlier listing did and it has not been read since. The rest follow least recently read
+        first, never-read first of all, which alone reads every open frontier turn within
+        ceil(open / limit) ticks. Every attempt counts, a failed one included.
+        """
+        if limit <= 0:
+            return 0
+        candidates = []
+        for relationship in relationships:
+            rid = relationship["relationshipId"]
+            thread = relationship["child"]["taskId"]
+            for turn_id in self._frontier_turns(relationship):
+                if self._worth_polling(thread, turn_id, rid):
+                    candidates.append((relationship, turn_id,
+                                       self._last_attempt(relationship, turn_id)))
+        open_keys = {(one["relationshipId"], turn_id) for one, turn_id, _ in candidates}
+        for key in [key for key in self._stopped if key not in open_keys]:
+            del self._stopped[key]
+        if not candidates:
+            return 0
+        reads = [_epoch(last) for _, _, last in candidates if last]
+        activity = self._thread_activity(report, min(reads) if reads else None)
+        ordered = []
+        for relationship, turn_id, last in candidates:
+            key = (relationship["relationshipId"], turn_id)
+            listed = activity.get(relationship["child"]["taskId"])
+            if (listed is not None and listed.status != "active"
+                    and listed.updated_at is not None):
+                read_at = _epoch(last)
+                if read_at is None or listed.updated_at + 1 >= read_at:
+                    self._stopped[key] = listed.updated_at
+            ordered.append(((key not in self._stopped, last is not None, last or "",
+                             key[0], turn_id), relationship, turn_id))
+        ordered.sort(key=lambda one: one[0])
+        spent = 0
+        for _, relationship, turn_id in ordered[:limit]:
+            read_now.setdefault(relationship["relationshipId"], set()).add(turn_id)
+            self._stopped.pop((relationship["relationshipId"], turn_id), None)
+            spent += 1
+            self._read_turn(relationship, turn_id, report)
+        return spent
+
+    def _thread_activity(self, report, seed) -> dict:
+        """The host's threads by id, from its listing newest-updated first, or {} without one.
+
+        Pages until a page reaches below the watermark (the newest updatedAt of the last
+        listing's first page, less the second the host rounds to), the listing ends, or
+        thread_activity_listing_pages pages were read, which is saturation and is said so.
+        With no watermark yet it starts from seed, the oldest last read of an open frontier
+        turn, and with neither it reads one page. The watermark moves only after a listing that
+        got to its end, and always to page 1's newest updatedAt: a later page can hold threads
+        updated while it was paging, and moving past them would skip what they hide. A listing
+        that fails keeps the mark it had and uses what it read.
+        """
+        lister = getattr(self.adapter, "recent_threads", None)
+        limit = self.policy.thread_activity_listing_limit
+        pages = self.policy.thread_activity_listing_pages
+        if lister is None or limit <= 0 or pages <= 0:
+            return {}
+        since = self._activity_since if self._activity_since is not None else seed
+        activity, cursor, mark, ended = {}, None, None, False
+        try:
+            for number in range(pages):
+                page = lister(limit, cursor=cursor)
+                stamps = [one.updated_at for one in page.threads if one.updated_at is not None]
+                for one in page.threads:
+                    activity.setdefault(one.thread_id, one)
+                if number == 0 and stamps:
+                    mark = max(stamps)
+                cursor = page.cursor
+                if since is None or not cursor or (stamps and min(stamps) < since - 1):
+                    ended = True
+                    break
+            else:
+                ended = True
+                report.notes.append(
+                    f"thread activity listing saturated: {pages} pages of {limit} threads were"
+                    f" all updated at or after {since}; a child that stopped below them is read"
+                    " in least-recently-read order")
+        except Exception as error:  # noqa: BLE001 - a tick never dies on one listing
+            report.notes.append(f"thread activity listing failed: {error}")
+        if ended and mark is not None:
+            self._activity_since = mark
+        return activity
+
+    # ---------------------------------------------------------------- rotation
+
+    def _turns_to_poll(self, relationship, share: int, exclude=frozenset()) -> list:
         """The current anchor, plus a rotating slice of everything else worth reading.
 
         The old version collected every anchor oldest-first, sliced to the budget, and left
@@ -551,6 +708,9 @@ class RelayDaemon:
         So candidates are filtered BEFORE the budget, the current anchor is reserved, and the
         rest rotate through a persistent cursor so a backlog larger than the share is covered
         in a finite number of ticks rather than re-read from the same end every time.
+
+        exclude names turns already read this tick (the frontier's), which are neither reserved
+        nor put in the ring, and count as consumed where the admission page is concerned.
         """
         rid = relationship["relationshipId"]
         thread = relationship["child"]["taskId"]
@@ -575,14 +735,15 @@ class RelayDaemon:
         # reporting. It has no staged event, so polling only anchors and receipts
         # would never settle that omission. Include this assignment's admissions
         # from every generation, like historical anchors, until they settle.
-        page, ceiling = self._admission_page(rid, thread, max(1, share - 1))
+        page, ceiling, began, floor = self._admission_page(rid, thread, max(1, share - 1))
         admitted = [row["turn_id"] for row in page if row["eligible"]]
         ring = [
             turn_id for turn_id in dict.fromkeys(staged + admitted + history)
-            if turn_id != current and self._worth_polling(thread, turn_id, rid)
+            if turn_id != current and turn_id not in exclude
+            and self._worth_polling(thread, turn_id, rid)
         ]
         selected = []
-        if current and self._worth_polling(thread, current, rid):
+        if current and current not in exclude and self._worth_polling(thread, current, rid):
             selected.append(current)
         remaining = share - len(selected)
         if remaining <= 0 and ring and self._alternate(rid):
@@ -600,57 +761,82 @@ class RelayDaemon:
         consumed = None
         for row in page:
             turn = row["turn_id"]
-            if row["eligible"] and turn != current and turn not in selected:
+            if (row["eligible"] and turn != current and turn not in selected
+                    and turn not in exclude):
                 break
             consumed = row["admission_row"]
+        # The settled floor (CRW-238): a page that began at the floor moves it over its leading
+        # rows this assignment has settled. Only settled rows pass it - settlements are never
+        # deleted and nothing inserts below the table's highest rowid - so a wrapped pass starts
+        # there and never reads them again. An unsettled row pins it, an ineligible legacy row
+        # included, because a fresh admission can repair that row in place.
+        if began == floor:
+            for row in page:
+                if not row["settled"]:
+                    break
+                floor = row["admission_row"]
         if consumed is not None:
             with self.store.transaction() as db:
                 db.execute(
                     "INSERT INTO discovery_cursors (task_id,listing,cursor,updated_at)"
                     " VALUES ('scheduler',?,?,?) ON CONFLICT(task_id,listing) DO UPDATE"
                     " SET cursor=excluded.cursor,updated_at=excluded.updated_at",
-                    (f"admitted:{rid}", json.dumps({"after": consumed, "through": ceiling}), self.clock.iso()),
+                    (f"admitted:{rid}",
+                     json.dumps({"after": consumed, "through": ceiling, "floor": floor}),
+                     self.clock.iso()),
                 )
         return selected
 
     def _admission_page(self, rid, thread, limit):
-        """Bound raw work, including settled and foreign admissions.
+        """One bounded page of this assignment's admissions, in insertion order.
 
         Writers only INSERT or UPDATE this table; rowid fixes insertion order even
         when a new turn sorts before an old turn lexically. A frozen upper rowid
         prevents ongoing inserts from extending the current pass. The rowid range
         scans at most limit rows before filtering ownership/eligibility; searching
         for limit eligible rows first would scan unlimited settled history.
-        This trades latency across a large shared store for a fixed per-tick cost.
+
+        Scoped to this assignment through the index generation_turns_relationship, so other
+        assignments' rows are never read (CRW-238), and a wrapped pass starts at the settled
+        floor rather than at the first row. Returns the page, the pass's upper rowid, the rowid
+        the page started after and the floor. A cursor written before the scope existed holds
+        global rowids, which are still positions in the same order; a range that holds none of
+        this assignment's rows starts again at the floor.
         """
         row = self.store.one(
             "SELECT cursor FROM discovery_cursors WHERE task_id='scheduler' AND listing=?",
             (f"admitted:{rid}",),
         )
-        key, ceiling = 0, None
+        key, ceiling, floor = 0, None, 0
         try:
             saved = json.loads(row["cursor"]) if row else {}
             if type(saved.get("after")) is int and type(saved.get("through")) is int:
                 key, ceiling = saved["after"], saved["through"]
+            if type(saved.get("floor")) is int and saved["floor"] <= key:
+                floor = saved["floor"]
         except (ValueError, TypeError, AttributeError):
             pass
         if ceiling is None or key >= ceiling:
-            key = 0
-            ceiling = self.store.one("SELECT COALESCE(MAX(rowid),0) AS last FROM generation_turns")["last"]
+            key = floor
+            ceiling = self.store.one(
+                "SELECT COALESCE(MAX(rowid),0) AS last FROM generation_turns"
+                " WHERE relationship_id=?", (rid,))["last"]
         sql = (
             "SELECT t.rowid AS admission_row,t.turn_id,"
-            " CASE WHEN t.relationship_id=? THEN"
+            " EXISTS (SELECT 1 FROM assignment_settlements s WHERE s.relationship_id=t.relationship_id"
+            " AND s.thread_id=? AND s.turn_id=t.turn_id) AS settled,"
             " (EXISTS (SELECT 1 FROM generations g WHERE g.relationship_id=t.relationship_id"
             " AND g.execution_generation=t.execution_generation AND " + BOUND_ADMISSION_SQL + ")"
             " AND NOT EXISTS (SELECT 1 FROM assignment_settlements s"
             " WHERE s.relationship_id=t.relationship_id AND s.thread_id=? AND s.turn_id=t.turn_id))"
-            " ELSE 0 END AS eligible FROM generation_turns t"
-            " WHERE t.rowid > ? AND t.rowid <= ? ORDER BY t.rowid LIMIT ?"
+            " AS eligible FROM generation_turns t"
+            " WHERE t.relationship_id=? AND t.rowid > ? AND t.rowid <= ? ORDER BY t.rowid LIMIT ?"
         )
-        page = self.store.all(sql, (rid, thread, key, ceiling, limit))
-        if not page and key:
-            page = self.store.all(sql, (rid, thread, 0, ceiling, limit))
-        return page, ceiling
+        page = self.store.all(sql, (thread, thread, rid, key, ceiling, limit))
+        if not page and key > floor:
+            key = floor
+            page = self.store.all(sql, (thread, thread, rid, key, ceiling, limit))
+        return page, ceiling, key, floor
 
     def _record_poll(self, relationship, turn_id, *, status, error) -> None:
         """That we LOOKED, which an observations row cannot tell anyone.

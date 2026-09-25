@@ -13,10 +13,11 @@ a report is still owed because of it. Neither carries a classifier of its own.
 
 import json
 import stat
+from datetime import timedelta
 from pathlib import Path
 
 from . import guard, intent, marker
-from .admission import AnchorOrExplicit, BOUND_ADMISSION_SQL
+from .admission import AnchorOrExplicit, BOUND_ADMISSION_SQL, BOUND_EXPLICIT_PREFIX
 from .store import read_only_rows
 from .receipts import CHILD as CHILD_PRODUCER, DAEMON
 
@@ -46,17 +47,31 @@ GRACE_UNMEASURED = "report_grace_unmeasured"
 # the cut-over. Named, because the channel treats it apart from every other unmeasured reading.
 DECLARATIONS_NOT_RECORDED = "declarations_not_recorded"
 
+# What a reading that has not reached its answer yet is waiting for (CRW-238). Beside the
+# diagnosis, never instead of it: the relay settling the turn, or the grace after that.
+WAITING_SETTLEMENT = "relay_settlement"
+WAITING_GRACE = "report_grace"
+# Why the settlement has not happened, from the daemon's own record of its last read.
+NOT_YET_POLLED = "not_yet_polled"
+IN_PROGRESS_AT_LAST_READ = "in_progress_at_last_read"
+HOST_REPORTS_ABSENT = "host_reports_absent"
+LAST_READ_FAILED = "last_read_failed"
+TERMINAL_READ_UNSETTLED = "terminal_read_unsettled"
+
 # One SELECT gives the registry, admission and terminal facts the same SQLite
-# snapshot. Filesystem reads happen afterwards, with this snapshot rechecked.
+# snapshot. Filesystem reads happen afterwards, with this snapshot rechecked. Every column is a
+# point lookup or one seek, so the row does not grow with the generation's admissions (CRW-238):
+# own_bound says whether this turn has a bound admission, and newest_admission is the newest
+# bound admission of the generation, found by the same seek newest_admission() makes.
 CONTEXT = """
 SELECT r.relationship_id, r.issue_key, r.status, r.parent_task_id, r.child_task_id,
        r.child_cwd, r.execution_generation, r.superseded_by,
        g.execution_generation AS opened_generation, g.dispatch_request_id,
        g.dispatch_turn_id, g.anchor_state,
-       (SELECT json_group_array(turn_id) FROM generation_turns t
+       EXISTS (SELECT 1 FROM generation_turns t
         WHERE t.relationship_id=r.relationship_id
-          AND t.execution_generation=g.execution_generation
-          AND """ + BOUND_ADMISSION_SQL + """) AS admitted,
+          AND t.execution_generation=g.execution_generation AND t.turn_id=?
+          AND """ + BOUND_ADMISSION_SQL + """) AS own_bound,
        (SELECT json_group_array(json_object('status',s.terminal_status,'at',s.settled_at))
         FROM assignment_settlements s WHERE s.relationship_id=r.relationship_id
           AND s.thread_id=? AND s.turn_id=?) AS settlements,
@@ -71,11 +86,12 @@ SELECT r.relationship_id, r.issue_key, r.status, r.parent_task_id, r.child_task_
                  'workspace',m.workspace,'markerRoot',m.marker_root,'issue',m.issue_key))
         FROM managed_start_requests m WHERE m.dispatch_request_id=g.dispatch_request_id)
         AS managed,
-       (SELECT json_group_array(json_object('turn',t.turn_id,'at',t.admitted_at,'row',t.rowid))
+       (SELECT json_object('turn',t.turn_id,'at',t.admitted_at,'row',t.rowid)
         FROM generation_turns t
         WHERE t.relationship_id=r.relationship_id
           AND t.execution_generation=g.execution_generation
-          AND """ + BOUND_ADMISSION_SQL + """) AS bound_admissions,
+          AND """ + BOUND_ADMISSION_SQL + """
+        ORDER BY t.admitted_at DESC, t.rowid DESC LIMIT 1) AS newest_admission,
        (SELECT json_object('at',a.admitted_at,'row',a.rowid) FROM generation_turns a
         WHERE a.relationship_id=r.relationship_id
           AND a.execution_generation=g.execution_generation
@@ -191,22 +207,27 @@ def _context(selection, relationship, dispatch, session, turn):
 
 def _context_params(relationship, dispatch, session, turn):
     """CONTEXT's parameters, in the order its placeholders appear."""
-    return (session, turn, session, turn, turn, relationship, dispatch)
+    return (turn, session, turn, session, turn, turn, relationship, dispatch)
 
 
 class _AdmissionReader:
-    """Expose already snapshotted admission rows to the existing policy owner."""
+    """Expose this turn's already snapshotted admission to the existing policy owner.
 
-    def __init__(self, row):
+    AnchorOrExplicit asks about exactly the turn it was handed, so the snapshot carries that one
+    turn's answer. A question about any other turn is refused rather than answered no, because
+    no would read as unadmitted.
+    """
+
+    def __init__(self, row, turn):
         self.row = row
-        self.admitted = json.loads(row["admitted"])
+        self.turn = turn
 
     def one(self, sql, params):
         rid, generation, turn = params
         if (rid != self.row["relationship_id"]
-                or generation != self.row["opened_generation"]):
+                or generation != self.row["opened_generation"] or turn != self.turn):
             raise Unmeasured("admission_identity_changed")
-        return {"present": 1} if turn in self.admitted else None
+        return {"present": 1} if self.row["own_bound"] else None
 
 
 def _registry_evidence(row, facts, root, workspace, assignment, session, turn):
@@ -262,7 +283,7 @@ def _admission(row, session, root, workspace, turn):
     generation = {"dispatchTurnId": row["dispatch_turn_id"],
                   "executionGeneration": row["opened_generation"]}
     relation = {"relationshipId": row["relationship_id"]}
-    admitted = AnchorOrExplicit().admit(_AdmissionReader(row), relation, generation, turn)
+    admitted = AnchorOrExplicit().admit(_AdmissionReader(row, turn), relation, generation, turn)
     return ("bootstrap" if bootstrap else "admitted" if admitted.admitted else "unadmitted"), requests
 
 
@@ -313,14 +334,45 @@ def admission_order(entry):
     return (0, moment, row or 0) if moment is not None else (1, 0, row or 0)
 
 
+# The newest bound admission of one generation (CRW-238). Bound means evidence equal to
+# BOUND_EXPLICIT_PREFIX + the generation's anchor, one constant per generation, so the index
+# generation_turns_bound makes this a single seek however many admissions the generation holds.
+# Newest is admitted_at, then rowid: every bound row is written by admission._record_bound with
+# clock.iso(), fixed-width microseconds in UTC, so the text order is admission_order's time order
+# to the microsecond (no SQLite date function is involved) and rowid breaks ties as it does.
+NEWEST_ADMISSION = (
+    "SELECT turn_id AS turn, admitted_at AS at, rowid AS row FROM generation_turns"
+    " WHERE relationship_id=? AND execution_generation=? AND evidence=?"
+    " ORDER BY admitted_at DESC, rowid DESC LIMIT 1"
+)
+
+
+def newest_admission(one, relationship_id, generation, anchor):
+    """The newest bound admission of a generation as {turn, at, row}, or None.
+
+    one is a store.one-shaped reader, so the daemon's frontier and derive() ask the same
+    question the same way. A generation with no bound anchor has no bound admissions.
+    """
+    if not anchor:
+        return None
+    row = one(NEWEST_ADMISSION, (relationship_id, generation, BOUND_EXPLICIT_PREFIX + anchor))
+    return dict(row) if row else None
+
+
 def _admitted_after(row, turn):
-    """Whether a turn other than this one was admitted to the generation after it."""
-    bound = json.loads(row["bound_admissions"] or "[]")
+    """Whether a turn other than this one was admitted to the generation after it.
+
+    Some bound admission of another turn is later than this turn's own exactly when the newest
+    bound admission is another turn and later than it: a turn has one admission row per
+    generation, and admission_order never ties once the row is included.
+    """
+    newest = json.loads(row["newest_admission"]) if row["newest_admission"] else None
+    if not newest or newest.get("turn") == turn:
+        return False
     own = json.loads(row["own_admission"]) if row["own_admission"] else None
     # A turn with no admission row of its own is the anchor, which every bound admission
-    # continues, so each of them is later.
-    floor = admission_order(own) if own else (-1, 0, 0)
-    return any(entry.get("turn") != turn and admission_order(entry) > floor for entry in bound)
+    # continues, so any of them is later.
+    return own is None or admission_order(newest) > admission_order(own)
 
 
 def facts_of(row, *, turn, witness, admission, label, now, grace):
@@ -433,6 +485,56 @@ def _record_terminal(result, row, verdict):
         result["executionReports"] = _execution_reports(row, terminal)
 
 
+# The daemon's own record of its last read of a turn under the current generation
+# (daemon._record_poll). Keyed like that record, so a reading of the same turn id under another
+# generation is not taken for this one's.
+POLL = ("SELECT last_status, last_polled_at, last_attempt_at, last_error FROM poll_observations"
+        " WHERE relationship_id=? AND execution_generation=? AND turn_id=?")
+
+
+def waiting_for(verdict, settlements, poll, grace):
+    """What a reading that is not yet an answer waits for, or None. Pure.
+
+    Beside the diagnosis and never part of it (CRW-238): classify() decides reportingState and
+    owed, and this only names why the relay has not got further. Until the relay settles the
+    turn the wait is its settlement, and poll - the daemon's last read, or None - says why it has
+    not happened; once settled and inside the grace, the wait is the grace and its end.
+    """
+    if verdict.get("reason") == "host_terminal_unobserved":
+        if poll is None:
+            return {"for": WAITING_SETTLEMENT, "reason": NOT_YET_POLLED}
+        status, error = poll["last_status"], poll["last_error"]
+        if status == "absent":
+            reason = HOST_REPORTS_ABSENT
+        elif status is None:
+            reason = LAST_READ_FAILED
+        elif status in TERMINAL_STATUSES:
+            # The daemon read an ending and did not commit a settlement: deferred or rolled back.
+            reason = TERMINAL_READ_UNSETTLED
+        else:
+            reason = IN_PROGRESS_AT_LAST_READ
+        return {"for": WAITING_SETTLEMENT, "reason": reason, "lastStatus": status,
+                "lastPolledAt": poll["last_polled_at"], "lastAttemptAt": poll["last_attempt_at"],
+                "lastError": error}
+    if verdict.get("owedReason") == WITHIN_GRACE:
+        ended = [intent.moment(item.get("at")) for item in settlements]
+        if ended and all(one is not None for one in ended):
+            until = max(ended) + timedelta(seconds=float(grace or 0))
+            return {"for": WAITING_GRACE, "until": until.isoformat(timespec="microseconds")}
+    return None
+
+
+def reporting_summary(reading):
+    """The part of a store reading assignment-show carries: the answer, and what it waits for."""
+    summary = {"source": reading.get("source"),
+               "turn": (reading.get("selectors") or {}).get("turn"),
+               "reportingState": reading.get("reportingState"), "reason": reading.get("reason"),
+               "owed": reading.get("owed"), "owedReason": reading.get("owedReason")}
+    if reading.get("waiting"):
+        summary["waiting"] = reading["waiting"]
+    return summary
+
+
 def observe(selection, root, workspace, assignment, session, turn, now, grace=0):
     """Diagnose explicit selectors; all reads are optional evidence, never writes.
 
@@ -501,6 +603,15 @@ def observe(selection, root, workspace, assignment, session, turn, now, grace=0)
         if _context(selection, relationship, claim["dispatchRequestId"], session, turn) != snapshot:
             raise Unmeasured("registry_changed_during_read")
         result.update(verdict)
+        # After the recheck and outside CONTEXT: the daemon rewrites its poll record on every
+        # read, which must not make a stable registry look changed. An unreadable record claims
+        # nothing, so the field is left out rather than guessed.
+        polled = read_only_rows(selection, POLL, (relationship, row["execution_generation"], turn))
+        if polled["readable"] and not polled["detail"]:
+            wait = waiting_for(verdict, json.loads(row["settlements"]),
+                               dict(polled["rows"][0]) if polled["rows"] else None, grace)
+            if wait:
+                result["waiting"] = wait
     except Unmeasured as error:
         result.update(_answer("unmeasured", str(error)))
     except (OSError, ValueError, TypeError, RuntimeError) as error:
@@ -517,18 +628,6 @@ FROM relationships r JOIN generations g ON g.relationship_id=r.relationship_id
  AND g.execution_generation=r.execution_generation
 WHERE r.relationship_id=?
 """
-
-# The turns admitted to a generation by an explicit bound record. The newest of them, in
-# admission_order, is the only turn whose omission can still be owed - every other has a later
-# one - and the anchor is that turn when nothing was admitted after it. Ordered in Python, the
-# same way _admitted_after orders CONTEXT's bound_admissions, for the reason admission_order
-# gives.
-BOUND_ADMISSIONS = """
-SELECT t.turn_id AS turn, t.admitted_at AS at, t.rowid AS row FROM generation_turns t JOIN generations g
-  ON g.relationship_id=t.relationship_id AND g.execution_generation=t.execution_generation
-WHERE t.relationship_id=? AND t.execution_generation=? AND """ + BOUND_ADMISSION_SQL + """
-"""
-
 
 def derive(store, relationship_id, *, state_directory, now, grace, turn=None):
     """The reading observe() would give, taken from this store alone. Reads; never writes.
@@ -548,6 +647,9 @@ def derive(store, relationship_id, *, state_directory, now, grace, turn=None):
     omission can still be owed. The store's witness of the ending is its declaration record:
     there is no pre-terminal record here like the marker's Stop record, and the relay's own
     settlement is what says the turn ended.
+
+    Its cost does not grow with the generation's admissions (CRW-238): the newest admission is
+    one seek (newest_admission) and CONTEXT is point lookups.
     """
     result = {"schema": SCHEMA, "source": STORE_SOURCE, "reportingState": "unmeasured",
               "reason": None, "observedAt": now, "selectors": None,
@@ -573,10 +675,11 @@ def derive(store, relationship_id, *, state_directory, now, grace, turn=None):
                 or claimed["capability"] != CAPABILITY):
             raise Unmeasured(DECLARATIONS_NOT_RECORDED)
         if turn is None:
-            admissions = [dict(one) for one in store.all(
-                BOUND_ADMISSIONS, (relationship_id, current["execution_generation"]))]
-            turn = (max(admissions, key=admission_order)["turn"] if admissions
-                    else current["dispatch_turn_id"])
+            # The newest bound admission of the generation, the only turn whose omission can
+            # still be owed - every other has a later one - else the anchor.
+            newest = newest_admission(store.one, relationship_id, current["execution_generation"],
+                                      current["dispatch_turn_id"])
+            turn = newest["turn"] if newest else current["dispatch_turn_id"]
         if not marker.valid_segment(turn or ""):
             raise Unmeasured("admission_unrecorded")
         result["selectors"] = {"state": str(state_directory),
@@ -620,6 +723,11 @@ def derive(store, relationship_id, *, state_directory, now, grace, turn=None):
                                     admission=admission, label=label, now=now, grace=grace))
         _record_terminal(result, row, verdict)
         result.update(verdict)
+        wait = waiting_for(verdict, json.loads(row["settlements"]),
+                           store.one(POLL, (relationship_id, current["execution_generation"], turn)),
+                           grace)
+        if wait:
+            result["waiting"] = wait
     except Unmeasured as error:
         result.update(_answer("unmeasured", str(error)))
     except (OSError, ValueError, TypeError, RuntimeError) as error:

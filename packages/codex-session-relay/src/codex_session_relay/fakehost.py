@@ -11,8 +11,8 @@ No test sleeps. Time only moves when a test moves it.
 import hashlib
 
 from .hostadapter import (
-    IN_TURN_ITEMS_MAX, USER_MESSAGE, ThreadFacts, TokenScan, TurnInfo, find_in_listing,
-    find_token_in, find_token_in_turn_items, is_message,
+    IN_TURN_ITEMS_MAX, USER_MESSAGE, ThreadActivity, ThreadActivityPage, ThreadFacts, TokenScan,
+    TurnInfo, find_in_listing, find_token_in, find_token_in_turn_items, is_message,
 )
 
 
@@ -44,6 +44,8 @@ class FakeThread:
         # (turn id, text) is a user message, the item a send appends; (turn id, text, type) is
         # an item of the named type, such as a command's output.
         self.items = []
+        # When the host last updated the thread, as its thread listing reports it.
+        self.updated_at = 0.0
 
 
 def _loaded_as_recorded(thread, settings) -> dict:
@@ -82,8 +84,13 @@ class FakeHostAdapter:
 
     def add_thread(self, thread_id, **kwargs) -> FakeThread:
         thread = FakeThread(thread_id, **kwargs)
+        thread.updated_at = self._updated_now()
         self.threads[thread_id] = thread
         return thread
+
+    def _updated_now(self) -> float:
+        """When the host updates a thread now; a host built without a clock never moves."""
+        return self.clock.now() if self.clock is not None else 0.0
 
     def start_turn(self, thread_id, *, turn_id=None, status="inProgress", text=None) -> TurnInfo:
         thread = self.threads[thread_id]
@@ -91,6 +98,7 @@ class FakeHostAdapter:
         turn_id = turn_id or f"turn-{thread_id}-{self._turn_counter}"
         turn = TurnInfo(turn_id, status, self.clock.now())
         thread.turns.append(turn)
+        thread.updated_at = self._updated_now()
         if text:
             thread.items.append((turn_id, text))
         return turn
@@ -101,6 +109,7 @@ class FakeHostAdapter:
             TurnInfo(t.turn_id, status, t.started_at) if t.turn_id == turn_id else t
             for t in thread.turns
         ]
+        thread.updated_at = self._updated_now()
 
     def set_status(self, thread_id, status) -> None:
         self.threads[thread_id].status = status
@@ -145,6 +154,27 @@ class FakeHostAdapter:
             if turn.turn_id == turn_id:
                 return turn
         return None
+
+    def recent_threads(self, limit, cursor=None) -> ThreadActivityPage:
+        """The host-wide listing, newest-updated first, as the real host keeps it.
+
+        A thread running a turn is listed active and updated now, because the real host
+        refreshes a running thread's updatedAt every few seconds; any other thread keeps its own
+        status and the time it was last updated. The cursor is the offset of the next page.
+        """
+        self._guard("recent_threads")
+        now = self._updated_now()
+        listed = []
+        for thread in self.threads.values():
+            running = thread.status == "active" or any(
+                turn.status == "inProgress" for turn in thread.turns)
+            listed.append(ThreadActivity(thread.thread_id, "active" if running else thread.status,
+                                         now if running else thread.updated_at))
+        listed.sort(key=lambda one: (one.updated_at, one.thread_id), reverse=True)
+        start = int(cursor or 0)
+        end = start + max(1, int(limit))
+        return ThreadActivityPage(tuple(listed[start:end]),
+                                  str(end) if end < len(listed) else None)
 
     def find_dispatched_turn(self, thread_id, turn_id, *, sent_at):
         """The real adapter's rule over this thread's turns, newest first, as one final page."""
@@ -281,6 +311,7 @@ class FakeHostAdapter:
             existing = thread.turns[-1].turn_id if thread.turns else None
             receipt.update(status="accepted", resumed=resumed, turnId=existing)
             thread.items.append((existing, message))
+            thread.updated_at = self._updated_now()
         else:  # accepted
             turn = self.start_turn(thread_id, status="inProgress", text=message)
             receipt.update(status="accepted", resumed=resumed, turnId=turn.turn_id)

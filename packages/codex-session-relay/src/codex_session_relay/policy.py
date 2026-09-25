@@ -82,6 +82,18 @@ class RetryPolicy:
     # Turn reads are the scarce thing in an observation pass, so they are capped directly
     # rather than implied by a per-relationship slice that grows with the relationship count.
     max_turn_reads_per_tick: int = 8
+    # Of those reads, how many go first to the frontier - the turn omitted.derive evaluates for
+    # each active assignment (its newest bound admission, else its anchor) and the anchor itself,
+    # while unsettled - before the relationship rotation spends the rest (CRW-238). Clamped to one
+    # less than the budget so the rotation always keeps a read.
+    frontier_reads_per_tick: int = 4
+    # One host-wide thread listing a tick, newest-updated first, says which children stopped
+    # running since their frontier turn was last read; those are read first (CRW-238). At most
+    # this many pages of this many threads, and none on a tick with no open frontier turn. It is
+    # a host call of its own, outside max_turn_reads_per_tick. Either value 0 turns it off, which
+    # leaves the frontier's least-recently-read order.
+    thread_activity_listing_limit: int = 50
+    thread_activity_listing_pages: int = 4
     # Recipient-turn lookups for delivered completions still awaiting their acknowledgement
     # (daemon._check_dispatched_turns). Separate from the observation reads above: those watch
     # children, these ask a parent whether the turn a delivery started still exists.
