@@ -34,7 +34,8 @@ from . import __version__, faults
 from . import settings as settings_module
 from .errors import RefusalReason
 from .policy import (
-    BUSY_CAP, HOST_LOST_TURN, UNKNOWN_SEND_LOST, UNKNOWN_SEND_UNDECIDED, RetryPolicy,
+    BUSY_CAP, HOST_LOST_TURN, UNKNOWN_SEND_HOLD_NAMED, UNKNOWN_SEND_LOST, UNKNOWN_SEND_UNDECIDED,
+    RetryPolicy,
 )
 from .transport import DEFERRED_BUSY
 
@@ -83,14 +84,16 @@ BUSY_HOLD = BUSY_CAP
 PARENT_HOLDS = (HOST_LOST_TURN, UNKNOWN_SEND_LOST, UNKNOWN_SEND_UNDECIDED)
 # The holds named on an uncertain send's settled attempt after the fact (hostloss.read_unknown_send):
 # the retry page reads that attempt as soon as it settles, degraded, and the hold comes only after
-# the start-time allowance. So the hold is its own occurrence - delivery:<request>:held:<hold> - and
+# the start-time allowance. So the hold is its own occurrence - delivery:<request>:held:<hold>:<n>,
+# n the journal sequence of the reconciliation that gave it that name (UNKNOWN_SEND_HOLD_NAMED) - and
 # the ledger records it, escalating the fault to broken and naming the hold, whatever the retry page
 # recorded first (CRW-124 R5 F-R5-1: under the attempt's own key it was dropped as already recorded
-# and the fault stayed degraded). From then on the attempt is the hold page's alone: the retry page
-# skips a delivery's current attempt while it carries one of these holds, so a later retry-page
-# occurrence cannot replace the detail that names the hold. A host_lost_turn hold is written in the
-# same settlement that ends a dispatched attempt the retry page never read, so it keeps the
-# attempt's key (CRW-224).
+# and the fault stayed degraded). Each naming is one occurrence, a name the hold returns to
+# included, and a reading that keeps the name adds none. From then on the attempt is the hold
+# page's alone: the retry page skips a delivery's current attempt while it carries one of these
+# holds, so a later retry-page occurrence cannot replace the detail that names the hold. A
+# host_lost_turn hold is written in the same settlement that ends a dispatched attempt the retry
+# page never read, so it keeps the attempt's key (CRW-224).
 UNKNOWN_SEND_HOLDS = (UNKNOWN_SEND_LOST, UNKNOWN_SEND_UNDECIDED)
 # How many attempts make a delivery one that is RETRYING rather than one in flight. A first
 # attempt is ordinary; a second means the first did not land.
@@ -604,6 +607,17 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None,
         occurrence = f"delivery:{row['last_request'] or row['event_id']}"
         if row["hold_reason"] in UNKNOWN_SEND_HOLDS:
             occurrence += f":held:{row['hold_reason']}"
+            # Ended with the journal sequence of the reconciliation that gave the hold this name
+            # (UNKNOWN_SEND_HOLD_NAMED): readings can move it from undecided to lost and back, and
+            # a name it returns to must be recorded again rather than dropped as the occurrence
+            # its first naming already was (independent review of 72178ee8). A hold named before
+            # the journal kind existed keeps the bare key.
+            named = store.one(
+                "SELECT MAX(seq) AS seq FROM journal WHERE kind = ? AND subject = ?",
+                (UNKNOWN_SEND_HOLD_NAMED, row["last_request"]),
+            ) if row["last_request"] else None
+            if named is not None and named["seq"] is not None:
+                occurrence += f":{named['seq']}"
         signature = {"recipient": row["recipient_task_id"],
                      "attemptState": row["last_state"]}
         observations.append(faults.observation(

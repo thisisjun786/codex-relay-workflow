@@ -763,12 +763,15 @@ is opened and published rather than left observed. An uncertain send's hold is n
 records it degraded under the attempt's key (about twenty seconds after the send in CRW-124's R5
 re-check, where the hold's broken reading under the same key was then dropped as already recorded
 and the fault stayed degraded). So an `unknown_send_*` hold is recorded as its own occurrence,
-`delivery:<request id>:held:<hold>`: it escalates the fault to broken and names the hold in the
+`delivery:<request id>:held:<hold>:<n>`, where `<n>` is the journal sequence of the reconciliation
+that gave the hold that name (`unknown_send_hold_named`, written only when the name changes; a hold
+named before this revision has no `<n>`): it escalates the fault to broken and names the hold in the
 fault's detail and in the publication that opening or escalating the fault queues, whatever the
 sweep recorded first. From then on the retry page leaves that attempt to the hold page, so a later
 reading of the attempt cannot replace the detail that names the hold. A later reading that changes
-the hold (undecided, then lost) is another occurrence on the same fault and updates its detail,
-which `fault-show` reads; like every fault the ledger records, an open fault is not published again
+the hold (undecided to lost, or back again) is another occurrence on the same fault and updates its
+detail, which `fault-show` reads, even when the name is one the fault already recorded; a reading
+that keeps the name adds nothing. Like every fault the ledger records, an open fault is not published again
 for a changed detail, so its published record keeps the hold it was opened or escalated with, while
 `assignment-show` and `reconcile` name the current one. A `host_lost_turn` hold keeps the attempt's own key: it is set in the
 same settlement that ends a dispatched attempt, which the retry page never reads first.

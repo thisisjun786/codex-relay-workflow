@@ -22,6 +22,7 @@ cap (O-H0R4-2), staged by filling the recipient's window.
 
 import json
 import os
+import re
 import shlex
 import unittest
 
@@ -908,7 +909,9 @@ class AHoldReachesItsFaultWhateverTheSweepSawFirst(UnknownSendCase):
         return self.store.one("SELECT * FROM fault_ledger WHERE fault_class = 'delivery_stalled'")
 
     def keys(self):
-        return sorted(row["occurrence_key"] for row in self.store.all(
+        """The recorded occurrence keys, a hold's naming sequence shown as #."""
+        return sorted(re.sub(r":held:(\w+):\d+$", r":held:\1:#", row["occurrence_key"])
+                      for row in self.store.all(
             "SELECT o.occurrence_key FROM fault_occurrences o"
             "  JOIN fault_ledger f ON f.fault_id = o.fault_id"
             " WHERE f.fault_class = 'delivery_stalled'"))
@@ -931,7 +934,8 @@ class AHoldReachesItsFaultWhateverTheSweepSawFirst(UnknownSendCase):
         self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
         self.assert_broken_naming(UNKNOWN_LOST)
         # Two readings of one attempt: the attempt, and the hold named on it.
-        self.assertEqual(self.keys(), [f"delivery:{first}", f"delivery:{first}:held:{UNKNOWN_LOST}"])
+        self.assertEqual(self.keys(),
+                         [f"delivery:{first}", f"delivery:{first}:held:{UNKNOWN_LOST}:#"])
         self.assertEqual(self.stall()["occurrence_count"], 2)
         opened = [summary for trigger, summary in self.publications() if trigger == "open"]
         self.assertTrue(opened, self.publications())
@@ -975,7 +979,7 @@ class AHoldReachesItsFaultWhateverTheSweepSawFirst(UnknownSendCase):
         self.assert_broken_naming(UNKNOWN_LOST)
         self.clock.advance(700)
         self.assert_broken_naming(UNKNOWN_LOST)
-        self.assertEqual(self.keys(), [f"delivery:{first}:held:{UNKNOWN_LOST}"])
+        self.assertEqual(self.keys(), [f"delivery:{first}:held:{UNKNOWN_LOST}:#"])
         self.assertEqual(self.stall()["occurrence_count"], 1)
 
     def test_a_host_lost_turn_held_after_two_losses_keeps_its_keys(self):
@@ -1001,7 +1005,7 @@ class AHoldReachesItsFaultWhateverTheSweepSawFirst(UnknownSendCase):
         self.assert_held(event_id, second, UNKNOWN_LOST, NO_TRACE)
         self.fault_states()
         self.assertEqual(self.keys(),
-                         [f"delivery:{first}", f"delivery:{second}:held:{UNKNOWN_LOST}"])
+                         [f"delivery:{first}", f"delivery:{second}:held:{UNKNOWN_LOST}:#"])
 
     def test_a_hold_that_changes_name_updates_the_one_fault_it_is_on(self):
         """Independent review of ea197703: an undecided hold that a later reading decides as lost
@@ -1019,8 +1023,8 @@ class AHoldReachesItsFaultWhateverTheSweepSawFirst(UnknownSendCase):
         self.ticks(1)
         self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
         self.assert_broken_naming(UNKNOWN_LOST)
-        self.assertEqual(self.keys(), [f"delivery:{first}:held:{UNKNOWN_LOST}",
-                                       f"delivery:{first}:held:{UNDECIDED}"])
+        self.assertEqual(self.keys(), [f"delivery:{first}:held:{UNKNOWN_LOST}:#",
+                                       f"delivery:{first}:held:{UNDECIDED}:#"])
         self.assertEqual(len(self.store.all(
             "SELECT fault_id FROM fault_ledger WHERE fault_class = 'delivery_stalled'")), 1)
         self.assertEqual(self.publications(), opened)
@@ -1046,6 +1050,10 @@ class AHoldReachesItsFaultWhateverTheSweepSawFirst(UnknownSendCase):
         self.ticks(1, seconds=700)
         self.assert_held(event_id, first, UNDECIDED, f"{UNDECIDED}:listing_empty")
         self.assert_broken_naming(UNDECIDED)
+        # One occurrence per naming: undecided, lost, and undecided again.
+        self.assertEqual(self.keys(), [f"delivery:{first}:held:{UNKNOWN_LOST}:#",
+                                       f"delivery:{first}:held:{UNDECIDED}:#",
+                                       f"delivery:{first}:held:{UNDECIDED}:#"])
         self.assertEqual(self.stall()["occurrence_count"], 3)
         self.assertEqual(self.sends_to(), [first])
 

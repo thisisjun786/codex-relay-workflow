@@ -41,7 +41,8 @@ from . import hostloss
 from .delivery import COMPLETION, REVISION, SENDING
 from .hostadapter import TokenScan
 from .policy import (
-    HOST_LOST_TURN, TURN_CHECK_UNDECIDED, UNKNOWN_SEND_LOST, UNKNOWN_SEND_UNDECIDED,
+    HOST_LOST_TURN, TURN_CHECK_UNDECIDED, UNKNOWN_SEND_HOLD_NAMED, UNKNOWN_SEND_LOST,
+    UNKNOWN_SEND_UNDECIDED,
 )
 from .transport import (
     DEFERRED_BUSY,
@@ -672,6 +673,11 @@ class Reconciler:
                 ) != (attempt["internal_state"], attempt["state"], attempt["affirmative_evidence"])
                     or (expect_scan and now_row["recipient_scan"] != attempt["recipient_scan"]))
             if current:
+                # The name the delivery carried before this write, read inside it, so that a
+                # reading giving the hold a new name journals that naming exactly once.
+                named_before = db.execute(
+                    "SELECT hold_reason FROM deliveries WHERE event_id = ?", (attempt["event_id"],),
+                ).fetchone() if hold is not None else None
                 promoted = db.execute(
                     "UPDATE deliveries SET state = ?, next_eligible_at = ?,"
                     # A pass that decided nothing keeps the hold an uncertain send's reading set.
@@ -698,6 +704,13 @@ class Reconciler:
                 # after which the turn the real dispatch reached can never bind.
                 if promoted == 1 and (aggregate or state) == DISPATCHED:
                     anchor = self._bind_promoted_anchor(db, attempt, delivery, dispatch_turn_id)
+                previous = named_before["hold_reason"] if named_before is not None else None
+                if promoted == 1 and hold is not None and previous != hold:
+                    self.store.journal(
+                        UNKNOWN_SEND_HOLD_NAMED, attempt["request_id"],
+                        {"hold": hold, "previous": previous, "eventId": attempt["event_id"]},
+                        at=now_iso,
+                    )
             self.store.journal(
                 "reconciled", attempt["request_id"],
                 {"evidence": evidence.value, "state": aggregate or state}, at=now_iso,
