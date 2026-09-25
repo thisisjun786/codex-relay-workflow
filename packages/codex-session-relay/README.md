@@ -394,14 +394,64 @@ child, completion event or terminal settlement. Existing final receipts and ackn
 are retained. Until recovery, legacy continuations remain unmeasured; this is an explicit
 compatibility boundary, not automatic migration.
 
-Admission history is read in bounded raw rowid pages. The cursor retains a finite
-insertion boundary and advances only past a consumed prefix. Settled and foreign
-rows use scan slots but cannot become this assignment's candidates; large shared
-stores can therefore increase observation latency, without increasing per-tick
-row materialization. Admission writers preserve existing rowids and never delete
-rows. Historical terminal turns remain observable, but opening a new generation
-supersedes all prior outcomes, including failures; observing an old failure does
-not send it as a current-generation report or establish acceptance.
+Admission history is read in bounded pages of one assignment's own rows. The pager keeps a
+persisted rowid keyset per assignment through the index `generation_turns_relationship`, so other
+assignments' rows are never read, and it keeps a settled floor: a wrapped pass starts at the first
+row the assignment has not settled rather than at its first row. Only settled rows pass the floor
+(settlements are never deleted and nothing is inserted below the table's highest rowid); an
+unsettled row pins it, an unrepaired legacy row included, because a fresh admission can repair
+that row in place. Admission writers preserve existing rowids and never delete rows. Historical
+terminal turns remain observable, but opening a new generation supersedes all prior outcomes,
+including failures; observing an old failure does not send it as a current-generation report or
+establish acceptance.
+
+#### How soon an ended turn is settled
+
+The store derives an omission only after the relay settles the turn itself, so the daemon reads
+first, every tick, the turn that derivation evaluates (CRW-238). For each active assignment that is
+its newest bound admission of the current generation, found by one seek on the index
+`generation_turns_bound`, and its anchor, while either is unsettled: the frontier. It gets up to
+`frontier_reads_per_tick` (4) of the `max_turn_reads_per_tick` (8) reads; the relationship
+rotation spends the rest on staged, historical and older admitted turns and never reads a turn the
+frontier read that tick.
+
+Which frontier turns are read first comes from one host-wide `thread/list` sorted by
+`updated_at`, newest first, made only on a tick with an open frontier turn. It pages until it
+reaches the newest `updatedAt` of the last listing's first page, at most
+`thread_activity_listing_pages` (4) pages of `thread_activity_listing_limit` (50) threads; that
+is its own cap, outside the read budget. A child listed as not active, updated at or after the
+relay's last read of its frontier turn (one second of slack, since `updatedAt` is whole seconds),
+has stopped: that turn is read before the others, which follow least recently read, and it stays
+first until read once. Measured on codex-cli 0.154.0: a running thread is `active` with
+`updatedAt` within seconds of now, and every idle or unloaded thread's `updatedAt` is the whole
+second of its last `task_complete`. The listing never settles anything; settlement still needs a
+successful read of a terminal status whose settlement commits.
+
+The bound, with F = `frontier_reads_per_tick`:
+
+- A turn whose child stopped is read, and settled if it ended, on the next tick; with E stopped
+  frontier turns waiting at once, within ceil(E / F) ticks. That holds whatever the length of
+  `generation_turns`, however many active assignments are idle (they cost no host reads) and
+  however many children are running, provided fewer than 200 (limit x pages) threads have an
+  `updatedAt` at or after the listing's mark when it runs. A listing that does not reach its mark
+  says `thread activity listing saturated` in the tick's notes.
+- Otherwise the frontier's own order reads every open frontier turn within ceil(U / F) ticks,
+  U being the open frontier turns (running children, not active assignments). That is the floor
+  for an adapter without the listing, a failed or saturated listing, a failed read of a stopped
+  turn, a relay/host clock skew over a second, a first listing after a restart before any
+  frontier turn was read, and one named case no thread-level signal can see: a turn started on
+  the child outside the relay, and not admitted to the assignment, within one poll interval of
+  the omitted turn's end. A turn the relay starts on a child is a revision request of the next
+  generation, and a later turn the parent admits makes the older one `later_turn_admitted`;
+  neither leaves an omission to settle.
+- A tick is `poll_interval_seconds` (20) plus its own duration, because `run()` sleeps after each
+  tick. Measured on the fake host at 7286dfd6: 1.1 ms at 18 active assignments, 2.3 ms at 100 and
+  9.9 ms at 500 idle; 3.1, 3.7 and 9.9 ms with a quarter of them running. Host calls a tick stay
+  capped; store work is O(active assignments) indexed lookups, as it already was.
+- The omission is owed `omission_grace_seconds` after the settlement and staged by the supervisor
+  pass within its project rotation. That pass derives each relationship of a served project once,
+  and each derivation is a fixed number of point lookups and seeks, so it does not grow with the
+  generation's admissions either.
 
 ### Exact-turn reporting observation
 
@@ -423,7 +473,13 @@ not as proof that nothing happened.
 A Stop observation by itself is not a terminal assignment. `stopObservation` keeps that warning;
 `terminalObservation` comes only from a persisted settlement for the same relationship, child and
 turn. When that settlement is missing, the state is `unmeasured` with reason
-`host_terminal_unobserved`. Evidence that cannot be read, or that conflicts, stays `unmeasured`
+`host_terminal_unobserved`, and `waiting` names what the reading waits for:
+`{"for": "relay_settlement", "reason": ...}` with the daemon's last read of the turn under the
+current generation (`lastStatus`, `lastPolledAt`, `lastAttemptAt`, `lastError`), the reason one of
+`not_yet_polled`, `in_progress_at_last_read`, `host_reports_absent`, `last_read_failed` or
+`terminal_read_unsettled` (read as ended, settlement deferred or rolled back). A settled omission
+still inside the grace carries `{"for": "report_grace", "until": ...}`. `waiting` sits beside the
+diagnosis and never changes it; an owed or answered reading has none. Evidence that cannot be read, or that conflicts, stays `unmeasured`
 with its reason; it is not rewritten as success or absence. `relationshipStatus` is the stored
 status, including `paused` or `cancelled`, and does not wake the owner.
 
@@ -438,6 +494,9 @@ omission from. A child that claimed without that record is `unmeasured` /
 `declarations_not_recorded`, and nothing is derived for it. Both readings carry `owed` beside
 the diagnosis: false when the turn's own final receipt exists, when a later turn was admitted, or
 inside the grace. See [the supervisor channel](docs/supervisor-channel.md#an-omission-this-store-derives).
+`assignment-show` carries the same reading, with the pass's grace, as `reporting` (for
+`--relationship`, and on each entry of `assignments` for `--issue`): the turn, the answer and its
+`waiting`, or `unmeasured` when the store cannot be read.
 
 ## Commands
 
