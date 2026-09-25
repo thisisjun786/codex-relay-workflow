@@ -32,8 +32,9 @@ import stat
 from pathlib import Path
 
 from .hostadapter import (
-    DISPATCHED_TURN_MAX_PAGES, IN_TURN_ITEMS_MAX, HostUnavailable, ThreadFacts, TokenScan,
-    TurnInfo, TurnPresence, find_in_listing, find_token_in, find_token_in_turn_items, is_message,
+    DISPATCHED_TURN_MAX_PAGES, IN_TURN_ITEMS_MAX, HostUnavailable, ThreadActivity,
+    ThreadActivityPage, ThreadFacts, TokenScan, TurnInfo, TurnPresence, find_in_listing,
+    find_token_in, find_token_in_turn_items, is_message,
 )
 from .settings import SETTINGS_DIFFER_AFTER_LOAD, SETTINGS_NOT_PRESERVED
 
@@ -246,6 +247,26 @@ class BridgeHostAdapter:
             f"turn {turn_id!r} not found within {MAX_PAGES_PER_CHECK} pages; the listing was not "
             "exhausted, so this is not evidence of absence"
         )
+
+    def recent_threads(self, limit: int, cursor: str | None = None) -> ThreadActivityPage:
+        """One page of this host's threads, most recently updated first (CRW-238).
+
+        The default listing: interactive sources, unarchived, read from the state database
+        without repairing metadata, as the archive scan reads it. Exec-source threads are not in
+        it (see the module note), and the daemon reads their turns in its fallback order. One
+        call per page; the caller decides how many pages it can afford.
+        """
+        params = {"limit": limit, "useStateDbOnly": True, "sortKey": "updated_at",
+                  "sortDirection": "desc"}
+        if cursor:
+            params["cursor"] = cursor
+        page = self._call("thread/list", params)
+        threads = tuple(
+            ThreadActivity(one["id"], (one.get("status") or {}).get("type") or "unknown",
+                           one.get("updatedAt"), one.get("recencyAt"))
+            for one in page.get("data", []) if one.get("id")
+        )
+        return ThreadActivityPage(threads, page.get("nextCursor") or None)
 
     def is_archived(self, thread_id: str, *, cwd: str | None = None):
         """True, False, or None for unknown. Resolved by exact id, never by a filter's silence.

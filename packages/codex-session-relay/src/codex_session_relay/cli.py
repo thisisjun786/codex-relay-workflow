@@ -1731,8 +1731,37 @@ def cmd_revision_head(services, args) -> dict:
 
 def cmd_assignment_show(services, args) -> dict:
     if args.issue:
-        return services.assignments.for_issue(args.issue)
-    return services.assignments.state(args.relationship)
+        record = services.assignments.for_issue(args.issue)
+        for assignment in record.get("assignments") or []:
+            assignment["reporting"] = _reporting_block(services, assignment["relationshipId"])
+        return record
+    record = services.assignments.state(args.relationship)
+    record["reporting"] = _reporting_block(services, args.relationship)
+    return record
+
+
+def _reporting_block(services, relationship_id) -> dict:
+    """What this store derives about the assignment's newest turn, and what that waits for.
+
+    The reading reporting-derive gives, with the grace the daemon's pass uses, cut to its answer
+    (CRW-238): a child that ended a turn without reporting shows here whether the relay has
+    settled it yet and, until it is owed, why not. A store the reading cannot read answers
+    unmeasured rather than failing a command that answered before this block existed.
+    """
+    import sqlite3
+
+    from . import omitted
+
+    try:
+        reading = omitted.derive(
+            services.store, relationship_id, state_directory=services.state_directory,
+            now=services.clock.iso(),
+            grace=services.supervisor_channel.policy.omission_grace_seconds)
+    except (sqlite3.Error, OSError) as error:
+        return {"source": omitted.STORE_SOURCE, "reportingState": "unmeasured",
+                "reason": f"evidence_unreadable: {error}", "owed": False,
+                "owedReason": omitted.NOT_AN_OMISSION}
+    return omitted.reporting_summary(reading)
 
 
 def cmd_assignment_find(services, args) -> dict:

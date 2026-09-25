@@ -394,14 +394,122 @@ child, completion event or terminal settlement. Existing final receipts and ackn
 are retained. Until recovery, legacy continuations remain unmeasured; this is an explicit
 compatibility boundary, not automatic migration.
 
-Admission history is read in bounded raw rowid pages. The cursor retains a finite
-insertion boundary and advances only past a consumed prefix. Settled and foreign
-rows use scan slots but cannot become this assignment's candidates; large shared
-stores can therefore increase observation latency, without increasing per-tick
-row materialization. Admission writers preserve existing rowids and never delete
-rows. Historical terminal turns remain observable, but opening a new generation
-supersedes all prior outcomes, including failures; observing an old failure does
-not send it as a current-generation report or establish acceptance.
+Admission history is read in bounded pages of one assignment's own rows. The pager keeps a
+persisted rowid keyset per assignment through the index `generation_turns_relationship`, so other
+assignments' rows are never read, and it keeps a settled floor: a wrapped pass starts at the first
+row the assignment has not settled rather than at its first row. A pass ends when its range is
+spent or its page comes back empty, as it does for a cursor written before the scope existed,
+whose global rowids can stand past the assignment's rows; the next pass starts at the floor with
+the assignment's own highest rowid as its ceiling, so a call makes at most two page queries.
+Only settled rows pass the floor (settlements are never deleted and nothing is inserted below the
+table's highest rowid); an unsettled row pins it, an unrepaired legacy row included, because a
+fresh admission can repair that row in place. Admission writers preserve existing rowids and
+never delete rows. Historical terminal turns remain observable, but opening a new generation
+supersedes all prior outcomes, including failures; observing an old failure does not send it as a
+current-generation report or establish acceptance.
+
+#### How soon an ended turn is settled
+
+The store derives an omission only after the relay settles the turn itself, so the daemon reads
+first, every tick, the turn that derivation evaluates (CRW-238). For each active assignment that is
+its newest bound admission of the current generation, found by one seek on the index
+`generation_turns_bound`, and its anchor, while either is unsettled: the frontier. It gets up to
+`frontier_reads_per_tick` (4) of the `max_turn_reads_per_tick` (8) reads; the relationship
+rotation spends the rest on staged, historical and older admitted turns and never reads a turn the
+frontier read that tick.
+
+Which frontier turns are read first comes from one host-wide `thread/list` sorted by
+`updated_at`, newest first, made only on a tick with an open frontier turn, at most
+`thread_activity_listing_pages` (4) pages of `thread_activity_listing_limit` (50) threads a
+tick; that is its own cap, outside the read budget. The daemon keeps what the listing last showed
+of each child of a live assignment, active or paused, and decides from that record rather than
+from the pages one tick happened to read. A frontier turn's child has stopped when, measured
+against the relay's last read of that turn the host answered (a failed read does not move it):
+
+- the record shows it not active and updated at or after that read, or not active at all while
+  no read of the turn has been answered, or
+- its `recencyAt`, the second its latest turn started, is after that read. A thread runs one turn
+  at a time, so a turn started on the child outside the relay, and not admitted, still shows that
+  the turn the relay read has ended.
+
+Both stamps are whole seconds, so each rule allows one second of slack; a false stop costs one
+read, because a read settles only a terminal status. A stopped turn is read before the others,
+which follow least recently read. It stays first until a read settles it or answers running or
+absent; a read that fails, or that sees the ending while the settlement does not commit, keeps
+it first, for at most three such reads in a row (`UNSETTLED_READS_CAP`).
+
+Measured on codex-cli 0.154.0: a running thread is `active` with `updatedAt` within seconds of
+now, every idle or unloaded thread's `updatedAt` is the whole second of its last
+`task_complete`, and on every thread of a first listing page whose rollout was read in full (30
+of 30) the last `task_started` falls within [0, 1) s after `recencyAt`. The listing never
+settles anything; settlement still needs a successful read of a terminal status whose settlement
+commits.
+
+How far back a listing reaches is its floor. That is the watermark, page 1's newest `updatedAt`
+on the tick the last complete listing began, or further back for an open turn whose child the
+listing has not shown since the daemon started: to that turn's last answered read or, before any,
+to its generation's opening. Until a listing has reached its floor since the daemon started, every
+open turn's reference counts that way, so the worker's hourly restart cannot leave it reading
+page 1 alone. A listing that reaches its floor, less the second the host rounds to, or the end of
+the host's list is complete: its first page's newest becomes the watermark, and every live child
+it did not show is recorded as not listed down to that floor. Such a child gives no stop signal
+and asks for no deeper listing unless one of its turns refers to a moment before that floor.
+
+A listing that runs out of pages first is saturated: the tick's notes say `thread activity listing
+saturated`, the watermark stays, and the listing becomes a sweep that later ticks carry on to its
+floor from its cursor, whatever they would reach for themselves. While a sweep is pending, each
+tick first reads its head, from the top down to the newest `updatedAt` of the last head that got
+there, in at most P - 1 pages, and spends the rest on the sweep. A head that does not get there
+leaves the same target to the next, so the heads leave no gap above the sweep's start, and the
+watermark a finished sweep leaves is the last complete head's. The host's cursor is a timestamp
+keyset, so a thread that moves to the top meanwhile shifts nothing below the cursor.
+
+The bound, with F = `frontier_reads_per_tick`, L = `thread_activity_listing_limit` and
+P = `thread_activity_listing_pages`:
+
+- A turn whose child stopped, or started another turn, is read, and settled if it ended, on the
+  next tick; with E such frontier turns waiting at once, within ceil(E / F) ticks. That holds
+  whatever the length of `generation_turns`, however many active assignments are idle (they cost
+  no host reads) and however many children are running, while fewer than about
+  L x (P - 1) = 150 distinct host threads, the relay's own running children included, update per
+  poll interval: the listing, or a pending sweep's head, then gets back past the previous tick
+  within the tick.
+- A child that had already stopped when the daemon started, or while its assignment was paused
+  across a restart, is reached by the first complete listing or its sweep, which moves at least L
+  threads a tick besides the head. How many ticks that takes depends on the host threads updated
+  since the oldest reference, which is host-wide activity rather than the relay's assignments.
+- Otherwise the frontier's own order still reads a turn with no stop signal within
+  ceil((U + E + 3X) / F) ticks, an upper bound per daemon run: U the open frontier turns during
+  the wait, including those that open meanwhile (running children, not active assignments), E the
+  priority reads stopped turns take meanwhile when the host answers (one each, false signals
+  included), and X the stopped turns whose reads keep failing or whose settlement does not commit
+  (at most `UNSETTLED_READS_CAP`, 3, reads each; an answered read resets the count, and the turn
+  then needs a new signal to go first again). A run lasts at most `segment_seconds` (3600) and
+  each restart re-arms the cap. The rotation may read the turn sooner. That is the floor for:
+  - an adapter without the listing, or a listing limit or page count of 0;
+  - a page count of 1, which leaves a sweep no page after the head, for what only a sweep would
+    reach;
+  - a listing that keeps failing (one failure only delays the next complete listing, since the
+    watermark stays);
+  - more host updates per poll interval than the rate above;
+  - a stopped turn with three reads in a row that did not settle it;
+  - children the default listing leaves out: exec-source threads and archived threads, which are
+    recorded as not listed;
+  - threads sharing a millisecond at a page boundary, which the host's timestamp cursor may skip
+    (an assumption: the cursor carries no thread id);
+  - skew over a second between the relay's clock and the host's;
+  - a turn whose child ended it before its generation opened (registering a turn that had already
+    ended), once no listing reaches that far;
+  - a terminal read whose settlement rolled back, when the daemon restarts before reading it
+    again (the priority is kept in memory).
+- A tick is `poll_interval_seconds` (20) plus its own duration, because `run()` sleeps after each
+  tick. Measured on the fake host at 658fd142: 1.1 ms at 18 active assignments, 2.0 ms at 100 and
+  10.1 ms at 500 idle; 2.7, 4.3 and 12.0 ms with a quarter of them running. Host calls a tick stay
+  capped; store work is O(active assignments) indexed lookups, as it already was.
+- The omission is owed `omission_grace_seconds` after the settlement and staged by the supervisor
+  pass within its project rotation. That pass derives each relationship of a served project once,
+  and each derivation is a fixed number of point lookups and seeks, so it does not grow with the
+  generation's admissions either.
 
 ### Exact-turn reporting observation
 
@@ -423,7 +531,14 @@ not as proof that nothing happened.
 A Stop observation by itself is not a terminal assignment. `stopObservation` keeps that warning;
 `terminalObservation` comes only from a persisted settlement for the same relationship, child and
 turn. When that settlement is missing, the state is `unmeasured` with reason
-`host_terminal_unobserved`. Evidence that cannot be read, or that conflicts, stays `unmeasured`
+`host_terminal_unobserved`, and `waiting` names what the reading waits for:
+`{"for": "relay_settlement", "reason": ...}` with the daemon's last read of the turn under the
+current generation (`lastStatus`, `lastPolledAt`, `lastAttemptAt`, `lastError`), the reason one of
+`not_yet_polled`, `in_progress_at_last_read`, `host_reports_absent`, `last_read_failed` or
+`terminal_read_unsettled` (read as ended, settlement deferred or rolled back). A settled omission
+still inside the grace carries `{"for": "report_grace", "until": ...}`, with `until` null when no
+timestamp can hold the grace's end (an infinite or out-of-range `--grace`). `waiting` sits beside the
+diagnosis and never changes it; an owed or answered reading has none. Evidence that cannot be read, or that conflicts, stays `unmeasured`
 with its reason; it is not rewritten as success or absence. `relationshipStatus` is the stored
 status, including `paused` or `cancelled`, and does not wake the owner.
 
@@ -438,6 +553,9 @@ omission from. A child that claimed without that record is `unmeasured` /
 `declarations_not_recorded`, and nothing is derived for it. Both readings carry `owed` beside
 the diagnosis: false when the turn's own final receipt exists, when a later turn was admitted, or
 inside the grace. See [the supervisor channel](docs/supervisor-channel.md#an-omission-this-store-derives).
+`assignment-show` carries the same reading, with the pass's grace, as `reporting` (for
+`--relationship`, and on each entry of `assignments` for `--issue`): the turn, the answer and its
+`waiting`, or `unmeasured` when the store cannot be read.
 
 ## Commands
 

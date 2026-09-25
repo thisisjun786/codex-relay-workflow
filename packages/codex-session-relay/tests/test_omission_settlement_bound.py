@@ -1,0 +1,1170 @@
+"""CRW-238: an omitted turn settles within a bound that neither history nor other assignments move.
+
+CRW-124 K2 (R5 10fd7048, the shared host): a managed child ended its admitted business turn with
+no emit and no disposition. The store derives an omission only after the relay settles that turn
+itself, and the daemon reached it only through the admitted-turn pager, which walked the whole
+generation_turns table - every assignment's rows - one row per visit, visiting four of eighteen
+assignments per tick. The turn sat at row 58 and was about 91 minutes from being settled.
+
+These cases build that shape (this assignment among seventeen others, its business turn admitted
+as row 58) and hold the daemon to five things:
+
+1. The turn omitted.derive evaluates is found by an index seek and, once its child thread stops
+   running, read on the next tick - the one host-wide thread listing a tick makes says which
+   children stopped - so it settles within a tick of ending however many rows the store holds
+   and however many other children run; its omission then goes up once, after the grace.
+2. Without that listing every open frontier turn is still read within ceil(U / F) ticks.
+3. A child that reports on that turn is delivered within the same bound.
+4. The tick's read budget holds, and the admission pager reads only its own assignment's rows
+   and starts a wrapped pass at the first row not yet settled.
+5. The readers' own cost does not grow with admission history, and assignment-show,
+   reporting-show and reporting-derive name what a derivation is waiting for.
+"""
+
+import datetime
+import json
+import math
+from unittest import mock
+
+from codex_session_relay import cli, intent, omitted
+from codex_session_relay.admission import admit_explicitly
+from codex_session_relay.models import Endpoint, TurnRef
+from codex_session_relay.policy import RetryPolicy
+from codex_session_relay.receipts import ObservationOutcome
+from codex_session_relay.store import resolve_state_dir
+from codex_session_relay.transport import DISPATCHED
+
+from .support import CHILD, DISPATCH_TURN, HOST, PARENT, DeliveryTestCase
+from .test_daemon import DaemonTestCase
+from .test_guard import LATER, GuardTestCase
+from .test_supervisor_omission_store import ChildCommands, StoreOmissionCase, relay, stored
+
+BUSINESS = "turn-business"
+OTHERS = 17
+FOREIGN_ROWS = 57
+TICK = 20
+
+
+def frontier_slice(policy):
+    """frontier_reads_per_tick, read defensively so a relay without it fails on the bound."""
+    return getattr(policy, "frontier_reads_per_tick", 4)
+
+
+class ASharedHost(StoreOmissionCase):
+    """This assignment among seventeen idle others, fifty-seven settled admissions before its own."""
+
+    def setUp(self):
+        super().setUp()
+        self.others = [self.other(index) for index in range(OTHERS)]
+        for index in range(FOREIGN_ROWS):
+            rid, child = self.others[index % OTHERS]
+            turn = f"history-{index:02}"
+            self.adapter.start_turn(child, turn_id=turn, status="completed")
+            admit_explicitly(self.store, self.clock, rid, 1, turn, actor="owner")
+            self.settle(rid, child, turn)
+        # The standby turn this assignment was dispatched on ended and was settled, as in K2.
+        self.adapter.start_turn(CHILD, turn_id=DISPATCH_TURN, status="completed")
+        self.settle(self.rid, CHILD, DISPATCH_TURN)
+        self.claim_through_cli()
+
+    def settle(self, rid, child, turn):
+        self.intake.record_observation(TurnRef(child, turn, "completed"),
+                                       ObservationOutcome.ORDINARY_TURN_END, relationship_id=rid)
+
+    def other(self, index, *, running=False):
+        """Another assignment on its own child: idle (its anchor settled) unless running."""
+        parent, child = f"01parent-other-{index:02}", f"01child-other-{index:02}"
+        anchor = f"turn-other-{index:02}"
+        for task in (parent, child):
+            self.adapter.add_thread(task)
+        record = self.registry.register(
+            parent=Endpoint(parent, HOST, cwd=f"/p/{index}"),
+            child=Endpoint(child, HOST, cwd=f"/c/{index}"),
+            issue_key=f"REL-other-{index:02}", artifact_roots=[self.root],
+            allowed_recipients=[parent], dispatch_request_id=f"dispatch-other-{index:02}",
+            dispatch_turn_id=anchor)
+        rid = record["relationshipId"]
+        self.adapter.start_turn(child, turn_id=anchor,
+                                status="inProgress" if running else "completed")
+        if not running:
+            self.settle(rid, child, anchor)
+        return rid, child
+
+    def business_turn_starts(self, turn=BUSINESS, *, status="inProgress", host=True):
+        if host:
+            self.adapter.start_turn(CHILD, turn_id=turn, status=status)
+        admit_explicitly(self.store, self.clock, self.rid, 1, turn, actor=PARENT,
+                         detail="managed business dispatch")
+
+    def business_turn_ends(self, turn=BUSINESS, status="completed"):
+        self.adapter.finish_turn(CHILD, turn, status=status)
+
+    def settled(self, turn=BUSINESS):
+        return self.store.one(
+            "SELECT 1 FROM assignment_settlements WHERE relationship_id = ? AND turn_id = ?",
+            (self.rid, turn)) is not None
+
+    def ticks_until_settled(self, limit, turn=BUSINESS):
+        for count in range(1, limit + 1):
+            self.tick(advance=TICK)
+            if self.settled(turn):
+                return count
+        return None
+
+    def derive(self, turn=None, grace=None):
+        return omitted.derive(self.store, self.rid, state_directory=self.state_directory(),
+                              now=self.clock.iso(),
+                              grace=self.grace if grace is None else grace, turn=turn)
+
+    def shown(self, command, *extra):
+        """The real command line, in process, reading at this case's clock rather than the host's."""
+        with mock.patch.object(cli, "SystemClock", lambda: self.clock):
+            code, answer = relay("--state", self.state_directory(), command,
+                                 "--relationship", self.rid, *extra)
+        self.assertEqual(code, 0, answer)
+        return answer
+
+    def this_assignment_last_in_the_rotation(self, rid=None):
+        """Stand the relationship rotation where it reaches this assignment (or rid) last."""
+        order = [one["relationshipId"] for one in self.daemon._active_relationships()]
+        cursor = (order.index(rid or self.rid) + 1) % len(order)
+        self.store.db.execute(
+            "INSERT INTO discovery_cursors (task_id, listing, cursor, updated_at)"
+            " VALUES ('scheduler','relationships',?,?) ON CONFLICT(task_id, listing)"
+            " DO UPDATE SET cursor = excluded.cursor", (str(cursor), self.clock.iso()))
+
+    def read_in_the_last_tick(self, turn=BUSINESS):
+        """Tick until the frontier's last read of the turn is this tick's, so least-recently-read
+        order alone would not pick it next: what follows is then decided by the stop signal."""
+        for _ in range(8):
+            self.tick(advance=TICK)
+            row = self.store.one(
+                "SELECT last_attempt_at FROM poll_observations WHERE relationship_id = ?"
+                " AND turn_id = ?", (self.rid, turn))
+            if row and row["last_attempt_at"] == self.clock.iso():
+                return
+        self.fail("the turn was never read in the tick just gone")
+
+
+class AnOmittedTurnAmongManyAssignmentsAndLongHistory(ASharedHost):
+    def test_the_k2_shape_is_what_this_case_builds(self):
+        self.business_turn_starts()
+        row = self.store.one("SELECT rowid AS row FROM generation_turns WHERE turn_id = ?",
+                             (BUSINESS,))
+        self.assertEqual(row["row"], FOREIGN_ROWS + 1)
+        self.assertEqual(len(self.daemon._active_relationships()), OTHERS + 1)
+
+    def test_it_settles_within_one_tick_and_goes_up_once_after_the_grace(self):
+        self.business_turn_starts()
+        self.tick(advance=TICK)
+        self.assertFalse(self.settled(), "a running turn is read, not settled")
+        self.business_turn_ends()
+        self.tick(advance=TICK)
+        self.assertTrue(self.settled(),
+                        "the omitted business turn waited behind the admission history")
+        reading = self.derive()
+        self.assertEqual((reading["reportingState"], reading["owed"], reading["owedReason"]),
+                         ("unreported", False, omitted.WITHIN_GRACE))
+        self.assertEqual(self.omissions(), [])
+
+        after = self.tick(advance=self.grace + 1)
+        self.assertEqual(self.counts(after), (1, 1))
+        message = self.the_omission()
+        self.assertEqual(message["state"], DISPATCHED)
+        again = self.tick(advance=3600)
+        self.assertEqual(self.counts(again), (0, 0))
+        self.assertEqual(len(self.upward()), 1, "one omission, one wake")
+
+    def test_a_stopped_turn_is_read_first_however_many_children_run(self):
+        for index in range(12):
+            self.other(OTHERS + index, running=True)
+        self.business_turn_starts()
+        for _ in range(3):
+            self.tick(advance=TICK)
+        self.business_turn_ends()
+        self.assertEqual(self.ticks_until_settled(1), 1,
+                         "twelve running children delayed the one that stopped")
+
+    def test_without_the_listing_every_open_turn_is_read_within_ceil_u_over_f(self):
+        running = [self.other(OTHERS + index, running=True) for index in range(12)]
+        self.adapter.recent_threads = None
+        self.business_turn_starts()
+        for _ in range(3):
+            self.tick(advance=TICK)
+        self.business_turn_ends()
+        bound = math.ceil((len(running) + 1) / frontier_slice(self.daemon.policy))
+        self.assertIsNotNone(self.ticks_until_settled(bound),
+                             f"not settled within ceil(U/F) = {bound} ticks of ending")
+
+    def test_the_listing_pages_to_its_watermark(self):
+        """Five running children fill two pages of two; the stopped one is on the third."""
+        self.daemon.policy = RetryPolicy(thread_activity_listing_limit=2,
+                                         thread_activity_listing_pages=4)
+        for index in range(5):
+            self.other(OTHERS + index, running=True)
+        self.business_turn_starts()
+        for _ in range(3):
+            self.tick(advance=TICK)
+        self.business_turn_ends()
+        self.assertEqual(self.ticks_until_settled(1), 1,
+                         "the stopped child was below the first page and nobody paged to it")
+
+    def test_a_failed_listing_keeps_its_watermark(self):
+        """A listing that fails part way must not move the mark past rows it never read.
+        Prepared under the default policy, whose first listing reaches its floor in one tick."""
+        for index in range(5):
+            self.other(OTHERS + index, running=True)
+        self.business_turn_starts()
+        self.tick(advance=TICK)
+        before = getattr(self.daemon, "_activity_since", None)
+        self.assertIsNotNone(before, "a listing that read its pages sets the mark")
+        self.daemon.policy = RetryPolicy(thread_activity_listing_limit=2,
+                                         thread_activity_listing_pages=4)
+        original = self.adapter.recent_threads
+
+        def failing(limit, cursor=None):
+            if cursor is not None:
+                raise ConnectionError("the second page never came")
+            return original(limit, cursor=cursor)
+
+        self.adapter.recent_threads = failing
+        report = self.tick(advance=TICK)
+        self.assertTrue(any("thread activity listing failed" in note for note in report.notes),
+                        report.notes)
+        self.assertEqual(self.daemon._activity_since, before)
+
+    def test_a_failed_listing_is_noted_and_the_floor_still_settles_the_turn(self):
+        running = [self.other(OTHERS + index, running=True) for index in range(12)]
+        self.adapter.fail_reads("recent_threads")
+        self.business_turn_starts()
+        report = self.tick(advance=TICK)
+        self.assertTrue(any("thread activity listing failed" in note for note in report.notes),
+                        report.notes)
+        self.business_turn_ends()
+        bound = math.ceil((len(running) + 1) / frontier_slice(self.daemon.policy))
+        self.assertIsNotNone(self.ticks_until_settled(bound))
+
+
+class ANormalEmitOnTheBusinessTurn(ASharedHost):
+    def test_a_ready_receipt_goes_to_the_parent_within_the_bound(self):
+        self.business_turn_starts()
+        path = self.artifact("out.txt", "the deliverable")
+        payload = self.ready_payload(self.relationship, [path],
+                                     turn=TurnRef(CHILD, BUSINESS, "inProgress"))
+        self.accept(payload)
+        self.assertEqual(self.intake.row(payload["eventId"])["stage"], "staged")
+        self.this_assignment_last_in_the_rotation()
+        self.business_turn_ends()
+
+        self.tick(advance=TICK)
+
+        self.assertEqual(self.intake.row(payload["eventId"])["stage"], "final",
+                         "the reported turn waited for the rotation to come round")
+        # Queued to the parent in the same tick. The send itself then passes the parent's own
+        # gates (this fixture binds the parent as a role with no role policy readable, so it is
+        # withheld there); that path is the delivery's, not the observation's.
+        self.assertIsNotNone(self.store.one(
+            "SELECT 1 FROM deliveries WHERE event_id = ? AND recipient_task_id = ?",
+            (payload["eventId"], PARENT)), "the parent's delivery was not queued within the bound")
+        self.assertEqual(len(self.upward()), 1, "the completion did not go up within the bound")
+        self.assertFalse(self.derive()["owed"])
+
+
+class TheTickBudget(ASharedHost):
+    def test_frontier_and_rotation_never_exceed_the_budget_or_read_a_turn_twice(self):
+        """A guard: it holds on 10fd7048 too, and the frontier must not break it."""
+        for index in range(12):
+            self.other(OTHERS + index, running=True)
+        self.business_turn_starts()
+        reads = []
+        original = self.adapter.read_turn
+
+        def counted(thread, turn):
+            reads.append((thread, turn))
+            if turn == "turn-other-20":
+                raise ConnectionError("this one never answers")
+            return original(thread, turn)
+
+        self.adapter.read_turn = counted
+        budget = self.daemon.policy.max_turn_reads_per_tick
+        for tick in range(10):
+            del reads[:]
+            self.tick(advance=TICK)
+            self.assertLessEqual(len(reads), budget, f"tick {tick} read {len(reads)}")
+            # Distinct children here, so a (thread, turn) is one assignment's turn.
+            self.assertEqual(len(reads), len(set(reads)), f"tick {tick} read a turn twice")
+            if tick == 4:
+                self.business_turn_ends()
+
+    def test_the_listing_is_bounded_a_tick_and_absent_while_nothing_is_open(self):
+        calls = []
+        original = getattr(self.adapter, "recent_threads", None)
+
+        def listed(limit, cursor=None):
+            calls.append((limit, cursor))
+            return original(limit, cursor=cursor)
+
+        self.adapter.recent_threads = listed
+        for _ in range(3):
+            self.tick(advance=TICK)
+        self.assertEqual(calls, [], "an idle store asked the host for its threads")
+        self.business_turn_starts()
+        self.tick(advance=TICK)
+        pages = getattr(self.daemon.policy, "thread_activity_listing_pages", 4)
+        self.assertTrue(1 <= len(calls) <= pages, f"{len(calls)} listing calls in one tick")
+
+
+class ABudgetOfOne(DaemonTestCase):
+    def test_the_rotation_still_reads_when_the_frontier_has_no_room(self):
+        """A guard: a budget of one leaves the frontier no slot and the rotation its old one."""
+        from codex_session_relay.daemon import RelayDaemon
+
+        self.register()
+        self.daemon = RelayDaemon(self.store, self.registry, self.intake, self.delivery,
+                                  self.ack, self.reconciler, self.adapter, clock=self.clock,
+                                  policy=RetryPolicy(max_turn_reads_per_tick=1))
+        self.adapter.start_turn(CHILD, turn_id=DISPATCH_TURN, status="inProgress")
+        reads = []
+        original = self.adapter.read_turn
+        self.adapter.read_turn = lambda thread, turn: (reads.append(turn),
+                                                       original(thread, turn))[1]
+        self.daemon.tick(now=self.clock.now())
+        self.assertEqual(reads, [DISPATCH_TURN])
+        self.adapter.finish_turn(CHILD, DISPATCH_TURN, status="completed")
+        for _ in range(2):
+            self.clock.advance(TICK)
+            self.daemon.tick(now=self.clock.now())
+        self.assertIsNotNone(self.store.one(
+            "SELECT 1 FROM assignment_settlements WHERE turn_id = ?", (DISPATCH_TURN,)))
+
+
+class TheScopedPager(ASharedHost):
+    def pages(self):
+        """Every row the admission pager's own query returned, in order."""
+        original = self.store.all
+        seen = []
+
+        def observed(sql, params=()):
+            rows = original(sql, params)
+            if "admission_row" in sql:
+                seen.extend(dict(row) for row in rows)
+            return rows
+
+        self.store.all = observed
+        return seen
+
+    def test_another_assignments_rows_are_never_in_this_ones_page(self):
+        self.business_turn_starts()
+        seen = self.pages()
+        relation = self.registry.get(self.rid)
+        first = self.daemon._turns_to_poll(relation, 2)
+        for _ in range(3):
+            self.daemon._turns_to_poll(relation, 2)
+        owners = {self.store.one("SELECT relationship_id FROM generation_turns WHERE rowid = ?",
+                                 (row["admission_row"],))["relationship_id"] for row in seen}
+        self.assertEqual(owners, {self.rid}, "the page walked other assignments' rows")
+        self.assertIn(BUSINESS, first, "the first visit did not reach this assignment's admission")
+
+    def test_a_wrapped_pass_starts_at_the_first_row_not_yet_settled(self):
+        earlier = [f"settled-{index:02}" for index in range(40)]
+        for turn in earlier:
+            self.business_turn_starts(turn, status="completed")
+            self.settle(self.rid, CHILD, turn)
+        self.business_turn_starts("still-running")
+        for index in range(4):
+            self.business_turn_starts(f"after-{index}", status="completed")
+            self.settle(self.rid, CHILD, f"after-{index}")
+        seen = self.pages()
+        relation = self.registry.get(self.rid)
+        picked = []
+        for _ in range(300):
+            picked.extend(self.daemon._turns_to_poll(relation, 2))
+        counts = {}
+        for row in seen:
+            counts[row["turn_id"]] = counts.get(row["turn_id"], 0) + 1
+        self.assertEqual({turn: counts.get(turn, 0) for turn in earlier
+                          if counts.get(turn, 0) != 1}, {},
+                         "a settled row before the first unsettled one was read again")
+        self.assertGreater(picked.count("still-running"), 1,
+                           "the unsettled row stopped being read once passed")
+
+    def test_a_cursor_left_past_this_assignments_rows_starts_again_at_the_floor(self):
+        """A cursor written by 10fd7048 keeps global rowids; its range can hold none of ours."""
+        for index in range(3):
+            self.business_turn_starts(f"settled-{index}", status="completed")
+            self.settle(self.rid, CHILD, f"settled-{index}")
+        self.business_turn_starts("still-running")
+        last = self.store.one("SELECT MAX(rowid) AS m FROM generation_turns")["m"]
+        self.store.db.execute(
+            "INSERT INTO discovery_cursors (task_id, listing, cursor, updated_at)"
+            " VALUES ('scheduler',?,?,?)",
+            (f"admitted:{self.rid}", json.dumps({"after": last, "through": last + 5}),
+             self.clock.iso()))
+        relation = self.registry.get(self.rid)
+        picked = []
+        for _ in range(4):
+            picked.extend(self.daemon._turns_to_poll(relation, 2))
+        self.assertIn("still-running", picked)
+
+
+class TheWaitingReason(ASharedHost):
+    def waiting(self, **kw):
+        return self.derive(**kw).get("waiting") or {}
+
+    def test_each_stage_of_the_wait_is_named_by_every_reader(self):
+        self.business_turn_starts()
+        first = self.derive()
+        self.assertEqual(first["reason"], "host_terminal_unobserved")
+        self.assertEqual(self.waiting(), dict(self.waiting(), **{
+            "for": "relay_settlement", "reason": "not_yet_polled"}))
+
+        self.tick(advance=TICK)
+        running = self.waiting()
+        self.assertEqual((running.get("reason"), running.get("lastStatus")),
+                         ("in_progress_at_last_read", "inProgress"))
+        self.assertIsNotNone(running.get("lastPolledAt"))
+        reporting = self.shown("assignment-show").get("reporting") or {}
+        self.assertEqual((reporting.get("waiting") or {}).get("reason"),
+                         "in_progress_at_last_read")
+
+        self.business_turn_ends()
+        self.tick(advance=TICK)
+        settled_at = self.store.one(
+            "SELECT settled_at FROM assignment_settlements WHERE relationship_id = ?"
+            " AND turn_id = ?", (self.rid, BUSINESS))["settled_at"]
+        within = self.waiting()
+        self.assertEqual(within.get("for"), "report_grace")
+        self.assertEqual(intent.moment(within["until"]) - intent.moment(settled_at),
+                         datetime.timedelta(seconds=self.grace))
+        self.assertEqual((self.shown("reporting-derive").get("waiting") or {}).get("for"),
+                         "report_grace")
+        reporting = self.shown("assignment-show").get("reporting") or {}
+        self.assertEqual(((reporting.get("waiting") or {}).get("for"), reporting.get("turn")),
+                         ("report_grace", BUSINESS))
+
+        self.tick(advance=self.grace + 1)
+        self.assertNotIn("waiting", self.derive(), "an owed omission is not waiting")
+
+    def test_an_absent_turn_a_failed_read_and_an_unsettled_ending_are_named(self):
+        self.business_turn_starts("turn-absent", host=False)
+        self.tick(advance=TICK)
+        self.assertEqual(self.waiting().get("reason"), "host_reports_absent")
+
+        self.business_turn_starts("turn-rolled-back", status="completed")
+        with mock.patch.object(self.intake, "record_observation_in",
+                               side_effect=RuntimeError("the disk is full")):
+            report = self.tick(advance=TICK)
+        self.assertTrue(any("settlement rolled back" in note for note in report.notes),
+                        report.notes)
+        self.assertEqual(self.waiting().get("reason"), "terminal_read_unsettled")
+
+        self.business_turn_starts("turn-unreadable")
+        self.adapter.fail_reads("read_turn")
+        self.tick(advance=TICK)
+        failed = self.waiting()
+        self.assertEqual(failed.get("reason"), "last_read_failed")
+        self.assertIn("unavailable", failed.get("lastError") or "")
+
+    def test_a_reading_of_another_generation_is_not_this_turns_wait(self):
+        self.business_turn_starts()
+        self.store.db.execute(
+            "INSERT INTO poll_observations (relationship_id, execution_generation, turn_id,"
+            " last_status, last_polled_at, last_attempt_at, last_error) VALUES (?,?,?,?,?,?,?)",
+            (self.rid, 2, BUSINESS, "completed", self.clock.iso(), self.clock.iso(), None))
+        self.assertEqual(self.waiting().get("reason"), "not_yet_polled")
+
+
+class AssignmentShowStillAnswersWhenTheReadingCannot(ASharedHost):
+    def test_a_store_error_in_the_reading_is_named_not_raised(self):
+        import sqlite3
+
+        self.business_turn_starts()
+        with mock.patch.object(omitted, "derive",
+                               side_effect=sqlite3.OperationalError("database is locked")):
+            answer = self.shown("assignment-show")
+        reporting = answer.get("reporting") or {}
+        self.assertEqual(reporting.get("reportingState"), "unmeasured")
+        self.assertIn("database is locked", reporting.get("reason") or "")
+
+
+class AssignmentShowByIssue(ASharedHost):
+    def test_each_assignment_of_the_issue_carries_its_reading(self):
+        from .support import ISSUE
+
+        self.business_turn_starts()
+        self.tick(advance=TICK)
+        with mock.patch.object(cli, "SystemClock", lambda: self.clock):
+            code, answer = relay("--state", self.state_directory(), "assignment-show",
+                                 "--issue", ISSUE)
+        self.assertEqual(code, 0, answer)
+        mine = [one for one in answer.get("assignments", [])
+                if one.get("relationshipId") == self.rid]
+        self.assertEqual(len(mine), 1, answer)
+        reporting = mine[0].get("reporting") or {}
+        self.assertEqual((reporting.get("waiting") or {}).get("reason"),
+                         "in_progress_at_last_read")
+
+
+class TheMarkerReaderNamesTheWaitToo(ChildCommands, GuardTestCase):
+    def state_directory(self):
+        return str(self.store.path.parent)
+
+    def marker_root(self):
+        return self.markers
+
+    def workspace_path(self):
+        return self.workspace
+
+    def test_both_readers_name_the_same_wait(self):
+        relation = self.managed()
+        self.assertEqual(stored(self.claim_through_cli()).get("state"), "recorded")
+        self.evaluate()
+        selection = resolve_state_dir(str(self.store.path.parent))
+        rid = relation["relationshipId"]
+
+        def both():
+            by_marker = omitted.observe(selection, self.markers, self.workspace, self.assignment,
+                                        CHILD, DISPATCH_TURN, LATER)
+            by_store = omitted.derive(self.store, rid, state_directory=str(selection.path),
+                                      now=LATER, grace=0, turn=DISPATCH_TURN)
+            for reading in (by_marker, by_store):
+                self.assertEqual(reading["reason"], "host_terminal_unobserved")
+            self.assertEqual(by_marker.get("waiting"), by_store.get("waiting"))
+            return by_marker.get("waiting") or {}
+
+        self.assertEqual(both().get("reason"), "not_yet_polled")
+        # What the daemon's _record_poll writes for a read that found the turn running.
+        self.store.db.execute(
+            "INSERT INTO poll_observations (relationship_id, execution_generation, turn_id,"
+            " last_status, last_polled_at, last_attempt_at, last_error) VALUES (?,?,?,?,?,?,?)",
+            (rid, 1, DISPATCH_TURN, "inProgress", LATER, LATER, None))
+        self.assertEqual(both().get("reason"), "in_progress_at_last_read")
+
+
+class TheReaderIsBoundedInHistory(ASharedHost):
+    def materialized(self, callable_):
+        """How many bytes of row values a call read through this store."""
+        total = [0]
+        one, every = self.store.one, self.store.all
+
+        def count(rows):
+            for row in rows:
+                total[0] += sum(len(str(value)) for value in tuple(row))
+            return rows
+
+        with mock.patch.object(self.store, "one",
+                               lambda sql, params=(): (lambda row: count([row])[0] if row
+                                                       else row)(one(sql, params))), \
+                mock.patch.object(self.store, "all",
+                                  lambda sql, params=(): count(every(sql, params))):
+            answer = callable_()
+        return total[0], answer
+
+    def admissions(self, count, start=0):
+        for index in range(start, start + count):
+            self.business_turn_starts(f"b-{index:04}", status="completed")
+            self.settle(self.rid, CHILD, f"b-{index:04}")
+
+    def test_what_derive_reads_does_not_grow_with_the_generations_admissions(self):
+        self.admissions(20)
+        short, answer = self.materialized(lambda: self.derive())
+        self.assertEqual(answer["selectors"]["turn"], "b-0019")
+        self.admissions(200, start=20)
+        long, answer = self.materialized(lambda: self.derive())
+        self.assertEqual(answer["selectors"]["turn"], "b-0219")
+        self.assertLess(long - short, 64, f"{short} bytes with 20 admissions, {long} with 220")
+
+    def test_what_a_tick_reads_does_not_grow_with_the_generations_admissions(self):
+        """A guard on the tick as a whole: the pager, the frontier and the supervisor's derive."""
+        self.admissions(20)
+        self.business_turn_starts()
+        for _ in range(3):
+            self.tick(advance=TICK)
+        short, _ = self.materialized(lambda: self.tick(advance=TICK))
+        # Two hundred more settled admissions, admitted before the business turn, so the turn
+        # derive evaluates and the frontier reads is the same one.
+        evidence = self.store.one("SELECT evidence FROM generation_turns WHERE turn_id = ?",
+                                  (BUSINESS,))["evidence"]
+        for index in range(200):
+            turn = f"late-{index:04}"
+            self.store.db.execute(
+                "INSERT INTO generation_turns (relationship_id, execution_generation, turn_id,"
+                " evidence, actor, detail, admitted_at) VALUES (?,?,?,?,?,?,?)",
+                (self.rid, 1, turn, evidence, "owner", "", "2000-01-01T00:00:00.000000+00:00"))
+            self.settle(self.rid, CHILD, turn)
+        for _ in range(3):
+            self.tick(advance=TICK)
+        long, _ = self.materialized(lambda: self.tick(advance=TICK))
+        self.assertLess(long - short, 256, f"a tick read {short} bytes, then {long}")
+
+    def test_the_newest_admission_is_one_index_seek(self):
+        plan = [tuple(row) for row in self.store.db.execute(
+            "EXPLAIN QUERY PLAN " + omitted.NEWEST_ADMISSION, (self.rid, 1, "x"))]
+        details = " ".join(str(row[-1]) for row in plan)
+        self.assertIn("USING INDEX", details, details)
+        self.assertNotIn("TEMP B-TREE", details, details)
+
+
+class TheHostListingItReads(DeliveryTestCase):
+    def test_one_page_newest_first_mapped_to_thread_activity(self):
+        from codex_session_relay.bridge_adapter import BridgeHostAdapter
+
+        calls = []
+
+        def call(method, params):
+            calls.append((method, params))
+            return {"data": [{"id": "a", "status": {"type": "idle"}, "updatedAt": 5,
+                              "recencyAt": 4},
+                             {"id": "b", "status": {"type": "active", "activeFlags": []},
+                              "updatedAt": 9, "recencyAt": 7},
+                             {"status": {"type": "idle"}, "updatedAt": 3}],
+                    "nextCursor": "more"}
+
+        adapter = BridgeHostAdapter(call=call)
+        page = adapter.recent_threads(50)
+        self.assertEqual(calls, [("thread/list", {"limit": 50, "useStateDbOnly": True,
+                                                  "sortKey": "updated_at",
+                                                  "sortDirection": "desc"})])
+        self.assertEqual([(one.thread_id, one.status, one.updated_at, one.recency_at)
+                          for one in page.threads],
+                         [("a", "idle", 5, 4), ("b", "active", 9, 7)])
+        self.assertEqual(page.cursor, "more")
+        adapter.recent_threads(50, cursor="more")
+        self.assertEqual(calls[-1][1].get("cursor"), "more")
+
+
+class WhatTheFinalReviewOf81dd75a5Found(ASharedHost):
+    """Two High findings on 81dd75a5 and the restart the listing could not see."""
+
+    def test_a_range_holding_none_of_this_assignments_rows_ends_the_pass(self):
+        """Finding 1: a cursor whose remaining range held only other assignments' rows never
+        refreshed its ceiling, so an admission past it was never read."""
+        self.business_turn_starts("mine-settled", status="completed")
+        self.settle(self.rid, CHILD, "mine-settled")
+        rid2, child2 = self.others[0]
+        for index in range(2):
+            turn = f"foreign-late-{index}"
+            self.adapter.start_turn(child2, turn_id=turn, status="completed")
+            admit_explicitly(self.store, self.clock, rid2, 1, turn, actor="owner")
+        self.business_turn_starts("mine-running")
+        rows = {row["turn_id"]: row["row"] for row in self.store.all(
+            "SELECT turn_id, rowid AS row FROM generation_turns WHERE turn_id IN (?,?)",
+            ("mine-settled", "foreign-late-1"))}
+        self.store.db.execute(
+            "INSERT INTO discovery_cursors (task_id, listing, cursor, updated_at)"
+            " VALUES ('scheduler',?,?,?)",
+            (f"admitted:{self.rid}", json.dumps({"after": rows["mine-settled"],
+                                                  "through": rows["foreign-late-1"]}),
+             self.clock.iso()))
+        relation = self.registry.get(self.rid)
+        picked = []
+        for _ in range(3):
+            picked.extend(self.daemon._turns_to_poll(relation, 2))
+        self.assertIn("mine-running", picked, "the pass never ended, so the new row was never read")
+
+    def test_a_saturated_listing_continues_from_its_cursor_next_tick(self):
+        """Finding 2: a saturated listing moved its mark past pages it never read, so a child
+        that stopped below them was left to least-recently-read order. Prepared under the
+        default policy; only the checked ticks list four threads a page, three pages a tick."""
+        for index in range(12):
+            self.other(OTHERS + index, running=True)
+        self.business_turn_starts()
+        self.read_in_the_last_tick()
+        self.business_turn_ends()
+        self.daemon.policy = RetryPolicy(thread_activity_listing_limit=4,
+                                         thread_activity_listing_pages=3)
+        before = getattr(self.daemon, "_activity_since", None)
+        report = self.tick(advance=TICK)
+        self.assertTrue(any("saturated" in note for note in report.notes), report.notes)
+        self.assertEqual(self.daemon._activity_since, before,
+                         "the mark moved past threads the listing never read")
+        self.assertTrue(self.settled() or self.ticks_until_settled(1) == 1,
+                        "the listing did not continue to the stopped child")
+
+    def test_a_child_that_starts_another_turn_before_the_next_tick_is_read_first(self):
+        """An unadmitted turn started outside the relay hides the stop from status and
+        updatedAt; the thread's recencyAt still shows a turn began after the relay's read."""
+        for index in range(12):
+            self.other(OTHERS + index, running=True)
+        self.business_turn_starts()
+        self.read_in_the_last_tick()
+        self.this_assignment_last_in_the_rotation()
+        self.business_turn_ends()
+        self.clock.advance(2)
+        self.adapter.start_turn(CHILD, turn_id="started-outside-the-relay", status="inProgress")
+        self.assertEqual(self.ticks_until_settled(1), 1,
+                         "the restarted child's ended turn waited for least-recently-read order")
+
+    def test_a_stopped_turn_whose_read_fails_is_read_first_again(self):
+        for index in range(12):
+            self.other(OTHERS + index, running=True)
+        self.business_turn_starts()
+        self.read_in_the_last_tick()
+        self.this_assignment_last_in_the_rotation()
+        self.business_turn_ends()
+        original = self.adapter.read_turn
+        failed = []
+
+        def once(thread, turn):
+            if turn == BUSINESS and not failed:
+                failed.append(turn)
+                raise ConnectionError("the host did not answer this once")
+            return original(thread, turn)
+
+        self.adapter.read_turn = once
+        self.tick(advance=TICK)
+        self.assertEqual(failed, [BUSINESS], "the stopped turn was not read first")
+        self.tick(advance=TICK)
+        self.assertTrue(self.settled(), "a failed read dropped the turn to the back of the line")
+
+    def test_a_sweep_keeps_the_mark_of_the_tick_that_first_saturated(self):
+        """Audit 1 on 020: a sweep over several ticks keeps its first mark, or threads updated
+        between two marks would sit above the sweep's cursor and below the next listing's mark.
+        Twelve children stop one second apart after the watermark, so their updatedAt stays put
+        below the sweep's cursor while this assignment's running child keeps page 1's top. Each
+        tick's head covers what changed above the mark, so the watermark the sweep leaves is the
+        newest head's, and every child that stopped between the marks is on record."""
+        running = [self.other(OTHERS + index, running=True) for index in range(12)]
+        self.business_turn_starts()
+        self.tick(advance=TICK)
+        for index, (_, child) in enumerate(running):
+            self.clock.advance(1)
+            self.adapter.finish_turn(child, f"turn-other-{OTHERS + index:02}")
+        self.daemon.policy = RetryPolicy(thread_activity_listing_limit=2,
+                                         thread_activity_listing_pages=2)
+        first = self.tick(advance=TICK)
+        self.assertTrue(any("saturated" in note for note in first.notes), first.notes)
+        mark = self.daemon._activity_sweep["mark"]
+        second = self.tick(advance=TICK)
+        self.assertTrue(any("saturated" in note for note in second.notes), second.notes)
+        self.assertEqual(self.daemon._activity_sweep["mark"], mark,
+                         "a second saturated tick replaced the sweep's mark")
+        for _ in range(12):
+            if self.daemon._activity_sweep is None:
+                break
+            self.tick(advance=TICK)
+        self.assertIsNone(self.daemon._activity_sweep, "the sweep never ended")
+        self.assertGreater(self.daemon._activity_since, mark,
+                           "the finished sweep left the first mark, not the last head's")
+        self.assertEqual([self.daemon._listed[child].status for _, child in running],
+                         ["idle"] * len(running), "a child that stopped between marks was skipped")
+
+    def test_a_turn_whose_settlement_never_commits_is_first_only_three_times(self):
+        """Audit 2 on 020: a priority read that ends without a settlement counts toward the same
+        cap as a failed read, so a turn whose settlement always rolls back cannot hold a slot."""
+        for index in range(12):
+            self.other(OTHERS + index, running=True)
+        self.business_turn_starts()
+        self.read_in_the_last_tick()
+        self.this_assignment_last_in_the_rotation()
+        self.business_turn_ends()
+        original = self.adapter.read_turn
+        reads = []
+
+        def counted(thread, turn):
+            if turn == BUSINESS:
+                reads.append(self.clock.now())
+            return original(thread, turn)
+
+        self.adapter.read_turn = counted
+        with mock.patch.object(self.intake, "record_observation_in",
+                               side_effect=RuntimeError("the disk is full")):
+            for expected in (1, 2, 3):
+                self.tick(advance=TICK)
+                self.assertEqual(len(reads), expected,
+                                 f"not read first on unsettled tick {expected}")
+            self.tick(advance=TICK)
+        self.assertEqual(len(reads), 3, "a turn that never settles kept a frontier slot")
+
+    def test_a_failed_read_between_the_stop_and_the_listing_does_not_hide_the_stop(self):
+        """Architect gap (b): the stop rules compared against the last ATTEMPT, which a failed
+        read moves past the stop; the last read the host answered does not move."""
+        from codex_session_relay.daemon import TickReport
+
+        for index in range(12):
+            self.other(OTHERS + index, running=True)
+        self.business_turn_starts()
+        self.read_in_the_last_tick()
+        self.this_assignment_last_in_the_rotation()
+        self.business_turn_ends()
+        self.clock.advance(5)
+        original = self.adapter.read_turn
+        self.adapter.read_turn = mock.Mock(side_effect=ConnectionError("no answer"))
+        self.daemon._read_turn(self.registry.get(self.rid), BUSINESS, TickReport())
+        self.adapter.read_turn = original
+        self.assertEqual(self.ticks_until_settled(1), 1,
+                         "a failed read after the stop hid it from the listing")
+
+    def test_a_terminal_read_whose_settlement_rolled_back_stays_first(self):
+        """Architect gap (b): an answered read that saw the ending but committed nothing."""
+        for index in range(12):
+            self.other(OTHERS + index, running=True)
+        self.business_turn_starts()
+        self.read_in_the_last_tick()
+        self.this_assignment_last_in_the_rotation()
+        self.business_turn_ends()
+        with mock.patch.object(self.intake, "record_observation_in",
+                               side_effect=RuntimeError("the disk is full")):
+            report = self.tick(advance=TICK)
+        self.assertTrue(any("settlement rolled back" in note for note in report.notes),
+                        report.notes)
+        self.assertFalse(self.settled())
+        self.tick(advance=TICK)
+        self.assertTrue(self.settled(), "the rolled-back ending went to the back of the line")
+
+    def test_retention_after_failed_reads_is_capped(self):
+        """Architect gap (c): a stopped turn whose reads keep failing is first for three ticks,
+        then read in least-recently-read order like the rest."""
+        for index in range(12):
+            self.other(OTHERS + index, running=True)
+        self.business_turn_starts()
+        self.read_in_the_last_tick()
+        self.this_assignment_last_in_the_rotation()
+        self.business_turn_ends()
+        original = self.adapter.read_turn
+        attempts = []
+
+        def failing(thread, turn):
+            if turn == BUSINESS:
+                attempts.append(self.clock.now())
+                raise ConnectionError("this turn never answers")
+            return original(thread, turn)
+
+        self.adapter.read_turn = failing
+        for expected in (1, 2, 3):
+            self.tick(advance=TICK)
+            self.assertEqual(len(attempts), expected, f"not read first on stopped tick {expected}")
+        self.tick(advance=TICK)
+        self.assertEqual(len(attempts), 3, "a turn that never answers kept a frontier slot")
+
+
+class TheFakeHostListsLikeTheHost(DeliveryTestCase):
+    """Architect gap (d): the host's cursor is a timestamp keyset and its default listing leaves
+    archived threads out. A thread archived above the cursor leaves the listing; with an offset
+    cursor the threads below would shift up and one would be skipped, with a keyset none is."""
+
+    def test_the_cursor_is_a_keyset_and_archived_threads_are_not_listed(self):
+        for index in range(6):
+            self.adapter.add_thread(f"t{index}")
+            self.clock.advance(1)
+            self.adapter.start_turn(f"t{index}", turn_id=f"x{index}", status="completed")
+        listed = lambda page: [one.thread_id for one in page.threads]  # noqa: E731
+        first = self.adapter.recent_threads(2)
+        self.assertEqual(listed(first)[:2], ["t5", "t4"])
+        self.adapter.threads["t5"].archived = True
+        second = self.adapter.recent_threads(2, cursor=first.cursor)
+        self.assertEqual(listed(second), ["t3", "t2"], "a thread leaving above the cursor skipped one")
+        self.assertNotIn("t5", listed(self.adapter.recent_threads(50)))
+
+
+class ThePagerKeepsItsRefreshedPass(DaemonTestCase):
+    def test_a_refreshed_pass_is_persisted_even_when_nothing_was_consumed(self):
+        """Architect gap (e): a pass refreshed because its range held none of the assignment's
+        rows is written even when the page's first row was not selected (a share of one spent
+        on the open anchor), so the next call makes one page query instead of two."""
+        relation = self.register()
+        rid = relation["relationshipId"]
+        self.adapter.start_turn(CHILD, turn_id="running-business", status="inProgress")
+        admit_explicitly(self.store, self.clock, rid, 1, "running-business", actor="owner")
+        last = self.store.one("SELECT MAX(rowid) AS m FROM generation_turns")["m"]
+        self.store.db.execute(
+            "INSERT INTO discovery_cursors (task_id, listing, cursor, updated_at)"
+            " VALUES ('scheduler',?,?,?)",
+            (f"admitted:{rid}", json.dumps({"after": last + 5, "through": last + 9}),
+             self.clock.iso()))
+        relation = self.registry.get(rid)
+        self.assertEqual(self.daemon._turns_to_poll(relation, 1), [DISPATCH_TURN])
+        saved = json.loads(self.store.one(
+            "SELECT cursor FROM discovery_cursors WHERE listing = ?", (f"admitted:{rid}",))["cursor"])
+        own = self.store.one("SELECT MAX(rowid) AS m FROM generation_turns"
+                             " WHERE relationship_id = ?", (rid,))["m"]
+        self.assertEqual(saved.get("through"), own, saved)
+        original, queries = self.store.all, []
+
+        def counted(sql, params=()):
+            if "admission_row" in sql:
+                queries.append(params)
+            return original(sql, params)
+
+        self.store.all = counted
+        self.daemon._turns_to_poll(relation, 1)
+        self.assertEqual(len(queries), 1, "the refreshed pass was not kept, so it was refreshed again")
+
+
+class AnAbsentTurnIsAnAnswer(ASharedHost):
+    def test_a_turn_the_host_reports_absent_does_not_take_the_stopped_slot_every_tick(self):
+        """A guard (it holds on 81dd75a5 too). Architect reflection 1 on 020 rev 2: an absent
+        answer is an answer, so the stop rules compare against it; against last_polled_at, which
+        an absent read leaves, the turn would be read first on every tick."""
+        for index in range(12):
+            self.other(OTHERS + index, running=True)
+        self.business_turn_starts("never-started", host=False)
+        reads = []
+        original = self.adapter.read_turn
+        self.adapter.read_turn = lambda thread, turn: (reads.append(turn),
+                                                       original(thread, turn))[1]
+        self.tick(advance=TICK)
+        self.assertIn("never-started", reads, "a never-read frontier turn is read first")
+        del reads[:]
+        for _ in range(3):
+            self.tick(advance=TICK)
+        self.assertLessEqual(reads.count("never-started"), 1,
+                             "a turn the host reports absent kept a stopped-first slot")
+
+
+class WhatTheFinalReviewOf82a79b1bFound(ASharedHost):
+    """Findings 1 and 2 of the final review of 82a79b1b, and what the audit of their fix found."""
+
+    def test_a_child_that_stopped_before_any_answered_read_is_found_below_page_one(self):
+        """Finding 1: with no answered read of any open frontier turn the first listing read one
+        page and set its mark there, so a child that had already stopped below that page waited
+        for least-recently-read order. Twelve children keep running above it; its assignment is
+        the one that order and the rotation reach last. The time the relay opened each turn now
+        seeds how far the listing reaches."""
+        running = [(self.other(OTHERS + index, running=True), OTHERS + index)
+                   for index in range(13)]
+        (rid, child), index = max(running)
+        anchor = f"turn-other-{index:02}"
+        self.this_assignment_last_in_the_rotation(rid)
+        self.clock.advance(2)
+        self.adapter.finish_turn(child, anchor)
+        self.daemon.policy = RetryPolicy(thread_activity_listing_limit=4,
+                                         thread_activity_listing_pages=4)
+        self.tick(advance=TICK)
+        self.assertIsNotNone(self.store.one(
+            "SELECT 1 FROM assignment_settlements WHERE relationship_id = ? AND turn_id = ?",
+            (rid, anchor)), "the stopped child below page one waited for least-recently-read order")
+
+    def test_a_child_that_stopped_while_paused_is_read_first_after_the_resume(self):
+        """Architect on the review of 82a79b1b: a child that stopped while its assignment was
+        paused was listed only while nothing of that assignment was open, and once the watermark
+        passed it no later listing showed it, so after the resume its ended turn waited for
+        least-recently-read order. The record keeps what the listing showed of every live child,
+        paused ones included. After the resume sixteen children run above it and four never-read
+        turns come first in least-recently-read order."""
+        for index in range(12):
+            self.other(OTHERS + index, running=True)
+        late = [(self.other(OTHERS + 12 + index, running=True), OTHERS + 12 + index)
+                for index in range(4)]
+        self.business_turn_starts()
+        self.read_in_the_last_tick()
+        self.registry.set_status(self.rid, "paused", actor="user")
+        self.business_turn_ends()
+        self.tick(advance=TICK)
+        for (_, child), index in late:
+            self.clock.advance(1)
+            self.adapter.finish_turn(child, f"turn-other-{index:02}")
+        self.tick(advance=TICK)
+        for index in range(4):
+            self.other(OTHERS + 16 + index, running=True)
+        record = self.registry.get(self.rid)
+        self.registry.resume(
+            self.rid, expect_generation=record["executionGeneration"],
+            expect_artifact_roots=record["authorizedScope"]["artifactRoots"],
+            expect_allowed_recipients=record["authorizedScope"]["allowedRecipients"],
+            actor="user")
+        self.this_assignment_last_in_the_rotation()
+        self.daemon.policy = RetryPolicy(thread_activity_listing_limit=4,
+                                         thread_activity_listing_pages=4)
+        self.assertEqual(self.ticks_until_settled(1), 1,
+                         "the stop seen while paused was lost once the watermark passed it")
+
+    def test_a_child_the_listing_never_shows_does_not_keep_it_deep(self):
+        """A guard for the record: a child the default listing leaves out (archived here, an
+        exec-source thread on the host) is recorded as not listed once a listing reaches below
+        its turn's reference, so later listings stop paging down to that reference every tick.
+        This turn's reads never answer, so its reference stays the generation's opening."""
+        for index in range(2):
+            self.other(OTHERS + index, running=True)
+        self.business_turn_starts()
+        self.adapter.threads[CHILD].archived = True
+        original_read = self.adapter.read_turn
+
+        def failing(thread, turn):
+            if turn == BUSINESS:
+                raise ConnectionError("this turn never answers")
+            return original_read(thread, turn)
+
+        self.adapter.read_turn = failing
+        original_list, calls = self.adapter.recent_threads, []
+
+        def counted(limit, cursor=None):
+            calls.append(cursor)
+            return original_list(limit, cursor=cursor)
+
+        self.adapter.recent_threads = counted
+        self.daemon.policy = RetryPolicy(thread_activity_listing_limit=4,
+                                         thread_activity_listing_pages=4)
+        for _ in range(12):
+            self.tick(advance=TICK)
+            if getattr(self.daemon, "_activity_sweep", None) is None and calls:
+                break
+        self.assertIsNone(getattr(self.daemon, "_activity_sweep", None), "the sweep never ended")
+        del calls[:]
+        for _ in range(3):
+            self.tick(advance=TICK)
+        self.assertEqual(len(calls), 3, "a child the listing never shows kept every listing deep")
+
+    def test_a_first_listing_that_fails_after_page_one_does_not_leave_page_one_alone(self):
+        """A guard from the audit of the fix for 82a79b1b (it holds there too): after a restart
+        the first listing puts every open turn's child on record from page 1 and then fails.
+        Were a child on record to ask for nothing, no later tick would have a floor to reach
+        for, each would read page 1 alone for the rest of the run, and a child that stopped
+        below it would wait for least-recently-read order. Until a listing reaches its floor in
+        a run, every open turn's reference sets it. Seven running children and one busy parent
+        fill page 1; one frontier read a tick, and this turn was the last read before the
+        restart."""
+        for index in range(6):
+            self.other(OTHERS + index, running=True)
+        self.business_turn_starts()
+        self.read_in_the_last_tick()
+        self.adapter.start_turn("01parent-other-09", turn_id="parent-work-early",
+                                status="inProgress")
+        self.daemon = self.build_daemon(self.channel)
+        self.daemon.policy = RetryPolicy(frontier_reads_per_tick=1,
+                                         thread_activity_listing_limit=8,
+                                         thread_activity_listing_pages=4)
+        original, failed = self.adapter.recent_threads, []
+
+        def page_two_fails_once(limit, cursor=None):
+            if cursor is not None and not failed:
+                failed.append(cursor)
+                raise ConnectionError("page two never came")
+            return original(limit, cursor=cursor)
+
+        self.adapter.recent_threads = page_two_fails_once
+        report = self.tick(advance=TICK)
+        self.assertTrue(failed and any("listing failed" in note for note in report.notes),
+                        report.notes)
+        self.adapter.recent_threads = original
+        self.business_turn_ends()
+        for index in range(8):
+            self.adapter.start_turn(f"01parent-other-{index:02}", turn_id=f"parent-work-{index}",
+                                    status="inProgress")
+        self.this_assignment_last_in_the_rotation()
+        self.assertEqual(self.ticks_until_settled(1), 1,
+                         "after a failed first listing only page 1 was ever read again")
+
+    def test_a_child_that_stops_while_a_sweep_is_pending_is_read_on_the_next_tick(self):
+        """Audit of the fix for 82a79b1b (head first): while a sweep was pending the listing read
+        page 1 and then went on below the sweep's cursor, so a child that stopped just below
+        page 1 waited for the sweep to end. Each tick now first reads its head, everything
+        updated since the last tick. Five children keep running above it, twelve parents'
+        turns ending in a burst saturate the listing, and one frontier read a tick goes to the
+        stopped turn or to least-recently-read order, which reached this turn last."""
+        for index in range(5):
+            self.other(OTHERS + index, running=True)
+        self.business_turn_starts()
+        self.read_in_the_last_tick()
+        self.daemon.policy = RetryPolicy(frontier_reads_per_tick=1,
+                                         thread_activity_listing_limit=4,
+                                         thread_activity_listing_pages=3)
+        for index in range(12):
+            self.clock.advance(1)
+            self.adapter.start_turn(f"01parent-other-{index:02}", turn_id=f"burst-{index}",
+                                    status="completed")
+        report = self.tick(advance=TICK)
+        self.assertTrue(any("saturated" in note for note in report.notes), report.notes)
+        self.business_turn_ends()
+        self.this_assignment_last_in_the_rotation()
+        self.assertEqual(self.ticks_until_settled(1), 1,
+                         "a stop above the pending sweep waited for the sweep to end")
+
+
+class AListingWithNoSeed(DaemonTestCase):
+    def test_it_carries_a_pending_sweep_to_its_floor(self):
+        """Finding 2 on 82a79b1b: a tick with no reference to reach for ended a pending sweep
+        and raised the mark past the pages the sweep had not read. The sweep goes on to the
+        floor it began with, and only then moves the mark."""
+        from types import SimpleNamespace
+
+        from codex_session_relay.daemon import TickReport
+        from codex_session_relay.hostadapter import ThreadActivity, ThreadActivityPage
+
+        threads = [ThreadActivity(f"t{index}", "active", 120 - index, None) for index in range(8)]
+        calls, shown = [], []
+
+        def recent_threads(limit, cursor=None):
+            calls.append(cursor)
+            rest = [one for one in threads if cursor is None or one.updated_at < float(cursor)]
+            page = rest[:limit]
+            shown.extend(one.thread_id for one in page)
+            return ThreadActivityPage(tuple(page), str(page[-1].updated_at)
+                                      if len(rest) > len(page) else None)
+
+        self.daemon.adapter = SimpleNamespace(recent_threads=recent_threads)
+        self.daemon.policy = RetryPolicy(thread_activity_listing_limit=2,
+                                         thread_activity_listing_pages=2)
+        self.daemon._thread_activity(TickReport(), 100)
+        sweep = dict(self.daemon._activity_sweep)
+        self.daemon._thread_activity(TickReport(), None)
+        self.assertIsNone(self.daemon._activity_since,
+                          "a tick with no seed ended the sweep before its floor")
+        self.assertEqual(self.daemon._activity_sweep["floor"], sweep["floor"])
+        self.assertIn(sweep["cursor"], calls, "the sweep did not go on from its cursor")
+        for _ in range(4):
+            if self.daemon._activity_sweep is None:
+                break
+            self.daemon._thread_activity(TickReport(), None)
+        self.assertEqual(self.daemon._activity_since, 120)
+        self.assertIn("t7", shown)
+
+
+
+class ASweepWhoseTargetRises(DaemonTestCase):
+    def test_it_pages_to_its_own_floor_and_keeps_what_earlier_pages_recorded(self):
+        """Architect on the review of 82a79b1b, R2's real path: the open turns change while a
+        sweep is pending and the listing's target rises. The sweep still pages to the floor it
+        began with, the watermark waits for it, and what its earlier pages showed of a live child
+        stays on record for the turns that open meanwhile."""
+        from types import SimpleNamespace
+
+        from codex_session_relay.daemon import TickReport
+        from codex_session_relay.hostadapter import ThreadActivity, ThreadActivityPage
+
+        self.register()
+        names = [f"t{index}" for index in range(12)]
+        names[5] = CHILD
+        threads = [ThreadActivity(name, "active" if index < 4 else "idle", 120 - index, None)
+                   for index, name in enumerate(names)]
+        pages = []
+
+        def recent_threads(limit, cursor=None):
+            rest = [one for one in threads if cursor is None or one.updated_at < float(cursor)]
+            page = rest[:limit]
+            pages.append([one.thread_id for one in page])
+            return ThreadActivityPage(tuple(page), str(page[-1].updated_at)
+                                      if len(rest) > len(page) else None)
+
+        self.daemon.adapter = SimpleNamespace(recent_threads=recent_threads)
+        self.daemon.policy = RetryPolicy(thread_activity_listing_limit=2,
+                                         thread_activity_listing_pages=2)
+        self.daemon._thread_activity(TickReport(), 105)
+        self.daemon._thread_activity(TickReport(), 105)
+        self.daemon._thread_activity(TickReport(), 116)
+        self.assertIsNone(self.daemon._activity_since,
+                          "a risen target ended the sweep before the floor it began with")
+        self.assertEqual(self.daemon._activity_sweep["floor"], 105)
+        self.assertIn(CHILD, self.daemon._listed, "an earlier page's entry left the record")
+        for _ in range(4):
+            if self.daemon._activity_sweep is None:
+                break
+            self.daemon._thread_activity(TickReport(), 116)
+        self.assertEqual(self.daemon._activity_since, 120)
+        self.assertIn("t11", [name for page in pages for name in page])
+
+
+class AGraceNoTimestampCanHold(ASharedHost):
+    def test_the_reading_stands_and_its_wait_has_no_end(self):
+        """Devin on #166: an infinite or very large --grace overflowed the grace's end, so
+        reporting-derive answered nothing for a settled omission inside it."""
+        self.business_turn_starts()
+        self.tick(advance=TICK)
+        self.business_turn_ends()
+        self.tick(advance=TICK)
+        self.assertTrue(self.settled())
+        for grace in ("inf", "1e300"):
+            answer = self.shown("reporting-derive", "--grace", grace)
+            self.assertEqual((answer.get("owedReason"), answer.get("waiting")),
+                             ("within_report_grace", {"for": "report_grace", "until": None}),
+                             grace)
