@@ -102,6 +102,134 @@ CARRIED_APPROVAL_POLICIES = ("never", "on-request")
 # very case CRW-225 exists for - a parent switched to on-request in its own client - undeliverable.
 APPROVAL_POLICY_DIFFERS_FROM_RECORD = "approval_policy_differs_from_record"
 
+# Workspace roots a resume reported narrower than the record, delivered and noted (CRW-235). A
+# resume never changes the roots of a thread the host already has loaded - the thread keeps the
+# roots of whichever load brought it in, and a plain load brings it in with its cwd as the only
+# root - and a workspace-write thread's reported writableRoots follow those roots. Measured on
+# codex-cli 0.154.0 with an isolated app-server. Narrower is inside what the record authorizes,
+# so it is accepted where mismatches() allows it and written on the transport receipt, because a
+# recipient on fewer roots than recorded may lack write access to one the record names.
+RUNTIME_ROOTS_NARROWER = "runtime_roots_narrower_than_record"
+
+# Who recovers a settings hold, and how (CRW-235). One table for status, assignment-show and the
+# fault sweep, so no two of them can name a different actor for one hold. The command is a NAME
+# ("settings-show" or "show-event"); the caller renders it for its own store, because this module
+# is imported everywhere and must not import the renderer's.
+SETTINGS_SHOW = "settings-show"
+SHOW_EVENT = "show-event"
+# The two refusals the daemon itself may clear: the host answered without the setting, which a
+# later answer can supply. Every other settings code is a difference only a person can resolve.
+DAEMON_SETTINGS_CODES = (SETTING_UNOBSERVABLE, ENVIRONMENTS_UNKNOWN)
+HOLD_OPERATOR_THEN = (
+    "bring the recipient back under its recorded settings - another client loaded it under"
+    " other ones, and it loads under the record once the host has unloaded it and the relay"
+    " loads it again - or, if the user changed the task, re-record it with settings-record"
+    " --source user_transition; a refusal of the record itself names its own recovery. The"
+    " daemon retries on its own each pass until the attempt cap"
+)
+HOLD_DAEMON_THEN = (
+    "the daemon retries on its own each pass; if the host keeps answering without the setting,"
+    " the operator compares its reading with settings-show"
+)
+HOLD_CAPPED_THEN = (
+    "nothing sends this delivery again: read the report, then open a fresh execution"
+    " generation (generation-open) if the work still needs verifying"
+)
+HOLD_CHANNEL_THEN = "the report is stored where the recipient reads it: read it and acknowledge"
+# A revision request the child's approval policy stored without waking it. It takes no
+# acknowledgement (ack.py accepts one for a completion only), so the parent's path is the one a
+# held correction already has (CRW-231): read it here, and open a fresh execution generation if the
+# child still has to be given it (the review of 566eecb5).
+HOLD_CORRECTION_CHANNEL_THEN = (
+    "the revision request is stored where the child reads it, without waking the child, and it"
+    " takes no acknowledgement: read it, then open a fresh execution generation (generation-open)"
+    " if the child still has to be given it"
+)
+# A hold recorded before this revision wrote causes down. Its cause is not established, but its
+# state still says who moves it, so the actor follows the kind (Devin on fd2ee727): the daemon
+# retries an uncapped withhold, and the parent reads what a cap or a closed channel stopped.
+HOLD_UNDETERMINED_CAUSE = (
+    "its settings cause was recorded before this revision wrote causes down and is not"
+    " established here, so nothing here claims a settings fix"
+)
+HOLD_UNDETERMINED_THEN = (
+    "the daemon retries on its own each pass; " + HOLD_UNDETERMINED_CAUSE + ": if it stays"
+    " withheld, read the event's attempts and their receipts, then settings-show"
+)
+LATER_BY_OPERATOR = (
+    "for later deliveries, the operator brings the recipient back under its recorded settings"
+    " or re-records it (settings-record --source user_transition); settings-show names the"
+    " difference"
+)
+LATER_BY_OWNER = (
+    "for later deliveries, the thread's owner switches it back to an approval policy this"
+    " transport carries (never or on-request)"
+)
+# Refusals whose repair is not the thread's settings (Devin on 1f0f5a89). The role gate's codes each
+# cover more than one cause - role_policy_unconfigured is a relay process without a policy or a
+# policy that does not declare the role, role_binding_mismatch a contested binding or a cited
+# exception the policy does not authorize - and the gate writes the repair for the exact cause into
+# its refusal, so the recovery sends the operator there rather than choosing one from the code (the
+# review of fa2bacf7). The record's own refusals have one cause each: the record.
+HOLD_ROLE_GATE_THEN = (
+    "the role gate refused the recorded authorization, and its refusal names the repair for the"
+    " exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote"
+    " it. Declare the role in this host's execution policy, give the relay process its policy and"
+    " restart it, fix the binding or the creation, or re-record from a user-attributed source,"
+    " whichever it names; the code alone does not tell them apart"
+)
+HOLD_RECORD_THEN = (
+    "the recipient's authorization record was refused before any host call (missing, incomplete,"
+    " mistyped, or a sandbox it does not state as a policy this transport carries), as"
+    " refusalDetail beside this recovery says: record it again from the creation result or a"
+    " user-attributed source (settings-record --source user_transition), and the next pass reads"
+    " it again"
+)
+HOLD_REFUSAL_THEN = {
+    **{code: HOLD_ROLE_GATE_THEN for code in (
+        RefusalReason.ROLE_POLICY_UNCONFIGURED.value, RefusalReason.ROLE_BINDING_MISMATCH.value,
+        RefusalReason.SETTINGS_RECORD_STALE_FOR_ROLE.value)},
+    **{code: HOLD_RECORD_THEN for code in (
+        RefusalReason.SETTINGS_UNAVAILABLE.value, RefusalReason.SETTINGS_INCOMPLETE.value,
+        RefusalReason.SETTINGS_MISTYPED.value, RefusalReason.UNSUPPORTED_SANDBOX_TYPE.value)},
+}
+
+
+def settings_hold_recovery(kind, code, source, *, revision=False) -> dict:
+    """Who recovers a settings hold of this kind and code, and how: {actor, command, then,
+    laterDeliveries}. kind is withheld, capped or channel_closed; source is the reader's
+    (attempt, pre_send or undetermined); revision says the delivery is a revision request to the
+    child rather than a completion, which only a closed channel reads differently."""
+    if source == "undetermined":
+        if kind == "capped":
+            return {"actor": "parent", "command": SHOW_EVENT,
+                    "then": HOLD_CAPPED_THEN + "; " + HOLD_UNDETERMINED_CAUSE,
+                    "laterDeliveries": None}
+        if kind == "channel_closed":
+            return {"actor": "parent", "command": SHOW_EVENT,
+                    "then": (HOLD_CORRECTION_CHANNEL_THEN if revision else HOLD_CHANNEL_THEN)
+                    + "; " + HOLD_UNDETERMINED_CAUSE,
+                    "laterDeliveries": LATER_BY_OWNER}
+        return {"actor": "daemon", "command": SHOW_EVENT, "then": HOLD_UNDETERMINED_THEN,
+                "laterDeliveries": None}
+    role_then = HOLD_REFUSAL_THEN.get(code)
+    if kind == "capped":
+        return {"actor": "parent", "command": SHOW_EVENT, "then": HOLD_CAPPED_THEN,
+                "laterDeliveries": ("for later deliveries, " + role_then) if role_then
+                else LATER_BY_OPERATOR}
+    if kind == "channel_closed":
+        return {"actor": "parent", "command": SHOW_EVENT,
+                "then": HOLD_CORRECTION_CHANNEL_THEN if revision else HOLD_CHANNEL_THEN,
+                "laterDeliveries": LATER_BY_OWNER}
+    if code in DAEMON_SETTINGS_CODES:
+        return {"actor": "daemon", "command": SETTINGS_SHOW, "then": HOLD_DAEMON_THEN,
+                "laterDeliveries": None}
+    if role_then:
+        return {"actor": "operator", "command": SETTINGS_SHOW, "then": role_then,
+                "laterDeliveries": None}
+    return {"actor": "operator", "command": SETTINGS_SHOW, "then": HOLD_OPERATOR_THEN,
+            "laterDeliveries": None}
+
 
 def normalise_policy(policy):
     """Fill the declared defaults so an omitted default compares equal to an explicit one.
@@ -414,7 +542,7 @@ class TaskSettings:
                 "recorded": recorded, "observed": observed}
 
     def mismatches(self, response: dict, *, transmitted: bool = True,
-                   exact_approval_policy: bool = False) -> list:
+                   exact_approval_policy: bool = False, loaded_before: bool = False) -> list:
         """Ordered findings against a resume response. Order is behaviour, not presentation.
 
         The approval policy is checked FIRST, against the set this transport carries, not against
@@ -438,14 +566,27 @@ class TaskSettings:
         host that reported something else, and the two need different answers from a caller.
 
         transmitted=False reads a resume that requested nothing (settings_free_resume_params).
-        The model, the effort, the whole sandbox policy, the cwd and the environment selection
-        are compared exactly as ever, and the approval policy against the carried set as on the
-        transmitted route. The workspace roots are not: a load
-        that transmits nothing restores only what the host persists, and measured on the live
-        host it brought a thread back with its roots reduced to its cwd while every other field
-        held (CRW-215 live finding F2). So roots, at the top level and in each environment, may
-        come back NARROWER than recorded and never wider - a narrower set is inside what the
-        record authorizes, a wider one is not.
+        The model, the effort, the sandbox policy, the cwd and the environment selection are
+        compared exactly as ever, and the approval policy against the carried set as on the
+        transmitted route. The workspace roots are not: a load that transmits nothing restores
+        only what the host persists, and measured on the live host it brought a thread back with
+        its roots reduced to its cwd while every other field held (CRW-215 live finding F2). So
+        roots, at the top level and in each environment, may come back NARROWER than recorded and
+        never wider - a narrower set is inside what the record authorizes, a wider one is not.
+
+        loaded_before=True extends the same allowance to a resume that DID transmit the record,
+        when this send's own thread/read found the recipient already loaded (idle) just before
+        it (CRW-235). A resume never changes the roots of a thread the host already has loaded:
+        the thread keeps the roots of whichever load brought it in, which for another task's
+        plain bridge message is its cwd alone. Measured on codex-cli 0.154.0: a resume sending
+        other roots to a loaded thread changes nothing, and one sending them to a notLoaded thread
+        applies them, so a transmitted resume to a recipient read as notLoaded still has to come
+        back exact (loaded_before stays False there).
+
+        Wherever the roots may narrow, so may the one sandbox field the host derives from them: a
+        workspace-write thread reports its non-cwd runtime roots as writableRoots, so a narrowed
+        load reports fewer. Both sides must be workspaceWrite, every other sandbox field stays
+        exact, and the writable roots may only be a subset of the recorded ones (_sandbox_within).
         """
         found = []
         if not isinstance(response, dict):
@@ -499,6 +640,9 @@ class TaskSettings:
                           "returnedShape": "environments" + " ".join(unreadable)})
             return found
         got_environments = normalise_environments(returned_environments)
+        # Where a narrower reading is inside what the record authorizes: after a resume that
+        # requested nothing, or after one sent to a thread that was already loaded.
+        narrowable = not transmitted or loaded_before
         if environments_problem(self.data["environments"]) is not None:
             # require_usable() refuses such a record before any send; this is the same rule
             # where the comparison stands on its own, so an unreadable record is never measured
@@ -509,7 +653,7 @@ class TaskSettings:
         else:
             expected_environments = normalise_environments(self.data["environments"])
             if not (_environments_within(got_environments, expected_environments)
-                    if not transmitted
+                    if narrowable
                     else _canonical(got_environments) == _canonical(expected_environments)):
                 found.append({"code": SETTINGS_NOT_PRESERVED, "field": "environments",
                               "expected": expected_environments,
@@ -542,6 +686,8 @@ class TaskSettings:
                               "expected": expected if expected is not None else self.data["sandbox"],
                               "returned": raw})
                 continue
+            if field == "sandbox" and narrowable and _sandbox_within(returned, expected):
+                continue
             if field == "runtimeWorkspaceRoots":
                 if not _text_list(returned):
                     # list(123) raised here, and list("/a/b") compared characters.
@@ -550,7 +696,7 @@ class TaskSettings:
                                   "returnedShape": _shape(returned)})
                     continue
                 returned = list(returned)
-                if not transmitted and roots_readable and _roots_within(returned, expected):
+                if narrowable and roots_readable and _roots_within(returned, expected):
                     continue
             # As JSON values, not by Python equality, under which 0 == False and 1 == True.
             if _canonical(expected) != _canonical(returned):
@@ -572,8 +718,47 @@ class TaskSettings:
             found.append({"code": UNVERIFIABLE_PERMISSION_PROFILE,
                           "field": "activePermissionProfile",
                           "expected": expected_profile,
-                          "returned": profile})
+                              "returned": profile})
         return found
+
+    def roots_narrowing(self, response, *, status_before=None) -> list:
+        """Notes for each place a resume reported fewer roots than the record, or [].
+
+        Read only after mismatches() found nothing, so every reported set is already within the
+        recorded one. A note is written where the reported SET is a strict subset: a reordering of
+        the same roots is no narrowing. Three places can narrow - the top-level roots, each
+        environment's roots, and a workspace-write sandbox's writableRoots, compared on the
+        normalised policies so an omitted list reads as the declared empty default. Total, like
+        mismatches(): a shape it cannot read produces no note rather than an exception.
+        """
+        notes = []
+        if not isinstance(response, dict):
+            return notes
+
+        def note(field, recorded, observed):
+            if _text_list(recorded) and _text_list(observed) and set(observed) < set(recorded):
+                notes.append({"code": RUNTIME_ROOTS_NARROWER, "field": field,
+                              "recorded": list(recorded), "observed": list(observed),
+                              "statusBeforeResume": status_before})
+
+        note("runtimeWorkspaceRoots", self.data.get("runtimeWorkspaceRoots"),
+             response.get("runtimeWorkspaceRoots"))
+        thread = response.get("thread")
+        returned = thread.get("environments") if isinstance(thread, dict) else None
+        recorded = self.data.get("environments")
+        if (returned is not None and environments_problem(returned) is None
+                and environments_problem(recorded) is None):
+            pairs = zip(normalise_environments(returned), normalise_environments(recorded))
+            for index, (got, allowed) in enumerate(pairs):
+                note(f"environments[{index}].runtimeWorkspaceRoots",
+                     allowed["runtimeWorkspaceRoots"], got["runtimeWorkspaceRoots"])
+        got_policy = normalise_policy(response.get("sandbox"))
+        recorded_policy = normalise_policy(self.data.get("sandbox"))
+        if (got_policy is not None and recorded_policy is not None
+                and got_policy.get("type") == recorded_policy.get("type") == "workspaceWrite"):
+            note("sandbox.writableRoots", recorded_policy.get("writableRoots"),
+                 got_policy.get("writableRoots"))
+        return notes
 
 
 def _shape(value) -> str:
@@ -632,6 +817,28 @@ def environments_problem(environments):
 def _roots_within(returned, recorded) -> bool:
     """Every root the host reports is one the record names: narrower is within, wider is not."""
     return all(root in recorded for root in returned)
+
+
+def _sandbox_within(returned, recorded) -> bool:
+    """A reported sandbox inside the recorded one: the same workspace-write policy with fewer
+    writable roots at most.
+
+    Both arguments are normalised policies (normalise_policy), and the caller has already refused
+    either side being unreadable. Only workspaceWrite relaxes, and only its writableRoots: the
+    type, the network flag, the tmp exclusions and any key the pinned contract does not declare
+    are the same JSON on both sides, and the writable roots are text lists whose every member the
+    record names. Another sandbox type carrying a writableRoots key compares exactly.
+    """
+    if not (isinstance(returned, dict) and isinstance(recorded, dict)):
+        return False
+    if returned.get("type") != "workspaceWrite" or recorded.get("type") != "workspaceWrite":
+        return False
+    rest = [{key: value for key, value in one.items() if key != "writableRoots"}
+            for one in (returned, recorded)]
+    if _canonical(rest[0]) != _canonical(rest[1]):
+        return False
+    got, allowed = returned.get("writableRoots"), recorded.get("writableRoots")
+    return _text_list(got) and _text_list(allowed) and _roots_within(got, allowed)
 
 
 def _environments_within(returned, recorded) -> bool:

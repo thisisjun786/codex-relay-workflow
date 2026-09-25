@@ -306,6 +306,18 @@ class FakeHostAdapter:
                 error="thread/resume: Interactive approvals unsupported; message withheld.",
                 rpcError={"code": "unsupported_approval_policy", "message": "unsupported"},
             )
+        elif outcome in ("settings_not_preserved", "setting_unobservable"):
+            # The transmitted route's settings refusal, as the real transport reports it: a
+            # failed resume carrying the field-level findings, before any turn (CRW-235).
+            finding = {"code": outcome, "field": "runtimeWorkspaceRoots",
+                       "expected": ["/recorded"],
+                       "returned": None if outcome == "setting_unobservable" else ["/other"]}
+            receipt.update(
+                status="failed", resumed=resumed, settingsFindings=[finding],
+                error=f"thread/resume: {outcome}: runtimeWorkspaceRoots returned"
+                      f" {finding['returned']!r}; message withheld",
+                rpcError={"code": outcome, "message": f"{outcome}: runtimeWorkspaceRoots"},
+            )
         elif outcome == "turn_start_fail":
             receipt.update(status="failed", resumed=resumed,
                            error="turn/start: refused",
@@ -324,6 +336,15 @@ class FakeHostAdapter:
             receipt.update(status="accepted", resumed=resumed, turnId=existing)
             thread.items.append((existing, message))
             thread.updated_at = self._updated_now()
+        elif outcome == "accepted_with_notes":
+            # Delivered on roots narrower than the record, noted as the real transport notes it.
+            turn = self.start_turn(thread_id, status="inProgress", text=message)
+            receipt.update(status="accepted", resumed=resumed, turnId=turn.turn_id,
+                           settingsNotes=[{"code": "runtime_roots_narrower_than_record",
+                                           "field": "runtimeWorkspaceRoots",
+                                           "recorded": ["/recorded", "/also"],
+                                           "observed": ["/recorded"],
+                                           "statusBeforeResume": "idle"}])
         else:  # accepted
             turn = self.start_turn(thread_id, status="inProgress", text=message)
             receipt.update(status="accepted", resumed=resumed, turnId=turn.turn_id)
