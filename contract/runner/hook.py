@@ -86,7 +86,7 @@ def run_scenario(path, tmp_path):
                               capture_output=True, timeout=60, check=False, env=env, cwd=cwd)
         exit_code, stdout, stderr = done.returncode, done.stdout.decode(), done.stderr.decode()
     else:
-        pytest.fail(f"{ident}: unknown run kind {action['kind']}")
+        raise AssertionError(f"{ident}: unknown run kind {action['kind']}")
     elapsed = time.monotonic() - started
     records = [json.loads(entry.read_text(encoding="utf-8"))
                for day in sorted((tmp_path / "journal").glob("*"))

@@ -9,9 +9,10 @@ import subprocess
 import sys
 
 DOCS = {"README.md", "CONTRIBUTING.md", "POLICY.md", "SECURITY.md", "AGENTS.md", "LICENSE"}
-FULL = {".gitignore", ".gitleaks.toml", "pyproject.toml", "uv.lock", "plugins/crw/LICENSE"}
+FULL = {".gitignore", ".gitleaks.toml", "pyproject.toml", "uv.lock", "plugins/crw/LICENSE",
+        "conftest.py"}
 PREFIXES = ("scripts/", "packages/", "plugins/crw/wiring/", "plugins/crw/.codex-plugin/",
-            ".agents/", ".github/")
+            ".agents/", ".github/", "contract/", "docs/port/")
 REASONS = {"paths", "empty", "base-unavailable", "dispatch"}
 FIELDS = {"version", "event", "base", "head", "base_ref", "ref", "changed", "unknown",
           "unsafe", "reason", "selected"}

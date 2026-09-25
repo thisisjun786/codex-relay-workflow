@@ -32,7 +32,7 @@ too, so an existing unregistered component cannot hide behind a docs-only diff.
 | --- | --- |
 | Named root prose files and Markdown directly under `docs/` | Validation, plugin identity, offline contracts and secrets |
 | `plugins/crw/skills/**` or the root `skills` link | Above, plus installer/CI tests on Python 3.10 and 3.13 |
-| Runtime, package, wiring, manifest, shared configuration or CI-control paths | All checks, including both package suites on Python 3.11 and 3.13 |
+| Runtime, package, wiring, manifest, shared configuration, contract corpus (`contract/**`, root `conftest.py`, the checker-read `docs/port/**`) or CI-control paths | All checks, including both package suites on Python 3.11 and 3.13 |
 | Mixed paths | Union of their coverage |
 | Empty/unavailable diff or manual dispatch | Full coverage |
 | Unmapped changed or candidate path | Full coverage; gate fails until the path is registered |
