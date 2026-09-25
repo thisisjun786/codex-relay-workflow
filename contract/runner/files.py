@@ -1,5 +1,6 @@
 """Stop adapter process and filesystem observations."""
 
+import importlib.util
 import json
 import os
 import re
@@ -174,7 +175,13 @@ def agreement(case, tmp_path):
     """Run both installed and checkout adapters against independent identical fixtures."""
     sys.path.insert(0, str(ROOT / "scripts"))
     from crw_runtime import completion
-    from codex_session_relay import stopadapter
+    # Loaded from its file, not through the relay package: stopadapter.py is standard-library only,
+    # so this runs in the offline scripts/ci/tests job where the package is not installed.
+    spec = importlib.util.spec_from_file_location(
+        "crw_packaged_stopadapter",
+        ROOT / "packages/codex-session-relay/src/codex_session_relay/stopadapter.py")
+    stopadapter = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(stopadapter)
     results = []
     for label, adapter in (("checkout", completion), ("packaged", stopadapter)):
         home = tmp_path / label
