@@ -801,6 +801,12 @@ def _awaiting(kind, outcome, reading, stored=None, *, event_id=None, store=None)
     generation opens (Devin on a4c13aec); a delivery with no note (a grant) is asked the send
     path's own live rule (delivery.supersession_reason). The row itself is left reconcilable, as
     the send path leaves it.
+
+    A merge-turn grant is answered on its own turn, and status settles it from there before
+    anything else (delivery._phase and _reported_state), so it is asked there first here too.
+    Acknowledged is a grant's ordinary end and reads grant_acknowledged, status's word, with
+    nothing owed; any other answer from its turn (regranted, closed, gone, unreadable) is what
+    replaced it (independent review of b05b452f: an answered grant read as a supersession).
     """
     from .assignment import (
         CORRECTION_ANSWERED_ACTION, CORRECTION_HELD_ACTION, CORRECTION_UNCONFIRMED_ACTION,
@@ -808,17 +814,23 @@ def _awaiting(kind, outcome, reading, stored=None, *, event_id=None, store=None)
         UNKNOWN_SEND_UNDECIDED_ACTION, recovery_command, store_directory,
     )
     from .currency import SUPERSEDED as SUPERSEDED_REVISION
-    from .delivery import supersession_reason
+    from .delivery import MERGE_TURN_GRANT, supersession_reason
+    from .mergeturn import MERGE_TURN_GRANT_ANSWERED
 
     if outcome.get("state") != HELD_UNCERTAIN:
         return {}
     correction = kind == REVISION
     superseded = None
     if event_id is not None and store is not None:
-        note = store.one("SELECT reason FROM delivery_supersession WHERE event_id = ?",
-                         (event_id,))
-        superseded = (note["reason"] if note is not None
-                      else supersession_reason(store.db, event_id))
+        if kind == MERGE_TURN_GRANT:
+            superseded = supersession_reason(store.db, event_id)
+            if superseded == MERGE_TURN_GRANT_ANSWERED:
+                return {"nextExpectedAction": "none", "reason": "grant_acknowledged"}
+        if superseded is None:
+            note = store.one("SELECT reason FROM delivery_supersession WHERE event_id = ?",
+                             (event_id,))
+            superseded = (note["reason"] if note is not None
+                          else supersession_reason(store.db, event_id))
     if superseded is not None:
         # "none" is assignment's word for nothing owed (NEXT_ACTION); a correction its
         # generation answered is the parent's to read, as correction_next_action says.

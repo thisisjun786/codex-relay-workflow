@@ -749,6 +749,13 @@ reconciled, as the send path leaves it, so a lost response can still settle it. 
 re-check found the old generation's held attempt still naming `parent_recovers_unknown_send_lost`
 after the parent had recovered.
 
+A merge-turn grant sent this way is answered on its own merge turn, and `reconcile` asks that turn
+first, as `status` does. A grant the parent has since acknowledged answers `nextExpectedAction`
+`none` with reason `grant_acknowledged`, the word `status` reports for it, and no `recovery`:
+acknowledgement is how a grant ordinarily ends, and nothing replaced it. A grant its turn moved past
+(regranted, closed, gone or unreadable) answers `none` with `superseded:<reason>`, as status
+reports it.
+
 A hold only the parent can recover (`host_lost_turn`, `unknown_send_lost`,
 `unknown_send_undecided`) is a broken `delivery_stalled` fault as soon as the sweep reads it, so it
 is opened and published rather than left observed. An uncertain send's hold is named only after the
