@@ -86,19 +86,28 @@ if [[ "${1:-}" == api ]]; then
     printf '{"sha":"%s","object":{"sha":"%s","type":"%s"}}\n' "$object_sha" "$peeled_sha" "$peeled_type"
     exit 0
   fi
-  if [[ "$query" == */releases/tags/* ]]; then
+  if [[ "$query" == */releases\?per_page=100 ]]; then
     case=$(state_get release.json case)
     if [[ "$case" == error ]]; then printf '%s\n' '{"message":"release api failed","status":"500"}'; exit 1; fi
-    if [[ "$case" == missing ]]; then printf '%s\n' '{"message":"Not Found","status":"404"}'; exit 1; fi
+    if [[ "$case" == paged-draft ]]; then
+      printf '%s\n' '[]'
+      printf '[{"draft":true,"target_commitish":"%s","tag_name":"%s"}]\n' "$RELEASE_SHA" "$RELEASE_TAG"
+      exit 0
+    fi
+    if [[ "$case" == missing || "$case" == create-error ]]; then printf '%s\n' '[]'; exit 0; fi
     draft=$(state_get release.json draft); [[ -n "$draft" ]] || draft=false
     target=$(state_get release.json target); [[ -n "$target" ]] || target="$RELEASE_SHA"
-    printf '{"draft":%s,"target_commitish":"%s","tag_name":"%s"}\n' "$draft" "$target" "$RELEASE_TAG"
+    printf '[{"draft":%s,"target_commitish":"%s","tag_name":"%s"}]\n' "$draft" "$target" "$RELEASE_TAG"
     exit 0
   fi
   printf 'unexpected api: %s\n' "$query" >&2
   exit 90
 fi
 if [[ "${1:-}" == release && "${2:-}" == create ]]; then
+  if [[ "$(state_get release.json case)" == create-error ]]; then
+    echo 'release create failed' >&2
+    exit 1
+  fi
   printf '%s\n' "$*" > "$GH_STATE/created.txt"
   exit 0
 fi

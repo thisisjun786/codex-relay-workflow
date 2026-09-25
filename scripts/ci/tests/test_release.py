@@ -261,6 +261,32 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.set_case("release", case="existing", draft=False, target=self.candidate)
         self.assert_refuse(self.run_block("publish", RELEASE_TAG="v0.1.1"), "main readback mismatch")
 
+    def test_draft_collision_refuses_before_creating_immutable_tag(self):
+        self.set_case("release", case="existing", draft=True, target=self.candidate)
+        self.assert_refuse(self.run_block("publish"), "draft must be seen before any write")
+        tag = command(["git", "--git-dir", str(self.remote), "show-ref", "--verify", "--quiet", "refs/tags/v0.1.0"], self.env, self.root)
+        self.assertNotEqual(tag.returncode, 0, "draft refusal must leave no remote tag")
+        self.assertEqual(self.remote_sha("main"), self.base)
+        self.assertFalse((self.state / "created.txt").exists())
+        self.set_case("release", case="paged-draft")
+        self.assert_refuse(self.run_block("publish"), "draft on later page must be seen")
+        tag = command(["git", "--git-dir", str(self.remote), "show-ref", "--verify", "--quiet", "refs/tags/v0.1.0"], self.env, self.root)
+        self.assertNotEqual(tag.returncode, 0)
+
+    def test_tag_only_failure_reports_and_recovers_same_commit(self):
+        self.set_case("release", case="create-error")
+        result = self.run_block("publish")
+        self.assert_refuse(result, "release creation failed after tag")
+        self.assertIn("The tag exists, but release creation failed", result.stdout)
+        self.assertEqual(self.remote_sha("refs/tags/v0.1.0"), self.candidate)
+        self.assertEqual(self.remote_sha("main"), self.base)
+        self.assertFalse((self.state / "created.txt").exists())
+        self.set_case("tag", case="commit", object_sha=self.candidate, object_type="commit")
+        self.set_case("release", case="missing")
+        self.assert_pass(self.run_block("publish"), "recover without rewriting tag")
+        self.assertEqual(self.remote_sha("main"), self.candidate)
+        self.assertEqual(self.remote_sha("refs/tags/v0.1.0"), self.candidate)
+
     def test_old_and_divergent_sources_do_not_advance_main(self):
         self.git("commit", "--allow-empty", "-m", "newer main")
         advanced = self.git("rev-parse", "HEAD")

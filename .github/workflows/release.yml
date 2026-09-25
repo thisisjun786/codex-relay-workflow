@@ -219,6 +219,26 @@ jobs:
             }
             tag_exists=0
           fi
+          # Tag lookup omits draft releases. Inspect all releases with the owner
+          # credential before creating an immutable tag or changing any ref.
+          releases=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100") || {
+            echo '::error::Could not inspect release conflicts before publication.'
+            exit 1
+          }
+          release=$(jq -c -e -s --arg tag "$RELEASE_TAG" '
+            map(if type == "array" then . else error("invalid release page") end)
+            | add | map(select(.tag_name == $tag))
+            | if length > 1 then error("multiple releases for tag") else {match: .[0]} end
+          ' <<< "$releases") || {
+            echo '::error::Could not determine whether this release already exists.'
+            exit 1
+          }
+          jq -e --arg sha "$RELEASE_SHA" '
+            .match == null or (.match.draft == false and .match.target_commitish == $sha)
+          ' <<< "$release" >/dev/null || {
+            echo '::error::An existing draft or conflicting release must be resolved before publication.'
+            exit 1
+          }
           if [[ "$tag_exists" == 0 ]]; then
             if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
               [[ "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" == "$RELEASE_SHA" ]] || {
@@ -230,22 +250,13 @@ jobs:
             fi
             git push origin "refs/tags/$RELEASE_TAG"
           fi
-          if release=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG"); then
-            jq -e --arg sha "$RELEASE_SHA" '
-              .draft == false and .target_commitish == $sha
-            ' <<< "$release" >/dev/null || {
-              echo '::error::This tag already has a release that does not identify the selected commit.'
-              exit 1
-            }
-          else
-            status=$(jq -r '.status // empty' <<< "$release")
-            [[ "$status" == 404 ]] || {
-              echo '::error::Could not determine whether this release already exists.'
-              exit 1
-            }
+          if jq -e '.match == null' <<< "$release" >/dev/null; then
             args=(--verify-tag --target "$RELEASE_SHA" --title "$RELEASE_TAG" --notes "$RELEASE_NOTES")
             if [[ "$RELEASE_TAG" == *-* ]]; then args+=(--prerelease); fi
-            gh release create "$RELEASE_TAG" "${args[@]}"
+            gh release create "$RELEASE_TAG" "${args[@]}" || {
+              echo '::error::The tag exists, but release creation failed. Inspect the release and any draft conflict, then recover with the same tag and commit; main was not advanced.'
+              exit 1
+            }
           fi
           git push origin "$RELEASE_SHA:refs/heads/main" || {
             echo '::error::The release exists, but main was not updated. Inspect the failure and rerun with the same tag and commit.'

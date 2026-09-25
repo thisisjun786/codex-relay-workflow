@@ -34,6 +34,8 @@ and Actions read permissions. Workflow permission is needed when advancing main
 includes workflow changes. Never commit a token or substitute a local developer
 credential automatically. A missing token blocks publication before any write.
 
+Before writing, publication reads the complete release list with the owner
+credential and refuses an existing draft or conflicting release for the tag.
 The workflow creates the immutable tag and GitHub source release, then advances
 main without force. It does not publish to a package registry, update an installed
 plugin/runtime, restart services, or deploy an application. Those operations keep
@@ -44,6 +46,11 @@ their separate authorization and verification requirements.
 Read back the tag's commit, published release and main SHA. They must identify the
 selected source. GitHub rules prohibit rewriting or deleting version tags and
 moving main backwards or onto divergent history.
+
+If the tag exists but release creation failed, main remains unchanged. Inspect
+the failure and any draft created outside this workflow; resolve that conflict
+under the owner's authorization, then rerun the same tag and commit. Do not delete
+or move the immutable tag.
 
 If the release exists but the main update failed, preserve that partial result.
 After correcting the cause, rerun with the same tag and commit. An existing tag
