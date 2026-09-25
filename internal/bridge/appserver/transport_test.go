@@ -89,7 +89,7 @@ func TestReceive_fails_only_requests_owned_by_retired_reader(t *testing.T) {
 	replacement := &websocket.Conn{}
 	mine := make(chan outcome, 1)
 	theirs := make(chan outcome, 1)
-	client := &Client{pending: map[string]pending{"old": {old, mine}, "new": {replacement, theirs}}, conn: replacement}
+	client := &Client{pending: map[string]pending{"old": {conn: old, done: mine}, "new": {conn: replacement, done: theirs}}, conn: replacement}
 	// When: the old reader unwinds after its connection fails.
 	// Its finalizer is exercised with an already-closed connection, not a wall-clock race.
 	client.failReader(old, errors.New("retired"))

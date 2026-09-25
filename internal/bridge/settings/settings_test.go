@@ -14,7 +14,7 @@ func TestReceipts_whenLimitsAreReported(t *testing.T) {
 	approvals := contract.Approvals(response)
 	settings := contract.Receipt(response, "resume")
 	// Then: each states its Python-compatible observation boundary.
-	if approvals["limits"] != approvalLimits || settings["observationLimits"] != observationLimits {
+	if approvals["limits"] != ApprovalLimits || settings["observationLimits"] != observationLimits {
 		t.Fatalf("approvals=%v settings=%v", approvals, settings)
 	}
 }

@@ -65,17 +65,25 @@ func (c *session) dispatch(ctx context.Context, raw []byte) {
 	if message.ID == nil {
 		return
 	}
-	reply, scripted := c.server.reply(method)
+	reply, scripted := c.server.reply(method, message.Params)
 	switch {
 	case method == "initialize":
 		if !scripted {
 			reply = Reply{Result: map[string]any{"userAgent": UserAgent, "platformOs": "linux"}}
 		}
-		c.initialized = reply.Error == nil
+		c.initialized = reply.Error == nil && reply.ErrorObject == nil && reply.Close == nil
 	case !c.initialized:
 		reply = Reply{Error: &RPCError{Message: "not initialized"}}
 	case !scripted:
 		reply = Reply{Error: &RPCError{Code: -32601, Message: method}}
+	}
+	if reply.Paused != nil {
+		reply.Paused <- struct{}{}
+		select {
+		case <-ctx.Done():
+			return
+		case <-reply.Release:
+		}
 	}
 	if reply.Delay <= 0 {
 		c.answer(ctx, message, reply)
@@ -128,6 +136,10 @@ func (c *session) answer(ctx context.Context, message envelope, reply Reply) {
 	}
 	if reply.Close != nil {
 		_ = c.conn.Close(reply.Close.Code, reply.Close.Reason)
+		return
+	}
+	if reply.ErrorObject != nil {
+		c.send(ctx, map[string]any{"id": message.ID, "error": reply.ErrorObject})
 		return
 	}
 	if reply.Error != nil {

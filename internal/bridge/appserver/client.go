@@ -15,7 +15,7 @@ import (
 
 // New constructs a reconnecting client; Dial also performs the initial handshake.
 func New(socketPath string, bounds PhaseBounds) *Client {
-	return &Client{socket: socketPath, bounds: bounds, pending: make(map[string]pending), notifications: make(chan Notification, 64), connectGate: make(chan struct{}, 1)}
+	return &Client{socket: socketPath, bounds: bounds, maxFrame: MaxFrameBytes, pending: make(map[string]pending), notifications: make(chan Notification, 64), connectGate: make(chan struct{}, 1)}
 }
 func Dial(ctx context.Context, socketPath string) (*Client, error) {
 	c := New(socketPath, DefaultBounds)
@@ -46,22 +46,34 @@ func (c *Client) connect(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("appserver dial: %w", err)
 	}
-	ws.SetReadLimit(MaxFrameBytes)
+	ws.SetReadLimit(int64(c.maxFrame))
 	c.mu.Lock()
 	c.conn = ws
 	c.mu.Unlock()
 	go c.receive(ws)
 	handshake := map[string]any{"clientInfo": map[string]any{"name": "codex_thread_bridge", "version": "0.1.0"}, "capabilities": map[string]any{"experimentalApi": true}}
-	if _, err := c.request(ctx, ws, "initialize", handshake); err != nil {
+	raw, err := c.request(ctx, ws, "initialize", handshake)
+	if err != nil {
 		c.retire(ws)
 		return fmt.Errorf("initialize: %w", err)
 	}
+	var info map[string]any
+	if err := json.Unmarshal(raw, &info); err != nil {
+		c.retire(ws)
+		return fmt.Errorf("initialize result: %w", err)
+	}
+	c.mu.Lock()
+	c.info = info
+	c.mu.Unlock()
 	if err := c.write(ctx, ws, map[string]any{"method": "initialized", "params": map[string]any{}}, "initialized"); err != nil {
 		c.retire(ws)
 		return err
 	}
 	return nil
 }
+
+// Connect establishes the connection and handshake now rather than on the first call.
+func (c *Client) Connect(ctx context.Context) error { return c.connect(ctx) }
 
 func (c *Client) Call(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
 	establish, cancel := context.WithTimeout(ctx, c.bounds.Establish)
@@ -87,9 +99,21 @@ func (c *Client) request(ctx context.Context, ws *websocket.Conn, method string,
 	id := c.counter
 	key := fmt.Sprint(id)
 	ch := make(chan outcome, 1)
-	c.pending[key] = pending{ws, ch}
+	c.pending[key] = pending{ws, ch, method}
 	c.mu.Unlock()
 	defer func() { c.mu.Lock(); delete(c.pending, key); c.mu.Unlock() }()
+	c.mu.Lock()
+	var injected error
+	if c.beforeWrite != nil {
+		injected = c.beforeWrite(method)
+	}
+	c.mu.Unlock()
+	if injected != nil {
+		return nil, injected
+	}
+	if hook, ok := ctx.Value(sendHookKey{}).(func(string)); ok {
+		hook(method)
+	}
 	if err := c.write(ctx, ws, map[string]any{"id": id, "method": method, "params": params}, method); err != nil {
 		c.retire(ws)
 		return nil, err
@@ -102,8 +126,7 @@ func (c *Client) request(ctx context.Context, ws *websocket.Conn, method string,
 			return nil, result.err
 		}
 		if result.response.Error != nil {
-			e := result.response.Error
-			return nil, &RPCError{method, e.Code, e.Message}
+			return nil, rpcError(method, result.response.Error)
 		}
 		if result.response.Result == nil {
 			return nil, &TransportError{method + ": invalid response; outcome unknown"}

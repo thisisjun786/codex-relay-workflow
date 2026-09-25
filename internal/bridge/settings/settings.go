@@ -19,6 +19,12 @@ const (
 
 var ErrInvalid = errors.New("invalid settings")
 
+// invalid is a settings.py ValueError: its text is exactly Python's, and it matches ErrInvalid.
+type invalid string
+
+func (e invalid) Error() string        { return string(e) }
+func (e invalid) Is(target error) bool { return target == ErrInvalid }
+
 // UntransmittableError is settings.py UntransmittableSetting: the protocol cannot carry the
 // request at all, decided before any RPC.
 type UntransmittableError struct {
@@ -79,24 +85,24 @@ func Normalise(policy any) map[string]any {
 func (c Contract) Validate() error {
 	approval := c.ApprovalPolicy
 	if approval != "" && approval != "never" && approval != "on-request" && approval != "untrusted" {
-		return fmt.Errorf("approval_policy must be one of ['never', 'on-request', 'untrusted']; a granular policy has no name a caller can declare: %w", ErrInvalid)
+		return invalid("approval_policy must be one of ['never', 'on-request', 'untrusted']; a granular policy has no name a caller can declare")
 	}
 	if c.Sandbox != "" && modes[c.Sandbox] == "" {
-		return fmt.Errorf("Unsupported sandbox %q: %w", c.Sandbox, ErrInvalid)
+		return invalid("Unsupported sandbox " + Repr(c.Sandbox))
 	}
 	if c.ExpectedPolicy != nil {
 		if err := c.validatePolicy(); err != nil {
 			return err
 		}
 	}
-	for _, v := range []string{c.CWD, c.Model, c.ReasoningEffort} {
-		if v != "" && strings.TrimSpace(v) == "" {
-			return fmt.Errorf("cwd, model and reasoning_effort must be non-empty strings when supplied: %w", ErrInvalid)
+	for _, f := range [...][2]string{{"cwd", c.CWD}, {"model", c.Model}, {"reasoning_effort", c.ReasoningEffort}} {
+		if f[1] != "" && strings.TrimSpace(f[1]) == "" {
+			return invalid(f[0] + " must be a non-empty string when supplied")
 		}
 	}
 	for _, root := range c.Roots {
 		if !filepath.IsAbs(root) {
-			return fmt.Errorf("runtime_workspace_roots must be absolute paths: %w", ErrInvalid)
+			return invalid("runtime_workspace_roots must be absolute paths")
 		}
 	}
 	return nil
@@ -108,14 +114,14 @@ var transmittable = map[string]map[string]string{"workspaceWrite": {"writableRoo
 func (c Contract) validatePolicy() error {
 	p := Normalise(c.ExpectedPolicy)
 	if p == nil {
-		return fmt.Errorf("expected_sandbox_policy must be an object carrying a type: %w", ErrInvalid)
+		return invalid("expected_sandbox_policy must be an object carrying a type")
 	}
 	kind := p["type"].(string)
 	if kind != "readOnly" && kind != "workspaceWrite" && kind != "dangerFullAccess" {
 		return &UntransmittableError{"sandbox", p, fmt.Sprintf("%q has no sandbox mode this bridge can send", kind)}
 	}
 	if c.Sandbox != "" && modes[c.Sandbox] != kind {
-		return fmt.Errorf("sandbox and expected_sandbox_policy.type must agree: %w", ErrInvalid)
+		return invalid("sandbox and expected_sandbox_policy.type must agree")
 	}
 	fields := make([]string, 0, len(p))
 	for k := range p {

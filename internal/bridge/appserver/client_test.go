@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -221,6 +220,6 @@ func TestRequestsSince_reports_evictions(t *testing.T) {
 	// Then
 	report := client.RequestsSince(mark, "a")
 	if len(report.ThisThread) != 64 || report.NotRetained != 5 {
-		t.Fatal(fmt.Sprintf("bad ring: %+v", report))
+		t.Fatalf("bad ring: %+v", report)
 	}
 }

@@ -18,6 +18,7 @@ import (
 
 const PriorAttemptsKept = 5
 
+//lint:ignore ST1005 ledger.py:125 caller-visible message kept byte-identical to Python
 var ErrUnknown = errors.New("Unknown request_id")
 var ErrConflict = errors.New("request_id already belongs to different arguments; no action taken")
 
