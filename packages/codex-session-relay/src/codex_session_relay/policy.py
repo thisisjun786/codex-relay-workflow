@@ -41,6 +41,14 @@ UNKNOWN_SEND_LOST = "unknown_send_lost"
 # hold so that nothing reads it as a wait the daemon will end. The attempt names the reason as
 # "unknown_send_undecided:<reason>".
 UNKNOWN_SEND_UNDECIDED = "unknown_send_undecided"
+# The journal kind a reconciliation writes, subject the attempt's request id, when it gives an uncertain
+# send's hold a name the delivery did not already carry: its first name, or a change between the two
+# above, which readings can make in either direction. The fault sweep ends the hold's occurrence key with
+# that entry's sequence, so each name a sweep finds standing is one occurrence and a name the hold
+# returns to is recorded again, while a reading that keeps the name adds nothing (independent review of
+# 72178ee8). The journal keeps every naming, including one a later naming replaced before any sweep
+# read it, which is not a fault occurrence (independent review of 66328cb4).
+UNKNOWN_SEND_HOLD_NAMED = "unknown_send_hold_named"
 # Why a recipient may not be woken now (RetryPolicy.pacing). Neither is a hold or a failure: the delivery
 # waits and goes out once the reading reopens (I-225).
 MIN_SEND_INTERVAL = "min_send_interval"

@@ -20,16 +20,20 @@ host lost afterwards (CRW-224, host_lost_turn); and a delivery waiting on the re
 cap (O-H0R4-2), staged by filling the recipient's window.
 """
 
+import json
 import os
+import re
 import shlex
 import unittest
 
 from codex_session_relay import faults, faultsweep
 from codex_session_relay.hostadapter import TURN_ABSENT, ListingBounded, TurnInfo, find_in_listing
+from codex_session_relay.mergeturn import MERGE_TURN_REGRANTED
 from codex_session_relay.transport import DISPATCHED, HELD_UNCERTAIN, QUEUED
 
 from .support import CHILD, PARENT
 from .test_host_lost_turn import HostLossCase
+from .test_merge_turn_wake import MergeTurnWakeTestCase
 
 UNKNOWN_LOST = "unknown_send_lost"
 UNDECIDED = "unknown_send_undecided"
@@ -894,3 +898,349 @@ class TheHourlyCapIsNamedWithItsReopenTime(UnknownSendCase):
         record = self.attempt(event_id)
         self.assertEqual(record["deliveryState"], DISPATCHED)
         self.assertIsNone(self.status_of(event_id).get("pacing"))
+
+class AHoldReachesItsFaultWhateverTheSweepSawFirst(UnknownSendCase):
+    """CRW-124 R5 F-R5-1: in live timing the fault sweep reads the settled uncertain attempt about
+    twenty seconds after the send, before the 61 s allowance lets any reading name a hold, and
+    records it degraded. The hold, named later, has to reach the same fault as broken and name
+    itself whatever the sweep recorded first."""
+
+    def stall(self):
+        return self.store.one("SELECT * FROM fault_ledger WHERE fault_class = 'delivery_stalled'")
+
+    def keys(self):
+        """The recorded occurrence keys, a hold's naming sequence shown as #."""
+        return sorted(re.sub(r":held:(\w+):\d+$", r":held:\1:#", row["occurrence_key"])
+                      for row in self.store.all(
+            "SELECT o.occurrence_key FROM fault_occurrences o"
+            "  JOIN fault_ledger f ON f.fault_id = o.fault_id"
+            " WHERE f.fault_class = 'delivery_stalled'"))
+
+    def publications(self):
+        return [(row["trigger_key"], row["summary"]) for row in self.store.all(
+            "SELECT p.trigger_key, p.summary FROM fault_publications p"
+            "  JOIN fault_ledger f ON f.fault_id = p.fault_id"
+            " WHERE f.fault_class = 'delivery_stalled' ORDER BY p.rowid")]
+
+    def assert_broken_naming(self, hold):
+        self.assertEqual(self.fault_states(), [(faults.OPEN, faults.BROKEN)])
+        self.assertIn(f"is held: {hold}", self.stall()["detail"])
+
+    def test_a_hold_named_after_the_sweep_recorded_its_attempt_breaks_the_fault(self):
+        event_id, first = self.unknown_send()
+        self.clock.advance(20)
+        self.assertEqual(self.fault_states(), [(faults.OBSERVED, faults.DEGRADED)])
+        self.ticks(1)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assert_broken_naming(UNKNOWN_LOST)
+        # Two readings of one attempt: the attempt, and the hold named on it.
+        self.assertEqual(self.keys(),
+                         [f"delivery:{first}", f"delivery:{first}:held:{UNKNOWN_LOST}:#"])
+        self.assertEqual(self.stall()["occurrence_count"], 2)
+        opened = [summary for trigger, summary in self.publications() if trigger == "open"]
+        self.assertTrue(opened, self.publications())
+        self.assertIn("severity: broken", opened[-1])
+        self.assertIn(f"is held: {UNKNOWN_LOST}", opened[-1])
+        self.assertEqual(self.sends_to(), [first])
+
+    def test_an_undecided_hold_named_after_the_sweep_breaks_the_fault_too(self):
+        event_id, first = self.unknown_send(history=False)
+        self.clock.advance(20)
+        self.assertEqual(self.fault_states(), [(faults.OBSERVED, faults.DEGRADED)])
+        self.ticks(1)
+        self.assert_held(event_id, first, UNDECIDED, f"{UNDECIDED}:listing_empty")
+        self.assert_broken_naming(UNDECIDED)
+
+    def test_a_fault_already_open_degraded_escalates_when_the_hold_is_named(self):
+        """The R5 shape: earlier occurrences for the same recipient and attempt state had already
+        opened the fault degraded when this hold was named."""
+        event_id, first = self.unknown_send()
+        self.clock.advance(20)
+        batch = faultsweep.sweep(self.store)
+        seen = [entry for entry in batch["observations"]
+                if entry["faultClass"] == "delivery_stalled"]
+        self.assertEqual([entry["occurrenceKey"] for entry in seen], [f"delivery:{first}"])
+        ledger = faults.FaultLedger(self.store, self.clock)
+        faultsweep.record_all(ledger, batch, store=self.store)
+        for n in (1, 2):
+            ledger.record(dict(seen[0], occurrenceKey=f"delivery:earlier-{n}"))
+        self.assertEqual(self.fault_states(), [(faults.OPEN, faults.DEGRADED)])
+        self.ticks(1)
+        self.assert_broken_naming(UNKNOWN_LOST)
+        escalated = [summary for trigger, summary in self.publications()
+                     if trigger == "escalate:broken"]
+        self.assertTrue(escalated, self.publications())
+        self.assertIn(f"is held: {UNKNOWN_LOST}", escalated[-1])
+
+    def test_a_hold_named_before_any_sweep_keeps_its_name_through_later_sweeps(self):
+        event_id, first = self.unknown_send()
+        self.ticks(1)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assert_broken_naming(UNKNOWN_LOST)
+        self.clock.advance(700)
+        self.assert_broken_naming(UNKNOWN_LOST)
+        self.assertEqual(self.keys(), [f"delivery:{first}:held:{UNKNOWN_LOST}:#"])
+        self.assertEqual(self.stall()["occurrence_count"], 1)
+
+    def test_a_host_lost_turn_held_after_two_losses_keeps_its_keys(self):
+        """CRW-224 unchanged: each lost attempt is one occurrence under its own request id."""
+        event_id, first, turn = self.dispatched()
+        self.host_loses(turn)
+        self.ticks(1)
+        second = self.attempts_for(event_id)[1]
+        self.host_loses(json.loads(second["record"])["turnId"])
+        self.ticks(4)
+        self.assertEqual(self.delivery_row(event_id)["hold_reason"], HOST_LOST)
+        self.fault_states()
+        self.assertEqual(self.keys(), [f"delivery:{first}", f"delivery:{second['request_id']}"])
+
+    def test_an_unknown_send_held_after_a_host_loss_reads_both_attempts(self):
+        event_id, first, turn = self.dispatched()
+        self.host_loses(turn)
+        self.adapter.script("transport_unknown")
+        self.ticks(1)
+        second = self.attempts_for(event_id)[1]["request_id"]
+        self.adapter.set_status(PARENT, "notLoaded")
+        self.ticks(3)
+        self.assert_held(event_id, second, UNKNOWN_LOST, NO_TRACE)
+        self.fault_states()
+        self.assertEqual(self.keys(),
+                         [f"delivery:{first}", f"delivery:{second}:held:{UNKNOWN_LOST}:#"])
+
+    def test_a_hold_that_changes_name_updates_the_one_fault_it_is_on(self):
+        """Independent review of ea197703: an undecided hold that a later reading decides as lost
+        is a new occurrence on the same open, broken fault. Its detail - what fault-show reads -
+        names the current hold; the published record is the one the fault opened with, because the
+        ledger publishes on open, escalation and reopening, never on a changed detail, for every
+        fault kind (assignment-show and reconcile name the current hold, and the actor and command
+        are the same for both)."""
+        event_id, first = self.unknown_send(history=False)
+        self.ticks(1)
+        self.assert_held(event_id, first, UNDECIDED, f"{UNDECIDED}:listing_empty")
+        self.assert_broken_naming(UNDECIDED)
+        opened = self.publications()
+        self.adapter.start_turn(PARENT, status="completed", text="the operator asked something")
+        self.ticks(1)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assert_broken_naming(UNKNOWN_LOST)
+        self.assertEqual(self.keys(), [f"delivery:{first}:held:{UNKNOWN_LOST}:#",
+                                       f"delivery:{first}:held:{UNDECIDED}:#"])
+        self.assertEqual(len(self.store.all(
+            "SELECT fault_id FROM fault_ledger WHERE fault_class = 'delivery_stalled'")), 1)
+        self.assertEqual(self.publications(), opened)
+        self.assertEqual(self.sends_to(), [first])
+
+    def test_a_hold_that_returns_to_an_earlier_name_names_it_again(self):
+        """Independent review of 72178ee8: undecided, then lost, then undecided again. The last
+        naming reused the first one's occurrence key, the ledger dropped it as already recorded,
+        and fault-show went on naming unknown_send_lost while the delivery, assignment-show and
+        reconcile named unknown_send_undecided."""
+        event_id, first = self.unknown_send(history=False)
+        self.ticks(1)
+        self.assert_held(event_id, first, UNDECIDED, f"{UNDECIDED}:listing_empty")
+        self.assert_broken_naming(UNDECIDED)
+        turn = self.adapter.start_turn(PARENT, status="completed", text="the operator asked something")
+        self.ticks(1)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assert_broken_naming(UNKNOWN_LOST)
+        # The host lists nothing for the parent again, as a restarted one did in K5ctl.
+        thread = self.adapter.threads[PARENT]
+        thread.turns = [one for one in thread.turns if one.turn_id != turn.turn_id]
+        thread.items = [one for one in thread.items if one[0] != turn.turn_id]
+        self.ticks(1, seconds=700)
+        self.assert_held(event_id, first, UNDECIDED, f"{UNDECIDED}:listing_empty")
+        self.assert_broken_naming(UNDECIDED)
+        # One occurrence per naming: undecided, lost, and undecided again.
+        self.assertEqual(self.keys(), [f"delivery:{first}:held:{UNKNOWN_LOST}:#",
+                                       f"delivery:{first}:held:{UNDECIDED}:#",
+                                       f"delivery:{first}:held:{UNDECIDED}:#"])
+        self.assertEqual(self.stall()["occurrence_count"], 3)
+        self.assertEqual(self.sends_to(), [first])
+
+    def test_namings_between_two_sweeps_leave_the_standing_name(self):
+        """Independent review of 66328cb4: the fault records the name a sweep finds standing, one
+        occurrence for each such name. Namings a later one replaced before any sweep read them -
+        here two reconcile passes between sweeps, lost and then undecided again - are kept in the
+        journal (unknown_send_hold_named) and are not fault occurrences."""
+        event_id, first = self.unknown_send(history=False)
+        self.ticks(1)
+        self.assert_held(event_id, first, UNDECIDED, f"{UNDECIDED}:listing_empty")
+        self.assert_broken_naming(UNDECIDED)
+        turn = self.adapter.start_turn(PARENT, status="completed", text="the operator asked something")
+        self.reconciler.reconcile_attempt(first, self.adapter)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        thread = self.adapter.threads[PARENT]
+        thread.turns = [one for one in thread.turns if one.turn_id != turn.turn_id]
+        thread.items = [one for one in thread.items if one[0] != turn.turn_id]
+        self.reconciler.reconcile_attempt(first, self.adapter)
+        self.assert_held(event_id, first, UNDECIDED, f"{UNDECIDED}:listing_empty")
+        self.assert_broken_naming(UNDECIDED)
+        self.assertEqual(self.keys(), [f"delivery:{first}:held:{UNDECIDED}:#",
+                                       f"delivery:{first}:held:{UNDECIDED}:#"])
+        self.assertEqual(self.stall()["occurrence_count"], 2)
+        named = [json.loads(row["detail"])["hold"] for row in self.store.all(
+            "SELECT detail FROM journal WHERE kind = 'unknown_send_hold_named' AND subject = ?"
+            " ORDER BY seq", (first,))]
+        self.assertEqual(named, [UNDECIDED, UNKNOWN_LOST, UNDECIDED])
+        self.assertEqual(self.sends_to(), [first])
+
+    def test_readings_that_keep_the_name_record_nothing_new(self):
+        """Every unknown_send_* hold is read again every ten minutes; a reading that finds the
+        same name is not another naming and adds nothing to the fault."""
+        event_id, first = self.unknown_send()
+        self.ticks(1)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assert_broken_naming(UNKNOWN_LOST)
+        recorded = self.keys()
+        self.ticks(3, seconds=700)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assert_broken_naming(UNKNOWN_LOST)
+        self.assertEqual(self.keys(), recorded)
+        self.assertEqual(self.stall()["occurrence_count"], 1)
+        self.assertEqual(self.sends_to(), [first])
+
+
+class ASupersededHoldNamesTheSupersession(UnknownSendCase):
+    """CRW-124 R5 O-R5-1: after the parent recovered by opening a new generation, reconcile on the
+    old generation's held attempt still named parent_recovers_unknown_send_lost, while status
+    called the delivery superseded. Nothing is owed on it any more."""
+
+    def open_generation_two(self):
+        self.adapter.start_turn(CHILD, turn_id="turn-dispatch-2", status="inProgress")
+        self.registry.open_generation(self._rid, dispatch_request_id="dispatch-2",
+                                      reason="needs_changes_revision",
+                                      dispatch_turn_id="turn-dispatch-2")
+
+    def test_a_held_send_a_new_generation_replaced_names_the_supersession(self):
+        event_id, first = self.unknown_send()
+        self.ticks(1)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.open_generation_two()
+        outcome = self.reconciler.reconcile_attempt(first, self.adapter)
+        self.assertEqual((outcome.get("nextExpectedAction"), outcome.get("reason")),
+                         ("none", "superseded:stale_generation"))
+        self.assertNotIn("recovery", outcome)
+        item = self.status_of(event_id)
+        self.assertEqual((item["phase"], item["reported"]),
+                         ("superseded:stale_generation", "superseded:stale_generation"))
+        self.ticks(3, seconds=700)
+        self.assertEqual(self.sends_to(), [first])
+
+    def test_a_send_superseded_before_its_hold_is_named_reports_the_supersession(self):
+        """Independent review of ea197703: superseded inside the allowance, before any reading
+        could name a hold, the delivery's phase said superseded while its reported state still
+        said it was waiting for evidence."""
+        event_id, first = self.unknown_send()
+        self.clock.advance(20)
+        self.open_generation_two()
+        item = self.status_of(event_id)
+        self.assertEqual((item["phase"], item["reported"]),
+                         ("superseded:stale_generation", "superseded:stale_generation"))
+        outcome = self.reconciler.reconcile_attempt(first, self.adapter)
+        self.assertEqual((outcome.get("nextExpectedAction"), outcome.get("reason")),
+                         ("none", "superseded:stale_generation"))
+        self.assertNotIn("recovery", outcome)
+        self.assertEqual(self.sends_to(), [first])
+
+    def answered_correction(self):
+        """A correction held unknown_send_lost whose generation a final event then answered."""
+        _completion, correction = self.correction_after_needs_changes()
+        self.adapter.start_turn(CHILD, turn_id="child-earlier", status="completed")
+        self.clock.advance(300)
+        self.adapter.script("transport_unknown")
+        record = self.attempt(correction)
+        self.adapter.set_status(CHILD, "notLoaded")
+        self.clock.advance(120)
+        self.reconciler.reconcile_attempt(record["requestId"], self.adapter)
+        row = self.delivery_row(correction)
+        self.assertEqual((row["state"], row["hold_reason"]), (HELD_UNCERTAIN, UNKNOWN_LOST))
+        # The App Server applied the unanswered turn/start after all; the operator binds the
+        # generation to the turn its dispatch receipt names (generation-bind), and the child
+        # answers the generation with a final event of its own.
+        self.adapter.start_turn(CHILD, turn_id="child-late", status="failed")
+        self.registry.bind_anchor(self._rid, 2, dispatch_turn_id="child-late",
+                                  source="dispatch_receipt")
+        relationship = self.registry.get(self._rid)
+        turn = self.assigned_turn("failed", thread=CHILD, turn="child-late")
+        answer = self.execution_payload(relationship, "failed", generation=2, turn=turn)
+        self.accept(answer)
+        # Queued as the real path queues a final event, which annotates what it answers.
+        self.delivery.enqueue(answer["eventId"])
+        return correction, record["requestId"]
+
+    def test_a_held_correction_its_generation_answered_names_the_child_disposition(self):
+        correction, request_id = self.answered_correction()
+        outcome = self.reconciler.reconcile_attempt(request_id, self.adapter)
+        self.assertEqual((outcome.get("nextExpectedAction"), outcome.get("reason")),
+                         ("parent_reads_child_disposition", "superseded:superseded_revision"))
+        self.assertNotIn("recovery", outcome)
+        self.assertEqual(self.sends_to(CHILD), [request_id])
+
+    def test_an_answered_correction_a_later_generation_passed_keeps_its_answer(self):
+        """Devin on a4c13aec: once another generation opened after the answer, the live rule
+        says stale_generation first, and reconcile answered none while status, which reads the
+        stored note, still said superseded:superseded_revision."""
+        correction, request_id = self.answered_correction()
+        self.adapter.start_turn(CHILD, turn_id="turn-dispatch-3", status="inProgress")
+        self.registry.open_generation(self._rid, dispatch_request_id="dispatch-3",
+                                      reason="needs_changes_revision",
+                                      dispatch_turn_id="turn-dispatch-3")
+        outcome = self.reconciler.reconcile_attempt(request_id, self.adapter)
+        self.assertEqual((outcome.get("nextExpectedAction"), outcome.get("reason")),
+                         ("parent_reads_child_disposition", "superseded:superseded_revision"))
+        self.assertNotIn("recovery", outcome)
+        item = self.status_of(correction)
+        self.assertEqual((item["phase"], item["reported"]),
+                         ("superseded:superseded_revision", "superseded:superseded_revision"))
+
+
+class AnUncertainGrantIsReadAsStatusReadsIt(MergeTurnWakeTestCase):
+    """Independent review of b05b452f: a merge-turn grant whose send went unanswered, and which
+    the parent then acknowledged on its turn, was answered by reconcile as
+    superseded:merge_turn_grant_answered while status said grant_acknowledged. Status settles a
+    grant from its own turn before anything else, and an acknowledgement is the grant's ordinary
+    end, never something that overtook it."""
+
+    def status(self, event):
+        (item,) = [one for one in self.delivery.snapshot()["deliveries"]
+                   if one["eventId"] == event]
+        return item["phase"], item["reported"]
+
+    def uncertain_grant(self):
+        """The promoted parent's grant notice, sent with no answer and held after the allowance."""
+        turn = self.promoted()
+        event = self.wakes()[0]["event_id"]
+        self.adapter.script("transport_unknown")
+        record = self.attempt(event)
+        self.assertEqual(record["transportReceiptStatus"], "outcome_unknown")
+        self.clock.advance(120)
+        self.reconciler.reconcile_attempt(record["requestId"], self.adapter)
+        row = self.delivery_row(event)
+        self.assertEqual(row["state"], HELD_UNCERTAIN)
+        self.assertIn(row["hold_reason"], (UNKNOWN_LOST, UNDECIDED))
+        return turn, event, record["requestId"]
+
+    def sends(self):
+        return [send[0] for send in self.adapter.sends if send[1] == PARENT]
+
+    def test_an_uncertain_grant_answered_on_its_turn_reads_acknowledged(self):
+        turn, event, request_id = self.uncertain_grant()
+        self.answer_grant(turn, PARENT)
+        outcome = self.reconciler.reconcile_attempt(request_id, self.adapter)
+        self.assertEqual((outcome.get("nextExpectedAction"), outcome.get("reason")),
+                         ("none", "grant_acknowledged"))
+        self.assertNotIn("recovery", outcome)
+        self.assertEqual(self.status(event), ("grant_acknowledged", "grant_acknowledged"))
+        self.assertEqual(self.delivery_row(event)["state"], HELD_UNCERTAIN)
+        self.assertEqual(self.sends(), [request_id])
+
+    def test_an_uncertain_grant_regranted_meanwhile_reads_superseded(self):
+        turn, event, request_id = self.uncertain_grant()
+        self.turns.declare_ready(turn, actor=PARENT, ready=True, candidate_head="head-a2")
+        outcome = self.reconciler.reconcile_attempt(request_id, self.adapter)
+        expected = "superseded:" + MERGE_TURN_REGRANTED
+        self.assertEqual((outcome.get("nextExpectedAction"), outcome.get("reason")),
+                         ("none", expected))
+        self.assertNotIn("recovery", outcome)
+        self.assertEqual(self.status(event), (expected, expected))
+        self.assertEqual(self.sends(), [request_id])
