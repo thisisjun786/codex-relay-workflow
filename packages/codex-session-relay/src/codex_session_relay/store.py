@@ -951,6 +951,27 @@ CREATE TABLE IF NOT EXISTS edit_revision_marks (
     UNIQUE (repository, from_revision)
 );
 
+-- CRW-237. What a reaffirmation carried onto the successor it created: one row per successor,
+-- written in the transaction that retires the predecessor and inserts the successor, so no
+-- successor exists without the record of what it carries. The three *_revision columns name the
+-- revision each text was WRITTEN against. A constraint or condition carried forward keeps the
+-- revision it came from, so a line number inside it is read against that tree rather than the
+-- successor's; a condition the carrying side restates, or a decline writes, is stated on the
+-- successor's own revision. A new table rather than columns on edit_agreements, because CREATE
+-- TABLE IF NOT EXISTS reaches an existing store and an added column would not.
+CREATE TABLE IF NOT EXISTS edit_reaffirmations (
+    agreement_id             TEXT PRIMARY KEY,
+    predecessor_id           TEXT NOT NULL,
+    actor                    TEXT NOT NULL,
+    actor_project            TEXT NOT NULL,
+    from_revision            TEXT NOT NULL,
+    to_revision              TEXT NOT NULL,
+    constraint_revision      TEXT NOT NULL,
+    left_condition_revision  TEXT,
+    right_condition_revision TEXT,
+    recorded_at              TEXT NOT NULL
+);
+
 -- One managed admission request for one issue, on THIS physical store only. A new table
 -- rather than columns on relationships: CREATE TABLE IF NOT EXISTS reaches an existing
 -- store, and adding a column would not. The request keeps its own row through reserved,

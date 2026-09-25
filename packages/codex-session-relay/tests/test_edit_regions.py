@@ -601,6 +601,477 @@ class AuthorityOverAgreementsAndTheWorkTheyImply(EditRegionTestCase):
         self.assertEqual(caught.exception.reason, RefusalReason.AGREEMENT_NOT_OPEN)
 
 
+class AReaffirmationCarriesWhatWasAgreed(EditRegionTestCase):
+    """CRW-237. Carrying an agreement onto a moved base must not rewrite it.
+
+    CRW-124 G3 found the answering side's reaffirmation making itself the proposer, dropping both
+    sides' conditions and clearing the other side's acceptance without a word, while the constraint
+    kept line numbers of a tree the successor no longer stood on.
+    """
+
+    BETA_CONDITION = "beta publishes parse() and restates this before renaming it"
+    CONSTRAINT = "keep parse() at src/a.py lines 12-13 at rev-1"
+
+    def proposed_by_beta(self, condition=BETA_CONDITION):
+        return self.regions.propose(
+            repository=REPO, base_revision=REV, path="src/a.py", region_kind="file",
+            left_project="PRJ-B", right_project="PRJ-A", peer_link_id=self.pair,
+            proposer_task_id=self.beta.task_id, constraint_text=self.CONSTRAINT,
+            condition=condition, issue_key="CRW-1", next_owner=self.alpha.task_id)
+
+    def moved(self, *revisions):
+        previous = REV
+        for revision in revisions:
+            self.regions.restate_revision(
+                repository=REPO, from_revision=previous, to_revision=revision,
+                actor=self.beta.task_id)
+            previous = revision
+
+    def carries(self):
+        return self.store.all("SELECT * FROM edit_reaffirmations", ())
+
+    def racing(self, concurrent):
+        """Land ``concurrent`` after reaffirm's validation and before its write.
+
+        reaffirm validates in one transaction and writes in propose()'s, so wrapping propose puts
+        the concurrent write exactly in the gap a second parent could reach.
+        """
+        original = self.regions.propose
+
+        def interleaved(**arguments):
+            self.regions.propose = original
+            concurrent()
+            return original(**arguments)
+
+        self.regions.propose = interleaved
+        self.addCleanup(vars(self.regions).pop, "propose", None)
+
+    def test_the_answering_side_reaffirming_keeps_proposer_conditions_and_constraint(self):
+        """The G3 order: propose, two recorded moves, a refused late acceptance, reaffirm, accept."""
+        original = self.proposed_by_beta()
+        self.moved("rev-2", "rev-3")
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.settle(
+                original["agreementId"], actor=self.alpha.task_id, disposition="accepted")
+        self.assertEqual(caught.exception.reason, RefusalReason.AGREEMENT_REVISION_STALE)
+        successor = self.regions.reaffirm(
+            original["agreementId"], actor=self.alpha.task_id, base_revision="rev-3")
+        self.assertEqual(successor["proposerTaskId"], self.beta.task_id)
+        self.assertEqual(successor["rightCondition"], self.BETA_CONDITION)
+        self.assertIsNone(successor["leftCondition"])
+        self.assertEqual(successor["constraintText"], self.CONSTRAINT)
+        self.assertEqual(
+            successor["statedOn"],
+            {"constraint": REV, "leftCondition": None, "rightCondition": REV})
+        self.assertEqual(
+            successor["textFromEarlierRevision"], ["constraint", "rightCondition"])
+        self.assertIsNone(successor["legacyCarry"])
+        self.assertIsNotNone(successor["leftAcceptedAt"], "reaffirming accepts the carrier's side")
+        self.assertIsNone(successor["rightAcceptedAt"])
+        carried = successor["reaffirmation"]
+        self.assertEqual(
+            (carried["predecessor"], carried["actor"], carried["fromRevision"],
+             carried["toRevision"]),
+            (original["agreementId"], self.alpha.task_id, REV, "rev-3"))
+        self.assertEqual(carried["awaitingAcceptance"], {
+            "project": "PRJ-B", "task": self.beta.task_id,
+            "reason": "acceptance_on_prior_revision",
+            "priorAcceptedAt": original["rightAcceptedAt"], "priorRevision": REV,
+            "command": "region-settle --agreement " + successor["agreementId"]
+                       + " --actor " + self.beta.task_id + " --disposition accepted",
+            "precondition": None,
+        })
+        self.assertEqual(successor["nextOwner"], self.beta.task_id)
+        self.assertEqual(
+            self.regions.agreement(original["agreementId"])["supersededBy"],
+            successor["agreementId"])
+        agreed = self.regions.settle(
+            successor["agreementId"], actor=self.beta.task_id, disposition="accepted")
+        self.assertEqual(agreed["state"], "agreed")
+        self.assertEqual(agreed["rightCondition"], self.BETA_CONDITION)
+        self.assertIsNone(agreed["reaffirmation"]["awaitingAcceptance"])
+
+    def test_the_proposing_side_reaffirming_is_the_control(self):
+        original = self.proposed_by_beta()
+        self.moved("rev-2")
+        successor = self.regions.reaffirm(
+            original["agreementId"], actor=self.beta.task_id, base_revision="rev-2")
+        self.assertEqual(successor["proposerTaskId"], self.beta.task_id)
+        self.assertEqual(successor["rightCondition"], self.BETA_CONDITION)
+        self.assertIsNotNone(successor["rightAcceptedAt"])
+        self.assertIsNone(successor["leftAcceptedAt"])
+        awaiting = successor["reaffirmation"]["awaitingAcceptance"]
+        self.assertEqual(
+            (awaiting["project"], awaiting["task"], awaiting["reason"],
+             awaiting["priorAcceptedAt"]),
+            ("PRJ-A", self.alpha.task_id, "not_yet_accepted", None))
+        self.assertEqual(successor["nextOwner"], self.alpha.task_id)
+
+    def test_an_agreed_agreement_carried_forward_asks_the_other_side_again(self):
+        original = self.proposed_by_beta()
+        self.regions.settle(
+            original["agreementId"], actor=self.alpha.task_id, disposition="accepted")
+        self.moved("rev-2")
+        successor = self.regions.reaffirm(
+            original["agreementId"], actor=self.alpha.task_id, base_revision="rev-2")
+        awaiting = successor["reaffirmation"]["awaitingAcceptance"]
+        self.assertEqual(
+            (awaiting["task"], awaiting["reason"]),
+            (self.beta.task_id, "acceptance_on_prior_revision"))
+        self.assertEqual(successor["state"], "proposed")
+
+    def test_the_reaffirming_side_restates_only_its_own_condition(self):
+        original = self.proposed_by_beta()
+        self.moved("rev-2")
+        successor = self.regions.reaffirm(
+            original["agreementId"], actor=self.alpha.task_id, base_revision="rev-2",
+            condition="alpha's condition, lines 14-15 at rev-2")
+        self.assertEqual(successor["leftCondition"], "alpha's condition, lines 14-15 at rev-2")
+        self.assertEqual(successor["rightCondition"], self.BETA_CONDITION)
+        self.assertEqual(
+            successor["statedOn"],
+            {"constraint": REV, "leftCondition": "rev-2", "rightCondition": REV})
+        self.assertEqual(
+            successor["textFromEarlierRevision"], ["constraint", "rightCondition"])
+
+    def test_both_conditions_survive_a_second_carry(self):
+        original = self.proposed_by_beta()
+        self.moved("rev-2")
+        first = self.regions.reaffirm(
+            original["agreementId"], actor=self.alpha.task_id, base_revision="rev-2",
+            condition="alpha's condition at rev-2")
+        self.regions.restate_revision(
+            repository=REPO, from_revision="rev-2", to_revision="rev-3",
+            actor=self.alpha.task_id)
+        second = self.regions.reaffirm(
+            first["agreementId"], actor=self.beta.task_id, base_revision="rev-3")
+        self.assertEqual(
+            (second["leftCondition"], second["rightCondition"]),
+            ("alpha's condition at rev-2", self.BETA_CONDITION))
+        self.assertEqual(
+            second["statedOn"],
+            {"constraint": REV, "leftCondition": "rev-2", "rightCondition": REV})
+        self.assertEqual(
+            second["textFromEarlierRevision"],
+            ["constraint", "leftCondition", "rightCondition"])
+        self.assertEqual(second["proposerTaskId"], self.beta.task_id)
+
+    def test_a_decline_after_a_carry_states_its_condition_on_the_current_revision(self):
+        original = self.proposed_by_beta()
+        self.moved("rev-2")
+        successor = self.regions.reaffirm(
+            original["agreementId"], actor=self.alpha.task_id, base_revision="rev-2")
+        declined = self.regions.settle(
+            successor["agreementId"], actor=self.beta.task_id, disposition="declined",
+            condition="only if parse keeps forwarding", reason="the tree moved")
+        self.assertEqual(declined["rightCondition"], "only if parse keeps forwarding")
+        self.assertEqual(declined["statedOn"]["rightCondition"], "rev-2")
+
+    def test_a_conditionless_decline_after_a_carry_states_no_revision(self):
+        original = self.proposed_by_beta()
+        self.moved("rev-2")
+        successor = self.regions.reaffirm(
+            original["agreementId"], actor=self.alpha.task_id, base_revision="rev-2")
+        declined = self.regions.settle(
+            successor["agreementId"], actor=self.beta.task_id, disposition="declined",
+            reason="changed our mind")
+        self.assertIsNone(declined["rightCondition"])
+        self.assertIsNone(declined["statedOn"]["rightCondition"])
+
+    def test_reaffirming_onto_the_revision_it_already_stands_on_is_refused(self):
+        original = self.proposed_by_beta()
+        self.regions.settle(
+            original["agreementId"], actor=self.alpha.task_id, disposition="accepted")
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.reaffirm(
+                original["agreementId"], actor=self.alpha.task_id, base_revision=REV)
+        self.assertEqual(caught.exception.reason, RefusalReason.LINK_NOT_ACTIVE)
+        still = self.regions.agreement(original["agreementId"])
+        self.assertEqual((still["state"], still["supersededBy"]), ("agreed", None))
+        self.assertIsNotNone(still["rightAcceptedAt"], "nobody's acceptance was cleared")
+
+    def test_a_carry_onto_a_place_the_pair_already_holds_is_refused_before_retiring(self):
+        original = self.proposed_by_beta()
+        self.moved("rev-2")
+        standing = self.propose("src/a.py", revision="rev-2")
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.reaffirm(
+                original["agreementId"], actor=self.alpha.task_id, base_revision="rev-2")
+        self.assertEqual(caught.exception.reason, RefusalReason.REGION_OVERLAP)
+        self.assertIn(standing["agreementId"], caught.exception.detail)
+        still = self.regions.agreement(original["agreementId"])
+        self.assertEqual((still["state"], still["supersededBy"]), ("reopened", None))
+        self.assertEqual(self.carries(), [])
+
+    def test_a_move_recorded_while_carrying_refuses_and_keeps_the_predecessor(self):
+        record = self.proposed_by_beta()
+        self.moved("rev-2")
+        self.racing(lambda: self.regions.restate_revision(
+            repository=REPO, from_revision="rev-2", to_revision="rev-3",
+            actor=self.beta.task_id))
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.reaffirm(
+                record["agreementId"], actor=self.alpha.task_id, base_revision="rev-2")
+        self.assertEqual(caught.exception.reason, RefusalReason.AGREEMENT_REVISION_STALE)
+        self.assertIn("rev-3", caught.exception.detail)
+        still = self.regions.agreement(record["agreementId"])
+        self.assertEqual((still["state"], still["supersededBy"]), ("reopened", None))
+        self.assertEqual(self.carries(), [])
+        self.assertEqual(
+            self.store.all(
+                "SELECT * FROM edit_agreements WHERE base_revision = 'rev-2'", ()), [])
+        contests = self.regions.show(repository=REPO)["conflicts"]
+        self.assertEqual(
+            [(c["incumbent"], c["challenger"]) for c in contests
+             if c["reason"] == "agreement_revision_stale"],
+            [("rev-3", "rev-2")], "the refusal was recorded, not only raised")
+
+    def test_a_same_pair_proposal_arriving_while_carrying_refuses_and_keeps_the_predecessor(self):
+        record = self.proposed_by_beta()
+        self.moved("rev-2")
+        standing = {}
+        self.racing(lambda: standing.update(self.propose("src/a.py", revision="rev-2")))
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.reaffirm(
+                record["agreementId"], actor=self.alpha.task_id, base_revision="rev-2")
+        self.assertEqual(caught.exception.reason, RefusalReason.REGION_OVERLAP)
+        still = self.regions.agreement(record["agreementId"])
+        self.assertEqual((still["state"], still["supersededBy"]), ("reopened", None))
+        self.assertEqual(self.carries(), [])
+        self.assertEqual(
+            self.regions.agreement(standing["agreementId"])["reaffirmation"], None,
+            "nothing was carried onto the agreement that arrived")
+        contests = self.regions.show(repository=REPO)["conflicts"]
+        self.assertIn(
+            standing["agreementId"],
+            [c["incumbent"] for c in contests if c["reason"] == "region_overlap"])
+
+    def test_a_carry_whose_destination_is_not_the_predecessors_place_is_refused(self):
+        """A carry retires its predecessor, so where it lands is checked against that row."""
+        record = self.proposed_by_beta()
+        self.moved("rev-2")
+        for path, right, link in (("src/b.py", "PRJ-B", self.pair),
+                                  ("src/a.py", "PRJ-Z", self.other)):
+            with self.assertRaises(CoordinationError) as caught:
+                self.regions.propose(
+                    repository=REPO, base_revision="rev-2", path=path, region_kind="file",
+                    left_project="PRJ-A", right_project=right, peer_link_id=link,
+                    proposer_task_id=self.alpha.task_id, constraint_text="elsewhere",
+                    supersedes=record["agreementId"],
+                    carry={"predecessor": record["agreementId"], "restated": None})
+            self.assertEqual(caught.exception.reason, RefusalReason.UNREGISTERED_SCOPE, path)
+        still = self.regions.agreement(record["agreementId"])
+        self.assertEqual((still["state"], still["supersededBy"]), ("reopened", None))
+        self.assertEqual(self.carries(), [])
+        self.assertEqual(
+            self.store.all(
+                "SELECT * FROM edit_agreements WHERE base_revision = 'rev-2'", ()), [])
+
+    def test_a_handover_while_carrying_is_refused_recorded_and_keeps_the_predecessor(self):
+        """Third review: the carrier lost its project between validation and write, and the
+        refusal was raised before the write transaction, so nothing recorded it."""
+        record = self.proposed_by_beta()
+        self.moved("rev-2")
+        self.racing(lambda: self.linkage.handover(
+            role=PARENT, scope_key="PRJ-A", expect_task_id=self.alpha.task_id,
+            endpoint=Endpoint("task-alpha-next", "host-a"), acknowledged=[],
+            evidence="project A changed hands during the carry", actor="test"))
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.reaffirm(
+                record["agreementId"], actor=self.alpha.task_id, base_revision="rev-2")
+        self.assertEqual(caught.exception.reason, RefusalReason.SCOPE_ROLE_MISMATCH)
+        still = self.regions.agreement(record["agreementId"])
+        self.assertEqual((still["state"], still["supersededBy"]), ("reopened", None))
+        self.assertEqual(self.carries(), [])
+        contests = self.regions.show(repository=REPO)["conflicts"]
+        self.assertEqual(
+            [c["challenger"] for c in contests if c["reason"] == "scope_role_mismatch"],
+            [self.alpha.task_id], "the refusal was recorded, not only raised")
+        self.assertEqual(
+            self.store.all("SELECT * FROM edit_regions WHERE base_revision = 'rev-2'", ()), [],
+            "fourth review: the refusal came after the region insert and left an orphan region")
+
+    def test_an_acceptance_carrying_a_condition_is_refused_rather_than_dropped(self):
+        original = self.proposed_by_beta()
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.settle(
+                original["agreementId"], actor=self.alpha.task_id, disposition="accepted",
+                condition="alpha's terms")
+        self.assertEqual(caught.exception.reason, RefusalReason.LINK_NOT_ACTIVE)
+        self.assertIsNone(self.regions.agreement(original["agreementId"])["leftAcceptedAt"])
+
+    def test_a_successor_carried_before_carries_were_recorded_says_where_its_text_was_written(self):
+        """Fourth review: a successor the earlier reaffirm left in a store has no carry row.
+
+        Its constraint was copied verbatim from the agreement it supersedes, so reading it as
+        written on its own revision hid exactly the stale line numbers criterion 2 is about.
+        """
+        original = self.proposed_by_beta()
+        self.moved("rev-2")
+        # What that reaffirm wrote: an ordinary proposal on the new revision naming what it
+        # supersedes and copying the constraint, with nothing recorded about the carry.
+        legacy = self.regions.propose(
+            repository=REPO, base_revision="rev-2", path="src/a.py", region_kind="file",
+            left_project="PRJ-A", right_project="PRJ-B", peer_link_id=self.pair,
+            proposer_task_id=self.alpha.task_id, constraint_text=self.CONSTRAINT,
+            issue_key="CRW-1", supersedes=original["agreementId"])
+        self.assertEqual(legacy["statedOn"]["constraint"], REV)
+        self.assertEqual(legacy["textFromEarlierRevision"], ["constraint"])
+        # Fifth review: that carry also made its caller the proposer and dropped both
+        # conditions; the agreement it came from still holds them, and a read says so.
+        self.assertEqual(legacy["legacyCarry"], {
+            "origin": original["agreementId"], "proposerTaskId": self.beta.task_id,
+            "leftCondition": None, "rightCondition": self.BETA_CONDITION})
+        shown = [r for r in self.regions.show(repository=REPO)["exclusive"]
+                 if r["agreementId"] == legacy["agreementId"]]
+        self.assertEqual(shown[0]["statedOn"]["constraint"], REV)
+        self.assertEqual(shown[0]["legacyCarry"], legacy["legacyCarry"])
+        self.regions.restate_revision(
+            repository=REPO, from_revision="rev-2", to_revision="rev-3",
+            actor=self.beta.task_id)
+        carried = self.regions.reaffirm(
+            legacy["agreementId"], actor=self.alpha.task_id, base_revision="rev-3")
+        self.assertEqual(carried["statedOn"]["constraint"], REV)
+        # ... and carrying it again brings the original terms back rather than the lost ones.
+        self.assertEqual(
+            (carried["proposerTaskId"], carried["rightCondition"],
+             carried["statedOn"]["rightCondition"], carried["legacyCarry"]),
+            (self.beta.task_id, self.BETA_CONDITION, REV, None))
+        self.assertEqual(
+            carried["reaffirmation"]["awaitingAcceptance"]["task"], self.beta.task_id)
+        self.assertEqual(carried["nextOwner"], self.beta.task_id)
+
+    def test_the_next_owner_follows_a_handover_while_the_carry_waits(self):
+        """Review of the first head: nextOwner kept naming a parent that had handed over."""
+        original = self.proposed_by_beta()
+        self.moved("rev-2")
+        successor = self.regions.reaffirm(
+            original["agreementId"], actor=self.alpha.task_id, base_revision="rev-2")
+        self.linkage.handover(
+            role=PARENT, scope_key="PRJ-B", expect_task_id=self.beta.task_id,
+            endpoint=Endpoint("task-beta-next", "host-b"), acknowledged=[],
+            evidence="project B changed hands after the carry", actor="test")
+        waiting = self.regions.agreement(successor["agreementId"])
+        awaiting = waiting["reaffirmation"]["awaitingAcceptance"]
+        self.assertEqual(
+            (waiting["nextOwner"], awaiting["task"]), ("task-beta-next", "task-beta-next"))
+        self.assertIn("--actor task-beta-next", awaiting["command"])
+        agreed = self.regions.settle(
+            successor["agreementId"], actor="task-beta-next", disposition="accepted")
+        self.assertEqual(agreed["state"], "agreed")
+
+    def test_a_classification_clash_on_the_new_revision_is_refused_and_recorded(self):
+        """Review of the first head: this refusal was raised inside its transaction, unrecorded."""
+        original = self.proposed_by_beta()
+        self.moved("rev-2")
+        self.propose("src/a.py", revision="rev-2", right="PRJ-Z", link=self.other,
+                     region_class="generated", regenerate_from="derive")
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.reaffirm(
+                original["agreementId"], actor=self.alpha.task_id, base_revision="rev-2")
+        self.assertEqual(caught.exception.reason, RefusalReason.REGION_OVERLAP)
+        still = self.regions.agreement(original["agreementId"])
+        self.assertEqual((still["state"], still["supersededBy"]), ("reopened", None))
+        self.assertEqual(self.carries(), [])
+        contests = self.regions.show(repository=REPO)["conflicts"]
+        self.assertEqual(
+            [c["challenger"] for c in contests if c["reason"] == "region_overlap"], ["source"])
+
+
+class ABaseMoveChainsFromTheLastRecordedRevision(EditRegionTestCase):
+    """CRW-237. One revision has one successor, so only the first move starts at the proposal."""
+
+    def test_consecutive_moves_chain_from_the_end_of_the_recorded_chain(self):
+        record = self.propose("src/a.py")
+        first = self.regions.restate_revision(
+            repository=REPO, from_revision=REV, to_revision="rev-2", actor=self.alpha.task_id)
+        self.assertEqual(
+            (first["alreadyRecorded"], first["currentRevision"]), (False, "rev-2"))
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.restate_revision(
+                repository=REPO, from_revision=REV, to_revision="rev-3",
+                actor=self.alpha.task_id)
+        self.assertEqual(caught.exception.reason, RefusalReason.AGREEMENT_REVISION_STALE)
+        self.assertIn("--from-revision rev-2 --to-revision rev-3", caught.exception.detail)
+        chained = self.regions.restate_revision(
+            repository=REPO, from_revision="rev-2", to_revision="rev-3",
+            actor=self.alpha.task_id)
+        self.assertEqual(
+            (chained["alreadyRecorded"], chained["currentRevision"]), (False, "rev-3"))
+        again = self.regions.restate_revision(
+            repository=REPO, from_revision=REV, to_revision="rev-3", actor=self.beta.task_id)
+        self.assertEqual(
+            (again["alreadyRecorded"], again["currentRevision"]), (True, "rev-3"))
+        self.assertEqual(
+            len(self.store.all("SELECT * FROM edit_revision_marks", ())), 2,
+            "a move the chain already holds writes no mark")
+        shown = self.regions.show(repository=REPO)["exclusive"]
+        self.assertEqual([r["currentRevision"] for r in shown], ["rev-3"])
+        with self.assertRaises(CoordinationError) as stale:
+            self.regions.settle(
+                record["agreementId"], actor=self.beta.task_id, disposition="accepted")
+        self.assertIn("--revision rev-3", stale.exception.detail)
+        with self.assertRaises(CoordinationError) as short:
+            self.regions.reaffirm(
+                record["agreementId"], actor=self.beta.task_id, base_revision="rev-2")
+        self.assertEqual(short.exception.reason, RefusalReason.AGREEMENT_REVISION_STALE)
+        successor = self.regions.reaffirm(
+            record["agreementId"], actor=self.beta.task_id, base_revision="rev-3")
+        self.assertEqual(
+            (successor["baseRevision"], successor["currentRevision"]), ("rev-3", "rev-3"))
+
+    def test_a_move_from_a_revision_nothing_stands_on_is_refused(self):
+        """Review of the first head: after A->B, C->D was recorded and never reached A."""
+        self.propose("src/a.py")
+        self.regions.restate_revision(
+            repository=REPO, from_revision=REV, to_revision="rev-2", actor=self.alpha.task_id)
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.restate_revision(
+                repository=REPO, from_revision="rev-9", to_revision="rev-10",
+                actor=self.alpha.task_id)
+        self.assertEqual(caught.exception.reason, RefusalReason.AGREEMENT_REVISION_STALE)
+        self.assertIn("'rev-2'", caught.exception.detail)
+        self.assertEqual(len(self.store.all("SELECT * FROM edit_revision_marks", ())), 1)
+        contests = self.regions.show(repository=REPO)["conflicts"]
+        self.assertIn(
+            ("rev-2", "rev-9"), [(c["incumbent"], c["challenger"]) for c in contests])
+
+    def test_an_agreement_on_another_revision_starts_its_own_chain(self):
+        self.propose("src/a.py")
+        self.regions.restate_revision(
+            repository=REPO, from_revision=REV, to_revision="rev-2", actor=self.alpha.task_id)
+        self.propose("src/b.py", revision="other-1")
+        moved = self.regions.restate_revision(
+            repository=REPO, from_revision="other-1", to_revision="other-2",
+            actor=self.alpha.task_id)
+        self.assertEqual(
+            (moved["alreadyRecorded"], moved["currentRevision"]), (False, "other-2"))
+
+    def test_a_closed_agreement_does_not_make_its_revision_a_starting_point(self):
+        """Second review: a withdrawn agreement's revision let the wrong move start anyway.
+
+        The live agreement's chain stayed where it was, so its late acceptance went through on a
+        tree that had moved.
+        """
+        closed = self.propose("src/old.py", revision="closed-1")
+        self.regions.settle(
+            closed["agreementId"], actor=self.alpha.task_id, disposition="withdrawn")
+        live = self.propose("src/a.py")
+        self.regions.restate_revision(
+            repository=REPO, from_revision=REV, to_revision="rev-2", actor=self.alpha.task_id)
+        successor = self.regions.reaffirm(
+            live["agreementId"], actor=self.alpha.task_id, base_revision="rev-2")
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.restate_revision(
+                repository=REPO, from_revision="closed-1", to_revision="rev-3",
+                actor=self.alpha.task_id)
+        self.assertEqual(caught.exception.reason, RefusalReason.AGREEMENT_REVISION_STALE)
+        self.assertIn("'rev-2'", caught.exception.detail)
+        self.assertEqual(len(self.store.all("SELECT * FROM edit_revision_marks", ())), 1)
+        self.assertEqual(
+            self.regions.agreement(successor["agreementId"])["currentRevision"], "rev-2")
+
+
 class TwoPairsProposingOverlappingRegionsAtOnce(EditRegionTestCase):
     """One independent Store per thread, a barrier, bounded joins, errors collected.
 
