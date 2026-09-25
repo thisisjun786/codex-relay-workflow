@@ -245,6 +245,13 @@ SUMMARIES = {
     # A stated absence is a dict carrying one key, so the false side is reachable from either
     # input alone - anything that is not a mapping, and any mapping without the key.
     ("envelope.py", None, "is_absent", "function"): ((False,), (), ()),
+    # A reported sandbox inside the recorded one: the same workspace-write policy with fewer
+    # writable roots at most (CRW-235). The false side is reachable from any one input alone -
+    # a type other than workspaceWrite on either side, another value for any other field, or a
+    # writable root the record does not name - and the three early returns are the paths this
+    # rule cannot reduce. test_bridge_load_roots.py reaches it true for a workspace-write parent a
+    # bridge load narrowed, and false for a wider list, another network flag and another type.
+    ("settings.py", None, "_sandbox_within", "function"): ((False,), (("return: False", 3),), ()),
     # The delivered message, as the host types it: userMessage, or no type at all on a host that
     # gives none, so the true side is reachable from either alone. test_host_lost_turn.py hands
     # the token readers typed and untyped items (TheAdapterLooksBackOnlyToTheSend).
@@ -290,6 +297,11 @@ FOLDS_BEYOND_ITS_PATHS = (
     ("ack.py", None, "certainly_before", "function"),
     ("admission.py", "Admission", "admitted", "field"),
     ("assignment.py", None, "_criteria_current", "function"),
+    # Whether a delivery is withheld on its recipient's settings on a code only a person
+    # resolves: its state, the hold's kind and source, and the actor the one table names, folded
+    # through early returns (CRW-235). test_settings_hold_naming.py reaches it for a completion
+    # and a correction on each side, and for the daemon's own codes.
+    ("assignment.py", None, "operator_restores_settings", "function"),
     ("bridge_adapter.py", None, "_scan_listing", "function"),
     ("bridge_adapter.py", None, "same_ledger", "function"),
     ("cli.py", None, "_reads_no_selected_store", "function"),
@@ -320,7 +332,8 @@ FOLDS_BEYOND_ITS_PATHS = (
     ("service.py", None, "_existing_lock_held", "function"),
     ("service.py", None, "lock_is_held", "function"),
     ("service.py", None, "send", "function"),
-    # Whether a thread loaded with nothing transmitted keeps the recorded environment selection:
+    # Whether a thread keeps the recorded environment selection where its roots may narrow (a
+    # load that transmitted nothing, or a thread already loaded before the resume, CRW-235):
     # false on every path that finds another environment, another cwd or a root outside it.
     ("settings.py", None, "_environments_within", "function"),
     # Whether a message held because nobody could be addressed with it is addressed again:
@@ -351,7 +364,8 @@ FOLD_FREE_BOOLEANS = (
     ("scope.py", None, "at_least", "function"),
     ("service.py", None, "stop_requested", "function"),
     ("service.py", None, "usable", "function"),
-    # Every reported root is a recorded one: the one comparison a settings-free load relaxes.
+    # Every reported root is a recorded one: the comparison a narrowable resume relaxes (a
+    # settings-free load, or a thread already loaded before the resume, CRW-235).
     ("settings.py", None, "_roots_within", "function"),
     ("store.py", None, "in_transaction", "function"),
 )
@@ -426,6 +440,12 @@ SUMMARY_SITES = (
      "self.assertTrue(facts.retry_safe)",
      "a shared helper rather than a case: it asserts the classification beside the absence of a"
      " transport call, and its callers name the refusal each is about"),
+    ("test_bridge_load_roots.py",
+     "test_a_narrower_answer_to_a_resume_that_loaded_the_parent_is_refused", "retry_safe", True,
+     "self.assertTrue(classify_operation_receipt(receipt).retry_safe)",
+     "the case is named for the refusal being retry-safe: somebody else loaded the parent between"
+     " the relay's read and its resume, so the next pass reads it idle; the same case asserts no"
+     " turn/start, the code and withheld_pre_send beside it"),
     ("test_supervisor_live_findings.py", "assert_withheld_before_any_turn", "retry_safe", True,
      "self.assertTrue(facts.retry_safe)",
      "a shared helper like the seam's own _assert_no_start: it asserts the classification beside"

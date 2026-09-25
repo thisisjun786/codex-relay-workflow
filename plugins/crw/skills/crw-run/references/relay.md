@@ -293,10 +293,30 @@ was sent while materializing the thread lands it where policy says it belongs. A
 resume could restore a value the user has since changed. The relay's transport loads such a
 recipient with a resume that requests nothing, compares what the host reports with the record
 before any turn, and refuses a difference as `settings_differ_after_load`, retry-safe with
-nothing started; re-record from a reading the user stands behind rather than retrying. The
-workspace roots may come back narrower than recorded, because a load does not restore them, and
-never wider. The bridge's own tool path still refuses the unloaded case, so an operator message
-to an unloaded supervisor through the bridge waits until the host has it loaded.
+nothing started; re-record from a reading the user stands behind rather than retrying.
+
+The workspace roots are the one setting read differently, on both routes. A resume never changes
+the roots of a thread the host already has loaded: the thread keeps the roots of whichever load
+brought it in, and a plain load, such as another task's bridge message to a `notLoaded`
+recipient, brings it in with its cwd as the only root. So the roots, at the top level and in each
+environment, may come back narrower than recorded and never wider: always after a resume that
+requested nothing, and after a resume that carried the recorded settings when the transport's own
+read found the recipient loaded (`idle`) just before it. A resume that carried the settings to a
+recipient read as `notLoaded` is expected to load it, so its roots must come back exact; if
+another client loaded it in between, the narrower answer is refused, retry-safe, and the next pass
+reads the recipient `idle`. A
+workspace-write sandbox reports its non-cwd roots as its writable roots, so those follow the same
+rule: fewer than recorded where the roots may narrow, never one the record does not name, and
+every other field of the sandbox exact. Every other setting keeps its own comparison on both
+routes (the approval policy against the set this transport carries, the rest exactly), and a
+root the record does not name is refused on both. A delivery accepted on narrower roots is still
+delivered, and its transport receipt says so under `settingsNotes`
+(`runtime_roots_narrower_than_record`, one note per narrowed place: the top-level roots, an
+environment's roots, the writable roots, each with the recorded and observed lists and the
+status read before the resume). A recipient running on fewer roots than recorded may lack write
+access to one the record names, which is a reason to look, not to withhold. The bridge's own
+tool path still refuses the unloaded case, so an operator message to an unloaded supervisor
+through the bridge waits until the host has it loaded.
 
 Reading the state before choosing is what keeps those apart, and it is also what a report must
 not skip: a send accepted on a resumed recipient, a steer accepted into a live turn, and a
@@ -324,6 +344,29 @@ relationship, and either side can be recorded afterwards with
 incomplete one is refused when it is written, and a recipient with no record at all has its send
 withheld rather than sent under a host default. `settings-show --task <id>` reports what is held
 and what is missing.
+
+A delivery held on its recipient's settings says who recovers it and how. `status` carries
+`settingsHold` (kind `withheld`, `capped` or `channel_closed`, and the reason) and `recovery`
+(actor, command, next step, and what later deliveries need); assignment-show names the same actor
+as `operator_restores_recipient_settings` or `parent_recovers_settings_hold` (a revision request
+to the child the same way, except that one held at the cap or stored by a closed channel keeps
+`parent_recovers_held_correction`, named for the settings code, and a stored revision request takes
+no acknowledgement); the fault sweep carries the same reason and recovery. A withheld hold is the
+operator's: run the named `settings-show`, then bring the recipient back under its recorded
+settings or re-record it with `--source user_transition` when the user changed it. The exception is
+a host answer that left a setting out (`setting_unobservable`, `environments_unknown`): the daemon
+may clear it on its own next pass, so the recovery names the daemon and assignment-show keeps the
+daemon's action. A role gate refusal (`role_policy_unconfigured`, `role_binding_mismatch`,
+`settings_record_stale_for_role`) can have more than one cause, so its recovery carries the refusal's
+own text as `refusalDetail` and points at the repair it names: declaring the role, giving the relay
+process its policy and restarting it, fixing the binding or the creation, or re-recording from a
+user-attributed source. A refusal of the record itself (missing, incomplete, mistyped) is fixed by
+recording it again.
+A capped one is never sent again, so the parent reads the stored report with the
+named `show --event`. A send budget that never reopens is named before any settings hold
+(`operator_changes_send_policy`), because until the policy changes nothing is sent. A hold recorded
+before this revision is named `undetermined` and points at the event rather than at a fix; its actor still follows
+its state (the daemon for a withhold, the parent for a capped or closed-channel one).
 
 Read `deliverable` rather than `usable` before a send. They answer different questions: `usable`
 is about the record alone, whether the required fields are there, and it is the field `missing`

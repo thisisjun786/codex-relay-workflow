@@ -184,10 +184,30 @@ def correction_next_action(state, projection):
     if delivery["state"] in UNCONFIRMED_STATES:
         return CORRECTION_UNCONFIRMED_ACTION
     if delivery["state"] in NOT_SENT_STATES:
-        # A budget that never reopens (a cap of zero) is the operator's, not the relay's.
-        return SEND_POLICY_ACTION if never_reopens(delivery.get("pacing")) else (
-            CORRECTION_UNSENT_ACTION)
+        # A budget that never reopens (a cap of zero) is the operator's, not the relay's, and it
+        # is asked first: until the policy changes nothing is sent, not even the retry that
+        # would re-read a recorded settings refusal (Devin on 566eecb5).
+        if never_reopens(delivery.get("pacing")):
+            return SEND_POLICY_ACTION
+        # A revision request withheld on its recipient's settings, on a code only a person
+        # resolves, is the operator's, as a completion's is (CRW-235; Devin on aa9724f4).
+        if operator_restores_settings(delivery):
+            return OPERATOR_RESTORES_SETTINGS_ACTION
+        return CORRECTION_UNSENT_ACTION
     return None
+
+
+def operator_restores_settings(delivery) -> bool:
+    """Whether a delivery is withheld on its recipient's settings, on a code only a person
+    resolves: the one rule the completion's and the correction's next action ask (CRW-235)."""
+    from .settings import settings_hold_recovery
+
+    hold = delivery.get("settingsHold") or {}
+    if delivery.get("state") != WITHHELD_PRE_SEND or hold.get("kind") != "withheld" \
+            or hold.get("source") not in ("attempt", "pre_send"):
+        return False
+    return settings_hold_recovery("withheld", hold.get("reason"),
+                                  hold.get("source"))["actor"] == "operator"
 
 
 def never_reopens(pacing) -> bool:
@@ -367,6 +387,16 @@ class AssignmentView:
         )
         recovery = parent_recovery(record["nextExpectedAction"], record["projection"],
                                    store_directory(self.store))
+        if recovery is None:
+            # A delivery held on its recipient's settings: who restores them, or who reads the
+            # event nothing will send again (CRW-235). In needs_changes the delivery that moves
+            # the assignment is the correction to the child, not the completion already ruled on
+            # (Devin on aa9724f4).
+            correcting = state == NEEDS_CHANGES
+            recovery = settings_hold_recovery_for(
+                record["nextExpectedAction"], record["projection"], self.store,
+                recipient=record["childTaskId"] if correcting else record["parentTaskId"],
+                anchor="correction" if correcting else "completion")
         if recovery is not None:
             record["recovery"] = recovery
         return record
@@ -419,6 +449,8 @@ class AssignmentView:
         # an acknowledgement that never coexisted with it, which is exactly the combination
         # this projection exists to make impossible. The attempt joins on attempt_count so the
         # request id is the CURRENT attempt's, not whichever row sorted first after a retry.
+        from .delivery import SETTINGS_HOLD_COLUMNS
+
         now = self.clock.now()
         window, earliest = self.policy.rate_windows(now)
         row = self.store.one(
@@ -447,7 +479,8 @@ class AssignmentView:
             "       lf.next_retry_at AS lifecycle_next_retry_at,"
             "       sx.reason AS supersession_reason, sx.applied AS supersession_applied,"
             "       (SELECT reason FROM refusals WHERE event_id = e.event_id"
-            "         ORDER BY id DESC LIMIT 1) AS refusal_reason"
+            "         ORDER BY id DESC LIMIT 1) AS refusal_reason,"
+            + SETTINGS_HOLD_COLUMNS.format(event="e.event_id", delivery="d") +
             "  FROM events e"
             "  LEFT JOIN deliveries d ON d.event_id = e.event_id"
             "  LEFT JOIN attempts a ON a.event_id = e.event_id"
@@ -491,6 +524,14 @@ class AssignmentView:
                            if row["delivery_state"] in NOT_SENT_STATES and not row["hold_reason"]
                            else None),
             }
+            # Whether the delivery's current state is a settings hold (CRW-235), resolved by the
+            # one reader status and the fault sweep use, from columns of the statement above.
+            from .delivery import settings_hold_reading
+
+            reading = settings_hold_reading(row)
+            record["delivery"]["settingsHold"] = (
+                dict(reading["hold"], kind=reading["kind"]) if reading["hold"] is not None
+                else None)
         record["ack"] = {
             # The parent's DISPOSITION, independent of whether the acknowledging turn could be
             # verified. A verified rejection and a verified acceptance settle identically on
@@ -889,11 +930,16 @@ UNKNOWN_SEND_UNDECIDED_ACTION = "parent_recovers_unknown_send_undecided"
 # A delivery the recipient's send budget refuses in every window: a cap of zero. The daemon cannot
 # send it under that policy; only whoever sets the policy can (CRW-231, review of bb1b6af6).
 SEND_POLICY_ACTION = "operator_changes_send_policy"
+# A completion withheld on its recipient's settings, which only a person can bring back under
+# the record (CRW-235); and one nothing sends again after the attempt cap, whose report the
+# parent reads here.
+OPERATOR_RESTORES_SETTINGS_ACTION = "operator_restores_recipient_settings"
+PARENT_RECOVERS_SETTINGS_HOLD_ACTION = "parent_recovers_settings_hold"
 # What the parent does to recover a completion nothing will deliver automatically any more. The
 # report is in this store whatever happened to the message, so the parent reads it here and, if
 # the work still needs verifying, opens a fresh execution generation.
 PARENT_RECOVERY_ACTIONS = (HOST_LOST_HELD_ACTION, UNKNOWN_SEND_HELD_ACTION,
-                           UNKNOWN_SEND_UNDECIDED_ACTION)
+                           UNKNOWN_SEND_UNDECIDED_ACTION, PARENT_RECOVERS_SETTINGS_HOLD_ACTION)
 PARENT_RECOVERY_THEN = ("read the report, then open a fresh execution generation"
                         " (generation-open) if the work still needs verifying")
 # The recipient-check names a current attempt can carry (hostloss): the turn check's, and an
@@ -931,6 +977,14 @@ def completion_next_action(state, projection):
     - queued, deferred or withheld: the relay's to send, and after a host loss its to send again;
       under a budget no window reopens (a cap of zero), the operator's.
 
+    A settings hold (CRW-235) is the current cause of the state it names, so it is asked before
+    the host-loss fallback; a send budget that never reopens is asked before it, because until
+    the policy changes nothing is sent, not even the retry that would re-read the refusal
+    (Devin on 566eecb5). Capped, the parent's to recover
+    (parent_recovers_settings_hold); withheld on a code only a person resolves, the operator's
+    (operator_restores_recipient_settings); withheld on one the daemon may clear, the daemon's as
+    before. A closed channel keeps its parent action; the recovery names the settings code.
+
     None leaves NEXT_ACTION's answer.
     """
     from .policy import (
@@ -948,6 +1002,7 @@ def completion_next_action(state, projection):
         return None
     ack = completion["ack"] or {}
     host_lost = (delivery.get("hostLostAttempts") or 0) > 0
+    settings_hold = delivery.get("settingsHold") or {}
     settlement = ack.get("settlement")
     if settlement == "verified":
         return NEXT_ACTION[VERIFYING] if state == RECEIVED and ack.get("accepted") else None
@@ -958,6 +1013,8 @@ def completion_next_action(state, projection):
                  UNKNOWN_SEND_UNDECIDED: UNKNOWN_SEND_UNDECIDED_ACTION}.get(hold)
         if named is not None:
             return named
+        if settings_hold.get("kind") == "capped":
+            return PARENT_RECOVERS_SETTINGS_HOLD_ACTION
         return HOST_LOST_HELD_ACTION if host_lost else None
     where = delivery["state"]
     if where in (HELD_UNCERTAIN, SENDING):
@@ -969,8 +1026,12 @@ def completion_next_action(state, projection):
             return REACKNOWLEDGE_ACTION
         return AWAITING_ACK_ACTION
     if where in (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND):
+        # A budget that never reopens first: until the policy changes nothing is sent, not even
+        # the retry that would re-read a recorded settings refusal (Devin on 566eecb5).
         if never_reopens(delivery.get("pacing")):
             return SEND_POLICY_ACTION
+        if operator_restores_settings(delivery):
+            return OPERATOR_RESTORES_SETTINGS_ACTION
         return HOST_LOST_REDELIVERY_ACTION if host_lost else NEXT_ACTION[RECEIVED]
     return None
 
@@ -1011,9 +1072,92 @@ def parent_recovery(action, projection, state_directory):
     else:
         return None
     delivery = anchored["delivery"] or {}
+    if action == PARENT_RECOVERS_SETTINGS_HOLD_ACTION:
+        # Named for the settings code, not for the cap that stopped the retries, and with the
+        # step later deliveries need (CRW-235).
+        return settings_hold_recovery_for(action, projection, None,
+                                          state_directory=state_directory)
+    held = delivery.get("settingsHold") or {}
+    if action == CORRECTION_HELD_ACTION and held.get("kind") in ("capped", "channel_closed"):
+        # A revision request capped on its recipient's settings, or stored by a closed channel:
+        # the same parent action, named for the settings code and with the step later deliveries
+        # need, from the table status reads (CRW-235; Devin on aa9724f4 and 566eecb5).
+        return settings_recovery_record(None, held, anchored["eventId"], None,
+                                        state_directory=state_directory, revision=True)
     return {
         "actor": "parent",
         "reason": delivery.get("holdReason") or delivery.get("state"),
         "command": recovery_command(state_directory, anchored["eventId"]),
         "then": PARENT_RECOVERY_THEN,
     }
+
+
+def settings_show_command(state_directory, task_id) -> str:
+    """settings-show for this task, run by this relay on this store, quoted for a POSIX shell,
+    as recovery_command renders show --event."""
+    from .supervisorchannel import _command, relay_program
+
+    return _command(*relay_program(), "--state", state_directory, "settings-show", "--task",
+                    task_id)
+
+
+def settings_recovery_record(store, hold, event_id, recipient, *, state_directory=None,
+                             revision=False):
+    """{actor, reason, command, then, laterDeliveries} for a settings hold, from the one table
+    in settings.settings_hold_recovery, with its command rendered for this store (CRW-235).
+    Status, assignment-show and the fault sweep all build it here. revision marks a revision
+    request to the child (see settings_hold_recovery)."""
+    from .settings import SHOW_EVENT, settings_hold_recovery
+
+    directory = state_directory or store_directory(store)
+    chosen = settings_hold_recovery(hold.get("kind"), hold.get("reason"), hold.get("source"),
+                                    revision=revision)
+    command = (recovery_command(directory, event_id)
+               if chosen["command"] == SHOW_EVENT or not recipient
+               else settings_show_command(directory, recipient))
+    return {
+        "actor": chosen["actor"],
+        "reason": hold.get("reason") or "undetermined",
+        "command": command,
+        "then": chosen["then"],
+        "laterDeliveries": chosen["laterDeliveries"],
+        # The pre-send refusal as the relay service wrote it, naming the repair for its exact
+        # cause; None for a hold read from an attempt or recorded before this revision.
+        "refusalDetail": hold.get("detail"),
+    }
+
+
+def settings_hold_recovery_for(action, projection, store, *, state_directory=None,
+                               recipient=None, anchor="completion"):
+    """The recovery for the anchored delivery (the completion, or in needs_changes the
+    correction) when it is a settings hold, or None.
+
+    Rendered for the three actions a settings hold leads to: the operator's restore, the
+    parent's recovery of a capped one, and the parent's acknowledgement of a report a closed
+    channel stored; for the daemon's own delivery actions while the hold is one the daemon may
+    clear itself (Devin on 566eecb5); and for an undetermined hold whatever the action, since
+    its path is the reading, not a fix. recipient is the anchored delivery's recipient (the parent for a
+    completion, the child for a correction), which settings-show names; a recovery rendered
+    without it (the capped one) reads the event instead."""
+    from .settings import settings_hold_recovery
+
+    anchored = projection[anchor]
+    delivery = anchored.get("delivery") or {}
+    hold = delivery.get("settingsHold")
+    if not hold:
+        return None
+    actions = (OPERATOR_RESTORES_SETTINGS_ACTION, PARENT_RECOVERS_SETTINGS_HOLD_ACTION,
+               AWAITING_ACK_ACTION)
+    daemons = (NEXT_ACTION[RECEIVED], HOST_LOST_REDELIVERY_ACTION, CORRECTION_UNSENT_ACTION)
+    daemon_clears = (action in daemons and hold.get("kind") == "withheld"
+                     and hold.get("source") in ("attempt", "pre_send")
+                     and settings_hold_recovery("withheld", hold.get("reason"),
+                                                hold.get("source"))["actor"] == "daemon")
+    if action not in actions and not daemon_clears and hold.get("source") != "undetermined":
+        return None
+    if action == AWAITING_ACK_ACTION and hold.get("kind") != "channel_closed":
+        return None
+    directory = state_directory or store_directory(store)
+    return settings_recovery_record(None, hold, anchored["eventId"], recipient,
+                                    state_directory=directory,
+                                    revision=anchor == "correction")

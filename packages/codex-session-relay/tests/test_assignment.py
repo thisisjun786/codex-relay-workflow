@@ -716,7 +716,9 @@ class UnsentCorrection(AssignmentTestCase):
         self.assertIsNone(self.attempt(self.correction, now=self.clock.now()))
         record, correction = self.read()
         self.assertEqual(correction["delivery"]["state"], "withheld_pre_send")
-        self.assertEqual(record["nextExpectedAction"], "daemon_delivers_correction")
+        # The child's record is gone, a settings code only a person resolves, so the operator
+        # restores it, as for a completion (CRW-235); before that no action named settings.
+        self.assertEqual(record["nextExpectedAction"], "operator_restores_recipient_settings")
         self.assertIsNone(correction["undeliveredReason"])
 
     def test_a_pause_names_the_relationship_and_a_resume_waits_for_the_next_reading(self):

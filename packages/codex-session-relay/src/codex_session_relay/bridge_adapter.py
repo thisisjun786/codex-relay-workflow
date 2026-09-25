@@ -1208,7 +1208,13 @@ async def _guarded_send(rpc, ledger, request_id, thread_id, message, settings, *
             receipt["resumed"] = resumed
             ledger.save(receipt)
 
-            findings = settings.mismatches(resumed)
+            # A recipient this read found loaded keeps the roots of whichever load brought it in,
+            # whatever this resume carries (CRW-235): another task's plain bridge message loads a
+            # parent with its cwd as the only root. Those roots, and the writable roots a
+            # workspace-write sandbox derives from them, may then come back narrower than the
+            # record and never wider. A recipient read as notLoaded is loaded by this resume,
+            # which applies what it carries, so its answer must be exact.
+            findings = settings.mismatches(resumed, loaded_before=(status == "idle"))
             if findings:
                 first = findings[0]
                 receipt["settingsFindings"] = findings
@@ -1221,10 +1227,19 @@ async def _guarded_send(rpc, ledger, request_id, thread_id, message, settings, *
         # A carried approval policy that is not the recorded one is delivered on either route and
         # noted here, so the record can be re-recorded (CRW-225). Nothing was sent that could set
         # it: neither resume carries an approvalPolicy, so the difference is the thread's own.
+        # Roots accepted narrower than the record are noted the same way (CRW-235), on either
+        # route: delivered, because narrower is inside what the record authorizes, and written
+        # down, because a recipient on fewer roots may lack write access to one the record names.
+        notes = []
         divergence = getattr(settings, "approval_divergence", None)
         note = divergence(resumed) if divergence is not None else None
         if note is not None:
-            receipt["settingsNotes"] = [note]
+            notes.append(note)
+        narrowing = getattr(settings, "roots_narrowing", None)
+        if narrowing is not None:
+            notes.extend(narrowing(resumed, status_before=status))
+        if notes:
+            receipt["settingsNotes"] = notes
             ledger.save(receipt)
 
         if before_start is not None:
