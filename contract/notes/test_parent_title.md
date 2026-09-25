@@ -45,6 +45,8 @@ The README describes general ordered steps, SQL observations and release operati
 | test_publication_refuses_conflicts_and_reports_partial_main_failure | blocked | R1 R2 (conflicts, tag-only partial failure, readback mismatch) |
 | test_draft_collision_refuses_before_creating_immutable_tag | blocked | R1 R2 (two draft cases and absent remote tag) |
 | test_tag_only_failure_reports_and_recovers_same_commit | blocked | R1 R2 (tag-only failure then recovery without rewriting tag) |
+| test_release_go_runs_after_publication_and_snapshot_stays_in_validation | kept | Release workflow sequencing and job conditions; the contract corpus has no Go release-workflow runner kind. Go owner: todo 47 (CI scripts). |
+| test_release_go_refuses_a_tag_that_is_not_the_released_commit | kept | Release-tag/commit validation through the release workflow; the contract corpus has no Go release-workflow runner kind. Go owner: todo 47 (CI scripts). |
 | test_old_and_divergent_sources_do_not_advance_main | blocked | R1 R2 (behind-main and outside-dev cases with remote readbacks) |
 
 The pre-existing `test_owner_dispatch_inputs` fixture checks only the happy owner dispatch; its source test retains all refusal checks. It is counted as blocked until the source can become a thin runner without dropping refusal assertions. No new fixture is added when doing so would only assert a subset of the original case.
