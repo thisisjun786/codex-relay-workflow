@@ -46,10 +46,10 @@ read by `hook_probe.py` through `scripts/ci/contracts.py`, not by a test file; t
 ## Totals
 
 Files: 121
-Tests: 6048
-Class A: files=14 tests=555
+Tests: 6053
+Class A: files=14 tests=557
 Class B: files=87 tests=3353
-Class C: files=20 tests=2140
+Class C: files=20 tests=2143
 
 ## Files
 
@@ -160,7 +160,7 @@ Class C: files=20 tests=2140
 | `packages/codex-thread-bridge/tests/test_worktree.py` | 28 | A | create_worktree against real git: exact base, collisions, replay | `tests/conftest.py` fake App Server | todo 15 / CRW-151 | corpus: mcp-tools + go-test: `internal/bridge/worktrees` (todo 15) | - |
 | `scripts/ci/tests/test_adapter_agreement.py` | 53 | A | packaged vs checkout adapter over the same invocations | `packages/codex-session-relay/tests/fixtures/stop_event_r1.json` | todo 33 / CRW-156 | corpus: hook | - |
 | `scripts/ci/tests/test_completion_hook.py` | 221 | A | completion hook adapter vs a fake relay: journal, claims, exits | - | todo 33 / CRW-156 | corpus: hook | - |
-| `scripts/ci/tests/test_gate.py` | 14 | C | dev-gate check selection and result judgement | `.github/workflows/ci.yml` | todo 47 / CRW-160 | go-test: `crw-dev ci gate` (todo 47) | importlib spec_from_file_location of scripts/ci/gate.py |
+| `scripts/ci/tests/test_gate.py` | 15 | C | dev-gate check selection and result judgement | `.github/workflows/ci.yml` | todo 47 / CRW-160 | go-test: `crw-dev ci gate` (todo 47) | importlib spec_from_file_location of scripts/ci/gate.py |
 | `scripts/ci/tests/test_hook_comparison.py` | 127 | C | off/on hook comparison harness states and its declared readings | - | todo 46 / CRW-159 | go-test: `internal/dev` hook-compare, build tag dev (todo 46) + inventory-check: go/ast scan of the harness (todo 46) | ast over scripts/hook_comparison.py |
 | `scripts/ci/tests/test_install.py` | 9 | C | skill-link install: check/apply, idempotence, foreign paths | - | todo 39 / CRW-158 | go-test: `crw install skills` (todo 39) | importlib load of scripts/install.py |
 | `scripts/ci/tests/test_install_acceptance.py` | 61 | C | new install carried through to recovery of the replaced install | - | todo 38 / CRW-158 | go-test: `internal/runtime/install` (todo 38) + inventory-check: go/ast scan of fixture switches (todo 38) | ast over the installer and its fixture (494 reflective sites) |
@@ -170,9 +170,9 @@ Class C: files=20 tests=2140
 | `scripts/ci/tests/test_plugin_transition.py` | 239 | C | manual-to-plugin transition on synthetic hosts | - | todo 39 / CRW-158 | go-test: `crw install transition` (todo 39) | ast/importlib over crw_transition |
 | `scripts/ci/tests/test_plugin_wiring.py` | 188 | C | one owner registers the Stop hook; launchers resolve | - | todo 34 / CRW-156 | go-test: plugin wiring (todo 34) + go-test: isolated Codex home integration (todo 40) | exec of plugins/crw/wiring/crw_bridge_mcp.py (:80) + ast (:2132) |
 | `scripts/ci/tests/test_relay_schema_shipped.py` | 1 | A | shipped store objects keep their CREATE text | `scripts/ci/tests/relay_schema_shipped.json` | todo 17 / CRW-152 | corpus: sqlite-ddl | - |
-| `scripts/ci/tests/test_release.py` | 8 | A | release workflow steps against fake git/gh | `scripts/ci/tests/{fake_git.sh,fake_gh.sh,release_steps.py}` | todo 12 / CRW-150 | corpus: release (domain added by todo 12) | - |
+| `scripts/ci/tests/test_release.py` | 10 | A | release workflow steps against fake git/gh | `scripts/ci/tests/{fake_git.sh,fake_gh.sh,release_steps.py}` | todo 12 / CRW-150 | corpus: release (domain added by todo 12) | - |
 | `scripts/ci/tests/test_runtime_install.py` | 496 | C | runtime installer and diagnosis on temporary destinations | - | todo 38 / CRW-158 | go-test: `internal/runtime` (todo 37) + go-test: `internal/runtime/install` (todo 38) + inventory-check: go/ast scan of command producers (todo 38) | ast over scripts/runtime_install.py (406 reflective sites) |
-| `scripts/ci/tests/test_scope.py` | 12 | C | CI selection evidence from real git changes incl. renames | - | todo 47 / CRW-160 | go-test: `crw-dev ci scope` (todo 47) | importlib load of scripts/ci/scope.py |
+| `scripts/ci/tests/test_scope.py` | 14 | C | CI selection evidence from real git changes incl. renames | - | todo 47 / CRW-160 | go-test: `crw-dev ci scope` (todo 47) | importlib load of scripts/ci/scope.py |
 | `scripts/ci/tests/test_stop_events.py` | 75 | A | one accepted record per Stop event through host paths (CRW-212) | `packages/codex-session-relay/tests/fixtures/stop_event_r1.json` | todo 46 / CRW-159 | corpus: hook | - |
 | `scripts/ci/tests/test_trial_startup.py` | 374 | C | live-trial preflight states asserted against runs (A/C mix) | - | todo 46 / CRW-159 | go-test: `internal/dev` trial-startup, build tag dev (todo 46) + inventory-check: go/ast scan (todo 46) | ast over scripts/trial_startup.py; subprocess runs of the harness |
 | `scripts/ci/tests/test_validate.py` | 3 | C | skill structure validator: metadata, links | - | todo 47 / CRW-160 | go-test: `crw-dev ci validate` (todo 47) | importlib load of scripts/ci/validate.py |
