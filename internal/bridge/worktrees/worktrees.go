@@ -47,8 +47,12 @@ func git(ctx context.Context, cwd string, args ...string) (string, error) {
 	}
 	cmd.Env = env
 	output, err := cmd.Output()
-	if err == nil && AfterGit != nil && ((args[0] == "worktree" && len(args) > 1 && args[1] == "add") || args[0] == "checkout-index") {
-		AfterGit(args[0])
+	command := args
+	for len(command) >= 2 && command[0] == "-c" {
+		command = command[2:]
+	}
+	if err == nil && AfterGit != nil && ((len(command) > 1 && command[0] == "worktree" && command[1] == "add") || (len(command) > 0 && command[0] == "checkout-index")) {
+		AfterGit(command[0])
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
