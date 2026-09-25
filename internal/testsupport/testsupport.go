@@ -30,7 +30,7 @@ const (
 // the real receipt. An override replaces a field in place and a new key is appended, as Python's
 // dict.update does, so the record serializes in the same key order.
 func TaskSettings(cwd string, overrides ...contract.Field) contract.OrderedObject {
-	settings := contract.OrderedObject{
+    settings := contract.OrderedObject{
 		{Key: "sandbox", Value: contract.OrderedObject{
 			{Key: "type", Value: "workspaceWrite"},
 			{Key: "writableRoots", Value: []any{}},
