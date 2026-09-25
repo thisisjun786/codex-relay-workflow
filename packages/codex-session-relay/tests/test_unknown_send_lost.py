@@ -27,10 +27,12 @@ import unittest
 
 from codex_session_relay import faults, faultsweep
 from codex_session_relay.hostadapter import TURN_ABSENT, ListingBounded, TurnInfo, find_in_listing
+from codex_session_relay.mergeturn import MERGE_TURN_REGRANTED
 from codex_session_relay.transport import DISPATCHED, HELD_UNCERTAIN, QUEUED
 
 from .support import CHILD, PARENT
 from .test_host_lost_turn import HostLossCase
+from .test_merge_turn_wake import MergeTurnWakeTestCase
 
 UNKNOWN_LOST = "unknown_send_lost"
 UNDECIDED = "unknown_send_undecided"
@@ -1117,3 +1119,55 @@ class ASupersededHoldNamesTheSupersession(UnknownSendCase):
         item = self.status_of(correction)
         self.assertEqual((item["phase"], item["reported"]),
                          ("superseded:superseded_revision", "superseded:superseded_revision"))
+
+
+class AnUncertainGrantIsReadAsStatusReadsIt(MergeTurnWakeTestCase):
+    """Independent review of b05b452f: a merge-turn grant whose send went unanswered, and which
+    the parent then acknowledged on its turn, was answered by reconcile as
+    superseded:merge_turn_grant_answered while status said grant_acknowledged. Status settles a
+    grant from its own turn before anything else, and an acknowledgement is the grant's ordinary
+    end, never something that overtook it."""
+
+    def status(self, event):
+        (item,) = [one for one in self.delivery.snapshot()["deliveries"]
+                   if one["eventId"] == event]
+        return item["phase"], item["reported"]
+
+    def uncertain_grant(self):
+        """The promoted parent's grant notice, sent with no answer and held after the allowance."""
+        turn = self.promoted()
+        event = self.wakes()[0]["event_id"]
+        self.adapter.script("transport_unknown")
+        record = self.attempt(event)
+        self.assertEqual(record["transportReceiptStatus"], "outcome_unknown")
+        self.clock.advance(120)
+        self.reconciler.reconcile_attempt(record["requestId"], self.adapter)
+        row = self.delivery_row(event)
+        self.assertEqual(row["state"], HELD_UNCERTAIN)
+        self.assertIn(row["hold_reason"], (UNKNOWN_LOST, UNDECIDED))
+        return turn, event, record["requestId"]
+
+    def sends(self):
+        return [send[0] for send in self.adapter.sends if send[1] == PARENT]
+
+    def test_an_uncertain_grant_answered_on_its_turn_reads_acknowledged(self):
+        turn, event, request_id = self.uncertain_grant()
+        self.answer_grant(turn, PARENT)
+        outcome = self.reconciler.reconcile_attempt(request_id, self.adapter)
+        self.assertEqual((outcome.get("nextExpectedAction"), outcome.get("reason")),
+                         ("none", "grant_acknowledged"))
+        self.assertNotIn("recovery", outcome)
+        self.assertEqual(self.status(event), ("grant_acknowledged", "grant_acknowledged"))
+        self.assertEqual(self.delivery_row(event)["state"], HELD_UNCERTAIN)
+        self.assertEqual(self.sends(), [request_id])
+
+    def test_an_uncertain_grant_regranted_meanwhile_reads_superseded(self):
+        turn, event, request_id = self.uncertain_grant()
+        self.turns.declare_ready(turn, actor=PARENT, ready=True, candidate_head="head-a2")
+        outcome = self.reconciler.reconcile_attempt(request_id, self.adapter)
+        expected = "superseded:" + MERGE_TURN_REGRANTED
+        self.assertEqual((outcome.get("nextExpectedAction"), outcome.get("reason")),
+                         ("none", expected))
+        self.assertNotIn("recovery", outcome)
+        self.assertEqual(self.status(event), (expected, expected))
+        self.assertEqual(self.sends(), [request_id])
