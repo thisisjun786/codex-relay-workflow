@@ -1,0 +1,204 @@
+[
+ {
+  "tool": "create_thread",
+  "arguments": {
+   "request_id": "a",
+   "cwd": "${CWD}"
+  },
+  "prefix": "Error executing tool create_thread: 2 validation errors for create_threadArguments",
+  "fields": [
+   "model",
+   "reasoning_effort"
+  ]
+ },
+ {
+  "tool": "create_thread",
+  "arguments": {
+   "cwd": "${CWD}",
+   "request_id": 1,
+   "model": true,
+   "reasoning_effort": null
+  },
+  "prefix": "Error executing tool create_thread: 3 validation errors for create_threadArguments",
+  "fields": [
+   "request_id",
+   "model",
+   "reasoning_effort"
+  ]
+ },
+ {
+  "tool": "create_thread",
+  "arguments": {
+   "request_id": "b",
+   "cwd": "${CWD}",
+   "model": "m",
+   "reasoning_effort": "h",
+   "sandbox": "bogus"
+  },
+  "prefix": "Error executing tool create_thread: 1 validation error for create_threadArguments",
+  "fields": [
+   "sandbox"
+  ]
+ },
+ {
+  "tool": "create_thread",
+  "arguments": {
+   "request_id": "b",
+   "cwd": "${CWD}",
+   "model": "m",
+   "reasoning_effort": "h",
+   "runtime_workspace_roots": "x",
+   "expected_sandbox_policy": 5
+  },
+  "prefix": "Error executing tool create_thread: 2 validation errors for create_threadArguments",
+  "fields": [
+   "runtime_workspace_roots",
+   "expected_sandbox_policy"
+  ]
+ },
+ {
+  "tool": "create_worktree_thread",
+  "arguments": {
+   "request_id": "e",
+   "source_repository": "${CWD}",
+   "starting_revision": "0000000000000000000000000000000000000000",
+   "destination": "${CWD}/new",
+   "worktree_mode": "other",
+   "sandbox": "read-only",
+   "expected_sandbox_policy": [],
+   "model": "m",
+   "reasoning_effort": "h"
+  },
+  "prefix": "Error executing tool create_worktree_thread: 2 validation errors for create_worktree_threadArguments",
+  "fields": [
+   "worktree_mode",
+   "expected_sandbox_policy"
+  ]
+ },
+ {
+  "tool": "send_message_to_thread",
+  "arguments": {
+   "request_id": "d",
+   "thread_id": "t",
+   "message": "x"
+  },
+  "prefix": "Error executing tool send_message_to_thread: 1 validation error for send_message_to_threadArguments",
+  "fields": [
+   "expected_settings"
+  ]
+ },
+ {
+  "tool": "list_threads",
+  "arguments": {
+   "limit": 5.0,
+   "cursor": null
+  },
+  "prefix": "Error executing tool list_threads: 1 validation error for list_threadsArguments",
+  "fields": [
+   "cursor"
+  ]
+ },
+ {
+  "tool": "list_threads",
+  "arguments": {
+   "limit": "abc",
+   "cursor": 7
+  },
+  "prefix": "Error executing tool list_threads: 2 validation errors for list_threadsArguments",
+  "fields": [
+   "limit",
+   "cursor"
+  ]
+ },
+ {
+  "tool": "read_thread",
+  "arguments": {
+   "thread_id": "t",
+   "limit": 5.5
+  },
+  "prefix": "Error executing tool read_thread: 1 validation error for read_threadArguments",
+  "fields": [
+   "limit"
+  ]
+ },
+ {
+  "tool": "read_thread",
+  "arguments": {},
+  "prefix": "Error executing tool read_thread: 1 validation error for read_threadArguments",
+  "fields": [
+   "thread_id"
+  ]
+ },
+ {
+  "tool": "wait_thread",
+  "arguments": {
+   "thread_id": "t",
+   "turn_id": "u",
+   "timeout_seconds": "x"
+  },
+  "prefix": "Error executing tool wait_thread: 1 validation error for wait_threadArguments",
+  "fields": [
+   "timeout_seconds"
+  ]
+ },
+ {
+  "tool": "steer_thread",
+  "arguments": {
+   "request_id": "s",
+   "thread_id": "t",
+   "expected_turn_id": "u"
+  },
+  "prefix": "Error executing tool steer_thread: 1 validation error for steer_threadArguments",
+  "fields": [
+   "message"
+  ]
+ },
+ {
+  "tool": "get_operation",
+  "arguments": {
+   "request_id": [
+    "a"
+   ]
+  },
+  "prefix": "Error executing tool get_operation: 1 validation error for get_operationArguments",
+  "fields": [
+   "request_id"
+  ]
+ },
+ {
+  "tool": "create_worktree_thread",
+  "arguments": {},
+  "prefix": "Error executing tool create_worktree_thread: 9 validation errors for create_worktree_threadArguments",
+  "fields": [
+   "request_id",
+   "source_repository",
+   "starting_revision",
+   "destination",
+   "worktree_mode",
+   "sandbox",
+   "expected_sandbox_policy",
+   "model",
+   "reasoning_effort"
+  ]
+ },
+ {
+  "tool": "create_thread",
+  "arguments": {
+   "request_id": "z",
+   "cwd": "${CWD}",
+   "model": "m",
+   "reasoning_effort": "h",
+   "prompt": 7,
+   "title": [
+    1
+   ],
+   "role": {}
+  },
+  "prefix": "Error executing tool create_thread: 3 validation errors for create_threadArguments",
+  "fields": [
+   "prompt",
+   "title",
+   "role"
+  ]
+ }
+]
