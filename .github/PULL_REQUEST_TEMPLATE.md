@@ -14,6 +14,6 @@
      Remove this section when there are none. -->
 
 <!-- Ordinary PRs target dev. Mark Ready before requesting review.
-     For dev -> main promotion add release notes, intended revision/version,
-     current release-gate link and tested base/head, and explicit owner approval.
+     Do not open a dev -> main promotion PR. The owner releases an exact verified
+     dev commit with the Release workflow; see docs/releases.md.
      A green gate does not authorize installation, publication or deployment. -->

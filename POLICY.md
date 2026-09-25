@@ -11,7 +11,7 @@ Linear owns product decisions; private task records hold raw operational evidenc
 | Target | Purpose | Required check | Merge method |
 | --- | --- | --- | --- |
 | `dev` | Default branch; integrate completed work | `dev-gate` | Merge commit |
-| `main` | Release promotion from this repository's `dev` | `release-gate` | Merge commit |
+| `main` | Mirror of the released source commit | Exact-commit `dev-gate` from dev push CI | Fast-forward by the release workflow |
 
 Start a short-lived `codex/` branch from `dev`; ordinary PRs target `dev`.
 Dependent PRs may target another task branch when the dependency is explicit;
@@ -42,39 +42,60 @@ guard. Refresh invalidated checks after either input changes. Serialize merges
 into the same target and verify the landed commit. Never bypass protection,
 force-push, or push changes directly to an integration/release branch.
 
-Every `dev -> main` promotion requires explicit owner authorization for that
-release and user-facing release notes. Only a same-repository `dev` PR may target
-`main`; urgent fixes use the same path. A gate cannot establish the owner's
-authorization. After promotion, reconcile its merge commit back into `dev` with
-a PR before the next promotion.
+Release one exact, verified commit already on `dev`, with explicit owner
+authorization, a version tag and user-facing release notes. The owner runs the
+[Release workflow](docs/releases.md) from `dev`; it verifies the latest dev-push
+CI for that SHA, publishes a GitHub source release, and fast-forwards `main` to
+that same commit. There is no `dev -> main` promotion PR or new release merge
+commit to reconcile. `main` accepts no development or promotion PRs; urgent fixes
+first land on `dev` under the ordinary policy. A green gate is not authorization.
 
-Tags, public visibility, package publication, installation, service activation
-and deployment are separate operations. Source merges do not authorize them.
+The release workflow defaults to a read-only dry-run. Publication needs the
+repository's explicitly provisioned `RELEASE_TOKEN`. Existing tags may be reused
+only for their original commit; tags and published releases are never rewritten.
+An older or divergent source cannot replace `main`. Source release tags identify
+repository commits independently of plugin and imported-package version numbers.
+
+Public visibility, package publication, installation, service activation and
+deployment remain separate operations. An ordinary dev merge authorizes none of
+them and does not publish a source release.
 If a merge is known to trigger deployment, obtain deployment approval before
 that merge. Source checkout changes can affect linked skill reads immediately;
 state that separately from installation and successful live operation.
 
 ## Verification
 
-The graph is independent validation, tests and secret scanning, followed by a
-result-only `dev-gate` or `release-gate`. Every PR runs all inexpensive checks;
-skill Markdown changes executable instructions and is not a docs-only exemption.
-Intermediate PR bases receive the same checks. There is no duplicate push suite,
-live-service suite, automatic release or deployment workflow.
+CI classifies the changed paths and candidate inventory, runs the selected checks
+in parallel, and reports one result-only `dev-gate`. Validation, plugin identity,
+offline contracts and secret scanning always run. Explicitly listed prose paths
+skip the installer/CI test matrix and package matrix. Skill instructions retain
+the installer/CI tests; runtime, packaging metadata and CI-control changes run
+both matrices. Mixed changes take the union. An unknown path runs full checks and
+blocks the gate until its verification mapping is registered. Empty or unavailable
+diffs and manual dispatch run all checks. See the exact map in
+[scripts/ci/scope.py](scripts/ci/scope.py).
+
+Every PR base receives selection and a final gate, including explicit dependent
+PRs; main-target PRs fail. A push to `dev` also runs CI on the integrated commit,
+providing the exact-SHA evidence used for release. PR merge-candidate evidence
+cannot replace it. No live-service suite or automatic publication/deployment runs.
+The release workflow is manual and owner-controlled.
 
 | Evidence | What it establishes |
 | --- | --- |
 | Skill metadata, local links and Python syntax | Repository structure and readable source |
 | Installer subprocess tests in temporary destinations | Idempotence and preservation of conflicting files, directories and links |
-| CI-control negative tests | Missing, malformed, failed, cancelled or skipped prerequisites cannot pass the aggregator; invalid promotions are rejected |
+| CI-control negative tests | Missing, malformed, failed, cancelled or skipped prerequisites cannot pass the aggregator; main-target PRs and invalid release sources are rejected |
 | Locked package install, resolved import locations, full suites, CLIs and wheel builds | The imported packages build, import and test from this checkout, with no empty collection and no skipped case |
 | Pinned secret scan of available Git history | No finding under the reviewed scanner configuration in that fetched history |
 | Owning offline contract checks, when present | Their documented parser, fixture or shape behavior |
 | Independent scenario review | Instruction consistency and consequential edge cases within its scope |
 
-The stable gate must run after failures and require every prerequisite to
-succeed. A missing or skipped job is not success. Gate jobs do not rerun source
-tests. Record exact commands, candidate revisions, check attempts and limitations
+The stable gate runs after failures. Every selected job must succeed and every
+unselected job must be explicitly skipped; missing, malformed, failed, cancelled
+or unexpectedly skipped results refuse the gate. A selected job cannot silently
+opt out. The selection itself and all always-on checks must succeed. Gate jobs
+do not rerun source tests. Record exact commands, candidate revisions, check attempts and limitations
 in the PR; reuse evidence only while its bytes, criteria and environment remain
 applicable. A structural test does not prove the workflow's meaning, and a fixture
 replay does not prove an actual Codex hook, relay delivery or Desktop behavior.
@@ -89,7 +110,8 @@ documented minimum Python version in CI; cross-platform symlink behavior and
 actual host compatibility need their own evidence before claiming support.
 
 Use hosted Linux runners, pinned Action commits, bounded timeouts and a
-read-only token. Cancel obsolete runs only within the same PR. PR code runs on
+read-only CI token. Cancel obsolete CI runs only within the same PR or branch.
+Release runs serialize and do not cancel each other. PR code runs on
 `pull_request` merge candidates, never in a privileged `pull_request_target`
 job. Do not expose production secrets, shared operational data or self-hosted
 runners. Pin downloaded tooling and verify its checksum. CI-control edits
@@ -144,4 +166,6 @@ private repository public or publishing a release.
 Checked-in rules and successful local checks do not enable GitHub enforcement.
 Follow [CI activation](docs/CI.md#activation), verify the first hosted gate,
 and read back repository settings before claiming protection is active. Keep
-in-progress PRs on the correct base and rerun checks after target changes.
+in-progress PRs on the correct base and refresh invalidated evidence after target
+changes. During iteration, use the affected tests. Do not repeat passing checks
+for unchanged bytes, criteria and environments merely for extra confidence.

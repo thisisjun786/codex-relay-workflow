@@ -16,8 +16,8 @@ response time.
 ## Scope and support
 
 Security fixes target the current `dev` branch. There are no separately maintained
-release lines. The `main` branch is a release-promotion branch; its name alone does
-not establish a supported release.
+release lines. The `main` branch mirrors the released source; its name alone does not
+establish a supported release.
 
 This repository distributes instructions and an installer, not a sandbox or an
 authorization service. Skills can request actions from the host; the host's actual
