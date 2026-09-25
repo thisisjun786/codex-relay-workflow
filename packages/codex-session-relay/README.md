@@ -503,8 +503,8 @@ P = `thread_activity_listing_pages`:
   - a terminal read whose settlement rolled back, when the daemon restarts before reading it
     again (the priority is kept in memory).
 - A tick is `poll_interval_seconds` (20) plus its own duration, because `run()` sleeps after each
-  tick. Measured on the fake host at 8a259501: 0.9 ms at 18 active assignments, 2.0 ms at 100 and
-  7.4 ms at 500 idle; 3.1, 3.4 and 10.9 ms with a quarter of them running. Host calls a tick stay
+  tick. Measured on the fake host at 658fd142: 1.1 ms at 18 active assignments, 2.0 ms at 100 and
+  10.1 ms at 500 idle; 2.7, 4.3 and 12.0 ms with a quarter of them running. Host calls a tick stay
   capped; store work is O(active assignments) indexed lookups, as it already was.
 - The omission is owed `omission_grace_seconds` after the settlement and staged by the supervisor
   pass within its project rotation. That pass derives each relationship of a served project once,
