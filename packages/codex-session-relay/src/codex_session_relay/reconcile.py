@@ -38,7 +38,7 @@ import json
 from enum import Enum
 
 from . import hostloss
-from .delivery import COMPLETION, REVISION, SENDING
+from .delivery import COMPLETION, REVISION, SENDING, SETTINGS_NOTED, settings_refusal_of
 from .hostadapter import TokenScan
 from .policy import (
     HOST_LOST_TURN, TURN_CHECK_UNDECIDED, UNKNOWN_SEND_HOLD_NAMED, UNKNOWN_SEND_LOST,
@@ -266,12 +266,20 @@ class Reconciler:
             operation_observation = f"{facts.transport_receipt_status}:{facts.delivery_state}"
             if facts.delivery_state == DISPATCHED:
                 return self._settle_dispatched(
-                    attempt, delivery, facts, operation_observation, adapter, now
+                    attempt, delivery, facts, operation_observation, adapter, now,
+                    # The notes the transport wrote on an accepted receipt, journaled as the
+                    # sender's own settlement journals them (CRW-235; Devin on aa9724f4).
+                    settings_notes=(receipt.get("settingsNotes")
+                                    if isinstance(receipt, dict) else None),
                 )
             if facts.retry_safe:
                 return self._settle_from_receipt(
                     attempt, delivery, facts, Evidence.CONFIRMED_PRE_SEND_REJECTION,
                     operation_observation, now,
+                    # The field-level findings the receipt keeps, as the sender reads them, so
+                    # a refusal settled here names its field too (Devin on fa2bacf7).
+                    settings_findings=(receipt.get("settingsFindings")
+                                       if isinstance(receipt, dict) else None),
                 )
             if facts.transport_receipt_status != UNFINISHED:
                 operation_observation += " (not affirmative)"
@@ -335,7 +343,8 @@ class Reconciler:
                                  event_id=attempt["event_id"], store=self.store))
         return outcome
 
-    def _settle_dispatched(self, attempt, delivery, facts, observation, adapter, now) -> dict:
+    def _settle_dispatched(self, attempt, delivery, facts, observation, adapter, now, *,
+                           settings_notes=None) -> dict:
         """A receipt with a turn id, then the recipient's own turns for that turn (CRW-224).
 
         The read comes first and outside any transaction, as every host read here does. An
@@ -350,6 +359,7 @@ class Reconciler:
             outcome = self._settle_from_receipt(
                 attempt, delivery, facts, Evidence.RECEIPT_TURN_ID, observation, now,
                 turns_checked=reading["finding"] != hostloss.UNKNOWN,
+                settings_notes=settings_notes,
             )
         except _AttemptLost:
             # Recorded already, or by the daemon between this read and this write.
@@ -509,7 +519,8 @@ class Reconciler:
         return delivery["state"] not in (DISPATCHED, "acknowledged", "superseded")
 
     def _settle_from_receipt(self, attempt, delivery, facts, evidence, observation, now, *,
-                             turns_checked=False) -> dict:
+                             turns_checked=False, settings_notes=None,
+                             settings_findings=None) -> dict:
         """The transport itself settled, so the attempt record is re-derived honestly."""
         record = attempt_record(
             facts,
@@ -538,6 +549,11 @@ class Reconciler:
             "not scanned", next_eligible, hold=hold,
             dispatch_evidence="transport_accepted" if facts.delivery_state == DISPATCHED else None,
             dispatch_turn_id=facts.turn_id,
+            # This attempt's settings cause, read from the receipt reconciliation just classified,
+            # so an attempt a crash left for reconciliation is named as exactly as one the sender
+            # settled itself (CRW-235), its field from the receipt's findings as the sender's is.
+            settings_refusal=settings_refusal_of(facts, settings_findings),
+            settings_notes=settings_notes,
         )
         return _with_anchor(
             {"evidence": evidence.value, "state": facts.delivery_state, "record": record},
@@ -622,7 +638,8 @@ class Reconciler:
 
     def _write(self, attempt, delivery, record, state, evidence, observation, scan_detail,
                next_eligible, *, aggregate=None, dispatch_evidence=None, dispatch_turn_id=None,
-               hold=None, keep_unknown=False, clear_dispatch=False, expect_scan=False):
+               hold=None, keep_unknown=False, clear_dispatch=False, expect_scan=False,
+               settings_refusal=None, settings_notes=None):
         now_iso = self.clock.iso()
         current = self._is_current(attempt, delivery)
         anchor = None
@@ -713,8 +730,26 @@ class Reconciler:
                     )
             self.store.journal(
                 "reconciled", attempt["request_id"],
-                {"evidence": evidence.value, "state": aggregate or state}, at=now_iso,
+                # settingsRefusal is always written by this revision, null for a settlement that
+                # is not a settings refusal: its absence is what marks an older row (CRW-235).
+                {"evidence": evidence.value, "state": aggregate or state,
+                 "settingsRefusal": settings_refusal},
+                at=now_iso,
             )
+            # An accepted narrowing the transport noted, journaled beside the event as the
+            # sender's settlement journals it, once per request: a dispatch settled from its
+            # receipt again, or first settled by the sender, already carries its row (CRW-235;
+            # Devin on aa9724f4).
+            if isinstance(settings_notes, list) and settings_notes and db.execute(
+                    "SELECT 1 FROM journal WHERE subject = ? AND +kind = ?"
+                    "   AND (CASE WHEN json_valid(detail)"
+                    "        THEN json_extract(detail, '$.requestId') END) = ?",
+                    (attempt["event_id"], SETTINGS_NOTED, attempt["request_id"]),
+            ).fetchone() is None:
+                self.store.journal(
+                    SETTINGS_NOTED, attempt["event_id"],
+                    {"requestId": attempt["request_id"], "notes": settings_notes}, at=now_iso,
+                )
         return anchor
 
     def _bind_promoted_anchor(self, db, attempt, delivery, dispatch_turn_id):

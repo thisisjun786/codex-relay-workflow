@@ -374,7 +374,7 @@ transport call.
 | `awaiting_send:hourly_cap` | as above, and the recipient's hourly send cap is spent; `pacing` says until when (see "When the send budget holds a delivery") |
 | `in_flight` | a send was claimed and its outcome is not yet settled |
 | `parent_busy` | the parent is mid-turn; it is never interrupted |
-| `settings_rejected` | the host would not confirm the authorized execution settings |
+| `settings_rejected` | the host would not confirm the authorized execution settings; `settingsHold` and `recovery` name who restores them |
 | `withheld:<operation>` | refused before any transport call, naming the operation that refused |
 | `turn_accepted` | the transport started a turn |
 | `awaiting_ack` | delivered, acknowledgement outstanding |
@@ -392,6 +392,50 @@ transport call.
 
 Each carries the most recent failed operation, its concrete error, the exact settings
 difference where there is one, and the next retry time.
+
+A delivery held on its recipient's settings also carries `settingsHold` and `recovery` (CRW-235).
+`settingsHold` is `{kind, source, reason, field, requestId, detail}`: the kind is `withheld` (still
+retried), `capped` (held at the attempt cap, never sent again) or `channel_closed` (stored where
+the recipient reads it); the source says where the cause was read, and `detail` is a pre-send
+refusal's own text. `recovery` is `{actor, reason, command, then, laterDeliveries, refusalDetail}`
+with the command rendered for this store and `refusalDetail` that same text: a withheld hold is the
+operator's (`settings-show --task <recipient>`, then bring the recipient back under its recorded
+settings or re-record it with `--source user_transition`), except a host answer that left a
+setting out, which the daemon may clear itself; the role gate's refusals (`role_policy_unconfigured`,
+`role_binding_mismatch`, `settings_record_stale_for_role`), which each cover more than one cause
+and so point at the repair the refusal names in `refusalDetail`, never at whichever failure row a
+timestamp puts last (declare the role,
+give the relay process its policy and restart it, fix the binding or the creation, or re-record from
+a user-attributed source); and a refusal of the record itself (missing, incomplete, mistyped, or an
+unsupported sandbox type), whose step is recording it again; a capped or closed-channel hold is the parent's
+(`show --event` for the stored report), with the operator's or the thread owner's step for later
+deliveries. assignment-show names the same actor as `operator_restores_recipient_settings` or
+`parent_recovers_settings_hold`, for a completion and for a revision request to the child alike
+(`settings-show --task <child>` for the latter); a revision request held at the cap or stored by
+a closed channel keeps `parent_recovers_held_correction`, its recovery named for the settings code
+(a stored revision request takes no acknowledgement: the parent reads it and opens a fresh
+generation if the child still has to be given it). A hold the daemon may clear itself keeps the
+daemon's action, with the same recovery beside it. A send budget that never reopens is named first
+(`operator_changes_send_policy`): until the policy changes nothing is sent, not even the retry that
+would re-read a recorded refusal, which `settingsHold` still names. The fault sweep
+carries the same reason and recovery on the occurrence. An attempt's own occurrence keeps its own
+cause when a later pre-send refusal is what holds the delivery now; that refusal's occurrence
+names it with its recovery. An accepted narrowing settled by reconciliation is journaled
+(`delivery_settings_noted`) as the sender's settlement journals it, once per request.
+
+The cause is read where each transition wrote it, never from the time-ordered failure rows: the
+settlement row of the latest settled attempt (`settingsRefusal`, written by the sender and by
+reconciliation) or a pre-send withhold that took effect (`delivery_presend_withheld`), whichever
+came later in the journal. Two limits follow. A state recorded before this revision has neither,
+so its hold is named `undetermined`, with the event's attempts and receipts as the path and no
+claim of a settings fix, and its actor still follows its state: the daemon retries an uncapped
+withhold, and the parent reads what a cap or a closed channel stopped; a strictly later lifecycle
+withhold or pause still clears it, and a closed channel,
+which only a settings refusal produces, is always named `undetermined`. And the reader
+trusts the newest recorded transition, so a pre-send withhold that a still-running older relay
+program writes after a newer program's settlement, which only an upgrade window allows (the
+service holds one daemon per store, but a relay CLI is not under that lock), is read as the
+settlement's cause until the next transition is recorded.
 
 An unsent, unheld delivery whose recipient's send budget is what holds it also carries `pacing`. The
 budget holds it unless the delivery's own backoff (a busy recipient, a pre-send failure) ends later

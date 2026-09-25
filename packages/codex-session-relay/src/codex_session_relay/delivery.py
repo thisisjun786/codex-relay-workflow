@@ -31,13 +31,14 @@ from .transport import (
     SENDING,
     SUPERSEDED,
     WITHHELD_PRE_SEND,
+    SETTINGS_REFUSALS as TRANSPORT_SETTINGS_REFUSALS,
     assert_attempt_invariants,
     attempt_record,
     classify_operation_receipt,
 )
 from .policy import (
-    HOST_LOST_TURN, HOURLY_CAP, PUSH_CHANNEL_CLOSED, SUPERSEDED as SUPERSEDED_HOLD,
-    TURN_CHECK_UNDECIDED,
+    ATTEMPT_CAP, HOST_LOST_TURN, HOURLY_CAP, PUSH_CHANNEL_CLOSED,
+    SUPERSEDED as SUPERSEDED_HOLD, TURN_CHECK_UNDECIDED,
 )
 from . import NO_DELIVERABLE, envelope, restoration, rolepolicy
 from .report import (
@@ -78,6 +79,18 @@ AWAITING_SEND_CAPPED = "awaiting_send:" + HOURLY_CAP
 # the meantime (a raised cap, or a cap of zero lifted) take effect within this, without asking
 # every few seconds (Devin on c27051a5).
 CAP_RECHECK_SECONDS = 60.0
+
+# The settings cause of a delivery, recorded where its transition is (CRW-235). A settlement row
+# (delivery_attempted here, reconciled in reconcile.py) carries settingsRefusal; a pre-send
+# transition that took effect journals PRESEND_WITHHELD; an accepted note journals SETTINGS_NOTED.
+PRESEND_WITHHELD = "delivery_presend_withheld"
+SETTINGS_NOTED = "delivery_settings_noted"
+# The codes an ATTEMPT's settings cause is written for: the transport's settings refusals, which
+# withhold before any turn, and the approval policy this transport cannot carry, which stores the
+# report where the recipient reads it (inbox_only). Each only when thread/resume refused.
+ATTEMPT_SETTINGS_CODES = frozenset(TRANSPORT_SETTINGS_REFUSALS) | {"unsupported_approval_policy"}
+# The delivery states in which a settings hold can be the current cause, and the kind each is.
+SETTINGS_HOLD_KINDS = {WITHHELD_PRE_SEND: "withheld", INBOX_ONLY: "channel_closed"}
 
 # linkage.PROJECT and linkage.ISSUE, spelled here rather than imported. linkage reaches registry
 # and assignment from inside its own functions, and delivery is reached from registry, so a
@@ -1170,7 +1183,11 @@ class DeliveryService:
             status_before=_status_for_record(observation),
             observed_at=self.clock.iso(),
         )
-        elsewhere = self._settle(event_id, request_id, record, facts, previously_observed, now)
+        elsewhere = self._settle(
+            event_id, request_id, record, facts, previously_observed, now,
+            settings_refusal=settings_refusal_of(facts, findings),
+            settings_notes=(receipt.get("settingsNotes") if isinstance(receipt, dict) else None),
+        )
         if elsewhere is not None:
             # Another reader settled this attempt while the send was in flight (I-37). What it
             # recorded stands; the transport ledger keeps this send's receipt for the next
@@ -1240,6 +1257,16 @@ class DeliveryService:
                     detail=refusal.detail,
                     relationship_id=row["relationship_id"] if row is not None else None,
                     error_code=reason, retry_safe=True, next_retry_at=when,
+                )
+                # The transition this pass made, bound to the journal's own order (CRW-235):
+                # written only when the guarded UPDATE changed the row, unlike the
+                # delivery_withheld row above, whose streak counting (I-373) reads every refusal.
+                self.store.journal(
+                    PRESEND_WITHHELD, event_id,
+                    # The refusal's own text travels with the transition, so a reader names the
+                    # repair this refusal gave and never another transition's (CRW-235).
+                    {"reason": reason, "operation": "settings_check",
+                     "detail": refusal.detail}, at=stamp,
                 )
 
     def record_settings_violation(self, request_id: str, event_id: str, findings) -> dict:
@@ -1381,6 +1408,13 @@ class DeliveryService:
                 {"relationshipId": relationship["relationshipId"], "status": status},
                 at=self.clock.iso(),
             )
+            # A pause names no operation that refused anything (CRW-235): the reader then says
+            # no settings hold, and status keeps the generic withheld_pre_send.
+            self.store.journal(
+                PRESEND_WITHHELD, event_id,
+                {"reason": RefusalReason.RELATIONSHIP_NOT_ACTIVE.value, "operation": None},
+                at=self.clock.iso(),
+            )
         return {
             "deliveryState": WITHHELD_PRE_SEND,
             "withheldReason": RefusalReason.RELATIONSHIP_NOT_ACTIVE.value,
@@ -1424,13 +1458,19 @@ class DeliveryService:
                                     if relationship is not None else None),
                     error_code=observation.withhold_reason, next_retry_at=when,
                 )
+                self.store.journal(
+                    PRESEND_WITHHELD, event_id,
+                    {"reason": observation.withhold_reason, "operation": "lifecycle_read"},
+                    at=stamp,
+                )
             self.store.journal(
                 "delivery_withheld", event_id,
                 {"reason": observation.withhold_reason, "detail": observation.detail},
                 at=self.clock.iso(),
             )
 
-    def _settle(self, event_id, request_id, record, facts, previously_observed, now):
+    def _settle(self, event_id, request_id, record, facts, previously_observed, now, *,
+                settings_refusal=None, settings_notes=None):
         """Settle this send's own attempt from its receipt, if nothing else settled it first.
 
         The send runs outside any transaction, and a reconciliation - the daemon's, a manual one,
@@ -1440,6 +1480,12 @@ class DeliveryService:
         to held with no turn. So the attempt is settled only while still in flight; otherwise
         nothing is written to it or the delivery, and the stored attempt and delivery state are
         returned. None when this settlement was written.
+
+        settings_refusal is this attempt's settings cause (settings_refusal_of), written on the
+        settlement row as settingsRefusal, null when the attempt was not a settings refusal, so a
+        reader can name each attempt's own cause whatever the clock (CRW-235). settings_notes are
+        the transport receipt's settingsNotes (an accepted narrowing, an approval divergence),
+        journaled beside the settlement so show and status can reach them.
         """
         assert_attempt_invariants(record)
         state = facts.delivery_state
@@ -1496,9 +1542,15 @@ class DeliveryService:
                 {
                     "requestId": request_id, "state": state, "retrySafe": record["retrySafe"],
                     "turnPreviouslyObserved": previously_observed, "hold": hold,
+                    "settingsRefusal": settings_refusal,
                 },
                 at=self.clock.iso(),
             )
+            if settings_notes:
+                self.store.journal(
+                    SETTINGS_NOTED, event_id,
+                    {"requestId": request_id, "notes": settings_notes}, at=self.clock.iso(),
+                )
         return None
 
     def mark_superseded(self, event_id: str, *, reason: str = SUPERSEDED_HOLD) -> None:
@@ -2004,6 +2056,17 @@ class DeliveryService:
                 if recipient not in paced:
                     paced[recipient] = send_pacing(self.store.db, self.policy, recipient, now)
                 pacing = pacing_holding(paced[recipient], row["next_eligible_at"])
+            # Whether the current state is a settings hold, and who recovers it how (CRW-235):
+            # read where the transitions are recorded, and named with a command for this store.
+            reading = current_settings_hold(self.store, row["event_id"])
+            settings_hold = recovery = None
+            if reading["hold"] is not None:
+                from .assignment import settings_recovery_record
+
+                settings_hold = dict(reading["hold"], kind=reading["kind"])
+                recovery = settings_recovery_record(
+                    self.store, settings_hold, row["event_id"], row["recipient_task_id"],
+                    revision=row["kind"] == REVISION)
             items.append({
                 "eventId": row["event_id"],
                 "kind": row["kind"],
@@ -2019,9 +2082,11 @@ class DeliveryService:
                 "verdict": verdict["verdict"] if verdict else None,
                 "attemptDetail": [dict(a) for a in attempts],
                 "phase": _phase(row, attempts, ack, failure, superseded, grant=grant,
-                                pacing=pacing),
+                                pacing=pacing, settings_reading=reading),
                 "pacing": pacing,
                 "lastFailedOperation": failure,
+                "settingsHold": settings_hold,
+                "recovery": recovery,
                 "nextRetryAt": row["next_eligible_at"],
                 "supersededNote": superseded,
             })
@@ -2045,6 +2110,163 @@ class DeliveryService:
             )
         ]
         return {"deliveries": items, "pendingIntents": intents}
+
+
+def settings_refusal_of(facts, findings=None):
+    """This attempt's settings cause for its settlement row, or None (CRW-235).
+
+    A cause exists only when the resume refused on a code this transport decides settings by
+    (ATTEMPT_SETTINGS_CODES). The field is the first finding's, when the receipt carries them;
+    reconciliation passes the findings of the receipt it read, as the sender does.
+    """
+    code = getattr(facts, "rpc_error_code", None)
+    # A host can answer with a code that is not text; it is no settings code, and a set lookup on
+    # an unhashable one would stop the attempt from settling at all (the review of ee24c936).
+    if getattr(facts, "failed_operation", None) != "thread/resume" \
+            or not isinstance(code, str) or code not in ATTEMPT_SETTINGS_CODES:
+        return None
+    field = None
+    if isinstance(findings, list) and findings and isinstance(findings[0], dict):
+        field = findings[0].get("field")
+    return {"reason": code, "field": field if isinstance(field, str) else None}
+
+
+# The inputs of current_settings_hold as columns of ONE statement, formatted with the SQL alias of
+# the event id and the delivery row. assignment._anchored adds them to its own single-statement
+# snapshot, so a projection never pairs a delivery state with a settings cause read later.
+_LATEST_SETTLED = (
+    "(SELECT {tag}.request_id FROM attempts {tag} WHERE {tag}.event_id = {event}"
+    " AND {tag}.internal_state = 'settled' ORDER BY {tag}.attempt_no DESC LIMIT 1)"
+)
+SETTINGS_HOLD_COLUMNS = (
+    "{delivery}.state AS sh_state, {delivery}.hold_reason AS sh_hold_reason,"
+    " " + _LATEST_SETTLED.format(tag="sha", event="{event}") + " AS sh_request,"
+    # The two settlement rows, each probed through journal_subject: (subject, seq) orders the
+    # probe, and the unary + keeps the planner off journal_kind, which would scan every row of
+    # that kind and sort them (the review of ee24c936). settings_hold_reading takes the later.
+    " (SELECT json_object('seq', shj.seq, 'detail', shj.detail) FROM journal shj"
+    "   WHERE shj.subject = {event} AND +shj.kind = 'delivery_attempted'"
+    "     AND (CASE WHEN json_valid(shj.detail)"
+    "          THEN json_extract(shj.detail, '$.requestId') END)"
+    "         = " + _LATEST_SETTLED.format(tag="shb", event="{event}") +
+    "   ORDER BY shj.seq DESC LIMIT 1) AS sh_settled_sent,"
+    " (SELECT json_object('seq', shr.seq, 'detail', shr.detail) FROM journal shr"
+    "   WHERE shr.subject = " + _LATEST_SETTLED.format(tag="shc", event="{event}") +
+    "     AND +shr.kind = 'reconciled'"
+    "   ORDER BY shr.seq DESC LIMIT 1) AS sh_settled_reconciled,"
+    " (SELECT json_object('seq', shp.seq, 'detail', shp.detail) FROM journal shp"
+    "   WHERE shp.subject = {event} AND +shp.kind = '" + PRESEND_WITHHELD + "'"
+    "   ORDER BY shp.seq DESC LIMIT 1) AS sh_presend,"
+    " (SELECT shf.occurred_at FROM failed_operations shf WHERE shf.scope_key = {event}"
+    "   AND shf.operation = 'settings_check') AS sh_settings_at,"
+    " (SELECT shl.occurred_at FROM failed_operations shl WHERE shl.scope_key = {event}"
+    "   AND shl.operation = 'lifecycle_read') AS sh_lifecycle_at,"
+    # A pause writes no failure row, only this journal kind; a legacy settings row a strictly
+    # later pause followed is no settings hold (Devin on 77c0c641).
+    " (SELECT shi.at FROM journal shi WHERE shi.subject = {event}"
+    "   AND +shi.kind = 'delivery_withheld_inactive' ORDER BY shi.seq DESC LIMIT 1)"
+    "   AS sh_inactive_at"
+)
+
+
+def current_settings_hold(store, event_id) -> dict:
+    """Whether a delivery's CURRENT state is a settings hold, and which, read where its
+    transitions are recorded rather than from the time-ordered failure rows (CRW-235). One
+    statement (SETTINGS_HOLD_COLUMNS); settings_hold_reading() interprets it."""
+    row = store.one(
+        "SELECT " + SETTINGS_HOLD_COLUMNS.format(event="d.event_id", delivery="d")
+        + " FROM deliveries d WHERE d.event_id = ?", (event_id,),
+    )
+    return settings_hold_reading(row)
+
+
+def _packed(value):
+    """A json_object('seq', ..., 'detail', ...) column as (seq, detail mapping), or None."""
+    if not value:
+        return None
+    try:
+        packed = json.loads(value)
+        detail = json.loads(packed["detail"]) if packed.get("detail") else {}
+    except (TypeError, ValueError, KeyError, AttributeError):
+        return None
+    return packed.get("seq"), (detail if isinstance(detail, dict) else {})
+
+
+def settings_hold_reading(row) -> dict:
+    """Interpret the SETTINGS_HOLD_COLUMNS of one delivery. Pure: no reads of its own.
+
+    Only three states can be a settings hold: withheld_pre_send (kind withheld), withheld_pre_send
+    held at the attempt cap (kind capped) and inbox_only (kind channel_closed). The transition
+    that made the state is the later, by journal seq, of the event's latest
+    delivery_presend_withheld row (a pre-send writer whose guarded UPDATE took effect) and the
+    latest settled attempt's settlement row (its delivery_attempted, or its reconciled row,
+    whichever came later):
+
+    - pre_send: the reason is a settings hold when it is one of faultsweep.SETTINGS_REFUSALS;
+      a lifecycle or pause reason is none;
+    - attempt: the row's settingsRefusal key decides, null meaning none;
+    - otherwise the transition was recorded before this revision (no key, no marker): no hold
+      when the event has no settings_check failure row, or a strictly later lifecycle_read one or
+      pause (delivery_withheld_inactive, which writes no failure row; Devin on 77c0c641),
+      else an undetermined one; and a closed channel (inbox_only) always an undetermined one,
+      because only a settings refusal (the approval policy) closes it and that refusal records
+      its failure under thread/resume, never settings_check (the review of aa9724f4). Nothing
+      is inferred beyond that.
+
+    definitive is True when the chosen row is this revision's evidence (attempt or pre_send), so
+    a status phase can stop inferring from the failure rows there. The key is tested for
+    ABSENCE, never truthiness: a null key is a definite "not a settings refusal".
+    """
+    from .faultsweep import SETTINGS_REFUSALS as PRESEND_SETTINGS_REFUSALS
+
+    reading = {"kind": None, "chosen": None, "definitive": False, "hold": None,
+               "presendOperation": None}
+    if row is None:
+        return reading
+    kind = SETTINGS_HOLD_KINDS.get(row["sh_state"])
+    if row["sh_state"] == WITHHELD_PRE_SEND and row["sh_hold_reason"]:
+        kind = "capped" if row["sh_hold_reason"] == ATTEMPT_CAP else None
+    if kind is None:
+        return reading
+    reading["kind"] = kind
+    settled = [one for one in (_packed(row["sh_settled_sent"]),
+                               _packed(row["sh_settled_reconciled"])) if one is not None]
+    settlement = max(settled, key=lambda one: one[0]) if settled else None
+    presend = _packed(row["sh_presend"])
+    if presend is not None and (settlement is None or presend[0] > settlement[0]):
+        detail = presend[1]
+        operation = detail.get("operation")
+        reason = detail.get("reason")
+        reading.update(chosen="pre_send", definitive=True,
+                       presendOperation=operation if isinstance(operation, str) else None)
+        if isinstance(reason, str) and reason in PRESEND_SETTINGS_REFUSALS:
+            # The refusal's own text, written on this very row by the withhold that took effect,
+            # so it cannot be another transition's (the review of 77c0c641: the settings_check
+            # failure row is shared with the attempt path, which writes it before settling).
+            refusal_text = detail.get("detail")
+            reading["hold"] = {"source": "pre_send", "reason": reason, "field": None,
+                               "requestId": None,
+                               "detail": refusal_text if isinstance(refusal_text, str) else None}
+        return reading
+    if settlement is not None and "settingsRefusal" in settlement[1]:
+        reading.update(chosen="attempt", definitive=True)
+        refusal = settlement[1]["settingsRefusal"]
+        if isinstance(refusal, dict) and isinstance(refusal.get("reason"), str):
+            field = refusal.get("field")
+            reading["hold"] = {"source": "attempt", "reason": refusal["reason"],
+                               "field": field if isinstance(field, str) else None,
+                               "requestId": row["sh_request"]}
+        return reading
+    reading["chosen"] = "legacy" if row["sh_request"] is not None else None
+    settings_at = row["sh_settings_at"]
+    cleared = settings_at is not None and any(
+        later is not None and later > settings_at
+        for later in (row["sh_lifecycle_at"], row["sh_inactive_at"]))
+    if kind == "channel_closed" or (
+            settings_at is not None and not cleared):
+        reading["hold"] = {"source": "undetermined", "reason": None, "field": None,
+                           "requestId": None}
+    return reading
 
 
 def send_refusal(db, policy, recipient: str, now: float):
@@ -2382,7 +2604,8 @@ def _manifest_paths(event_row):
 
 
 
-def _phase(row, attempts, ack, failure=None, superseded=None, grant=None, pacing=None) -> str:
+def _phase(row, attempts, ack, failure=None, superseded=None, grant=None, pacing=None,
+           settings_reading=None) -> str:
     """Which stage a delivery is actually at, without inventing certainty.
 
     withheld_pre_send used to mean five different things at once, and the cause is the only
@@ -2390,6 +2613,10 @@ def _phase(row, attempts, ack, failure=None, superseded=None, grant=None, pacing
     means the transport gave no usable answer, which is NOT the same as a turn having been
     accepted, and a settled withheld_pre_send can be an ordinary thread/read failure rather
     than a settings mismatch. Both are read from the attempt record, not from the state word.
+
+    settings_reading is current_settings_hold's answer. Where it is definitive - the transition
+    that made the state is recorded by this revision - a withheld delivery is labelled from it
+    and never from the time-ordered failure row, which can name an older cause (CRW-235).
     """
     if ack is not None and ack["verified"] == "verified":
         # A verified REJECTION is just as settled as a verified acceptance: the receipt was
@@ -2469,6 +2696,15 @@ def _phase(row, attempts, ack, failure=None, superseded=None, grant=None, pacing
         if record.get("turnId"):
             return "turn_accepted"
         return "outcome_unknown"
+    if row["state"] == WITHHELD_PRE_SEND and settings_reading \
+            and settings_reading.get("definitive"):
+        if settings_reading.get("chosen") == "attempt":
+            if settings_reading.get("hold") is not None:
+                return "settings_rejected"
+            return f"withheld:{failed}" if failed else "withheld_pre_send"
+        # A pre-send transition names the operation that refused; a pause names none.
+        operation = settings_reading.get("presendOperation")
+        return f"withheld:{operation}" if operation else "withheld_pre_send"
     if row["state"] == WITHHELD_PRE_SEND and latest is not None:
         # thread/resume fails for ordinary connectivity and internal reasons too, and the
         # generic branch records the same operation for all of them. Naming those a settings
