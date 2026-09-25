@@ -73,6 +73,14 @@ normal corrections. Include exact checks and their results, and identify
 untested behavior. An absent check or review is not a pass.
 
 The implementation owner handles reviews through resolution; the coordinator
-checks the latest candidate before integration. Every promotion from `dev` to
-`main` needs explicit owner release authorization and release notes. A normal
-contribution does not publish or deploy anything.
+checks the latest candidate before integration. A normal contribution does not
+publish or deploy anything. The owner releases a verified dev commit with the
+[Release workflow](docs/releases.md), which fast-forwards main to that exact SHA;
+do not open a promotion PR. Release approval, a version tag and notes are required.
+
+During implementation, run focused tests for the changed behavior. Reuse passing
+evidence while its source, criteria and environment remain applicable. Hosted CI
+selects checks by path; root prose and `docs/*.md` avoid expensive suites, while
+executable skills and runtime changes retain their owning checks. A manifest change
+still selects full coverage, including a derived plugin-version update. Unknown
+paths need an explicit verification mapping before the gate can pass.

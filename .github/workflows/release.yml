@@ -1,0 +1,274 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Exact 40-character commit SHA on dev with successful push CI
+        required: true
+        type: string
+      tag:
+        description: Release tag, such as v0.1.0 or v0.1.0-rc.1
+        required: true
+        type: string
+      notes:
+        description: User-facing release notes
+        required: true
+        type: string
+      dry_run:
+        description: Validate only; do not create a tag, release, or update main
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  RELEASE_SHA: ${{ inputs.commit }}
+  RELEASE_TAG: ${{ inputs.tag }}
+  RELEASE_NOTES: ${{ inputs.notes }}
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - id: release-inputs
+        name: Require owner dispatch from dev and valid inputs
+        env:
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          [[ "$ACTOR" == "$OWNER" && "$TRIGGERING_ACTOR" == "$OWNER" ]] || {
+            echo '::error::Only the repository owner may authorize a release.'
+            exit 1
+          }
+          [[ "$GITHUB_REF" == refs/heads/dev ]] || {
+            echo '::error::Run the release workflow from dev.'
+            exit 1
+          }
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo '::error::Provide an exact 40-character commit SHA.'
+            exit 1
+          }
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]] || {
+            echo '::error::Provide a version tag such as v0.1.0 or v0.1.0-rc.1.'
+            exit 1
+          }
+          [[ "$RELEASE_NOTES" =~ [^[:space:]] ]] || {
+            echo '::error::Release notes are required.'
+            exit 1
+          }
+      - name: Checkout release source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: release-source
+        name: Verify source, release ancestry, remote tag, and exact-commit CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin dev main
+          git checkout --detach "$RELEASE_SHA"
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]]
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/dev || {
+            echo '::error::The release source must belong to dev.'
+            exit 1
+          }
+          git merge-base --is-ancestor origin/main "$RELEASE_SHA" || {
+            echo '::error::The release must fast-forward main; older or divergent sources are not allowed.'
+            exit 1
+          }
+          if tag_body=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG"); then
+            tag_sha=$(jq -er '.object.sha' <<< "$tag_body")
+            tag_type=$(jq -er '.object.type' <<< "$tag_body")
+            if [[ "$tag_type" == tag ]]; then
+              peeled=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_sha") || {
+                echo '::error::Could not resolve the annotated release tag.'
+                exit 1
+              }
+              tag_sha=$(jq -er '.object.sha' <<< "$peeled")
+              tag_type=$(jq -er '.object.type' <<< "$peeled")
+            fi
+            [[ "$tag_type" == commit && "$tag_sha" == "$RELEASE_SHA" ]] || {
+              echo '::error::This immutable tag already identifies a different commit.'
+              exit 1
+            }
+          else
+            status=$(jq -r '.status // empty' <<< "$tag_body")
+            [[ "$status" == 404 ]] || {
+              echo '::error::Could not determine whether this tag already exists.'
+              exit 1
+            }
+          fi
+          runs=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=push&branch=dev&head_sha=$RELEASE_SHA&per_page=100") || {
+            echo '::error::Could not read dev push CI for this commit.'
+            exit 1
+          }
+          jq -e -s --arg sha "$RELEASE_SHA" '
+            map(if type == "object" and (.workflow_runs | type) == "array" then . else error("invalid CI page") end)
+            | [.[].workflow_runs[]]
+            | map(select(.head_sha == $sha and .head_branch == "dev" and .event == "push"))
+            | group_by(.id) | map(max_by(.run_attempt))
+            | sort_by(.run_number) | last
+            | select(.status == "completed" and .conclusion == "success")
+          ' <<< "$runs" >/dev/null || {
+            echo '::error::The latest dev push CI for this exact commit must have completed successfully.'
+            exit 1
+          }
+          {
+            printf '## Validated release candidate\n\n'
+            printf -- '- Commit: %s\n- Tag: %s\n' "$RELEASE_SHA" "$RELEASE_TAG"
+            printf -- '- Latest exact-commit dev push CI passed.\n'
+            printf -- '- No tag, release, or branch has been changed by validation.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - id: release-credentials
+        name: Require dedicated publication credentials
+        if: inputs.dry_run == false
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          if [[ -z "$RELEASE_TOKEN" ]]; then
+            echo '::error::Configure RELEASE_TOKEN before publishing (Contents and Workflows write; Actions read).'
+            exit 1
+          fi
+
+  publish:
+    needs: validate
+    if: inputs.dry_run == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout the validated commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
+          persist-credentials: true
+      - id: release-publish
+        name: Publish the source release and fast-forward main
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo '::error::Configure RELEASE_TOKEN before publishing (Contents and Workflows write; Actions read).'
+            exit 1
+          fi
+          git fetch --no-tags origin dev main
+          git checkout --detach "$RELEASE_SHA"
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]]
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/dev || {
+            echo '::error::The release source must belong to dev.'
+            exit 1
+          }
+          git merge-base --is-ancestor origin/main "$RELEASE_SHA" || {
+            echo '::error::The release must fast-forward main; older or divergent sources are not allowed.'
+            exit 1
+          }
+          runs=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=push&branch=dev&head_sha=$RELEASE_SHA&per_page=100") || {
+            echo '::error::Could not read dev push CI for this commit.'
+            exit 1
+          }
+          jq -e -s --arg sha "$RELEASE_SHA" '
+            map(if type == "object" and (.workflow_runs | type) == "array" then . else error("invalid CI page") end)
+            | [.[].workflow_runs[]]
+            | map(select(.head_sha == $sha and .head_branch == "dev" and .event == "push"))
+            | group_by(.id) | map(max_by(.run_attempt))
+            | sort_by(.run_number) | last
+            | select(.status == "completed" and .conclusion == "success")
+          ' <<< "$runs" >/dev/null || {
+            echo '::error::The latest dev push CI for this exact commit must have completed successfully.'
+            exit 1
+          }
+          if tag_body=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG"); then
+            tag_sha=$(jq -er '.object.sha' <<< "$tag_body")
+            tag_type=$(jq -er '.object.type' <<< "$tag_body")
+            if [[ "$tag_type" == tag ]]; then
+              peeled=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_sha") || {
+                echo '::error::Could not resolve the annotated release tag.'
+                exit 1
+              }
+              tag_sha=$(jq -er '.object.sha' <<< "$peeled")
+              tag_type=$(jq -er '.object.type' <<< "$peeled")
+            fi
+            [[ "$tag_type" == commit && "$tag_sha" == "$RELEASE_SHA" ]] || {
+              echo '::error::This immutable tag already identifies a different commit.'
+              exit 1
+            }
+            tag_exists=1
+          else
+            status=$(jq -r '.status // empty' <<< "$tag_body")
+            [[ "$status" == 404 ]] || {
+              echo '::error::Could not determine whether this tag already exists.'
+              exit 1
+            }
+            tag_exists=0
+          fi
+          # Tag lookup omits draft releases. Inspect all releases with the owner
+          # credential before creating an immutable tag or changing any ref.
+          releases=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100") || {
+            echo '::error::Could not inspect release conflicts before publication.'
+            exit 1
+          }
+          release=$(jq -c -e -s --arg tag "$RELEASE_TAG" '
+            map(if type == "array" then . else error("invalid release page") end)
+            | add | map(select(.tag_name == $tag))
+            | if length > 1 then error("multiple releases for tag") else {match: .[0]} end
+          ' <<< "$releases") || {
+            echo '::error::Could not determine whether this release already exists.'
+            exit 1
+          }
+          jq -e --arg sha "$RELEASE_SHA" '
+            .match == null or (.match.draft == false and .match.target_commitish == $sha)
+          ' <<< "$release" >/dev/null || {
+            echo '::error::An existing draft or conflicting release must be resolved before publication.'
+            exit 1
+          }
+          if [[ "$tag_exists" == 0 ]]; then
+            if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+              [[ "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" == "$RELEASE_SHA" ]] || {
+                echo '::error::The local tag already identifies a different commit.'
+                exit 1
+              }
+            else
+              git tag "$RELEASE_TAG" "$RELEASE_SHA"
+            fi
+            git push origin "refs/tags/$RELEASE_TAG"
+          fi
+          if jq -e '.match == null' <<< "$release" >/dev/null; then
+            args=(--verify-tag --target "$RELEASE_SHA" --title "$RELEASE_TAG" --notes "$RELEASE_NOTES")
+            if [[ "$RELEASE_TAG" == *-* ]]; then args+=(--prerelease); fi
+            gh release create "$RELEASE_TAG" "${args[@]}" || {
+              echo '::error::The tag exists, but release creation failed. Inspect the release and any draft conflict, then recover with the same tag and commit; main was not advanced.'
+              exit 1
+            }
+          fi
+          git push origin "$RELEASE_SHA:refs/heads/main" || {
+            echo '::error::The release exists, but main was not updated. Inspect the failure and rerun with the same tag and commit.'
+            exit 1
+          }
+          updated=$(git ls-remote origin refs/heads/main)
+          [[ "$updated" == "$RELEASE_SHA"* ]] || {
+            echo '::error::The release exists, but main does not identify the selected commit. Inspect the failure and rerun with the same tag and commit.'
+            exit 1
+          }
+          {
+            printf '## Published source release\n\n'
+            printf -- '- Commit: %s\n- Tag: %s\n' "$RELEASE_SHA" "$RELEASE_TAG"
+            printf -- '- main now identifies the released commit.\n'
+          } >> "$GITHUB_STEP_SUMMARY"

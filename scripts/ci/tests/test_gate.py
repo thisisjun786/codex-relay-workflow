@@ -13,7 +13,7 @@ spec = importlib.util.spec_from_file_location("gate", SCRIPT)
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
-GATES = {"dev-gate", "release-gate"}
+GATES = {"dev-gate"}
 
 
 def workflow_jobs():
@@ -42,66 +42,78 @@ def workflow_jobs():
 
 
 class GateTests(unittest.TestCase):
-    def env(self):
-        return dict(NEEDS_JSON=json.dumps({n: {"result": "success"} for n in gate.JOBS}),
-                    EXPECTED_RELEASE="false", BASE_REF="dev", HEAD_REF="codex/task",
-                    BASE_REPO="owner/repo", HEAD_REPO="owner/repo")
+    def env(self, kind="full", event="pull_request", base="dev"):
+        paths = {"full": ["scripts/ci/gate.py"], "docs": ["README.md"],
+                 "skill": ["plugins/crw/skills/crw-run/SKILL.md"]}[kind]
+        selected = {"tests": kind != "docs", "packages": kind == "full"}
+        if event == "workflow_dispatch":
+            selected = {"tests": True, "packages": True}
+        ref = "refs/pull/1/merge" if event == "pull_request" else "refs/heads/dev"
+        selection = dict(version=1, event=event, base="a" * 40, head="b" * 40,
+                         base_ref=base, ref=ref, changed=paths, unknown=[], unsafe=[],
+                         reason="dispatch" if event == "workflow_dispatch" else "paths",
+                         selected=selected)
+        needs = {name: {"result": "skipped" if selected.get(name) is False else "success"}
+                 for name in gate.JOBS}
+        needs["selection"]["outputs"] = {"scope": json.dumps(selection)}
+        return dict(NEEDS_JSON=json.dumps(needs), EVENT_NAME=event, BASE_REF=base,
+                    REF=ref, HEAD_SHA="b" * 40)
 
-    def test_development_and_manual_chain(self):
-        for base in ("dev", "codex/parent"):
-            env = self.env()
-            env.update(BASE_REF=base, HEAD_REPO="contributor/fork")
-            gate.check(env)
+    def mutate(self, env, change):
+        needs = json.loads(env["NEEDS_JSON"])
+        change(needs)
+        env["NEEDS_JSON"] = json.dumps(needs)
+        return env
 
-    def test_only_same_repository_dev_can_promote(self):
-        for branch, repo, accepted in (("dev", "owner/repo", True),
-                                       ("codex/task", "owner/repo", False),
-                                       ("dev", "attacker/repo", False)):
-            with self.subTest(branch=branch, repo=repo):
-                env = self.env()
-                env.update(BASE_REF="main", HEAD_REF=branch, HEAD_REPO=repo,
-                           EXPECTED_RELEASE="true")
-                if accepted:
-                    gate.check(env)
-                else:
-                    with self.assertRaises(ValueError):
-                        gate.check(env)
+    def test_selected_checks_for_each_scope_and_event(self):
+        for kind in ("docs", "skill", "full"):
+            for event in ("pull_request", "push", "workflow_dispatch"):
+                with self.subTest(kind=kind, event=event):
+                    gate.check(self.env(kind, event))
+        gate.check(self.env(base="codex/parent"))
 
-    def test_every_unsuccessful_result_blocks(self):
+    def test_main_pr_refused_even_when_all_jobs_succeed(self):
+        with self.assertRaises(ValueError):
+            gate.check(self.env(base="main"))
+
+    def test_every_unsuccessful_selected_result_blocks(self):
         for job in gate.JOBS:
-            for state in ("failure", "cancelled", "skipped", "pending", "", None, True):
-                with self.subTest(job=job, state=state):
-                    env = self.env()
-                    needs = json.loads(env["NEEDS_JSON"])
-                    needs[job]["result"] = state
-                    env["NEEDS_JSON"] = json.dumps(needs)
-                    with self.assertRaises(ValueError):
-                        gate.check(env)
+            for state in ("failure", "cancelled", "skipped", "pending", "neutral", "", None, True):
+                with self.subTest(job=job, state=state), self.assertRaises(ValueError):
+                    gate.check(self.mutate(self.env(), lambda n: n[job].update(result=state)))
+
+    def test_unselected_jobs_must_be_skipped_not_failed_or_run(self):
+        for job in ("tests", "packages"):
+            for state in ("success", "failure", "cancelled", "neutral", None):
+                with self.subTest(job=job, state=state), self.assertRaises(ValueError):
+                    gate.check(self.mutate(self.env("docs"), lambda n: n[job].update(result=state)))
 
     def test_missing_unexpected_and_malformed_results(self):
-        valid = json.loads(self.env()["NEEDS_JSON"])
-        invalid = ["", "{", "[]", "null", "true", "{}"]
+        for raw in ("", "{", "[]", "null", "true", "{}"):
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                gate.check(dict(self.env(), NEEDS_JSON=raw))
         for job in gate.JOBS:
-            invalid.append(json.dumps({k: v for k, v in valid.items() if k != job}))
-            invalid.append(json.dumps(dict(valid, **{job: None})))
-        invalid.append(json.dumps(dict(valid, surprise={"result": "success"})))
-        for needs in invalid:
-            with self.subTest(needs=needs), self.assertRaises(ValueError):
-                env = self.env()
-                env["NEEDS_JSON"] = needs
-                gate.check(env)
+            with self.subTest(job=job), self.assertRaises(ValueError):
+                gate.check(self.mutate(self.env(), lambda n: n.pop(job)))
+        with self.assertRaises(ValueError):
+            gate.check(self.mutate(self.env(), lambda n: n.update(extra={"result": "success"})))
 
-    def test_context_and_gate_mismatch(self):
-        for key in self.env():
+    def test_selection_cannot_claim_false_exemption(self):
+        for field, value in (("selected", {"tests": False, "packages": False}),
+                             ("unknown", ["new/component.py"]), ("head", "old"),
+                             ("version", True), ("selected", {"tests": "true", "packages": True})):
+            def alter(needs):
+                data = json.loads(needs["selection"]["outputs"]["scope"])
+                data[field] = value
+                needs["selection"]["outputs"]["scope"] = json.dumps(data)
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                gate.check(self.mutate(self.env(), alter))
+
+    def test_context_is_bound_to_actual_candidate(self):
+        for key in ("EVENT_NAME", "BASE_REF", "REF", "HEAD_SHA"):
             env = self.env()
-            del env[key]
-            with self.subTest(missing=key), self.assertRaises((KeyError, ValueError)):
-                gate.check(env)
-        for changes in ({"BASE_REF": "main"}, {"EXPECTED_RELEASE": "true"},
-                        {"EXPECTED_RELEASE": "yes"}, {"HEAD_REPO": " "}):
-            env = self.env()
-            env.update(changes)
-            with self.subTest(changes=changes), self.assertRaises(ValueError):
+            env[key] = "different"
+            with self.subTest(key=key), self.assertRaises(ValueError):
                 gate.check(env)
 
     def test_cli_missing_input_fails(self):
@@ -124,7 +136,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("packages", gate.JOBS)
         self.assertIn("packages", workflow_jobs())
 
-    def test_both_gates_wait_for_every_required_job(self):
+    def test_gate_waits_for_every_producer(self):
         jobs = workflow_jobs()
         for name in sorted(GATES):
             with self.subTest(gate=name):
@@ -137,10 +149,13 @@ class WorkflowTests(unittest.TestCase):
             with self.subTest(job=name):
                 self.assertNotIn("continue-on-error", body)
 
-    def test_the_packages_job_runs_the_check_unconditionally(self):
+    def test_expensive_jobs_follow_selection_and_keep_runtime_coverage(self):
         body = workflow_jobs()["packages"]
         self.assertIn("scripts/ci/packages.py", body)
-        self.assertIsNone(re.search(r"^    if:", body, re.MULTILINE))
+        self.assertIn("if: needs.selection.outputs.packages == 'true'", body)
+        self.assertIn("if: needs.selection.outputs.tests == 'true'", workflow_jobs()["tests"])
+        self.assertIn("scripts/ci/contracts.py", workflow_jobs()["validate"])
+        self.assertNotIn("scripts/ci/contracts.py", workflow_jobs()["tests"])
         for version in ("'3.11'", "'3.13'"):
             self.assertIn(version, body)
 

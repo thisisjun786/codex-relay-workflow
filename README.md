@@ -47,8 +47,8 @@ The skills use installed CXC/Paperthin and the available Linear connector; they 
 ## Install
 
 Use Git, Python 3.10+, and a platform supporting directory symlinks. The default
-branch `dev` contains ongoing integration work; `main` is reserved for authorized
-release promotions. Clone into a location you will keep:
+branch `dev` contains ongoing integration work; `main` identifies the last
+owner-authorized source release. Clone into a location you will keep:
 
 ```sh
 git clone --branch dev https://github.com/thisisjun786/codex-relay-workflow.git
@@ -178,7 +178,7 @@ not change task IDs, relay state, permissions, or running CXC workflows.
 
 ## Maintain
 
-Edit `plugins/crw/skills/`, review the diff, and commit the change. Use a scoped branch from `dev` and target `dev` for ordinary pull requests; an explicit dependent pull request may target its prerequisite branch instead. `main` receives explicitly authorized release promotions from `dev`. Read [repository policy](POLICY.md), [contribution steps](CONTRIBUTING.md) and [CI operation](docs/CI.md). Remote pushes remain user-authorized. Do not copy project state into the skills.
+Edit `plugins/crw/skills/`, review the diff, and commit the change. Use a scoped branch from `dev` and target `dev` for ordinary pull requests; an explicit dependent pull request may target its prerequisite branch instead. The owner releases a verified `dev` commit and fast-forwards `main` to it with the [release workflow](docs/releases.md); there is no promotion PR. Read [repository policy](POLICY.md), [contribution steps](CONTRIBUTING.md) and [CI operation](docs/CI.md). Remote pushes remain user-authorized. Do not copy project state into the skills.
 
 Repository checks need only Python 3.10+:
 
@@ -327,8 +327,8 @@ request against the Linear criteria and its latest diff, checks and review
 resolution, then merges under Jun's standing authorization for this workflow and
 confirms the landing. Release and deployment still require Jun. Skills, bridge and
 relay all deliver to this repository on base `dev` for ordinary pull requests, with dependent pull
-requests allowed to target their prerequisite branch, and promoting `dev` to `main` is a release that
-needs Jun.
+requests allowed to target their prerequisite branch. Releasing a verified dev commit and
+advancing main to it requires Jun's explicit release authorization.
 See [Default dev integration](plugins/crw/skills/crw-plan/references/integrations.md#default-dev-integration)
 for destination, delivery, and release boundaries. [Merge readiness](plugins/crw/skills/crw-run/references/merge-readiness.md)
 checks current CI, actual review coverage, and unresolved findings without requiring

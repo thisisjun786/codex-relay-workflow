@@ -16,22 +16,50 @@ the steps needed to activate GitHub enforcement.
 | `python3 scripts/ci/gate.py` | Aggregate prerequisite results supplied by the workflow |
 
 See the [workflow](../.github/workflows/ci.yml) for exact job inputs and Python
-versions. All PR bases receive the same offline checks. The default checkout is
-GitHub's combined merge candidate. Base retargeting invalidates prior evidence;
-inspect the new run and candidate before integration. No docs-only selection
-exists because the primary product is instructions in Markdown.
+versions. PR validation uses GitHub's combined merge candidate; pushes to `dev`
+validate the integrated commit. Retargeting invalidates prior coverage. Manual
+CI dispatch runs all checks but does not produce release-eligible push evidence.
 
-Each check has independent state. The final gate runs even after a prerequisite
-fails and rejects missing, malformed, failed, cancelled and skipped results.
-`dev-gate` covers development targets; `release-gate` additionally requires a
-same-repository `dev -> main` promotion. Approval and release notes are reviewed
-by the coordinator; the gate does not infer authorization from a branch name.
+## Selection and aggregation
 
-`scripts/ci/tests/test_gate.py` reads the workflow and requires the aggregator's
-job set to equal the jobs the workflow actually defines, both gates to wait for all
-of them, and no job to carry `continue-on-error`. Adding a job without requiring it,
-or requiring a job that does not exist, fails that test rather than producing a gate
-that silently covers less than it appears to.
+The standard-library [selector](../scripts/ci/scope.py) owns the path map. It
+records the actual comparison base, candidate, event, changed paths, unknown
+paths, selected jobs and reason. Renames include both old and new paths; mode and
+file-type changes cannot obtain a prose exemption. Candidate inventory is checked
+too, so an existing unregistered component cannot hide behind a docs-only diff.
+
+| Change | Selected work |
+| --- | --- |
+| Named root prose files and Markdown directly under `docs/` | Validation, plugin identity, offline contracts and secrets |
+| `plugins/crw/skills/**` or the root `skills` link | Above, plus installer/CI tests on Python 3.10 and 3.13 |
+| Runtime, package, wiring, manifest, shared configuration or CI-control paths | All checks, including both package suites on Python 3.11 and 3.13 |
+| Mixed paths | Union of their coverage |
+| Empty/unavailable diff or manual dispatch | Full coverage |
+| Unmapped changed or candidate path | Full coverage; gate fails until the path is registered |
+
+Skill Markdown contains executable instructions. A manifest version update paired
+with a skill edit still selects full coverage; this selector does not infer a
+version-only exemption from JSON contents. The PR template lives under `.github/`
+and conservatively selects full coverage too.
+
+`selection` runs first. Selected test and package jobs and `validate` then run
+independently; secret scanning is independent. `contracts.py` runs once in
+`validate`, not in both test-matrix legs. `dev-gate` always runs, requires selection
+and the always-on producers to succeed, and accepts skipped jobs only when that
+selection explicitly did not request them. Missing, malformed, failed, cancelled
+and unexpected-skipped results fail. It rejects PRs targeting `main`.
+
+`test_gate.py` compares the gate's prerequisite inventory with the real workflow
+and refuses omitted/extra jobs or `continue-on-error`. Selector tests use real Git
+histories, including renames and unknown candidate files. Release tests execute
+the release workflow's actual shell steps with disposable repositories and fake
+GitHub responses; they never create a real release.
+
+During iteration use the affected tests, and reuse valid evidence for unchanged
+source, criteria and environments. Pure prose needs reading and link checks, not
+assertions that freeze its wording. CI concurrency cancels obsolete runs within
+the same PR or branch. An interrupted dev push is not release evidence: rerun
+that exact push run if the owner later chooses its commit for release.
 
 ## Plugin package
 
@@ -137,53 +165,45 @@ upload secret-bearing findings; keep output redacted and repair with the owner.
 
 ## Activation
 
-Use `dev` as default and the normal PR target. Preserve `main` as the release
-line. Creating `dev` at the existing `main` revision is branch setup, not a
-release; moving new product changes into `main` is a release promotion.
+Use `dev` as default and the normal PR target. `main` is a release mirror,
+advanced by the owner-authorized [Release workflow](releases.md) to the exact
+verified dev SHA. There is no promotion PR or release-specific CI gate.
 
-1. Publish this policy and workflow in a Ready PR against `dev`; verify actual
-   hosted check results, workflow validity and current head/base.
-2. Integrate after the candidate and review gates pass. Existing task PRs must
-   target `dev` and incorporate the CI revision before their integration.
-3. Activate branch protection only after its required check exists. Use one
-   source of protection per branch and read back the effective settings.
-
-The intended protection settings are:
+Land CI/policy changes through the existing protected dev PR route first. Confirm
+the new PR gate and the merged dev-push gate both actually succeeded. Then apply
+the authorized protection changes and read back effective rules; never loosen a
+current gate merely to land its replacement.
 
 | Setting | `dev` | `main` |
 | --- | --- | --- |
-| PR required, current base, resolved conversations | Yes | Yes |
-| Required check | `dev-gate` | `release-gate` |
-| Required approving human reviews | 0 | 0 |
+| PR required | Yes | No; release workflow advances the ref |
+| Required check | `dev-gate` | `dev-gate` from the selected commit |
+| Strict current-base requirement | Yes | No; unchanged verified commit is fast-forwarded |
+| Required human approvals | 0 | Not a PR workflow |
+| Resolved PR conversations | Yes | Not applicable |
 | Force push, deletion and bypass | Disallowed | Disallowed |
-| Merge method | Merge commit | Merge commit |
+| Update method | Merge commit through PR | Non-forced fast-forward |
 
-Bind the check to its observed GitHub Actions producer. These are desired
-settings, not proof that GitHub currently enforces them. Record activation and
-readback in the PR. Do not enable a release gate by claiming a release was tested
-without running it. Creating a promotion PR to validate CI does not authorize
-merging or publishing that release.
+Require stale-review dismissal on dev and bind checks to the observed GitHub
+Actions producer. Protect version tags (`v*`) against update, deletion and
+non-fast-forward with no bypass actors. The main rules protect ancestry and CI,
+while owner-only workflow checks govern its release route; they do not prevent a
+repository administrator from changing policy or using other authorized write
+credentials. Do not describe that as an unbypassable workflow-only permission.
 
-Do not delete task branches or retained worktrees automatically during this
-transition; open dependencies and private receipts can still refer to them.
-Public visibility, automatic branch cleanup and distribution are separate scope.
-If protection is unavailable, state that limitation and enforce the documented
-checks in coordinator review; never label policy-only checks server-enforced.
-
-Read state before and after activation:
+Read before and after configuration:
 
 ```sh
-gh api repos/OWNER/REPO --jq '{default_branch,visibility,allow_merge_commit,allow_squash_merge,allow_rebase_merge}'
 gh api repos/OWNER/REPO/rulesets
-gh api repos/OWNER/REPO/branches/dev/protection
-gh api repos/OWNER/REPO/branches/main/protection
+gh api repos/OWNER/REPO/rules/branches/dev
+gh api repos/OWNER/REPO/rules/branches/main
 gh pr checks PR_NUMBER --repo OWNER/REPO
 ```
 
-Replace the placeholders with the repository being operated on. Local passing
-checks, hosted passing checks, protection settings, a merge and a live deployment
-are distinct facts. Re-read current base/head and new findings before an
-expected-head-guarded merge. Do not waive a failed gate in its own failure report.
+Checked-in rules are not proof of server enforcement. If protection or release
+credentials are missing, state the exact remaining prerequisite. Policy activation
+does not authorize publishing a release, installation or deployment. Do not delete
+existing branches or worktrees as part of this transition.
 
 ## Public repository activation
 
@@ -215,8 +235,8 @@ prove that a mutation had no effect.
 
 Verify unauthenticated source access, MIT license detection, default `dev`, and
 both branch rulesets after the change. Check the Security page exposes private
-reporting. Publishing a repository does not authorize a `dev -> main` promotion,
-a tag, a package release, or runtime activation.
+reporting. Publishing a repository does not authorize a source release, a tag, a package
+release, or runtime activation.
 
 ## Adaptation sources
 
