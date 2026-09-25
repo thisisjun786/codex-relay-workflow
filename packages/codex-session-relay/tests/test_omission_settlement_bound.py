@@ -716,14 +716,17 @@ class WhatTheFinalReviewOf81dd75a5Found(ASharedHost):
         self.tick(advance=TICK)
         self.assertTrue(self.settled(), "a failed read dropped the turn to the back of the line")
 
-
     def test_a_sweep_keeps_the_mark_of_the_tick_that_first_saturated(self):
         """Audit 1 on 020: a sweep over several ticks keeps its first mark, or threads updated
-        between two marks would sit above the sweep's cursor and below the next listing's mark."""
-        for index in range(12):
-            self.other(OTHERS + index, running=True)
+        between two marks would sit above the sweep's cursor and below the next listing's mark.
+        Twelve children stop one second apart after the watermark, so their updatedAt stays put
+        below the sweep's cursor while this assignment's running child keeps page 1's top."""
+        running = [self.other(OTHERS + index, running=True) for index in range(12)]
         self.business_turn_starts()
         self.tick(advance=TICK)
+        for index, (_, child) in enumerate(running):
+            self.clock.advance(1)
+            self.adapter.finish_turn(child, f"turn-other-{OTHERS + index:02}")
         self.daemon.policy = RetryPolicy(thread_activity_listing_limit=2,
                                          thread_activity_listing_pages=2)
         first = self.tick(advance=TICK)

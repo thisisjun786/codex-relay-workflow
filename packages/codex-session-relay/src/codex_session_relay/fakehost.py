@@ -9,6 +9,7 @@ No test sleeps. Time only moves when a test moves it.
 """
 
 import hashlib
+import json
 
 from .hostadapter import (
     IN_TURN_ITEMS_MAX, USER_MESSAGE, ThreadActivity, ThreadActivityPage, ThreadFacts, TokenScan,
@@ -46,6 +47,8 @@ class FakeThread:
         self.items = []
         # When the host last updated the thread, as its thread listing reports it.
         self.updated_at = 0.0
+        # When its latest turn started, the listing's recencyAt.
+        self.recency_at = None
 
 
 def _loaded_as_recorded(thread, settings) -> dict:
@@ -99,6 +102,7 @@ class FakeHostAdapter:
         turn = TurnInfo(turn_id, status, self.clock.now())
         thread.turns.append(turn)
         thread.updated_at = self._updated_now()
+        thread.recency_at = self._updated_now()
         if text:
             thread.items.append((turn_id, text))
         return turn
@@ -160,21 +164,29 @@ class FakeHostAdapter:
 
         A thread running a turn is listed active and updated now, because the real host
         refreshes a running thread's updatedAt every few seconds; any other thread keeps its own
-        status and the time it was last updated. The cursor is the offset of the next page.
+        status and the time it was last updated. Archived threads are left out, as the host's
+        default listing leaves them. The cursor is a keyset, (updated_at, id) of the page's last
+        thread, as the host's is a timestamp: a thread that leaves the listing or moves to its top
+        never shifts the threads below the cursor.
         """
         self._guard("recent_threads")
         now = self._updated_now()
         listed = []
         for thread in self.threads.values():
+            if thread.archived:
+                continue
             running = thread.status == "active" or any(
                 turn.status == "inProgress" for turn in thread.turns)
             listed.append(ThreadActivity(thread.thread_id, "active" if running else thread.status,
-                                         now if running else thread.updated_at))
+                                         now if running else thread.updated_at, thread.recency_at))
         listed.sort(key=lambda one: (one.updated_at, one.thread_id), reverse=True)
-        start = int(cursor or 0)
-        end = start + max(1, int(limit))
-        return ThreadActivityPage(tuple(listed[start:end]),
-                                  str(end) if end < len(listed) else None)
+        if cursor:
+            after = tuple(json.loads(cursor))
+            listed = [one for one in listed if (one.updated_at, one.thread_id) < after]
+        page = listed[:max(1, int(limit))]
+        more = len(listed) > len(page)
+        return ThreadActivityPage(tuple(page), json.dumps([page[-1].updated_at, page[-1].thread_id])
+                                  if more else None)
 
     def find_dispatched_turn(self, thread_id, turn_id, *, sent_at):
         """The real adapter's rule over this thread's turns, newest first, as one final page."""

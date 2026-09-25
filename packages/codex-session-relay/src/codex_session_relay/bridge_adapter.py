@@ -263,7 +263,7 @@ class BridgeHostAdapter:
         page = self._call("thread/list", params)
         threads = tuple(
             ThreadActivity(one["id"], (one.get("status") or {}).get("type") or "unknown",
-                           one.get("updatedAt"))
+                           one.get("updatedAt"), one.get("recencyAt"))
             for one in page.get("data", []) if one.get("id")
         )
         return ThreadActivityPage(threads, page.get("nextCursor") or None)

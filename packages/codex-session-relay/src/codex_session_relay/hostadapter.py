@@ -58,12 +58,16 @@ class ThreadActivity:
     status is the host's status type (active, idle, notLoaded, systemError, or unknown). A running
     thread is active and its updated_at moves every few seconds; a thread whose turn ended reads
     idle or notLoaded with updated_at at the whole second of that turn's end (measured on 0.154.0,
-    CRW-238). updated_at is seconds since the epoch, or None when the host gave none.
+    CRW-238). recency_at is the whole second the thread's latest turn started (the host's
+    recencyAt; measured against every listed rollout's last task_started), so a turn that began
+    after a reading of an older one shows the older one ended. Both are seconds since the epoch,
+    or None when the host gave none.
     """
 
     thread_id: str
     status: str
     updated_at: float | None
+    recency_at: float | None = None
 
 
 @dataclass(frozen=True)
