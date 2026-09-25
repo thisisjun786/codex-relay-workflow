@@ -111,15 +111,16 @@ type Server struct {
 	httpSrv  *http.Server
 	handlers sync.WaitGroup
 
-	mu        sync.Mutex
-	closed    bool
-	conns     map[*websocket.Conn]struct{}
-	scripted  map[string][]Reply
-	standing  map[string]Reply
-	requests  []Request
-	malformed []Malformed
-	raised    []ServerRequest
-	answers   []Answer
+	mu             sync.Mutex
+	closed         bool
+	conns          map[*websocket.Conn]struct{}
+	scripted       map[string][]Reply
+	standing       map[string]Reply
+	requests       []Request
+	malformed      []Malformed
+	raised         []ServerRequest
+	answers        []Answer
+	compressionOff int
 }
 
 // Start listens on a fresh unix socket and stops the fake when the test ends.
@@ -217,6 +218,13 @@ func (s *Server) ServerRequests() []ServerRequest {
 }
 
 // Answers returns every client answer to a server-to-client request, in order.
+// CompressionOff counts handshakes without a compression extension offer.
+func (s *Server) CompressionOff() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.compressionOff
+}
+
 func (s *Server) Answers() []Answer {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -224,6 +232,11 @@ func (s *Server) Answers() []Answer {
 }
 
 func (s *Server) accept(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Sec-Websocket-Extensions") == "" {
+		s.mu.Lock()
+		s.compressionOff++
+		s.mu.Unlock()
+	}
 	// Codex 0.153.4 closes unix handshakes offering permessage-deflate; the fake offers none.
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
 	if err != nil {
