@@ -61,7 +61,9 @@ class ScopeTests(unittest.TestCase):
     def test_runtime_manifest_and_ci_select_both(self):
         for path in ("packages/bridge/src/a.py", "scripts/runtime_install.py",
                      "plugins/crw/wiring/launch.py", "plugins/crw/.codex-plugin/plugin.json",
-                     ".github/workflows/ci.yml", "pyproject.toml"):
+                     ".github/workflows/ci.yml", "pyproject.toml", "conftest.py",
+                     "contract/runner/core.py", "contract/fixtures/records/a.json",
+                     "docs/port/test-map.md"):
             with self.subTest(path=path):
                 self.assertEqual(scope.classify(path), "full")
 
