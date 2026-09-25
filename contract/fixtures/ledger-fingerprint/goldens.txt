@@ -1,0 +1,306 @@
+[
+  {
+    "method": "create_thread",
+    "params": {},
+    "hash": "859bbfed615f10cc8f9af4bbb7b746b75cc0d37f617ecbd216acfb914853e434"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "a": 1,
+      "b": 2
+    },
+    "hash": "bbb9b129b4e42e327449b7625a74f779e35208b271749754d5fa24bc07dfe25c"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "b": 2,
+      "a": 1
+    },
+    "hash": "bbb9b129b4e42e327449b7625a74f779e35208b271749754d5fa24bc07dfe25c"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "nested": {
+        "z": [
+          1,
+          {
+            "b": true,
+            "a": null
+          }
+        ]
+      }
+    },
+    "hash": "416e2df4535ee35778db32d857bb33dbd413f84a5b89e1db2a95ac2abaf7c919"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "text": "caf\u00e9 \ud83d\udc08"
+    },
+    "hash": "5a21c0148174221019a3f0e4420aede0ff71c65ebabe0544b6da94ba90cee9db"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "text": "\u2028\u2029\b\f\n\t\r"
+    },
+    "hash": "c0d8e9bd4d033429c839c0bbb5890f7374e1512b7c2d87c989e90de6e5e5f811"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "text": "<>&/"
+    },
+    "hash": "37dd5f1fbf273501ca01cbee32c85d93b5348ba999d719288e187a47c57812da"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "float": 1.5
+    },
+    "hash": "7455005861a6c19d512c529a8389b22b344f8530ae52040b76559700c211ed7e"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "float": 1e-07
+    },
+    "hash": "39c429705e2bb452d8c3d50c6a3e63fb57805f138c3ff1f4e7c55e0688305939"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "float": -0.0
+    },
+    "hash": "3e83662407318bf8de2cc52718b172e124291c1b33b4ae4d077c1eb8244443ec"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "float": 1e+20
+    },
+    "hash": "8befedd95b16e41ac0f1c6c7b8470fae510779238ff7e5ebeb52c241efd8ac30"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "float": 1e-05
+    },
+    "hash": "7ddde7af1da93051a6f896a3af45e01960daa702d3dfbece59b93c8eb11696dd"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "float": 1.0
+    },
+    "hash": "5eb1f7d6ba16d3cc91ea146839b7c8c4194c64d03dcd5a08bb67f5e172906c9a"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "integer": 9007199254740991
+    },
+    "hash": "a1120d91308333f79b95d1bfc4215bf26228a30af5263a17c25b1d3129c26e6d"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "array": [
+        [],
+        [
+          1,
+          2,
+          3
+        ]
+      ]
+    },
+    "hash": "ceb8e1f9c1965ac05e275d09cc6955e9db800549eaa5505b94d925ac39d4143e"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "nested": {
+        "\u00fc": "\u00e9",
+        "a": "\u03c9"
+      }
+    },
+    "hash": "7bc84deca8c924fe5a84feb59930e6c9e4ac47ca671e2fd36be7ec74173f836b"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "deep": {
+        "c": {
+          "b": {
+            "a": 3
+          }
+        }
+      }
+    },
+    "hash": "080785fecb0ec354bfb08c12e31f4777ac586ed122175bba8c1167a3a0bb4a35"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "quote": "\\\""
+    },
+    "hash": "b77addb77e47baf17c069bc35c7410262739b973d1d6db5efe757bd960d34d8d"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "boolean": false
+    },
+    "hash": "71a848ef97b893efe1307f7e405246815e1eda925813b244d967ac29e068d9e9"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "null": null
+    },
+    "hash": "9a1766e7a378bb6194f9a1063cabee2d26134387c19221a4d8c26c82424b9ee8"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "list": [
+        "\ud83e\uddea",
+        "\u6c49\u5b57",
+        "ascii"
+      ]
+    },
+    "hash": "d0cac490b3c92d3876703976d28a2dae5acd4725ebe945a13d931483e4146efa"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "float": 0.0001
+    },
+    "hash": "1f8e5960ed16ffc848364be3e7630aed5e910514468350b3c23b19be80f06c8d"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "float": 1e+16
+    },
+    "hash": "1b66404418045568aa217800f8e6697e8d5f3b11de3894372a4dc3ee7267de91"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "float": 1e-06
+    },
+    "hash": "408c9482aff098f7144e762ed1fbef3d3238eaf40332fd8b2102be382fa5ea61"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "float": 1000000000000000.0
+    },
+    "hash": "cb694fb210f13e9dab6d9f996e8437f1c30c84dd8ea231b0e267b97268835dca"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "float": 999999999999999.9
+    },
+    "hash": "e2eadfcd79c3c3d26be7e50894bcec09355d5ce7635b46ced5f09dabd71f947a"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "float": -1000000000000000.0
+    },
+    "hash": "22d76737811227892652277c400df909b460ebe05097fcd5d87d98f4db447d27"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "text": "\u007f"
+    },
+    "hash": "b19e7d4e549526b948e6d2eed2b04202d5bbf0af4c1c0122d2b70d57925060ea"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "text": "\u0000\u0001\u001f"
+    },
+    "hash": "a6072ab655dcc1d34b95c0b8577b0e154614803d0082fbed5b96b06026688791"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "text": "\ud800\udc00\ud83d\ude80"
+    },
+    "hash": "2e9422d3bc374971d0d48dc907de2ed5da316fcef6bd0718ce479e53fb4ab619"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "text": "\u00e9\u007f\ud83d\ude80\u0000\u4e2d"
+    },
+    "hash": "e894582d87a7cd85be80f8013e66fa6de484267de284b9bd1bdce475bda45adf"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "integer": 0
+    },
+    "hash": "a8f0f22e710c88fcbe8a48cfa615bd4fb3833f416976d71a0efaaeff1eccf9a6"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "float": 1e400
+    },
+    "hash": "f8da58730ec9c3cb0d58c54fbf14a099ca285470f2c449353f9099f93fbd6c02"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "text": "\u0080\uffff"
+    },
+    "hash": "94c2ed6a28144b5d1332960f3572b18c0e14336d6859fa4727ab9cbddd1a0877"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "text": "\ud800"
+    },
+    "hash": "6d6b8fa2996301d38a6500c38ec5746907f90684f19d6a9c9a5e09f24e6d9d81"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "text": "a\udc00b"
+    },
+    "hash": "30666c74f2007ab49ce139adc6f4fb250093cd753417cb243af4b6b4cdb0f737"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "text": "\udc00\ud800"
+    },
+    "hash": "c0b07184b1d5c63efccb818cde74b8bae19ef1fa76044b03a2fb461a7f9cf7d9"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "text": "\ud800\u00e9"
+    },
+    "hash": "1355116a510ec875ce52a22ee3586f587b0320feef73512012d10c9f87accd72"
+  },
+  {
+    "method": "create_thread",
+    "params": {
+      "\udbff": [
+        "\udfff",
+        "\ud83d\ude80"
+      ]
+    },
+    "hash": "bc96e3047e2d47545dfeb54141245b7c18a0c6ad6cd3ab43595965f69b55e5ce"
+  }
+]

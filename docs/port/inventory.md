@@ -28,7 +28,7 @@ differ, when a line count differs from `wc -l`, when an owning issue is missing,
 
 ## Files
 
-Total non-test lines: 99396
+Total non-test lines: 99456
 
 | path | lines | invoked | runs | owner | disposition | consumer_search | removal_trigger |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -151,6 +151,7 @@ Total non-test lines: 99396
 | `scripts/port/check_cutover_doc.py` | 149 | dev CLI `python3 scripts/port/check_cutover_doc.py` (todo 5) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn check_cutover_doc` over scripts/, docs/, .github/ (consumer: todo 5 cutover-document validation; no CI job runs it yet) | todo 48 retires the Python cutover checker with the remaining dev Python |
 | `scripts/port/check_test_map.py` | 133 | dev CLI `python3 scripts/port/check_test_map.py` (todo 3) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn check_test_map` over scripts/, docs/, .github/ (consumer: todo 3 test-map validation; no CI job runs it yet) | todo 48 retires the Python test-map checker with the remaining dev Python |
 | `scripts/port/dump_contracts.py` | 487 | dev CLI `python3 scripts/port/dump_contracts.py` (todo 2) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn dump_contracts` over scripts/, docs/, .github/ (consumer: todo 2 contract-schema generation/check; no CI job runs it yet) | todo 48 retires the Python contract dumper with the remaining dev Python |
+| `scripts/port/make_ledger_fixture.py` | 60 | dev CLI `uv run --no-sync python scripts/port/make_ledger_fixture.py` (todo 14) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn make_ledger_fixture` over scripts/, docs/, .github/ and contract/ (consumer: this inventory and todo-14 ledger fixture regeneration; no product invocation) | todo 48 retires Python fixture generation after the Go ledger test owns the committed Python reference fixture |
 | `scripts/port/make_sqlite_fixture.py` | 28 | dev CLI `uv run --no-sync python scripts/port/make_sqlite_fixture.py` (todo 17) | dev/CI | CRW-152 | keep-as-data | - | - |
 | `scripts/runtime_install.py` | 5810 | operator CLI `python3 scripts/runtime_install.py <cmd>` (docs/runtime-install.md:19); CI `verify-definition` via scripts/ci/contracts.py:15 | end user + relay host | CRW-158 | port | - | - |
 | `scripts/stop_events.py` | 59 | dev CLI `python3 scripts/stop_events.py --journal-root ...` (docs/runtime-install.md:1867) | dev/CI | CRW-159 | port | - | - |

@@ -80,6 +80,8 @@ def run_scenario(path, tmp_path):
             from .release import run
         case "appserver":
             from .appserver import run
+        case "ledger":
+            from .ledger import run
         case _: raise AssertionError(f"{ident}: unknown run kind {kind}")
     actual = run(case, tmp_path)
     expected = case["expect"]

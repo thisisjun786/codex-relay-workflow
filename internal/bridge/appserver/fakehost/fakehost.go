@@ -64,10 +64,16 @@ type CloseFrame struct {
 type Reply struct {
 	Result map[string]any
 	Error  *RPCError
+	// ErrorObject, when set, is sent verbatim as the error member, so a code may be any JSON
+	// value (the Python fake sends whatever reject[method] holds).
+	ErrorObject map[string]any
 	// Delay holds the answer back; it is abandoned when the connection or server closes.
 	Delay time.Duration
 	// PadBytes adds a "padding" member of that many bytes to Result: frame-size injection.
 	PadBytes int
+	// Paused signals when this request reaches the fake and blocks its answer until Release.
+	Paused  chan<- struct{}
+	Release <-chan struct{}
 	// Before is sent ahead of the answer, in order.
 	Before []Notification
 	// ServerRequests names server-to-client requests raised ahead of the answer, about the
@@ -111,15 +117,17 @@ type Server struct {
 	httpSrv  *http.Server
 	handlers sync.WaitGroup
 
-	mu        sync.Mutex
-	closed    bool
-	conns     map[*websocket.Conn]struct{}
-	scripted  map[string][]Reply
-	standing  map[string]Reply
-	requests  []Request
-	malformed []Malformed
-	raised    []ServerRequest
-	answers   []Answer
+	mu             sync.Mutex
+	closed         bool
+	conns          map[*websocket.Conn]struct{}
+	scripted       map[string][]Reply
+	handlerFor     map[string]Handler
+	standing       map[string]Reply
+	requests       []Request
+	malformed      []Malformed
+	raised         []ServerRequest
+	answers        []Answer
+	compressionOff int
 }
 
 // Start listens on a fresh unix socket and stops the fake when the test ends.
@@ -142,6 +150,7 @@ func Start(tb testing.TB) *Server {
 		cancel:     cancel,
 		conns:      map[*websocket.Conn]struct{}{},
 		scripted:   map[string][]Reply{},
+		handlerFor: map[string]Handler{},
 		standing:   map[string]Reply{},
 	}
 	s.httpSrv = &http.Server{
@@ -175,6 +184,18 @@ func (s *Server) Script(method string, replies ...Reply) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.scripted[method] = append(s.scripted[method], replies...)
+}
+
+// Handler computes the answer to one request from its params. It runs on the connection's read
+// loop, so a handler that blocks holds that connection exactly as a busy host would.
+type Handler func(params json.RawMessage) Reply
+
+// Handle answers method through h whenever no scripted answer is queued; it takes precedence
+// over a standing answer.
+func (s *Server) Handle(method string, h Handler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.handlerFor[method] = h
 }
 
 // Respond sets the answer method gets whenever no scripted one is queued.
@@ -217,6 +238,13 @@ func (s *Server) ServerRequests() []ServerRequest {
 }
 
 // Answers returns every client answer to a server-to-client request, in order.
+// CompressionOff counts handshakes without a compression extension offer.
+func (s *Server) CompressionOff() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.compressionOff
+}
+
 func (s *Server) Answers() []Answer {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -224,6 +252,11 @@ func (s *Server) Answers() []Answer {
 }
 
 func (s *Server) accept(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Sec-Websocket-Extensions") == "" {
+		s.mu.Lock()
+		s.compressionOff++
+		s.mu.Unlock()
+	}
 	// Codex 0.153.4 closes unix handshakes offering permessage-deflate; the fake offers none.
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
 	if err != nil {
@@ -251,14 +284,19 @@ func (s *Server) accept(ctx context.Context, w http.ResponseWriter, r *http.Requ
 	(&session{server: s, conn: conn}).serve(ctx)
 }
 
-func (s *Server) reply(method string) (Reply, bool) {
+func (s *Server) reply(method string, params json.RawMessage) (Reply, bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if queued := s.scripted[method]; len(queued) > 0 {
 		s.scripted[method] = queued[1:]
+		s.mu.Unlock()
 		return queued[0], true
 	}
+	handler, handled := s.handlerFor[method]
 	reply, ok := s.standing[method]
+	s.mu.Unlock()
+	if handled {
+		return handler(params), true
+	}
 	return reply, ok
 }
 

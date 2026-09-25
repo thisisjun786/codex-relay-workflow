@@ -22,19 +22,22 @@ var ErrNotPorted = errors.New("not ported")
 // corpus defect and fails, whether or not its domain is ported.
 var Kinds = map[RunKind]bool{
 	"cli": true, "mcp": true, "appserver": true, "git": true, "release": true, "stop": true,
-	"agreement": true, "entry": true, "hook": true, "status": true, "install": true,
+	"agreement": true, "entry": true, "hook": true, "status": true, "install": true, "ledger": true,
 }
 
 // runners maps a run kind to its Go runner. Only kinds the built crw can already answer have
 // one; the rest arrive with the todo that ports their surface.
 var runners = map[RunKind]Runner{
-	"cli": runCLI,
+	"cli":       runCLI,
+	"appserver": runAppServer,
+	"ledger":    runLedger,
+	"git":       runGit,
 }
 
 // ported lists the domains whose Go implementation is registered. A domain joins this set in
 // the todo that ports it (for example cli-shape once the relay commands its fixtures call are
 // registered in internal/relay/cli); until then every scenario in it is skipped and counted.
-var ported = map[string]bool{"sqlite-ddl": true}
+var ported = map[string]bool{"sqlite-ddl": true, "appserver": true, "ledger-fingerprint": true, "git": true}
 
 // crwBinary is the crw under test: CRW_TEST_BINARY, or ./cmd/crw built once per package run
 // into buildDir, which TestMain creates and removes.

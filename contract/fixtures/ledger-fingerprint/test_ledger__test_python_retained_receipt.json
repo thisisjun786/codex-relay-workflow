@@ -1,0 +1,1 @@
+{"given":{"fixture":"operations.sqlite3"},"run":{"kind":"ledger","request_id":"retained-create","method":"create_thread","params":{"cwd":"/checkout"}},"expect":{"exit":0,"checks":[{"kind":"eq","path":["fresh"],"value":false},{"kind":"eq","path":["receipt","threadId"],"value":"python-thread"},{"kind":"eq","path":["receipt","status"],"value":"accepted"}]}}
