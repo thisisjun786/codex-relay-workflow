@@ -133,7 +133,21 @@ func (c Contract) validatePolicy() error {
 			continue
 		}
 		if !reflect.DeepEqual(p[k], defaults[kind][k]) {
-			return &UntransmittableError{"sandbox." + k, p[k], fmt.Sprintf("%s %s cannot be carried by thread/start or thread/resume", kind, k)}
+			// settings.py: f"only {sorted(mapped) or 'no field'} is transmittable for this type".
+			carried := "no field"
+			names := make([]string, 0, len(transmittable[kind]))
+			for name := range transmittable[kind] {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			if len(names) > 0 {
+				quoted := make([]string, len(names))
+				for i, name := range names {
+					quoted[i] = Repr(name)
+				}
+				carried = "[" + strings.Join(quoted, ", ") + "]"
+			}
+			return &UntransmittableError{"sandbox." + k, p[k], fmt.Sprintf("%s %s cannot be carried by thread/start or thread/resume; only %s is transmittable for this type", kind, k, carried)}
 		}
 	}
 	return nil

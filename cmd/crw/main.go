@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"path/filepath"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 )
@@ -45,7 +46,9 @@ func run(ctx context.Context, program string, args []string) int {
 	switch mode {
 	case "relay":
 		return cli.Execute(ctx, args, os.Stdout, os.Stderr)
-	case "bridge", "hook", "install", "doctor", "version", "skill":
+	case "bridge":
+		return mcp.Run(ctx, args)
+	case "hook", "install", "doctor", "version", "skill":
 		// Only implemented commands are dispatched; future domains own these modes.
 		usage()
 		return contract.ExitUsage

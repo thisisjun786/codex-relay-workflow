@@ -1,0 +1,1725 @@
+{
+ "steps": [
+  {
+   "tool": "create_thread",
+   "arguments": {
+    "request_id": "made",
+    "cwd": "${HOME}",
+    "prompt": "READY",
+    "model": "anthropic/claude-opus-5",
+    "reasoning_effort": "xhigh"
+   }
+  },
+  {
+   "tool": "create_thread",
+   "arguments": {
+    "request_id": "made",
+    "cwd": "${HOME}",
+    "prompt": "READY",
+    "model": "anthropic/claude-opus-5",
+    "reasoning_effort": "xhigh"
+   }
+  },
+  {
+   "tool": "get_operation",
+   "arguments": {
+    "request_id": "made"
+   }
+  },
+  {
+   "tool": "create_thread",
+   "arguments": {
+    "request_id": "made",
+    "cwd": "${HOME}",
+    "prompt": "OTHER",
+    "model": "anthropic/claude-opus-5",
+    "reasoning_effort": "xhigh"
+   }
+  },
+  {
+   "tool": "send_message_to_thread",
+   "arguments": {
+    "request_id": "sent",
+    "thread_id": "thread-1",
+    "message": "NEXT",
+    "expected_settings": {
+     "model": "anthropic/claude-opus-5",
+     "reasoning_effort": "xhigh"
+    }
+   }
+  },
+  {
+   "tool": "read_thread",
+   "arguments": {
+    "thread_id": "thread-1",
+    "limit": 1
+   }
+  },
+  {
+   "tool": "list_threads",
+   "arguments": {}
+  },
+  {
+   "tool": "get_active_turn",
+   "arguments": {
+    "thread_id": "thread-1"
+   }
+  },
+  {
+   "tool": "wait_thread",
+   "arguments": {
+    "thread_id": "thread-1",
+    "turn_id": "turn-2",
+    "timeout_seconds": 0
+   }
+  },
+  {
+   "tool": "get_goal",
+   "arguments": {
+    "thread_id": "thread-1"
+   }
+  },
+  {
+   "tool": "steer_thread",
+   "arguments": {
+    "request_id": "steer",
+    "thread_id": "thread-1",
+    "expected_turn_id": "turn-2",
+    "message": "MORE"
+   }
+  },
+  {
+   "tool": "pause_goal",
+   "arguments": {
+    "request_id": "pause",
+    "thread_id": "thread-1"
+   }
+  },
+  {
+   "tool": "get_operation",
+   "arguments": {
+    "request_id": "missing"
+   }
+  },
+  {
+   "tool": "create_thread",
+   "arguments": {
+    "request_id": "rel",
+    "cwd": "relative",
+    "model": "anthropic/claude-opus-5",
+    "reasoning_effort": "xhigh"
+   }
+  },
+  {
+   "tool": "create_thread",
+   "arguments": {
+    "request_id": "role",
+    "cwd": "${HOME}",
+    "role": "",
+    "model": "anthropic/claude-opus-5",
+    "reasoning_effort": "xhigh"
+   }
+  },
+  {
+   "tool": "create_thread",
+   "arguments": {
+    "request_id": "title",
+    "cwd": "${HOME}",
+    "title": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+    "model": "anthropic/claude-opus-5",
+    "reasoning_effort": "xhigh"
+   }
+  },
+  {
+   "tool": "create_thread",
+   "arguments": {
+    "request_id": "blank",
+    "cwd": "${HOME}",
+    "model": " ",
+    "reasoning_effort": "xhigh"
+   }
+  },
+  {
+   "tool": "create_thread",
+   "arguments": {
+    "request_id": "exc",
+    "cwd": "${HOME}",
+    "policy_exception": "none",
+    "model": "anthropic/claude-opus-5",
+    "reasoning_effort": "xhigh"
+   }
+  },
+  {
+   "tool": "create_thread",
+   "arguments": {
+    "request_id": "who",
+    "cwd": "${HOME}",
+    "role": "child",
+    "model": "anthropic/claude-opus-5",
+    "reasoning_effort": "xhigh"
+   }
+  },
+  {
+   "tool": "create_thread",
+   "arguments": {
+    "request_id": "net",
+    "cwd": "${HOME}",
+    "expected_sandbox_policy": {
+     "type": "readOnly",
+     "networkAccess": true
+    },
+    "model": "anthropic/claude-opus-5",
+    "reasoning_effort": "xhigh"
+   }
+  },
+  {
+   "tool": "create_worktree_thread",
+   "arguments": {
+    "request_id": "wt",
+    "source_repository": "${HOME}",
+    "starting_revision": "0000000000000000000000000000000000000000",
+    "destination": "${HOME}/new",
+    "worktree_mode": "bridge-managed-retained",
+    "sandbox": "workspace-write",
+    "expected_sandbox_policy": {
+     "type": "readOnly",
+     "networkAccess": false
+    },
+    "model": "anthropic/claude-opus-5",
+    "reasoning_effort": "xhigh"
+   }
+  },
+  {
+   "tool": "send_message_to_thread",
+   "arguments": {
+    "request_id": "keys",
+    "thread_id": "thread-1",
+    "message": "x",
+    "expected_settings": {
+     "model": "anthropic/claude-opus-5",
+     "reasoning_effort": "xhigh",
+     "bogus": 1
+    }
+   }
+  },
+  {
+   "tool": "send_message_to_thread",
+   "arguments": {
+    "request_id": "halfpair",
+    "thread_id": "thread-1",
+    "message": "x",
+    "expected_settings": {
+     "model": "anthropic/claude-opus-5"
+    }
+   }
+  },
+  {
+   "tool": "list_threads",
+   "arguments": {
+    "limit": 101
+   }
+  },
+  {
+   "tool": "list_threads",
+   "arguments": {
+    "limit": "5"
+   }
+  },
+  {
+   "tool": "read_thread",
+   "arguments": {
+    "thread_id": "thread-1",
+    "max_text_chars": 99
+   }
+  },
+  {
+   "tool": "wait_thread",
+   "arguments": {
+    "thread_id": "thread-1",
+    "turn_id": "u",
+    "timeout_seconds": 51
+   }
+  },
+  {
+   "tool": "get_goal",
+   "arguments": {
+    "thread_id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   }
+  },
+  {
+   "tool": "pause_goal",
+   "arguments": {
+    "request_id": "",
+    "thread_id": "thread-1"
+   }
+  },
+  {
+   "tool": "no_such_tool",
+   "arguments": {}
+  }
+ ],
+ "results": [
+  {
+   "error": false,
+   "content": [
+    {
+     "type": "text",
+     "json": {
+      "requestId": "made",
+      "operation": "create_thread",
+      "status": "accepted",
+      "retrySafe": false,
+      "fingerprintVersion": 2,
+      "executionPolicy": {
+       "mode": "presence_only",
+       "digest": null,
+       "exception": null,
+       "role": null,
+       "model": "anthropic/claude-opus-5",
+       "reasoningEffort": "xhigh",
+       "limits": "This is what the bridge authorized and transmitted. A host reporting the same values has recorded the request; it is not evidence that a provider served this model or honoured this effort. An allowlist covers requests made through this bridge only."
+      },
+      "threadId": "thread-1",
+      "creation": {
+       "thread": {
+        "id": "thread-1",
+        "cwd": "<HOME>",
+        "status": {
+         "type": "idle"
+        },
+        "turns": [],
+        "model": "anthropic/claude-opus-5",
+        "reasoningEffort": "xhigh"
+       },
+       "cwd": "<HOME>",
+       "runtimeWorkspaceRoots": [
+        "<HOME>"
+       ],
+       "approvalPolicy": "never",
+       "sandbox": {
+        "type": "readOnly",
+        "networkAccess": false
+       },
+       "model": "anthropic/claude-opus-5",
+       "reasoningEffort": "xhigh"
+      },
+      "settings": {
+       "requested": {
+        "cwd": "<HOME>",
+        "model": "anthropic/claude-opus-5",
+        "reasoningEffort": "xhigh",
+        "sandbox": {
+         "type": "readOnly"
+        }
+       },
+       "actual": {
+        "approvalPolicy": "never",
+        "cwd": "<HOME>",
+        "model": "anthropic/claude-opus-5",
+        "reasoningEffort": "xhigh",
+        "runtimeWorkspaceRoots": [
+         "<HOME>"
+        ],
+        "sandbox": {
+         "networkAccess": false,
+         "type": "readOnly"
+        }
+       },
+       "verified": [
+        "cwd",
+        "model",
+        "reasoningEffort",
+        "sandbox"
+       ],
+       "unobservable": [],
+       "findings": [],
+       "verification": "observed_at_creation",
+       "observationLimits": "These are the settings the host reported at this observation, not a guarantee about the dispatched turn. The bridge holds no host-side exclusivity, so another client can change a thread's settings between the observation and turn/start. A matching value means the host recorded the request; it is not evidence that a provider honours it."
+      },
+      "turnId": "turn-1",
+      "desktopProjectAssociation": "unverified; check Desktop listing",
+      "attemptedEffects": [
+       "thread/start",
+       "turn/start"
+      ],
+      "settingsAfterDispatch": {
+       "fields": {
+        "model": "anthropic/claude-opus-5",
+        "reasoningEffort": "xhigh",
+        "cwd": "<HOME>"
+       },
+       "concurrentChange": false,
+       "changed": {},
+       "covers": [
+        "cwd",
+        "model",
+        "reasoningEffort"
+       ],
+       "unobserved": [],
+       "limit": "thread/read reports neither sandbox nor approvalPolicy, so no change here means only that the fields in covers were compared and unchanged. Anything in unobserved was not compared at all."
+      }
+     }
+    }
+   ],
+   "structured": {
+    "requestId": "made",
+    "operation": "create_thread",
+    "status": "accepted",
+    "retrySafe": false,
+    "fingerprintVersion": 2,
+    "executionPolicy": {
+     "mode": "presence_only",
+     "digest": null,
+     "exception": null,
+     "role": null,
+     "model": "anthropic/claude-opus-5",
+     "reasoningEffort": "xhigh",
+     "limits": "This is what the bridge authorized and transmitted. A host reporting the same values has recorded the request; it is not evidence that a provider served this model or honoured this effort. An allowlist covers requests made through this bridge only."
+    },
+    "threadId": "thread-1",
+    "creation": {
+     "thread": {
+      "id": "thread-1",
+      "cwd": "<HOME>",
+      "status": {
+       "type": "idle"
+      },
+      "turns": [],
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh"
+     },
+     "cwd": "<HOME>",
+     "runtimeWorkspaceRoots": [
+      "<HOME>"
+     ],
+     "approvalPolicy": "never",
+     "sandbox": {
+      "type": "readOnly",
+      "networkAccess": false
+     },
+     "model": "anthropic/claude-opus-5",
+     "reasoningEffort": "xhigh"
+    },
+    "settings": {
+     "requested": {
+      "cwd": "<HOME>",
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh",
+      "sandbox": {
+       "type": "readOnly"
+      }
+     },
+     "actual": {
+      "approvalPolicy": "never",
+      "cwd": "<HOME>",
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "<HOME>"
+      ],
+      "sandbox": {
+       "networkAccess": false,
+       "type": "readOnly"
+      }
+     },
+     "verified": [
+      "cwd",
+      "model",
+      "reasoningEffort",
+      "sandbox"
+     ],
+     "unobservable": [],
+     "findings": [],
+     "verification": "observed_at_creation",
+     "observationLimits": "These are the settings the host reported at this observation, not a guarantee about the dispatched turn. The bridge holds no host-side exclusivity, so another client can change a thread's settings between the observation and turn/start. A matching value means the host recorded the request; it is not evidence that a provider honours it."
+    },
+    "turnId": "turn-1",
+    "desktopProjectAssociation": "unverified; check Desktop listing",
+    "attemptedEffects": [
+     "thread/start",
+     "turn/start"
+    ],
+    "settingsAfterDispatch": {
+     "fields": {
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh",
+      "cwd": "<HOME>"
+     },
+     "concurrentChange": false,
+     "changed": {},
+     "covers": [
+      "cwd",
+      "model",
+      "reasoningEffort"
+     ],
+     "unobserved": [],
+     "limit": "thread/read reports neither sandbox nor approvalPolicy, so no change here means only that the fields in covers were compared and unchanged. Anything in unobserved was not compared at all."
+    }
+   }
+  },
+  {
+   "error": false,
+   "content": [
+    {
+     "type": "text",
+     "json": {
+      "requestId": "made",
+      "operation": "create_thread",
+      "status": "accepted",
+      "retrySafe": false,
+      "fingerprintVersion": 2,
+      "executionPolicy": {
+       "mode": "presence_only",
+       "digest": null,
+       "exception": null,
+       "role": null,
+       "model": "anthropic/claude-opus-5",
+       "reasoningEffort": "xhigh",
+       "limits": "This is what the bridge authorized and transmitted. A host reporting the same values has recorded the request; it is not evidence that a provider served this model or honoured this effort. An allowlist covers requests made through this bridge only."
+      },
+      "threadId": "thread-1",
+      "creation": {
+       "thread": {
+        "id": "thread-1",
+        "cwd": "<HOME>",
+        "status": {
+         "type": "idle"
+        },
+        "turns": [],
+        "model": "anthropic/claude-opus-5",
+        "reasoningEffort": "xhigh"
+       },
+       "cwd": "<HOME>",
+       "runtimeWorkspaceRoots": [
+        "<HOME>"
+       ],
+       "approvalPolicy": "never",
+       "sandbox": {
+        "type": "readOnly",
+        "networkAccess": false
+       },
+       "model": "anthropic/claude-opus-5",
+       "reasoningEffort": "xhigh"
+      },
+      "settings": {
+       "requested": {
+        "cwd": "<HOME>",
+        "model": "anthropic/claude-opus-5",
+        "reasoningEffort": "xhigh",
+        "sandbox": {
+         "type": "readOnly"
+        }
+       },
+       "actual": {
+        "approvalPolicy": "never",
+        "cwd": "<HOME>",
+        "model": "anthropic/claude-opus-5",
+        "reasoningEffort": "xhigh",
+        "runtimeWorkspaceRoots": [
+         "<HOME>"
+        ],
+        "sandbox": {
+         "networkAccess": false,
+         "type": "readOnly"
+        }
+       },
+       "verified": [
+        "cwd",
+        "model",
+        "reasoningEffort",
+        "sandbox"
+       ],
+       "unobservable": [],
+       "findings": [],
+       "verification": "observed_at_creation",
+       "observationLimits": "These are the settings the host reported at this observation, not a guarantee about the dispatched turn. The bridge holds no host-side exclusivity, so another client can change a thread's settings between the observation and turn/start. A matching value means the host recorded the request; it is not evidence that a provider honours it."
+      },
+      "turnId": "turn-1",
+      "desktopProjectAssociation": "unverified; check Desktop listing",
+      "attemptedEffects": [
+       "thread/start",
+       "turn/start"
+      ],
+      "settingsAfterDispatch": {
+       "fields": {
+        "model": "anthropic/claude-opus-5",
+        "reasoningEffort": "xhigh",
+        "cwd": "<HOME>"
+       },
+       "concurrentChange": false,
+       "changed": {},
+       "covers": [
+        "cwd",
+        "model",
+        "reasoningEffort"
+       ],
+       "unobserved": [],
+       "limit": "thread/read reports neither sandbox nor approvalPolicy, so no change here means only that the fields in covers were compared and unchanged. Anything in unobserved was not compared at all."
+      },
+      "replayed": true
+     }
+    }
+   ],
+   "structured": {
+    "requestId": "made",
+    "operation": "create_thread",
+    "status": "accepted",
+    "retrySafe": false,
+    "fingerprintVersion": 2,
+    "executionPolicy": {
+     "mode": "presence_only",
+     "digest": null,
+     "exception": null,
+     "role": null,
+     "model": "anthropic/claude-opus-5",
+     "reasoningEffort": "xhigh",
+     "limits": "This is what the bridge authorized and transmitted. A host reporting the same values has recorded the request; it is not evidence that a provider served this model or honoured this effort. An allowlist covers requests made through this bridge only."
+    },
+    "threadId": "thread-1",
+    "creation": {
+     "thread": {
+      "id": "thread-1",
+      "cwd": "<HOME>",
+      "status": {
+       "type": "idle"
+      },
+      "turns": [],
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh"
+     },
+     "cwd": "<HOME>",
+     "runtimeWorkspaceRoots": [
+      "<HOME>"
+     ],
+     "approvalPolicy": "never",
+     "sandbox": {
+      "type": "readOnly",
+      "networkAccess": false
+     },
+     "model": "anthropic/claude-opus-5",
+     "reasoningEffort": "xhigh"
+    },
+    "settings": {
+     "requested": {
+      "cwd": "<HOME>",
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh",
+      "sandbox": {
+       "type": "readOnly"
+      }
+     },
+     "actual": {
+      "approvalPolicy": "never",
+      "cwd": "<HOME>",
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "<HOME>"
+      ],
+      "sandbox": {
+       "networkAccess": false,
+       "type": "readOnly"
+      }
+     },
+     "verified": [
+      "cwd",
+      "model",
+      "reasoningEffort",
+      "sandbox"
+     ],
+     "unobservable": [],
+     "findings": [],
+     "verification": "observed_at_creation",
+     "observationLimits": "These are the settings the host reported at this observation, not a guarantee about the dispatched turn. The bridge holds no host-side exclusivity, so another client can change a thread's settings between the observation and turn/start. A matching value means the host recorded the request; it is not evidence that a provider honours it."
+    },
+    "turnId": "turn-1",
+    "desktopProjectAssociation": "unverified; check Desktop listing",
+    "attemptedEffects": [
+     "thread/start",
+     "turn/start"
+    ],
+    "settingsAfterDispatch": {
+     "fields": {
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh",
+      "cwd": "<HOME>"
+     },
+     "concurrentChange": false,
+     "changed": {},
+     "covers": [
+      "cwd",
+      "model",
+      "reasoningEffort"
+     ],
+     "unobserved": [],
+     "limit": "thread/read reports neither sandbox nor approvalPolicy, so no change here means only that the fields in covers were compared and unchanged. Anything in unobserved was not compared at all."
+    },
+    "replayed": true
+   }
+  },
+  {
+   "error": false,
+   "content": [
+    {
+     "type": "text",
+     "json": {
+      "requestId": "made",
+      "operation": "create_thread",
+      "status": "accepted",
+      "retrySafe": false,
+      "fingerprintVersion": 2,
+      "executionPolicy": {
+       "mode": "presence_only",
+       "digest": null,
+       "exception": null,
+       "role": null,
+       "model": "anthropic/claude-opus-5",
+       "reasoningEffort": "xhigh",
+       "limits": "This is what the bridge authorized and transmitted. A host reporting the same values has recorded the request; it is not evidence that a provider served this model or honoured this effort. An allowlist covers requests made through this bridge only."
+      },
+      "threadId": "thread-1",
+      "creation": {
+       "thread": {
+        "id": "thread-1",
+        "cwd": "<HOME>",
+        "status": {
+         "type": "idle"
+        },
+        "turns": [],
+        "model": "anthropic/claude-opus-5",
+        "reasoningEffort": "xhigh"
+       },
+       "cwd": "<HOME>",
+       "runtimeWorkspaceRoots": [
+        "<HOME>"
+       ],
+       "approvalPolicy": "never",
+       "sandbox": {
+        "type": "readOnly",
+        "networkAccess": false
+       },
+       "model": "anthropic/claude-opus-5",
+       "reasoningEffort": "xhigh"
+      },
+      "settings": {
+       "requested": {
+        "cwd": "<HOME>",
+        "model": "anthropic/claude-opus-5",
+        "reasoningEffort": "xhigh",
+        "sandbox": {
+         "type": "readOnly"
+        }
+       },
+       "actual": {
+        "approvalPolicy": "never",
+        "cwd": "<HOME>",
+        "model": "anthropic/claude-opus-5",
+        "reasoningEffort": "xhigh",
+        "runtimeWorkspaceRoots": [
+         "<HOME>"
+        ],
+        "sandbox": {
+         "networkAccess": false,
+         "type": "readOnly"
+        }
+       },
+       "verified": [
+        "cwd",
+        "model",
+        "reasoningEffort",
+        "sandbox"
+       ],
+       "unobservable": [],
+       "findings": [],
+       "verification": "observed_at_creation",
+       "observationLimits": "These are the settings the host reported at this observation, not a guarantee about the dispatched turn. The bridge holds no host-side exclusivity, so another client can change a thread's settings between the observation and turn/start. A matching value means the host recorded the request; it is not evidence that a provider honours it."
+      },
+      "turnId": "turn-1",
+      "desktopProjectAssociation": "unverified; check Desktop listing",
+      "attemptedEffects": [
+       "thread/start",
+       "turn/start"
+      ],
+      "settingsAfterDispatch": {
+       "fields": {
+        "model": "anthropic/claude-opus-5",
+        "reasoningEffort": "xhigh",
+        "cwd": "<HOME>"
+       },
+       "concurrentChange": false,
+       "changed": {},
+       "covers": [
+        "cwd",
+        "model",
+        "reasoningEffort"
+       ],
+       "unobserved": [],
+       "limit": "thread/read reports neither sandbox nor approvalPolicy, so no change here means only that the fields in covers were compared and unchanged. Anything in unobserved was not compared at all."
+      }
+     }
+    }
+   ],
+   "structured": {
+    "requestId": "made",
+    "operation": "create_thread",
+    "status": "accepted",
+    "retrySafe": false,
+    "fingerprintVersion": 2,
+    "executionPolicy": {
+     "mode": "presence_only",
+     "digest": null,
+     "exception": null,
+     "role": null,
+     "model": "anthropic/claude-opus-5",
+     "reasoningEffort": "xhigh",
+     "limits": "This is what the bridge authorized and transmitted. A host reporting the same values has recorded the request; it is not evidence that a provider served this model or honoured this effort. An allowlist covers requests made through this bridge only."
+    },
+    "threadId": "thread-1",
+    "creation": {
+     "thread": {
+      "id": "thread-1",
+      "cwd": "<HOME>",
+      "status": {
+       "type": "idle"
+      },
+      "turns": [],
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh"
+     },
+     "cwd": "<HOME>",
+     "runtimeWorkspaceRoots": [
+      "<HOME>"
+     ],
+     "approvalPolicy": "never",
+     "sandbox": {
+      "type": "readOnly",
+      "networkAccess": false
+     },
+     "model": "anthropic/claude-opus-5",
+     "reasoningEffort": "xhigh"
+    },
+    "settings": {
+     "requested": {
+      "cwd": "<HOME>",
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh",
+      "sandbox": {
+       "type": "readOnly"
+      }
+     },
+     "actual": {
+      "approvalPolicy": "never",
+      "cwd": "<HOME>",
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "<HOME>"
+      ],
+      "sandbox": {
+       "networkAccess": false,
+       "type": "readOnly"
+      }
+     },
+     "verified": [
+      "cwd",
+      "model",
+      "reasoningEffort",
+      "sandbox"
+     ],
+     "unobservable": [],
+     "findings": [],
+     "verification": "observed_at_creation",
+     "observationLimits": "These are the settings the host reported at this observation, not a guarantee about the dispatched turn. The bridge holds no host-side exclusivity, so another client can change a thread's settings between the observation and turn/start. A matching value means the host recorded the request; it is not evidence that a provider honours it."
+    },
+    "turnId": "turn-1",
+    "desktopProjectAssociation": "unverified; check Desktop listing",
+    "attemptedEffects": [
+     "thread/start",
+     "turn/start"
+    ],
+    "settingsAfterDispatch": {
+     "fields": {
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh",
+      "cwd": "<HOME>"
+     },
+     "concurrentChange": false,
+     "changed": {},
+     "covers": [
+      "cwd",
+      "model",
+      "reasoningEffort"
+     ],
+     "unobserved": [],
+     "limit": "thread/read reports neither sandbox nor approvalPolicy, so no change here means only that the fields in covers were compared and unchanged. Anything in unobserved was not compared at all."
+    }
+   }
+  },
+  {
+   "error": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Error executing tool create_thread: request_id already belongs to different arguments; no action taken"
+    }
+   ],
+   "structured": null
+  },
+  {
+   "error": false,
+   "content": [
+    {
+     "type": "text",
+     "json": {
+      "requestId": "sent",
+      "operation": "send_message_to_thread",
+      "status": "accepted",
+      "retrySafe": false,
+      "fingerprintVersion": 2,
+      "threadId": "thread-1",
+      "executionPolicy": {
+       "mode": "presence_only",
+       "digest": null,
+       "exception": null,
+       "role": null,
+       "model": "anthropic/claude-opus-5",
+       "reasoningEffort": "xhigh",
+       "limits": "This is what the bridge authorized and transmitted. A host reporting the same values has recorded the request; it is not evidence that a provider served this model or honoured this effort. An allowlist covers requests made through this bridge only."
+      },
+      "statusBeforeResume": "idle",
+      "resumed": {
+       "thread": {
+        "id": "thread-1",
+        "cwd": "<HOME>",
+        "status": {
+         "type": "idle"
+        },
+        "turns": [],
+        "settings": {
+         "cwd": "<HOME>",
+         "runtimeWorkspaceRoots": [
+          "<HOME>"
+         ],
+         "approvalPolicy": "never",
+         "sandbox": {
+          "type": "readOnly",
+          "networkAccess": false
+         },
+         "model": "anthropic/claude-opus-5",
+         "reasoningEffort": "xhigh"
+        },
+        "model": "anthropic/claude-opus-5",
+        "reasoningEffort": "xhigh"
+       },
+       "cwd": "<HOME>",
+       "runtimeWorkspaceRoots": [
+        "<HOME>"
+       ],
+       "approvalPolicy": "never",
+       "sandbox": {
+        "type": "readOnly",
+        "networkAccess": false
+       },
+       "model": "anthropic/claude-opus-5",
+       "reasoningEffort": "xhigh",
+       "approvalsReviewer": "user"
+      },
+      "settings": {
+       "requested": {
+        "model": "anthropic/claude-opus-5",
+        "reasoningEffort": "xhigh"
+       },
+       "actual": {
+        "approvalPolicy": "never",
+        "cwd": "<HOME>",
+        "model": "anthropic/claude-opus-5",
+        "reasoningEffort": "xhigh",
+        "runtimeWorkspaceRoots": [
+         "<HOME>"
+        ],
+        "sandbox": {
+         "networkAccess": false,
+         "type": "readOnly"
+        }
+       },
+       "verified": [
+        "model",
+        "reasoningEffort"
+       ],
+       "unobservable": [],
+       "findings": [],
+       "verification": "observed_at_resume",
+       "observationLimits": "These are the settings the host reported at this observation, not a guarantee about the dispatched turn. The bridge holds no host-side exclusivity, so another client can change a thread's settings between the observation and turn/start. A matching value means the host recorded the request; it is not evidence that a provider honours it."
+      },
+      "approvals": {
+       "declared": "never",
+       "observed": "never",
+       "reviewer": "user",
+       "transmitted": false,
+       "preservation": "omitted_from_resume",
+       "interactive": false,
+       "servicedByThisBridge": false,
+       "onApprovalRequest": "left_for_thread_approver",
+       "meaning": "Nothing on this thread can ask for an approval, so delivery and approval cannot be confused here.",
+       "limits": "This bridge answers no approval request: it never grants one, never denies one, and a report message never stands in for one. Measured on codex-cli 0.154.0, the host sends each approval request of a turn to every client subscribed to the thread, replays a pending one to a client that resumes the thread later, and applies the first answer from any of them, an error answer as a denial. An answer from this bridge would therefore decide for the thread's approver, so it records each request and leaves it unanswered; the thread's own client decides it, now or when it next opens the thread, and the turn waits until then. That measurement is of that release, not a reading of the connected server, and how a particular client such as Desktop presents a request it did not ask for is not established here. Delivering a report and servicing the code execution a report may provoke are separate capabilities, and only the first one is claimed."
+      },
+      "turnId": "turn-2",
+      "approvalRequests": {
+       "thisThread": [],
+       "unattributed": [],
+       "otherThreads": 0,
+       "approvalsLeftForThisThread": 0,
+       "refusedForThisThread": 0,
+       "notRetained": 0,
+       "note": "Requests recorded between the two marks this receipt spans. A turn outlives that window, so a request the turn raises later is handled the same way and is simply not on this receipt. An approval-class request is never answered here: the host sends it to every client subscribed to the thread and applies the first answer, so it stays with the thread's own approver. Nothing here was granted or denied."
+      },
+      "attemptedEffects": [
+       "thread/resume",
+       "turn/start"
+      ],
+      "delivery": "turn_started",
+      "deliveryMeaning": "The host accepted this message into a new turn. That is delivery, not completion: it does not say the peer read it, acted on it, or finished anything.",
+      "settingsAfterDispatch": {
+       "fields": {
+        "model": "anthropic/claude-opus-5",
+        "reasoningEffort": "xhigh",
+        "cwd": "<HOME>"
+       },
+       "concurrentChange": false,
+       "changed": {},
+       "covers": [
+        "cwd",
+        "model",
+        "reasoningEffort"
+       ],
+       "unobserved": [],
+       "limit": "thread/read reports neither sandbox nor approvalPolicy, so no change here means only that the fields in covers were compared and unchanged. Anything in unobserved was not compared at all."
+      }
+     }
+    }
+   ],
+   "structured": {
+    "requestId": "sent",
+    "operation": "send_message_to_thread",
+    "status": "accepted",
+    "retrySafe": false,
+    "fingerprintVersion": 2,
+    "threadId": "thread-1",
+    "executionPolicy": {
+     "mode": "presence_only",
+     "digest": null,
+     "exception": null,
+     "role": null,
+     "model": "anthropic/claude-opus-5",
+     "reasoningEffort": "xhigh",
+     "limits": "This is what the bridge authorized and transmitted. A host reporting the same values has recorded the request; it is not evidence that a provider served this model or honoured this effort. An allowlist covers requests made through this bridge only."
+    },
+    "statusBeforeResume": "idle",
+    "resumed": {
+     "thread": {
+      "id": "thread-1",
+      "cwd": "<HOME>",
+      "status": {
+       "type": "idle"
+      },
+      "turns": [],
+      "settings": {
+       "cwd": "<HOME>",
+       "runtimeWorkspaceRoots": [
+        "<HOME>"
+       ],
+       "approvalPolicy": "never",
+       "sandbox": {
+        "type": "readOnly",
+        "networkAccess": false
+       },
+       "model": "anthropic/claude-opus-5",
+       "reasoningEffort": "xhigh"
+      },
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh"
+     },
+     "cwd": "<HOME>",
+     "runtimeWorkspaceRoots": [
+      "<HOME>"
+     ],
+     "approvalPolicy": "never",
+     "sandbox": {
+      "type": "readOnly",
+      "networkAccess": false
+     },
+     "model": "anthropic/claude-opus-5",
+     "reasoningEffort": "xhigh",
+     "approvalsReviewer": "user"
+    },
+    "settings": {
+     "requested": {
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh"
+     },
+     "actual": {
+      "approvalPolicy": "never",
+      "cwd": "<HOME>",
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "<HOME>"
+      ],
+      "sandbox": {
+       "networkAccess": false,
+       "type": "readOnly"
+      }
+     },
+     "verified": [
+      "model",
+      "reasoningEffort"
+     ],
+     "unobservable": [],
+     "findings": [],
+     "verification": "observed_at_resume",
+     "observationLimits": "These are the settings the host reported at this observation, not a guarantee about the dispatched turn. The bridge holds no host-side exclusivity, so another client can change a thread's settings between the observation and turn/start. A matching value means the host recorded the request; it is not evidence that a provider honours it."
+    },
+    "approvals": {
+     "declared": "never",
+     "observed": "never",
+     "reviewer": "user",
+     "transmitted": false,
+     "preservation": "omitted_from_resume",
+     "interactive": false,
+     "servicedByThisBridge": false,
+     "onApprovalRequest": "left_for_thread_approver",
+     "meaning": "Nothing on this thread can ask for an approval, so delivery and approval cannot be confused here.",
+     "limits": "This bridge answers no approval request: it never grants one, never denies one, and a report message never stands in for one. Measured on codex-cli 0.154.0, the host sends each approval request of a turn to every client subscribed to the thread, replays a pending one to a client that resumes the thread later, and applies the first answer from any of them, an error answer as a denial. An answer from this bridge would therefore decide for the thread's approver, so it records each request and leaves it unanswered; the thread's own client decides it, now or when it next opens the thread, and the turn waits until then. That measurement is of that release, not a reading of the connected server, and how a particular client such as Desktop presents a request it did not ask for is not established here. Delivering a report and servicing the code execution a report may provoke are separate capabilities, and only the first one is claimed."
+    },
+    "turnId": "turn-2",
+    "approvalRequests": {
+     "thisThread": [],
+     "unattributed": [],
+     "otherThreads": 0,
+     "approvalsLeftForThisThread": 0,
+     "refusedForThisThread": 0,
+     "notRetained": 0,
+     "note": "Requests recorded between the two marks this receipt spans. A turn outlives that window, so a request the turn raises later is handled the same way and is simply not on this receipt. An approval-class request is never answered here: the host sends it to every client subscribed to the thread and applies the first answer, so it stays with the thread's own approver. Nothing here was granted or denied."
+    },
+    "attemptedEffects": [
+     "thread/resume",
+     "turn/start"
+    ],
+    "delivery": "turn_started",
+    "deliveryMeaning": "The host accepted this message into a new turn. That is delivery, not completion: it does not say the peer read it, acted on it, or finished anything.",
+    "settingsAfterDispatch": {
+     "fields": {
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh",
+      "cwd": "<HOME>"
+     },
+     "concurrentChange": false,
+     "changed": {},
+     "covers": [
+      "cwd",
+      "model",
+      "reasoningEffort"
+     ],
+     "unobserved": [],
+     "limit": "thread/read reports neither sandbox nor approvalPolicy, so no change here means only that the fields in covers were compared and unchanged. Anything in unobserved was not compared at all."
+    }
+   }
+  },
+  {
+   "error": false,
+   "content": [
+    {
+     "type": "text",
+     "json": {
+      "thread": {
+       "id": "thread-1",
+       "cwd": "<HOME>",
+       "status": {
+        "type": "idle"
+       },
+       "turns": [],
+       "settings": {
+        "cwd": "<HOME>",
+        "runtimeWorkspaceRoots": [
+         "<HOME>"
+        ],
+        "approvalPolicy": "never",
+        "sandbox": {
+         "type": "readOnly",
+         "networkAccess": false
+        },
+        "model": "anthropic/claude-opus-5",
+        "reasoningEffort": "xhigh"
+       },
+       "model": "anthropic/claude-opus-5",
+       "reasoningEffort": "xhigh"
+      },
+      "turnsPage": {
+       "data": [
+        {
+         "id": "turn-2",
+         "status": "completed",
+         "items": [
+          {
+           "type": "agentMessage",
+           "text": "NEXT"
+          }
+         ],
+         "itemsView": "summary",
+         "itemsDetailStatus": "complete",
+         "itemsDetail": [
+          {
+           "type": "agentMessage",
+           "text": "NEXT"
+          }
+         ]
+        }
+       ],
+       "nextCursor": "1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "backwardsCursor": "0:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "observation": {
+       "turnsPageStatus": "summary",
+       "itemsView": "summary",
+       "detailTurnsRequested": 1,
+       "detailTurnsObserved": 1,
+       "note": "Turn items are the host's summary view: each turn's user and agent messages, not its tool calls or their output. Item detail was requested and read for the newest 1 turn. Every other turn on this page is marked not_requested, which is not a statement that it has no items. This is a bounded observation of a thread rather than its whole history, and it says nothing about whether that thread finished, stalled, or has to be run again."
+      }
+     }
+    }
+   ],
+   "structured": {
+    "thread": {
+     "id": "thread-1",
+     "cwd": "<HOME>",
+     "status": {
+      "type": "idle"
+     },
+     "turns": [],
+     "settings": {
+      "cwd": "<HOME>",
+      "runtimeWorkspaceRoots": [
+       "<HOME>"
+      ],
+      "approvalPolicy": "never",
+      "sandbox": {
+       "type": "readOnly",
+       "networkAccess": false
+      },
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh"
+     },
+     "model": "anthropic/claude-opus-5",
+     "reasoningEffort": "xhigh"
+    },
+    "turnsPage": {
+     "data": [
+      {
+       "id": "turn-2",
+       "status": "completed",
+       "items": [
+        {
+         "type": "agentMessage",
+         "text": "NEXT"
+        }
+       ],
+       "itemsView": "summary",
+       "itemsDetailStatus": "complete",
+       "itemsDetail": [
+        {
+         "type": "agentMessage",
+         "text": "NEXT"
+        }
+       ]
+      }
+     ],
+     "nextCursor": "1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "backwardsCursor": "0:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    "observation": {
+     "turnsPageStatus": "summary",
+     "itemsView": "summary",
+     "detailTurnsRequested": 1,
+     "detailTurnsObserved": 1,
+     "note": "Turn items are the host's summary view: each turn's user and agent messages, not its tool calls or their output. Item detail was requested and read for the newest 1 turn. Every other turn on this page is marked not_requested, which is not a statement that it has no items. This is a bounded observation of a thread rather than its whole history, and it says nothing about whether that thread finished, stalled, or has to be run again."
+    }
+   }
+  },
+  {
+   "error": false,
+   "content": [
+    {
+     "type": "text",
+     "json": {
+      "data": [
+       {
+        "id": "thread-1",
+        "cwd": "<HOME>",
+        "status": {
+         "type": "idle"
+        },
+        "turns": [],
+        "settings": {
+         "cwd": "<HOME>",
+         "runtimeWorkspaceRoots": [
+          "<HOME>"
+         ],
+         "approvalPolicy": "never",
+         "sandbox": {
+          "type": "readOnly",
+          "networkAccess": false
+         },
+         "model": "anthropic/claude-opus-5",
+         "reasoningEffort": "xhigh"
+        },
+        "model": "anthropic/claude-opus-5",
+        "reasoningEffort": "xhigh"
+       }
+      ],
+      "nextCursor": null
+     }
+    }
+   ],
+   "structured": {
+    "data": [
+     {
+      "id": "thread-1",
+      "cwd": "<HOME>",
+      "status": {
+       "type": "idle"
+      },
+      "turns": [],
+      "settings": {
+       "cwd": "<HOME>",
+       "runtimeWorkspaceRoots": [
+        "<HOME>"
+       ],
+       "approvalPolicy": "never",
+       "sandbox": {
+        "type": "readOnly",
+        "networkAccess": false
+       },
+       "model": "anthropic/claude-opus-5",
+       "reasoningEffort": "xhigh"
+      },
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh"
+     }
+    ],
+    "nextCursor": null
+   }
+  },
+  {
+   "error": false,
+   "content": [
+    {
+     "type": "text",
+     "json": {
+      "threadId": "thread-1",
+      "status": {
+       "type": "active",
+       "activeFlags": []
+      },
+      "activeFlags": [],
+      "activeTurnId": "turn-2",
+      "newestTurnId": "turn-2",
+      "observation": "active",
+      "derivation": "newest turn reported inProgress; the status carries no turn id",
+      "steerable": true,
+      "snapshot": "observed now; the turn may change before any steer is sent"
+     }
+    }
+   ],
+   "structured": {
+    "threadId": "thread-1",
+    "status": {
+     "type": "active",
+     "activeFlags": []
+    },
+    "activeFlags": [],
+    "activeTurnId": "turn-2",
+    "newestTurnId": "turn-2",
+    "observation": "active",
+    "derivation": "newest turn reported inProgress; the status carries no turn id",
+    "steerable": true,
+    "snapshot": "observed now; the turn may change before any steer is sent"
+   }
+  },
+  {
+   "error": false,
+   "content": [
+    {
+     "type": "text",
+     "json": {
+      "threadId": "thread-1",
+      "turnId": "turn-2",
+      "timedOut": true,
+      "turn": {
+       "id": "turn-2",
+       "status": "inProgress",
+       "items": [
+        {
+         "type": "agentMessage",
+         "text": "NEXT"
+        }
+       ],
+       "itemsView": "summary"
+      },
+      "observation": "found"
+     }
+    }
+   ],
+   "structured": {
+    "threadId": "thread-1",
+    "turnId": "turn-2",
+    "timedOut": true,
+    "turn": {
+     "id": "turn-2",
+     "status": "inProgress",
+     "items": [
+      {
+       "type": "agentMessage",
+       "text": "NEXT"
+      }
+     ],
+     "itemsView": "summary"
+    },
+    "observation": "found"
+   }
+  },
+  {
+   "error": false,
+   "content": [
+    {
+     "type": "text",
+     "json": {
+      "goal": null
+     }
+    }
+   ],
+   "structured": {
+    "goal": null
+   }
+  },
+  {
+   "error": false,
+   "content": [
+    {
+     "type": "text",
+     "json": {
+      "requestId": "steer",
+      "operation": "steer_thread",
+      "status": "accepted",
+      "retrySafe": false,
+      "fingerprintVersion": 2,
+      "threadId": "thread-1",
+      "expectedTurnId": "turn-2",
+      "clientUserMessageId": "steer:steer",
+      "settings": {
+       "verification": "not_observable",
+       "reason": "steer performs no resume"
+      },
+      "steeredTurnId": "turn-2",
+      "delivery": "accepted_not_applied",
+      "deliveryMeaning": "The host accepted this input into the guarded turn. It does not say the peer read it, and it does not say the peer acted on it.",
+      "attemptedEffects": [
+       "turn/steer"
+      ]
+     }
+    }
+   ],
+   "structured": {
+    "requestId": "steer",
+    "operation": "steer_thread",
+    "status": "accepted",
+    "retrySafe": false,
+    "fingerprintVersion": 2,
+    "threadId": "thread-1",
+    "expectedTurnId": "turn-2",
+    "clientUserMessageId": "steer:steer",
+    "settings": {
+     "verification": "not_observable",
+     "reason": "steer performs no resume"
+    },
+    "steeredTurnId": "turn-2",
+    "delivery": "accepted_not_applied",
+    "deliveryMeaning": "The host accepted this input into the guarded turn. It does not say the peer read it, and it does not say the peer acted on it.",
+    "attemptedEffects": [
+     "turn/steer"
+    ]
+   }
+  },
+  {
+   "error": false,
+   "content": [
+    {
+     "type": "text",
+     "json": {
+      "requestId": "pause",
+      "operation": "pause_goal",
+      "status": "failed",
+      "retrySafe": false,
+      "fingerprintVersion": 2,
+      "threadId": "thread-1",
+      "error": "thread/goal/get: Thread has no goal to pause.",
+      "rpcError": {
+       "code": "no_goal",
+       "message": "Thread has no goal to pause."
+      },
+      "attemptedEffects": []
+     }
+    }
+   ],
+   "structured": {
+    "requestId": "pause",
+    "operation": "pause_goal",
+    "status": "failed",
+    "retrySafe": false,
+    "fingerprintVersion": 2,
+    "threadId": "thread-1",
+    "error": "thread/goal/get: Thread has no goal to pause.",
+    "rpcError": {
+     "code": "no_goal",
+     "message": "Thread has no goal to pause."
+    },
+    "attemptedEffects": []
+   }
+  },
+  {
+   "error": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Error executing tool get_operation: Unknown request_id"
+    }
+   ],
+   "structured": null
+  },
+  {
+   "error": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Error executing tool create_thread: cwd must be an existing absolute directory on the App Server host"
+    }
+   ],
+   "structured": null
+  },
+  {
+   "error": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Error executing tool create_thread: role must contain 1–64 characters"
+    }
+   ],
+   "structured": null
+  },
+  {
+   "error": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Error executing tool create_thread: title must contain 1–500 characters"
+    }
+   ],
+   "structured": null
+  },
+  {
+   "error": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Error executing tool create_thread: execution_setting_invalid: model must be a non-empty string of at most 500 characters"
+    }
+   ],
+   "structured": null
+  },
+  {
+   "error": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Error executing tool create_thread: execution_exception_unknown: no exception with this id is declared in this host's execution policy"
+    }
+   ],
+   "structured": null
+  },
+  {
+   "error": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Error executing tool create_thread: execution_role_unknown: no such role is declared in this host's execution policy; this bridge declares no pair of its own for any role"
+    }
+   ],
+   "structured": null
+  },
+  {
+   "error": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Error executing tool create_thread: setting_untransmittable: readOnly networkAccess cannot be carried by thread/start or thread/resume; only no field is transmittable for this type"
+    }
+   ],
+   "structured": null
+  },
+  {
+   "error": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Error executing tool create_worktree_thread: sandbox and expected_sandbox_policy.type must agree"
+    }
+   ],
+   "structured": null
+  },
+  {
+   "error": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Error executing tool send_message_to_thread: expected_settings has unknown keys ['bogus']; supported keys are ['approval_policy', 'cwd', 'expected_sandbox_policy', 'model', 'reasoning_effort', 'runtime_workspace_roots', 'sandbox']"
+    }
+   ],
+   "structured": null
+  },
+  {
+   "error": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Error executing tool send_message_to_thread: execution_setting_missing: reasoning_effort was not supplied; this bridge never inherits the host's configured default"
+    }
+   ],
+   "structured": null
+  },
+  {
+   "error": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Error executing tool list_threads: limit must be between 1 and 100"
+    }
+   ],
+   "structured": null
+  },
+  {
+   "error": false,
+   "content": [
+    {
+     "type": "text",
+     "json": {
+      "data": [
+       {
+        "id": "thread-1",
+        "cwd": "<HOME>",
+        "status": {
+         "type": "active",
+         "activeFlags": []
+        },
+        "turns": [],
+        "settings": {
+         "cwd": "<HOME>",
+         "runtimeWorkspaceRoots": [
+          "<HOME>"
+         ],
+         "approvalPolicy": "never",
+         "sandbox": {
+          "type": "readOnly",
+          "networkAccess": false
+         },
+         "model": "anthropic/claude-opus-5",
+         "reasoningEffort": "xhigh"
+        },
+        "model": "anthropic/claude-opus-5",
+        "reasoningEffort": "xhigh"
+       }
+      ],
+      "nextCursor": null
+     }
+    }
+   ],
+   "structured": {
+    "data": [
+     {
+      "id": "thread-1",
+      "cwd": "<HOME>",
+      "status": {
+       "type": "active",
+       "activeFlags": []
+      },
+      "turns": [],
+      "settings": {
+       "cwd": "<HOME>",
+       "runtimeWorkspaceRoots": [
+        "<HOME>"
+       ],
+       "approvalPolicy": "never",
+       "sandbox": {
+        "type": "readOnly",
+        "networkAccess": false
+       },
+       "model": "anthropic/claude-opus-5",
+       "reasoningEffort": "xhigh"
+      },
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh"
+     }
+    ],
+    "nextCursor": null
+   }
+  },
+  {
+   "error": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Error executing tool read_thread: limit must be 1–100 and max_text_chars must be 100–20000"
+    }
+   ],
+   "structured": null
+  },
+  {
+   "error": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Error executing tool wait_thread: timeout_seconds must be between 0 and 50"
+    }
+   ],
+   "structured": null
+  },
+  {
+   "error": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Error executing tool get_goal: thread_id must contain 1–128 characters"
+    }
+   ],
+   "structured": null
+  },
+  {
+   "error": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Error executing tool pause_goal: request_id must contain 1–128 characters"
+    }
+   ],
+   "structured": null
+  },
+  {
+   "error": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Unknown tool: no_such_tool"
+    }
+   ],
+   "structured": null
+  }
+ ]
+}

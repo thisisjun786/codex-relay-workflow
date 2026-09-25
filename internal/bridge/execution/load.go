@@ -6,26 +6,35 @@ import (
 	"os"
 	"strings"
 	"syscall"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/pyerr"
 )
 
 // FromFile is ExecutionPolicy.from_file: opened without blocking and judged on the descriptor
 // that is read, so a FIFO is refused instead of hanging startup.
 func FromFile(path string) (Policy, error) {
+	unreadable := func(err error) error {
+		// str(OSError) as Python raises it: "[Errno 2] No such file or directory: '<path>'".
+		if _, message, ok := pyerr.OSError(err); ok {
+			return &PolicyError{fmt.Sprintf("cannot read %s: %s", path, message)}
+		}
+		return &PolicyError{fmt.Sprintf("cannot read %s: %v", path, err)}
+	}
 	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return Policy{}, &PolicyError{fmt.Sprintf("cannot read %s: %v", path, err)}
+		return Policy{}, unreadable(err)
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return Policy{}, &PolicyError{fmt.Sprintf("cannot read %s: %v", path, err)}
+		return Policy{}, unreadable(err)
 	}
 	if !info.Mode().IsRegular() {
 		return Policy{}, &PolicyError{fmt.Sprintf("cannot read %s: it is not a regular file", path)}
 	}
 	raw, err := io.ReadAll(file)
 	if err != nil {
-		return Policy{}, &PolicyError{fmt.Sprintf("cannot read %s: %v", path, err)}
+		return Policy{}, unreadable(err)
 	}
 	return FromBytes(raw, path)
 }
