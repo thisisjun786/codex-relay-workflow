@@ -1,0 +1,154 @@
+{
+  "given": {
+    "host": {
+      "cursor_format": "json_turns",
+      "threads": {
+        "thread-0": {
+          "id": "thread-0",
+          "cwd": "${HOME}",
+          "status": {
+            "type": "idle"
+          },
+          "turns": [
+            {
+              "id": "turn-0",
+              "status": "completed",
+              "items": []
+            },
+            {
+              "id": "turn-1",
+              "status": "completed",
+              "items": []
+            }
+          ]
+        },
+        "thread-1": {
+          "id": "thread-1",
+          "cwd": "${HOME}",
+          "status": {
+            "type": "idle"
+          },
+          "turns": [
+            {
+              "id": "turn-0",
+              "status": "completed",
+              "items": []
+            },
+            {
+              "id": "turn-1",
+              "status": "completed",
+              "items": []
+            }
+          ]
+        }
+      }
+    }
+  },
+  "run": {
+    "kind": "mcp",
+    "steps": [
+      {
+        "tool": "read_thread",
+        "arguments": {
+          "thread_id": "thread-0",
+          "limit": 1
+        },
+        "id": "first"
+      },
+      {
+        "tool": "read_thread",
+        "arguments": {
+          "thread_id": "thread-0",
+          "limit": 1,
+          "cursor": {
+            "$step": "first",
+            "path": [
+              "structured",
+              "turnsPage",
+              "nextCursor"
+            ]
+          }
+        }
+      },
+      {
+        "tool": "list_threads",
+        "arguments": {
+          "limit": 1
+        },
+        "id": "listed"
+      },
+      {
+        "tool": "list_threads",
+        "arguments": {
+          "limit": 1,
+          "cursor": {
+            "$step": "listed",
+            "path": [
+              "structured",
+              "nextCursor"
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "results",
+          1,
+          "error"
+        ],
+        "value": false
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "results",
+          1,
+          "structured",
+          "turnsPage",
+          "data",
+          0,
+          "id"
+        ],
+        "value": "turn-0"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "calls",
+          1,
+          1,
+          "cursor"
+        ],
+        "value": "{\"offset\": 1, \"scope\": {\"kind\": \"turns\"}}"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "results",
+          3,
+          "structured",
+          "data",
+          0,
+          "id"
+        ],
+        "value": "thread-1"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "calls",
+          3,
+          1,
+          "cursor"
+        ],
+        "value": "{\"offset\": 1, \"scope\": {\"kind\": \"turns\"}}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,263 @@
+{
+ "given": {
+  "sql_seed": "INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, superseded_by, created_at, updated_at) VALUES ('rel-00', 'CRW-0', 'active', '01parent-task', 'host-a', '01child-task', 'host-a', 1, '[]', '[\"01parent-task\"]', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO relationship_scope (relationship_id, project_key, recorded_at) VALUES ('rel-00', 'PROJ-CRW-163', '2026-09-21T00:00:00Z');\nINSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, finalized_at, suppressed_reason, first_seen_at, last_seen_at) VALUES ('e0', 'rel-00', 1, '0000000000000000000000000000000000000000000000000000000000000000', 'blocked_needs_input', 'child', 1, '01child-task', 'turn-dispatch-1', 'completed', '{}', 'final', '2026-09-21T00:00:00Z', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, next_eligible_at, hold_reason, dispatch_evidence, dispatch_turn_id, created_at, updated_at) VALUES ('e0', 'rel-00', 'completion_event', '01parent-task', '01parent-task', 'queued', 0, NULL, NULL, NULL, NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, superseded_by, created_at, updated_at) VALUES ('rel-01', 'CRW-1', 'active', '01parent-task', 'host-a', '01child-task', 'host-a', 1, '[]', '[\"01parent-task\"]', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO relationship_scope (relationship_id, project_key, recorded_at) VALUES ('rel-01', 'PROJ-CRW-163', '2026-09-21T00:00:00Z');\nINSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, finalized_at, suppressed_reason, first_seen_at, last_seen_at) VALUES ('e1', 'rel-01', 1, '0000000000000000000000000000000000000000000000000000000000000000', 'blocked_needs_input', 'child', 1, '01child-task', 'turn-dispatch-1', 'completed', '{}', 'final', '2026-09-21T00:00:00Z', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, next_eligible_at, hold_reason, dispatch_evidence, dispatch_turn_id, created_at, updated_at) VALUES ('e1', 'rel-01', 'completion_event', '01parent-task', '01parent-task', 'deferred_busy', 0, NULL, NULL, NULL, NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, superseded_by, created_at, updated_at) VALUES ('rel-02', 'CRW-2', 'active', '01parent-task', 'host-a', '01child-task', 'host-a', 1, '[]', '[\"01parent-task\"]', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO relationship_scope (relationship_id, project_key, recorded_at) VALUES ('rel-02', 'PROJ-CRW-163', '2026-09-21T00:00:00Z');\nINSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, finalized_at, suppressed_reason, first_seen_at, last_seen_at) VALUES ('e2', 'rel-02', 1, '0000000000000000000000000000000000000000000000000000000000000000', 'blocked_needs_input', 'child', 1, '01child-task', 'turn-dispatch-1', 'completed', '{}', 'final', '2026-09-21T00:00:00Z', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, next_eligible_at, hold_reason, dispatch_evidence, dispatch_turn_id, created_at, updated_at) VALUES ('e2', 'rel-02', 'completion_event', '01parent-task', '01parent-task', 'withheld_pre_send', 0, NULL, NULL, NULL, NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, superseded_by, created_at, updated_at) VALUES ('rel-03', 'CRW-3', 'active', '01parent-task', 'host-a', '01child-task', 'host-a', 1, '[]', '[\"01parent-task\"]', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO relationship_scope (relationship_id, project_key, recorded_at) VALUES ('rel-03', 'PROJ-CRW-163', '2026-09-21T00:00:00Z');\nINSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, finalized_at, suppressed_reason, first_seen_at, last_seen_at) VALUES ('e3', 'rel-03', 1, '0000000000000000000000000000000000000000000000000000000000000000', 'blocked_needs_input', 'child', 1, '01child-task', 'turn-dispatch-1', 'completed', '{}', 'final', '2026-09-21T00:00:00Z', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, next_eligible_at, hold_reason, dispatch_evidence, dispatch_turn_id, created_at, updated_at) VALUES ('e3', 'rel-03', 'completion_event', '01parent-task', '01parent-task', 'sending', 0, NULL, NULL, NULL, NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, superseded_by, created_at, updated_at) VALUES ('rel-04', 'CRW-4', 'active', '01parent-task', 'host-a', '01child-task', 'host-a', 1, '[]', '[\"01parent-task\"]', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO relationship_scope (relationship_id, project_key, recorded_at) VALUES ('rel-04', 'PROJ-CRW-163', '2026-09-21T00:00:00Z');\nINSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, finalized_at, suppressed_reason, first_seen_at, last_seen_at) VALUES ('e4', 'rel-04', 1, '0000000000000000000000000000000000000000000000000000000000000000', 'blocked_needs_input', 'child', 1, '01child-task', 'turn-dispatch-1', 'completed', '{}', 'final', '2026-09-21T00:00:00Z', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, next_eligible_at, hold_reason, dispatch_evidence, dispatch_turn_id, created_at, updated_at) VALUES ('e4', 'rel-04', 'completion_event', '01parent-task', '01parent-task', 'held_uncertain', 0, NULL, NULL, NULL, NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, superseded_by, created_at, updated_at) VALUES ('rel-05', 'CRW-5', 'active', '01parent-task', 'host-a', '01child-task', 'host-a', 1, '[]', '[\"01parent-task\"]', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO relationship_scope (relationship_id, project_key, recorded_at) VALUES ('rel-05', 'PROJ-CRW-163', '2026-09-21T00:00:00Z');\nINSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, finalized_at, suppressed_reason, first_seen_at, last_seen_at) VALUES ('e5', 'rel-05', 1, '0000000000000000000000000000000000000000000000000000000000000000', 'blocked_needs_input', 'child', 1, '01child-task', 'turn-dispatch-1', 'completed', '{}', 'final', '2026-09-21T00:00:00Z', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, next_eligible_at, hold_reason, dispatch_evidence, dispatch_turn_id, created_at, updated_at) VALUES ('e5', 'rel-05', 'completion_event', '01parent-task', '01parent-task', 'inbox_only', 0, NULL, NULL, NULL, NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, superseded_by, created_at, updated_at) VALUES ('rel-06', 'CRW-6', 'active', '01parent-task', 'host-a', '01child-task', 'host-a', 1, '[]', '[\"01parent-task\"]', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO relationship_scope (relationship_id, project_key, recorded_at) VALUES ('rel-06', 'PROJ-CRW-163', '2026-09-21T00:00:00Z');\nINSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, finalized_at, suppressed_reason, first_seen_at, last_seen_at) VALUES ('e6', 'rel-06', 1, '0000000000000000000000000000000000000000000000000000000000000000', 'blocked_needs_input', 'child', 1, '01child-task', 'turn-dispatch-1', 'completed', '{}', 'final', '2026-09-21T00:00:00Z', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, next_eligible_at, hold_reason, dispatch_evidence, dispatch_turn_id, created_at, updated_at) VALUES ('e6', 'rel-06', 'completion_event', '01parent-task', '01parent-task', 'dispatched', 0, NULL, NULL, NULL, NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, superseded_by, created_at, updated_at) VALUES ('rel-07', 'CRW-7', 'active', '01parent-task', 'host-a', '01child-task', 'host-a', 1, '[]', '[\"01parent-task\"]', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO relationship_scope (relationship_id, project_key, recorded_at) VALUES ('rel-07', 'PROJ-CRW-163', '2026-09-21T00:00:00Z');\nINSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, finalized_at, suppressed_reason, first_seen_at, last_seen_at) VALUES ('e7', 'rel-07', 1, '0000000000000000000000000000000000000000000000000000000000000000', 'blocked_needs_input', 'child', 1, '01child-task', 'turn-dispatch-1', 'completed', '{}', 'final', '2026-09-21T00:00:00Z', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, next_eligible_at, hold_reason, dispatch_evidence, dispatch_turn_id, created_at, updated_at) VALUES ('e7', 'rel-07', 'completion_event', '01parent-task', '01parent-task', 'acknowledged', 0, NULL, NULL, NULL, NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, superseded_by, created_at, updated_at) VALUES ('rel-08', 'CRW-8', 'active', '01parent-task', 'host-a', '01child-task', 'host-a', 1, '[]', '[\"01parent-task\"]', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO relationship_scope (relationship_id, project_key, recorded_at) VALUES ('rel-08', 'PROJ-CRW-163', '2026-09-21T00:00:00Z');\nINSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, finalized_at, suppressed_reason, first_seen_at, last_seen_at) VALUES ('e8', 'rel-08', 1, '0000000000000000000000000000000000000000000000000000000000000000', 'blocked_needs_input', 'child', 1, '01child-task', 'turn-dispatch-1', 'completed', '{}', 'final', '2026-09-21T00:00:00Z', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, next_eligible_at, hold_reason, dispatch_evidence, dispatch_turn_id, created_at, updated_at) VALUES ('e8', 'rel-08', 'completion_event', '01parent-task', '01parent-task', 'superseded', 0, NULL, NULL, NULL, NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');"
+ },
+ "run": {
+  "kind": "cli",
+  "argv": [
+   "dispositions-show",
+   "--project",
+   "PROJ-CRW-163"
+  ],
+  "env": {
+   "XDG_STATE_HOME": "${HOME}/xdg-state"
+  }
+ },
+ "expect": {
+  "exit": 0,
+  "checks": [
+   {
+    "kind": "length",
+    "path": [
+     "stdout_json",
+     "children"
+    ],
+    "value": 9
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "stdout_json",
+     "children",
+     0,
+     "events",
+     0,
+     "delivery",
+     "state"
+    ],
+    "value": "queued"
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "stdout_json",
+     "children",
+     1,
+     "events",
+     0,
+     "delivery",
+     "state"
+    ],
+    "value": "deferred_busy"
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "stdout_json",
+     "children",
+     2,
+     "events",
+     0,
+     "delivery",
+     "state"
+    ],
+    "value": "withheld_pre_send"
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "stdout_json",
+     "children",
+     3,
+     "events",
+     0,
+     "delivery",
+     "state"
+    ],
+    "value": "sending"
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "stdout_json",
+     "children",
+     4,
+     "events",
+     0,
+     "delivery",
+     "state"
+    ],
+    "value": "held_uncertain"
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "stdout_json",
+     "children",
+     5,
+     "events",
+     0,
+     "delivery",
+     "state"
+    ],
+    "value": "inbox_only"
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "stdout_json",
+     "children",
+     6,
+     "events",
+     0,
+     "delivery",
+     "state"
+    ],
+    "value": "dispatched"
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "stdout_json",
+     "children",
+     7,
+     "events",
+     0,
+     "delivery",
+     "state"
+    ],
+    "value": "acknowledged"
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "stdout_json",
+     "children",
+     8,
+     "events",
+     0,
+     "delivery",
+     "state"
+    ],
+    "value": "superseded"
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "stdout_json",
+     "children",
+     0,
+     "events",
+     0,
+     "delivery",
+     "observation"
+    ],
+    "value": "not_sent"
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "stdout_json",
+     "children",
+     1,
+     "events",
+     0,
+     "delivery",
+     "observation"
+    ],
+    "value": "not_sent"
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "stdout_json",
+     "children",
+     2,
+     "events",
+     0,
+     "delivery",
+     "observation"
+    ],
+    "value": "not_sent"
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "stdout_json",
+     "children",
+     3,
+     "events",
+     0,
+     "delivery",
+     "observation"
+    ],
+    "value": "send_uncertain"
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "stdout_json",
+     "children",
+     4,
+     "events",
+     0,
+     "delivery",
+     "observation"
+    ],
+    "value": "send_uncertain"
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "stdout_json",
+     "children",
+     5,
+     "events",
+     0,
+     "delivery",
+     "observation"
+    ],
+    "value": "stored_not_woken"
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "stdout_json",
+     "children",
+     6,
+     "events",
+     0,
+     "delivery",
+     "observation"
+    ],
+    "value": "dispatched"
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "stdout_json",
+     "children",
+     7,
+     "events",
+     0,
+     "delivery",
+     "observation"
+    ],
+    "value": "dispatched"
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "stdout_json",
+     "children",
+     8,
+     "events",
+     0,
+     "delivery",
+     "observation"
+    ],
+    "value": "superseded"
+   }
+  ]
+ }
+}

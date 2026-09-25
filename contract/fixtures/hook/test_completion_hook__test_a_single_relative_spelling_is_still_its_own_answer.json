@@ -1,0 +1,25 @@
+{
+  "given": {
+    "settings": false,
+    "files": {
+      "hooks.json": "{\"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"${PYTHON} ${ENTRY} a.json\", \"timeout\": 10}]}]}}"
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "configuration",
+          "value"
+        ],
+        "value": "registration_names_a_relative_settings_path"
+      }
+    ]
+  }
+}

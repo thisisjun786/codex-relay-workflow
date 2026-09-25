@@ -1,0 +1,1 @@
+{"given":{"settings":false},"run":{"kind":"stop","stdin":"{}"},"expect":{"exit":0,"checks":[{"kind":"eq","path":["stdout"],"value":""}]}}

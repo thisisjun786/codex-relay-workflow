@@ -149,6 +149,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         target.chmod(target.stat().st_mode | stat.S_IEXEC)
 
     def test_owner_dispatch_inputs(self):
+        from contract.runner import FIXTURES, run_scenario
+        with tempfile.TemporaryDirectory() as raw:
+            run_scenario(FIXTURES / "records" / "test_release__test_owner_dispatch_inputs.json", Path(raw))
         self.assert_pass(self.run_block("inputs"), "owner dispatch")
         self.assert_pass(self.run_block("inputs", RELEASE_TAG="v0.1.0-rc.1"), "prerelease tag")
         refused = {

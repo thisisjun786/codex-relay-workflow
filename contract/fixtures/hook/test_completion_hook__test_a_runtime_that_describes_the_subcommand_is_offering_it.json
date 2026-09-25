@@ -1,0 +1,24 @@
+{
+  "given": {
+    "relay": {
+      "stdout": "usage: guard-evaluate [-h] [--marker-root ROOT]"
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "guardEvaluateOffered",
+          "value"
+        ],
+        "value": "guard-evaluate"
+      }
+    ]
+  }
+}

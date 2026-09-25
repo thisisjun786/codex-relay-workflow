@@ -1,0 +1,56 @@
+{
+  "given": {
+    "settings": false,
+    "relay": {
+      "stdout": "{\"decision\": \"release\", \"state\": \"unmanaged\", \"observation\": \"unmanaged\", \"reason\": \"No marker names this workspace.\", \"assignmentId\": null, \"counters\": {}, \"recordedAs\": null, \"hook_output\": {}}"
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "configuration",
+          "value"
+        ],
+        "value": "config_absent"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "firingRecordAbsence",
+          "candidates",
+          0,
+          "cause"
+        ],
+        "value": "not_registered"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "firingRecordAbsence",
+          "candidates",
+          0,
+          "standing"
+        ],
+        "value": "not_ruled_out"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "firingRecordAbsence",
+          "value"
+        ],
+        "value": "cause_unreadable"
+      }
+    ]
+  }
+}

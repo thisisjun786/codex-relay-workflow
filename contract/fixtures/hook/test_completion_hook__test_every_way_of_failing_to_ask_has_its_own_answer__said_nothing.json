@@ -1,0 +1,24 @@
+{
+  "given": {
+    "relay": {
+      "stdout": ""
+    }
+  },
+  "run": {
+    "kind": "hook"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "rows",
+          0,
+          "adapterOutcome"
+        ],
+        "value": "guard_said_nothing"
+      }
+    ]
+  }
+}

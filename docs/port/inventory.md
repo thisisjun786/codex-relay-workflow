@@ -28,7 +28,7 @@ differ, when a line count differs from `wc -l`, when an owning issue is missing,
 
 ## Files
 
-Total non-test lines: 98160
+Total non-test lines: 99367
 
 | path | lines | invoked | runs | owner | disposition | consumer_search | removal_trigger |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -146,6 +146,11 @@ Total non-test lines: 98160
 | `scripts/install.py` | 98 | operator CLI `python3 scripts/install.py --check` or `--apply` (docs/runtime-install.md:18); spawned by runtime_install.py:294 and crw_transition/inventory.py:454 | end user + relay host | CRW-158 | port | - | - |
 | `scripts/plugin_transition.py` | 381 | operator CLI `python3 scripts/plugin_transition.py` (docs/plugin-transition.md) | end user + relay host | CRW-158 | port | - | - |
 | `scripts/port/check_inventory.py` | 113 | dev CLI `python3 scripts/port/check_inventory.py` (this document's check, todo 1) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn check_inventory` over scripts/, docs/, .github/ (consumers: this document only; no CI job runs it yet) | the Python inventory is obsolete once todo 44 (CRW-141) deletes the product Python; deleted with the remaining dev Python in todo 48 |
+| `scripts/port/corpus_notes.py` | 230 | imported by scripts/port/check_corpus_count.py (todo 6) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn corpus_notes` over scripts/, docs/, .github/ (consumer: scripts/port/check_corpus_count.py; no CI job runs it yet) | todo 48 retires the Python corpus checker after the Go tests assume its coverage obligation |
+| `scripts/port/check_corpus_count.py` | 208 | dev CLI `python3 scripts/port/check_corpus_count.py` (todo 6) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn check_corpus_count` over scripts/, docs/, .github/ (consumer: todo 6 corpus-coverage validation; no CI job runs it yet) | todo 48 retires the Python corpus checker after the Go tests assume its coverage obligation |
+| `scripts/port/check_cutover_doc.py` | 149 | dev CLI `python3 scripts/port/check_cutover_doc.py` (todo 5) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn check_cutover_doc` over scripts/, docs/, .github/ (consumer: todo 5 cutover-document validation; no CI job runs it yet) | todo 48 retires the Python cutover checker with the remaining dev Python |
+| `scripts/port/check_test_map.py` | 133 | dev CLI `python3 scripts/port/check_test_map.py` (todo 3) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn check_test_map` over scripts/, docs/, .github/ (consumer: todo 3 test-map validation; no CI job runs it yet) | todo 48 retires the Python test-map checker with the remaining dev Python |
+| `scripts/port/dump_contracts.py` | 487 | dev CLI `python3 scripts/port/dump_contracts.py` (todo 2) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn dump_contracts` over scripts/, docs/, .github/ (consumer: todo 2 contract-schema generation/check; no CI job runs it yet) | todo 48 retires the Python contract dumper with the remaining dev Python |
 | `scripts/runtime_install.py` | 5810 | operator CLI `python3 scripts/runtime_install.py <cmd>` (docs/runtime-install.md:19); CI `verify-definition` via scripts/ci/contracts.py:15 | end user + relay host | CRW-158 | port | - | - |
 | `scripts/stop_events.py` | 59 | dev CLI `python3 scripts/stop_events.py --journal-root ...` (docs/runtime-install.md:1867) | dev/CI | CRW-159 | port | - | - |
 | `scripts/trial_startup.py` | 3734 | dev CLI `python3 scripts/trial_startup.py` (docs/live-trial.md); spawns git + relay (:1302) | dev/CI | CRW-159 | port | - | - |

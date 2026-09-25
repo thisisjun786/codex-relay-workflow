@@ -45,10 +45,10 @@ read by `hook_probe.py` through `scripts/ci/contracts.py`, not by a test file; t
 
 ## Totals
 
-Files: 119
-Tests: 6041
+Files: 121
+Tests: 6048
 Class A: files=14 tests=555
-Class B: files=85 tests=3346
+Class B: files=87 tests=3353
 Class C: files=20 tests=2140
 
 ## Files
@@ -65,6 +65,7 @@ Class C: files=20 tests=2140
 | `packages/codex-session-relay/tests/test_capacity.py` | 30 | B | capacity counting and refusal to infer | - | todo 27 / CRW-154 | go-test: capacity package (todo 27) | - |
 | `packages/codex-session-relay/tests/test_child_packets.py` | 82 | B | child packets a receiver can act on (CRW-149) | - | todo 23 / CRW-153 | go-test: `internal/relay/reception` (todo 23) | - |
 | `packages/codex-session-relay/tests/test_cli.py` | 86 | C | command surface end to end in-process: flags, JSON, exits, host-free | fixtures/host (inline) | todo 25 / CRW-154 | corpus: cli-shape + corpus: exit-codes + inventory-check: settings-transformation coverage table in `internal/relay/registry` (todo 25) | ast + inspect.getsource over delivery/bridge_adapter/settings (:2390-2418) to derive the TaskSettings calls a send applies |
+| `packages/codex-session-relay/tests/test_contract_corpus.py` | 3 | B | corpus discovery and CLI runner proof added in todo 6; not original class-A cases | `contract/fixtures/cli-shape` | todo 6 / CRW-140 | corpus: cli-shape | - |
 | `packages/codex-session-relay/tests/test_coordination_cli.py` | 19 | A | operator surface of 26 coordination commands: argv shape, exits, JSON | - | todo 26 / CRW-154 | corpus: cli-shape | - |
 | `packages/codex-session-relay/tests/test_coordination_contract.py` | 11 | C | coordination modules: one txn per mutator, no own wait loops, lock wait declared once | - | todo 26 / CRW-154 | inventory-check: go/ast scan of the linkage/merge-turn packages (todo 26) + go-test: transaction-count cases (todo 26) | ast over linkage/mergeturn source (:22, :59) |
 | `packages/codex-session-relay/tests/test_criteria_registration.py` | 9 | B | criteria ensure never replaces a set | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
@@ -151,6 +152,7 @@ Class C: files=20 tests=2140
 | `packages/codex-thread-bridge/tests/test_approval_routing.py` | 8 | B | approval-class requests left for the thread's approver (CRW-225) | `tests/conftest.py` fake App Server | todo 13 / CRW-151 | go-test: `internal/bridge/appserver` (todo 13) | - |
 | `packages/codex-thread-bridge/tests/test_bridge.py` | 74 | B | create/followup/duplicate/conflict/replay through the bridge | `tests/conftest.py` fake App Server | todo 15 / CRW-151 | go-test: `internal/bridge` (todo 15) | - |
 | `packages/codex-thread-bridge/tests/test_execution.py` | 63 | B | execution guard refusals; nothing dispatched | `tests/conftest.py` fake App Server | todo 14 / CRW-151 | go-test: `internal/bridge/execution` (todo 14) | - |
+| `packages/codex-thread-bridge/tests/test_contract_corpus.py` | 4 | B | corpus discovery and git/App Server runner proofs added in todo 6; not original class-A cases | `contract/fixtures/git`, `contract/fixtures/appserver` | todo 6 / CRW-140 | corpus: git + corpus: appserver | - |
 | `packages/codex-thread-bridge/tests/test_ledger.py` | 6 | B | operation ledger: socket aliases, legacy import, re-arm | - | todo 14 / CRW-151 | go-test: `internal/bridge/ledger` (todo 14) + corpus: ledger-fingerprint | - |
 | `packages/codex-thread-bridge/tests/test_mcp.py` | 11 | A | stdio MCP server: schema refusals, host policy, plugin launch | `tests/conftest.py` fake App Server | todo 16 / CRW-151 | corpus: mcp-tools | - |
 | `packages/codex-thread-bridge/tests/test_rpc.py` | 20 | B | App Server RPC: multiplexing, errors, timeouts, frame limits | `tests/conftest.py` fake App Server | todo 13 / CRW-151 | go-test: `internal/bridge/appserver` (todo 13) + corpus: appserver | - |

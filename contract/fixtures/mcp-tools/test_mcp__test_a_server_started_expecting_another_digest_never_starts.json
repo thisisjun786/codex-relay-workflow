@@ -1,0 +1,55 @@
+{
+  "given": {
+    "files": {
+      "execution-policy.json": "{\"roles\": {\"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"parent\": {\"model\": \"devin/swe-2\", \"reasoningEffort\": \"max\"}}}"
+    }
+  },
+  "run": {
+    "kind": "mcp",
+    "process": true,
+    "env": {
+      "CODEX_THREAD_BRIDGE_EXECUTION_POLICY": "${HOME}/execution-policy.json",
+      "CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  "expect": {
+    "exit": 1,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "exit"
+        ],
+        "value": 1
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "stderr"
+        ],
+        "value": "execution_policy_unreadable"
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "stderr"
+        ],
+        "value": "changed after it was registered"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "state_exists"
+        ],
+        "value": false
+      },
+      {
+        "kind": "length",
+        "path": [
+          "calls"
+        ],
+        "value": 0
+      }
+    ]
+  }
+}

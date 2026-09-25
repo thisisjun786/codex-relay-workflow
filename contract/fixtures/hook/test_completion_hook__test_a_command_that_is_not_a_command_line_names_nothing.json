@@ -1,0 +1,43 @@
+{
+  "given": {
+    "settings": false,
+    "files": {
+      "hooks.json": "{\"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"unbalanced 'quote\", \"timeout\": 10}]}]}}"
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "registration",
+          "value"
+        ],
+        "value": "1"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "registration",
+          "thisAdapter"
+        ],
+        "value": []
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "registeredCommandTarget",
+          "value"
+        ],
+        "value": "not_read"
+      }
+    ]
+  }
+}

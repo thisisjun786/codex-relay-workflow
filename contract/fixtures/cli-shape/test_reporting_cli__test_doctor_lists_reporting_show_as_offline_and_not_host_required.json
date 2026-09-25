@@ -1,0 +1,40 @@
+{
+  "given": {},
+  "run": {
+    "kind": "cli",
+    "steps": [
+      {
+        "id": "doctor",
+        "argv": [
+          "doctor"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "contains",
+        "path": [
+          "stdout_json",
+          "actorReachability",
+          "offlineCommands"
+        ],
+        "value": "reporting-show"
+      },
+      {
+        "kind": "excludes",
+        "path": [
+          "stdout_json",
+          "actorReachability",
+          "hostRequiredCommands"
+        ],
+        "value": "reporting-show"
+      }
+    ],
+    "files": {
+      "state/relay.sqlite3": false
+    }
+  }
+}

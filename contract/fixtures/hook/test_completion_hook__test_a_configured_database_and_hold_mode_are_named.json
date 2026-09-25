@@ -1,0 +1,37 @@
+{
+  "given": {
+    "relay": {
+      "stdout": "{\"decision\": \"release\", \"state\": \"unmanaged\", \"observation\": \"unmanaged\", \"reason\": \"No marker names this workspace.\", \"assignmentId\": null, \"counters\": {}, \"recordedAs\": null, \"hook_output\": {}}"
+    },
+    "settings_overrides": {
+      "dbPath": "/tmp/relay.sqlite",
+      "mode": "hold",
+      "isolationAssertedBy": "the coordinator, for this test"
+    }
+  },
+  "run": {
+    "kind": "hook"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "contains",
+        "path": [
+          "call",
+          "argv"
+        ],
+        "value": "--db-path"
+      },
+      {
+        "kind": "after",
+        "path": [
+          "call",
+          "argv"
+        ],
+        "flag": "--mode",
+        "value": "hold"
+      }
+    ]
+  }
+}

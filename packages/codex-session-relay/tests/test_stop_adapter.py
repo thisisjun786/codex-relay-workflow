@@ -68,75 +68,50 @@ class StopAdapterTests(unittest.TestCase):
         self.assertTrue(callable(stopadapter.run))
 
     def test_a_held_turn_prints_exactly_the_stop_json_the_host_accepts(self):
+        from contract.runner import FIXTURES, run_scenario
         with tempfile.TemporaryDirectory() as raw:
-            home = Path(raw)
-            path = settings(home, guard(home, decision="block"))
-            answer = stopadapter.run(json.dumps({"session_id": "s", "turn_id": "t"}).encode(),
-                                     settings=str(path))
-            self.assertEqual(json.loads(answer),
-                             {"decision": "block", "reason": "verify the child",
-                              "continue": True})
+            run_scenario(FIXTURES / "hook" /
+                         "test_stop_adapter__test_a_held_turn_prints_exactly_the_stop_json_the_host_accepts.json",
+                         Path(raw))
 
     def test_a_released_turn_prints_nothing(self):
+        from contract.runner import FIXTURES, run_scenario
         with tempfile.TemporaryDirectory() as raw:
-            home = Path(raw)
-            path = settings(home, guard(home))
-            self.assertIsNone(stopadapter.run(json.dumps({"session_id": "s"}).encode(),
-                                              settings=str(path)))
+            run_scenario(FIXTURES / "hook" / "test_stop_adapter__test_a_released_turn_prints_nothing.json",
+                         Path(raw))
 
     def test_the_record_is_written_where_the_settings_said_and_only_for_its_owner(self):
+        from contract.runner import FIXTURES, run_scenario
         with tempfile.TemporaryDirectory() as raw:
-            home = Path(raw)
-            path = settings(home, guard(home))
-            stopadapter.run(json.dumps({"session_id": "s"}).encode(), settings=str(path))
-            days = sorted((home / "journal").iterdir())
-            self.assertEqual(len(days), 1)
-            records = sorted(days[0].iterdir())
-            self.assertEqual(len(records), 1)
-            self.assertRegex(records[0].name, stopadapter.JOURNAL_NAME)
-            self.assertEqual(stat.S_IMODE(records[0].stat().st_mode), 0o600)
-            written = json.loads(records[0].read_text(encoding="utf-8"))
-            self.assertEqual(written["adapterOutcome"], stopadapter.GUARD_ANSWERED)
-            self.assertEqual(written["event"], stopadapter.EVENT)
+            run_scenario(FIXTURES / "hook" /
+                         "test_stop_adapter__test_the_record_is_written_where_the_settings_said_and_only_for_its_owner.json",
+                         Path(raw))
 
     def test_a_payload_it_cannot_parse_is_recorded_rather_than_lost(self):
+        from contract.runner import FIXTURES, run_scenario
         with tempfile.TemporaryDirectory() as raw:
-            home = Path(raw)
-            path = settings(home, guard(home))
-            self.assertIsNone(stopadapter.run(b"not json", settings=str(path)))
-            record = next(next((home / "journal").iterdir()).iterdir())
-            written = json.loads(record.read_text(encoding="utf-8"))
-            self.assertEqual(written["adapterOutcome"], stopadapter.STDIN_NOT_JSON)
+            run_scenario(FIXTURES / "hook" /
+                         "test_stop_adapter__test_a_payload_it_cannot_parse_is_recorded_rather_than_lost.json",
+                         Path(raw))
 
     def test_absent_settings_release_in_silence(self):
+        from contract.runner import FIXTURES, run_scenario
         with tempfile.TemporaryDirectory() as raw:
-            self.assertIsNone(stopadapter.run(b"{}", settings=str(Path(raw) / "nothing.json")))
+            run_scenario(FIXTURES / "hook" / "test_stop_adapter__test_absent_settings_release_in_silence.json",
+                         Path(raw))
 
     def test_the_entry_point_exits_zero_and_says_nothing_on_stderr(self):
-        """Run as the console script does, because exit 2 is the host's blocking code."""
+        from contract.runner import FIXTURES, run_scenario
         with tempfile.TemporaryDirectory() as raw:
-            home = Path(raw)
-            path = settings(home, guard(home, decision="block"))
-            done = subprocess.run(
-                [sys.executable, "-c",
-                 "from codex_session_relay import stopadapter; stopadapter.main()", str(path)],
-                input=json.dumps({"session_id": "s"}).encode(),
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60,
-                env={**os.environ, "PYTHONPATH": str(Path(stopadapter.__file__).parents[1])},
-            )
-            self.assertEqual(done.returncode, 0)
-            self.assertEqual(done.stderr, b"")
-            self.assertEqual(json.loads(done.stdout)["decision"], "block")
+            run_scenario(FIXTURES / "hook" /
+                         "test_stop_adapter__test_the_entry_point_exits_zero_and_says_nothing_on_stderr.json",
+                         Path(raw))
 
     def test_a_broken_runtime_never_holds_the_turn(self):
+        from contract.runner import FIXTURES, run_scenario
         with tempfile.TemporaryDirectory() as raw:
-            home = Path(raw)
-            path = settings(home, home / "does-not-exist")
-            self.assertIsNone(stopadapter.run(b"{}", settings=str(path)))
-            record = next(next((home / "journal").iterdir()).iterdir())
-            written = json.loads(record.read_text(encoding="utf-8"))
-            self.assertEqual(written["adapterOutcome"], stopadapter.GUARD_UNREACHABLE)
-            self.assertFalse(written["held"])
+            run_scenario(FIXTURES / "hook" / "test_stop_adapter__test_a_broken_runtime_never_holds_the_turn.json",
+                         Path(raw))
 
 
 # ----------------------------------------------------------------- one accepted record per Stop event
@@ -284,36 +259,19 @@ class StopEventAcceptanceTests(unittest.TestCase):
         return stop_payload(stop, self.transcript, self.home)
 
     def test_the_same_stop_replayed_is_accepted_once_and_asked_about_once(self):
-        path = self.arrange()
-        payload = self.at_stop(0)
-        first, second = fire(path, payload), fire(path, payload)
-        self.assertEqual((first.returncode, second.returncode), (0, 0))
-        self.assertEqual((first.stderr, second.stderr), (b"", b""))
-        self.assertEqual(len(guard_calls(self.home)), 1,
-                         "a replayed Stop event asked the guard again")
-        written = rows(self.home)
-        self.assertEqual(len(written), 2, "every invocation still leaves a row")
-        self.assertEqual(sorted(str(r.get("acceptance")) for r in written),
-                         ["accepted", "duplicate"])
-        claims, outcomes = ledger(self.home)
-        self.assertEqual((len(claims), len(outcomes)), (1, 1))
+        from contract.runner import FIXTURES, run_scenario
+        with tempfile.TemporaryDirectory() as raw:
+            run_scenario(FIXTURES / "hook" /
+                         "test_stop_adapter__test_the_same_stop_replayed_is_accepted_once_and_asked_about_once.json",
+                         Path(raw))
 
     def test_two_registrations_answering_one_stop_at_once_accept_it_once(self):
-        payload = self.at_stop(0)
-        for round_number in range(10):
-            with self.subTest(round=round_number):
-                journal = self.home / "journal"
-                shutil.rmtree(journal, True)
-                shutil.rmtree(self.home / "crw-completion-hook", True)
-                (self.home / "guard-calls").unlink(missing_ok=True)
-                path = self.arrange()
-                answers = fire_together(path, payload)
-                self.assertEqual([code for code, _o, _e in answers], [0, 0])
-                self.assertEqual(len(guard_calls(self.home)), 1,
-                                 "two registrations on one Stop both asked the guard")
-                self.assertEqual(sorted(str(r.get("acceptance")) for r in rows(self.home)),
-                                 ["accepted", "duplicate"])
-                self.assertEqual(len(ledger(self.home)[0]), 1)
+        from contract.runner import FIXTURES, run_scenario
+        for _ in range(10):
+            with tempfile.TemporaryDirectory() as raw:
+                run_scenario(FIXTURES / "hook" /
+                             "test_stop_adapter__test_two_registrations_answering_one_stop_at_once_accept_it_once.json",
+                             Path(raw))
 
     def test_two_registrations_with_their_own_journal_roots_accept_one_stop_once(self):
         """Two registrations of one host whose settings name different journal roots: they share
@@ -381,31 +339,18 @@ class StopEventAcceptanceTests(unittest.TestCase):
         self.assertEqual(len(guard_calls(self.home)), before + 1)
 
     def test_an_identity_it_cannot_establish_is_asked_about_every_time(self):
-        path = self.arrange()
-        payload = json.dumps({"session_id": "s", "turn_id": "t", "stop_hook_active": False,
-                              "last_assistant_message": "done"}).encode("utf-8")
-        fire(path, payload)
-        fire(path, payload)
-        self.assertEqual(len(guard_calls(self.home)), 2)
-        written = rows(self.home)
-        self.assertEqual([r.get("acceptance") for r in written], ["unestablished"] * 2)
-        self.assertEqual({(r.get("eventIdentity") or {}).get("reason") for r in written},
-                         {"transcript_path_missing"})
-        self.assertEqual(ledger(self.home), ([], []))
+        from contract.runner import FIXTURES, run_scenario
+        with tempfile.TemporaryDirectory() as raw:
+            run_scenario(FIXTURES / "hook" /
+                         "test_stop_adapter__test_an_identity_it_cannot_establish_is_asked_about_every_time.json",
+                         Path(raw))
 
     def test_a_claim_whose_owner_died_is_not_answered_twice(self):
-        path = self.arrange(die_first=True)
-        payload = self.at_stop(0)
-        killed = fire(path, payload)
-        self.assertEqual(killed.returncode, -9)
-        again = fire(path, payload)
-        self.assertEqual(again.returncode, 0)
-        self.assertEqual(again.stdout, b"")
-        self.assertEqual(len(guard_calls(self.home)), 1)
-        claims, outcomes = ledger(self.home)
-        self.assertEqual((len(claims), len(outcomes)), (1, 0),
-                         "the claim stays and names no outcome")
-        self.assertEqual([r.get("acceptance") for r in rows(self.home)], ["duplicate"])
+        from contract.runner import FIXTURES, run_scenario
+        with tempfile.TemporaryDirectory() as raw:
+            run_scenario(FIXTURES / "hook" /
+                         "test_stop_adapter__test_a_claim_whose_owner_died_is_not_answered_twice.json",
+                         Path(raw))
 
     def test_a_newer_input_with_no_answer_leaves_the_identity_unestablished(self):
         """A transcript whose newest item for the turn is a continuation prompt does not show this

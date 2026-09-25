@@ -1,0 +1,33 @@
+{
+  "given": {
+    "relay": {
+      "stdout": ""
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "relayExecutable",
+          "value"
+        ],
+        "value": "PRESENT"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "guardEvaluateOffered",
+          "value"
+        ],
+        "value": "guard_rejected_the_call"
+      }
+    ]
+  }
+}

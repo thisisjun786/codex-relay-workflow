@@ -1,0 +1,44 @@
+{
+  "given": {
+    "settings": false,
+    "files": {
+      "crw-hook.json": "{}",
+      "hooks.json": "{\"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"${PYTHON} ${ENTRY} crw-hook.json\", \"timeout\": 10}]}]}}"
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "configuration",
+          "value"
+        ],
+        "value": "registration_names_a_relative_settings_path"
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "status",
+          "configuration",
+          "evidence"
+        ],
+        "value": "each session's workspace"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "relayExecutable",
+          "value"
+        ],
+        "value": "not_read"
+      }
+    ]
+  }
+}

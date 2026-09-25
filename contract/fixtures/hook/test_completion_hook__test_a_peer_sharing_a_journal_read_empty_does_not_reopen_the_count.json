@@ -1,0 +1,69 @@
+{
+  "given": {
+    "settings": false,
+    "relay": {
+      "stdout": "{\"decision\": \"release\", \"state\": \"unmanaged\", \"observation\": \"unmanaged\", \"reason\": \"No marker names this workspace.\", \"assignmentId\": null, \"counters\": {}, \"recordedAs\": null, \"hook_output\": {}}"
+    },
+    "files": {
+      "crw-completion-hook.json": "{\"configVersion\": 1, \"event\": \"Stop\", \"relayExecutable\": \"${HOME}/codex-session-relay\", \"markerRoot\": \"${HOME}/marker\", \"dbPath\": null, \"mode\": \"observe\", \"timeoutSeconds\": 5, \"journalRoot\": \"${HOME}/journal\", \"journalPolicy\": \"every_invocation\", \"installedBy\": \"CRW-100\", \"isolationAssertedBy\": null}",
+      "hooks.json": "{\"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"${PYTHON} ${ENTRY} ${HOME}/crw-completion-hook.json\", \"timeout\": 10}, {\"type\": \"command\", \"command\": \"./python ${ENTRY} ${HOME}/other-settings.json\", \"timeout\": 10}]}]}}",
+      "other-settings.json": "{\"configVersion\": 1, \"event\": \"Stop\", \"relayExecutable\": \"${HOME}/codex-session-relay\", \"markerRoot\": \"${HOME}/marker\", \"dbPath\": null, \"mode\": \"observe\", \"timeoutSeconds\": 5, \"journalRoot\": \"${HOME}/journal\", \"journalPolicy\": \"every_invocation\", \"installedBy\": \"CRW-100\", \"isolationAssertedBy\": null}"
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "length",
+        "path": [
+          "status",
+          "configuration",
+          "namedSettings"
+        ],
+        "value": 2
+      },
+      {
+        "kind": "same",
+        "path": [
+          "status",
+          "configuration",
+          "namedSettings",
+          1,
+          "journalRoot"
+        ],
+        "other": [
+          "status",
+          "configuration",
+          "namedSettings",
+          0,
+          "journalRoot"
+        ]
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "firingRecordAbsence",
+          "candidates",
+          1,
+          "cause"
+        ],
+        "value": "nothing_recorded"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "firingRecordAbsence",
+          "candidates",
+          1,
+          "standing"
+        ],
+        "value": "established"
+      }
+    ]
+  }
+}

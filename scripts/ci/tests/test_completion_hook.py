@@ -168,69 +168,38 @@ def why_no_record(directory):
     return completion.status(codex_home=directory, environ={}).get("firingRecordAbsence", {})
 
 
+def run_contract(name, *params):
+    """Replay the named scenario, or each of its parameter ids, through the checkout Python hook."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("crw_contract_corpus", ROOT / "conftest.py")
+    corpus = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(corpus)
+    for stem in [name + "__" + param for param in params] or [name]:
+        with tempfile.TemporaryDirectory() as temporary:
+            corpus.run_scenario(corpus.FIXTURES / "hook" /
+                                ("test_completion_hook__" + stem + ".json"), Path(temporary))
+
+
 class TheCallToTheGuard(unittest.TestCase):
     """Criterion 1: the confirmed event and output contract, and the guard's own flags."""
 
     def test_the_payload_reaches_the_guard_unchanged(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            seen = Path(temporary) / "seen.json"
-            fake_relay(temporary, stdout=json.dumps(RELEASED), record=seen)
-            settings(temporary)
-            answer = completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary,
-                                    environ={})
-            call = json.loads(seen.read_text(encoding="utf-8"))
-        self.assertIsNone(answer, "a release prints nothing at all")
-        self.assertEqual(json.loads(call["stdin"]), STOP,
-                         "the guard is handed what the host delivered, not a reconstruction")
-        self.assertEqual(call["argv"][0], completion.GUARD_COMMAND)
+        run_contract("test_the_payload_reaches_the_guard_unchanged")
 
     def test_the_marker_root_is_always_named_and_the_clock_never_is(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            seen = Path(temporary) / "seen.json"
-            fake_relay(temporary, stdout=json.dumps(RELEASED), record=seen)
-            settings(temporary)
-            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
-            call = json.loads(seen.read_text(encoding="utf-8"))
-        self.assertIn("--marker-root", call["argv"],
-                      "the host process does not carry the coordinator's environment, so a root"
-                      " left unnamed would resolve somewhere else and read every workspace as"
-                      " unmanaged")
-        self.assertNotIn("--now", call["argv"], "the time a decision is made is the guard's")
-        self.assertNotIn("--db-path", call["argv"],
-                         "an unconfigured database must stay unnamed, or the dbPath the"
-                         " coordinator recorded in its own intent becomes unreachable")
-        self.assertNotIn("--mode", call["argv"], "observe is the guard's own default")
+        run_contract("test_the_marker_root_is_always_named_and_the_clock_never_is")
 
     def test_a_configured_database_and_hold_mode_are_named(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            seen = Path(temporary) / "seen.json"
-            fake_relay(temporary, stdout=json.dumps(RELEASED), record=seen)
-            settings(temporary, dbPath="/tmp/relay.sqlite", mode=completion.HOLD,
-                     isolationAssertedBy="the coordinator, for this test")
-            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
-            call = json.loads(seen.read_text(encoding="utf-8"))
-        self.assertIn("--db-path", call["argv"])
-        self.assertEqual(call["argv"][call["argv"].index("--mode") + 1], completion.HOLD)
+        run_contract("test_a_configured_database_and_hold_mode_are_named")
 
     def test_a_held_turn_prints_the_block_the_guard_produced(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            fake_relay(temporary, stdout=json.dumps(HELD))
-            settings(temporary)
-            answer = completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary,
-                                    environ={})
-        self.assertEqual(json.loads(answer),
-                         {"decision": "block", "reason": HELD["hook_output"]["reason"],
-                          "continue": True})
+        run_contract("test_a_held_turn_prints_the_block_the_guard_produced")
 
     def test_a_block_carrying_no_prompt_is_not_delivered(self):
         """The host reports a block with no reason as a failed run that continues nothing, so
         delivering one would spend a turn's hold on a prompt the model never sees."""
-        for answer in ({"decision": "block", "continue": True},
-                       {"decision": "block", "reason": "   ", "continue": True},
-                       {"decision": "allow", "reason": "x"}):
-            with self.subTest(answer=answer):
-                self.assertIsNone(completion.hook_output({"decision": "block",
-                                                          "hook_output": answer}))
+        run_contract("test_a_block_carrying_no_prompt_is_not_delivered", "no_reason",
+                     "blank_reason", "allow_decision")
 
 
 class OnlyAVerdictThatAgreesWithItselfIsActedOn(unittest.TestCase):
@@ -238,29 +207,17 @@ class OnlyAVerdictThatAgreesWithItselfIsActedOn(unittest.TestCase):
     would deliver a hold nobody decided."""
 
     def test_a_verdict_that_releases_while_its_answer_holds_is_not_honoured(self):
-        verdict = {"decision": "release",
-                   "hook_output": {"decision": "block", "reason": "retry", "continue": False}}
-        self.assertTrue(completion.verdict_complaints(verdict))
-        self.assertIsNone(completion.hook_output(verdict),
-                          "the nested half alone must not become a block")
-        self.assertEqual(
-            completion.outcome_of({"ending": completion.EXITED, "code": completion.GUARD_EXIT_OK},
-                                  *completion.read_guard_stdout(json.dumps(verdict))),
-            completion.GUARD_VERDICT_INCOMPLETE)
+        run_contract("test_a_verdict_that_releases_while_its_answer_holds_is_not_honoured")
 
     def test_a_continuation_is_never_manufactured(self):
-        verdict = {"decision": "block",
-                   "hook_output": {"decision": "block", "reason": "r", "continue": False}}
-        self.assertTrue(completion.verdict_complaints(verdict))
-        self.assertIsNone(completion.hook_output(verdict))
+        run_contract("test_a_continuation_is_never_manufactured")
 
     def test_a_hold_with_nothing_for_the_host_to_act_on_is_a_disagreement(self):
-        self.assertTrue(completion.verdict_complaints({"decision": "block", "hook_output": {}}))
+        run_contract("test_a_hold_with_nothing_for_the_host_to_act_on_is_a_disagreement")
 
     def test_the_release_the_guard_actually_produces_still_agrees(self):
-        self.assertEqual(completion.verdict_complaints(RELEASED), [])
-        self.assertEqual(completion.verdict_complaints(HELD), [])
-        self.assertIsNotNone(completion.hook_output(HELD))
+        run_contract("test_the_release_the_guard_actually_produces_still_agrees", "released",
+                     "held")
 
 
 class EveryRecordedPathIsAbsolute(unittest.TestCase):
@@ -276,12 +233,7 @@ class EveryRecordedPathIsAbsolute(unittest.TestCase):
                 self.assertTrue(os.path.isabs(document[field]), document[field])
 
     def test_a_relative_path_is_refused_rather_than_resolved_in_the_workspace(self):
-        document = completion.configuration(relay="/r", marker_root="/m", codex_home="/h",
-                                            environ={})
-        document["relayExecutable"] = "codex-session-relay"
-        found = completion.complaints(document)
-        self.assertTrue(found)
-        self.assertIn("absolute", found[0])
+        run_contract("test_a_relative_path_is_refused_rather_than_resolved_in_the_workspace")
 
     def test_the_pointer_is_recorded_as_a_pointer_and_not_as_its_target(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -330,17 +282,8 @@ class CouldNotLookIsNotNotThere(unittest.TestCase):
     """Path.is_file answers false for both, which sends the repair to the wrong place."""
 
     def test_the_four_states_are_four_answers(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
-            (home / "a-file").write_text("", encoding="utf-8")
-            (home / "a-dir").mkdir()
-            self.assertEqual(completion.presence(home / "a-file", "x")["value"], reading.PRESENT)
-            self.assertEqual(completion.presence(home / "nothing", "x")["value"], reading.ABSENT)
-            self.assertEqual(completion.presence(home / "a-dir", "x")["value"],
-                             reading.UNREADABLE, "a directory where a file belongs is neither")
-            self.assertEqual(
-                completion.presence(home / "a-dir", "x", directory=True)["value"],
-                reading.PRESENT)
+        run_contract("test_the_four_states_are_four_answers", "file", "nothing",
+                     "directory_as_file", "directory")
 
     def test_a_runtime_that_cannot_be_reached_is_not_reported_as_missing(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -365,56 +308,21 @@ class CouldNotLookIsNotNotThere(unittest.TestCase):
 
 class TheSettingsVersionIsAnActualBoundary(unittest.TestCase):
     def test_a_document_from_another_version_is_malformed_rather_than_acted_on(self):
-        document = completion.configuration(relay="/r", marker_root="/m", codex_home="/h",
-                                            environ={})
-        self.assertEqual(completion.complaints(document), [])
-        document["configVersion"] = completion.CONFIG_VERSION + 1
-        self.assertTrue(completion.complaints(document))
-        del document["configVersion"]
-        self.assertTrue(completion.complaints(document))
+        run_contract("test_a_document_from_another_version_is_malformed_rather_than_acted_on", "current",
+                     "next", "missing")
 
 
 class TheJournalCountMeansInvocations(unittest.TestCase):
     def test_a_file_this_hook_did_not_write_is_not_counted_as_one(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            fake_relay(temporary, stdout=json.dumps(RELEASED))
-            settings(temporary)
-            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
-            root = Path(temporary) / "journal"
-            day = sorted(root.glob("*"))[0]
-            (day / "notes.txt").write_text("someone else's", encoding="utf-8")
-            (day / "readme.json").write_text("{}", encoding="utf-8")
-            (root / "scratch").mkdir()
-            (root / "scratch" / "x.json").write_text("{}", encoding="utf-8")
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["firingJournal"]["value"], "1",
-                         "the count is labelled invocations this hook recorded, so it counts"
-                         " the records this hook writes and nothing else")
+        run_contract("test_a_file_this_hook_did_not_write_is_not_counted_as_one")
 
 
 class TheBudgetMarginIsShownRatherThanAsserted(unittest.TestCase):
     def test_both_numbers_and_their_margin_are_reported(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
-            args = argparse.Namespace(
-                codex_home=str(home), event=None, hook_command=None, adapter="completion",
-                dest=None, relay_command=str(home / "codex-session-relay"),
-                marker_root=str(home / "marker"), db_path=None,
-                journal_root=str(home / "journal"), python=sys.executable,
-                mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-37", apply=True)
-            with mock.patch.object(runtime_install, "emit"):
-                runtime_install.cmd_hook(args)
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["budget"]["value"], "5")
-        self.assertEqual(found["budget"]["guardBudgetSeconds"], 5)
-        self.assertEqual(found["budget"]["registeredTimeoutSeconds"], [10])
+        run_contract("test_both_numbers_and_their_margin_are_reported")
 
     def test_with_no_registration_the_margin_is_not_read_rather_than_guessed(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            fake_relay(temporary, stdout=json.dumps(RELEASED))
-            settings(temporary)
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["budget"]["value"], completion.NOT_READ)
+        run_contract("test_with_no_registration_the_margin_is_not_read_rather_than_guessed")
 
 
 class NoTurnIsEverCostByThisAdapter(unittest.TestCase):
@@ -427,61 +335,19 @@ class NoTurnIsEverCostByThisAdapter(unittest.TestCase):
             env={**os.environ, "CODEX_HOME": str(temporary)})
 
     def test_the_entry_point_exits_zero_and_stays_silent_when_the_relay_rejects_the_call(self):
-        """The case that actually occurs: a relay built before the guard existed. Its argument
-        parser exits 2 with a usage message, and exit 2 is the host's blocking code."""
-        with tempfile.TemporaryDirectory() as temporary:
-            fake_relay(temporary, stdout="", code=2)
-            settings(temporary)
-            done = self._entry_point(temporary, json.dumps(STOP).encode("utf-8"))
-        self.assertEqual(done.returncode, 0, "exit 2 from anything inside must not escape")
-        self.assertEqual(done.stdout, b"", "a turn is not held because a runtime is too old")
-        self.assertEqual(done.stderr, b"", "stderr is the host's other continuation channel")
+        run_contract("test_the_entry_point_exits_zero_and_stays_silent_when_the_relay_rejects_the_call")
 
     def test_the_entry_point_exits_zero_on_a_payload_that_is_not_json(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            fake_relay(temporary, stdout=json.dumps(RELEASED))
-            settings(temporary)
-            done = self._entry_point(temporary, b"not json at all")
-        self.assertEqual(done.returncode, 0)
-        self.assertEqual(done.stdout, b"")
-        self.assertEqual(done.stderr, b"")
+        run_contract("test_the_entry_point_exits_zero_on_a_payload_that_is_not_json")
 
     def test_the_entry_point_exits_zero_with_no_settings_at_all(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            done = self._entry_point(temporary, json.dumps(STOP).encode("utf-8"))
-        self.assertEqual(done.returncode, 0)
-        self.assertEqual(done.stdout, b"")
+        run_contract("test_the_entry_point_exits_zero_with_no_settings_at_all")
 
     def test_the_entry_point_parses_no_arguments(self):
-        """A hook file can carry a flag this adapter never had. argparse would exit 2 on it,
-        and the host would read that as a hold with a usage message for its prompt."""
-        with tempfile.TemporaryDirectory() as temporary:
-            fake_relay(temporary, stdout=json.dumps(RELEASED))
-            settings(temporary)
-            done = subprocess.run(
-                [sys.executable, str(ENTRY_POINT), "--some-flag-from-an-older-install"],
-                input=json.dumps(STOP).encode("utf-8"), stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE, timeout=60,
-                env={**os.environ, "CODEX_HOME": str(temporary)})
-        self.assertEqual(done.returncode, 0)
-        self.assertEqual(done.stderr, b"")
+        run_contract("test_the_entry_point_parses_no_arguments")
 
     def test_a_guard_that_never_answers_is_killed_and_the_turn_ends(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            fake_relay(temporary, stdout=json.dumps(HELD), sleep=10)
-            settings(temporary, timeoutSeconds=1)
-            started = time.monotonic()
-            answer = completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary,
-                                    environ={})
-            elapsed = time.monotonic() - started
-            records = journalled(temporary)
-        self.assertIsNone(answer)
-        self.assertEqual(records[0]["adapterOutcome"], completion.GUARD_TIMED_OUT)
-        self.assertEqual(records[0]["processEnding"], completion.TIMED_OUT)
-        self.assertLess(elapsed, 5,
-                        "the whole timeout path stays near the budget, because a second full"
-                        " wait is the window in which the host kills this process and the"
-                        " timeout goes unrecorded")
+        run_contract("test_a_guard_that_never_answers_is_killed_and_the_turn_ends")
 
     def test_no_answer_this_adapter_gives_by_itself_holds_a_turn(self):
         held = [outcome for outcome in completion.OUTCOMES if outcome in completion.ANSWERED]
@@ -498,69 +364,32 @@ class FailuresStayApart(unittest.TestCase):
         """Both exit 2. One is the relay declining a request it understood; the other is its
         argument parser refusing before any command ran, which is what a runtime without this
         subcommand looks like. They are repaired in different places."""
-        refused = completion.outcome_of(
-            {"ending": completion.EXITED, "code": completion.GUARD_EXIT_REFUSED},
-            *completion.read_guard_stdout(json.dumps({"error": "refused", "reason": "x"})))
-        rejected = completion.outcome_of(
-            {"ending": completion.EXITED, "code": completion.GUARD_EXIT_REFUSED},
-            *completion.read_guard_stdout(""))
-        self.assertEqual(refused, completion.GUARD_REFUSED)
-        self.assertEqual(rejected, completion.GUARD_REJECTED_THE_CALL)
-        self.assertNotEqual(refused, rejected)
+        run_contract("test_a_refused_request_and_a_rejected_call_are_different_answers", "refused",
+                     "rejected")
 
     def test_every_way_of_failing_to_ask_has_its_own_answer(self):
-        cases = [
-            ({"ending": completion.NOT_STARTED}, "", completion.GUARD_UNREACHABLE),
-            ({"ending": completion.TIMED_OUT}, "", completion.GUARD_TIMED_OUT),
-            ({"ending": completion.SIGNALLED}, "", completion.GUARD_SIGNALLED),
-            ({"ending": completion.EXITED, "code": completion.GUARD_EXIT_HOST},
-             json.dumps({"error": "host"}), completion.GUARD_HOST_ERROR),
-            ({"ending": completion.EXITED, "code": completion.GUARD_EXIT_USAGE},
-             json.dumps({"error": "usage"}), completion.GUARD_USAGE_ERROR),
-            ({"ending": completion.EXITED, "code": completion.GUARD_EXIT_OK},
-             "this is not json", completion.GUARD_OUTPUT_UNREADABLE),
-            ({"ending": completion.EXITED, "code": completion.GUARD_EXIT_OK}, "",
-             completion.GUARD_SAID_NOTHING),
-            ({"ending": completion.EXITED, "code": completion.GUARD_EXIT_OK},
-             json.dumps({"decision": "release"}), completion.GUARD_VERDICT_INCOMPLETE),
-            ({"ending": completion.EXITED, "code": completion.GUARD_EXIT_OK},
-             json.dumps(RELEASED), completion.GUARD_ANSWERED),
-        ]
-        answers = []
-        for ending, said, expected in cases:
+        run_contract("test_every_way_of_failing_to_ask_has_its_own_answer", "not_started", "host",
+                     "usage", "not_json", "said_nothing", "incomplete", "answered")
+        # A guard that outlives its budget or dies by a signal: the fake relay has no knob for
+        # either, so these two rows stay in-process (runner_gaps in contract/notes).
+        for ending, expected in (({"ending": completion.TIMED_OUT}, completion.GUARD_TIMED_OUT),
+                                 ({"ending": completion.SIGNALLED}, completion.GUARD_SIGNALLED)):
             with self.subTest(expected=expected):
-                found = completion.outcome_of(ending, *completion.read_guard_stdout(said))
-                self.assertEqual(found, expected)
-                answers.append(found)
+                self.assertEqual(completion.outcome_of(ending, *completion.read_guard_stdout("")),
+                                 expected)
+        answers = [completion.GUARD_UNREACHABLE, completion.GUARD_TIMED_OUT,
+                   completion.GUARD_SIGNALLED, completion.GUARD_HOST_ERROR,
+                   completion.GUARD_USAGE_ERROR, completion.GUARD_OUTPUT_UNREADABLE,
+                   completion.GUARD_SAID_NOTHING, completion.GUARD_VERDICT_INCOMPLETE,
+                   completion.GUARD_ANSWERED]
         self.assertEqual(len(set(answers)), len(answers), "no two of these share an answer")
 
     def test_a_runtime_that_is_not_there_names_why(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            settings(temporary)  # no relay was ever written
-            answer = completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary,
-                                    environ={})
-            records = journalled(temporary)
-        self.assertIsNone(answer)
-        self.assertEqual(records[0]["adapterOutcome"], completion.GUARD_UNREACHABLE)
-        self.assertEqual(records[0]["errno"], "ENOENT",
-                         "a runtime that is gone and one that cannot be executed are"
-                         " different repairs")
+        run_contract("test_a_runtime_that_is_not_there_names_why")
 
     def test_settings_give_four_answers_and_not_one(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
-            path = completion.configuration_path(home)
-            _value, absent, _detail, _found = completion.read_configuration(path)
-            path.write_text("{ not json", encoding="utf-8")
-            _value, unreadable, _detail, _found = completion.read_configuration(path)
-            path.write_text(json.dumps({"relayExecutable": "/r", "markerRoot": "/m",
-                                        "mode": "whatever"}), encoding="utf-8")
-            _value, malformed, detail, _found = completion.read_configuration(path)
-        self.assertEqual(absent, completion.CONFIG_ABSENT)
-        self.assertEqual(unreadable, completion.CONFIG_UNREADABLE)
-        self.assertEqual(malformed, completion.CONFIG_MALFORMED)
-        self.assertIn("mode", detail)
-        self.assertEqual(len({absent, unreadable, malformed}), 3)
+        run_contract("test_settings_give_four_answers_and_not_one", "absent", "unreadable",
+                     "malformed")
 
     def test_the_settings_states_come_from_the_module_that_owns_them(self):
         self.assertEqual(set(completion.CONFIG_OUTCOMES), set(reading.UNUSABLE) | {reading.ABSENT})
@@ -570,139 +399,51 @@ class WhatIsRecordedAboutThisHookItself(unittest.TestCase):
     """Criterion 6: firing evidence this adapter owns, separate from the guard's records."""
 
     def test_an_unmanaged_workspace_still_leaves_evidence_that_the_hook_ran(self):
-        """The guard records only when it selected an assignment, so on a host with no managed
-        session it writes nothing. Without this, an empty firing record and a hook that never
-        runs at all would look identical."""
-        with tempfile.TemporaryDirectory() as temporary:
-            fake_relay(temporary, stdout=json.dumps(RELEASED))
-            settings(temporary)
-            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
-            records = journalled(temporary)
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["adapterOutcome"], completion.GUARD_ANSWERED)
-        self.assertEqual(records[0]["guardState"], "unmanaged")
-        self.assertIsNone(records[0]["guardRecordedAs"],
-                          "the guard recorded nothing, and that is reported rather than filled in")
-        self.assertFalse(records[0]["held"])
+        run_contract("test_an_unmanaged_workspace_still_leaves_evidence_that_the_hook_ran")
 
     def test_a_payload_this_hook_cannot_parse_is_still_recorded(self):
         """The one class of invocation that most needs a record was the one leaving none: the
         settings say where a record goes, so reading them second meant an unparseable payload
         was released into silence."""
+        run_contract("test_a_payload_this_hook_cannot_parse_is_still_recorded", "not_json",
+                     "not_object")
+        # No stdin at all is an in-process shape a spawned hook cannot be handed.
         with tempfile.TemporaryDirectory() as temporary:
             fake_relay(temporary, stdout=json.dumps(RELEASED))
             settings(temporary)
-            self.assertIsNone(completion.run(b"not json at all", codex_home=temporary,
-                                             environ={}))
-            self.assertIsNone(completion.run(json.dumps([1]).encode("utf-8"),
-                                             codex_home=temporary, environ={}))
             self.assertIsNone(completion.run(None, codex_home=temporary, environ={}))
             records = journalled(temporary)
-        self.assertEqual(sorted(r["adapterOutcome"] for r in records),
-                         sorted([completion.STDIN_NOT_JSON, completion.STDIN_NOT_OBJECT,
-                                 completion.STDIN_UNREADABLE]))
+        self.assertEqual([r["adapterOutcome"] for r in records], [completion.STDIN_UNREADABLE])
 
 
 class ATildeTargetIsNotExpandedByAnybody(unittest.TestCase):
     def test_a_tilde_adapter_path_is_relative_in_effect(self):
-        """The settings path this adapter expands before opening it. Its own path is handed to
-        the interpreter literally, and nothing expands a tilde on the way."""
-        with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
-            command = sys.executable + " '~/completion_hook.py'"
-            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
-                {"hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}),
-                encoding="utf-8")
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["registeredCommandTarget"]["value"],
-                         completion.REGISTRATION_RELATIVE_TARGET)
+        run_contract("test_a_tilde_adapter_path_is_relative_in_effect")
 
     def test_a_missing_absolute_target_is_reported_beside_a_relative_one(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
-            gone = completion.command_for(sys.executable, home / "gone" / "completion_hook.py")
-            loose = sys.executable + " scripts/completion_hook.py"
-            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
-                {"hooks": [{"type": "command", "command": gone, "timeout": 10}]},
-                {"hooks": [{"type": "command", "command": loose, "timeout": 10}]}]}}),
-                encoding="utf-8")
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["registeredCommandTarget"]["value"], reading.ABSENT,
-                         "one unjudgeable entry must not hide a broken copy beside it")
-        self.assertEqual(found["registeredCommandTarget"]["relativeTargets"],
-                         ["scripts/completion_hook.py"])
+        run_contract("test_a_missing_absolute_target_is_reported_beside_a_relative_one")
 
     def test_one_registration_naming_settings_and_one_not_is_ambiguous(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
-            named = completion.command_for(sys.executable, str(ENTRY_POINT), home / "a.json")
-            silent = completion.command_for(sys.executable, str(ENTRY_POINT))
-            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
-                {"hooks": [{"type": "command", "command": named, "timeout": 10}]},
-                {"hooks": [{"type": "command", "command": silent, "timeout": 10}]}]}}),
-                encoding="utf-8")
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["configuration"]["value"], completion.REGISTRATION_AMBIGUOUS,
-                         "one path and one silence is two different files")
+        run_contract("test_one_registration_naming_settings_and_one_not_is_ambiguous")
 
     def test_the_guards_own_answer_is_carried_verbatim_and_not_re_derived(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            fake_relay(temporary, stdout=json.dumps(HELD))
-            settings(temporary)
-            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
-            record = journalled(temporary)[0]
-        self.assertEqual(record["guardState"], HELD["state"])
-        self.assertEqual(record["guardDecision"], HELD["decision"])
-        self.assertEqual(record["assignmentId"], HELD["assignmentId"])
-        self.assertEqual(record["guardRecordedAs"], HELD["recordedAs"])
-        self.assertTrue(record["held"])
-        self.assertIn("elapsedMs", record)
+        run_contract("test_the_guards_own_answer_is_carried_verbatim_and_not_re_derived")
 
 
 class RegistrationIsNotFiring(unittest.TestCase):
     """Criterion 6: the two are separate cells, and neither is derived from the other."""
 
     def test_a_present_runtime_that_cannot_answer_is_its_own_cell(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            fake_relay(temporary, stdout="", code=2)  # a relay built before the guard existed
-            settings(temporary)
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["relayExecutable"]["value"], reading.PRESENT)
-        self.assertEqual(found["guardEvaluateOffered"]["value"], completion.GUARD_REJECTED_THE_CALL)
-        self.assertNotEqual(found["relayExecutable"]["value"],
-                            found["guardEvaluateOffered"]["value"],
-                            "merging these would report a hook that cannot work as working")
+        run_contract("test_a_present_runtime_that_cannot_answer_is_its_own_cell")
 
     def test_what_was_not_asked_is_never_reported_as_nothing_being_there(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            found = completion.status(codex_home=temporary, environ={})
-        for cell in ("hostTrust", "guardRecords", "daemon", "firingJournal"):
-            with self.subTest(cell=cell):
-                self.assertEqual(found[cell]["value"], completion.NOT_READ)
-                self.assertTrue(found[cell]["evidence"])
-        self.assertEqual(found["configuration"]["value"], completion.CONFIG_ABSENT,
-                         "with no settings, the journal cell says nobody could tell where this"
-                         " hook would record, which is not the same as it having recorded"
-                         " nothing")
+        run_contract("test_what_was_not_asked_is_never_reported_as_nothing_being_there")
 
     def test_a_configured_journal_that_is_not_there_yet_is_an_answer(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            fake_relay(temporary, stdout=json.dumps(RELEASED))
-            settings(temporary)
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["firingJournal"]["value"], reading.ABSENT,
-                         "settings name a journal and nothing has been written into it yet,"
-                         " which is a different answer from not knowing where to look")
+        run_contract("test_a_configured_journal_that_is_not_there_yet_is_an_answer")
 
     def test_the_journal_policy_travels_with_its_count(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            fake_relay(temporary, stdout=json.dumps(RELEASED))
-            settings(temporary)
-            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["firingJournal"]["value"], "1")
-        self.assertEqual(found["firingJournal"]["journalPolicy"], completion.EVERY_INVOCATION,
-                         "a count read without its policy cannot be compared with anything")
+        run_contract("test_the_journal_policy_travels_with_its_count")
 
     def test_a_registration_is_reported_apart_from_every_firing_question(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -832,17 +573,13 @@ class HoldingNeedsTheGrantItDependsOn(unittest.TestCase):
     that sets the mode without it turns an unstated premise into an enforcement decision."""
 
     def test_hold_without_a_stated_grant_is_malformed(self):
-        document = completion.configuration(relay="/r", marker_root="/m", codex_home="/h",
-                                            mode=completion.HOLD, environ={})
-        found = completion.complaints(document)
-        self.assertTrue(found)
-        self.assertIn("isolationAssertedBy", found[0])
+        run_contract("test_hold_without_a_stated_grant_is_malformed")
 
     def test_hold_with_a_stated_grant_records_who_stated_it(self):
+        run_contract("test_hold_with_a_stated_grant_records_who_stated_it")
         document = completion.configuration(relay="/r", marker_root="/m", codex_home="/h",
                                             mode=completion.HOLD, isolation="CRW-37 operator",
                                             environ={})
-        self.assertEqual(completion.complaints(document), [])
         self.assertEqual(document["isolationAssertedBy"], "CRW-37 operator")
 
     def test_observing_needs_nothing_which_is_why_it_is_the_default(self):
@@ -1132,35 +869,20 @@ class AJournalRecordIsWholeOrAbsent(unittest.TestCase):
 
     def test_a_budget_that_is_not_a_finite_number_is_refused(self):
         """1e999 parses as a valid JSON number and arrives as inf, which means no timeout."""
+        run_contract("test_a_budget_that_is_not_a_finite_number_is_refused")
         self.assertTrue(completion.budget_complaints(float("inf"), 10))
         self.assertTrue(completion.budget_complaints(float("nan"), 10))
-        document = completion.configuration(relay="/r", marker_root="/m", codex_home="/h",
-                                            environ={})
-        document["timeoutSeconds"] = json.loads("1e999")
-        found = completion.complaints(document)
-        self.assertTrue(found)
-        self.assertIn("timeoutSeconds", found[0])
 
     def test_an_integer_beyond_float_range_is_refused_rather_than_raising(self):
         """A guard against a bad value must not itself be one: converting an arbitrary-precision
         integer to a float raises, and the read then fails where it should have answered."""
-        enormous = 10 ** 400
-        self.assertTrue(completion.budget_complaints(enormous, 10))
-        document = completion.configuration(relay="/r", marker_root="/m", codex_home="/h",
-                                            environ={})
-        document["timeoutSeconds"] = enormous
-        found = completion.complaints(document)
-        self.assertTrue(found)
-        self.assertIn("timeoutSeconds", found[0])
+        run_contract("test_an_integer_beyond_float_range_is_refused_rather_than_raising")
+        self.assertTrue(completion.budget_complaints(10 ** 400, 10))
 
     def test_the_seconds_test_accepts_what_it_should_and_nothing_else(self):
-        for good in (1, 5, 0.5, completion.MAX_TIMEOUT_SECONDS):
-            with self.subTest(good=good):
-                self.assertTrue(completion.usable_seconds(good))
-        for bad in (0, -1, True, False, "5", None, float("inf"), float("nan"), 10 ** 400,
-                    completion.MAX_TIMEOUT_SECONDS + 1):
-            with self.subTest(bad=bad):
-                self.assertFalse(completion.usable_seconds(bad))
+        run_contract("test_the_seconds_test_accepts_what_it_should_and_nothing_else", "good_1",
+                     "good_5", "good_half", "good_max", "bad_zero", "bad_negative", "bad_true",
+                     "bad_false", "bad_string", "bad_inf", "bad_nan", "bad_huge", "bad_over_max")
 
     def test_a_replacement_under_another_matcher_is_not_this_runs_work(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1222,75 +944,22 @@ class ASpellingThisCommandCannotJudgeIsSaidSo(unittest.TestCase):
     probing it answers about a program under whatever checkout the diagnosis ran from."""
 
     def test_a_relative_interpreter_path_is_reported_not_probed(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
-            command = "venv/bin/python " + shlex.quote(str(ENTRY_POINT))
-            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
-                {"hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}),
-                encoding="utf-8")
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["registeredInterpreter"]["value"], completion.WORKSPACE_DEPENDENT)
-        self.assertIn("every workspace", found["registeredInterpreter"]["evidence"])
+        run_contract("test_a_relative_interpreter_path_is_reported_not_probed")
 
     def test_a_bare_name_keeps_its_path_lookup(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
-            command = "python3 " + shlex.quote(str(ENTRY_POINT))
-            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
-                {"hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}),
-                encoding="utf-8")
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["registeredInterpreter"]["value"], reading.PRESENT,
-                         "a bare name is what the host looks up on PATH too")
+        run_contract("test_a_bare_name_keeps_its_path_lookup")
 
     def test_relative_settings_spellings_count_toward_ambiguity(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
-            one = completion.command_for(sys.executable, str(ENTRY_POINT)) + " a.json"
-            two = completion.command_for(sys.executable, str(ENTRY_POINT)) + " b.json"
-            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
-                {"hooks": [{"type": "command", "command": one, "timeout": 10}]},
-                {"hooks": [{"type": "command", "command": two, "timeout": 10}]}]}}),
-                encoding="utf-8")
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["configuration"]["value"], completion.REGISTRATION_AMBIGUOUS,
-                         "two relative spellings are two unresolved sources, not one")
+        run_contract("test_relative_settings_spellings_count_toward_ambiguity")
 
     def test_one_relative_beside_one_absolute_is_ambiguous(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
-            one = completion.command_for(sys.executable, str(ENTRY_POINT), home / "a.json")
-            two = completion.command_for(sys.executable, str(ENTRY_POINT)) + " b.json"
-            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
-                {"hooks": [{"type": "command", "command": one, "timeout": 10}]},
-                {"hooks": [{"type": "command", "command": two, "timeout": 10}]}]}}),
-                encoding="utf-8")
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["configuration"]["value"], completion.REGISTRATION_AMBIGUOUS)
+        run_contract("test_one_relative_beside_one_absolute_is_ambiguous")
 
     def test_a_single_relative_spelling_is_still_its_own_answer(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
-            only = completion.command_for(sys.executable, str(ENTRY_POINT)) + " a.json"
-            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
-                {"hooks": [{"type": "command", "command": only, "timeout": 10}]}]}}),
-                encoding="utf-8")
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["configuration"]["value"], completion.REGISTRATION_RELATIVE)
+        run_contract("test_a_single_relative_spelling_is_still_its_own_answer")
 
     def test_a_registration_naming_relative_settings_is_reported_not_guessed_at(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
-            (home / "crw-hook.json").write_text("{}", encoding="utf-8")
-            command = completion.command_for(sys.executable, str(ENTRY_POINT)) + " crw-hook.json"
-            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
-                {"hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}),
-                encoding="utf-8")
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["configuration"]["value"], completion.REGISTRATION_RELATIVE)
-        self.assertIn("each session's workspace", found["configuration"]["evidence"])
-        self.assertEqual(found["relayExecutable"]["value"], completion.NOT_READ,
-                         "nothing downstream is read from settings that could not be located")
+        run_contract("test_a_registration_naming_relative_settings_is_reported_not_guessed_at")
 
     def test_a_tilde_settings_path_is_absolute_once_the_hook_opens_it(self):
         """Calling it relative here would hide a working configuration and every cell below it."""
@@ -1318,103 +987,37 @@ class ASpellingThisCommandCannotJudgeIsSaidSo(unittest.TestCase):
     def test_status_probes_the_interpreter_the_registration_names(self):
         """A virtual environment that moved leaves the script in place and the interpreter gone:
         the host cannot start the adapter at all, and the registration still looks correct."""
-        with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
-            command = completion.command_for(str(home / "vanished-python"), str(ENTRY_POINT))
-            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
-                {"hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}),
-                encoding="utf-8")
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["registeredCommandTarget"]["value"], reading.PRESENT,
-                         "the script is there")
-        self.assertEqual(found["registeredInterpreter"]["value"], reading.ABSENT,
-                         "and the program that has to run it is not")
+        run_contract("test_status_probes_the_interpreter_the_registration_names")
 
     def test_a_working_registration_reports_both(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
-            command = completion.command_for(sys.executable, str(ENTRY_POINT))
-            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
-                {"hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}),
-                encoding="utf-8")
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["registeredCommandTarget"]["value"], reading.PRESENT)
-        self.assertEqual(found["registeredInterpreter"]["value"], reading.PRESENT)
+        run_contract("test_a_working_registration_reports_both")
 
     def test_a_bare_interpreter_name_is_resolved_the_way_the_host_resolves_it(self):
         """Reporting a PATH name absent because no file sits at that spelling would fail a
         working hook in diagnosis."""
-        with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
-            command = "python3 " + shlex.quote(str(ENTRY_POINT))
-            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
-                {"hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}),
-                encoding="utf-8")
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["registeredInterpreter"]["value"], reading.PRESENT)
-        self.assertIn("wrapper", found["registeredInterpreter"]["evidence"],
-                      "and it says what it did not follow")
+        run_contract("test_a_bare_interpreter_name_is_resolved_the_way_the_host_resolves_it")
 
 
 class OfferingIsNotExitingZero(unittest.TestCase):
     def test_a_program_that_ignores_its_arguments_is_not_offering_the_subcommand(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            fake_relay(temporary, stdout="", code=0)  # succeeds, says nothing
-            settings(temporary)
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["relayExecutable"]["value"], reading.PRESENT)
-        self.assertEqual(found["guardEvaluateOffered"]["value"],
-                         completion.GUARD_REJECTED_THE_CALL,
-                         "exit 0 alone would report a subcommand it has never heard of")
+        run_contract("test_a_program_that_ignores_its_arguments_is_not_offering_the_subcommand")
 
     def test_a_runtime_that_describes_the_subcommand_is_offering_it(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            fake_relay(temporary, stdout="usage: guard-evaluate [-h] [--marker-root ROOT]",
-                       code=0)
-            settings(temporary)
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["guardEvaluateOffered"]["value"], completion.GUARD_COMMAND)
+        run_contract("test_a_runtime_that_describes_the_subcommand_is_offering_it")
 
     def test_a_program_that_echoes_its_arguments_is_not_offering_it(self):
         """/bin/echo prints the subcommand's own name back while offering nothing."""
-        with tempfile.TemporaryDirectory() as temporary:
-            fake_relay(temporary, stdout=completion.GUARD_COMMAND + " --help", code=0)
-            settings(temporary)
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["guardEvaluateOffered"]["value"],
-                         completion.GUARD_REJECTED_THE_CALL)
+        run_contract("test_a_program_that_echoes_its_arguments_is_not_offering_it")
 
 
 class ARelativeAdapterTargetAnswersForNoFile(unittest.TestCase):
     def test_a_relative_script_path_is_reported_rather_than_resolved(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
-            command = "python3 scripts/completion_hook.py " + shlex.quote(str(home / "c.json"))
-            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
-                {"hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}),
-                encoding="utf-8")
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["registeredCommandTarget"]["value"],
-                         completion.REGISTRATION_RELATIVE_TARGET)
-        self.assertIn("each session's workspace", found["registeredCommandTarget"]["evidence"])
+        run_contract("test_a_relative_script_path_is_reported_rather_than_resolved")
 
 
 class AmbiguousRegistrationsAnswerForNobody(unittest.TestCase):
     def test_two_registrations_naming_different_settings_are_reported_as_ambiguous(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
-            one = completion.command_for(sys.executable, str(ENTRY_POINT), home / "a.json")
-            two = completion.command_for(sys.executable, str(ENTRY_POINT), home / "b.json")
-            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
-                {"hooks": [{"type": "command", "command": one, "timeout": 10}]},
-                {"hooks": [{"type": "command", "command": two, "timeout": 10}]}]}}),
-                encoding="utf-8")
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["configuration"]["value"], completion.REGISTRATION_AMBIGUOUS)
-        self.assertIn("a.json", found["configuration"]["evidence"])
-        self.assertIn("b.json", found["configuration"]["evidence"])
-        self.assertEqual(found["relayExecutable"]["value"], completion.NOT_READ,
-                         "every one of them runs, so none of them answers for the others")
+        run_contract("test_two_registrations_naming_different_settings_are_reported_as_ambiguous")
 
 
 class AnInterpreterHasToBeOne(unittest.TestCase):
@@ -1521,17 +1124,8 @@ class TheConfigOverrideIsSettledToo(unittest.TestCase):
 
 class AnUnknownDecisionIsNotARelease(unittest.TestCase):
     def test_a_verdict_deciding_something_else_entirely_is_incomplete(self):
-        self.assertTrue(completion.verdict_complaints({"decision": "banana",
-                                                       "hook_output": {}}))
-        self.assertEqual(
-            completion.outcome_of({"ending": completion.EXITED, "code": completion.GUARD_EXIT_OK},
-                                  *completion.read_guard_stdout(
-                                      json.dumps({"decision": "banana", "hook_output": {}}))),
-            completion.GUARD_VERDICT_INCOMPLETE,
-            "recording an incompatible runtime as having answered is the one reading that"
-            " hides the incompatibility")
-        self.assertEqual(completion.verdict_complaints({"decision": completion.RELEASE,
-                                                        "hook_output": {}}), [])
+        run_contract("test_a_verdict_deciding_something_else_entirely_is_incomplete", "banana",
+                     "release")
 
 
 class TheInstallerSeamContinued(unittest.TestCase):
@@ -1620,28 +1214,16 @@ class TheRegisteredCommandIsArgvAndNotText(unittest.TestCase):
                          "/usr/bin/python3 /a/completion_hook.py")
 
     def test_a_neighbouring_program_is_not_this_adapter(self):
-        self.assertIsNone(completion.names_this_adapter("/opt/not-completion_hook.py"))
-        self.assertIsNone(completion.names_this_adapter("/opt/not_completion_hook.py"))
-        self.assertEqual(completion.names_this_adapter("/usr/bin/python3 /a/completion_hook.py"),
-                         "/a/completion_hook.py")
+        run_contract("test_a_neighbouring_program_is_not_this_adapter", "dash", "underscore",
+                     "adapter")
 
     def test_a_command_that_is_not_a_command_line_names_nothing(self):
+        run_contract("test_a_command_that_is_not_a_command_line_names_nothing")
+        # The parser's own None is internal (runner_gaps: no surface).
         self.assertIsNone(completion.registered_argv("unbalanced 'quote"))
-        self.assertIsNone(completion.names_this_adapter("unbalanced 'quote"))
 
     def test_status_does_not_claim_an_unrelated_hook_as_this_adapter(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
-            impostor = home / "not-completion_hook.py"
-            impostor.write_text("", encoding="utf-8")
-            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
-                {"hooks": [{"type": "command", "command": str(impostor), "timeout": 10}]}]}}),
-                encoding="utf-8")
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["registration"]["thisAdapter"], [],
-                         "a program whose name merely contains this one is a different program")
-        self.assertEqual(found["registeredCommandTarget"]["value"], completion.NOT_READ,
-                         "and no target of somebody else's is checked as if it were ours")
+        run_contract("test_status_does_not_claim_an_unrelated_hook_as_this_adapter")
 
     def test_what_installation_writes_is_what_the_status_reader_identifies(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1814,29 +1396,13 @@ class ADanglingLinkIsSomethingRatherThanNothing(unittest.TestCase):
     happened is that its target went away, and the fact that would repair it is gone."""
 
     def test_a_broken_link_is_unreadable_and_not_absent(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
-            (home / "dangling").symlink_to(home / "never-existed")
-            found = completion.presence(home / "dangling", "the configured runtime")
-        self.assertEqual(found["value"], reading.UNREADABLE)
-        self.assertIn("target does not exist", found["evidence"])
+        run_contract("test_a_broken_link_is_unreadable_and_not_absent")
 
     def test_a_live_link_is_present(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
-            (home / "real").write_text("", encoding="utf-8")
-            (home / "link").symlink_to(home / "real")
-            self.assertEqual(completion.presence(home / "link", "x")["value"], reading.PRESENT)
+        run_contract("test_a_live_link_is_present")
 
     def test_status_reports_a_broken_pointer_as_broken(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            home = Path(temporary)
-            (home / "codex-session-relay").symlink_to(home / "gone")
-            settings(temporary)
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["relayExecutable"]["value"], reading.UNREADABLE,
-                         "an update that moved the pointer is a different repair from a"
-                         " runtime that was never installed")
+        run_contract("test_status_reports_a_broken_pointer_as_broken")
 
     def test_an_event_this_adapter_has_no_decision_for_is_refused(self):
         """The guard judges a turn ending. On any other event the payload means something else
@@ -1871,34 +1437,18 @@ class TheJournalPolicyReadsItsOwnField(unittest.TestCase):
         agreement test's faults_only case). STOP names a transcript that does not exist, so its
         answer was given WITHOUT an identity: no accepted record covers it, and faults_only keeps
         that row so the invocation is not invisible (CRW-212)."""
-        with tempfile.TemporaryDirectory() as temporary:
-            fake_relay(temporary, stdout=json.dumps(RELEASED))
-            settings(temporary, journalPolicy=completion.FAULTS_ONLY)
-            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
-            answered = journalled(temporary)
-            self.assertEqual([(r["adapterOutcome"], r["acceptance"]) for r in answered],
-                             [(completion.GUARD_ANSWERED, completion.UNESTABLISHED)],
-                             "an answer given without an identity is the one kept")
-            os.remove(Path(temporary) / "codex-session-relay")
-            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
-            records = journalled(temporary)
-        self.assertEqual(sorted(r["adapterOutcome"] for r in records),
-                         sorted([completion.GUARD_ANSWERED, completion.GUARD_UNREACHABLE]))
+        run_contract("test_faults_only_keeps_the_failures_and_drops_the_answers", "answered",
+                     "unreachable")
 
     def test_every_invocation_keeps_both(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            fake_relay(temporary, stdout=json.dumps(RELEASED))
-            settings(temporary)
-            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
-            self.assertEqual(len(journalled(temporary)), 1)
+        run_contract("test_every_invocation_keeps_both")
 
 
 class OwnershipStaysSeparate(unittest.TestCase):
     """Criterion 5: this hook's own file, and nobody else's state."""
 
     def test_the_settings_are_this_hooks_own_file(self):
-        self.assertEqual(completion.configuration_path("/home/x/.codex", environ={}).name,
-                         completion.CONFIG_NAME)
+        run_contract("test_the_settings_are_this_hooks_own_file")
 
     def test_installing_preserves_every_hook_already_registered(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1943,48 +1493,15 @@ class TheCauseOfAnAbsence(unittest.TestCase):
         return Path(temporary)
 
     def test_three_hosts_that_look_alike_answer_three_different_causes(self):
-        answers = {}
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            settings(temporary)
-            answers["never registered"] = why_no_record(temporary).get("value")
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            answers["registered, nothing recorded"] = why_no_record(temporary).get("value")
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            _first, second = second_registration(temporary, "journal-two")
-            # Actually fired, into the journal the SECOND registration names. The first
-            # registration's journal stays empty, which is the reading an operator would have
-            # taken and reported as "this hook has never run".
-            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={},
-                           settings=str(second))
-            answers["recorded elsewhere"] = why_no_record(temporary).get("value")
-
-        self.assertEqual(len(set(answers.values())), 3,
-                         "three hosts with three different repairs answered " + repr(answers))
-        self.assertEqual(answers["never registered"], firing.NOT_REGISTERED)
-        self.assertEqual(answers["registered, nothing recorded"], firing.NOTHING_RECORDED)
-        self.assertEqual(answers["recorded elsewhere"], firing.RECORDED_ON_ANOTHER_PATH)
+        run_contract("test_three_hosts_that_look_alike_answer_three_different_causes", "never_registered",
+                     "registered_nothing_recorded", "recorded_elsewhere")
 
     def test_which_of_the_two_journals_holds_the_record_does_not_change_the_answer(self):
         """No reference path, so no sort order to depend on. The reading that reports this is
         symmetric over the journals the registrations name, and a cause that changed when the
         record moved between them would be an artefact of which path sorted first."""
-        seen = {}
-        for label in ("first", "second"):
-            with tempfile.TemporaryDirectory() as temporary:
-                self._host(temporary)
-                register(temporary)
-                paths = dict(zip(("first", "second"),
-                                 second_registration(temporary, "journal-two")))
-                completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary,
-                               environ={}, settings=str(paths[label]))
-                seen[label] = why_no_record(temporary).get("value")
-        self.assertEqual(seen["first"], seen["second"], seen)
-        self.assertEqual(seen["first"], firing.RECORDED_ON_ANOTHER_PATH)
+        run_contract("test_which_of_the_two_journals_holds_the_record_does_not_change_the_answer", "first",
+                     "second")
 
     def test_a_policy_that_records_only_faults_names_both_candidates_rather_than_choosing(self):
         """The ambiguity this command genuinely has, expressed as an answer.
@@ -1993,53 +1510,22 @@ class TheCauseOfAnAbsence(unittest.TestCase):
         behind, and it is also what a hook that never fired leaves behind. Choosing either
         would be a guess, so the cell reports that the cause is unsettled and carries both.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            amend_settings(temporary, journalPolicy=completion.FAULTS_ONLY)
-            cell = why_no_record(temporary)
-        self.assertEqual(cell.get("value"), firing.CAUSE_UNREADABLE)
-        self.assertEqual(
-            sorted(entry["cause"] for entry in cell.get("candidates") or []),
-            sorted((firing.NOTHING_RECORDED, firing.POLICY_RECORDS_ONLY_FAULTS)),
-            "an unsettled cause that does not carry what is still standing has resolved the"
-            " ambiguity by omission")
+        run_contract("test_a_policy_that_records_only_faults_names_both_candidates_rather_than_choosing")
 
     def test_an_adapter_the_host_cannot_start_is_its_own_cause(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            break_the_target(temporary)
-            cell = why_no_record(temporary)
-        self.assertEqual(cell.get("value"), firing.ADAPTER_CANNOT_RUN,
-                         "an empty journal under a program the host cannot start is that"
-                         " program's absence, not a second cause beside it")
+        run_contract("test_an_adapter_the_host_cannot_start_is_its_own_cause")
 
     def test_two_repairs_are_reported_as_two_and_never_as_the_first_one_alone(self):
         """Whether the host can start the adapter is not downstream of the settings. A run that
         stopped at the first cause it found reported the deleted settings and said nothing
         about the deleted adapter beside them, and only one of those was going to be fixed."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            break_the_target(temporary)
-            completion.configuration_path(Path(temporary)).unlink()
-            cell = why_no_record(temporary)
-        self.assertEqual(cell.get("value"), firing.SEVERAL_CAUSES)
-        self.assertEqual(
-            sorted(entry["cause"] for entry in cell.get("candidates") or []),
-            sorted((firing.ADAPTER_CANNOT_RUN, firing.SETTINGS_ABSENT)))
+        run_contract("test_two_repairs_are_reported_as_two_and_never_as_the_first_one_alone")
 
     def test_a_journal_switched_off_by_policy_is_not_an_empty_one(self):
         """journal() returns without writing on no_journal whatever root is configured, so a
         host that keeps no journal by configuration must not read as one whose journal happens
         to be empty: the first says nothing at all about firing."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            amend_settings(temporary, journalPolicy=completion.NO_JOURNAL)
-            cell = why_no_record(temporary)
-        self.assertEqual(cell.get("value"), firing.JOURNALLING_OFF)
+        run_contract("test_a_journal_switched_off_by_policy_is_not_an_empty_one")
 
 
 class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
@@ -2056,206 +1542,65 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         return Path(temporary)
 
     def test_a_missing_settings_file_beside_a_usable_one_is_still_reported(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            _first, second = second_registration(temporary, "journal-two")
-            second.unlink()
-            cell = why_no_record(temporary)
-        self.assertEqual(cell.get("value"), firing.SEVERAL_CAUSES,
-                         "one usable settings file answered for a registration whose settings"
-                         " are gone, and that registration releases every invocation until"
-                         " they come back")
-        self.assertEqual(
-            sorted(entry["cause"] for entry in cell.get("candidates") or []),
-            sorted((firing.NOTHING_RECORDED, firing.SETTINGS_ABSENT)))
+        run_contract("test_a_missing_settings_file_beside_a_usable_one_is_still_reported")
 
     def test_a_rejected_settings_file_beside_a_usable_one_is_still_reported(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            _first, second = second_registration(temporary, "journal-two")
-            document = json.loads(second.read_text(encoding="utf-8"))
-            document["mode"] = "nonsense"
-            second.write_text(json.dumps(document), encoding="utf-8")
-            cell = why_no_record(temporary)
-        self.assertEqual(cell.get("value"), firing.SEVERAL_CAUSES)
-        self.assertIn(firing.SETTINGS_UNUSABLE,
-                      [entry["cause"] for entry in cell.get("candidates") or []])
+        run_contract("test_a_rejected_settings_file_beside_a_usable_one_is_still_reported")
 
     def test_one_unstartable_registration_does_not_answer_for_a_startable_one(self):
         """The adapter and interpreter cells report their worst probe, which answers "is
         anything broken" and was read as "is everything broken". The empty journal of the
         registration that CAN start was then never reported at all."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            second_registration(temporary, "journal-two")
-            path = Path(temporary) / "hooks.json"
-            document = json.loads(path.read_text(encoding="utf-8"))
-            entries = document["hooks"][completion.EVENT][0]["hooks"]
-            # Only the FIRST registration's adapter is gone. The second is untouched and runs.
-            entries[0]["command"] = entries[0]["command"].replace(
-                str(ENTRY_POINT), str(Path(temporary) / completion.ENTRY_POINT_NAME))
-            path.write_text(json.dumps(document), encoding="utf-8")
-            cell = why_no_record(temporary)
-        self.assertEqual(cell.get("value"), firing.SEVERAL_CAUSES)
-        self.assertEqual(
-            sorted(entry["cause"] for entry in cell.get("candidates") or []),
-            sorted((firing.ADAPTER_CANNOT_RUN, firing.NOTHING_RECORDED)),
-            "a registration the host cannot start is a repair, and it must not silence what"
-            " the registration beside it recorded")
+        run_contract("test_one_unstartable_registration_does_not_answer_for_a_startable_one")
 
     def test_when_nothing_can_start_the_empty_journal_is_still_not_a_second_cause(self):
         """The direction the fix must not break: with no startable registration at all, an
         empty journal is that program's absence and adapter_cannot_run is the whole repair."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            break_the_target(temporary)
-            cell = why_no_record(temporary)
-        self.assertEqual(cell.get("value"), firing.ADAPTER_CANNOT_RUN)
+        run_contract("test_when_nothing_can_start_the_empty_journal_is_still_not_a_second_cause")
 
 
     def test_an_unreachable_settings_file_is_never_reported_as_a_rejected_one(self):
         """No bytes were read, so nothing establishes that this hook's reader rejects it.
         Reporting it as unusable sends the operator to repair a file that the session opens
         perfectly well and that only this process could not reach."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            _first, second = second_registration(temporary, "journal-two")
-            with mock.patch.object(completion.reading, "read_json", side_effect=(
-                    lambda path, what, **kw: completion.reading.Reading(
-                        state=completion.reading.ACCESS_ERROR, source=path,
-                        detail="PermissionError: [Errno 13] Permission denied")
-                    if str(path) == str(second) else real_read_json(path, what, **kw))):
-                cell = why_no_record(temporary)
-        established = [entry["cause"] for entry in cell.get("candidates") or []
-                       if entry["standing"] == firing.ESTABLISHED]
-        self.assertNotIn(firing.SETTINGS_UNUSABLE, established,
-                         "a file nobody could open was ESTABLISHED as one the reader rejected,"
-                         " which recommends a repair no reading supports")
-        self.assertEqual(cell.get("value"), firing.CAUSE_UNREADABLE,
-                         "nothing was settled about that file, so the cause is not settled")
+        run_contract("test_an_unreachable_settings_file_is_never_reported_as_a_rejected_one")
 
     def test_a_registration_that_keeps_no_journal_is_reported_beside_a_peer_that_does(self):
         """A registration configured never to record can never produce firing evidence, and a
         neighbour that records normally is not evidence that it can."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            _first, second = second_registration(temporary, "journal-two")
-            document = json.loads(second.read_text(encoding="utf-8"))
-            document["journalPolicy"] = completion.NO_JOURNAL
-            second.write_text(json.dumps(document), encoding="utf-8")
-            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={},
-                           settings=str(completion.configuration_path(Path(temporary))))
-            cell = why_no_record(temporary)
-        self.assertIn(firing.JOURNALLING_OFF,
-                      [entry["cause"] for entry in cell.get("candidates") or []],
-                      "one registration records and the other is configured never to, and only"
-                      " the first was reported")
+        run_contract("test_a_registration_that_keeps_no_journal_is_reported_beside_a_peer_that_does")
 
     def test_an_unstartable_peer_does_not_make_a_working_one_look_like_another_path(self):
         """The reverse mixed case. If A can start and holds records while B cannot start and
         its journal is therefore empty, B's emptiness is wholly explained by B, and reading it
         as 'recorded on another path' invents a second story about A."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            first, _second = second_registration(temporary, "journal-two")
-            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={},
-                           settings=str(first))
-            path = Path(temporary) / "hooks.json"
-            document = json.loads(path.read_text(encoding="utf-8"))
-            entries = document["hooks"][completion.EVENT][0]["hooks"]
-            entries[1]["command"] = entries[1]["command"].replace(
-                str(ENTRY_POINT), str(Path(temporary) / completion.ENTRY_POINT_NAME))
-            path.write_text(json.dumps(document), encoding="utf-8")
-            cell = why_no_record(temporary)
-        causes = [entry["cause"] for entry in cell.get("candidates") or []]
-        self.assertNotIn(firing.RECORDED_ON_ANOTHER_PATH, causes,
-                         "an unstartable registration's necessarily empty journal was read as"
-                         " its neighbour recording somewhere else")
-        self.assertIn(firing.ADAPTER_CANNOT_RUN, causes)
+        run_contract("test_an_unstartable_peer_does_not_make_a_working_one_look_like_another_path")
 
     def test_a_relative_peer_does_not_suppress_a_known_path_s_own_cause(self):
         """record_path_unidentified is established when ANY registration spells its settings
         relatively. As a prerequisite it then blanked out every downstream cause for the
         registrations whose paths ARE known, so a peer's readably-absent settings file went
         unreported behind a spelling this command could not resolve."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            _first, second = second_registration(temporary, "journal-two")
-            second.unlink()
-            path = Path(temporary) / "hooks.json"
-            document = json.loads(path.read_text(encoding="utf-8"))
-            entries = document["hooks"][completion.EVENT][0]["hooks"]
-            # The FIRST registration now names its settings relatively; the second names an
-            # absolute path this command can read, and that file is gone.
-            entries[0]["command"] = entries[0]["command"].replace(
-                str(completion.configuration_path(Path(temporary))), "relative-settings.json")
-            path.write_text(json.dumps(document), encoding="utf-8")
-            cell = why_no_record(temporary)
-        causes = sorted(entry["cause"] for entry in cell.get("candidates") or []
-                        if entry["standing"] == firing.ESTABLISHED)
-        self.assertEqual(causes, sorted((firing.RECORD_PATH_UNIDENTIFIED,
-                                         firing.SETTINGS_ABSENT)),
-                         "a path this command could not identify hid a repair it could")
+        run_contract("test_a_relative_peer_does_not_suppress_a_known_path_s_own_cause")
 
     def test_registrations_that_name_nothing_readable_leave_the_settings_causes_unasked(self):
         """SUPPORT, not evidence of the defect: this passes before the fix too. It holds the
         direction the fix must not break — with no readable settings path at all there is no
         question for the settings causes to answer, and dropping the prerequisite must not put
         an unsupported candidate on the table."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            path = Path(temporary) / "hooks.json"
-            document = json.loads(path.read_text(encoding="utf-8"))
-            entry = document["hooks"][completion.EVENT][0]["hooks"][0]
-            entry["command"] = entry["command"].replace(
-                str(completion.configuration_path(Path(temporary))), "relative-settings.json")
-            path.write_text(json.dumps(document), encoding="utf-8")
-            cell = why_no_record(temporary)
-        self.assertEqual(cell.get("value"), firing.RECORD_PATH_UNIDENTIFIED)
+        run_contract("test_registrations_that_name_nothing_readable_leave_the_settings_causes_unasked")
 
     def test_found_records_never_stand_beside_a_repair(self):
         """records_found is the one terminal answer: it says there is no absence to explain.
         Established off the subset this command could read, it appeared beside
         record_path_unidentified and presented found records as though they were a repair."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            first, second = second_registration(temporary, "journal-two")
-            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={},
-                           settings=str(second))
-            path = Path(temporary) / "hooks.json"
-            document = json.loads(path.read_text(encoding="utf-8"))
-            document["hooks"][completion.EVENT][0]["hooks"][0]["command"] = (
-                document["hooks"][completion.EVENT][0]["hooks"][0]["command"].replace(
-                    str(first), "relative-settings.json"))
-            path.write_text(json.dumps(document), encoding="utf-8")
-            cell = why_no_record(temporary)
-        self.assertEqual(cell.get("value"), firing.RECORD_PATH_UNIDENTIFIED,
-                         "records that need no repair were reported as one of several causes")
+        run_contract("test_found_records_never_stand_beside_a_repair")
 
     def test_a_disabled_journal_survives_its_registration_being_unstartable(self):
         """Unlike an empty journal, a disabled policy is not explained by the adapter being
         unstartable: repairing the adapter still produces no firing evidence until journalling
         is switched back on, so that is a second repair and has to be said."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            amend_settings(temporary, journalPolicy=completion.NO_JOURNAL)
-            break_the_target(temporary)
-            cell = why_no_record(temporary)
-        self.assertEqual(cell.get("value"), firing.SEVERAL_CAUSES)
-        self.assertEqual(
-            sorted(entry["cause"] for entry in cell.get("candidates") or []),
-            sorted((firing.ADAPTER_CANNOT_RUN, firing.JOURNALLING_OFF)))
+        run_contract("test_a_disabled_journal_survives_its_registration_being_unstartable")
 
     def test_one_journal_read_serves_both_the_count_and_the_cause(self):
         """Reading the journal twice opened a window: a Stop landing between the two reads
@@ -2438,154 +1783,43 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         could not reach -- is neither 'starts' nor 'cannot start'. Recorded as the latter, that
         registration's journal dropped out of every question while a blocked neighbour supplied
         a settled explanation for the whole host."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            second_registration(temporary, "journal-two")
-            path = Path(temporary) / "hooks.json"
-            document = json.loads(path.read_text(encoding="utf-8"))
-            entries = document["hooks"][completion.EVENT][0]["hooks"]
-            # One registration definitively blocked: its adapter is gone.
-            entries[0]["command"] = entries[0]["command"].replace(
-                str(ENTRY_POINT), str(Path(temporary) / completion.ENTRY_POINT_NAME))
-            # The other unjudged: a relative interpreter resolves per workspace, so this
-            # command does not probe it and cannot say whether the host can start it.
-            entries[1]["command"] = "./python " + entries[1]["command"].split(" ", 1)[1]
-            path.write_text(json.dumps(document), encoding="utf-8")
-            cell = why_no_record(temporary)
-        self.assertEqual(cell.get("value"), firing.CAUSE_UNREADABLE,
-                         "a blocked registration settled the whole host while a peer nobody"
-                         " could judge was quietly counted as unable to run")
-        self.assertIn(firing.ADAPTER_CANNOT_RUN,
-                      [entry["cause"] for entry in cell.get("candidates") or []])
+        run_contract("test_a_peer_nobody_could_judge_is_not_treated_as_one_that_cannot_start")
 
     def test_an_unjudged_peer_never_unmakes_what_was_observed(self):
         """The guard that keeps an unjudged peer visible must run AFTER each rule's own
         positive evidence. Placed first, it downgraded established causes -- a registration
         configured never to record, and a genuine holding-and-empty divergence -- into
         uncertainty because an unrelated peer could not be probed."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            _first, second = second_registration(temporary, "journal-two")
-            document = json.loads(second.read_text(encoding="utf-8"))
-            document["journalPolicy"] = completion.NO_JOURNAL
-            second.write_text(json.dumps(document), encoding="utf-8")
-            path = Path(temporary) / "hooks.json"
-            hooks_file = json.loads(path.read_text(encoding="utf-8"))
-            entries = hooks_file["hooks"][completion.EVENT][0]["hooks"]
-            third = dict(entries[0])
-            # A third registration nobody can judge: a relative interpreter resolves per
-            # workspace and is not probed from here.
-            third["command"] = "./python " + entries[0]["command"].split(" ", 1)[1]
-            entries.append(third)
-            path.write_text(json.dumps(hooks_file), encoding="utf-8")
-            cell = why_no_record(temporary)
-        established = [entry["cause"] for entry in cell.get("candidates") or []
-                       if entry["standing"] == firing.ESTABLISHED]
-        self.assertIn(firing.JOURNALLING_OFF, established,
-                      "a registration configured never to record is an established repair"
-                      " whatever an unrelated peer's startability could not be established")
+        run_contract("test_an_unjudged_peer_never_unmakes_what_was_observed")
 
     def test_a_configured_policy_is_not_reopened_by_an_unjudged_peer(self):
         """Whether a registration keeps a journal is what its settings say, and no startability
         reading can change that. Letting uncertainty about a peer reopen it put journalling_off
         on the table for a host whose settings conclusively rule it out."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            path = Path(temporary) / "hooks.json"
-            document = json.loads(path.read_text(encoding="utf-8"))
-            entry = document["hooks"][completion.EVENT][0]["hooks"][0]
-            # A relative interpreter resolves per workspace, so startability is unjudged while
-            # the settings still say every_invocation.
-            entry["command"] = "./python " + entry["command"].split(" ", 1)[1]
-            path.write_text(json.dumps(document), encoding="utf-8")
-            cell = why_no_record(temporary)
-        self.assertNotIn(firing.JOURNALLING_OFF,
-                         [one["cause"] for one in cell.get("candidates") or []],
-                         "the settings enable journalling, so that cause is ruled out whatever"
-                         " could not be established about starting the program")
-        self.assertNotIn(firing.POLICY_RECORDS_ONLY_FAULTS,
-                         [one["cause"] for one in cell.get("candidates") or []],
-                         "the policy is every_invocation, which the settings settle")
+        run_contract("test_a_configured_policy_is_not_reopened_by_an_unjudged_peer")
 
     def test_a_journal_that_cannot_be_listed_is_not_an_empty_one_under_faults_only(self):
         """An unknown count is not zero. Read as zero, the faults-only candidate went on the
         table without an empty journal ever having been observed."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            # A regular file where the journal root should be: scandir raises NotADirectoryError,
-            # so the count is unestablished rather than zero, and this case is about that and
-            # not about any other way a listing can fail.
-            blocked = Path(temporary) / "not-a-journal"
-            blocked.write_text("", encoding="utf-8")
-            amend_settings(temporary, journalPolicy=completion.FAULTS_ONLY,
-                           journalRoot=str(blocked))
-            cell = why_no_record(temporary)
-        self.assertNotIn(firing.POLICY_RECORDS_ONLY_FAULTS,
-                         [one["cause"] for one in cell.get("candidates") or []],
-                         "a journal nobody could list was counted as an empty one")
+        run_contract("test_a_journal_that_cannot_be_listed_is_not_an_empty_one_under_faults_only")
 
     def test_a_journal_path_that_cannot_name_a_file_is_a_reading_not_a_crash(self):
         """complaints() accepts any absolute string, and one carrying a NUL cannot name a path,
         so scandir raises ValueError rather than OSError. The settings read back fine, so a
         journal reading is what belongs here."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            amend_settings(temporary, journalRoot=str(Path(temporary) / "journal") + "\x00bad")
-            try:
-                found = completion.status(codex_home=temporary, environ={})
-            except Exception as error:
-                found = {"raised": type(error).__name__ + ": " + str(error)}
-        self.assertNotIn("raised", found,
-                         "a journal path that cannot name a file raised out of status instead"
-                         " of answering: " + str(found.get("raised")))
-        self.assertEqual(found["firingJournal"]["value"], reading.ACCESS_ERROR)
+        run_contract("test_a_journal_path_that_cannot_name_a_file_is_a_reading_not_a_crash")
 
     def test_an_unlistable_journal_beside_an_empty_one_leaves_divergence_standing(self):
         """The unread journal may hold records, and against a journal that was read and holds
         none that is exactly recorded_on_another_path. Ruling it out because the holding side
         happens to be the one nobody could list drops a candidate the readings leave open."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            _first, second = second_registration(temporary, "journal-two")
-            document = json.loads(second.read_text(encoding="utf-8"))
-            # A regular file where the second journal should be: it cannot be listed, so its
-            # count is unestablished while the first is read and holds nothing.
-            blocked = Path(temporary) / "not-a-journal"
-            blocked.write_text("", encoding="utf-8")
-            document["journalRoot"] = str(blocked)
-            second.write_text(json.dumps(document), encoding="utf-8")
-            cell = why_no_record(temporary)
-        self.assertIn(firing.RECORDED_ON_ANOTHER_PATH,
-                      [one["cause"] for one in cell.get("candidates") or []],
-                      "one journal read and empty beside one nobody could list leaves this"
-                      " cause standing, and it was ruled out")
-        self.assertEqual(cell.get("value"), firing.CAUSE_UNREADABLE)
+        run_contract("test_an_unlistable_journal_beside_an_empty_one_leaves_divergence_standing")
 
     def test_two_journals_nobody_could_list_leave_divergence_standing(self):
         """Neither side was read, so neither is settled: one unread journal may hold records
         while the other is empty, which is exactly this cause. Ruling it out omits a candidate
         precisely where the command promises to carry every unsettled one."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            _first, second = second_registration(temporary, "journal-two")
-            blocked = [Path(temporary) / "not-a-journal-one", Path(temporary) / "not-a-journal-two"]
-            for one in blocked:
-                one.write_text("", encoding="utf-8")
-            amend_settings(temporary, journalRoot=str(blocked[0]))
-            document = json.loads(second.read_text(encoding="utf-8"))
-            document["journalRoot"] = str(blocked[1])
-            second.write_text(json.dumps(document), encoding="utf-8")
-            cell = why_no_record(temporary)
-        self.assertIn(firing.RECORDED_ON_ANOTHER_PATH,
-                      [one["cause"] for one in cell.get("candidates") or []],
-                      "neither journal was read, so this cause is unsettled rather than out")
+        run_contract("test_two_journals_nobody_could_list_leave_divergence_standing")
 
     def test_one_journal_directory_is_listed_once_however_it_is_spelled(self):
         """A journal root is opened as a directory and _journal_cell puts it through Path, so a
@@ -2614,41 +1848,13 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         """Registrations are not journals. Two of them can name separate settings files that
         configure one journalRoot, and one directory cannot disagree with itself, so counting
         entries reported possible divergence for a host that has a single unlistable journal."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            _first, second = second_registration(temporary, "journal-two")
-            blocked = Path(temporary) / "not-a-journal"
-            blocked.write_text("", encoding="utf-8")
-            amend_settings(temporary, journalRoot=str(blocked))
-            document = json.loads(second.read_text(encoding="utf-8"))
-            document["journalRoot"] = str(blocked)
-            second.write_text(json.dumps(document), encoding="utf-8")
-            cell = why_no_record(temporary)
-        self.assertNotIn(firing.RECORDED_ON_ANOTHER_PATH,
-                         [one["cause"] for one in cell.get("candidates") or []],
-                         "one journal was counted as two and reported as possibly disagreeing"
-                         " with itself")
+        run_contract("test_two_registrations_sharing_one_unread_journal_cannot_disagree")
 
     def test_an_unjudged_peer_sharing_one_journal_cannot_disagree_with_itself(self):
         """An unjudged peer only matters to this cause when it could be a SECOND journal. One
         sharing the journal its neighbour already named cannot disagree with itself, however
         its startability reads."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            second_registration(temporary, "journal")  # the SAME journal as the first
-            path = Path(temporary) / "hooks.json"
-            document = json.loads(path.read_text(encoding="utf-8"))
-            entries = document["hooks"][completion.EVENT][0]["hooks"]
-            # The second registration's interpreter is relative, so it is unjudged.
-            entries[1]["command"] = "./python " + entries[1]["command"].split(" ", 1)[1]
-            path.write_text(json.dumps(document), encoding="utf-8")
-            cell = why_no_record(temporary)
-        self.assertNotIn(firing.RECORDED_ON_ANOTHER_PATH,
-                         [one["cause"] for one in cell.get("candidates") or []],
-                         "one journal was reported as possibly disagreeing with itself because"
-                         " a peer naming it could not be judged")
+        run_contract("test_an_unjudged_peer_sharing_one_journal_cannot_disagree_with_itself")
 
     def test_a_lone_unjudged_registration_is_not_two_journals_disagreeing(self):
         """No peer at all, which the shared-journal case above does not cover.
@@ -2658,28 +1864,7 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         satisfied by default and the cause stood on a host with exactly one journal. This cause
         is two journals disagreeing; one directory cannot disagree with itself.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            path = Path(temporary) / "hooks.json"
-            document = json.loads(path.read_text(encoding="utf-8"))
-            entries = document["hooks"][completion.EVENT][0]["hooks"]
-            # The ONE registration's interpreter is relative, so this command does not probe it
-            # and never establishes whether the host can start it.
-            entries[0]["command"] = "./python " + entries[0]["command"].split(" ", 1)[1]
-            path.write_text(json.dumps(document), encoding="utf-8")
-            found = completion.status(codex_home=temporary, environ={})
-        named = found["configuration"]["namedSettings"]
-        cell = found["firingRecordAbsence"]
-        self.assertEqual(len({entry.get("journalRoot") for entry in named}), 1,
-                         "the fixture did not build the single-journal host this case is"
-                         " about: " + repr(named))
-        self.assertEqual([entry.get("startable") for entry in named], [None],
-                         "the fixture did not leave the one registration unjudged")
-        self.assertNotIn(firing.RECORDED_ON_ANOTHER_PATH,
-                         [one["cause"] for one in cell.get("candidates") or []],
-                         "a host with one journal was told its journals may disagree, on the"
-                         " strength of nobody having judged the only registration it has")
+        run_contract("test_a_lone_unjudged_registration_is_not_two_journals_disagreeing")
 
     def test_a_peer_that_keeps_no_journal_never_unsettles_a_count(self):
         """Every rule that asks about an unjudged peer is a rule about counts, and a
@@ -2689,35 +1874,7 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         been read, which is uncertainty about a registration that cannot hold a record either
         way.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            _first, second = second_registration(temporary, "journal-two")
-            document = json.loads(second.read_text(encoding="utf-8"))
-            # This registration keeps no journal at all.
-            document.pop("journalRoot", None)
-            second.write_text(json.dumps(document), encoding="utf-8")
-            path = Path(temporary) / "hooks.json"
-            hooks_file = json.loads(path.read_text(encoding="utf-8"))
-            entries = hooks_file["hooks"][completion.EVENT][0]["hooks"]
-            # ... and its interpreter is relative, so its startability is never established.
-            entries[1]["command"] = "./python " + entries[1]["command"].split(" ", 1)[1]
-            path.write_text(json.dumps(hooks_file), encoding="utf-8")
-            found = completion.status(codex_home=temporary, environ={})
-        cell = found["firingRecordAbsence"]
-        standings = {one["cause"]: one["standing"]
-                     for group in ("candidates", "ruledOut", "notEvaluated")
-                     for one in (cell.get(group) or [])}
-        self.assertEqual(standings.get(firing.JOURNALLING_OFF), firing.ESTABLISHED,
-                         "the fixture did not build the non-journalling peer this case is"
-                         " about: " + repr(standings))
-        self.assertEqual(standings.get(firing.NOTHING_RECORDED), firing.ESTABLISHED,
-                         "the journal that WAS read holds nothing, and a peer that keeps no"
-                         " journal at all left that reading unsettled")
-        self.assertNotIn(firing.RECORDED_ON_ANOTHER_PATH,
-                         [one["cause"] for one in cell.get("candidates") or []],
-                         "a registration that records nothing by configuration was counted as"
-                         " a journal that might disagree with the one that was read")
+        run_contract("test_a_peer_that_keeps_no_journal_never_unsettles_a_count")
 
     def test_two_spellings_of_one_journal_are_not_two_journals(self):
         """resource_key is lexical and refuses to resolve, on purpose. That leaves one
@@ -2764,25 +1921,7 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         the one file it is deliberately not in named a repair that would put a second owner on
         one event, which is exactly what the ownership rules refuse.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            settings(temporary, owner=completion.OWNER_PLUGIN,
-                     adapterInterpreter=sys.executable,
-                     adapterEntryPoint=str(ENTRY_POINT))
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["registrationOwner"]["value"], completion.OWNER_PLUGIN,
-                         "the fixture did not build the plugin-owned host this case is about")
-        cell = found["firingRecordAbsence"]
-        standings = {one["cause"]: one["standing"]
-                     for group in ("candidates", "ruledOut", "notEvaluated")
-                     for one in (cell.get(group) or [])}
-        self.assertNotEqual(standings.get(firing.NOT_REGISTERED), firing.ESTABLISHED,
-                            "an empty hook file on a plugin-owned host was read as an absent"
-                            " registration, in a payload whose own cell says the plugin owns"
-                            " it")
-        self.assertEqual(cell.get("value"), firing.CAUSE_UNREADABLE,
-                         "whether this adapter is registered was not established either way,"
-                         " and the answer has to say so rather than choose")
+        run_contract("test_a_plugin_owned_registration_is_not_an_absent_one")
 
     def test_a_link_retargeted_between_two_listings_does_not_share_a_snapshot(self):
         """The identity is captured WITH the snapshot rather than re-derived from the spelling.
@@ -2878,22 +2017,7 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         plugin package may be registering the hook perfectly well -- and suppressed
         settings_unusable, which is the cause that would have named the real repair.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            settings(temporary, owner=completion.OWNER_PLUGIN,
-                     adapterInterpreter=sys.executable,
-                     adapterEntryPoint=str(ENTRY_POINT), mode="not-a-mode-this-reader-knows")
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["configuration"]["value"], completion.CONFIG_MALFORMED,
-                         "the fixture did not build the readable-but-rejected settings this"
-                         " case is about")
-        cell = found["firingRecordAbsence"]
-        standings = {one["cause"]: one["standing"]
-                     for group in ("candidates", "ruledOut", "notEvaluated")
-                     for one in (cell.get(group) or [])}
-        self.assertNotEqual(standings.get(firing.NOT_REGISTERED), firing.ESTABLISHED,
-                            "settings this reader rejects took the owner default with them,"
-                            " and an absence was established for a plugin-owned host")
+        run_contract("test_a_plugin_owner_survives_settings_this_reader_rejects")
 
     def test_a_link_that_points_away_and_back_does_not_publish_its_identity(self):
         """Bracketing a listing with two path lookups is not enough. A link that points away
@@ -2951,23 +2075,7 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         nothing either -- and taking the default there established an absence on a host whose
         plugin package may be registering the hook perfectly well.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            settings(temporary)
-            completion.configuration_path(Path(temporary)).write_text(
-                "{ this is not json", encoding="utf-8")
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["configuration"]["value"], completion.CONFIG_UNREADABLE,
-                         "the fixture did not build the unreadable settings this case is"
-                         " about: " + repr(found["configuration"]["value"]))
-        cell = found["firingRecordAbsence"]
-        standings = {one["cause"]: one["standing"]
-                     for group in ("candidates", "ruledOut", "notEvaluated")
-                     for one in (cell.get(group) or [])}
-        self.assertNotEqual(standings.get(firing.NOT_REGISTERED), firing.ESTABLISHED,
-                            "settings nobody could read were answered with the default owner,"
-                            " and an absence was established from a hook file that may not be"
-                            " where this host's registration lives at all")
+        run_contract("test_settings_nobody_could_read_leave_the_registration_unsettled")
 
     def test_an_owner_this_reader_does_not_know_is_not_the_default_owner(self):
         """An OMITTED owner is the legacy user document owner_of is written for. An owner this
@@ -2976,20 +2084,7 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         registration lives -- while suppressing settings_unusable, the cause that would have
         named the actual repair.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            settings(temporary, owner="an-owner-this-reader-does-not-know")
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["configuration"]["value"], completion.CONFIG_MALFORMED,
-                         "the fixture did not build the rejected-owner settings this case is"
-                         " about: " + repr(found["configuration"]["value"]))
-        cell = found["firingRecordAbsence"]
-        standings = {one["cause"]: one["standing"]
-                     for group in ("candidates", "ruledOut", "notEvaluated")
-                     for one in (cell.get(group) or [])}
-        self.assertNotEqual(standings.get(firing.NOT_REGISTERED), firing.ESTABLISHED,
-                            "an owner nobody recognises was read as the user owner, and an"
-                            " absence was established on its strength")
+        run_contract("test_an_owner_this_reader_does_not_know_is_not_the_default_owner")
 
     def test_a_plugin_owned_host_names_the_settings_repair_it_can_read(self):
         """A cause this command CAN distinguish and did not.
@@ -3000,29 +2095,7 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         cause_unreadable while the payload's own configuration cell already said the settings
         this command settled on are rejected.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            settings(temporary, owner=completion.OWNER_PLUGIN,
-                     adapterInterpreter=sys.executable,
-                     adapterEntryPoint=str(ENTRY_POINT), mode="not-a-mode-this-reader-knows")
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["configuration"]["value"], completion.CONFIG_MALFORMED,
-                         "the fixture did not build the rejected plugin settings this case is"
-                         " about")
-        self.assertEqual(found["configuration"]["namedSettings"], [],
-                         "the fixture registered something in the hook file, so this is not the"
-                         " host the case is about")
-        cell = found["firingRecordAbsence"]
-        standings = {one["cause"]: one["standing"]
-                     for group in ("candidates", "ruledOut", "notEvaluated")
-                     for one in (cell.get(group) or [])}
-        self.assertEqual(standings.get(firing.SETTINGS_UNUSABLE), firing.ESTABLISHED,
-                         "the repair the payload's own configuration cell names was left out of"
-                         " the answer that exists to name repairs")
-        self.assertIn(firing.SETTINGS_UNUSABLE,
-                      [one["cause"] for one in cell.get("candidates") or []],
-                      "an established cause that the answer does not carry is a repair the"
-                      " operator never sees")
+        run_contract("test_a_plugin_owned_host_names_the_settings_repair_it_can_read")
 
     def test_a_user_owned_host_that_registers_nothing_gains_no_settings_cause(self):
         """SUPPORT, not evidence of the defect: this passes before the change too. It holds the
@@ -3036,18 +2109,7 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         one that pins that; deleting it here would have been asserting this claim on a host
         that cannot support it.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            settings(temporary)
-            found = completion.status(codex_home=temporary, environ={})
-        cell = found["firingRecordAbsence"]
-        standings = {one["cause"]: one["standing"]
-                     for group in ("candidates", "ruledOut", "notEvaluated")
-                     for one in (cell.get(group) or [])}
-        self.assertEqual(cell.get("value"), firing.NOT_REGISTERED,
-                         "a settings cause was invented beside the one repair this host needs")
-        self.assertEqual(standings.get(firing.SETTINGS_ABSENT), firing.NOT_EVALUATED,
-                         "the settled reading answered a question this host does not have")
+        run_contract("test_a_user_owned_host_that_registers_nothing_gains_no_settings_cause")
 
     def test_a_settings_file_that_is_not_there_names_no_owner(self):
         """File absence establishes no owner, and this answer used to read it as one.
@@ -3058,24 +2120,7 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         plugin-side settings and launcher diagnoses and pointed recovery at the wrong
         registration. One observation, two explanations, and no reading here separates them.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            settings(temporary)
-            completion.configuration_path(Path(temporary)).unlink()
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["configuration"]["value"], completion.CONFIG_ABSENT,
-                         "the fixture did not build the missing-settings host this case is"
-                         " about")
-        cell = found["firingRecordAbsence"]
-        standings = {one["cause"]: one["standing"]
-                     for group in ("candidates", "ruledOut", "notEvaluated")
-                     for one in (cell.get(group) or [])}
-        self.assertEqual(standings.get(firing.NOT_REGISTERED), firing.NOT_RULED_OUT,
-                         "a settings file that is not there was read as saying the hook file"
-                         " is where this host's registration lives")
-        self.assertEqual(cell.get("value"), firing.CAUSE_UNREADABLE,
-                         "two explanations and no reading between them is an unsettled cause,"
-                         " not a chosen one")
+        run_contract("test_a_settings_file_that_is_not_there_names_no_owner")
 
     def test_a_peer_sharing_a_journal_read_empty_does_not_reopen_the_count(self):
         """A peer sharing a journal already read and found EMPTY cannot change that reading.
@@ -3084,27 +2129,7 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         answer reported an unsettled count for a directory it had just listed, and hid an
         established nothing_recorded behind a peer that shares its reading.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            second_registration(temporary, "journal")  # the SAME journal as the first
-            path = Path(temporary) / "hooks.json"
-            document = json.loads(path.read_text(encoding="utf-8"))
-            entries = document["hooks"][completion.EVENT][0]["hooks"]
-            # The second registration's interpreter is relative, so it is unjudged.
-            entries[1]["command"] = "./python " + entries[1]["command"].split(" ", 1)[1]
-            path.write_text(json.dumps(document), encoding="utf-8")
-            found = completion.status(codex_home=temporary, environ={})
-        named = found["configuration"]["namedSettings"]
-        self.assertEqual(len({entry.get("journalRoot") for entry in named}), 1,
-                         "the fixture did not build the one-journal host this case is about")
-        cell = found["firingRecordAbsence"]
-        standings = {one["cause"]: one["standing"]
-                     for group in ("candidates", "ruledOut", "notEvaluated")
-                     for one in (cell.get(group) or [])}
-        self.assertEqual(standings.get(firing.NOTHING_RECORDED), firing.ESTABLISHED,
-                         "the journal was read and holds nothing, and a peer sharing that very"
-                         " directory left the count unsettled")
+        run_contract("test_a_peer_sharing_a_journal_read_empty_does_not_reopen_the_count")
 
     def test_a_settled_settings_repair_names_what_it_did_not_establish(self):
         """The settings really are rejected. What is NOT established is that anything reads
@@ -3112,20 +2137,7 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         whether such a package is installed at all is not read either. A repair presented as
         the settled cause of an absence is a claim about the absence too.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            settings(temporary, owner=completion.OWNER_PLUGIN,
-                     adapterInterpreter=sys.executable,
-                     adapterEntryPoint=str(ENTRY_POINT), mode="not-a-mode-this-reader-knows")
-            cell = why_no_record(temporary)
-        detail = next((one["detail"] for one in cell.get("candidates") or []
-                       if one["cause"] == firing.SETTINGS_UNUSABLE), None)
-        self.assertIsNotNone(detail,
-                             "the fixture did not put the settings repair on the table, so"
-                             " there is nothing here to qualify")
-        self.assertIn("not established", detail,
-                      "the repair was presented without the registration it never read: "
-                      + repr(detail))
+        run_contract("test_a_settled_settings_repair_names_what_it_did_not_establish")
 
     def test_a_plugin_owned_host_that_has_recorded_has_no_absence_to_explain(self):
         """A record outranks every cause that claims nothing ran.
@@ -3136,31 +2148,7 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         it, including the one that says there is no absence to explain. The payload then
         reported cause_unreadable beside its own count of an invocation that happened.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            settings(temporary, owner=completion.OWNER_PLUGIN,
-                     adapterInterpreter=sys.executable,
-                     adapterEntryPoint=str(ENTRY_POINT))
-            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["firingJournal"]["value"], "1",
-                         "the fixture did not record the invocation this case is about")
-        self.assertEqual(found["registrationOwner"]["value"], completion.OWNER_PLUGIN,
-                         "the fixture did not build the plugin-owned host this case is about")
-        self.assertEqual(found["configuration"]["namedSettings"], [],
-                         "the fixture registered something in the hook file, so the count would"
-                         " not have reached the settled journal at all")
-        cell = found["firingRecordAbsence"]
-        self.assertEqual(cell.get("value"), firing.RECORDS_FOUND,
-                         "a conclusive record stood beside an answer that could not settle"
-                         " whether anything had run")
-        standings = {one["cause"]: one["standing"]
-                     for group in ("candidates", "ruledOut", "notEvaluated")
-                     for one in (cell.get(group) or [])}
-        self.assertEqual(standings.get(firing.NOT_REGISTERED), firing.RULED_OUT,
-                         "a record this hook wrote is proof something invoked it")
-        self.assertEqual(standings.get(firing.ADAPTER_CANNOT_RUN), firing.RULED_OUT,
-                         "a record outranks a probe that was never taken")
+        run_contract("test_a_plugin_owned_host_that_has_recorded_has_no_absence_to_explain")
 
     def test_an_old_record_does_not_answer_whether_the_launcher_starts_now(self):
         """A journal entry says the host started the adapter ONCE. Whether it can start NOW is
@@ -3169,29 +2157,8 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         reported records_found while the payload's own adapterEntryPoint cell read ABSENT.
         The launcher those settings record is probed instead.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            adapter = Path(temporary) / "the-recorded-adapter-entry-point.py"
-            adapter.write_text("", encoding="utf-8")
-            settings(temporary, owner=completion.OWNER_PLUGIN,
-                     adapterInterpreter=sys.executable, adapterEntryPoint=str(adapter))
-            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
-            intact = completion.status(codex_home=temporary,
-                                       environ={})["firingRecordAbsence"].get("value")
-            # Deleted AFTER the invocation it recorded, which is the whole point.
-            adapter.unlink()
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(intact, firing.RECORDS_FOUND,
-                         "the fixture did not reach records_found while the launcher was"
-                         " there, so it is not showing what deleting it changes")
-        self.assertEqual(found["firingJournal"]["value"], "1",
-                         "the record this case is about is gone from the fixture")
-        self.assertEqual(found["adapterEntryPoint"]["value"], reading.ABSENT,
-                         "the fixture did not delete the recorded launcher")
-        cell = found["firingRecordAbsence"]
-        self.assertEqual(cell.get("value"), firing.ADAPTER_CANNOT_RUN,
-                         "an old record answered a question about what is there now, and the"
-                         " launcher repair went unnamed beside a cell that reads ABSENT")
+        run_contract("test_an_old_record_does_not_answer_whether_the_launcher_starts_now", "intact",
+                     "deleted")
 
     def test_a_deleted_plugin_launcher_is_named_without_an_old_record(self):
         """The same repair, and no record to expose it.
@@ -3202,50 +2169,13 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         while adapterEntryPoint read ABSENT beside it -- the same repair, hidden by whether the
         host had ever fired.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            adapter = Path(temporary) / "the-recorded-adapter-entry-point.py"
-            adapter.write_text("", encoding="utf-8")
-            settings(temporary, owner=completion.OWNER_PLUGIN,
-                     adapterInterpreter=sys.executable, adapterEntryPoint=str(adapter))
-            adapter.unlink()
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["firingJournal"]["value"], reading.ABSENT,
-                         "the fixture recorded something, so this is the case the record"
-                         " already covers rather than the one it hides")
-        self.assertEqual(found["adapterEntryPoint"]["value"], reading.ABSENT,
-                         "the fixture did not delete the recorded launcher")
-        cell = found["firingRecordAbsence"]
-        standings = {one["cause"]: one["standing"]
-                     for group in ("candidates", "ruledOut", "notEvaluated")
-                     for one in (cell.get(group) or [])}
-        self.assertEqual(standings.get(firing.ADAPTER_CANNOT_RUN), firing.ESTABLISHED,
-                         "a launcher this command read as ABSENT was left unasked because"
-                         " nobody could rule out a registration it never reads")
+        run_contract("test_a_deleted_plugin_launcher_is_named_without_an_old_record")
 
     def test_a_recorded_launcher_is_probed_beside_a_hook_file_registration(self):
         """Both commands run on a host that has both. Supplying the recorded launcher only
         when the hook file named nothing let the other registration's healthy probe answer for
         a plugin launcher that is gone."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            adapter = Path(temporary) / "the-recorded-adapter-entry-point.py"
-            adapter.write_text("", encoding="utf-8")
-            amend_settings(temporary, owner=completion.OWNER_PLUGIN,
-                           adapterInterpreter=sys.executable, adapterEntryPoint=str(adapter))
-            adapter.unlink()
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertTrue(found["configuration"]["namedSettings"],
-                        "the fixture left no hook-file registration, so nothing here could"
-                        " have hidden the launcher")
-        cell = found["firingRecordAbsence"]
-        standings = {one["cause"]: one["standing"]
-                     for group in ("candidates", "ruledOut", "notEvaluated")
-                     for one in (cell.get(group) or [])}
-        self.assertEqual(standings.get(firing.ADAPTER_CANNOT_RUN), firing.ESTABLISHED,
-                         "a healthy hook-file registration answered for a recorded launcher"
-                         " that is not there")
+        run_contract("test_a_recorded_launcher_is_probed_beside_a_hook_file_registration")
 
     def test_an_open_that_yielded_no_descriptor_publishes_no_identity(self):
         """An open that failed established nothing about WHICH directory refused it. Taking the
@@ -3300,20 +2230,7 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         had fired leaves its journal exactly where it was, and this answer used to say no
         record of an invocation could exist beside a count, in the same payload, saying one
         does."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
-            (Path(temporary) / "hooks.json").unlink()
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["firingJournal"]["value"], "1",
-                         "the fixture did not leave the record this case is about")
-        cell = found["firingRecordAbsence"]
-        self.assertEqual(cell.get("value"), firing.NOT_REGISTERED,
-                         "the registration really is gone, so this stays the cause")
-        self.assertIn("1 record(s)", cell.get("evidence") or "",
-                      "the answer explained an absence the payload's own count refutes,"
-                      " without ever naming the records it was reading past")
+        run_contract("test_records_already_written_survive_the_registration_being_removed")
 
 
 class OneFileAndOneRecordAnswerForThemselves(unittest.TestCase):
@@ -3337,21 +2254,13 @@ class OneFileAndOneRecordAnswerForThemselves(unittest.TestCase):
         not_registered stayed unsettled, blocked every rule that requires it, and the payload
         reported cause_unreadable for an absence its own count refutes.
         """
-        found = firing.decide({"registrationReadable": False, "adapterRegistrations": 0,
-                               "registrationReadHere": True, "unregisteredRecords": 1,
-                               "namedJournals": [], "namedSettings": []})
-        self.assertEqual(found["value"], firing.RECORDS_FOUND,
-                         "an absence cause was reported for a host whose journal holds a"
-                         " record this hook wrote")
+        run_contract("test_a_record_answers_for_a_hook_file_this_command_cannot_read")
 
     def test_a_hook_file_nobody_could_read_is_still_unsettled_without_a_record(self):
         """SUPPORT, not evidence. The direction the fix must not break: with no record, an
         unreadable hook file establishes nothing and the cause stays unsettled rather than
         becoming the terminal answer."""
-        found = firing.decide({"registrationReadable": False, "adapterRegistrations": 0,
-                               "registrationReadHere": True, "unregisteredRecords": 0,
-                               "namedJournals": [], "namedSettings": []})
-        self.assertEqual(found["value"], firing.CAUSE_UNREADABLE)
+        run_contract("test_a_hook_file_nobody_could_read_is_still_unsettled_without_a_record")
 
     def test_one_settings_file_named_twice_is_read_once(self):
         """Two spellings of ONE settings file are one file, and one file has one answer.
@@ -3400,19 +2309,7 @@ class OneFileAndOneRecordAnswerForThemselves(unittest.TestCase):
         """SUPPORT, not evidence. The negative control for the case above: sharing a reading is
         keyed on what the kernel says the file is, so two genuinely different files are still
         read separately and keep their own journals."""
-        with tempfile.TemporaryDirectory() as temporary:
-            temporary = Path(temporary)
-            first_settings = temporary / "one.json"
-            second_settings = temporary / "two.json"
-            first, second = temporary / "journal-one", temporary / "journal-two"
-            first.mkdir()
-            second.mkdir()
-            first_settings.write_text(json.dumps(self._document(first)), encoding="utf-8")
-            second_settings.write_text(json.dumps(self._document(second)), encoding="utf-8")
-            found = completion.journals_named([
-                {"registration": "one", "settings": str(first_settings), "startable": True},
-                {"registration": "two", "settings": str(second_settings), "startable": True}])
-        self.assertEqual([entry["journalRoot"] for entry in found], [str(first), str(second)])
+        run_contract("test_two_different_settings_files_keep_their_own_readings")
 
 
 class AnIdentityIsOnlyAKeyWhileItIsHeld(unittest.TestCase):
@@ -3486,15 +2383,7 @@ class AnIdentityIsOnlyAKeyWhileItIsHeld(unittest.TestCase):
         at a different offset, so the line and column a malformed one reports -- which is what
         an operator reads to find it -- moved with the file's line endings.
         """
-        details = {}
-        for name, ending in (("lf", b"\n"), ("cr", b"\r"), ("crlf", b"\r\n")):
-            with tempfile.TemporaryDirectory() as temporary:
-                path = Path(temporary) / "record.json"
-                path.write_bytes(b'{"configVersion": 1,' + ending + b'  bad}')
-                details[name] = reading.read_json(path, "a record").detail
-        self.assertEqual(len(set(details.values())), 1,
-                         "one malformed record reported a different position for each line"
-                         " ending: " + repr(details))
+        run_contract("test_one_record_reads_the_same_however_its_lines_end")
 
     def test_the_callers_own_reading_is_held_before_it_is_a_key(self):
         """The one entry that skipped the rule every other entry follows.
@@ -3619,16 +2508,11 @@ class AnIdentityIsOnlyAKeyWhileItIsHeld(unittest.TestCase):
         a traceback. A path this command cannot identify is a reading like any other, and it
         keeps its own place.
         """
-        nul = "/a-path-with-a\x00-nul.json"
-        try:
-            kept, judged = completion._one_source_each([nul, "/an-ordinary-path.json"])
-        except ValueError as raised:
-            self.fail("a spelling the kernel is never asked about ended the read in a"
-                      " traceback instead of answering: " + repr(raised))
-        self.assertIn(nul, kept,
-                      "a spelling the kernel is never asked about was dropped instead of"
-                      " keeping its own place")
-        self.assertNotIn(nul, judged,
+        run_contract("test_a_settings_path_the_kernel_is_never_asked_about_is_a_reading")
+        # Which spellings were judged is internal to the collapse (runner_gaps: no surface).
+        _kept, judged = completion._one_source_each(
+            ["/a-path-with-a\x00-nul.json", "/an-ordinary-path.json"])
+        self.assertNotIn("/a-path-with-a\x00-nul.json", judged,
                          "a spelling nothing could identify was recorded as judged")
 
     def test_a_source_read_after_it_changed_is_not_the_one_that_was_merged(self):
@@ -3996,15 +2880,7 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
         causes and adapter_cannot_run were freed from that requirement for this exact host; the
         two policy causes were the rest of the same class.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            settings(temporary, owner=completion.OWNER_PLUGIN,
-                     adapterInterpreter=sys.executable,
-                     adapterEntryPoint=str(ENTRY_POINT),
-                     journalPolicy=completion.NO_JOURNAL)
-            cell = why_no_record(temporary)
-        self.assertEqual(self._standings(cell).get(firing.JOURNALLING_OFF), firing.ESTABLISHED,
-                         "the host states it keeps no journal and the answer did not say so")
+        run_contract("test_a_plugin_owned_host_names_the_journal_policy_it_states")
 
     def test_a_journal_path_that_leads_nowhere_counts_nothing(self):
         """A dangling link is not an empty journal.
@@ -4015,15 +2891,7 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
         either, so "this hook has recorded no invocation" claims something no reading here
         established -- an unreadable path answered as an empty journal.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            host = self._host(temporary)
-            nowhere = host / "a-journal-link-to-nothing"
-            nowhere.symlink_to(host / "a-target-that-is-not-there")
-            settings(temporary, journalRoot=str(nowhere))
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertNotEqual(found["firingJournal"]["value"], reading.ABSENT,
-                            "a journal path whose link leads nowhere was reported as an"
-                            " established absence, which is a count of zero")
+        run_contract("test_a_journal_path_that_leads_nowhere_counts_nothing")
 
     def test_rejected_settings_still_probe_the_launcher_they_record(self):
         """A document that was READ answers with every field that IS readable.
@@ -4034,18 +2902,7 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
         present readings whatever the mode says, so a deleted entry point hid behind an
         unrelated complaint on exactly the host whose repair the probe exists to name.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            host = self._host(temporary)
-            gone = host / "an-entry-point-that-was-deleted.py"
-            settings(temporary, owner=completion.OWNER_PLUGIN,
-                     adapterInterpreter=sys.executable,
-                     adapterEntryPoint=str(gone),
-                     mode="not-a-mode-this-reader-knows")
-            cell = why_no_record(temporary)
-        self.assertEqual(self._standings(cell).get(firing.ADAPTER_CANNOT_RUN),
-                         firing.ESTABLISHED,
-                         "the recorded entry point is gone and the answer never probed it,"
-                         " because an unrelated field of the same document failed validation")
+        run_contract("test_rejected_settings_still_probe_the_launcher_they_record")
 
     def test_one_readable_launcher_half_is_probed_without_the_other(self):
         """Two independent readings, joined by an 'and' that hid one of them.
@@ -4056,18 +2913,7 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
         launcher this host cannot start went unreported because of a fact about a different
         field. The cause reads the halves separately, and so does this.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            host = self._host(temporary)
-            gone = host / "an-entry-point-that-was-deleted.py"
-            settings(temporary, owner=completion.OWNER_PLUGIN,
-                     adapterEntryPoint=str(gone),
-                     adapterInterpreter="a-relative-interpreter",
-                     mode="not-a-mode-this-reader-knows")
-            cell = why_no_record(temporary)
-        self.assertEqual(self._standings(cell).get(firing.ADAPTER_CANNOT_RUN),
-                         firing.ESTABLISHED,
-                         "a recorded entry point that is gone went unprobed because the"
-                         " interpreter beside it was not an absolute path")
+        run_contract("test_one_readable_launcher_half_is_probed_without_the_other")
 
     def test_a_tilde_launcher_path_is_not_a_path_the_launcher_resolves(self):
         """Judged on the expanded spelling, read on the literal one.
@@ -4078,24 +2924,7 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
         absolute answered 'startable' from a file that launcher never reaches, which is an
         undistinguished state presented as a settled one.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            host = self._host(temporary)
-            # HOME is pointed at the fixture, so the file the expanded spelling reaches is
-            # inside this temporary host and nothing outside it is touched.
-            named = "an-entry-point-the-launcher-will-not-resolve.py"
-            (host / named).write_text("", encoding="utf-8")
-            settings(temporary, owner=completion.OWNER_PLUGIN,
-                     adapterInterpreter=sys.executable,
-                     adapterEntryPoint="~/" + named,
-                     mode="not-a-mode-this-reader-knows")
-            with mock.patch.dict(os.environ, {"HOME": str(host)}):
-                cell = why_no_record(temporary)
-        self.assertEqual(self._standings(cell).get(firing.ADAPTER_CANNOT_RUN),
-                         firing.NOT_RULED_OUT,
-                         "a spelling this command never resolved was answered as a settled"
-                         " startability: accepted because its EXPANDED form is absolute and"
-                         " then read as the literal string, it establishes a repair for a"
-                         " path the packaged launcher would have declined outright")
+        run_contract("test_a_tilde_launcher_path_is_not_a_path_the_launcher_resolves")
 
     def test_an_interpreter_that_is_not_one_is_not_startable(self):
         """A file being there establishes that the path is not empty, and nothing more.
@@ -4106,22 +2935,7 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
         and it is the same family _offers_guard already refuses to accept for the relay -- read
         as a working hook. The answer comes from running it now, and says it is a moment.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            # REPLACED after installation, which is the host this is about: the installer
-            # refuses an interpreter that is not one, so the only way to reach this state is
-            # for the program at that path to change afterwards.
-            hook_file = Path(temporary) / "hooks.json"
-            written = json.loads(hook_file.read_text(encoding="utf-8"))
-            entry = written["hooks"][completion.EVENT][0]["hooks"][0]
-            entry["command"] = entry["command"].replace(sys.executable, "/bin/true", 1)
-            hook_file.write_text(json.dumps(written), encoding="utf-8")
-            cell = why_no_record(temporary)
-        self.assertNotEqual(self._standings(cell).get(firing.ADAPTER_CANNOT_RUN),
-                            firing.RULED_OUT,
-                            "a registered interpreter that is not an interpreter was read as"
-                            " startable because a file exists at its path and is executable")
+        run_contract("test_an_interpreter_that_is_not_one_is_not_startable")
 
     def test_a_program_that_repeats_its_arguments_is_not_an_interpreter(self):
         """Echoing the question is not answering it.
@@ -4132,20 +2946,7 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
         The source asks for something computed from a nonce this call invents, and the exact
         reply is compared rather than searched for.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            hook_file = Path(temporary) / "hooks.json"
-            written = json.loads(hook_file.read_text(encoding="utf-8"))
-            entry = written["hooks"][completion.EVENT][0]["hooks"][0]
-            entry["command"] = entry["command"].replace(sys.executable, "/bin/echo", 1)
-            hook_file.write_text(json.dumps(written), encoding="utf-8")
-            cell = why_no_record(temporary)
-        self.assertNotEqual(self._standings(cell).get(firing.ADAPTER_CANNOT_RUN),
-                            firing.RULED_OUT,
-                            "a program that echoed the question back was read as having"
-                            " answered it, so a registration that cannot run read as"
-                            " startable")
+        run_contract("test_a_program_that_repeats_its_arguments_is_not_an_interpreter")
 
     def test_an_adapter_script_that_cannot_be_read_is_not_startable(self):
         """One step down from the interpreter, and the same sentence.
@@ -4241,6 +3042,8 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
         So: an established-absent journal, a full hook-status against that host, and the
         journal still established absent afterwards with nothing created at its path.
         """
+        run_contract("test_reading_the_host_never_writes_a_record_into_it")
+        # The fixture reads the host once; the repeated reading below stays in-process.
         with tempfile.TemporaryDirectory() as temporary:
             host = Path(temporary)
             fake_relay(temporary, stdout=json.dumps(RELEASED))
@@ -4295,24 +3098,7 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
         cause_unreadable on a host whose hook is fine. The answer is evidence and the status
         is not, so the answer is read first.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            host = self._host(temporary)
-            launcher = host / "a-launcher-that-exits-one"
-            # No exec, so the launcher keeps control and chooses its own status after the
-            # interpreter has already written the answer.
-            launcher.write_text("#!/bin/sh\n" + shlex.quote(sys.executable)
-                                + " \"$@\"\nexit 1\n", encoding="utf-8")
-            launcher.chmod(0o755)
-            register(temporary)
-            hook_file = host / "hooks.json"
-            written = json.loads(hook_file.read_text(encoding="utf-8"))
-            entry = written["hooks"][completion.EVENT][0]["hooks"][0]
-            entry["command"] = entry["command"].replace(sys.executable, str(launcher), 1)
-            hook_file.write_text(json.dumps(written), encoding="utf-8")
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["registeredInterpreter"]["value"], reading.PRESENT,
-                         "a launcher that answered the nonce and the version was discarded"
-                         " because it chose its own exit status")
+        run_contract("test_a_valid_answer_survives_a_wrapper_that_replaces_the_exit_status")
 
     def test_an_adapter_run_directly_is_not_judged_as_an_interpreter(self):
         """The first word is the script, so there is no interpreter to have a verdict about.
@@ -4323,23 +3109,7 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
         is for, arriving from a host whose hook works and writes records. A verdict about
         interpreters there would be about a question this command invented.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            host = self._host(temporary)
-            register(temporary)
-            direct = host / ENTRY_POINT.name
-            direct.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            direct.chmod(0o755)
-            hook_file = host / "hooks.json"
-            written = json.loads(hook_file.read_text(encoding="utf-8"))
-            entry = written["hooks"][completion.EVENT][0]["hooks"][0]
-            entry["command"] = entry["command"].replace(
-                sys.executable + " " + str(ENTRY_POINT), str(direct), 1)
-            hook_file.write_text(json.dumps(written), encoding="utf-8")
-            cell = why_no_record(temporary)
-        self.assertNotEqual(self._standings(cell).get(firing.ADAPTER_CANNOT_RUN),
-                            firing.ESTABLISHED,
-                            "a registration that runs the adapter directly was reported as"
-                            " naming an interpreter the host cannot start")
+        run_contract("test_an_adapter_run_directly_is_not_judged_as_an_interpreter")
 
     def test_every_probe_that_ran_a_program_says_so_not_only_the_one_that_worked(self):
         """A failed reading has the same side effect as a successful one.
@@ -4352,6 +3122,7 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
         The derived part matters: the branches are read out of the probe's own source, so a
         branch added later is covered without anyone remembering to add it here.
         """
+        run_contract("test_every_probe_that_ran_a_program_says_so_not_only_the_one_that_worked")
         source = inspect.getsource(completion._answers_as_an_interpreter)
         cells = [node for node in ast.walk(ast.parse(textwrap.dedent(source)))
                  if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "_cell"]
@@ -4362,23 +3133,6 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
                 self.assertTrue(named & {"ran", "attempted"},
                                 "a branch of the probe reports neither what it ran nor what it"
                                 " attempted, so a receipt cannot show the reading's cost")
-
-        # And the same, measured rather than parsed, on a host whose interpreter answers
-        # nothing: /bin/true runs and says nothing, which is the shape that used to go unnamed.
-        with tempfile.TemporaryDirectory() as temporary:
-            host = self._host(temporary)
-            register(temporary)
-            hook_file = host / "hooks.json"
-            written = json.loads(hook_file.read_text(encoding="utf-8"))
-            entry = written["hooks"][completion.EVENT][0]["hooks"][0]
-            entry["command"] = entry["command"].replace(sys.executable, "/bin/true", 1)
-            hook_file.write_text(json.dumps(written), encoding="utf-8")
-            found = completion.status(codex_home=temporary, environ={})
-        probes = [one["probe"] for one in (found["registeredInterpreter"].get("probes") or [])]
-        self.assertTrue(probes, "the fixture named no interpreter to probe")
-        for probe in probes:
-            self.assertTrue(probe.get("ran") or probe.get("attempted"),
-                            "a probe that executed a program did not say which: " + repr(probe))
 
     def test_losing_the_answer_after_the_program_started_is_not_a_cannot_start(self):
         """Losing the answer is not learning that the program cannot run.
@@ -4487,24 +3241,7 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
         The family the probe is for does the opposite -- it exits 0 and says nothing -- so the
         two are separable, and the one that cannot be established says so.
         """
-        if not Path("/usr/bin/env").exists():
-            self.skipTest("this host has no /usr/bin/env, so the wrapper this case is about"
-                          " cannot be built")
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            register(temporary)
-            hook_file = Path(temporary) / "hooks.json"
-            written = json.loads(hook_file.read_text(encoding="utf-8"))
-            entry = written["hooks"][completion.EVENT][0]["hooks"][0]
-            entry["command"] = entry["command"].replace(
-                sys.executable, "/usr/bin/env " + shlex.quote(sys.executable), 1)
-            hook_file.write_text(json.dumps(written), encoding="utf-8")
-            cell = why_no_record(temporary)
-        self.assertNotEqual(self._standings(cell).get(firing.ADAPTER_CANNOT_RUN),
-                            firing.ESTABLISHED,
-                            "a wrapper that starts the adapter was reported as a launcher the"
-                            " host cannot start, because it declined an option meant for the"
-                            " interpreter behind it")
+        run_contract("test_a_wrapper_around_an_interpreter_is_left_unjudged")
 
     def test_a_python_below_the_floor_is_not_a_startable_interpreter(self):
         """Being a Python is not the whole question, and the installer already knew that.
@@ -4586,13 +3323,7 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
         of the same presence-then-assert shape, and closing one of two is how this repository
         keeps rediscovering a class it thought it had removed.
         """
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            settings(temporary, owner=completion.OWNER_PLUGIN,
-                     adapterInterpreter="/bin/true",
-                     adapterEntryPoint=str(ENTRY_POINT))
-            found = completion.status(codex_home=temporary, environ={})
-        self.assertNotEqual(found["adapterInterpreter"]["value"], reading.PRESENT)
+        run_contract("test_a_recorded_interpreter_that_is_not_one_is_not_startable_either")
 
     def test_an_unread_settings_document_names_no_owner_to_the_operator(self):
         """Four states reach one predicate, and the sentence spoke for only one of them.
@@ -4603,15 +3334,8 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
         manifest -- a definite claim about a document nothing read, beside a registrationOwner
         cell saying not_read in the same payload.
         """
-        settled = firing.decide({"registrationReadable": True, "adapterRegistrations": 0,
-                                 "registrationReadHere": False, "registrationElsewhere": False,
-                                 "namedJournals": [], "namedSettings": []})
-        detail = {one["cause"]: one["detail"]
-                  for group in ("candidates", "ruledOut", "notEvaluated")
-                  for one in (settled.get(group) or [])}.get(firing.NOT_REGISTERED, "")
-        self.assertNotIn("package manifest", detail,
-                         "a document nothing could read was narrated as recording an owner"
-                         " whose registration lives in a package manifest")
+        run_contract("test_an_unread_settings_document_names_no_owner_to_the_operator", "missing",
+                     "unreadable", "not_object", "unknown_owner")
 
     def test_no_absence_rule_claims_an_owner_nothing_established(self):
         """SUPPORT, not evidence: the sweep for the class, derived from CAUSE_RULES.
@@ -4633,12 +3357,7 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
         """SUPPORT, not evidence. The direction the requirement change must not break: where no
         settings file was read for the question to be about, the policy causes answer
         not_evaluated rather than putting a candidate on the table no reading points at."""
-        with tempfile.TemporaryDirectory() as temporary:
-            self._host(temporary)
-            settings(temporary)
-            cell = why_no_record(temporary)
-        self.assertNotEqual(self._standings(cell).get(firing.JOURNALLING_OFF),
-                            firing.ESTABLISHED)
+        run_contract("test_a_user_owned_host_with_nothing_named_still_evaluates_nothing")
 
     def test_one_settings_file_named_through_an_alias_is_one_source(self):
         """Two spellings of one file are one source, and the configuration is read.
@@ -4693,19 +3412,8 @@ class TheCausePartitionItself(unittest.TestCase):
                                     " is decided is a requirement nothing can satisfy")
 
     def test_the_cell_is_answered_whichever_branch_of_the_settings_fork_ran(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            fake_relay(temporary, stdout=json.dumps(RELEASED))
-            register(temporary)
-            second_registration(temporary, "journal-two")
-            ambiguous = completion.status(codex_home=temporary, environ={})
-        with tempfile.TemporaryDirectory() as temporary:
-            fake_relay(temporary, stdout=json.dumps(RELEASED))
-            register(temporary)
-            settled = completion.status(codex_home=temporary, environ={})
-        for found in (ambiguous, settled):
-            self.assertIn("firingRecordAbsence", found)
-            self.assertIn(found["firingRecordAbsence"]["value"], firing.CAUSES)
-            self.assertTrue(found["firingRecordAbsence"]["evidence"])
+        run_contract("test_the_cell_is_answered_whichever_branch_of_the_settings_fork_ran", "ambiguous",
+                     "settled")
 
 
 if __name__ == "__main__":

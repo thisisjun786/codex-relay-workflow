@@ -1,0 +1,49 @@
+{
+  "given": {
+    "relay": {
+      "stdout": "{\"decision\": \"release\", \"state\": \"unmanaged\", \"observation\": \"unmanaged\", \"reason\": \"No marker names this workspace.\", \"assignmentId\": null, \"counters\": {}, \"recordedAs\": null, \"hook_output\": {}}"
+    }
+  },
+  "run": {
+    "kind": "hook"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "stdout"
+        ],
+        "value": ""
+      },
+      {
+        "kind": "json_eq",
+        "path": [
+          "call",
+          "stdin"
+        ],
+        "value": {
+          "cwd": "/tmp/workspace",
+          "hook_event_name": "Stop",
+          "last_assistant_message": "I finished the task.",
+          "model": "test-model",
+          "permission_mode": "default",
+          "session_id": "01a0b109-1ea5-7fb3-9adc-87f45ed83688",
+          "stop_hook_active": false,
+          "transcript_path": "/tmp/transcript.jsonl",
+          "turn_id": "turn-1"
+        }
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "call",
+          "argv",
+          0
+        ],
+        "value": "guard-evaluate"
+      }
+    ]
+  }
+}

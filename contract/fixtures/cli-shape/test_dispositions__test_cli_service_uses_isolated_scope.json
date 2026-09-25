@@ -1,0 +1,18 @@
+{
+  "given": {
+    "host": {}
+  },
+  "run": {
+    "kind": "cli",
+    "argv": [
+      "daemon",
+      "--max-ticks",
+      "0",
+      "--allow-isolated-scope"
+    ]
+  },
+  "expect": {"exit": 0, "observe": ["scopes", "state"], "checks": [
+    {"kind": "eq", "path": ["stdout_json", "ok"], "value": true},
+    {"kind": "truthy", "path": ["observed", "scopes", "entries"], "value": null}
+  ]}
+}

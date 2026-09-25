@@ -1,0 +1,1 @@
+{"given":{},"run":{"kind":"appserver","steps":[{"method":"project/read","params":{"projectId":"fixture-project"}}]},"expect":{"exit":0,"checks":[{"kind":"eq","path":["results",0,"project","id"],"value":"fixture-project"},{"kind":"contains","path":["calls"],"value":["project/read",{"projectId":"fixture-project"}]}]}}

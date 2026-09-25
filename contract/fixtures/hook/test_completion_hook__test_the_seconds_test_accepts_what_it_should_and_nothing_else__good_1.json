@@ -1,0 +1,28 @@
+{
+  "given": {
+    "settings": false,
+    "relay": {
+      "stdout": "{\"decision\": \"release\", \"state\": \"unmanaged\", \"observation\": \"unmanaged\", \"reason\": \"No marker names this workspace.\", \"assignmentId\": null, \"counters\": {}, \"recordedAs\": null, \"hook_output\": {}}"
+    },
+    "files": {
+      "crw-completion-hook.json": "{\"configVersion\": 1, \"event\": \"Stop\", \"relayExecutable\": \"${HOME}/codex-session-relay\", \"markerRoot\": \"${HOME}/marker\", \"dbPath\": null, \"mode\": \"observe\", \"timeoutSeconds\": 1, \"journalRoot\": \"${HOME}/journal\", \"journalPolicy\": \"every_invocation\", \"installedBy\": \"CRW-100\", \"isolationAssertedBy\": null}"
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "configuration",
+          "value"
+        ],
+        "value": "PRESENT"
+      }
+    ]
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "given": {
+    "settings": false,
+    "files": {
+      "hooks.json": "{\"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"/usr/bin/python3 /a/completion_hook.py\", \"timeout\": 10}]}]}}"
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "length",
+        "path": [
+          "status",
+          "registration",
+          "thisAdapter"
+        ],
+        "value": 1
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "registration",
+          "thisAdapter",
+          0,
+          "target"
+        ],
+        "value": "/a/completion_hook.py"
+      }
+    ]
+  }
+}

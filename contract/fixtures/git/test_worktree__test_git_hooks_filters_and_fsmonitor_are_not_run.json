@@ -1,0 +1,1 @@
+{"given":{"files":{"tracked":"base\n"},"hostile_git":true},"run":{"kind":"git","bridge":true,"steps":[{"kind":"launch"}]},"expect":{"exit":0,"paths":["unexpected-effect"],"checks":[{"kind":"eq","path":["receipts",0,"status"],"value":"accepted"},{"kind":"eq","path":["paths","unexpected-effect"],"value":false}]}}

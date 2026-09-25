@@ -1,0 +1,25 @@
+{
+  "given": {
+    "relay": {
+      "stdout": "{\"error\": \"refused\", \"reason\": \"x\"}",
+      "exit": 2
+    }
+  },
+  "run": {
+    "kind": "hook"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "rows",
+          0,
+          "adapterOutcome"
+        ],
+        "value": "guard_refused"
+      }
+    ]
+  }
+}

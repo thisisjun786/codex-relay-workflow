@@ -1,0 +1,24 @@
+{
+  "given": {
+    "relay": {
+      "stdout": "guard-evaluate --help"
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "guardEvaluateOffered",
+          "value"
+        ],
+        "value": "guard_rejected_the_call"
+      }
+    ]
+  }
+}

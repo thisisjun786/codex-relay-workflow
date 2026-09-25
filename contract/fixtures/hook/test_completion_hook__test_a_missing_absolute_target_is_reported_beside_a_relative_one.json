@@ -1,0 +1,36 @@
+{
+  "given": {
+    "settings": false,
+    "files": {
+      "hooks.json": "{\"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"${PYTHON} ${HOME}/gone/completion_hook.py\", \"timeout\": 10}]}, {\"hooks\": [{\"type\": \"command\", \"command\": \"${PYTHON} scripts/completion_hook.py\", \"timeout\": 10}]}]}}"
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "registeredCommandTarget",
+          "value"
+        ],
+        "value": "ABSENT"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "registeredCommandTarget",
+          "relativeTargets"
+        ],
+        "value": [
+          "scripts/completion_hook.py"
+        ]
+      }
+    ]
+  }
+}

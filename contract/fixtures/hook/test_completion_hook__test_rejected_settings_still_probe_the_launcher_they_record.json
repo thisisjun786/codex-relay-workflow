@@ -1,0 +1,41 @@
+{
+  "given": {
+    "settings": false,
+    "relay": {
+      "stdout": "{\"decision\": \"release\", \"state\": \"unmanaged\", \"observation\": \"unmanaged\", \"reason\": \"No marker names this workspace.\", \"assignmentId\": null, \"counters\": {}, \"recordedAs\": null, \"hook_output\": {}}"
+    },
+    "files": {
+      "crw-completion-hook.json": "{\"configVersion\": 1, \"event\": \"Stop\", \"relayExecutable\": \"${HOME}/codex-session-relay\", \"markerRoot\": \"${HOME}/marker\", \"dbPath\": null, \"mode\": \"not-a-mode-this-reader-knows\", \"timeoutSeconds\": 5, \"journalRoot\": \"${HOME}/journal\", \"journalPolicy\": \"every_invocation\", \"installedBy\": \"CRW-100\", \"isolationAssertedBy\": null, \"owner\": \"plugin\", \"adapterInterpreter\": \"${PYTHON}\", \"adapterEntryPoint\": \"${HOME}/an-entry-point-that-was-deleted.py\"}"
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "firingRecordAbsence",
+          "candidates",
+          1,
+          "cause"
+        ],
+        "value": "adapter_cannot_run"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "firingRecordAbsence",
+          "candidates",
+          1,
+          "standing"
+        ],
+        "value": "established"
+      }
+    ]
+  }
+}

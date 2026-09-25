@@ -1,0 +1,96 @@
+{
+  "given": {},
+  "run": {
+    "kind": "cli",
+    "steps": [
+      {
+        "id": "assignment",
+        "argv": [
+          "reporting-show",
+          "--marker-root",
+          "${HOME}/markers",
+          "--workspace",
+          "${HOME}/workspace",
+          "--assignment",
+          "../outside",
+          "--session",
+          "session-1",
+          "--turn",
+          "turn-1"
+        ]
+      },
+      {
+        "id": "session",
+        "argv": [
+          "reporting-show",
+          "--marker-root",
+          "${HOME}/markers",
+          "--workspace",
+          "${HOME}/workspace",
+          "--assignment",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "--session",
+          "a/b",
+          "--turn",
+          "turn-1"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 4,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "assignment",
+          "exit"
+        ],
+        "value": 4
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "assignment",
+          "stdout_json",
+          "error"
+        ],
+        "value": "usage"
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "steps",
+          "assignment",
+          "stdout_json",
+          "detail"
+        ],
+        "value": "assignment"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "session",
+          "exit"
+        ],
+        "value": 4
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "steps",
+          "session",
+          "stdout_json",
+          "detail"
+        ],
+        "value": "session"
+      }
+    ],
+    "files": {
+      "state": false
+    }
+  }
+}

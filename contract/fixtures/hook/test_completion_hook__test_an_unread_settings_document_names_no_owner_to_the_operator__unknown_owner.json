@@ -1,0 +1,50 @@
+{
+  "given": {
+    "settings": false,
+    "relay": {
+      "stdout": "{\"decision\": \"release\", \"state\": \"unmanaged\", \"observation\": \"unmanaged\", \"reason\": \"No marker names this workspace.\", \"assignmentId\": null, \"counters\": {}, \"recordedAs\": null, \"hook_output\": {}}"
+    },
+    "files": {
+      "crw-completion-hook.json": "{\"configVersion\": 1, \"event\": \"Stop\", \"relayExecutable\": \"${HOME}/codex-session-relay\", \"markerRoot\": \"${HOME}/marker\", \"dbPath\": null, \"mode\": \"observe\", \"timeoutSeconds\": 5, \"journalRoot\": \"${HOME}/journal\", \"journalPolicy\": \"every_invocation\", \"installedBy\": \"CRW-100\", \"isolationAssertedBy\": null, \"owner\": \"somebody\"}"
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "registrationOwner",
+          "value"
+        ],
+        "value": "not_read"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "firingRecordAbsence",
+          "candidates",
+          0,
+          "cause"
+        ],
+        "value": "not_registered"
+      },
+      {
+        "kind": "excludes",
+        "path": [
+          "status",
+          "firingRecordAbsence",
+          "candidates",
+          0,
+          "detail"
+        ],
+        "value": "package manifest"
+      }
+    ]
+  }
+}

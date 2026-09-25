@@ -1,0 +1,25 @@
+{
+  "given": {
+    "relay": {
+      "stdout": "{\"decision\":\"release\",\"state\":\"unmanaged\",\"hook_output\":{}}"
+    }
+  },
+  "run": {
+    "kind": "agreement",
+    "stdin": null
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "records",
+          0,
+          "adapterOutcome"
+        ],
+        "value": "stdin_unreadable"
+      }
+    ]
+  }
+}

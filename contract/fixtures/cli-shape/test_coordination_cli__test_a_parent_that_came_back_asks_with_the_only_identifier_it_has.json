@@ -1,0 +1,126 @@
+{
+  "given": {},
+  "run": {
+    "kind": "cli",
+    "steps": [
+      {
+        "id": "bind",
+        "argv": [
+          "linkage-bind",
+          "--role",
+          "parent",
+          "--scope",
+          "PRJ-A",
+          "--task",
+          "task-alpha",
+          "--host",
+          "host-a"
+        ]
+      },
+      {
+        "id": "request",
+        "argv": [
+          "merge-turn-request",
+          "--repository",
+          "owner/repo",
+          "--base-ref",
+          "dev",
+          "--project",
+          "PRJ-A",
+          "--task",
+          "task-alpha",
+          "--host",
+          "host-a",
+          "--head",
+          "head-a",
+          "--ready"
+        ]
+      },
+      {
+        "id": "show",
+        "argv": [
+          "merge-turn-show",
+          "--parent-task",
+          "task-alpha"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "show",
+          "exit"
+        ],
+        "value": 0
+      },
+      {
+        "kind": "same",
+        "path": [
+          "steps",
+          "show",
+          "stdout_json",
+          "claims",
+          0,
+          "turnId"
+        ],
+        "other": [
+          "steps",
+          "request",
+          "stdout_json",
+          "turnId"
+        ]
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "show",
+          "stdout_json",
+          "claims",
+          0,
+          "state"
+        ],
+        "value": "holding"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "show",
+          "stdout_json",
+          "claims",
+          0,
+          "targetFree"
+        ],
+        "value": false
+      },
+      {
+        "kind": "length",
+        "path": [
+          "steps",
+          "show",
+          "stdout_json",
+          "claims"
+        ],
+        "value": 1
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "show",
+          "stdout_json",
+          "claims",
+          0,
+          "targetFree"
+        ],
+        "value": false
+      }
+    ]
+  }
+}

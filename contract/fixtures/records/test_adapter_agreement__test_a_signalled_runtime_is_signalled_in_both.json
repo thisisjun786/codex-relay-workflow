@@ -1,0 +1,30 @@
+{
+  "given": {
+    "relay": {
+      "signal": true
+    }
+  },
+  "run": {
+    "kind": "agreement",
+    "stdin": {
+      "session_id": "s-1",
+      "turn_id": "t-1",
+      "cwd": "/tmp/workspace",
+      "stop_hook_active": false
+    }
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "records",
+          0,
+          "adapterOutcome"
+        ],
+        "value": "guard_signalled"
+      }
+    ]
+  }
+}

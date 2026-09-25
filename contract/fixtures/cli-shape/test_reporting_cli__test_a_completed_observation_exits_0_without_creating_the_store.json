@@ -1,0 +1,133 @@
+{
+  "given": {},
+  "run": {
+    "kind": "cli",
+    "steps": [
+      {
+        "id": "done",
+        "argv": [
+          "reporting-show",
+          "--marker-root",
+          "${HOME}/markers",
+          "--workspace",
+          "${HOME}/workspace",
+          "--assignment",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "--session",
+          "session-1",
+          "--turn",
+          "turn-1"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "stdout_json",
+          "schema"
+        ],
+        "value": "reporting-observation/1"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "stdout_json",
+          "reportingState"
+        ],
+        "value": "unmanaged"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "stdout_json",
+          "reason"
+        ],
+        "value": "marker_absent"
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "stdout_json"
+        ],
+        "value": "reason"
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "stdout_json"
+        ],
+        "value": "selectors"
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "stdout_json"
+        ],
+        "value": "stopObservation"
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "stdout_json"
+        ],
+        "value": "terminalObservation"
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "stdout_json"
+        ],
+        "value": "currentObservation"
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "stdout_json"
+        ],
+        "value": "turnAdmission"
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "stdout_json"
+        ],
+        "value": "relationshipStatus"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "stdout_json",
+          "selectors",
+          "assignment"
+        ],
+        "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "stdout_json",
+          "selectors",
+          "session"
+        ],
+        "value": "session-1"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "stdout_json",
+          "selectors",
+          "turn"
+        ],
+        "value": "turn-1"
+      }
+    ],
+    "files": {
+      "state": false,
+      "state/relay.sqlite3": false
+    }
+  }
+}

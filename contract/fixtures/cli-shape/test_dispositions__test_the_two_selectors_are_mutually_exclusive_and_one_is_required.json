@@ -1,0 +1,1 @@
+{"given":{},"run":{"kind":"cli","steps":[{"id":"none","argv":["dispositions-show"]},{"id":"both","argv":["dispositions-show","--project","PRJ-A","--relationship","rel-1"]}]},"expect":{"exit":2,"checks":[{"kind":"eq","path":["steps","none","exit"],"value":2},{"kind":"eq","path":["steps","both","exit"],"value":2}]}}

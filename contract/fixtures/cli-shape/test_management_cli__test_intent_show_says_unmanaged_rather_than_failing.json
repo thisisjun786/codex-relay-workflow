@@ -1,0 +1,33 @@
+{
+  "given": {},
+  "run": {
+    "kind": "cli",
+    "steps": [
+      {
+        "id": "show",
+        "argv": [
+          "intent-show",
+          "--marker-root",
+          "${HOME}/markers",
+          "--workspace",
+          "${HOME}/workspace"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "show",
+          "stdout_json",
+          "managed"
+        ],
+        "value": false
+      }
+    ]
+  }
+}

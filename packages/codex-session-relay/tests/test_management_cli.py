@@ -136,10 +136,9 @@ class Refusals(MarkerCli):
         self.assertEqual(os.listdir(self.markers), [])
 
     def test_intent_show_says_unmanaged_rather_than_failing(self):
-        shown = self.marker_cli(
-            "intent-show", "--marker-root", self.markers, "--workspace", self.root
-        )
-        self.assertIs(shown["managed"], False)
+        from contract.runner import FIXTURES, run_scenario
+        from pathlib import Path
+        run_scenario(FIXTURES / "cli-shape" / "test_management_cli__test_intent_show_says_unmanaged_rather_than_failing.json", Path(self.tmp))
 
     def test_an_explicit_assignment_with_no_intent_reads_unmanaged(self):
         """Selection treats a directory with no published intent as not selectable, so naming it
@@ -164,44 +163,24 @@ class Refusals(MarkerCli):
         self.assertEqual(refused["reason"], "relationship_conflict")
 
     def test_registration_is_refused_when_the_relay_cannot_be_confirmed(self):
-        """Refusing to claim beats taking the caller's word, so an unreadable store is a refusal."""
-        declared = self.declare()
-        refused = self.marker_cli(
-            "intent-register", "--marker-root", self.markers, "--workspace", self.root,
-            "--assignment", declared["assignmentId"], "--relationship", "rel-0123456789abcdef",
-            "--dispatch-request-id", DISPATCH,
-            "--db-path", os.path.join(self.tmp, "no-such-store.sqlite3"), expect=2,
-        )
-        self.assertEqual(refused["reason"], "unregistered_relationship")
+        from contract.runner import FIXTURES, run_scenario
+        from pathlib import Path
+        run_scenario(FIXTURES / "cli-shape" / "test_management_cli__test_registration_is_refused_when_the_relay_cannot_be_confirmed.json", Path(self.tmp))
 
     def test_a_relationship_from_another_dispatch_is_refused_with_a_reason(self):
-        declared = self.declare()
-        refused = self.marker_cli(
-            "intent-register", "--marker-root", self.markers, "--workspace", self.root,
-            "--assignment", declared["assignmentId"], "--relationship", "rel-0123456789abcdef",
-            "--dispatch-request-id", "some-other-dispatch", expect=2,
-        )
-        self.assertEqual(refused["error"], "refused")
-        self.assertEqual(refused["reason"], "relationship_conflict")
+        from contract.runner import FIXTURES, run_scenario
+        from pathlib import Path
+        run_scenario(FIXTURES / "cli-shape" / "test_management_cli__test_a_relationship_from_another_dispatch_is_refused_with_a_reason.json", Path(self.tmp))
 
     def test_a_disposition_outside_the_vocabulary_is_rejected_by_the_parser(self):
-        declared = self.declare()
-        environment = dict(os.environ, PYTHONPATH=os.path.join(REPO, "src"))
-        completed = subprocess.run(
-            [sys.executable, "-m", "codex_session_relay.cli", "--state", self.tmp,
-             "intent-disposition", "--marker-root", self.markers, "--workspace", self.root,
-             "--assignment", declared["assignmentId"], "--session", CHILD,
-             "--turn", DISPATCH_TURN, "--outcome", "done"],
-            capture_output=True, text=True, env=environment, timeout=60,
-        )
-        self.assertNotEqual(completed.returncode, 0)
-        self.assertIn("invalid choice", completed.stderr)
+        from contract.runner import FIXTURES, run_scenario
+        from pathlib import Path
+        run_scenario(FIXTURES / "cli-shape" / "test_management_cli__test_a_disposition_outside_the_vocabulary_is_rejected_by_the_parser.json", Path(self.tmp))
 
     def test_a_stop_payload_that_is_not_json_is_a_usage_error(self):
-        payload = self.marker_cli(
-            "guard-evaluate", "--marker-root", self.markers, stdin="not json", expect=4
-        )
-        self.assertEqual(payload["error"], "usage")
+        from contract.runner import FIXTURES, run_scenario
+        from pathlib import Path
+        run_scenario(FIXTURES / "cli-shape" / "test_management_cli__test_a_stop_payload_that_is_not_json_is_a_usage_error.json", Path(self.tmp))
 
     def test_a_malformed_intent_stays_managed_in_the_explicit_view(self):
         """The diagnostic view disagreed with the decision about the same marker.
@@ -250,17 +229,9 @@ class Refusals(MarkerCli):
         self.assertEqual(payload["error"], "usage")
 
     def test_a_hold_that_cannot_be_recorded_is_refused_at_the_command_line(self):
-        """A hold is reserved, counted against the bounds and released by its own record.
-
-        Asking for one with --no-record asks for a hold nothing can account for, so it is refused
-        where the operator typed it rather than answered with a release they did not expect.
-        """
-        payload = self.marker_cli(
-            "guard-evaluate", "--marker-root", self.markers, "--mode", "hold", "--no-record",
-            stdin=self.stop_payload(), expect=4,
-        )
-        self.assertEqual(payload["error"], "usage")
-        self.assertIn("--no-record", payload["detail"])
+        from contract.runner import FIXTURES, run_scenario
+        from pathlib import Path
+        run_scenario(FIXTURES / "cli-shape" / "test_management_cli__test_a_hold_that_cannot_be_recorded_is_refused_at_the_command_line.json", Path(self.tmp))
 
     def test_observe_is_the_default_mode_on_the_command_line(self):
         declared = self.declare()

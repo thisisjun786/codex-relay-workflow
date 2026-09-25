@@ -4,324 +4,160 @@ Every case here is written from the coordinator's side. The question is never wh
 exists, but whether somebody holding only this answer would reach a true conclusion: that a blocked
 child is blocked, that an unreadable store is not an empty one, and that nothing here claims a
 recipient saw anything the store cannot show it saw.
+
+Most cases are contract scenarios under contract/fixtures/cli-shape/test_dispositions__*.json,
+driven through the real relay CLI against a real store; the tests below that call run_fixture
+are their thin runners. The rest stay Python for the reasons contract/notes/test_dispositions.md
+records.
 """
 
 import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 
-from codex_session_relay import cxc, dispositions, report
+from codex_session_relay import dispositions, report
 from codex_session_relay.delivery import EXECUTION_ONLY_OUTCOMES
-from codex_session_relay.models import TurnRef
 from codex_session_relay.receipts import OUTCOMES
 from codex_session_relay.store import resolve_state_dir
 
-from .support import CHILD, DISPATCH_TURN, PARENT, DeliveryTestCase
-from .test_cli import REPO, CliBase
+from .support import DISPATCH_TURN, DeliveryTestCase
+from .test_cli import REPO
+
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT))
+from contract.runner import FIXTURES, run_scenario
 
 PROJECT = "PROJ-CRW-163"
 
 
-def a_row(**overrides) -> dict:
-    """One flat row in the shape the single statement returns, defaulting to an empty child."""
-    row = {
-        "kind": "child", "store_id": None,
-        "relationship_id": "rel-1", "issue_key": "CRW-1", "relationship_status": "active",
-        "parent_task_id": PARENT, "child_task_id": CHILD, "execution_generation": 1,
-        "project_key": PROJECT, "reviewable_count": 0, "earlier_events": 0,
-        "event_id": None, "outcome": None, "producer": None, "stage": None,
-        "suppressed_reason": None, "turn_id": None, "attempt": None,
-        "became_final_at": None, "ordering_at": None,
-        "report_submission": None, "cxc_status": None, "cxc_reason": None, "next_action": None,
-        "delivery_event": None, "delivery_state": None, "delivery_kind": None,
-        "recipient_task_id": None, "attempt_count": None, "hold_reason": None,
-        "dispatch_turn_id": None, "dispatch_evidence": None,
-        "intent_event": None, "intent_attempts": None, "intent_error": None,
-        "intent_next_retry_at": None,
-        "supersession_reason": None, "supersession_applied": None,
-        "request_id": None, "attempt_no": None, "attempt_internal_state": None,
-        "attempt_state": None, "attempt_sent_at": None,
-        "ack_event": None, "ack_accepted": None, "ack_rejection": None, "ack_verified": None,
-        "ack_evidence_event": None, "ack_tier": None,
-        "superseded_by": None, "correction_event": None, "correction_state": None,
-        "correction_attempts": None, "correction_hold": None,
-        "correction_next_eligible_at": None, "correction_lifecycle_withhold": None,
-        "correction_lifecycle_recorded_at": None, "correction_lifecycle_next_retry_at": None,
-        "correction_supersession_reason": None, "correction_supersession_applied": None,
-    }
-    row.update(overrides)
-    return row
-
-
-def an_event(event_id, outcome, **overrides) -> dict:
-    base = {
-        "event_id": event_id, "outcome": outcome, "producer": "child", "stage": "final",
-        "turn_id": DISPATCH_TURN, "attempt": 1, "became_final_at": "2026-09-21T00:00:00Z",
-        "ordering_at": "2026-09-21T00:00:00Z",
-    }
-    base.update(overrides)
-    return a_row(**base)
-
-
-def derived(rows):
-    return dispositions.derive(rows, selector={"projectKey": PROJECT})
-
-
-def only_child(rows):
-    answer = derived(rows)
-    return answer["children"][0]
-
-
-def only_event(rows):
-    return only_child(rows)["events"][0]
+def run_fixture(name):
+    with tempfile.TemporaryDirectory(prefix="relay-dispositions-") as raw:
+        run_scenario(FIXTURES / "cli-shape" / f"test_dispositions__{name}.json", Path(raw))
 
 
 class TheTurnDisposition(unittest.TestCase):
     """Which disposition is current, and what happens when the store holds two answers."""
 
     def test_a_child_that_reported_nothing_is_not_a_child_that_is_fine(self):
-        child = only_child([a_row()])
-        self.assertIsNone(child["turnDisposition"]["outcome"])
-        self.assertEqual(child["turnDisposition"]["basis"], "none")
-        self.assertIn("not", child["turnDisposition"]["detail"],
-                      "the absence has to say what it is not")
-        self.assertEqual(child["events"], [])
+        run_fixture("test_a_child_that_reported_nothing_is_not_a_child_that_is_fine")
 
     def test_a_single_blocked_event_is_the_disposition(self):
-        child = only_child([an_event("e1", "blocked_needs_input")])
-        self.assertEqual(child["turnDisposition"]["outcome"], "blocked_needs_input")
-        self.assertEqual(child["turnDisposition"]["eventId"], "e1")
-        self.assertEqual(child["turnDisposition"]["basis"], "sole")
+        run_fixture("test_a_single_blocked_event_is_the_disposition")
 
     def test_a_reviewable_event_is_counted_and_never_becomes_the_disposition(self):
-        """The store treats an execution-only event as a different kind of fact, not a rival.
-
-        A reviewable receipt beside a blocked one is not a contest, so the reviewable axis is
-        listed separately and this reader never names a head for it.
-        """
-        child = only_child([an_event("r1", "ready_for_review", reviewable_count=1)])
-        self.assertEqual(child["turnDisposition"]["basis"], "none")
-        self.assertEqual(child["reviewable"]["eventIds"], ["r1"])
-        self.assertEqual(child["reviewable"]["eventsInGeneration"], 1)
-        self.assertEqual(child["reviewable"]["head"], "not_derived_here")
-        self.assertIn("assignment-show", child["reviewable"]["readWith"])
-        self.assertEqual([e["eventId"] for e in child["events"]], ["r1"],
-                         "the event itself still travels, so lastEvent can be built from it")
+        run_fixture("test_a_reviewable_event_is_counted_and_never_becomes_the_disposition")
 
     def test_several_reviewable_events_are_all_listed_and_none_is_called_the_head(self):
-        child = only_child([
-            an_event("r1", "ready_for_review", reviewable_count=2),
-            an_event("r2", "ready_for_review", reviewable_count=2),
-        ])
-        self.assertEqual(sorted(child["reviewable"]["eventIds"]), ["r1", "r2"])
-        self.assertEqual(child["reviewable"]["head"], "not_derived_here")
+        run_fixture("test_several_reviewable_events_are_all_listed_and_none_is_called_the_head")
 
     def test_two_events_with_the_same_outcome_anchor_to_the_newest_and_keep_both(self):
-        child = only_child([
-            an_event("e1", "blocked_needs_input", ordering_at="2026-09-21T00:00:00Z"),
-            an_event("e2", "blocked_needs_input", ordering_at="2026-09-21T01:00:00Z"),
-        ])
-        self.assertEqual(child["turnDisposition"]["eventId"], "e2")
-        self.assertEqual(child["turnDisposition"]["basis"], "latest_of_same_outcome")
-        self.assertEqual(child["turnDisposition"]["candidates"], ["e1", "e2"])
+        run_fixture("test_two_events_with_the_same_outcome_anchor_to_the_newest_and_keep_both")
 
     def test_disagreeing_outcomes_are_a_contest_even_when_one_is_newer(self):
-        """Arrival order decides nothing here, so a later timestamp does not win the question."""
-        for label, later in (("equal", "2026-09-21T00:00:00Z"), ("newer", "2026-09-21T02:00:00Z")):
+        for label in ("equal", "newer"):
             with self.subTest(label):
-                child = only_child([
-                    an_event("e1", "blocked_needs_input", ordering_at="2026-09-21T00:00:00Z"),
-                    an_event("e2", "failed", ordering_at=later),
-                ])
-                self.assertIsNone(child["turnDisposition"]["outcome"])
-                self.assertEqual(child["turnDisposition"]["basis"], "contested")
-                self.assertEqual(child["turnDisposition"]["candidates"], ["e1", "e2"])
+                run_fixture("test_disagreeing_outcomes_are_a_contest_even_when_one_is_newer__"
+                            + label)
 
     def test_a_suppressed_claim_is_listed_and_never_chosen(self):
-        child = only_child([
-            an_event("e1", "blocked_needs_input", stage="suppressed",
-                     suppressed_reason="the turn ended failed, so the staged claim is not promoted"),
-        ])
-        self.assertEqual(child["turnDisposition"]["basis"], "none")
-        self.assertEqual(child["events"][0]["suppressedReason"][:3], "the")
+        run_fixture("test_a_suppressed_claim_is_listed_and_never_chosen")
 
     def test_a_staged_claim_is_listed_and_never_chosen(self):
-        child = only_child([an_event("e1", "blocked_needs_input", stage="staged")])
-        self.assertEqual(child["turnDisposition"]["basis"], "none")
-        self.assertEqual(child["events"][0]["stage"], "staged")
+        run_fixture("test_a_staged_claim_is_listed_and_never_chosen")
 
     def test_a_directly_final_event_with_no_finalized_at_still_orders(self):
-        child = only_child([
-            an_event("e1", "failed", became_final_at=None, ordering_at="2026-09-21T00:00:00Z"),
-            an_event("e2", "failed", became_final_at=None, ordering_at=None),
-        ])
-        self.assertEqual(child["turnDisposition"]["eventId"], "e1")
-        self.assertEqual(child["turnDisposition"]["candidates"], ["e1", "e2"])
+        run_fixture("test_a_directly_final_event_with_no_finalized_at_still_orders")
 
     def test_earlier_generations_are_counted_and_not_listed(self):
-        child = only_child([an_event("e1", "blocked_needs_input", earlier_events=2)])
-        self.assertEqual(child["earlierGenerationEvents"], 2)
-        self.assertEqual(len(child["events"]), 1)
+        run_fixture("test_earlier_generations_are_counted_and_not_listed")
 
 
 class TheWorkReport(unittest.TestCase):
     """BLOCKED, UNSAFE and NEEDS_HUMAN collapse onto one outcome; only the report separates them."""
 
     def test_a_recorded_report_carries_the_status_that_separates_them(self):
-        event = only_event([an_event(
-            "e1", "blocked_needs_input", report_submission=2, cxc_status=cxc.NEEDS_HUMAN,
-            cxc_reason="an approval nobody here can grant", next_action="ask the operator",
-        )])
-        self.assertTrue(event["workReport"]["recorded"])
-        self.assertEqual(event["workReport"]["cxcStatus"], cxc.NEEDS_HUMAN)
-        self.assertEqual(event["workReport"]["submissionNo"], 2)
+        run_fixture("test_a_recorded_report_carries_the_status_that_separates_them")
 
     def test_no_report_says_the_separation_is_unavailable_rather_than_guessing(self):
-        event = only_event([an_event("e1", "blocked_needs_input")])
-        self.assertFalse(event["workReport"]["recorded"])
-        self.assertIsNone(event["workReport"]["cxcStatus"])
+        run_fixture("test_no_report_says_the_separation_is_unavailable_rather_than_guessing")
 
 
 class TheDeliveryAxis(unittest.TestCase):
     """Whether a send was measured at all, which is the question absence used to swallow."""
 
-    def observation(self, **overrides):
-        return only_event([an_event("e1", "blocked_needs_input", **overrides)])["delivery"]
-
     def test_no_delivery_and_no_intent_is_unmeasured_not_undelivered(self):
-        delivery = self.observation()
-        self.assertEqual(delivery["observation"], "unmeasured")
-        self.assertIn("--no-enqueue", delivery["detail"],
-                      "the detail has to name what absence cannot separate")
-        self.assertIsNone(delivery["state"])
+        run_fixture("test_no_delivery_and_no_intent_is_unmeasured_not_undelivered")
 
     def test_an_intent_without_a_delivery_is_a_refusal_that_may_not_last(self):
-        delivery = self.observation(intent_event="e1", intent_attempts=3,
-                                    intent_error="parent is paused")
-        self.assertEqual(delivery["observation"], "refused_pre_queue")
-        self.assertTrue(delivery["intent"]["recorded"])
-        self.assertEqual(delivery["intent"]["attempts"], 3)
-        self.assertEqual(delivery["intent"]["lastError"], "parent is paused")
+        run_fixture("test_an_intent_without_a_delivery_is_a_refusal_that_may_not_last")
 
     def test_a_queued_delivery_is_not_sent_and_carries_the_stores_own_word(self):
-        delivery = self.observation(delivery_event="e1", delivery_state="queued",
-                                    delivery_kind="completion_event", attempt_count=0)
-        self.assertEqual(delivery["observation"], "not_sent")
-        self.assertEqual(delivery["state"], "queued")
-        self.assertIn("status", delivery["readWith"])
+        run_fixture("test_a_queued_delivery_is_not_sent_and_carries_the_stores_own_word")
 
     def test_a_dispatched_delivery_says_dispatched_and_nothing_more(self):
-        delivery = self.observation(delivery_event="e1", delivery_state="dispatched",
-                                    dispatch_turn_id="turn-parent-9",
-                                    dispatch_evidence="transport_accepted")
-        self.assertEqual(delivery["observation"], "dispatched")
-        self.assertTrue(delivery["dispatchEvidence"])
-        self.assertEqual(delivery["dispatchTurnId"], "turn-parent-9")
+        run_fixture("test_a_dispatched_delivery_says_dispatched_and_nothing_more")
 
     def test_an_inbox_only_delivery_is_stored_not_woken(self):
-        delivery = self.observation(delivery_event="e1", delivery_state="inbox_only")
-        self.assertEqual(delivery["observation"], "stored_not_woken")
-        self.assertIn("not a successful wake", delivery["detail"])
+        run_fixture("test_an_inbox_only_delivery_is_stored_not_woken")
 
     def test_an_uncertain_send_is_not_evidence_of_non_delivery(self):
         for state in ("sending", "held_uncertain"):
             with self.subTest(state):
-                delivery = self.observation(delivery_event="e1", delivery_state=state)
-                self.assertEqual(delivery["observation"], "send_uncertain")
+                run_fixture("test_an_uncertain_send_is_not_evidence_of_non_delivery__" + state)
 
     def test_a_supersession_note_outranks_the_state_but_never_erases_it(self):
-        delivery = self.observation(delivery_event="e1", delivery_state="dispatched",
-                                    supersession_reason="a newer generation replaced it",
-                                    supersession_applied=1)
-        self.assertEqual(delivery["observation"], "superseded")
-        self.assertEqual(delivery["state"], "dispatched", "the store word survives the derivation")
-        self.assertEqual(delivery["supersession"]["reason"], "a newer generation replaced it")
+        run_fixture("test_a_supersession_note_outranks_the_state_but_never_erases_it")
 
     def test_a_state_this_reader_has_no_word_for_is_not_folded_into_one(self):
-        delivery = self.observation(delivery_event="e1", delivery_state="teleported")
-        self.assertEqual(delivery["observation"], "state_unrecognised")
-        self.assertIn("teleported", delivery["detail"])
+        run_fixture("test_a_state_this_reader_has_no_word_for_is_not_folded_into_one")
 
     def test_a_staged_event_is_never_reported_as_delivered(self):
-        delivery = only_event([an_event("e1", "blocked_needs_input", stage="staged")])["delivery"]
-        self.assertEqual(delivery["observation"], "not_deliverable:staged")
-        self.assertIn("only a final event", delivery["detail"])
+        run_fixture("test_a_staged_event_is_never_reported_as_delivered")
 
     def test_a_suppressed_event_is_called_suppressed_rather_than_staged(self):
-        """resolve_staged_in writes stage suppressed WITH the reason, so order matters here."""
-        delivery = only_event([an_event(
-            "e1", "blocked_needs_input", stage="suppressed",
-            suppressed_reason="the turn ended failed, so the staged claim is not promoted",
-        )])["delivery"]
-        self.assertEqual(delivery["observation"], "suppressed")
-        self.assertIn("suppressed", delivery["detail"])
+        run_fixture("test_a_suppressed_event_is_called_suppressed_rather_than_staged")
 
     def test_an_acknowledgement_with_no_delivery_row_is_a_disagreement_not_unmeasured(self):
-        delivery = self.observation(ack_event="e1", ack_accepted=1, ack_verified="verified")
-        self.assertEqual(delivery["observation"], "records_disagree")
-        self.assertIn("an acknowledgement", delivery["detail"])
+        run_fixture(
+            "test_an_acknowledgement_with_no_delivery_row_is_a_disagreement_not_unmeasured")
 
 
 class TheReceivingAxis(unittest.TestCase):
     """A dispatch proves a send was accepted, never that the recipient observed anything."""
 
-    def receiving(self, **overrides):
-        return only_event([an_event("e1", "blocked_needs_input", **overrides)])["delivery"]
-
     def test_a_dispatched_send_still_leaves_the_receiving_side_unmeasured(self):
-        delivery = self.receiving(delivery_event="e1", delivery_state="dispatched",
-                                  dispatch_turn_id="turn-parent-9")
-        self.assertEqual(delivery["observation"], "dispatched")
-        self.assertEqual(delivery["recipientObservation"], "unmeasured")
-        self.assertIn("not an acknowledgement", delivery["recipientDetail"])
+        run_fixture("test_a_dispatched_send_still_leaves_the_receiving_side_unmeasured")
 
     def test_a_host_read_acknowledgement_is_an_observation(self):
-        delivery = self.receiving(delivery_event="e1", delivery_state="acknowledged",
-                                  ack_event="e1", ack_accepted=1, ack_verified="verified",
-                                  ack_evidence_event="e1", ack_tier="host_read")
-        self.assertEqual(delivery["recipientObservation"], "observed_host_read")
+        run_fixture("test_a_host_read_acknowledgement_is_an_observation")
 
     def test_an_unverified_acknowledgement_is_a_claim_rather_than_an_observation(self):
-        delivery = self.receiving(delivery_event="e1", delivery_state="dispatched",
-                                  ack_event="e1", ack_accepted=1, ack_verified="unverified_turn",
-                                  ack_evidence_event="e1", ack_tier="unverified")
-        self.assertEqual(delivery["recipientObservation"], "observed_claimed")
-        self.assertIn("claim", delivery["recipientDetail"])
+        run_fixture("test_an_unverified_acknowledgement_is_a_claim_rather_than_an_observation")
 
     def test_evidence_with_no_acknowledgement_beside_it_has_no_supportable_answer(self):
-        delivery = self.receiving(delivery_event="e1", delivery_state="dispatched",
-                                  ack_evidence_event="e1", ack_tier="unverified")
-        self.assertEqual(delivery["recipientObservation"], "records_disagree")
+        run_fixture("test_evidence_with_no_acknowledgement_beside_it_has_no_supportable_answer")
 
     def test_the_acknowledgement_block_keeps_every_field_the_assignment_view_reports(self):
-        event = only_event([an_event(
-            "e1", "blocked_needs_input", delivery_event="e1", delivery_state="dispatched",
-            ack_event="e1", ack_accepted=0, ack_rejection="the criteria set moved",
-            ack_verified="verified", ack_evidence_event="e1", ack_tier="host_read",
-        )])
-        acknowledgement = event["acknowledgement"]
-        self.assertTrue(acknowledgement["recorded"])
-        self.assertFalse(acknowledgement["accepted"])
-        self.assertEqual(acknowledgement["rejectionReason"], "the criteria set moved")
-        self.assertEqual(acknowledgement["settlement"], "verified")
-        self.assertEqual(acknowledgement["evidenceTier"], "host_read")
+        run_fixture(
+            "test_the_acknowledgement_block_keeps_every_field_the_assignment_view_reports")
 
     def test_no_acknowledgement_row_is_unrecorded_rather_than_unverified(self):
-        event = only_event([an_event("e1", "blocked_needs_input")])
-        self.assertFalse(event["acknowledgement"]["recorded"])
-        self.assertEqual(event["acknowledgement"]["evidenceTier"], "unrecorded")
-        self.assertIsNone(event["acknowledgement"]["settlement"])
+        run_fixture("test_no_acknowledgement_row_is_unrecorded_rather_than_unverified")
 
 
 class TheVocabulary(unittest.TestCase):
     """The words come from the store. A word that drifts from it fails here rather than in the field."""
 
     def test_the_execution_only_outcomes_are_still_the_stores_own_tuple(self):
+        run_fixture("test_the_execution_only_outcomes_are_still_the_stores_own_tuple")
         self.assertEqual(dispositions.EXECUTION_ONLY, EXECUTION_ONLY_OUTCOMES)
 
     def test_the_statement_selects_exactly_the_stores_four_outcomes(self):
+        run_fixture("test_the_statement_selects_exactly_the_stores_four_outcomes")
         for outcome in OUTCOMES:
             self.assertIn("'" + outcome + "'", dispositions._SQL,
                           "an outcome the store records is missing from the read")
@@ -332,6 +168,7 @@ class TheVocabulary(unittest.TestCase):
         The four subtracted names are receipt statuses rather than delivery states: they describe
         what a transport receipt said, not what a delivery row holds.
         """
+        run_fixture("test_every_delivery_state_the_transport_defines_has_a_word")
         from codex_session_relay import transport
 
         receipt_statuses = {"ACCEPTED", "FAILED", "OUTCOME_UNKNOWN", "UNFINISHED"}
@@ -343,26 +180,14 @@ class TheVocabulary(unittest.TestCase):
                          "a delivery state with no word would land in the wrong one")
 
     def test_every_word_the_map_produces_has_a_detail_entry(self):
+        run_fixture("test_every_word_the_map_produces_has_a_detail_entry")
         for word in set(dispositions.OBSERVATION_BY_STATE.values()):
             self.assertIn(word, dispositions.OBSERVATION_DETAIL)
 
 
 class TheCounts(unittest.TestCase):
     def test_the_counts_cannot_disagree_with_the_list_they_summarise(self):
-        answer = derived([
-            an_event("e1", "blocked_needs_input"),
-            a_row(relationship_id="rel-2", issue_key="CRW-2"),
-            an_event("e3", "failed", relationship_id="rel-3", issue_key="CRW-3",
-                     delivery_event="e3", delivery_state="dispatched",
-                     report_submission=1, cxc_status=cxc.BLOCKED, cxc_reason="waiting on a review"),
-        ])
-        counts = answer["counts"]
-        self.assertEqual(counts["children"], 3)
-        self.assertEqual(counts["blocked"], 1)
-        self.assertEqual(counts["withExecutionOnlyDisposition"], 2)
-        self.assertEqual(counts["deliveryUnmeasured"], 1, "only the one with no delivery record")
-        self.assertEqual(counts["recipientUnmeasured"], 2)
-        self.assertEqual(counts["workReportMissing"], 1)
+        run_fixture("test_the_counts_cannot_disagree_with_the_list_they_summarise")
 
 
 class TheReadItself(unittest.TestCase):
@@ -370,34 +195,15 @@ class TheReadItself(unittest.TestCase):
 
     def setUp(self):
         import shutil
-        import tempfile
 
         self.tmp = tempfile.mkdtemp(prefix="relay-dispositions-")
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
 
     def test_a_directory_with_no_database_is_unreadable_rather_than_empty(self):
-        absent = os.path.join(self.tmp, "absent")
-        answer = dispositions.read(resolve_state_dir(absent), project_key=PROJECT)
-        self.assertFalse(answer["readable"])
-        self.assertEqual(answer["children"], [])
-        self.assertIsNotNone(answer["detail"])
-        self.assertFalse(os.path.exists(absent), "the read created the directory it was asked about")
+        run_fixture("test_a_directory_with_no_database_is_unreadable_rather_than_empty")
 
     def test_a_file_that_is_not_a_relay_database_is_unreadable_and_stays_untouched(self):
-        """A legacy or unrelated file answers with the sqlite message, never with no children."""
-        state = os.path.join(self.tmp, "borrowed")
-        os.makedirs(state)
-        target = os.path.join(state, "relay.sqlite3")
-        open(target, "w").close()
-
-        answer = dispositions.read(resolve_state_dir(state), project_key=PROJECT)
-
-        self.assertFalse(answer["readable"])
-        self.assertEqual(answer["children"], [])
-        self.assertIsNotNone(answer["detail"])
-        self.assertEqual(os.path.getsize(target), 0, "the read wrote a schema into it")
-        self.assertEqual(sorted(os.listdir(state)), ["relay.sqlite3"],
-                         "no WAL or shm sidecar either")
+        run_fixture("test_a_file_that_is_not_a_relay_database_is_unreadable_and_stays_untouched")
 
     def test_a_replaced_file_is_unreadable_rather_than_attributed_to_the_wrong_store(self):
         """The caller half of the rename case.
@@ -443,11 +249,10 @@ class AgainstARealStore(DeliveryTestCase):
         )
         self.store.db.commit()
 
-    def blocked(self, relationship, *, status=None, staged=False, attempt=1,
-                turn_id=DISPATCH_TURN):
+    def blocked(self, relationship, *, status=None, attempt=1, turn_id=DISPATCH_TURN):
         # The turn has to be this generation's anchor: a receipt on any other turn needs an
         # explicit continuation admission, which is a different test's subject.
-        turn = self.assigned_turn("inProgress" if staged else "completed", turn=turn_id)
+        turn = self.assigned_turn("completed", turn=turn_id)
         payload = self.execution_payload(
             relationship, "blocked_needs_input", attempt=attempt, turn=turn)
         self.accept(payload)
@@ -472,124 +277,29 @@ class AgainstARealStore(DeliveryTestCase):
         raise AssertionError(f"{relationship_id} is not in the answer")
 
     def test_a_blocked_child_is_enumerable_by_project(self):
-        relationship = self.register()
-        rid = relationship["relationshipId"]
-        self.scope(rid)
-        event_id = self.blocked(relationship, status=cxc.BLOCKED)
-
-        answer = self.read(project_key=PROJECT)
-
-        self.assertTrue(answer["readable"])
-        child = self.child_for(answer, rid)
-        self.assertEqual(child["turnDisposition"]["outcome"], "blocked_needs_input")
-        self.assertEqual(child["turnDisposition"]["eventId"], event_id)
-        self.assertEqual(child["issueKey"], relationship["issueKey"])
-        self.assertEqual(child["childTaskId"], CHILD)
-        self.assertEqual(child["events"][0]["workReport"]["cxcStatus"], cxc.BLOCKED)
-        self.assertEqual(child["events"][0]["delivery"]["observation"], "unmeasured",
-                         "nothing enqueued it, and that is not the same as not delivered")
-        self.assertIsNotNone(answer["store"]["storeId"])
+        run_fixture("test_a_blocked_child_is_enumerable_by_project")
 
     def test_the_three_statuses_that_share_one_outcome_stay_separable(self):
-        seen = {}
-        for index, status in enumerate((cxc.BLOCKED, cxc.UNSAFE, cxc.NEEDS_HUMAN)):
-            relationship = self.register(
-                issue_key=f"CRW-16300{index}", dispatch_request_id=f"dispatch-{index}",
-                dispatch_turn_id=f"turn-dispatch-{index}",
-            )
-            rid = relationship["relationshipId"]
-            self.scope(rid)
-            self.blocked(relationship, status=status, attempt=index + 1,
-                         turn_id=f"turn-dispatch-{index}")
-            seen[rid] = status
-
-        answer = self.read(project_key=PROJECT)
-
-        for rid, status in seen.items():
-            child = self.child_for(answer, rid)
-            self.assertEqual(child["turnDisposition"]["outcome"], "blocked_needs_input")
-            self.assertEqual(child["events"][0]["workReport"]["cxcStatus"], status)
-        self.assertEqual(answer["counts"]["blocked"], 3)
+        run_fixture("test_the_three_statuses_that_share_one_outcome_stay_separable")
 
     def test_a_child_with_no_work_report_says_the_separation_is_unavailable(self):
-        relationship = self.register()
-        self.scope(relationship["relationshipId"])
-        self.blocked(relationship)
-
-        child = self.child_for(self.read(project_key=PROJECT), relationship["relationshipId"])
-
-        self.assertFalse(child["events"][0]["workReport"]["recorded"])
-        self.assertEqual(self.read(project_key=PROJECT)["counts"]["workReportMissing"], 1)
+        run_fixture("test_a_child_with_no_work_report_says_the_separation_is_unavailable")
 
     def test_a_queued_then_dispatched_delivery_is_measured_at_each_step(self):
-        relationship = self.register()
-        rid = relationship["relationshipId"]
-        self.scope(rid)
-        event_id = self.blocked(relationship, status=cxc.BLOCKED)
-
-        self.delivery.enqueue(event_id)
-        queued = self.child_for(self.read(relationship_id=rid), rid)["events"][0]["delivery"]
-        self.assertEqual(queued["observation"], "not_sent")
-        self.assertEqual(queued["state"], "queued")
-
-        self.attempt(event_id)
-        sent = self.child_for(self.read(relationship_id=rid), rid)["events"][0]["delivery"]
-        self.assertEqual(sent["observation"], "dispatched")
-        self.assertEqual(sent["recipientObservation"], "unmeasured",
-                         "a dispatch is not evidence that the parent observed anything")
-        self.assertIsNotNone(sent["currentAttempt"], "the current attempt travels with it")
+        run_fixture("test_a_queued_then_dispatched_delivery_is_measured_at_each_step")
 
     def test_a_staged_claim_is_recorded_progress_and_never_delivery(self):
-        relationship = self.register()
-        rid = relationship["relationshipId"]
-        self.scope(rid)
-        self.blocked(relationship, staged=True)
-
-        event = self.child_for(self.read(relationship_id=rid), rid)["events"][0]
-
-        self.assertEqual(event["stage"], "staged")
-        self.assertEqual(event["delivery"]["observation"], "not_deliverable:staged")
+        run_fixture("test_a_staged_claim_is_recorded_progress_and_never_delivery")
 
     def test_the_project_selector_hides_what_is_not_live_and_the_relationship_selector_does_not(self):
-        relationship = self.register()
-        rid = relationship["relationshipId"]
-        self.scope(rid)
-        self.blocked(relationship, status=cxc.BLOCKED)
-        self.store.db.execute(
-            "UPDATE relationships SET status = ? WHERE relationship_id = ?", ("archived", rid))
-        self.store.db.commit()
-
-        by_project = self.read(project_key=PROJECT)
-        by_relationship = self.read(relationship_id=rid)
-
-        self.assertEqual(by_project["children"], [], "an archived assignment is not live work")
-        self.assertTrue(by_project["readable"], "and that is still a readable answer")
-        child = self.child_for(by_relationship, rid)
-        self.assertEqual(child["relationshipStatus"], "archived",
-                         "the selector that named it answers about it, and says what it is")
+        run_fixture("test_the_project_selector_hides_what_is_not_live_and_the_relationship"
+                    "_selector_does_not")
 
     def test_an_unscoped_assignment_is_absent_by_project_and_present_by_relationship(self):
-        relationship = self.register()
-        rid = relationship["relationshipId"]
-        self.blocked(relationship, status=cxc.BLOCKED)
-
-        self.assertEqual(self.read(project_key=PROJECT)["children"], [])
-        self.assertEqual(
-            self.child_for(self.read(relationship_id=rid), rid)["projectKey"], None)
+        run_fixture("test_an_unscoped_assignment_is_absent_by_project_and_present_by_relationship")
 
     def test_an_event_in_an_earlier_generation_is_counted_not_listed(self):
-        relationship = self.register()
-        rid = relationship["relationshipId"]
-        self.scope(rid)
-        self.blocked(relationship, status=cxc.BLOCKED)
-        self.store.db.execute(
-            "UPDATE relationships SET execution_generation = 2 WHERE relationship_id = ?", (rid,))
-        self.store.db.commit()
-
-        child = self.child_for(self.read(relationship_id=rid), rid)
-
-        self.assertEqual(child["events"], [], "the answer is about the current generation")
-        self.assertEqual(child["earlierGenerationEvents"], 1, "and never drops the older one")
+        run_fixture("test_an_event_in_an_earlier_generation_is_counted_not_listed")
 
 
 class TheCommand(DeliveryTestCase):
@@ -600,7 +310,7 @@ class TheCommand(DeliveryTestCase):
         completed = subprocess.run(
             [sys.executable, "-m", "codex_session_relay.cli",
              "--state", state or os.path.join(self.tmp, "state"), *args],
-            capture_output=True, text=True, env=environment, timeout=60,
+            capture_output=True, text=True, env=environment, timeout=60, check=False,
         )
         self.assertEqual(
             completed.returncode, expect,
@@ -609,17 +319,7 @@ class TheCommand(DeliveryTestCase):
         return json.loads(completed.stdout)
 
     def test_the_command_reads_a_blocked_child_through_a_subprocess(self):
-        relationship = self.register()
-        rid = relationship["relationshipId"]
-        payload = self.execution_payload(relationship, "blocked_needs_input")
-        self.accept(payload)
-
-        answer = self.cli("dispositions-show", "--relationship", rid)
-
-        self.assertTrue(answer["readable"])
-        self.assertEqual(answer["children"][0]["turnDisposition"]["outcome"],
-                         "blocked_needs_input")
-        self.assertIn("unreadable", answer["limits"])
+        run_fixture("test_the_command_reads_a_blocked_child_through_a_subprocess")
 
     def test_an_unreadable_store_refuses_rather_than_reporting_nobody(self):
         """doctor keeps exit 0 for an unreadable database; this command must not.
@@ -627,59 +327,16 @@ class TheCommand(DeliveryTestCase):
         A coordinator asking which children are blocked and checking only the exit code would read
         an unreadable store as "nobody is blocked", which is the merge this whole contract refuses.
         """
-        absent = os.path.join(self.tmp, "absent")
-
-        answer = self.cli("dispositions-show", "--project", PROJECT, state=absent, expect=2)
-
-        self.assertFalse(answer["readable"])
-        self.assertIsNotNone(answer["detail"])
-        self.assertEqual(answer["children"], [])
-        self.assertFalse(os.path.exists(absent), "the command created the directory")
+        run_fixture("test_an_unreadable_store_refuses_rather_than_reporting_nobody")
 
     def test_the_command_turns_no_unrelated_file_into_a_relay_database(self):
-        state = os.path.join(self.tmp, "borrowed")
-        os.makedirs(state)
-        target = os.path.join(state, "relay.sqlite3")
-        open(target, "w").close()
-
-        self.cli("dispositions-show", "--project", PROJECT, state=state, expect=2)
-
-        self.assertEqual(os.path.getsize(target), 0, "the command wrote a schema into it")
-        self.assertEqual(sorted(os.listdir(state)), ["relay.sqlite3"])
+        run_fixture("test_the_command_turns_no_unrelated_file_into_a_relay_database")
 
     def test_the_two_selectors_are_mutually_exclusive_and_one_is_required(self):
-        for args in ((), ("--project", PROJECT, "--relationship", "rel-1")):
-            with self.subTest(args=args):
-                environment = dict(os.environ, PYTHONPATH=os.path.join(REPO, "src"))
-                completed = subprocess.run(
-                    [sys.executable, "-m", "codex_session_relay.cli", "--state", self.tmp,
-                     "dispositions-show", *args],
-                    capture_output=True, text=True, env=environment, timeout=60,
-                )
-                self.assertEqual(completed.returncode, 2, completed.stderr)
+        run_fixture("test_the_two_selectors_are_mutually_exclusive_and_one_is_required")
 
     def test_the_command_is_listed_as_offline_because_it_opens_no_adapter(self):
-        from codex_session_relay.cli import OFFLINE_COMMANDS
-
-        self.assertIn("dispositions-show", OFFLINE_COMMANDS)
-
-
-def a_correction(state="withheld_pre_send", **overrides) -> dict:
-    """A child row carrying its generation's correction, which the relay sent or did not."""
-    base = {
-        "correction_event": "rev-1", "correction_state": state, "correction_attempts": 0,
-        "correction_next_eligible_at": 1790000060.0,
-    }
-    base.update(overrides)
-    return a_row(**base)
-
-
-LIFECYCLE_RECORD = {
-    "correction_lifecycle_withhold": "lifecycle_unknown",
-    "correction_lifecycle_recorded_at": "2026-09-24T04:51:46.594000+00:00",
-    "correction_lifecycle_next_retry_at": 1790000060.0,
-}
-
+        run_fixture("test_the_command_is_listed_as_offline_because_it_opens_no_adapter")
 
 class TheCorrectionBlock(unittest.TestCase):
     """CRW-222: the correction a verdict queued is relay-produced, so it is not in events.
@@ -690,92 +347,42 @@ class TheCorrectionBlock(unittest.TestCase):
     """
 
     def test_a_child_without_a_correction_has_none_and_counts_nothing(self):
-        answer = derived([a_row()])
-        self.assertIsNone(answer["children"][0]["correction"])
-        self.assertEqual(answer["counts"]["correctionNotSent"], 0)
-        self.assertEqual(answer["counts"]["correctionWithheld"], 0)
+        run_fixture("test_a_child_without_a_correction_has_none_and_counts_nothing")
 
     def test_a_correction_withheld_by_the_lifecycle_is_named(self):
-        answer = derived([a_correction(**LIFECYCLE_RECORD)])
-        correction = answer["children"][0]["correction"]
-        self.assertEqual(correction["eventId"], "rev-1")
-        self.assertEqual(correction["delivery"]["observation"], "not_sent")
-        self.assertEqual(correction["delivery"]["state"], "withheld_pre_send")
-        self.assertEqual(correction["undeliveredReason"]["source"],
-                         "failed_operations.lifecycle_read")
-        self.assertEqual(correction["undeliveredReason"]["value"], "lifecycle_unknown")
-        self.assertEqual(answer["counts"]["correctionNotSent"], 1)
-        self.assertEqual(answer["counts"]["correctionWithheld"], 1)
+        run_fixture("test_a_correction_withheld_by_the_lifecycle_is_named")
 
     def test_a_withheld_correction_without_a_lifecycle_record_is_still_counted(self):
-        answer = derived([a_correction()])
-        self.assertIsNone(answer["children"][0]["correction"]["undeliveredReason"])
-        self.assertEqual(answer["counts"]["correctionWithheld"], 1)
+        run_fixture("test_a_withheld_correction_without_a_lifecycle_record_is_still_counted")
 
     def test_a_busy_deferral_is_not_sent_but_not_withheld(self):
-        answer = derived([a_correction("deferred_busy")])
-        self.assertEqual(answer["counts"]["correctionNotSent"], 1)
-        self.assertEqual(answer["counts"]["correctionWithheld"], 0)
+        run_fixture("test_a_busy_deferral_is_not_sent_but_not_withheld")
 
     def test_a_paused_assignment_names_the_relationship(self):
-        child = only_child([a_correction(relationship_status="paused")])
-        self.assertEqual(child["correction"]["undeliveredReason"]["value"],
-                         "relationship_not_active")
+        run_fixture("test_a_paused_assignment_names_the_relationship")
 
     def test_a_superseded_assignment_is_not_called_merely_inactive(self):
-        child = only_child([a_correction(relationship_status="archived",
-                                         superseded_by="rel-2")])
-        self.assertIsNone(child["correction"]["undeliveredReason"])
+        run_fixture("test_a_superseded_assignment_is_not_called_merely_inactive")
 
     def test_a_held_correction_names_its_hold(self):
-        child = only_child([a_correction(correction_hold="attempt_cap")])
-        self.assertEqual(child["correction"]["undeliveredReason"],
-                         {"source": "deliveries.hold_reason", "value": "attempt_cap"})
+        run_fixture("test_a_held_correction_names_its_hold")
 
     def test_a_dispatched_correction_has_no_reason(self):
-        answer = derived([a_correction("dispatched", correction_attempts=1)])
-        correction = answer["children"][0]["correction"]
-        self.assertEqual(correction["delivery"]["observation"], "dispatched")
-        self.assertIsNone(correction["undeliveredReason"])
-        self.assertEqual(answer["counts"]["correctionNotSent"], 0)
+        run_fixture("test_a_dispatched_correction_has_no_reason")
 
     def test_a_state_this_reader_has_no_word_for_is_said_so(self):
-        child = only_child([a_correction("teleported")])
-        self.assertEqual(child["correction"]["delivery"]["observation"], "state_unrecognised")
+        run_fixture("test_a_state_this_reader_has_no_word_for_is_said_so")
 
     def test_a_correction_the_child_already_answered_is_superseded_and_not_counted(self):
-        """A supersession note outranks the state, as it does for events."""
-        answer = derived([a_correction(
-            **LIFECYCLE_RECORD, correction_supersession_reason="superseded_revision",
-            correction_supersession_applied=0)])
-        correction = answer["children"][0]["correction"]
-        self.assertEqual(correction["delivery"]["observation"], "superseded")
-        self.assertEqual(correction["delivery"]["state"], "withheld_pre_send")
-        self.assertEqual(correction["delivery"]["supersession"],
-                         {"reason": "superseded_revision", "applied": False})
-        self.assertEqual(answer["counts"]["correctionNotSent"], 0)
-        self.assertEqual(answer["counts"]["correctionWithheld"], 0)
+        run_fixture(
+            "test_a_correction_the_child_already_answered_is_superseded_and_not_counted")
 
 
 class TheCorrectionAgainstARealStore(DeliveryTestCase):
     """The c6 shape against what the relay writes: an archived child's correction, withheld."""
 
     def test_a_withheld_correction_is_listed_with_its_reason(self):
-        from codex_session_relay.lifecycle import ARCHIVED
-
-        self.selection = resolve_state_dir(os.path.join(self.tmp, "state"))
-        _completion, correction = self.correction_after_needs_changes()
-        self.adapter.threads[CHILD].archived = True
-        self.assertIsNone(self.attempt(correction))
-        self.clock.advance(1)
-        answer = dispositions.read(self.selection, relationship_id=self._rid)
-        self.assertTrue(answer["readable"], answer["detail"])
-        child = answer["children"][0]
-        self.assertEqual(child["correction"]["eventId"], correction)
-        self.assertEqual(child["correction"]["delivery"]["observation"], "not_sent")
-        self.assertEqual(child["correction"]["undeliveredReason"]["value"], ARCHIVED)
-        self.assertEqual(answer["counts"]["correctionNotSent"], 1)
-        self.assertEqual(answer["counts"]["correctionWithheld"], 1)
+        run_fixture("test_a_withheld_correction_is_listed_with_its_reason")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,43 @@
+{
+  "given": {
+    "relay": {
+      "stdout": "{\"decision\": \"release\", \"state\": \"unmanaged\", \"observation\": \"unmanaged\", \"reason\": \"No marker names this workspace.\", \"assignmentId\": null, \"counters\": {}, \"recordedAs\": null, \"hook_output\": {}}"
+    },
+    "settings_overrides": {
+      "journalPolicy": "faults_only"
+    }
+  },
+  "run": {
+    "kind": "hook"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "length",
+        "path": [
+          "rows"
+        ],
+        "value": 1
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "rows",
+          0,
+          "adapterOutcome"
+        ],
+        "value": "guard_answered"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "rows",
+          0,
+          "acceptance"
+        ],
+        "value": "unestablished"
+      }
+    ]
+  }
+}
