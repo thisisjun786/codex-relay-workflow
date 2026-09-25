@@ -1001,20 +1001,46 @@ class AHoldReachesItsFaultWhateverTheSweepSawFirst(UnknownSendCase):
         self.assertEqual(self.keys(),
                          [f"delivery:{first}", f"delivery:{second}:held:{UNKNOWN_LOST}"])
 
+    def test_a_hold_that_changes_name_updates_the_one_fault_it_is_on(self):
+        """Independent review of ea197703: an undecided hold that a later reading decides as lost
+        is a new occurrence on the same open, broken fault. Its detail - what fault-show reads -
+        names the current hold; the published record is the one the fault opened with, because the
+        ledger publishes on open, escalation and reopening, never on a changed detail, for every
+        fault kind (assignment-show and reconcile name the current hold, and the actor and command
+        are the same for both)."""
+        event_id, first = self.unknown_send(history=False)
+        self.ticks(1)
+        self.assert_held(event_id, first, UNDECIDED, f"{UNDECIDED}:listing_empty")
+        self.assert_broken_naming(UNDECIDED)
+        opened = self.publications()
+        self.adapter.start_turn(PARENT, status="completed", text="the operator asked something")
+        self.ticks(1)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assert_broken_naming(UNKNOWN_LOST)
+        self.assertEqual(self.keys(), [f"delivery:{first}:held:{UNKNOWN_LOST}",
+                                       f"delivery:{first}:held:{UNDECIDED}"])
+        self.assertEqual(len(self.store.all(
+            "SELECT fault_id FROM fault_ledger WHERE fault_class = 'delivery_stalled'")), 1)
+        self.assertEqual(self.publications(), opened)
+        self.assertEqual(self.sends_to(), [first])
+
 
 class ASupersededHoldNamesTheSupersession(UnknownSendCase):
     """CRW-124 R5 O-R5-1: after the parent recovered by opening a new generation, reconcile on the
     old generation's held attempt still named parent_recovers_unknown_send_lost, while status
     called the delivery superseded. Nothing is owed on it any more."""
 
-    def test_a_held_send_a_new_generation_replaced_names_the_supersession(self):
-        event_id, first = self.unknown_send()
-        self.ticks(1)
-        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+    def open_generation_two(self):
         self.adapter.start_turn(CHILD, turn_id="turn-dispatch-2", status="inProgress")
         self.registry.open_generation(self._rid, dispatch_request_id="dispatch-2",
                                       reason="needs_changes_revision",
                                       dispatch_turn_id="turn-dispatch-2")
+
+    def test_a_held_send_a_new_generation_replaced_names_the_supersession(self):
+        event_id, first = self.unknown_send()
+        self.ticks(1)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.open_generation_two()
         outcome = self.reconciler.reconcile_attempt(first, self.adapter)
         self.assertEqual((outcome.get("nextExpectedAction"), outcome.get("reason")),
                          ("none", "superseded:stale_generation"))
@@ -1023,6 +1049,22 @@ class ASupersededHoldNamesTheSupersession(UnknownSendCase):
         self.assertEqual((item["phase"], item["reported"]),
                          ("superseded:stale_generation", "superseded:stale_generation"))
         self.ticks(3, seconds=700)
+        self.assertEqual(self.sends_to(), [first])
+
+    def test_a_send_superseded_before_its_hold_is_named_reports_the_supersession(self):
+        """Independent review of ea197703: superseded inside the allowance, before any reading
+        could name a hold, the delivery's phase said superseded while its reported state still
+        said it was waiting for evidence."""
+        event_id, first = self.unknown_send()
+        self.clock.advance(20)
+        self.open_generation_two()
+        item = self.status_of(event_id)
+        self.assertEqual((item["phase"], item["reported"]),
+                         ("superseded:stale_generation", "superseded:stale_generation"))
+        outcome = self.reconciler.reconcile_attempt(first, self.adapter)
+        self.assertEqual((outcome.get("nextExpectedAction"), outcome.get("reason")),
+                         ("none", "superseded:stale_generation"))
+        self.assertNotIn("recovery", outcome)
         self.assertEqual(self.sends_to(), [first])
 
     def test_a_held_correction_its_generation_answered_names_the_child_disposition(self):

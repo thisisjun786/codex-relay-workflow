@@ -2266,10 +2266,11 @@ def _reported_state(row, ack, grant=None, superseded=None) -> str:
     the notice, so a suppressed row is exactly where an answered grant is reported most often;
     its hold_reason stays on the row for whoever reconciles it.
 
-    superseded is the delivery's supersession note, which the phase reads too. A held uncertain
-    send whose obligation it records as overtaken reports that, not its hold: nothing is owed on
-    it any more, and naming the hold told the parent to recover a report a later generation had
-    already replaced (CRW-124 R5 O-R5-1).
+    superseded is the delivery's supersession note, which the phase reads too. An uncertain send
+    whose obligation it records as overtaken reports that, held or not: nothing is owed on it any
+    more, and naming its hold told the parent to recover a report a later generation had already
+    replaced (CRW-124 R5 O-R5-1), while an unheld one said it was waiting for evidence nothing
+    needs (independent review of ea197703).
     """
     if ack is not None and ack["verified"] == "verified" and ack["accepted"]:
         return "acknowledged"
@@ -2287,11 +2288,11 @@ def _reported_state(row, ack, grant=None, superseded=None) -> str:
     if row["state"] == DISPATCHED:
         return "dispatched_awaiting_ack"
     if row["state"] == HELD_UNCERTAIN:
+        if superseded is not None:
+            return f"superseded:{superseded['reason']}"
         # A hold on an uncertain send is the parent's (unknown_send_lost or
         # unknown_send_undecided, CRW-231); without one the evidence may still come.
         if row["hold_reason"]:
-            if superseded is not None:
-                return f"superseded:{superseded['reason']}"
             return f"held:{row['hold_reason']}"
         return "held_uncertain_awaiting_evidence"
     if row["state"] == QUEUED and row["dispatch_evidence"] == HOST_LOST_TURN \
