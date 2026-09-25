@@ -1026,6 +1026,44 @@ class AHoldReachesItsFaultWhateverTheSweepSawFirst(UnknownSendCase):
         self.assertEqual(self.publications(), opened)
         self.assertEqual(self.sends_to(), [first])
 
+    def test_a_hold_that_returns_to_an_earlier_name_names_it_again(self):
+        """Independent review of 72178ee8: undecided, then lost, then undecided again. The last
+        naming reused the first one's occurrence key, the ledger dropped it as already recorded,
+        and fault-show went on naming unknown_send_lost while the delivery, assignment-show and
+        reconcile named unknown_send_undecided."""
+        event_id, first = self.unknown_send(history=False)
+        self.ticks(1)
+        self.assert_held(event_id, first, UNDECIDED, f"{UNDECIDED}:listing_empty")
+        self.assert_broken_naming(UNDECIDED)
+        turn = self.adapter.start_turn(PARENT, status="completed", text="the operator asked something")
+        self.ticks(1)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assert_broken_naming(UNKNOWN_LOST)
+        # The host lists nothing for the parent again, as a restarted one did in K5ctl.
+        thread = self.adapter.threads[PARENT]
+        thread.turns = [one for one in thread.turns if one.turn_id != turn.turn_id]
+        thread.items = [one for one in thread.items if one[0] != turn.turn_id]
+        self.ticks(1, seconds=700)
+        self.assert_held(event_id, first, UNDECIDED, f"{UNDECIDED}:listing_empty")
+        self.assert_broken_naming(UNDECIDED)
+        self.assertEqual(self.stall()["occurrence_count"], 3)
+        self.assertEqual(self.sends_to(), [first])
+
+    def test_readings_that_keep_the_name_record_nothing_new(self):
+        """Every unknown_send_* hold is read again every ten minutes; a reading that finds the
+        same name is not another naming and adds nothing to the fault."""
+        event_id, first = self.unknown_send()
+        self.ticks(1)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assert_broken_naming(UNKNOWN_LOST)
+        recorded = self.keys()
+        self.ticks(3, seconds=700)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        self.assert_broken_naming(UNKNOWN_LOST)
+        self.assertEqual(self.keys(), recorded)
+        self.assertEqual(self.stall()["occurrence_count"], 1)
+        self.assertEqual(self.sends_to(), [first])
+
 
 class ASupersededHoldNamesTheSupersession(UnknownSendCase):
     """CRW-124 R5 O-R5-1: after the parent recovered by opening a new generation, reconcile on the
