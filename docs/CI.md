@@ -14,6 +14,7 @@ the steps needed to activate GitHub enforcement.
 | `python3 scripts/ci/packages.py` | Install, test, run and build the two packages under `packages/` from the root lock file |
 | `bash scripts/ci/secrets.sh` | Checksum-pinned Gitleaks scan of all fetched history |
 | `python3 scripts/ci/gate.py` | Aggregate prerequisite results supplied by the workflow |
+| `make lint test contract` then `CGO_ENABLED=0 make dist` per target | `go-product` job: vet, staticcheck, gofmt, Go tests and the contract corpus, then static `crw` binaries for linux/amd64, linux/arm64 and darwin/arm64 uploaded with `SHA256SUMS` |
 
 See the [workflow](../.github/workflows/ci.yml) for exact job inputs and Python
 versions. PR validation uses GitHub's combined merge candidate; pushes to `dev`
@@ -33,6 +34,7 @@ too, so an existing unregistered component cannot hide behind a docs-only diff.
 | Named root prose files and Markdown directly under `docs/` | Validation, plugin identity, offline contracts and secrets |
 | `plugins/crw/skills/**` or the root `skills` link | Above, plus installer/CI tests on Python 3.10 and 3.13 |
 | Runtime, package, wiring, manifest, shared configuration or CI-control paths | All checks, including both package suites on Python 3.11 and 3.13 |
+| Go product paths: `go.mod`, `go.sum`, `tools.go`, `Makefile`, `.goreleaser.yaml`, `cmd/**`, `internal/**`, `contract/**`, `docs/port/**`, `scripts/port/**` | All checks |
 | Mixed paths | Union of their coverage |
 | Empty/unavailable diff or manual dispatch | Full coverage |
 | Unmapped changed or candidate path | Full coverage; gate fails until the path is registered |
@@ -48,6 +50,12 @@ independently; secret scanning is independent. `contracts.py` runs once in
 and the always-on producers to succeed, and accepts skipped jobs only when that
 selection explicitly did not request them. Missing, malformed, failed, cancelled
 and unexpected-skipped results fail. It rejects PRs targeting `main`.
+
+`go-product` always runs, like `validate`: it needs no uv or Python packages, and
+the darwin/arm64 binary it builds is not validated on a macOS host. Its plugin
+payload step runs only once the native wiring launcher
+`plugins/crw/wiring/crw-bridge.sh` exists; until then `validate` covers the
+payload.
 
 `test_gate.py` compares the gate's prerequisite inventory with the real workflow
 and refuses omitted/extra jobs or `continue-on-error`. Selector tests use real Git
