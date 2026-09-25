@@ -26,6 +26,7 @@ from .errors import (
 from .models import TurnRef
 from .policy import RetryPolicy
 from .receipts import ObservationOutcome, classify_observation
+from .registry import LIVE
 from .scope import assert_assignment_delivery
 from .transport import DEFERRED_BUSY, DISPATCHED, HELD_UNCERTAIN, WITHHELD_PRE_SEND
 from .faults import DELIVERER_OWNER
@@ -217,10 +218,21 @@ class RelayDaemon:
         # that reached its end (CRW-238), in host seconds. In memory: after a restart the first
         # listing starts from the oldest last answered read of an open frontier turn instead.
         self._activity_since = None
-        # A listing that ran out of pages before reaching the watermark, continued next tick:
-        # {cursor, mark}, where mark is page 1's newest updatedAt on the tick it first ran out,
-        # and becomes the watermark when the sweep reaches it. None while no sweep is pending.
+        # A listing that ran out of pages before reaching its floor, carried on by later ticks:
+        # {cursor, mark, floor, head}. mark is page 1's newest updatedAt on the tick it first ran
+        # out; floor the depth it began with, or a deeper one asked for since; head the newest
+        # updatedAt of the last tick whose head read reached the one before, which becomes the
+        # watermark when the sweep reaches floor. None while no sweep is pending.
         self._activity_sweep = None
+        # What the listing last showed of each child of a live relationship (active or paused):
+        # the newest ThreadActivity any page read since this daemon started. The stop rules read
+        # this record, so a stop one tick's pages showed is not lost when a later tick's pages
+        # no longer reach it. Pruned to the live children on every listing.
+        self._listed = {}
+        # Live children a listing that ended reached below without showing, with the floor it
+        # reached: no update since then. Such a child gives no stop signal and does not ask the
+        # listing to reach back, unless one of its turns refers to a moment before that floor.
+        self._unlisted = {}
         # Frontier turns whose child the listing saw stop since their last answered read, first
         # in line until a read settles them or finds them running or absent. Keyed
         # (relationship, turn); entries no longer open are dropped.
@@ -596,8 +608,7 @@ class RelayDaemon:
             relationship_id=relationship["relationshipId"],
         ):
             return "settled"
-        return "settled" if self._settle_turn(relationship, reference, report) else (
-            "terminal_unsettled")
+        return self._settle_turn(relationship, reference, report)
 
     def _note_read(self, key, outcome) -> None:
         """Keep a stopped frontier turn first after a read that left it unsettled, and count it.
@@ -653,16 +664,22 @@ class RelayDaemon:
         """Read up to limit open frontier turns, stopped children first; return reads spent.
 
         Open means unsettled for its own assignment (_worth_polling). A turn is stopped when the
-        host's thread listing, measured against the relay's last answered read of it, shows
-        (A) its child no longer active and updated at or after that read, or (B) a turn started
-        on its child after that read - a thread runs one turn at a time, so this one ended even
-        if a turn started outside the relay keeps the child active. Both stamps are whole
-        seconds, so each rule allows one second of slack; a false stop costs one read, since a
-        read settles only a terminal status. A stopped turn stays first until a read settles it
-        or answers running or absent, for at most UNSETTLED_READS_CAP reads that leave it
-        unsettled. The rest follow least recently read first, never-read first of all, which
-        alone reads every open frontier turn within ceil(open / limit) ticks. Every attempt
-        counts, a failed one included.
+        record of what the host's thread listing last showed of its child (_listed), measured
+        against the relay's last answered read of the turn, shows (A) the child no longer active
+        and updated at or after that read - with no answered read yet, not active at all - or
+        (B) a turn started on the child after that read: a thread runs one turn at a time, so
+        this one ended even if a turn started outside the relay keeps the child active. Both
+        stamps are whole seconds, so each rule allows one second of slack; a false stop costs
+        one read, since a read settles only a terminal status. A stopped turn stays first until
+        a read settles it or answers running or absent, for at most UNSETTLED_READS_CAP reads
+        that leave it unsettled. The rest follow least recently read first, never-read first of
+        all. Every attempt counts, a failed one included.
+
+        The listing reaches back to its watermark, or further for a turn whose child it has not
+        shown since this daemon started: to that turn's last answered read, or before any, to
+        its generation's opening. Until a listing has reached its floor in this run every open
+        turn asks for that. A child a finished listing reached below without showing asks for
+        it again only for a turn that refers to a moment before that listing's floor.
         """
         if limit <= 0:
             return 0
@@ -670,26 +687,45 @@ class RelayDaemon:
         for relationship in relationships:
             rid = relationship["relationshipId"]
             thread = relationship["child"]["taskId"]
+            generation = relationship["executionGeneration"]
+            opened = next((one.get("openedAt") for one in relationship["generations"]
+                           if one["executionGeneration"] == generation), None)
             for turn_id in self._frontier_turns(relationship):
                 if self._worth_polling(thread, turn_id, rid):
                     candidates.append((relationship, turn_id,
-                                       *self._poll_times(relationship, turn_id)))
-        open_keys = {(one["relationshipId"], turn_id) for one, turn_id, _, _ in candidates}
+                                       *self._poll_times(relationship, turn_id), opened))
+        open_keys = {(one["relationshipId"], turn_id) for one, turn_id, *_ in candidates}
         for held in (self._stopped, self._unsettled_reads):
             for key in [key for key in held if key not in open_keys]:
                 del held[key]
         if not candidates:
             return 0
-        answers = [stamp for stamp in (_epoch(answered) for _, _, _, answered in candidates)
-                   if stamp is not None]
-        activity = self._thread_activity(report, min(answers) if answers else None)
+        seeds = []
+        for relationship, _, _, answered, opened in candidates:
+            child = relationship["child"]["taskId"]
+            reference = _epoch(answered) if answered else None
+            if reference is None:
+                reference = _epoch(opened)
+            if reference is None:
+                continue
+            if self._activity_since is None:
+                # No listing has reached its floor in this run, so nothing on record is known
+                # to be the newest: every open turn's reference sets how far to reach.
+                seeds.append(reference)
+                continue
+            if child in self._listed:
+                continue
+            reached = self._unlisted.get(child)
+            if reached is None or reference < reached:
+                seeds.append(reference)
+        self._thread_activity(report, min(seeds) if seeds else None)
         ordered = []
-        for relationship, turn_id, last, answered in candidates:
+        for relationship, turn_id, last, answered, _ in candidates:
             key = (relationship["relationshipId"], turn_id)
             if self._unsettled_reads.get(key, 0) >= UNSETTLED_READS_CAP:
                 self._stopped.pop(key, None)
             else:
-                listed = activity.get(relationship["child"]["taskId"])
+                listed = self._listed.get(relationship["child"]["taskId"])
                 read_at = _epoch(answered)
                 if listed is None:
                     pass
@@ -711,48 +747,82 @@ class RelayDaemon:
         return spent
 
     def _thread_activity(self, report, seed) -> dict:
-        """The host's threads by id, from its listing newest-updated first, or {} without one.
+        """This tick's listed threads by id, newest-updated first, or {} without a listing.
 
-        Every tick reads page 1 from the top, so a child that stopped or started a turn since
-        the last tick is seen at once. It then pages on - from page 1's cursor, or from where
-        a saturated listing stopped - until a page reaches below the watermark (less the second
-        the host rounds to), the listing ends, or thread_activity_listing_pages pages were read
-        this tick. The listing's mark is page 1's newest updatedAt on the tick it began: a later
-        page can hold threads updated while it was paging, and moving past them would skip what
-        they hide. Reaching the watermark or the end makes that mark the watermark. Running out
-        of pages first is saturation: it is said so, the watermark stays, and the next tick
-        continues from the cursor with the same mark, since the host's cursor is a keyset that
-        a thread moving to the top does not shift. With no watermark yet it starts from seed,
-        the oldest last answered read of an open frontier turn, and with neither it reads one
-        page. A listing that fails keeps its watermark and its sweep, and uses what it read.
+        Pages from the top until a page reaches below its floor (less the second the host rounds
+        to), the listing ends, or thread_activity_listing_pages pages were read this tick. The
+        floor is the watermark or seed, whichever is older. The listing's mark is page 1's
+        newest updatedAt on the tick it began: a later page can hold threads updated while it
+        was paging, and moving past them would skip what they hide. Reaching the floor or the
+        end makes the mark the watermark and records every live child the listing did not show
+        as not listed down to that floor.
+
+        Running out of pages first is saturation: it is said so, the watermark stays, and the
+        listing becomes a sweep that later ticks carry on from its cursor to its floor (a deeper
+        one if asked for since, and whatever the tick itself would reach for), since the host's
+        cursor is a keyset that a thread moving to the top does not shift. While a sweep is
+        pending each tick first reads its head, from the top down to the newest updatedAt of the
+        last head that got there, in at most pages - 1 pages, so a child that stops meanwhile is
+        seen on the next tick; a head that does not get there leaves the same target to the
+        next. The sweep gets the pages left, and when it reaches its floor the last complete
+        head's newest becomes the watermark: the heads cover everything above the sweep's start.
+        With no watermark, no seed and no sweep it reads page 1 only and changes nothing else. A
+        listing that fails keeps its watermark and its sweep, and keeps what it read.
+
+        Every page read updates _listed for the live children it shows.
         """
         lister = getattr(self.adapter, "recent_threads", None)
         limit = self.policy.thread_activity_listing_limit
         pages = self.policy.thread_activity_listing_pages
         if lister is None or limit <= 0 or pages <= 0:
             return {}
-        since = self._activity_since if self._activity_since is not None else seed
+        watched = self._live_children()
+        self._listed = {child: one for child, one in self._listed.items() if child in watched}
+        self._unlisted = {child: at for child, at in self._unlisted.items() if child in watched}
+        targets = [one for one in (self._activity_since, seed) if one is not None]
+        since = min(targets) if targets else None
         sweep = self._activity_sweep
         activity = {}
 
-        def listed(cursor):
+        def listed(cursor, floor):
             page = lister(limit, cursor=cursor)
             for one in page.threads:
                 activity.setdefault(one.thread_id, one)
+                if one.thread_id in watched:
+                    self._record(one)
             stamps = [one.updated_at for one in page.threads if one.updated_at is not None]
-            below = since is None or (bool(stamps) and min(stamps) < since - 1)
+            below = floor is not None and bool(stamps) and min(stamps) < floor - 1
             return page.cursor, stamps, below
 
         try:
-            cursor, stamps, below = listed(None)
-            mark = sweep["mark"] if sweep is not None else (max(stamps) if stamps else None)
-            if sweep is not None and since is not None:
-                cursor, below = sweep["cursor"], False
-            ended = below or not cursor
-            for _ in range(pages - 1):
-                if ended:
-                    break
-                cursor, stamps, below = listed(cursor)
+            if since is None and sweep is None:
+                # Nothing to reach for: page 1 is recorded and the watermark stays unset.
+                listed(None, None)
+                return activity
+            read = 0
+            if sweep is None:
+                floor = since
+                cursor, stamps, below = listed(None, floor)
+                read, mark = 1, (max(stamps) if stamps else None)
+                head = mark
+                ended = below or not cursor
+            else:
+                # The head first: everything updated since the last tick's first page, so a
+                # child that stops while a sweep is pending is seen on the next tick too. It
+                # takes at most pages - 1 pages, so the sweep moves on every tick. Until a head
+                # reaches that far the next one aims at the same place, so the heads leave no
+                # gap above the sweep's mark.
+                floor = sweep["floor"] if since is None else min(sweep["floor"], since)
+                head_cursor, stamps, below = listed(None, sweep["head"])
+                read, newest = 1, (max(stamps) if stamps else sweep["head"])
+                while not (below or not head_cursor) and read < max(1, pages - 1):
+                    head_cursor, stamps, below = listed(head_cursor, sweep["head"])
+                    read += 1
+                head = newest if (below or not head_cursor) else sweep["head"]
+                mark, cursor, ended = head, sweep["cursor"], False
+            while not ended and read < pages:
+                cursor, stamps, below = listed(cursor, floor)
+                read += 1
                 ended = below or not cursor
         except Exception as error:  # noqa: BLE001 - a tick never dies on one listing
             report.notes.append(f"thread activity listing failed: {error}")
@@ -761,12 +831,31 @@ class RelayDaemon:
             if mark is not None:
                 self._activity_since = mark
             self._activity_sweep = None
+            for child in watched:
+                if child not in self._listed:
+                    reached = self._unlisted.get(child)
+                    self._unlisted[child] = floor if reached is None else min(reached, floor)
         else:
-            self._activity_sweep = {"cursor": cursor, "mark": mark}
+            self._activity_sweep = {"cursor": cursor, "mark": (sweep or {}).get("mark", mark),
+                                    "floor": floor, "head": head}
             report.notes.append(
                 f"thread activity listing saturated: {pages} pages of {limit} threads were all"
-                f" updated at or after {since}; the listing continues from its cursor next tick")
+                f" updated at or after {floor}; the listing continues from its cursor next tick")
         return activity
+
+    def _record(self, one) -> None:
+        """Keep the newest entry the listing showed of a live child; it is listed now."""
+        held = self._listed.get(one.thread_id)
+        if (held is None or held.updated_at is None
+                or (one.updated_at is not None and one.updated_at >= held.updated_at)):
+            self._listed[one.thread_id] = one
+        self._unlisted.pop(one.thread_id, None)
+
+    def _live_children(self) -> frozenset:
+        """The child threads of every live relationship, active or paused."""
+        return frozenset(row["child_task_id"] for row in self.store.all(
+            "SELECT DISTINCT child_task_id FROM relationships WHERE status IN (?, ?)"
+            " AND superseded_by IS NULL", LIVE))
 
     # ---------------------------------------------------------------- rotation
 
@@ -1022,7 +1111,7 @@ class RelayDaemon:
             (reference.thread_id, reference.turn_id, reference.turn_status),
         ) is not None
 
-    def _settle_turn(self, relationship, reference, report) -> bool:
+    def _settle_turn(self, relationship, reference, report) -> str:
         """Finalize, record and queue as ONE commit, with a rule for each kind of failure.
 
         Recording the observation first and queuing after is what lost events: a refusal at
@@ -1034,7 +1123,8 @@ class RelayDaemon:
         refusal no longer applies. Anything else is transient and nothing is known, so the
         whole transaction rolls back and the next tick re-observes cleanly.
 
-        Returns whether the settlement committed.
+        Returns settled when the settlement committed and terminal_unsettled when it did not,
+        the words _read_turn answers with.
         """
         outcome = classify_observation(reference.turn_status, None)
         synthesized, failed = self._synthesize(relationship, reference, report)
@@ -1042,7 +1132,7 @@ class RelayDaemon:
             # Recording the observation now would bury the failure: the turn would never look
             # new again, the staged claim would be suppressed, and nothing would be left for
             # recovery to find. Leave the turn untouched and try again next tick.
-            return False
+            return "terminal_unsettled"
         try:
             self._commit_settlement(relationship, reference, outcome, synthesized, queue=True)
         except (DeliveryRefused, ScopeError, RegistrationError) as refusal:
@@ -1053,9 +1143,9 @@ class RelayDaemon:
             )
         except Exception as error:  # noqa: BLE001 - transient: keep nothing, retry next tick
             report.notes.append(f"settlement rolled back for {reference.turn_id}: {error}")
-            return False
+            return "terminal_unsettled"
         report.observed += 1
-        return True
+        return "settled"
 
     def _synthesize(self, relationship, reference, report):
         """An execution-only receipt for a turn that failed with no claim of its own.

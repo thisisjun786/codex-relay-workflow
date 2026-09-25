@@ -499,6 +499,8 @@ def waiting_for(verdict, settlements, poll, grace):
     owed, and this only names why the relay has not got further. Until the relay settles the
     turn the wait is its settlement, and poll - the daemon's last read, or None - says why it has
     not happened; once settled and inside the grace, the wait is the grace and its end.
+    A grace no timestamp can hold (inf, or one past the calendar) is a wait with no end, until
+    null, rather than an error that would take the reading with it.
     """
     if verdict.get("reason") == "host_terminal_unobserved":
         if poll is None:
@@ -519,8 +521,12 @@ def waiting_for(verdict, settlements, poll, grace):
     if verdict.get("owedReason") == WITHIN_GRACE:
         ended = [intent.moment(item.get("at")) for item in settlements]
         if ended and all(one is not None for one in ended):
-            until = max(ended) + timedelta(seconds=float(grace or 0))
-            return {"for": WAITING_GRACE, "until": until.isoformat(timespec="microseconds")}
+            try:
+                until = (max(ended) + timedelta(seconds=float(grace or 0))).isoformat(
+                    timespec="microseconds")
+            except (OverflowError, ValueError):
+                until = None
+            return {"for": WAITING_GRACE, "until": until}
     return None
 
 
