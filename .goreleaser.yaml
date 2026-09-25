@@ -1,0 +1,62 @@
+# GoReleaser v2.18.2 configuration for the static crw binaries.
+# The release workflow runs it only after the source release exists; it adds
+# archives and SHA256SUMS to that release and never moves a branch.
+version: 2
+
+project_name: crw
+
+builds:
+  - id: crw
+    main: ./cmd/crw
+    binary: crw
+    env:
+      # Overrides any inherited CGO_ENABLED: the product is static only.
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: darwin
+        goarch: amd64
+    hooks:
+      post:
+        # Compatibility names dispatched on argv[0]; archived as symlinks.
+        - cmd: ln -sfn crw codex-session-relay
+          dir: "{{ dir .Path }}"
+        - cmd: ln -sfn crw codex-thread-bridge
+          dir: "{{ dir .Path }}"
+        - cmd: ln -sfn crw crw-completion-hook
+          dir: "{{ dir .Path }}"
+
+archives:
+  - id: crw
+    ids: [crw]
+    formats: [tar.gz]
+    name_template: "crw_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - src: "dist/crw_{{ .Os }}_{{ .Arch }}*/codex-session-relay"
+        strip_parent: true
+      - src: "dist/crw_{{ .Os }}_{{ .Arch }}*/codex-thread-bridge"
+        strip_parent: true
+      - src: "dist/crw_{{ .Os }}_{{ .Arch }}*/crw-completion-hook"
+        strip_parent: true
+      - LICENSE
+      # MIT provenance of the ported bridge.
+      - packages/codex-thread-bridge/LICENSE
+
+checksum:
+  name_template: SHA256SUMS
+  algorithm: sha256
+
+changelog:
+  disable: true
+
+release:
+  # The publish job already created the release with the owner's notes.
+  mode: keep-existing
+  replace_existing_artifacts: true
+  prerelease: auto

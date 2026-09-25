@@ -26,6 +26,37 @@ Source-release tags identify repository commits. They are independent of the
 plugin manifest's payload version and the imported Python package versions.
 The ordinary plugin and runtime-definition checks still verify those identities.
 
+Validation, including dry-run, also builds the static `crw` binaries with
+GoReleaser v2.18.2 (`goreleaser release --snapshot --clean`) from
+[.goreleaser.yaml](../.goreleaser.yaml). The snapshot publishes nothing; it proves
+the selected commit still produces every archive before any tag is written.
+
+## Binary assets
+
+After publication creates the source release and advances main, the `release-go`
+job checks that the tag identifies the released commit and attaches the binaries
+to that same release. It does not create the release, edit its notes, or move
+any branch. Each archive `crw_<version>_<os>_<arch>.tar.gz` holds the `crw`
+binary, the compatibility symlinks `codex-session-relay`, `codex-thread-bridge`
+and `crw-completion-hook`, the repository `LICENSE`, and
+`packages/codex-thread-bridge/LICENSE` for the bridge's MIT provenance.
+`SHA256SUMS` lists the digest of every archive. Binaries are built with
+`CGO_ENABLED=0` whatever the caller's environment says; they are not signed
+or notarised.
+
+| Target | Status |
+| --- | --- |
+| linux/amd64 | Built; Linux is the validated relay host platform |
+| linux/arm64 | Built; same code path as linux/amd64 |
+| darwin/arm64 | Built but **unvalidated** until a macOS host runs the acceptance checks |
+
+State the darwin/arm64 status in the release notes until that macOS evidence
+exists.
+
+If `release-go` fails, the source release and main are already correct. Fix the
+cause and rerun the failed job for the same tag and commit; it replaces partial
+assets on that release and never republishes under another version.
+
 ## Publication credential
 
 Configure the repository secret `RELEASE_TOKEN` before a real publication. Use an
@@ -61,4 +92,5 @@ an incomplete main update.
 
 The workflow and [repository protections](CI.md#activation) must both be active.
 Passing local fixtures proves the guards in those fixtures, not real publication
-credentials, hosted execution or a completed release.
+credentials, hosted execution or a completed release. The local snapshot build
+proves the archive layout, not a hosted GoReleaser upload.

@@ -4,10 +4,14 @@ from pathlib import Path
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 
-import release_steps
+# Importable both under `unittest discover -s scripts/ci/tests` and as a file path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import release_steps  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -32,6 +36,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "source": release_steps.step_block("validate", "release-source"),
             "credentials": release_steps.step_block("validate", "release-credentials"),
             "publish": release_steps.step_block("publish", "release-publish"),
+            "go-source": release_steps.step_block("release-go", "release-go-source"),
         }
         publish_job = release_steps.job_body("publish")
         if "needs: validate" not in publish_job or "inputs.dry_run == false" not in publish_job:
@@ -286,6 +291,28 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assert_pass(self.run_block("publish"), "recover without rewriting tag")
         self.assertEqual(self.remote_sha("main"), self.candidate)
         self.assertEqual(self.remote_sha("refs/tags/v0.1.0"), self.candidate)
+
+    def test_release_go_runs_after_publication_and_snapshot_stays_in_validation(self):
+        self.assertEqual(release_steps.step_ids("validate")[-2:],
+                         ["release-credentials", "release-go-snapshot"])
+        validate = release_steps.job_body("validate")
+        snapshot = validate[validate.index("id: release-go-snapshot"):]
+        self.assertIn("args: release --snapshot --clean", snapshot)
+        self.assertNotIn("if:", snapshot, "the snapshot build must also run on dry-run")
+        job = release_steps.job_body("release-go")
+        self.assertIn("needs: [validate, publish]", job)
+        self.assertIn("if: inputs.dry_run == false", job)
+        self.assertEqual(release_steps.step_ids("release-go"),
+                         ["release-go-source", "release-go-publish"])
+        publish = job[job.index("id: release-go-publish"):]
+        self.assertIn("args: release --clean", publish)
+        self.assertNotIn("--snapshot", publish)
+
+    def test_release_go_refuses_a_tag_that_is_not_the_released_commit(self):
+        self.git("tag", "v0.1.0", self.base)
+        self.assert_refuse(self.run_block("go-source"), "tag on another commit")
+        self.git("tag", "-f", "v0.1.0", self.candidate)
+        self.assert_pass(self.run_block("go-source"), "tag on the released commit")
 
     def test_old_and_divergent_sources_do_not_advance_main(self):
         self.git("commit", "--allow-empty", "-m", "newer main")
