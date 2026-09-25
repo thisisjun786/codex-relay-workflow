@@ -591,6 +591,70 @@ its project. That task runs `merge-turn-restate-base` on the landing; the relay 
 again, records it, and keeps the replaced value beside it (`merge-turn-show --turn <landing>`,
 `baseRestatements`). Then the candidate checks again. Nobody edits the store to correct a base.
 
+## Peer region agreements across a moving base
+
+    codex-session-relay --state "$RELAY_STATE" region-propose --repository <repo> --revision <base branch tip now> --path <path> --kind file|symbol|data|tree [--key <name>] --left-project <key> --right-project <key> --peer-link <link> --task <you> --constraint <text> [--condition <yours>] [--issue <key>] [--next-owner <task>]
+    codex-session-relay --state "$RELAY_STATE" region-settle --agreement <id> --actor <you> --disposition accepted|declined|withdrawn|released [--condition <what a decline would accept>] [--reason <text>]
+    codex-session-relay --state "$RELAY_STATE" region-restate-revision --repository <repo> --from-revision <the end of the recorded chain> --to-revision <the base the landing left> --actor <you>
+    codex-session-relay --state "$RELAY_STATE" region-reaffirm --agreement <id> --actor <you> --revision <the end of the recorded chain> [--condition <your own side's condition, restated>]
+
+An agreement with a peer is about a place in one tree: its region carries the base revision it
+was proposed on, and an agreement confers nothing, merge permission included. The relay never
+watches the base branch, so a landing reaches the agreements standing on the older tree only when
+a parent records the move. `merge-turn-land` records the landed base for the next merge candidate
+and records no revision mark. A mark is append-only with one successor per revision, while a
+landing's recorded base can still be corrected with `merge-turn-restate-base`; a mark written from
+a wrong reading could never be taken back.
+
+**Who records a move, and when.** The relay accepts a move from the registered parent of any project
+with an agreement in that repository, open or closed (or, while the repository holds no agreement at
+all, from any registered parent): it checks that history, not the agreement being moved, and a move
+reopens every agreement standing on that revision. In practice a party to those agreements records
+it once it has read the landed base, from its own `merge-turn-land` answer or from
+`merge-turn-show`, and before it answers, relies on, or asks its peer to act on an agreement
+standing on the older revision. When the landing parent is a party it records the move right after
+landing; otherwise the party that reads the landing in its next pass does. Either party may, and a
+move the chain already records answers `alreadyRecorded` and writes no new mark (like any
+restatement it still reopens an agreement proposed on the older revision since). Until a move is
+recorded, a late acceptance on the older revision is accepted: that is the contract, not a gap the
+relay closes for you.
+
+**Chaining.** One revision has one successor. The first move is recorded from the proposal's
+revision; every later move is recorded from the end of the recorded chain, never from the
+proposal's revision again. `region-show` gives each agreement its `currentRevision`, the end of the
+chain from its own revision, and a refused restatement names that end and the command to run from
+it. A move from a revision no live agreement stands on and no recorded move reaches is refused
+too, naming where the chains end: it would start a chain no agreement follows. A closed agreement
+stands nowhere.
+
+**After a move.** Settling an agreement whose revision was restated is refused as
+`agreement_revision_stale`, and the refusal names the end of the chain and the `region-reaffirm`
+command. Either party then reaffirms onto that revision. The successor keeps the original
+proposer, the constraint and both sides' conditions as written, whichever side runs it;
+`--condition` restates only your own side's condition, on the new revision. Reaffirming accepts
+your side on the new tree. The other side's acceptance is not carried, because an acceptance stands
+on the tree it was given on: the answer's `reaffirmation.awaitingAcceptance` names that side's
+parent, the reason (`acceptance_on_prior_revision` when it had accepted the predecessor,
+`not_yet_accepted` when it had not) and the exact `region-settle` command, and `nextOwner` names
+that parent as it stands when read, so a handover since the carry is followed. When that side has
+no single registered parent, the answer names no task and no command and says what has to happen
+first. Tell your peer through the pair route; its acceptance agrees the successor.
+Reaffirming onto the revision an agreement already stands on is refused, as is carrying onto a
+place the same two projects already hold on the new revision.
+
+**Text written on an earlier tree.** `statedOn` names the revision the constraint and each condition
+were written against, and `textFromEarlierRevision` lists those carried from an earlier revision
+than the agreement's own. A line number in them points into that older tree. A successor carried
+before the relay recorded carries says the same by following what it supersedes back while its
+constraint is unchanged; that carry also made its caller the proposer and dropped both conditions,
+so `legacyCarry` names the agreement it came from and those terms, and the next reaffirmation
+carries them instead. To change the terms themselves, the proposer withdraws or the other side
+declines with the condition it would accept, and a new proposal states them on the current revision.
+Only the task that proposed can withdraw; once its project has changed hands, the project's current
+parent releases or declines instead and proposes again. An acceptance takes no condition:
+`region-settle --disposition accepted --condition ...` is refused as `bad_invocation` rather than
+dropped.
+
 ## When the assignment is not in the store yet
 
 Registration needs the task id that creation returns, so a child which finishes quickly can reach

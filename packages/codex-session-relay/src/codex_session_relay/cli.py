@@ -1425,6 +1425,16 @@ def cmd_region_propose(services, args) -> dict:
 
 
 def cmd_region_settle(services, args) -> dict:
+    if args.disposition == "accepted" and args.condition is not None:
+        # An acceptance records no condition, so one given here used to vanish without a trace
+        # (CRW-237). Refused by name before the service is reached.
+        raise PayloadExit({
+            "ok": False, "reason": "bad_invocation",
+            "detail": "an acceptance takes no condition and --condition would be dropped. State"
+                      " your condition when you propose, restate it with region-reaffirm"
+                      " --condition after a base move, or decline with the condition you would"
+                      " accept.",
+        }, EXIT_REFUSED)
     return services.edit_regions.settle(
         args.agreement, actor=args.actor, disposition=args.disposition,
         condition=args.condition, reason=args.reason)
@@ -1438,7 +1448,8 @@ def cmd_region_restate_revision(services, args) -> dict:
 
 def cmd_region_reaffirm(services, args) -> dict:
     return services.edit_regions.reaffirm(
-        args.agreement, actor=args.actor, base_revision=args.revision)
+        args.agreement, actor=args.actor, base_revision=args.revision,
+        condition=args.condition)
 
 
 def cmd_region_followup(services, args) -> dict:
@@ -5286,21 +5297,67 @@ def build_parser() -> argparse.ArgumentParser:
     region_settle.add_argument("--disposition", required=True,
                                choices=["accepted", "declined", "withdrawn", "released"])
     region_settle.add_argument("--condition",
-                               help="what a decline WOULD accept under, kept after it closes")
+                               help="what a decline WOULD accept under, kept after it closes. An"
+                                    " acceptance takes none and is refused with one")
     region_settle.add_argument("--reason")
     region_settle.set_defaults(handler=cmd_region_settle)
 
-    region_restate = subparsers.add_parser("region-restate-revision")
+    region_restate = subparsers.add_parser(
+        "region-restate-revision",
+        help="record that a repository's agreements now stand on a newer tree",
+        description="Record that a repository's region agreements now stand on a newer tree."
+                    " Nothing else does: merge-turn-land records no revision mark, because a"
+                    " mark is append-only while a landed base can still be corrected. A"
+                    " registered parent of any project with an agreement in the repository, open"
+                    " or closed (any registered parent while the repository has none), records"
+                    " the move after reading the landed base (its merge-turn-land"
+                    " answer or merge-turn-show), before answering or relying on an agreement"
+                    " standing on the older tree. Until then a late acceptance on the older"
+                    " tree stands. The move reopens the proposed and agreed agreements on"
+                    " --from-revision; settling one is then refused as agreement_revision_stale"
+                    " until a party reaffirms it. One revision has one successor, so only the"
+                    " first move starts at the proposal's revision: every later move starts at"
+                    " the end of the recorded chain, which region-show reports as"
+                    " currentRevision and a refusal names. A move the chain already holds"
+                    " answers alreadyRecorded and writes no new mark; a move from a revision"
+                    " no live agreement stands on and no recorded move reaches is refused.")
     region_restate.add_argument("--repository", required=True)
-    region_restate.add_argument("--from-revision", required=True)
-    region_restate.add_argument("--to-revision", required=True)
-    region_restate.add_argument("--actor", required=True)
+    region_restate.add_argument("--from-revision", required=True,
+                                help="the end of the recorded chain: the proposal's revision"
+                                     " for the first move, the last recorded revision after")
+    region_restate.add_argument("--to-revision", required=True,
+                                help="the base the landing left, as merge-turn-show reads it")
+    region_restate.add_argument("--actor", required=True,
+                                help="a registered parent of any project with an agreement in"
+                                     " this repository, open or closed; any registered"
+                                     " parent while the repository has none")
     region_restate.set_defaults(handler=cmd_region_restate_revision)
 
-    region_reaffirm = subparsers.add_parser("region-reaffirm")
+    region_reaffirm = subparsers.add_parser(
+        "region-reaffirm",
+        help="carry an agreement onto the revision its recorded chain reaches",
+        description="Carry an agreement whose revision was restated onto the end of its"
+                    " recorded chain. Either side may run it. The successor keeps the original"
+                    " proposer, the constraint and both sides' conditions as written; statedOn"
+                    " names the revision each text was written against, and"
+                    " textFromEarlierRevision lists those from an older tree, whose line"
+                    " numbers point there. --condition restates only your own side's condition,"
+                    " on the new revision. Carrying accepts your side on the new tree; the"
+                    " other side's acceptance is not carried, and"
+                    " reaffirmation.awaitingAcceptance names its parent, the reason and the"
+                    " region-settle command that agrees it. Refused onto a revision that did not"
+                    " move, onto anything but the end of the chain, and onto a place the same"
+                    " two projects already hold on that revision.")
     region_reaffirm.add_argument("--agreement", required=True)
-    region_reaffirm.add_argument("--actor", required=True)
-    region_reaffirm.add_argument("--revision", required=True)
+    region_reaffirm.add_argument("--actor", required=True,
+                                 help="the registered parent of either side")
+    region_reaffirm.add_argument("--revision", required=True,
+                                 help="the end of the agreement's recorded chain (region-show"
+                                      " currentRevision)")
+    region_reaffirm.add_argument("--condition",
+                                 help="your own side's condition, restated on the new"
+                                      " revision; without it both conditions are carried as"
+                                      " written")
     region_reaffirm.set_defaults(handler=cmd_region_reaffirm)
 
     region_followup = subparsers.add_parser("region-followup")
