@@ -397,13 +397,16 @@ compatibility boundary, not automatic migration.
 Admission history is read in bounded pages of one assignment's own rows. The pager keeps a
 persisted rowid keyset per assignment through the index `generation_turns_relationship`, so other
 assignments' rows are never read, and it keeps a settled floor: a wrapped pass starts at the first
-row the assignment has not settled rather than at its first row. Only settled rows pass the floor
-(settlements are never deleted and nothing is inserted below the table's highest rowid); an
-unsettled row pins it, an unrepaired legacy row included, because a fresh admission can repair
-that row in place. Admission writers preserve existing rowids and never delete rows. Historical
-terminal turns remain observable, but opening a new generation supersedes all prior outcomes,
-including failures; observing an old failure does not send it as a current-generation report or
-establish acceptance.
+row the assignment has not settled rather than at its first row. A pass ends when its range is
+spent or its page comes back empty, as it does for a cursor written before the scope existed,
+whose global rowids can stand past the assignment's rows; the next pass starts at the floor with
+the assignment's own highest rowid as its ceiling, so a call makes at most two page queries.
+Only settled rows pass the floor (settlements are never deleted and nothing is inserted below the
+table's highest rowid); an unsettled row pins it, an unrepaired legacy row included, because a
+fresh admission can repair that row in place. Admission writers preserve existing rowids and
+never delete rows. Historical terminal turns remain observable, but opening a new generation
+supersedes all prior outcomes, including failures; observing an old failure does not send it as a
+current-generation report or establish acceptance.
 
 #### How soon an ended turn is settled
 
@@ -416,37 +419,70 @@ rotation spends the rest on staged, historical and older admitted turns and neve
 frontier read that tick.
 
 Which frontier turns are read first comes from one host-wide `thread/list` sorted by
-`updated_at`, newest first, made only on a tick with an open frontier turn. It pages until it
-reaches the newest `updatedAt` of the last listing's first page, at most
-`thread_activity_listing_pages` (4) pages of `thread_activity_listing_limit` (50) threads; that
-is its own cap, outside the read budget. A child listed as not active, updated at or after the
-relay's last read of its frontier turn (one second of slack, since `updatedAt` is whole seconds),
-has stopped: that turn is read before the others, which follow least recently read, and it stays
-first until read once. Measured on codex-cli 0.154.0: a running thread is `active` with
-`updatedAt` within seconds of now, and every idle or unloaded thread's `updatedAt` is the whole
-second of its last `task_complete`. The listing never settles anything; settlement still needs a
-successful read of a terminal status whose settlement commits.
+`updated_at`, newest first, made only on a tick with an open frontier turn. Each such tick reads
+page 1 from the top and pages on until it reaches the listing's watermark, at most
+`thread_activity_listing_pages` (4) pages of `thread_activity_listing_limit` (50) threads a
+tick; that is its own cap, outside the read budget. A frontier turn's child has stopped when,
+measured against the relay's last read of that turn the host answered (a failed read does not
+move it):
 
-The bound, with F = `frontier_reads_per_tick`:
+- it is listed as not active and updated at or after that read, or
+- its `recencyAt`, the second its latest turn started, is after that read. A thread runs one turn
+  at a time, so a turn started on the child outside the relay, and not admitted, still shows that
+  the turn the relay read has ended.
 
-- A turn whose child stopped is read, and settled if it ended, on the next tick; with E stopped
-  frontier turns waiting at once, within ceil(E / F) ticks. That holds whatever the length of
-  `generation_turns`, however many active assignments are idle (they cost no host reads) and
-  however many children are running, provided fewer than 200 (limit x pages) threads have an
-  `updatedAt` at or after the listing's mark when it runs. A listing that does not reach its mark
-  says `thread activity listing saturated` in the tick's notes.
+Both stamps are whole seconds, so each rule allows one second of slack; a false stop costs one
+read, because a read settles only a terminal status. A stopped turn is read before the others,
+which follow least recently read. It stays first until a read settles it or answers running or
+absent; a read that fails, or that sees the ending while the settlement does not commit, keeps
+it first, for at most three such reads in a row (`UNSETTLED_READS_CAP`).
+
+Measured on codex-cli 0.154.0: a running thread is `active` with `updatedAt` within seconds of
+now, every idle or unloaded thread's `updatedAt` is the whole second of its last
+`task_complete`, and on every thread of a first listing page whose rollout was read in full (30
+of 30) the last `task_started` falls within [0, 1) s after `recencyAt`. The listing never
+settles anything; settlement still needs a successful read of a terminal status whose settlement
+commits.
+
+The watermark is page 1's newest `updatedAt` on the tick a listing began. It moves only when that
+listing reaches it, less the second the host rounds to, or reaches the end. A listing that runs
+out of pages first is saturated: the tick's notes say `thread activity listing saturated`, the
+watermark stays where it was, and the next tick reads page 1 again and then continues from where
+the listing stopped, keeping the mark it began with. The host's cursor is a timestamp keyset, so a
+thread that moves to the top meanwhile shifts nothing below the cursor, and the next listing finds
+it above the mark.
+
+The bound, with F = `frontier_reads_per_tick`, L = `thread_activity_listing_limit` and
+P = `thread_activity_listing_pages`:
+
+- A turn whose child stopped, or started another turn, is read, and settled if it ended, on the
+  next tick; with E such frontier turns waiting at once, within ceil(E / F) ticks. That holds
+  whatever the length of `generation_turns`, however many active assignments are idle (they cost
+  no host reads) and however many children are running, while the listing reaches its watermark
+  within the tick.
+- A saturated listing still reaches the child on a later tick. Each tick reads page 1 and
+  L x (P - 1) further threads from where the listing stopped, so it converges while fewer than
+  about L x (P - 1) = 150 distinct host threads, the relay's own running children included,
+  update per poll interval. Above that rate the delay grows with host-wide activity and has no
+  fixed bound; the floor below still holds.
 - Otherwise the frontier's own order reads every open frontier turn within ceil(U / F) ticks,
   U being the open frontier turns (running children, not active assignments). That is the floor
-  for an adapter without the listing, a failed or saturated listing, a failed read of a stopped
-  turn, a relay/host clock skew over a second, a first listing after a restart before any
-  frontier turn was read, and one named case no thread-level signal can see: a turn started on
-  the child outside the relay, and not admitted to the assignment, within one poll interval of
-  the omitted turn's end. A turn the relay starts on a child is a revision request of the next
-  generation, and a later turn the parent admits makes the older one `later_turn_admitted`;
-  neither leaves an omission to settle.
+  for:
+  - an adapter without the listing, or a listing limit or page count of 0;
+  - a tick whose listing failed;
+  - a saturated listing above the rate just stated;
+  - a stopped turn with three reads in a row that did not settle it;
+  - children the default listing leaves out: exec-source threads and archived threads;
+  - threads sharing a millisecond at a page boundary, which the host's timestamp cursor may skip
+    (an assumption: the cursor carries no thread id);
+  - skew over a second between the relay's clock and the host's;
+  - the first listing after a start while no open frontier turn has an answered read, which
+    reads one page;
+  - a terminal read whose settlement rolled back, when the daemon restarts before reading it
+    again (the priority is kept in memory).
 - A tick is `poll_interval_seconds` (20) plus its own duration, because `run()` sleeps after each
-  tick. Measured on the fake host at 7286dfd6: 1.1 ms at 18 active assignments, 2.3 ms at 100 and
-  9.9 ms at 500 idle; 3.1, 3.7 and 9.9 ms with a quarter of them running. Host calls a tick stay
+  tick. Measured on the fake host at 8a259501: 0.9 ms at 18 active assignments, 2.0 ms at 100 and
+  7.4 ms at 500 idle; 3.1, 3.4 and 10.9 ms with a quarter of them running. Host calls a tick stay
   capped; store work is O(active assignments) indexed lookups, as it already was.
 - The omission is owed `omission_grace_seconds` after the settlement and staged by the supervisor
   pass within its project rotation. That pass derives each relationship of a served project once,
