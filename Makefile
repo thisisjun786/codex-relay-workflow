@@ -7,7 +7,7 @@ STATICCHECK := $(GO) run honnef.co/go/tools/cmd/staticcheck
 .PHONY: build test contract lint dist
 
 build:
-	@if ! $(GO) list ./... 2>/dev/null | grep -q .; then echo "no Go packages yet: build skipped"; else $(GO) build -o $(BINARY) -trimpath -ldflags="$(LDFLAGS)" ./...; fi
+	@if ! $(GO) list ./... 2>/dev/null | grep -q .; then echo "no Go packages yet: build skipped"; else $(GO) build -o $(BINARY) -trimpath -ldflags="$(LDFLAGS)" ./cmd/crw; fi
 
 test:
 	@if ! $(GO) list ./... 2>/dev/null | grep -q .; then echo "no Go packages yet: test skipped"; else $(GO) test ./...; fi
@@ -22,4 +22,4 @@ dist:
 ifneq ($(CGO_ENABLED),0)
 	$(error dist requires CGO_ENABLED=0)
 endif
-	@if ! $(GO) list ./... 2>/dev/null | grep -q .; then echo "no Go packages yet: dist skipped"; else CGO_ENABLED=0 $(GO) build -o $(BINARY) -trimpath -ldflags="$(LDFLAGS)" ./...; fi
+	@if ! $(GO) list ./... 2>/dev/null | grep -q .; then echo "no Go packages yet: dist skipped"; else CGO_ENABLED=0 $(GO) build -o $(BINARY) -trimpath -ldflags="$(LDFLAGS)" ./cmd/crw; fi
