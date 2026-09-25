@@ -4,8 +4,6 @@ import json
 import re
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "contract" / "fixtures"
 
@@ -55,7 +53,7 @@ def evaluate(actual, checks, scenario_id):
             case "exception_code": passed = value == expected
             case "timeout": passed = value == expected
             case "signal": passed = value == expected
-            case _: pytest.fail(f"{scenario_id}: unsupported assertion {kind}")
+            case _: raise AssertionError(f"{scenario_id}: unsupported assertion {kind}")
         assert passed, f"{scenario_id}: {check}: {value!r}"
 
 
@@ -84,7 +82,7 @@ def run_scenario(path, tmp_path):
             from .appserver import run
         case "ledger":
             from .ledger import run
-        case _: pytest.fail(f"{ident}: unknown run kind {kind}")
+        case _: raise AssertionError(f"{ident}: unknown run kind {kind}")
     actual = run(case, tmp_path)
     expected = case["expect"]
     for key in ("exit", "stdout_json", "files"):
