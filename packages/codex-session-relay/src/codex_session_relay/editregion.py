@@ -12,6 +12,21 @@ revision is recorded as an append-only mark, one successor per revision, and a s
 whether its OWN revision has an outgoing mark. Asking which mark is newest would have no answer
 when two share an injected clock's instant.
 
+A base move reaches an agreement only when a party records it (CRW-237). Nothing here watches a
+branch, and merge-turn-land records no revision mark: a mark is append-only with one successor
+per revision, while a landing's recorded base can still be corrected, so a mark written from a
+wrong reading could never be taken back. A registered parent of a project with an agreement in the
+repository, open or closed (_check_restater reads that history, not the agreement being moved),
+records the move from the end of the recorded chain; until somebody does, a late acceptance on the
+older tree stands.
+
+Carrying an agreement onto the newer tree keeps what was agreed. The successor keeps its proposer,
+its constraint and both sides' conditions, whichever side carries it; the carrying side may
+restate only its own condition, and carrying accepts its side on the new tree. The other side's
+acceptance was given on the older tree, so it is asked for again - named, with its reason and the
+command that gives it, never cleared without a word. Text carried from an older tree says which
+tree it was written against, because a line number inside it points there.
+
 Generated metadata is classified rather than contested. Two parents both touching a file that
 is re-derived from the integration tree are not disagreeing; they are both going to regenerate
 it. Such a region never refuses another proposal and is reported under regenerate with the
@@ -28,6 +43,7 @@ in a file this work may not edit.
 """
 
 import posixpath
+import shlex
 
 from .coordination import DOMAIN_EDIT_REGION, Conflicts, Refusal, derive, exact
 from .errors import CoordinationError, RefusalReason
@@ -67,6 +83,23 @@ FOLLOWUP_DISPOSITIONS = (DONE, DROPPED)
 TOTAL = "total"
 PARTIAL = "partial"
 DISJOINT = "disjoint"
+
+# Why a carried agreement still waits for one side, said in the answer rather than left to a
+# cleared column to explain. An acceptance stands on the tree it was given on.
+ACCEPTANCE_ON_PRIOR_REVISION = "acceptance_on_prior_revision"
+NOT_YET_ACCEPTED = "not_yet_accepted"
+
+MARKS = ("SELECT from_revision, to_revision FROM edit_revision_marks"
+         "  WHERE repository = ?")
+LINEAGE = ("SELECT agreement_id, supersedes, constraint_text, base_revision, proposer_task_id,"
+           " left_condition, right_condition FROM edit_agreements WHERE repository = ?")
+CARRIES = ("SELECT c.* FROM edit_reaffirmations c"
+           "  JOIN edit_agreements a ON a.agreement_id = c.agreement_id WHERE a.repository = ?")
+# The destination a carry must share with the agreement it retires, named as the columns are.
+CARRIED_PLACE = (
+    "repository", "path", "region_kind", "region_key", "region_class", "regenerate_from",
+    "left_project", "right_project", "peer_link_id",
+)
 
 
 def canonical_path(path):
@@ -109,6 +142,15 @@ def mark_id(repository, from_revision, to_revision):
     return derive("rvm", repository, from_revision, to_revision)
 
 
+def command_line(*words):
+    """A command an answer tells somebody to run, quoted so that it runs as printed.
+
+    Task ids, revisions and repositories are caller-chosen text; one holding a space split
+    into two arguments when pasted, and the command the answer named then failed (Devin review).
+    """
+    return " ".join(shlex.quote(str(word)) for word in words)
+
+
 def overlap(left, right):
     """total, partial or disjoint, decided on the place rather than on who asked.
 
@@ -146,7 +188,7 @@ class EditRegions:
     def agreement(self, identifier):
         row = self.store.one(
             "SELECT * FROM edit_agreements WHERE agreement_id = ?", (identifier,))
-        return self._agreement_record(row) if row else None
+        return self._described(self._agreement_record(row)) if row else None
 
     def current_revision(self, repository, revision):
         """Whether this revision was superseded, asked of the revision itself.
@@ -170,7 +212,11 @@ class EditRegions:
             " WHERE a.repository = ? ORDER BY a.proposed_at, a.agreement_id",
             (repository,),
         )
+        # Read once for the whole answer rather than once per agreement.
+        successors = self._successor_map(self.store.all(MARKS, (repository,)))
+        carries = {row["agreement_id"]: row for row in self.store.all(CARRIES, (repository,))}
         exclusive, regenerate = [], []
+        lineage = {row["agreement_id"]: row for row in rows}
         for row in rows:
             if base_revision is not None and row["base_revision"] != base_revision:
                 continue
@@ -179,7 +225,8 @@ class EditRegions:
                 continue
             if path is not None and row["region_path"] != path:
                 continue
-            record = self._agreement_record(row)
+            record = self._described(
+                self._agreement_record(row), successors, carries, lineage)
             record["region"] = {
                 "path": row["region_path"], "regionKind": row["region_kind"],
                 "regionKey": row["region_key"] or None,
@@ -248,6 +295,165 @@ class EditRegions:
             "recordedBy": row["recorded_by"], "recordedAt": row["recorded_at"],
         }
 
+    def _described(self, record, successors=None, carries=None, lineage=None):
+        """What a record cannot say from its own columns (CRW-237).
+
+        Which revision each of its texts was written against, where the recorded chain from its
+        revision ends, and what a reaffirmation carried into it. A reader, so it opens no
+        transaction: show() passes the repository's marks, carries and lineage read once, and a
+        single record reads what it needs.
+        """
+        if successors is None:
+            successors = self._successor_map(self.store.all(MARKS, (record["repository"],)))
+        if carries is None:
+            row = self.store.one(
+                "SELECT * FROM edit_reaffirmations WHERE agreement_id = ?",
+                (record["agreementId"],))
+            carries = {record["agreementId"]: row} if row is not None else {}
+        carry = carries.get(record["agreementId"])
+        base = record["baseRevision"]
+        legacy = None
+        if carry is None:
+            constraint = base
+            if record["supersedes"]:
+                # A successor a reaffirmation made before carries were recorded: it copied the
+                # constraint, made its caller the proposer and dropped both conditions, and
+                # recorded none of it. The agreement it came from still holds what it lost.
+                if lineage is None:
+                    lineage = {row["agreement_id"]: row for row in self.store.all(
+                        LINEAGE, (record["repository"],))}
+                    carries = {row["agreement_id"]: row for row in self.store.all(
+                        CARRIES, (record["repository"],))}
+                constraint = self._written_on(record["agreementId"], lineage, carries)
+                origin = self._origin(record["agreementId"], lineage, carries)
+                if origin is not None and origin["agreement_id"] != record["agreementId"]:
+                    legacy = {
+                        "origin": origin["agreement_id"],
+                        "proposerTaskId": origin["proposer_task_id"],
+                        "leftCondition": origin["left_condition"],
+                        "rightCondition": origin["right_condition"],
+                    }
+            stated = {
+                "constraint": constraint,
+                "leftCondition": base if record["leftCondition"] is not None else None,
+                "rightCondition": base if record["rightCondition"] is not None else None,
+            }
+        else:
+            stated = {
+                "constraint": carry["constraint_revision"],
+                "leftCondition": carry["left_condition_revision"],
+                "rightCondition": carry["right_condition_revision"],
+            }
+        record["statedOn"] = stated
+        # What an earlier reaffirmation dropped without a record, read from where it came from.
+        # The next reaffirmation carries these terms rather than this row's.
+        record["legacyCarry"] = legacy
+        # Listed rather than rewritten: a line number in any of these points into the tree it was
+        # written against, and only the side that wrote a text can restate it.
+        record["textFromEarlierRevision"] = [
+            field for field in ("constraint", "leftCondition", "rightCondition")
+            if stated[field] is not None and stated[field] != base
+        ]
+        chain = self._walk(successors, base)
+        record["currentRevision"] = chain[-1] if chain else base
+        awaiting = None if carry is None else self._awaiting(record, carry)
+        if awaiting is not None:
+            # While a carried agreement waits for a side, whoever acts next is that side's
+            # parent NOW. The stored value names the parent at the time of the carry, and after
+            # a handover it would send the acceptance to a task that can no longer give it.
+            record["nextOwner"] = awaiting["task"]
+        record["reaffirmation"] = None if carry is None else {
+            "predecessor": carry["predecessor_id"], "actor": carry["actor"],
+            "actorProject": carry["actor_project"], "fromRevision": carry["from_revision"],
+            "toRevision": carry["to_revision"], "recordedAt": carry["recorded_at"],
+            "awaitingAcceptance": awaiting,
+        }
+        return record
+
+    def _awaiting(self, record, carry):
+        """The side a carried agreement still waits for, why, and the command that answers it.
+
+        Only while it is proposed: once agreed nothing waits, and a closed or reopened successor
+        is answered by its own state. With no single registered parent on that side there is no
+        task to name, so the answer says what has to happen first instead of printing a command
+        nobody can run.
+        """
+        if record["state"] != PROPOSED:
+            return None
+        for accepted, project, prior_column in (
+                ("leftAcceptedAt", "leftProject", "left_accepted_at"),
+                ("rightAcceptedAt", "rightProject", "right_accepted_at")):
+            if record[accepted]:
+                continue
+            predecessor = self.store.one(
+                "SELECT * FROM edit_agreements WHERE agreement_id = ?",
+                (carry["predecessor_id"],))
+            prior = predecessor[prior_column] if predecessor is not None else None
+            key = record[project]
+            parent = self._sole_parent(key)
+            command = command_line(
+                "region-settle", "--agreement", record["agreementId"], "--actor", parent,
+                "--disposition", "accepted") if parent else None
+            return {
+                "project": key, "task": parent,
+                "reason": ACCEPTANCE_ON_PRIOR_REVISION if prior else NOT_YET_ACCEPTED,
+                "priorAcceptedAt": prior, "priorRevision": carry["from_revision"],
+                "command": command,
+                "precondition": None if parent else (
+                    repr(key) + " has no single registered parent; the parent that takes it"
+                    " runs " + command_line("region-settle", "--agreement", record["agreementId"])
+                    + " --actor <that task> --disposition accepted"),
+            }
+        return None
+
+    def _sole_parent(self, project):
+        """The one registered parent of a project, or None when there is not exactly one."""
+        owners = [
+            record["taskId"] for record in self.linkage.owners(PROJECT, project)
+            if record["role"] == PARENT
+        ]
+        return owners[0] if len(owners) == 1 else None
+
+    @staticmethod
+    def _written_on(identifier, lineage, carries):
+        """The revision an agreement's constraint text was written against.
+
+        ``carries`` maps a carried successor to its edit_reaffirmations row. A successor made
+        before carries were recorded has none: its constraint was copied verbatim from the
+        agreement it supersedes, so the text is followed back while it stays the same. A bounded
+        walk over rows already read, like the revision chain.
+        """
+        cursor = lineage.get(identifier)
+        if cursor is None:
+            return None
+        for _step in range(len(lineage) + 1):
+            if cursor["agreement_id"] in carries:
+                return carries[cursor["agreement_id"]]["constraint_revision"]
+            before = lineage.get(cursor["supersedes"] or "")
+            if before is None or before["constraint_text"] != cursor["constraint_text"]:
+                break
+            cursor = before
+        return cursor["base_revision"]
+
+    @staticmethod
+    def _origin(identifier, lineage, carries):
+        """The row holding what a successor made before carries were recorded lost.
+
+        Such a successor has ``supersedes`` and no carry row. The walk goes back through
+        successors like it to the first row that is not one - an original proposal or a recorded
+        carry - whose proposer and conditions are the agreement's own.
+        """
+        cursor = lineage.get(identifier)
+        for _step in range(len(lineage) + 1):
+            if cursor is None or cursor["agreement_id"] in carries \
+                    or not cursor["supersedes"]:
+                return cursor
+            before = lineage.get(cursor["supersedes"])
+            if before is None:
+                return cursor
+            cursor = before
+        return cursor
+
     # -------------------------------------------------------------- ownership
 
     def _acting_side(self, db, row, actor, subject):
@@ -279,8 +485,17 @@ class EditRegions:
     def propose(self, *, repository, base_revision, path, region_kind, left_project,
                 right_project, peer_link_id, proposer_task_id, constraint_text,
                 region_key="", region_class=SOURCE, regenerate_from=None,
-                condition=None, issue_key=None, next_owner=None, supersedes=None):
-        """Claim a place, not a file. Refuses a claim so broad it would block a project."""
+                condition=None, issue_key=None, next_owner=None, supersedes=None,
+                carry=None):
+        """Claim a place, not a file. Refuses a claim so broad it would block a project.
+
+        ``carry`` is reaffirm's, and nobody else's: {"predecessor": id, "restated": text or
+        None}. With it this one transaction re-decides everything reaffirm validated a
+        transaction earlier, retires the predecessor, inserts the successor with the terms READ
+        FROM THE PREDECESSOR here, and links the two. The arguments name where the successor
+        lands and must be the predecessor's own place, pair and link on the end of its chain;
+        proposer_task_id is the task carrying it, which is not the proposer it records.
+        """
         clean = canonical_path(path)
         problem = self._shape_refusal(
             clean, path, region_kind, region_class, regenerate_from, repository)
@@ -302,7 +517,10 @@ class EditRegions:
                 "a " + region_kind + " region "
                 + ("names the symbol or data key it covers" if region_kind in KEYED
                    else "covers the whole path and takes no key"))
-        if self._owned_side(low, high, proposer_task_id) is None:
+        if carry is None and self._owned_side(low, high, proposer_task_id) is None:
+            # A carry's ownership is decided inside its transaction instead (the "no longer
+            # owns" branch below), where the refusal is recorded: reaffirm validated ownership a
+            # transaction earlier, and a handover in between used to be refused here, unrecorded.
             raise CoordinationError(
                 RefusalReason.SCOPE_ROLE_MISMATCH,
                 "task " + repr(proposer_task_id) + " is the registered parent of neither "
@@ -323,24 +541,46 @@ class EditRegions:
                     "region_kind": region_kind, "region_key": region_key,
                     "region_class": region_class, "regenerate_from": regenerate_from,
                 }
-            if region["region_class"] != region_class or (
-                    region["regenerate_from"] or "") != (regenerate_from or ""):
+            predecessor = None
+            if carry is not None:
+                predecessor, refusal = self._carry_check(
+                    db, carry, {
+                        "repository": repository, "path": clean, "region_kind": region_kind,
+                        "region_key": region_key, "region_class": region_class,
+                        "regenerate_from": regenerate_from, "left_project": low,
+                        "right_project": high, "peer_link_id": peer_link_id,
+                    }, supersedes, base_revision, proposer_task_id)
+            if refusal is None and (region["region_class"] != region_class or (
+                    region["regenerate_from"] or "") != (regenerate_from or "")):
                 # The insert above is ON CONFLICT DO NOTHING, so a later proposal naming a
                 # different classification silently inherited the first one - and
-                # classification decides whether the region contests at all.
-                raise CoordinationError(
+                # classification decides whether the region contests at all. Recorded like every
+                # other refusal here: raised inside the transaction it kept no trace, which a
+                # carry refused this way made visible (CRW-237 review).
+                refusal = Refusal(
                     RefusalReason.REGION_OVERLAP,
                     "region " + repr(identifier) + " is already recorded as "
                     + repr(region["region_class"]) + " derived from "
                     + repr(region["regenerate_from"]) + "; a place is classified once, and a"
-                    " different classification is a different claim about it")
-            previous = db.execute(
+                    " different classification is a different claim about it",
+                    domain=DOMAIN_EDIT_REGION, subject=repository, incumbent=identifier,
+                    challenger=region_class)
+            previous = None if refusal is not None else db.execute(
                 "SELECT * FROM edit_agreements"
                 "  WHERE region_id = ? AND left_project = ? AND right_project = ?"
                 "    AND state IN ('proposed','agreed','reopened') AND superseded_by IS NULL",
                 (identifier, low, high),
             ).fetchone()
-            if previous is not None:
+            if refusal is not None:
+                pass
+            elif previous is not None and predecessor is not None:
+                # Carrying onto an agreement this pair already holds on the new tree would hand
+                # it a lineage and terms it never had. reaffirm refuses this before it writes
+                # anything; reaching it here means that agreement arrived in between.
+                refusal = self._standing_refusal(
+                    previous["agreement_id"], predecessor["agreement_id"], base_revision,
+                    repository, proposer_task_id)
+            elif previous is not None:
                 replay = previous
             else:
                 refusal = self._overlap_refusal(
@@ -348,6 +588,25 @@ class EditRegions:
                 if refusal is None:
                     refusal = self._peer_refusal(
                         db, low, high, peer_link_id, proposer_task_id, identifier)
+            if replay is None and refusal is None:
+                # The side the proposer OWNS, not the argument slot it arrived in. Reversed
+                # arguments made a proposer pre-accept the PEER's side, so it could then
+                # accept the remaining one itself and hold both. Decided before anything is
+                # written: ownership can be lost between the pre-flight check and this write (and
+                # a carry is decided only here), and a refusal after the region insert left the
+                # orphan region the comment above describes (CRW-237 review).
+                owned = self._owned_side(low, high, proposer_task_id)
+                if owned is None:
+                    # A None here used to fall through to the high side, so a proposer that had
+                    # just stopped owning the low project pre-accepted the PEER's - which is the
+                    # bug this line was added to fix, one race later.
+                    refusal = Refusal(
+                        RefusalReason.SCOPE_ROLE_MISMATCH,
+                        "task " + repr(proposer_task_id) + " no longer owns either "
+                        + repr(low) + " or " + repr(high) + "; the project changed hands"
+                        " while this proposal was being decided",
+                        domain=DOMAIN_EDIT_REGION, subject=repository,
+                        challenger=proposer_task_id)
             if replay is None and refusal is None:
                 db.execute(
                     "INSERT INTO edit_regions (region_id, repository, base_revision, path,"
@@ -369,48 +628,43 @@ class EditRegions:
                 ).fetchone()
                 tenure = (highest["top"] or 0) + 1
                 agreement = agreement_id(identifier, low, high, tenure)
-                # The side the proposer OWNS, not the argument slot it arrived in. Reversed
-                # arguments made a proposer pre-accept the PEER's side, so it could then
-                # accept the remaining one itself and hold both.
-                owned = self._owned_side(low, high, proposer_task_id)
-                if owned is None:
-                    # Ownership can be lost between the pre-flight check and this insert. A
-                    # None here used to fall through to the high side, so a proposer that had
-                    # just stopped owning the low project pre-accepted the PEER's - which is
-                    # the bug this line was added to fix, one race later.
-                    refusal = Refusal(
-                        RefusalReason.SCOPE_ROLE_MISMATCH,
-                        "task " + repr(proposer_task_id) + " no longer owns either "
-                        + repr(low) + " or " + repr(high) + "; the project changed hands"
-                        " while this proposal was being decided",
-                        domain=DOMAIN_EDIT_REGION, subject=repository,
-                        challenger=proposer_task_id)
-                    self.conflicts.record_in(db, refusal, at=now)
-                    agreement = None
-                else:
-                    mine = "left_condition" if owned == low else "right_condition"
-                    accepted = ("left_accepted_at" if owned == low
-                                else "right_accepted_at")
-                    db.execute(
-                        "INSERT INTO edit_agreements (agreement_id, region_id, repository,"
-                        " base_revision, left_project, right_project, peer_link_id,"
-                        " proposer_task_id, issue_key, constraint_text, " + mine + ", "
-                        + accepted + ", next_owner, state, tenure, supersedes, proposed_at,"
-                        " updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                        (agreement, identifier, region["repository"],
-                         region["base_revision"], low, high, peer_link_id, proposer_task_id,
-                         issue_key, constraint_text, condition, now, next_owner, PROPOSED,
-                         tenure, supersedes, now, now),
-                    )
-                    self.store.journal(
-                        "edit_region_proposed", agreement,
-                        {"regionId": identifier, "path": clean, "pair": [low, high]}, at=now)
+                terms = {
+                    "proposer": proposer_task_id, "constraint": constraint_text,
+                    "issue": issue_key, "next_owner": next_owner,
+                    "conditions": {low: None, high: None},
+                }
+                terms["conditions"][owned] = condition
+                if predecessor is not None:
+                    terms = self._carried_terms(
+                        db, predecessor, owned, low, high, carry["restated"],
+                        region["base_revision"])
+                db.execute(
+                    "INSERT INTO edit_agreements (agreement_id, region_id, repository,"
+                    " base_revision, left_project, right_project, peer_link_id,"
+                    " proposer_task_id, issue_key, constraint_text, left_condition,"
+                    " right_condition, left_accepted_at, right_accepted_at, next_owner,"
+                    " state, tenure, supersedes, proposed_at, updated_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (agreement, identifier, region["repository"],
+                     region["base_revision"], low, high, peer_link_id, terms["proposer"],
+                     terms["issue"], terms["constraint"], terms["conditions"][low],
+                     terms["conditions"][high], now if owned == low else None,
+                     now if owned == high else None, terms["next_owner"], PROPOSED,
+                     tenure, supersedes, now, now),
+                )
+                self.store.journal(
+                    "edit_region_proposed", agreement,
+                    {"regionId": identifier, "path": clean, "pair": [low, high]}, at=now)
+                if predecessor is not None:
+                    self._retire_carried(
+                        db, predecessor, agreement, proposer_task_id, owned, terms,
+                        region["base_revision"], now)
             elif refusal is not None:
                 self.conflicts.record_in(db, refusal, at=now)
         if refusal is not None:
             raise refusal.error()
         if replay is not None:
-            answer = self._agreement_record(replay)
+            answer = self._described(self._agreement_record(replay))
             answer["alreadyProposed"] = True
             return answer
         answer = self.agreement(agreement)
@@ -498,6 +752,167 @@ class EditRegions:
                 + ", not " + repr([low, high]),
                 domain=DOMAIN_EDIT_REGION, subject=subject, challenger=actor)
         return None
+
+    def _carry_check(self, db, carry, place, supersedes, base_revision, actor):
+        """Whether a carry may retire its predecessor and land here, decided in the write.
+
+        reaffirm validated this one transaction earlier, and everything it read can have moved
+        since: the predecessor settled or carried by the other side, the base moved again. A
+        carry retires the row it names, so each fact is read again where it is acted on. The
+        destination is checked against the predecessor rather than trusted, because a carry that
+        landed on another place, pair or link would retire one agreement and create an
+        unrelated one.
+        """
+        subject = place["repository"]
+        predecessor = db.execute(
+            "SELECT a.*, r.path AS path, r.region_kind AS region_kind,"
+            "       r.region_key AS region_key, r.region_class AS region_class,"
+            "       r.regenerate_from AS regenerate_from"
+            "  FROM edit_agreements a JOIN edit_regions r ON r.region_id = a.region_id"
+            " WHERE a.agreement_id = ?", (carry["predecessor"],)).fetchone()
+        if predecessor is None:
+            return None, Refusal(
+                RefusalReason.UNREGISTERED_SCOPE,
+                "no agreement " + repr(carry["predecessor"]) + " to carry",
+                domain=DOMAIN_EDIT_REGION, subject=subject,
+                incumbent=str(carry["predecessor"]), challenger=actor)
+        identifier = predecessor["agreement_id"]
+        for field in CARRIED_PLACE:
+            if (place[field] or "") != (predecessor[field] or ""):
+                return None, Refusal(
+                    RefusalReason.UNREGISTERED_SCOPE,
+                    "a carry of " + repr(identifier) + " lands on its own place, pair and"
+                    " link; " + field + " " + repr(place[field]) + " is not its "
+                    + repr(predecessor[field]),
+                    domain=DOMAIN_EDIT_REGION, subject=subject, incumbent=identifier,
+                    challenger=actor)
+        if supersedes != identifier:
+            return None, Refusal(
+                RefusalReason.UNREGISTERED_SCOPE,
+                "a carry of " + repr(identifier) + " supersedes it, not " + repr(supersedes),
+                domain=DOMAIN_EDIT_REGION, subject=subject, incumbent=identifier,
+                challenger=actor)
+        if predecessor["state"] not in LIVE or predecessor["superseded_by"]:
+            return None, Refusal(
+                RefusalReason.AGREEMENT_NOT_OPEN,
+                "agreement " + repr(identifier) + " is " + predecessor["state"]
+                + (", superseded by " + repr(predecessor["superseded_by"])
+                   if predecessor["superseded_by"] else "")
+                + "; it was settled or carried while this carry was being decided, so there"
+                " is nothing left to carry",
+                domain=DOMAIN_EDIT_REGION, subject=subject, incumbent=predecessor["state"],
+                challenger=actor)
+        chain = self._chain_from(db, subject, predecessor["base_revision"])
+        if not chain:
+            return None, self._unmoved_refusal(
+                identifier, predecessor["base_revision"], subject, actor)
+        if chain[-1] != base_revision:
+            return None, Refusal(
+                RefusalReason.AGREEMENT_REVISION_STALE,
+                "the recorded chain from " + repr(predecessor["base_revision"]) + " now ends"
+                " at " + repr(chain[-1]) + ", not " + repr(base_revision) + ": the base moved"
+                " again while this was being carried. Reaffirm it onto " + repr(chain[-1]),
+                domain=DOMAIN_EDIT_REGION, subject=subject, incumbent=chain[-1],
+                challenger=base_revision)
+        return predecessor, None
+
+    @staticmethod
+    def _unmoved_refusal(identifier, revision, subject, actor):
+        return Refusal(
+            RefusalReason.LINK_NOT_ACTIVE,
+            "agreement " + repr(identifier) + " already stands on " + repr(revision)
+            + ", which no recorded move has superseded. A revision is not its own successor,"
+            " and proposing it again in place would only clear the other side's acceptance",
+            domain=DOMAIN_EDIT_REGION, subject=subject, incumbent=revision, challenger=actor)
+
+    @staticmethod
+    def _standing_refusal(standing, identifier, revision, subject, actor):
+        return Refusal(
+            RefusalReason.REGION_OVERLAP,
+            "agreement " + repr(standing) + " between these two projects already stands on this"
+            " place at " + repr(revision) + " with terms of its own. Carrying " + repr(identifier)
+            + " onto it would hand it a lineage and terms it never had; agree on "
+            + repr(standing) + " instead",
+            domain=DOMAIN_EDIT_REGION, subject=subject, incumbent=standing, challenger=actor)
+
+    def _carried_terms(self, db, predecessor, owned, low, high, restated, revision):
+        """The terms a successor inherits, each with the revision it was written against.
+
+        Read from the row being retired, inside the transaction retiring it, so the carried text
+        is exactly the text that stops being live. Only the carrying side's own condition can be
+        restated, and a restated one is stated on the successor's revision.
+        """
+        earlier = db.execute(
+            "SELECT * FROM edit_reaffirmations WHERE agreement_id = ?",
+            (predecessor["agreement_id"],)).fetchone()
+        before = predecessor["base_revision"]
+        conditions = {low: predecessor["left_condition"], high: predecessor["right_condition"]}
+        proposer = predecessor["proposer_task_id"]
+        if earlier is not None:
+            revisions = {low: earlier["left_condition_revision"],
+                         high: earlier["right_condition_revision"]}
+            constraint_revision = earlier["constraint_revision"]
+        elif predecessor["supersedes"]:
+            # A predecessor carried before carries were recorded lost its proposer and both
+            # conditions to that carry, and says nothing of where its copied constraint was
+            # written. The row it came from still holds all of it, so the terms are carried
+            # from there: the original agreement comes back, and the other side accepts again.
+            lineage = {row["agreement_id"]: row for row in db.execute(
+                LINEAGE, (predecessor["repository"],)).fetchall()}
+            carries = {row["agreement_id"]: row for row in db.execute(
+                CARRIES, (predecessor["repository"],)).fetchall()}
+            origin = self._origin(predecessor["agreement_id"], lineage, carries)
+            source = carries.get(origin["agreement_id"])
+            revisions = {}
+            for side, column in ((low, "left_condition"), (high, "right_condition")):
+                if conditions[side] is not None:
+                    revisions[side] = before
+                    continue
+                conditions[side] = origin[column]
+                revisions[side] = (source[column + "_revision"] if source is not None
+                                   else origin["base_revision"] if origin[column] is not None
+                                   else None)
+            proposer = origin["proposer_task_id"]
+            constraint_revision = self._written_on(
+                predecessor["agreement_id"], lineage, carries)
+        else:
+            revisions = {side: before if conditions[side] is not None else None
+                         for side in (low, high)}
+            constraint_revision = before
+        if restated is not None:
+            conditions[owned] = restated
+            revisions[owned] = revision
+        return {
+            "proposer": proposer,
+            "constraint": predecessor["constraint_text"], "issue": predecessor["issue_key"],
+            # Whoever must act next is the side still to accept, when there is exactly one task
+            # to name. The carried value was never checked against anybody's ownership.
+            "next_owner": self._sole_parent(high if owned == low else low),
+            "conditions": conditions, "revisions": revisions,
+            "constraint_revision": constraint_revision,
+        }
+
+    def _retire_carried(self, db, predecessor, successor, actor, owned, terms, revision, now):
+        """Retire, link and record the carry, in the transaction that inserted the successor."""
+        db.execute(
+            "UPDATE edit_agreements SET state = ?, close_reason = ?, closed_at = ?,"
+            " superseded_by = ?, updated_at = ? WHERE agreement_id = ?",
+            (RELEASED, "reaffirmed onto " + revision, now, successor, now,
+             predecessor["agreement_id"]))
+        low, high = predecessor["left_project"], predecessor["right_project"]
+        db.execute(
+            "INSERT INTO edit_reaffirmations (agreement_id, predecessor_id, actor, actor_project,"
+            " from_revision, to_revision, constraint_revision, left_condition_revision,"
+            " right_condition_revision, recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (successor, predecessor["agreement_id"], actor, owned,
+             predecessor["base_revision"], revision, terms["constraint_revision"],
+             terms["revisions"][low], terms["revisions"][high], now),
+        )
+        self.store.journal(
+            "edit_region_reaffirmed", successor,
+            {"predecessor": predecessor["agreement_id"], "actor": actor,
+             "from": predecessor["base_revision"], "to": revision}, at=now)
+
     def settle(self, identifier, *, actor, disposition, condition=None, reason=None):
         """Accept, decline, withdraw or release. A decline keeps the condition it would accept.
 
@@ -509,6 +924,15 @@ class EditRegions:
                 RefusalReason.LINK_NOT_ACTIVE,
                 "a disposition is one of " + ", ".join(DISPOSITIONS) + ", not "
                 + repr(disposition))
+        if disposition == "accepted" and condition is not None:
+            # An acceptance never wrote a condition, so one given here vanished without a trace;
+            # CRW-124 G3 restated a condition in an acceptance and lost it. Refused with the
+            # invocation reason this function already uses for an unknown disposition.
+            raise CoordinationError(
+                RefusalReason.LINK_NOT_ACTIVE,
+                "an acceptance takes no condition, and one given here would be dropped. A side"
+                " states its condition when it proposes, restates it with region-reaffirm"
+                " --condition after a base move, or declines with the condition it would accept")
         now = self.clock.iso()
         refusal = None
         with self.store.transaction() as db:
@@ -533,11 +957,16 @@ class EditRegions:
                     (row["repository"], row["base_revision"]),
                 ).fetchone()
                 if superseded is not None:
+                    chain = self._chain_from(db, row["repository"], row["base_revision"])
+                    end = chain[-1] if chain else superseded["to_revision"]
                     refusal = Refusal(
                         RefusalReason.AGREEMENT_REVISION_STALE,
                         "this agreement stands on " + repr(row["base_revision"])
                         + ", which was restated to " + repr(superseded["to_revision"])
-                        + "; reaffirm it on the current revision before settling it",
+                        + "; the recorded chain from it ends at " + repr(end) + ". Reaffirm it"
+                        " on the current revision before settling it: " + command_line(
+                            "region-reaffirm", "--agreement", identifier, "--actor", actor,
+                            "--revision", end),
                         domain=DOMAIN_EDIT_REGION, subject=row["repository"],
                         incumbent=row["base_revision"], challenger=actor)
             if refusal is None and disposition == WITHDRAWN \
@@ -578,6 +1007,12 @@ class EditRegions:
                 "UPDATE edit_agreements SET " + column + " = ?, state = ?, close_reason = ?,"
                 " closed_at = ?, updated_at = ? WHERE agreement_id = ?",
                 (condition, DECLINED, reason, now, now, identifier))
+            # A carried successor records where each condition was written; a decline writes
+            # this side's afresh, on this revision, or clears it. No row, nothing to update.
+            db.execute(
+                "UPDATE edit_reaffirmations SET " + column + "_revision = ?"
+                " WHERE agreement_id = ?",
+                (row["base_revision"] if condition is not None else None, identifier))
             self.store.journal(
                 "edit_region_declined", identifier,
                 {"side": side, "condition": condition}, at=now)
@@ -606,12 +1041,46 @@ class EditRegions:
         A walk over rows one query returned, not a wait: the chain cannot be longer than the
         number of marks the repository has, and a repeat stops it.
         """
-        marks = {
-            row["from_revision"]: row["to_revision"] for row in db.execute(
-                "SELECT from_revision, to_revision FROM edit_revision_marks"
-                "  WHERE repository = ?", (repository,),
-            ).fetchall()
-        }
+        return self._walk(
+            self._successor_map(db.execute(MARKS, (repository,)).fetchall()), revision)
+
+    @staticmethod
+    def _successor_map(rows):
+        return {row["from_revision"]: row["to_revision"] for row in rows}
+
+    def _unrelated_start(self, db, repository, revision):
+        """A first move starts where an agreement stands, and a later one where a chain ends.
+
+        One successor per revision stops a second chain from the SAME revision and nothing
+        stopped one from a revision nobody stands on: after A->B, recording C->D instead of B->D
+        succeeded, and the move never reached the agreement on A (CRW-237 review). Only a LIVE
+        agreement stands anywhere: counting a withdrawn one let the same wrong move start from
+        the closed agreement's revision (second review). A repository with neither a live
+        agreement nor a mark keeps the first restatement _check_restater allows.
+        """
+        bases = {row["base_revision"] for row in db.execute(
+            "SELECT DISTINCT base_revision FROM edit_agreements"
+            "  WHERE repository = ? AND state IN ('proposed','agreed','reopened')"
+            "    AND superseded_by IS NULL",
+            (repository,)).fetchall()}
+        successors = self._successor_map(db.execute(MARKS, (repository,)).fetchall())
+        if not bases and not successors:
+            return None
+        if revision in bases or revision in successors.values():
+            return None
+        ends = sorted({(self._walk(successors, base) or [base])[-1] for base in bases}
+                      | {end for end in successors.values() if end not in successors})
+        return Refusal(
+            RefusalReason.AGREEMENT_REVISION_STALE,
+            "no live agreement in " + repr(repository) + " stands on " + repr(revision) + " and no"
+            " recorded move reaches it, so a move from it would start a chain no agreement"
+            " follows. A first move starts at a live agreement's revision and a later one at the"
+            " end of its recorded chain; the chains here end at " + repr(ends),
+            domain=DOMAIN_EDIT_REGION, subject=repository, incumbent=",".join(ends),
+            challenger=revision)
+
+    @staticmethod
+    def _walk(marks, revision):
         reached, cursor = [], revision
         for _step in range(len(marks) + 1):
             cursor = marks.get(cursor)
@@ -663,6 +1132,11 @@ class EditRegions:
         The mark is append-only and one revision has one successor, so a chain leaves every
         earlier revision marked and only the newest unmarked. Rewriting base_revision on the
         rows instead would leave each one's id no longer derivable from its own columns.
+
+        So only the first move is recorded from a proposal's revision; every later one is
+        recorded from the end of the chain, and a refusal names that end (CRW-237). A move the
+        chain already holds - restating the proposal's revision to a revision the chain reaches
+        - is the same fact said again, answered like a replay with alreadyRecorded, not refused.
         """
         exact(repository, "a repository")
         exact(from_revision, "a base revision")
@@ -672,26 +1146,32 @@ class EditRegions:
                 RefusalReason.LINK_NOT_ACTIVE, "a revision is not its own successor")
         self._check_restater(repository, actor)
         now = self.clock.iso()
-        refusal, moved = None, []
+        refusal, moved, reached = None, [], []
         with self.store.transaction() as db:
             existing = db.execute(
                 "SELECT * FROM edit_revision_marks"
                 "  WHERE repository = ? AND from_revision = ?",
                 (repository, from_revision),
             ).fetchone()
-            if existing is not None and existing["to_revision"] != to_revision:
+            if existing is not None and existing["to_revision"] != to_revision \
+                    and to_revision not in self._chain_from(db, repository, from_revision):
+                end = self._chain_from(db, repository, from_revision)[-1]
                 refusal = Refusal(
                     RefusalReason.AGREEMENT_REVISION_STALE,
                     repr(from_revision) + " was already restated to "
                     + repr(existing["to_revision"]) + " by " + repr(existing["actor"])
                     + "; one revision has one successor and a second would leave two chains"
-                    " nobody can order",
+                    " nobody can order. A later move is recorded from the end of the recorded"
+                    " chain, which is " + repr(end) + ": " + command_line(
+                        "region-restate-revision", "--repository", repository,
+                        "--from-revision", end, "--to-revision", to_revision, "--actor", actor),
                     domain=DOMAIN_EDIT_REGION, subject=repository,
                     incumbent=existing["to_revision"], challenger=to_revision)
                 self.conflicts.record_in(db, refusal, at=now)
             elif existing is None:
+                refusal = self._unrelated_start(db, repository, from_revision)
                 reached = self._chain_from(db, repository, to_revision)
-                if from_revision in reached:
+                if refusal is None and from_revision in reached:
                     # One successor per revision does not make the chain acyclic. A to B
                     # followed by B to A left BOTH revisions carrying an outgoing mark, so
                     # every revision read as superseded and no tree was current at all.
@@ -702,6 +1182,7 @@ class EditRegions:
                         " and leave no current revision for anything to stand on",
                         domain=DOMAIN_EDIT_REGION, subject=repository,
                         incumbent=to_revision, challenger=from_revision)
+                if refusal is not None:
                     self.conflicts.record_in(db, refusal, at=now)
             if refusal is None and existing is None:
                 db.execute(
@@ -726,30 +1207,42 @@ class EditRegions:
                     "   AND state IN ('proposed','agreed') AND superseded_by IS NULL",
                     (REOPENED, now, repository, from_revision),
                 )
+                reached = self._chain_from(db, repository, from_revision)
                 self.store.journal(
                     "edit_revision_restated", repository,
-                    {"from": from_revision, "to": to_revision, "reopened": moved}, at=now)
+                    {"from": from_revision, "to": to_revision, "reopened": moved,
+                     "alreadyRecorded": existing is not None}, at=now)
         if refusal is not None:
             raise refusal.error()
         return {"repository": repository, "fromRevision": from_revision,
-                "toRevision": to_revision, "reopened": moved}
+                "toRevision": to_revision, "reopened": moved,
+                "alreadyRecorded": existing is not None, "currentRevision": reached[-1]}
 
-    def reaffirm(self, identifier, *, actor, base_revision):
-        """Carry an agreement onto the revision its own chain actually reaches.
+    def reaffirm(self, identifier, *, actor, base_revision, condition=None):
+        """Carry an agreement onto the revision its own chain actually reaches, keeping it.
 
         A successor rather than an edit, because the region's id contains its revision: moving
         the row would leave an identifier its own columns no longer derive.
 
-        Two things the first version got wrong. It accepted any destination, so a typo became
-        a live agreement on a tree nothing had recorded as the successor, and both sides could
-        settle it because an unrecorded revision has no stale mark. And it created the
-        successor before retiring the predecessor, so a failure between the two left both live
-        with different region revisions, which the one-live-agreement index cannot catch.
+        What is carried (CRW-237). The successor keeps the predecessor's proposer, constraint
+        and both sides' conditions, whichever side carries it; ``condition`` restates the
+        carrier's OWN side only, stated on the new revision. Carrying accepts the carrier's side
+        on the new tree. The other side's acceptance was given on the older tree and is not
+        carried; the successor names that wait - reason, prior acceptance, command. The first
+        version made the carrier the proposer, dropped both conditions and cleared the other
+        side's acceptance without a word (CRW-124 G3).
 
-        The predecessor is retired FIRST now. A failure after that leaves nothing live rather
-        than two things live, which is recoverable by proposing again; the reverse is not.
+        Two transactions. The first validates and records its refusals: ownership, an open
+        agreement, a revision that actually moved (a revision is not its own successor), the end
+        of the recorded chain (a typo is not a successor nobody recorded), and a successor place
+        free of another pair's overlap and of this pair's own live agreement. It retires
+        nothing. The second is propose() with the carry, which re-decides all of that where it
+        writes and then retires, inserts and links in one transaction. The earlier version
+        retired first and inserted a transaction later, so a move or a same-pair proposal
+        landing in between left a successor on a superseded tree or nothing live at all.
         """
         now = self.clock.iso()
+        error, carried = None, None
         with self.store.transaction() as db:
             row = db.execute(
                 "SELECT a.*, r.path AS path, r.region_kind AS region_kind,"
@@ -771,6 +1264,9 @@ class EditRegions:
                     + "; a closed agreement is not carried forward, it is proposed again",
                     domain=DOMAIN_EDIT_REGION, subject=row["repository"],
                     incumbent=row["state"], challenger=actor)
+            if refusal is None and base_revision == row["base_revision"]:
+                refusal = self._unmoved_refusal(
+                    identifier, row["base_revision"], row["repository"], actor)
             if refusal is None:
                 chain = self._chain_from(db, row["repository"], row["base_revision"])
                 terminal = chain[-1] if chain else row["base_revision"]
@@ -786,13 +1282,9 @@ class EditRegions:
             if refusal is not None:
                 self.conflicts.record_in(db, refusal, at=now)
                 error = refusal.error()
-                carried = None
             else:
-                error = None
-                carried = dict(row)
-                # Prove the successor is proposable BEFORE destroying the predecessor.
-                # Retiring first traded two live agreements for none: an overlap or peer
-                # refusal in the proposal left the carry-forward with nothing live at all.
+                # Refused here, where it records, rather than discovered after a write. The
+                # carry's own transaction decides all of it again before retiring anything.
                 successor_region = {
                     "region_id": region_id(
                         row["repository"], base_revision, row["path"],
@@ -806,21 +1298,28 @@ class EditRegions:
                 blocked = self._overlap_refusal(db, successor_region, low, high, actor) \
                     or self._peer_refusal(
                         db, low, high, row["peer_link_id"], actor, row["repository"])
+                if blocked is None:
+                    standing = db.execute(
+                        "SELECT agreement_id FROM edit_agreements"
+                        "  WHERE region_id = ? AND left_project = ? AND right_project = ?"
+                        "    AND state IN ('proposed','agreed','reopened')"
+                        "    AND superseded_by IS NULL",
+                        (successor_region["region_id"], low, high)).fetchone()
+                    if standing is not None:
+                        blocked = self._standing_refusal(
+                            standing["agreement_id"], identifier, base_revision,
+                            row["repository"], actor)
                 if blocked is not None:
                     self.conflicts.record_in(db, blocked, at=now)
                     # Carried OUT of the transaction. Raising here rolls back the very row
                     # that records the contest, which is the one thing this module's write
                     # protocol exists to prevent.
-                    refusal, carried = blocked, None
                     error = blocked.error()
                 else:
-                    db.execute(
-                        "UPDATE edit_agreements SET state = ?, close_reason = ?, closed_at = ?,"
-                        " updated_at = ? WHERE agreement_id = ?",
-                        (RELEASED, "reaffirmed onto " + base_revision, now, now, identifier))
+                    carried = dict(row)
         if error is not None:
             raise error
-        successor = self.propose(
+        return self.propose(
             repository=carried["repository"], base_revision=base_revision,
             path=carried["path"], region_kind=carried["region_kind"],
             region_key=carried["region_key"], region_class=carried["region_class"],
@@ -828,13 +1327,8 @@ class EditRegions:
             left_project=carried["left_project"], right_project=carried["right_project"],
             peer_link_id=carried["peer_link_id"], proposer_task_id=actor,
             constraint_text=carried["constraint_text"], issue_key=carried["issue_key"],
-            next_owner=carried["next_owner"], supersedes=identifier)
-        with self.store.transaction() as db:
-            db.execute(
-                "UPDATE edit_agreements SET superseded_by = ?, updated_at = ?"
-                " WHERE agreement_id = ?",
-                (successor["agreementId"], now, identifier))
-        return successor
+            next_owner=carried["next_owner"], supersedes=identifier,
+            carry={"predecessor": identifier, "restated": condition})
 
     # -------------------------------------------------------------- follow-ups
 
