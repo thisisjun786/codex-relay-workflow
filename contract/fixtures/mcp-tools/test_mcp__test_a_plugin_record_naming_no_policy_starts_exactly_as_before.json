@@ -1,0 +1,40 @@
+{
+  "given": {},
+  "run": {
+    "kind": "mcp",
+    "launcher": true,
+    "steps": [
+      {
+        "tool": "get_capabilities"
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "results",
+          0,
+          "structured",
+          "executionPolicy"
+        ],
+        "value": {
+          "mode": "presence_only",
+          "digest": null,
+          "roles": {}
+        }
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "results",
+          0,
+          "error"
+        ],
+        "value": false
+      }
+    ]
+  }
+}

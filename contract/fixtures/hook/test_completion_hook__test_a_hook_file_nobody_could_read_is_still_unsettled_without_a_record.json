@@ -1,0 +1,45 @@
+{
+  "given": {
+    "relay": {
+      "stdout": "{\"decision\": \"release\", \"state\": \"unmanaged\", \"observation\": \"unmanaged\", \"reason\": \"No marker names this workspace.\", \"assignmentId\": null, \"counters\": {}, \"recordedAs\": null, \"hook_output\": {}}"
+    },
+    "files": {
+      "hooks.json/unreadable": ""
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "registration",
+          "value"
+        ],
+        "value": "UNREADABLE"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "firingJournal",
+          "value"
+        ],
+        "value": "ABSENT"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "firingRecordAbsence",
+          "value"
+        ],
+        "value": "cause_unreadable"
+      }
+    ]
+  }
+}

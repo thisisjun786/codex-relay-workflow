@@ -1,0 +1,34 @@
+{
+  "given": {
+    "settings": false,
+    "files": {
+      "crw-completion-hook.json": "{\"relayExecutable\": \"/r\", \"markerRoot\": \"/m\", \"mode\": \"whatever\"}"
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "configuration",
+          "value"
+        ],
+        "value": "config_malformed"
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "status",
+          "configuration",
+          "evidence"
+        ],
+        "value": "mode"
+      }
+    ]
+  }
+}

@@ -1,0 +1,1 @@
+{"given":{"relay":{"stdout":"[1, 2, 3]"}},"run":{"kind":"agreement","stdin":{"session_id":"s-1","turn_id":"t-1","stop_hook_active":false}},"expect":{"exit":0,"checks":[{"kind":"eq","path":["records",0,"adapterOutcome"],"value":"guard_output_unreadable"}]}}

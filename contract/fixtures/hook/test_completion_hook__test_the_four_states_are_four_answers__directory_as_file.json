@@ -1,0 +1,24 @@
+{
+  "given": {
+    "files": {
+      "codex-session-relay/inside": ""
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "relayExecutable",
+          "value"
+        ],
+        "value": "UNREADABLE"
+      }
+    ]
+  }
+}

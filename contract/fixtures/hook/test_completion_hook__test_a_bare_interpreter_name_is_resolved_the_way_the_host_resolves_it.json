@@ -1,0 +1,34 @@
+{
+  "given": {
+    "settings": false,
+    "files": {
+      "hooks.json": "{\"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"python3 ${ENTRY}\", \"timeout\": 10}]}]}}"
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "registeredInterpreter",
+          "value"
+        ],
+        "value": "PRESENT"
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "status",
+          "registeredInterpreter",
+          "evidence"
+        ],
+        "value": "wrapper"
+      }
+    ]
+  }
+}

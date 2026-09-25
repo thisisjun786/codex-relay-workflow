@@ -1,0 +1,47 @@
+{
+  "given": {
+    "relay": {
+      "stdout": "{\"decision\": \"release\", \"state\": \"unmanaged\", \"observation\": \"unmanaged\", \"reason\": \"No marker names this workspace.\", \"assignmentId\": null, \"counters\": {}, \"recordedAs\": null, \"hook_output\": {}}"
+    }
+  },
+  "run": {
+    "kind": "hook"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "contains",
+        "path": [
+          "call",
+          "argv"
+        ],
+        "value": "--marker-root"
+      },
+      {
+        "kind": "excludes",
+        "path": [
+          "call",
+          "argv"
+        ],
+        "value": "--now"
+      },
+      {
+        "kind": "excludes",
+        "path": [
+          "call",
+          "argv"
+        ],
+        "value": "--db-path"
+      },
+      {
+        "kind": "excludes",
+        "path": [
+          "call",
+          "argv"
+        ],
+        "value": "--mode"
+      }
+    ]
+  }
+}

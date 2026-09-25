@@ -1,0 +1,46 @@
+{
+ "given": {},
+ "run": {
+  "kind": "cli",
+  "argv": [
+   "dispositions-show",
+   "--project",
+   "PROJ-CRW-163"
+  ],
+  "env": {
+   "XDG_STATE_HOME": "${HOME}/xdg-state"
+  }
+ },
+ "expect": {
+  "exit": 2,
+  "files": {
+   "state": false
+  },
+  "checks": [
+   {
+    "kind": "eq",
+    "path": [
+     "stdout_json",
+     "readable"
+    ],
+    "value": false
+   },
+   {
+    "kind": "ne",
+    "path": [
+     "stdout_json",
+     "detail"
+    ],
+    "value": null
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "stdout_json",
+     "children"
+    ],
+    "value": []
+   }
+  ]
+ }
+}

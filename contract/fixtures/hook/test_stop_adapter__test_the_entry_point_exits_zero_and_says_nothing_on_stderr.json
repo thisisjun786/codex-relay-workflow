@@ -1,0 +1,1 @@
+{"given":{"relay":{"stdout":"{\"decision\":\"block\",\"state\":\"declared\",\"hook_output\":{\"decision\":\"block\",\"reason\":\"verify the child\",\"continue\":true}}"}},"run":{"kind":"stop","entry":"console","stdin":{"session_id":"s"}},"expect":{"exit":0,"checks":[{"kind":"eq","path":["stderr"],"value":""},{"kind":"eq","path":["stdout_json","decision"],"value":"block"}]}}

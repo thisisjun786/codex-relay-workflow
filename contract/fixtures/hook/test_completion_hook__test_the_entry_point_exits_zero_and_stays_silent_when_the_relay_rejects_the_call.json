@@ -1,0 +1,29 @@
+{
+  "given": {
+    "relay": {
+      "exit": 2
+    }
+  },
+  "run": {
+    "kind": "entry"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "stdout"
+        ],
+        "value": ""
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "stderr"
+        ],
+        "value": ""
+      }
+    ]
+  }
+}

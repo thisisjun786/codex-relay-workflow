@@ -1,0 +1,34 @@
+{
+  "given": {
+    "settings": false,
+    "files": {
+      "hooks.json": "{\"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"python3 scripts/completion_hook.py ${HOME}/c.json\", \"timeout\": 10}]}]}}"
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "registeredCommandTarget",
+          "value"
+        ],
+        "value": "registration_names_a_relative_adapter"
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "status",
+          "registeredCommandTarget",
+          "evidence"
+        ],
+        "value": "each session's workspace"
+      }
+    ]
+  }
+}

@@ -1,0 +1,138 @@
+{
+ "given": {},
+ "run": {
+  "kind": "cli",
+  "steps": [
+   {
+    "id": "register",
+    "env": {
+     "XDG_STATE_HOME": "${HOME}/xdg-state"
+    },
+    "argv": [
+     "register",
+     "--parent-task",
+     "01parent-task",
+     "--parent-host",
+     "host-a",
+     "--child-task",
+     "01child-task",
+     "--child-host",
+     "host-a",
+     "--issue",
+     "REL-1",
+     "--artifact-root",
+     "${HOME}/work",
+     "--allowed-recipient",
+     "01parent-task",
+     "--dispatch-request-id",
+     "dispatch-1",
+     "--dispatch-turn-id",
+     "turn-dispatch-1"
+    ]
+   },
+   {
+    "id": "emit",
+    "env": {
+     "XDG_STATE_HOME": "${HOME}/xdg-state"
+    },
+    "argv": [
+     "emit",
+     "--relationship",
+     {
+      "$step": "register",
+      "path": [
+       "stdout_json",
+       "relationshipId"
+      ]
+     },
+     "--generation",
+     "1",
+     "--attempt",
+     "1",
+     "--outcome",
+     "blocked_needs_input",
+     "--turn-thread",
+     "01child-task",
+     "--turn-id",
+     "turn-dispatch-1",
+     "--turn-status",
+     "completed",
+     "--no-enqueue"
+    ]
+   },
+   {
+    "id": "read",
+    "env": {
+     "XDG_STATE_HOME": "${HOME}/xdg-state"
+    },
+    "argv": [
+     "dispositions-show",
+     "--relationship",
+     {
+      "$step": "register",
+      "path": [
+       "stdout_json",
+       "relationshipId"
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "exit": 0,
+  "checks": [
+   {
+    "kind": "eq",
+    "path": [
+     "steps",
+     "register",
+     "exit"
+    ],
+    "value": 0
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "steps",
+     "emit",
+     "exit"
+    ],
+    "value": 0
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "steps",
+     "read",
+     "stdout_json",
+     "readable"
+    ],
+    "value": true
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "steps",
+     "read",
+     "stdout_json",
+     "children",
+     0,
+     "turnDisposition",
+     "outcome"
+    ],
+    "value": "blocked_needs_input"
+   },
+   {
+    "kind": "contains",
+    "path": [
+     "steps",
+     "read",
+     "stdout_json",
+     "limits"
+    ],
+    "value": "unreadable"
+   }
+  ]
+ }
+}

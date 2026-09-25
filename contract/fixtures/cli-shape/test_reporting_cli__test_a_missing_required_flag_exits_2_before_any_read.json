@@ -1,0 +1,38 @@
+{
+  "given": {},
+  "run": {
+    "kind": "cli",
+    "steps": [
+      {
+        "id": "missing",
+        "argv": [
+          "reporting-show",
+          "--marker-root",
+          "${HOME}/markers"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 2,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "exit"
+        ],
+        "value": 2
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "stderr"
+        ],
+        "value": "required"
+      }
+    ],
+    "files": {
+      "state/relay.sqlite3": false
+    }
+  }
+}

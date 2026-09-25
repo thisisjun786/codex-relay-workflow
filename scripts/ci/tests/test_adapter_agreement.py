@@ -228,6 +228,20 @@ def reading_differences(path, packaged=None):
         return []
     return ["settings reading: checkout " + repr(left) + " vs packaged " + repr(right)]
 
+
+def run_fixture(name):
+    """Run this file's contract scenario contract/fixtures/records/test_adapter_agreement__<name>."""
+    from contract.runner import FIXTURES, run_scenario
+    with tempfile.TemporaryDirectory() as raw:
+        run_scenario(FIXTURES / "records" / ("test_adapter_agreement__" + name + ".json"),
+                     Path(raw))
+
+
+def run_both(name):
+    """Run the checkout (hook) and packaged (stop) scenarios pinned to the same observed record."""
+    for copy in ("checkout", "packaged"):
+        run_fixture(name + "__" + copy)
+
 class AgreementTests(unittest.TestCase):
     """One case per invocation class the adapter has to classify."""
 
@@ -262,61 +276,39 @@ class AgreementTests(unittest.TestCase):
         return left
 
     def test_a_held_verdict_is_the_same_hold_in_both(self):
-        answer = self.assert_agrees(behaviour="verdict_block")
-        self.assertIsNotNone(answer["returned"])
-        self.assertEqual(json.loads(answer["returned"])["decision"], "block")
-        self.assertTrue(answer["written"][0]["record"]["held"])
+        run_fixture("test_a_held_verdict_is_the_same_hold_in_both")
 
     def test_a_released_verdict_prints_nothing_in_both(self):
-        answer = self.assert_agrees(behaviour="verdict_release")
-        self.assertIsNone(answer["returned"])
-        self.assertEqual(answer["written"][0]["record"]["adapterOutcome"],
-                         completion.GUARD_ANSWERED)
+        run_fixture("test_a_released_verdict_prints_nothing_in_both")
 
     def test_a_verdict_that_disagrees_with_itself_is_incomplete_in_both(self):
-        answer = self.assert_agrees(behaviour="verdict_disagrees")
-        self.assertEqual(answer["written"][0]["record"]["adapterOutcome"],
-                         completion.GUARD_VERDICT_INCOMPLETE)
+        run_fixture("test_a_verdict_that_disagrees_with_itself_is_incomplete_in_both")
 
     def test_an_error_record_at_each_exit_code_is_its_own_outcome_in_both(self):
-        for code, expected in ((completion.GUARD_EXIT_REFUSED, completion.GUARD_REFUSED),
-                               (completion.GUARD_EXIT_HOST, completion.GUARD_HOST_ERROR),
-                               (completion.GUARD_EXIT_USAGE, completion.GUARD_USAGE_ERROR),
-                               (7, completion.GUARD_ENDED_UNEXPECTEDLY)):
+        for code in (2, 3, 4, 7):
             with self.subTest(code=code):
-                answer = self.assert_agrees(behaviour="error_record", exitCode=code)
-                self.assertEqual(answer["written"][0]["record"]["adapterOutcome"], expected)
+                run_both("test_an_error_record_at_each_exit_code_is_its_own_outcome_in_both__exit_"
+                         + str(code))
 
     def test_silence_at_two_and_at_zero_are_different_outcomes_in_both(self):
-        for code, expected in ((completion.GUARD_EXIT_REFUSED,
-                                completion.GUARD_REJECTED_THE_CALL),
-                               (completion.GUARD_EXIT_OK, completion.GUARD_SAID_NOTHING),
-                               (9, completion.GUARD_ENDED_UNEXPECTEDLY)):
+        for code in (2, 0, 9):
             with self.subTest(code=code):
-                answer = self.assert_agrees(behaviour="silent", exitCode=code)
-                self.assertEqual(answer["written"][0]["record"]["adapterOutcome"], expected)
+                run_both("test_silence_at_two_and_at_zero_are_different_outcomes_in_both__exit_"
+                         + str(code))
 
     def test_unreadable_output_is_not_a_verdict_in_both(self):
         for behaviour in ("garbage", "not_an_object"):
             with self.subTest(behaviour=behaviour):
-                answer = self.assert_agrees(behaviour=behaviour)
-                self.assertEqual(answer["written"][0]["record"]["adapterOutcome"],
-                                 completion.GUARD_OUTPUT_UNREADABLE)
+                run_fixture("test_unreadable_output_is_not_a_verdict_in_both__" + behaviour)
 
     def test_a_runtime_that_cannot_be_run_is_unreachable_in_both(self):
-        answer = self.assert_agrees()
-        self.assertEqual(answer["written"][0]["record"]["adapterOutcome"],
-                         completion.GUARD_UNREACHABLE)
+        run_both("test_a_runtime_that_cannot_be_run_is_unreachable_in_both")
 
     def test_a_signalled_runtime_is_signalled_in_both(self):
-        answer = self.assert_agrees(behaviour="signal_self")
-        self.assertEqual(answer["written"][0]["record"]["adapterOutcome"],
-                         completion.GUARD_SIGNALLED)
+        run_fixture("test_a_signalled_runtime_is_signalled_in_both")
 
     def test_a_runtime_past_its_budget_times_out_in_both(self):
-        answer = self.assert_agrees(behaviour="sleep", timeout=1)
-        self.assertEqual(answer["written"][0]["record"]["adapterOutcome"],
-                         completion.GUARD_TIMED_OUT)
+        run_both("test_a_runtime_past_its_budget_times_out_in_both")
 
     def test_absent_settings_are_absent_in_both(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -348,31 +340,25 @@ class AgreementTests(unittest.TestCase):
             self.assertEqual(reading_of(PACKAGED, path)["outcome"], completion.CONFIG_UNREADABLE)
 
     def test_every_payload_failure_is_the_same_failure_in_both(self):
-        for payload, expected in ((b"not json at all", completion.STDIN_NOT_JSON),
-                                  (b"[1,2,3]", completion.STDIN_NOT_OBJECT),
-                                  (None, completion.STDIN_UNREADABLE)):
-            with self.subTest(payload=payload):
-                answer = self.assert_agrees(behaviour="verdict_release", payload=payload)
-                self.assertEqual(answer["written"][0]["record"]["adapterOutcome"], expected)
+        for param in ("not_json", "not_object"):
+            with self.subTest(payload=param):
+                run_both("test_every_payload_failure_is_the_same_failure_in_both__" + param)
+        with self.subTest(payload=None):
+            run_fixture("test_every_payload_failure_is_the_same_failure_in_both__absent")
 
     def test_a_faults_only_policy_still_records_an_answer_given_without_an_identity_in_both(self):
         """faults_only leaves out answers to events this hook identified (see EventAcceptanceAgrees).
         This payload names no transcript, so the answer was given without an identity, and that is
         reported under every policy that keeps rows: no accepted record covers it."""
-        left, right = self.run_case(behaviour="verdict_release", policy=completion.FAULTS_ONLY)
-        self.assertEqual(differences(left, right), [])
-        self.assertEqual([entry["record"]["acceptance"] for entry in left["written"]],
-                         [completion.UNESTABLISHED])
+        run_both("test_a_faults_only_policy_still_records_an_answer_given_without_an_identity"
+                 "_in_both")
 
     def test_a_no_journal_policy_records_nothing_at_all_in_both(self):
-        left, right = self.run_case(behaviour="garbage", policy=completion.NO_JOURNAL)
-        self.assertEqual(differences(left, right), [])
-        self.assertEqual(left["written"], [])
+        run_both("test_a_no_journal_policy_records_nothing_at_all_in_both")
 
     def test_a_plugin_owned_document_is_the_same_answer_in_both(self):
         """The production path for a plugin installation, which the first draft never drove."""
-        answer = self.assert_agrees(behaviour="verdict_block", owner=completion.OWNER_PLUGIN)
-        self.assertEqual(json.loads(answer["returned"])["decision"], "block")
+        run_both("test_a_plugin_owned_document_is_the_same_answer_in_both")
 
     def test_a_plugin_owned_document_missing_its_adapter_fields_is_malformed_in_both(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -428,16 +414,7 @@ class AgreementTests(unittest.TestCase):
                              completion.CONFIG_UNREADABLE)
 
     def test_a_record_is_written_only_to_the_owner_and_only_readable_by_it(self):
-        with tempfile.TemporaryDirectory() as raw:
-            home = Path(raw)
-            stub = write_stub(home / "relay.py", "verdict_release", 0)
-            document = settings_document(relay=stub, marker=home / "marker",
-                                         journal=home / "unused")
-            written = drive(PACKAGED, home, json.dumps({"session_id": "s"}).encode(),
-                            document=document)["written"]
-            self.assertEqual(len(written), 1)
-            path = (home / "packaged" / "journal" / written[0]["day"] / written[0]["name"])
-            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        run_fixture("test_a_record_is_written_only_to_the_owner_and_only_readable_by_it")
 
 
 class MutationNoticedTests(unittest.TestCase):
@@ -1052,23 +1029,17 @@ class TheGuardCommandAgrees(unittest.TestCase):
         return (completion, PACKAGED)
 
     def test_both_copies_build_the_same_command(self):
-        for config in (self.BARE, self.SERVED, self.EVERYTHING):
-            self.assertEqual(
-                completion.guard_argv(config), PACKAGED.guard_argv(config), repr(config),
-            )
+        for config in ("bare", "served"):
+            with self.subTest(config=config):
+                run_both("test_both_copies_build_the_same_command__" + config)
+        self.assertEqual(completion.guard_argv(self.EVERYTHING),
+                         PACKAGED.guard_argv(self.EVERYTHING))
 
     def test_a_configured_socket_is_passed_as_a_global_option_in_both(self):
-        for adapter in self.both():
-            argv = adapter.guard_argv(self.SERVED)
-            self.assertIn("--socket", argv)
-            self.assertEqual(argv[argv.index("--socket") + 1], "/run/app-server.sock")
-            # Global options come before the subcommand, and the relay's parser only takes it
-            # there: after guard-evaluate it is an unrecognised option and the call is rejected.
-            self.assertLess(argv.index("--socket"), argv.index(completion.GUARD_COMMAND))
+        run_both("test_both_copies_build_the_same_command__served")
 
     def test_no_configured_socket_passes_none_in_both(self):
-        for adapter in self.both():
-            self.assertNotIn("--socket", adapter.guard_argv(self.BARE))
+        run_both("test_both_copies_build_the_same_command__bare")
 
     def test_a_socket_that_is_not_an_absolute_path_is_malformed_in_both(self):
         document = {"configVersion": completion.CONFIG_VERSION, "event": completion.EVENT,
@@ -1088,16 +1059,7 @@ class TheGuardCommandAgrees(unittest.TestCase):
             )
 
     def test_a_document_written_without_a_socket_carries_no_such_key(self):
-        """Byte-identity for a host that installed before the key existed, which keeps a
-        reinstall UNCHANGED rather than refusing settings that say something else."""
-        document = completion.configuration(relay="/opt/relay", marker_root="/markers",
-                                            codex_home="/home/someone/.codex", environ={})
-        self.assertNotIn("socketPath", document)
-        served = completion.configuration(relay="/opt/relay", marker_root="/markers",
-                                          codex_home="/home/someone/.codex", environ={},
-                                          socket="/run/app-server.sock")
-        self.assertEqual(served["socketPath"], "/run/app-server.sock")
-        self.assertEqual(completion.complaints(served), [])
+        run_fixture("test_a_document_written_without_a_socket_carries_no_such_key")
 
 
 if __name__ == "__main__":

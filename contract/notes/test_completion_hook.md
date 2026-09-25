@@ -1,0 +1,259 @@
+# test_completion_hook.py conversion (todo 6, lane L1)
+
+Source: `scripts/ci/tests/test_completion_hook.py`, 221 test functions. Fixtures live in `contract/fixtures/hook/`, run by `packages/codex-session-relay/tests/test_contract_corpus.py`, and each converted test function is a `run_contract(...)` thin runner over its fixtures. Every expected value was produced by running the checkout Python hook/status through the corpus runner and was checked against the original test's own assertion before the fixture was written.
+
+Totals: converted 125 (20 from the spike, 98 in the first lane, 7 in round 2; 168 fixture files), kept 26, blocked 70. 9 converted cases keep a residual in-process assertion; each is listed below.
+
+## Converted
+
+- `test_the_payload_reaches_the_guard_unchanged`: `contract/fixtures/hook/test_completion_hook__test_the_payload_reaches_the_guard_unchanged.json`.
+- `test_the_marker_root_is_always_named_and_the_clock_never_is`: `contract/fixtures/hook/test_completion_hook__test_the_marker_root_is_always_named_and_the_clock_never_is.json`.
+- `test_a_configured_database_and_hold_mode_are_named`: `contract/fixtures/hook/test_completion_hook__test_a_configured_database_and_hold_mode_are_named.json`.
+- `test_a_held_turn_prints_the_block_the_guard_produced`: `contract/fixtures/hook/test_completion_hook__test_a_held_turn_prints_the_block_the_guard_produced.json`.
+- `test_a_block_carrying_no_prompt_is_not_delivered`: `contract/fixtures/hook/test_completion_hook__test_a_block_carrying_no_prompt_is_not_delivered__allow_decision.json`, `contract/fixtures/hook/test_completion_hook__test_a_block_carrying_no_prompt_is_not_delivered__blank_reason.json`, `contract/fixtures/hook/test_completion_hook__test_a_block_carrying_no_prompt_is_not_delivered__no_reason.json`.
+- `test_a_verdict_that_releases_while_its_answer_holds_is_not_honoured`: `contract/fixtures/hook/test_completion_hook__test_a_verdict_that_releases_while_its_answer_holds_is_not_honoured.json`.
+- `test_a_continuation_is_never_manufactured`: `contract/fixtures/hook/test_completion_hook__test_a_continuation_is_never_manufactured.json`.
+- `test_a_hold_with_nothing_for_the_host_to_act_on_is_a_disagreement`: `contract/fixtures/hook/test_completion_hook__test_a_hold_with_nothing_for_the_host_to_act_on_is_a_disagreement.json`.
+- `test_the_release_the_guard_actually_produces_still_agrees`: `contract/fixtures/hook/test_completion_hook__test_the_release_the_guard_actually_produces_still_agrees__held.json`, `contract/fixtures/hook/test_completion_hook__test_the_release_the_guard_actually_produces_still_agrees__released.json`.
+- `test_a_relative_path_is_refused_rather_than_resolved_in_the_workspace`: `contract/fixtures/hook/test_completion_hook__test_a_relative_path_is_refused_rather_than_resolved_in_the_workspace.json`.
+- `test_the_four_states_are_four_answers`: `contract/fixtures/hook/test_completion_hook__test_the_four_states_are_four_answers__directory.json`, `contract/fixtures/hook/test_completion_hook__test_the_four_states_are_four_answers__directory_as_file.json`, `contract/fixtures/hook/test_completion_hook__test_the_four_states_are_four_answers__file.json`, `contract/fixtures/hook/test_completion_hook__test_the_four_states_are_four_answers__nothing.json`.
+- `test_a_document_from_another_version_is_malformed_rather_than_acted_on`: `contract/fixtures/hook/test_completion_hook__test_a_document_from_another_version_is_malformed_rather_than_acted_on__current.json`, `contract/fixtures/hook/test_completion_hook__test_a_document_from_another_version_is_malformed_rather_than_acted_on__missing.json`, `contract/fixtures/hook/test_completion_hook__test_a_document_from_another_version_is_malformed_rather_than_acted_on__next.json`.
+- `test_a_file_this_hook_did_not_write_is_not_counted_as_one`: `contract/fixtures/hook/test_completion_hook__test_a_file_this_hook_did_not_write_is_not_counted_as_one.json`.
+- `test_both_numbers_and_their_margin_are_reported`: `contract/fixtures/hook/test_completion_hook__test_both_numbers_and_their_margin_are_reported.json`.
+- `test_with_no_registration_the_margin_is_not_read_rather_than_guessed`: `contract/fixtures/hook/test_completion_hook__test_with_no_registration_the_margin_is_not_read_rather_than_guessed.json`.
+- `test_the_entry_point_exits_zero_and_stays_silent_when_the_relay_rejects_the_call`: `contract/fixtures/hook/test_completion_hook__test_the_entry_point_exits_zero_and_stays_silent_when_the_relay_rejects_the_call.json`.
+- `test_the_entry_point_exits_zero_on_a_payload_that_is_not_json`: `contract/fixtures/hook/test_completion_hook__test_the_entry_point_exits_zero_on_a_payload_that_is_not_json.json`.
+- `test_the_entry_point_exits_zero_with_no_settings_at_all`: `contract/fixtures/hook/test_completion_hook__test_the_entry_point_exits_zero_with_no_settings_at_all.json`.
+- `test_the_entry_point_parses_no_arguments`: `contract/fixtures/hook/test_completion_hook__test_the_entry_point_parses_no_arguments.json`.
+- `test_a_refused_request_and_a_rejected_call_are_different_answers`: `contract/fixtures/hook/test_completion_hook__test_a_refused_request_and_a_rejected_call_are_different_answers__refused.json`, `contract/fixtures/hook/test_completion_hook__test_a_refused_request_and_a_rejected_call_are_different_answers__rejected.json`.
+- `test_every_way_of_failing_to_ask_has_its_own_answer`: `contract/fixtures/hook/test_completion_hook__test_every_way_of_failing_to_ask_has_its_own_answer__answered.json`, `contract/fixtures/hook/test_completion_hook__test_every_way_of_failing_to_ask_has_its_own_answer__host.json`, `contract/fixtures/hook/test_completion_hook__test_every_way_of_failing_to_ask_has_its_own_answer__incomplete.json`, `contract/fixtures/hook/test_completion_hook__test_every_way_of_failing_to_ask_has_its_own_answer__not_json.json`, `contract/fixtures/hook/test_completion_hook__test_every_way_of_failing_to_ask_has_its_own_answer__not_started.json`, `contract/fixtures/hook/test_completion_hook__test_every_way_of_failing_to_ask_has_its_own_answer__said_nothing.json`, `contract/fixtures/hook/test_completion_hook__test_every_way_of_failing_to_ask_has_its_own_answer__usage.json`. Residual: the timed_out and signalled rows plus the all-distinct check stay in Python (the fake relay has no delay or self-signal knob).
+- `test_a_runtime_that_is_not_there_names_why`: `contract/fixtures/hook/test_completion_hook__test_a_runtime_that_is_not_there_names_why.json`.
+- `test_settings_give_four_answers_and_not_one`: `contract/fixtures/hook/test_completion_hook__test_settings_give_four_answers_and_not_one__absent.json`, `contract/fixtures/hook/test_completion_hook__test_settings_give_four_answers_and_not_one__malformed.json`, `contract/fixtures/hook/test_completion_hook__test_settings_give_four_answers_and_not_one__unreadable.json`.
+- `test_an_unmanaged_workspace_still_leaves_evidence_that_the_hook_ran`: `contract/fixtures/hook/test_completion_hook__test_an_unmanaged_workspace_still_leaves_evidence_that_the_hook_ran.json`.
+- `test_a_payload_this_hook_cannot_parse_is_still_recorded`: `contract/fixtures/hook/test_completion_hook__test_a_payload_this_hook_cannot_parse_is_still_recorded__not_json.json`, `contract/fixtures/hook/test_completion_hook__test_a_payload_this_hook_cannot_parse_is_still_recorded__not_object.json`. Residual: stdin=None (stdin_unreadable) stays in Python: a spawned or runner-driven hook always receives bytes.
+- `test_a_tilde_adapter_path_is_relative_in_effect`: `contract/fixtures/hook/test_completion_hook__test_a_tilde_adapter_path_is_relative_in_effect.json`.
+- `test_a_missing_absolute_target_is_reported_beside_a_relative_one`: `contract/fixtures/hook/test_completion_hook__test_a_missing_absolute_target_is_reported_beside_a_relative_one.json`.
+- `test_one_registration_naming_settings_and_one_not_is_ambiguous`: `contract/fixtures/hook/test_completion_hook__test_one_registration_naming_settings_and_one_not_is_ambiguous.json`.
+- `test_the_guards_own_answer_is_carried_verbatim_and_not_re_derived`: `contract/fixtures/hook/test_completion_hook__test_the_guards_own_answer_is_carried_verbatim_and_not_re_derived.json`.
+- `test_a_present_runtime_that_cannot_answer_is_its_own_cell`: `contract/fixtures/hook/test_completion_hook__test_a_present_runtime_that_cannot_answer_is_its_own_cell.json`.
+- `test_what_was_not_asked_is_never_reported_as_nothing_being_there`: `contract/fixtures/hook/test_completion_hook__test_what_was_not_asked_is_never_reported_as_nothing_being_there.json`.
+- `test_a_configured_journal_that_is_not_there_yet_is_an_answer`: `contract/fixtures/hook/test_completion_hook__test_a_configured_journal_that_is_not_there_yet_is_an_answer.json`.
+- `test_the_journal_policy_travels_with_its_count`: `contract/fixtures/hook/test_completion_hook__test_the_journal_policy_travels_with_its_count.json`.
+- `test_hold_without_a_stated_grant_is_malformed`: `contract/fixtures/hook/test_completion_hook__test_hold_without_a_stated_grant_is_malformed.json`.
+- `test_hold_with_a_stated_grant_records_who_stated_it`: `contract/fixtures/hook/test_completion_hook__test_hold_with_a_stated_grant_records_who_stated_it.json`. Residual: the configuration() writer's isolationAssertedBy field stays in Python (installer surface).
+- `test_a_budget_that_is_not_a_finite_number_is_refused`: `contract/fixtures/hook/test_completion_hook__test_a_budget_that_is_not_a_finite_number_is_refused.json`. Residual: budget_complaints(inf/nan) stays in Python (installer surface).
+- `test_an_integer_beyond_float_range_is_refused_rather_than_raising`: `contract/fixtures/hook/test_completion_hook__test_an_integer_beyond_float_range_is_refused_rather_than_raising.json`. Residual: budget_complaints(10**400) stays in Python (installer surface).
+- `test_the_seconds_test_accepts_what_it_should_and_nothing_else`: `contract/fixtures/hook/test_completion_hook__test_the_seconds_test_accepts_what_it_should_and_nothing_else__bad_false.json`, `contract/fixtures/hook/test_completion_hook__test_the_seconds_test_accepts_what_it_should_and_nothing_else__bad_huge.json`, `contract/fixtures/hook/test_completion_hook__test_the_seconds_test_accepts_what_it_should_and_nothing_else__bad_inf.json`, `contract/fixtures/hook/test_completion_hook__test_the_seconds_test_accepts_what_it_should_and_nothing_else__bad_nan.json`, `contract/fixtures/hook/test_completion_hook__test_the_seconds_test_accepts_what_it_should_and_nothing_else__bad_negative.json`, `contract/fixtures/hook/test_completion_hook__test_the_seconds_test_accepts_what_it_should_and_nothing_else__bad_over_max.json`, `contract/fixtures/hook/test_completion_hook__test_the_seconds_test_accepts_what_it_should_and_nothing_else__bad_string.json`, `contract/fixtures/hook/test_completion_hook__test_the_seconds_test_accepts_what_it_should_and_nothing_else__bad_true.json`, `contract/fixtures/hook/test_completion_hook__test_the_seconds_test_accepts_what_it_should_and_nothing_else__bad_zero.json`, `contract/fixtures/hook/test_completion_hook__test_the_seconds_test_accepts_what_it_should_and_nothing_else__good_1.json`, `contract/fixtures/hook/test_completion_hook__test_the_seconds_test_accepts_what_it_should_and_nothing_else__good_5.json`, `contract/fixtures/hook/test_completion_hook__test_the_seconds_test_accepts_what_it_should_and_nothing_else__good_half.json`, `contract/fixtures/hook/test_completion_hook__test_the_seconds_test_accepts_what_it_should_and_nothing_else__good_max.json`.
+- `test_a_relative_interpreter_path_is_reported_not_probed`: `contract/fixtures/hook/test_completion_hook__test_a_relative_interpreter_path_is_reported_not_probed.json`.
+- `test_a_bare_name_keeps_its_path_lookup`: `contract/fixtures/hook/test_completion_hook__test_a_bare_name_keeps_its_path_lookup.json`.
+- `test_relative_settings_spellings_count_toward_ambiguity`: `contract/fixtures/hook/test_completion_hook__test_relative_settings_spellings_count_toward_ambiguity.json`.
+- `test_one_relative_beside_one_absolute_is_ambiguous`: `contract/fixtures/hook/test_completion_hook__test_one_relative_beside_one_absolute_is_ambiguous.json`.
+- `test_a_single_relative_spelling_is_still_its_own_answer`: `contract/fixtures/hook/test_completion_hook__test_a_single_relative_spelling_is_still_its_own_answer.json`.
+- `test_a_registration_naming_relative_settings_is_reported_not_guessed_at`: `contract/fixtures/hook/test_completion_hook__test_a_registration_naming_relative_settings_is_reported_not_guessed_at.json`.
+- `test_status_probes_the_interpreter_the_registration_names`: `contract/fixtures/hook/test_completion_hook__test_status_probes_the_interpreter_the_registration_names.json`.
+- `test_a_working_registration_reports_both`: `contract/fixtures/hook/test_completion_hook__test_a_working_registration_reports_both.json`.
+- `test_a_bare_interpreter_name_is_resolved_the_way_the_host_resolves_it`: `contract/fixtures/hook/test_completion_hook__test_a_bare_interpreter_name_is_resolved_the_way_the_host_resolves_it.json`.
+- `test_a_program_that_ignores_its_arguments_is_not_offering_the_subcommand`: `contract/fixtures/hook/test_completion_hook__test_a_program_that_ignores_its_arguments_is_not_offering_the_subcommand.json`.
+- `test_a_runtime_that_describes_the_subcommand_is_offering_it`: `contract/fixtures/hook/test_completion_hook__test_a_runtime_that_describes_the_subcommand_is_offering_it.json`.
+- `test_a_program_that_echoes_its_arguments_is_not_offering_it`: `contract/fixtures/hook/test_completion_hook__test_a_program_that_echoes_its_arguments_is_not_offering_it.json`.
+- `test_a_relative_script_path_is_reported_rather_than_resolved`: `contract/fixtures/hook/test_completion_hook__test_a_relative_script_path_is_reported_rather_than_resolved.json`.
+- `test_two_registrations_naming_different_settings_are_reported_as_ambiguous`: `contract/fixtures/hook/test_completion_hook__test_two_registrations_naming_different_settings_are_reported_as_ambiguous.json`.
+- `test_a_verdict_deciding_something_else_entirely_is_incomplete`: `contract/fixtures/hook/test_completion_hook__test_a_verdict_deciding_something_else_entirely_is_incomplete__banana.json`, `contract/fixtures/hook/test_completion_hook__test_a_verdict_deciding_something_else_entirely_is_incomplete__release.json`.
+- `test_a_neighbouring_program_is_not_this_adapter`: `contract/fixtures/hook/test_completion_hook__test_a_neighbouring_program_is_not_this_adapter__adapter.json`, `contract/fixtures/hook/test_completion_hook__test_a_neighbouring_program_is_not_this_adapter__dash.json`, `contract/fixtures/hook/test_completion_hook__test_a_neighbouring_program_is_not_this_adapter__underscore.json`.
+- `test_a_command_that_is_not_a_command_line_names_nothing`: `contract/fixtures/hook/test_completion_hook__test_a_command_that_is_not_a_command_line_names_nothing.json`. Residual: registered_argv returning None stays in Python (parser internal).
+- `test_status_does_not_claim_an_unrelated_hook_as_this_adapter`: `contract/fixtures/hook/test_completion_hook__test_status_does_not_claim_an_unrelated_hook_as_this_adapter.json`.
+- `test_faults_only_keeps_the_failures_and_drops_the_answers`: `contract/fixtures/hook/test_completion_hook__test_faults_only_keeps_the_failures_and_drops_the_answers__answered.json`, `contract/fixtures/hook/test_completion_hook__test_faults_only_keeps_the_failures_and_drops_the_answers__unreachable.json`.
+- `test_every_invocation_keeps_both`: `contract/fixtures/hook/test_completion_hook__test_every_invocation_keeps_both.json`.
+- `test_the_settings_are_this_hooks_own_file`: `contract/fixtures/hook/test_completion_hook__test_the_settings_are_this_hooks_own_file.json`.
+- `test_three_hosts_that_look_alike_answer_three_different_causes`: `contract/fixtures/hook/test_completion_hook__test_three_hosts_that_look_alike_answer_three_different_causes__never_registered.json`, `contract/fixtures/hook/test_completion_hook__test_three_hosts_that_look_alike_answer_three_different_causes__recorded_elsewhere.json`, `contract/fixtures/hook/test_completion_hook__test_three_hosts_that_look_alike_answer_three_different_causes__registered_nothing_recorded.json`.
+- `test_which_of_the_two_journals_holds_the_record_does_not_change_the_answer`: `contract/fixtures/hook/test_completion_hook__test_which_of_the_two_journals_holds_the_record_does_not_change_the_answer__first.json`, `contract/fixtures/hook/test_completion_hook__test_which_of_the_two_journals_holds_the_record_does_not_change_the_answer__second.json`.
+- `test_a_policy_that_records_only_faults_names_both_candidates_rather_than_choosing`: `contract/fixtures/hook/test_completion_hook__test_a_policy_that_records_only_faults_names_both_candidates_rather_than_choosing.json`.
+- `test_an_adapter_the_host_cannot_start_is_its_own_cause`: `contract/fixtures/hook/test_completion_hook__test_an_adapter_the_host_cannot_start_is_its_own_cause.json`.
+- `test_two_repairs_are_reported_as_two_and_never_as_the_first_one_alone`: `contract/fixtures/hook/test_completion_hook__test_two_repairs_are_reported_as_two_and_never_as_the_first_one_alone.json`.
+- `test_a_journal_switched_off_by_policy_is_not_an_empty_one`: `contract/fixtures/hook/test_completion_hook__test_a_journal_switched_off_by_policy_is_not_an_empty_one.json`.
+- `test_a_missing_settings_file_beside_a_usable_one_is_still_reported`: `contract/fixtures/hook/test_completion_hook__test_a_missing_settings_file_beside_a_usable_one_is_still_reported.json`.
+- `test_a_rejected_settings_file_beside_a_usable_one_is_still_reported`: `contract/fixtures/hook/test_completion_hook__test_a_rejected_settings_file_beside_a_usable_one_is_still_reported.json`.
+- `test_one_unstartable_registration_does_not_answer_for_a_startable_one`: `contract/fixtures/hook/test_completion_hook__test_one_unstartable_registration_does_not_answer_for_a_startable_one.json`.
+- `test_when_nothing_can_start_the_empty_journal_is_still_not_a_second_cause`: `contract/fixtures/hook/test_completion_hook__test_when_nothing_can_start_the_empty_journal_is_still_not_a_second_cause.json`.
+- `test_an_unreachable_settings_file_is_never_reported_as_a_rejected_one`: `contract/fixtures/hook/test_completion_hook__test_an_unreachable_settings_file_is_never_reported_as_a_rejected_one.json`.
+- `test_a_registration_that_keeps_no_journal_is_reported_beside_a_peer_that_does`: `contract/fixtures/hook/test_completion_hook__test_a_registration_that_keeps_no_journal_is_reported_beside_a_peer_that_does.json`.
+- `test_an_unstartable_peer_does_not_make_a_working_one_look_like_another_path`: `contract/fixtures/hook/test_completion_hook__test_an_unstartable_peer_does_not_make_a_working_one_look_like_another_path.json`.
+- `test_a_relative_peer_does_not_suppress_a_known_path_s_own_cause`: `contract/fixtures/hook/test_completion_hook__test_a_relative_peer_does_not_suppress_a_known_path_s_own_cause.json`.
+- `test_registrations_that_name_nothing_readable_leave_the_settings_causes_unasked`: `contract/fixtures/hook/test_completion_hook__test_registrations_that_name_nothing_readable_leave_the_settings_causes_unasked.json`.
+- `test_found_records_never_stand_beside_a_repair`: `contract/fixtures/hook/test_completion_hook__test_found_records_never_stand_beside_a_repair.json`.
+- `test_a_disabled_journal_survives_its_registration_being_unstartable`: `contract/fixtures/hook/test_completion_hook__test_a_disabled_journal_survives_its_registration_being_unstartable.json`.
+- `test_a_peer_nobody_could_judge_is_not_treated_as_one_that_cannot_start`: `contract/fixtures/hook/test_completion_hook__test_a_peer_nobody_could_judge_is_not_treated_as_one_that_cannot_start.json`.
+- `test_an_unjudged_peer_never_unmakes_what_was_observed`: `contract/fixtures/hook/test_completion_hook__test_an_unjudged_peer_never_unmakes_what_was_observed.json`.
+- `test_a_configured_policy_is_not_reopened_by_an_unjudged_peer`: `contract/fixtures/hook/test_completion_hook__test_a_configured_policy_is_not_reopened_by_an_unjudged_peer.json`.
+- `test_a_journal_that_cannot_be_listed_is_not_an_empty_one_under_faults_only`: `contract/fixtures/hook/test_completion_hook__test_a_journal_that_cannot_be_listed_is_not_an_empty_one_under_faults_only.json`.
+- `test_a_journal_path_that_cannot_name_a_file_is_a_reading_not_a_crash`: `contract/fixtures/hook/test_completion_hook__test_a_journal_path_that_cannot_name_a_file_is_a_reading_not_a_crash.json`.
+- `test_an_unlistable_journal_beside_an_empty_one_leaves_divergence_standing`: `contract/fixtures/hook/test_completion_hook__test_an_unlistable_journal_beside_an_empty_one_leaves_divergence_standing.json`.
+- `test_two_journals_nobody_could_list_leave_divergence_standing`: `contract/fixtures/hook/test_completion_hook__test_two_journals_nobody_could_list_leave_divergence_standing.json`.
+- `test_two_registrations_sharing_one_unread_journal_cannot_disagree`: `contract/fixtures/hook/test_completion_hook__test_two_registrations_sharing_one_unread_journal_cannot_disagree.json`.
+- `test_an_unjudged_peer_sharing_one_journal_cannot_disagree_with_itself`: `contract/fixtures/hook/test_completion_hook__test_an_unjudged_peer_sharing_one_journal_cannot_disagree_with_itself.json`.
+- `test_a_lone_unjudged_registration_is_not_two_journals_disagreeing`: `contract/fixtures/hook/test_completion_hook__test_a_lone_unjudged_registration_is_not_two_journals_disagreeing.json`.
+- `test_a_peer_that_keeps_no_journal_never_unsettles_a_count`: `contract/fixtures/hook/test_completion_hook__test_a_peer_that_keeps_no_journal_never_unsettles_a_count.json`.
+- `test_a_plugin_owned_registration_is_not_an_absent_one`: `contract/fixtures/hook/test_completion_hook__test_a_plugin_owned_registration_is_not_an_absent_one.json`.
+- `test_a_plugin_owner_survives_settings_this_reader_rejects`: `contract/fixtures/hook/test_completion_hook__test_a_plugin_owner_survives_settings_this_reader_rejects.json`.
+- `test_settings_nobody_could_read_leave_the_registration_unsettled`: `contract/fixtures/hook/test_completion_hook__test_settings_nobody_could_read_leave_the_registration_unsettled.json`.
+- `test_an_owner_this_reader_does_not_know_is_not_the_default_owner`: `contract/fixtures/hook/test_completion_hook__test_an_owner_this_reader_does_not_know_is_not_the_default_owner.json`.
+- `test_a_plugin_owned_host_names_the_settings_repair_it_can_read`: `contract/fixtures/hook/test_completion_hook__test_a_plugin_owned_host_names_the_settings_repair_it_can_read.json`.
+- `test_a_user_owned_host_that_registers_nothing_gains_no_settings_cause`: `contract/fixtures/hook/test_completion_hook__test_a_user_owned_host_that_registers_nothing_gains_no_settings_cause.json`.
+- `test_a_settings_file_that_is_not_there_names_no_owner`: `contract/fixtures/hook/test_completion_hook__test_a_settings_file_that_is_not_there_names_no_owner.json`.
+- `test_a_peer_sharing_a_journal_read_empty_does_not_reopen_the_count`: `contract/fixtures/hook/test_completion_hook__test_a_peer_sharing_a_journal_read_empty_does_not_reopen_the_count.json`.
+- `test_a_settled_settings_repair_names_what_it_did_not_establish`: `contract/fixtures/hook/test_completion_hook__test_a_settled_settings_repair_names_what_it_did_not_establish.json`.
+- `test_a_plugin_owned_host_that_has_recorded_has_no_absence_to_explain`: `contract/fixtures/hook/test_completion_hook__test_a_plugin_owned_host_that_has_recorded_has_no_absence_to_explain.json`.
+- `test_an_old_record_does_not_answer_whether_the_launcher_starts_now`: `contract/fixtures/hook/test_completion_hook__test_an_old_record_does_not_answer_whether_the_launcher_starts_now__deleted.json`, `contract/fixtures/hook/test_completion_hook__test_an_old_record_does_not_answer_whether_the_launcher_starts_now__intact.json`.
+- `test_a_deleted_plugin_launcher_is_named_without_an_old_record`: `contract/fixtures/hook/test_completion_hook__test_a_deleted_plugin_launcher_is_named_without_an_old_record.json`.
+- `test_a_recorded_launcher_is_probed_beside_a_hook_file_registration`: `contract/fixtures/hook/test_completion_hook__test_a_recorded_launcher_is_probed_beside_a_hook_file_registration.json`.
+- `test_records_already_written_survive_the_registration_being_removed`: `contract/fixtures/hook/test_completion_hook__test_records_already_written_survive_the_registration_being_removed.json`.
+- `test_a_record_answers_for_a_hook_file_this_command_cannot_read`: `contract/fixtures/hook/test_completion_hook__test_a_record_answers_for_a_hook_file_this_command_cannot_read.json`.
+- `test_a_hook_file_nobody_could_read_is_still_unsettled_without_a_record`: `contract/fixtures/hook/test_completion_hook__test_a_hook_file_nobody_could_read_is_still_unsettled_without_a_record.json`.
+- `test_two_different_settings_files_keep_their_own_readings`: `contract/fixtures/hook/test_completion_hook__test_two_different_settings_files_keep_their_own_readings.json`.
+- `test_one_record_reads_the_same_however_its_lines_end`: `contract/fixtures/hook/test_completion_hook__test_one_record_reads_the_same_however_its_lines_end.json`.
+- `test_a_settings_path_the_kernel_is_never_asked_about_is_a_reading`: `contract/fixtures/hook/test_completion_hook__test_a_settings_path_the_kernel_is_never_asked_about_is_a_reading.json`. Residual: the collapse's judged set stays in Python (internal).
+- `test_a_plugin_owned_host_names_the_journal_policy_it_states`: `contract/fixtures/hook/test_completion_hook__test_a_plugin_owned_host_names_the_journal_policy_it_states.json`.
+- `test_rejected_settings_still_probe_the_launcher_they_record`: `contract/fixtures/hook/test_completion_hook__test_rejected_settings_still_probe_the_launcher_they_record.json`.
+- `test_one_readable_launcher_half_is_probed_without_the_other`: `contract/fixtures/hook/test_completion_hook__test_one_readable_launcher_half_is_probed_without_the_other.json`.
+- `test_an_interpreter_that_is_not_one_is_not_startable`: `contract/fixtures/hook/test_completion_hook__test_an_interpreter_that_is_not_one_is_not_startable.json`.
+- `test_a_program_that_repeats_its_arguments_is_not_an_interpreter`: `contract/fixtures/hook/test_completion_hook__test_a_program_that_repeats_its_arguments_is_not_an_interpreter.json`.
+- `test_reading_the_host_never_writes_a_record_into_it`: `contract/fixtures/hook/test_completion_hook__test_reading_the_host_never_writes_a_record_into_it.json`. Residual: the second back-to-back status reading stays in Python (the hook runner reads status once per run).
+- `test_every_probe_that_ran_a_program_says_so_not_only_the_one_that_worked`: `contract/fixtures/hook/test_completion_hook__test_every_probe_that_ran_a_program_says_so_not_only_the_one_that_worked.json`. Residual: the ast sweep over _answers_as_an_interpreter stays in Python (source inventory).
+- `test_a_wrapper_around_an_interpreter_is_left_unjudged`: `contract/fixtures/hook/test_completion_hook__test_a_wrapper_around_an_interpreter_is_left_unjudged.json`.
+- `test_a_recorded_interpreter_that_is_not_one_is_not_startable_either`: `contract/fixtures/hook/test_completion_hook__test_a_recorded_interpreter_that_is_not_one_is_not_startable_either.json`.
+- `test_an_unread_settings_document_names_no_owner_to_the_operator`: `contract/fixtures/hook/test_completion_hook__test_an_unread_settings_document_names_no_owner_to_the_operator__missing.json`, `contract/fixtures/hook/test_completion_hook__test_an_unread_settings_document_names_no_owner_to_the_operator__not_object.json`, `contract/fixtures/hook/test_completion_hook__test_an_unread_settings_document_names_no_owner_to_the_operator__unknown_owner.json`, `contract/fixtures/hook/test_completion_hook__test_an_unread_settings_document_names_no_owner_to_the_operator__unreadable.json`.
+- `test_a_user_owned_host_with_nothing_named_still_evaluates_nothing`: `contract/fixtures/hook/test_completion_hook__test_a_user_owned_host_with_nothing_named_still_evaluates_nothing.json`.
+- `test_the_cell_is_answered_whichever_branch_of_the_settings_fork_ran`: `contract/fixtures/hook/test_completion_hook__test_the_cell_is_answered_whichever_branch_of_the_settings_fork_ran__ambiguous.json`, `contract/fixtures/hook/test_completion_hook__test_the_cell_is_answered_whichever_branch_of_the_settings_fork_ran__settled.json`.
+
+- `test_a_guard_that_never_answers_is_killed_and_the_turn_ends`: `contract/fixtures/hook/test_completion_hook__test_a_guard_that_never_answers_is_killed_and_the_turn_ends.json`.
+- `test_a_live_link_is_present`: `contract/fixtures/hook/test_completion_hook__test_a_live_link_is_present.json`.
+- `test_status_reports_a_broken_pointer_as_broken`: `contract/fixtures/hook/test_completion_hook__test_status_reports_a_broken_pointer_as_broken.json`.
+- `test_a_journal_path_that_leads_nowhere_counts_nothing`: `contract/fixtures/hook/test_completion_hook__test_a_journal_path_that_leads_nowhere_counts_nothing.json`.
+- `test_a_tilde_launcher_path_is_not_a_path_the_launcher_resolves`: `contract/fixtures/hook/test_completion_hook__test_a_tilde_launcher_path_is_not_a_path_the_launcher_resolves.json`.
+- `test_a_valid_answer_survives_a_wrapper_that_replaces_the_exit_status`: `contract/fixtures/hook/test_completion_hook__test_a_valid_answer_survives_a_wrapper_that_replaces_the_exit_status.json`.
+- `test_an_adapter_run_directly_is_not_judged_as_an_interpreter`: `contract/fixtures/hook/test_completion_hook__test_an_adapter_run_directly_is_not_judged_as_an_interpreter.json`.
+
+## Kept as Python tests
+
+Only the README exception (a live mid-operation interleave) keeps a case in Python:
+
+- `interleave`: the README exception. The case changes the world at an exact point in the middle of one operation (between append and read-back, between a listing's stat and scandir, inode recycling between two reads, a syscall failing mid-write, a pipe lost after the process started). No fixture can place that change.
+- `test_an_append_that_cannot_be_found_afterwards_is_refused`: interleave.
+- `test_a_read_back_that_could_not_happen_is_refused_too`: interleave.
+- `test_a_registration_that_is_not_the_one_this_run_made_is_refused`: interleave.
+- `test_a_write_that_cannot_finish_leaves_nothing_behind`: interleave.
+- `test_a_short_write_is_finished_rather_than_accepted`: interleave.
+- `test_a_replacement_under_another_matcher_is_not_this_runs_work`: interleave.
+- `test_the_process_group_is_the_one_that_was_started`: interleave.
+- `test_a_write_that_could_not_be_read_back_does_not_settle`: interleave.
+- `test_an_unverified_write_stops_the_hook_from_being_registered`: interleave.
+- `test_a_link_retargeted_between_two_listings_does_not_share_a_snapshot`: interleave.
+- `test_a_link_retargeted_under_the_listing_is_not_published_as_an_alias`: interleave.
+- `test_a_link_that_points_away_and_back_does_not_publish_its_identity`: interleave.
+- `test_an_open_that_yielded_no_descriptor_publishes_no_identity`: interleave.
+- `test_one_settings_file_named_twice_is_read_once`: interleave.
+- `test_a_deleted_file_does_not_lend_its_identity_to_the_next_one`: interleave.
+- `test_the_callers_own_reading_is_held_before_it_is_a_key`: interleave.
+- `test_the_descriptor_that_read_the_bytes_is_the_one_held`: interleave.
+- `test_collapsing_sources_holds_each_identity_it_compares`: interleave.
+- `test_a_source_read_after_it_changed_is_not_the_one_that_was_merged`: interleave.
+- `test_a_discarded_spelling_that_moved_unsettles_the_merge_too`: interleave.
+- `test_a_journal_identity_is_held_while_it_is_an_alias_key`: interleave.
+- `test_a_rewrite_between_the_two_reads_does_not_split_one_file`: interleave.
+- `test_a_replacement_between_the_snapshot_and_the_pins_is_not_two_sources`: interleave.
+- `test_an_alias_reuses_the_carried_snapshot_rather_than_reading_again`: interleave.
+- `test_a_pinned_spelling_that_is_unlinked_is_still_read`: interleave.
+- `test_losing_the_answer_after_the_program_started_is_not_a_cannot_start`: interleave.
+
+## Blocked (runner_gaps)
+
+- `test_installation_settles_every_path_it_records`: install.
+- `test_the_pointer_is_recorded_as_a_pointer_and_not_as_its_target`: install + symlink.
+- `test_the_interpreter_is_settled_at_install_time`: install.
+- `test_a_registered_command_names_an_interpreter_that_can_be_found_from_anywhere`: install.
+- `test_a_runtime_that_cannot_be_reached_is_not_reported_as_missing`: modes.
+- `test_no_answer_this_adapter_gives_by_itself_holds_a_turn`: no_surface.
+- `test_the_settings_states_come_from_the_module_that_owns_them`: no_surface.
+- `test_a_registration_is_reported_apart_from_every_firing_question`: install.
+- `test_the_settings_are_written_before_the_hook_that_reads_them`: install.
+- `test_settings_that_say_something_else_are_not_overwritten_and_no_hook_is_added`: install.
+- `test_the_socket_named_at_install_is_the_one_the_guard_is_asked_with`: install.
+- `test_observing_needs_nothing_which_is_why_it_is_the_default`: install.
+- `test_the_environment_override_the_relay_reads_is_read_here_too`: install.
+- `test_the_override_wins_over_xdg_and_home`: install.
+- `test_an_install_under_the_override_records_that_root`: install.
+- `test_a_file_without_execute_permission_is_not_registered`: install + modes.
+- `test_a_missing_interpreter_stops_the_install`: install.
+- `test_a_second_registration_that_differs_is_refused`: install.
+- `test_installing_the_identical_registration_again_is_not_a_duplicate`: install.
+- `test_a_refused_duplicate_writes_no_settings_for_the_existing_hook_to_pick_up`: install.
+- `test_a_second_copy_already_there_is_refused_even_when_one_of_them_matches`: install.
+- `test_an_identical_command_under_a_matcher_is_still_a_duplicate`: install.
+- `test_a_tilde_settings_path_is_absolute_once_the_hook_opens_it`: status_env.
+- `test_an_executable_that_is_not_python_is_refused`: install.
+- `test_a_real_interpreter_passes`: install.
+- `test_a_relative_override_names_one_file_rather_than_one_per_workspace`: entry_env_cwd.
+- `test_the_install_decides_the_file_and_the_hook_does_not_decide_it_again`: install.
+- `test_the_carried_path_wins_over_the_environment_and_the_codex_home`: entry_env_cwd.
+- `test_status_reads_the_file_the_registered_hook_reads`: install.
+- `test_the_entry_point_uses_the_path_it_was_given`: entry_env_cwd.
+- `test_installing_the_same_thing_twice_settles_without_a_second_hook`: install.
+- `test_naming_no_runtime_at_all_is_refused_rather_than_resolved_from_the_path`: install.
+- `test_the_runtime_is_named_through_the_installers_own_pointer`: install.
+- `test_an_explicit_command_still_installs_without_knowing_about_adapters`: install.
+- `test_a_path_with_a_space_survives_the_round_trip`: install.
+- `test_shell_syntax_in_an_interpreter_path_is_not_delivered_as_syntax`: install.
+- `test_ordinary_paths_come_back_unchanged`: install.
+- `test_what_installation_writes_is_what_the_status_reader_identifies`: install.
+- `test_settings_the_reader_would_reject_are_never_written`: install.
+- `test_an_existing_file_that_is_not_an_object_refuses_rather_than_raising`: install.
+- `test_a_non_positive_budget_is_refused_before_anything_is_installed`: install.
+- `test_a_budget_the_host_timeout_does_not_exceed_is_refused`: install.
+- `test_a_registered_timeout_the_host_would_clamp_is_refused`: install.
+- `test_a_python_too_old_for_this_adapter_is_refused`: install + modes.
+- `test_a_plan_does_not_run_the_program_the_caller_named`: install.
+- `test_a_broken_link_is_unreadable_and_not_absent`: symlink.
+- `test_an_event_this_adapter_has_no_decision_for_is_refused`: install.
+- `test_installing_preserves_every_hook_already_registered`: install.
+- `test_nothing_here_reads_or_writes_another_hooks_state`: no_surface.
+- `test_one_journal_read_serves_both_the_count_and_the_cause`: call_count.
+- `test_one_settings_read_serves_the_cell_and_the_cause`: call_count.
+- `test_the_adapter_is_probed_once_for_the_cell_and_the_cause`: call_count.
+- `test_one_journal_is_listed_once_however_many_registrations_name_it`: call_count.
+- `test_one_adapter_is_probed_once_however_many_registrations_run_it`: call_count.
+- `test_alias_spellings_of_one_resource_are_one_reading`: call_count.
+- `test_a_key_never_merges_two_spellings_the_kernel_keeps_apart`: no_surface.
+- `test_one_journal_directory_is_listed_once_however_it_is_spelled`: call_count.
+- `test_two_spellings_of_one_journal_are_not_two_journals`: call_count.
+- `test_a_record_that_will_not_parse_still_says_what_it_came_from`: no_surface.
+- `test_an_adapter_script_that_cannot_be_read_is_not_startable`: modes.
+- `test_two_spellings_of_one_interpreter_are_two_questions`: symlink + modes.
+- `test_the_reading_says_which_program_it_ran`: expected_template.
+- `test_a_wrapper_that_ignores_the_question_is_not_condemned`: modes.
+- `test_a_probe_that_times_out_leaves_nothing_of_its_own_running`: modes + probe_timeout.
+- `test_a_python_below_the_floor_is_not_a_startable_interpreter`: modes.
+- `test_every_state_the_interpreter_probe_can_answer_has_a_consumer`: no_surface.
+- `test_no_absence_rule_claims_an_owner_nothing_established`: no_surface.
+- `test_one_settings_file_named_through_an_alias_is_one_source`: symlink.
+- `test_every_rule_and_requirement_names_a_declared_cause`: no_surface.
+- `test_a_requirement_is_never_its_own_cause_or_downstream_of_it`: no_surface.
+
+## runner_gaps
+
+Each gap names a run or given kind the hook runner (`contract/runner/hook.py`) lacks. Lane L1 may not edit the runner.
+
+- `install`: `contract/runner/hook.py` contains an install branch, but `contract/runner/core.py` does not dispatch `install`; no reachable run kind exposes the installer exit, JSON and written settings/hooks. Blocks every case marked `install` above.
+- `symlink`: `given.symlinks` now exists; the remaining two-spelling interpreter case also needs a command registration whose two interpreter names point to the same executable, with both probe readings exposed.
+- `modes`: `given.modes` can chmod files, but there is no case-local directory creation/mode setup for a non-traversable directory; the remaining inaccessible-file cases need a platform-aware permission prerequisite. Blocks every case marked `modes`.
+- `probe_timeout`: no knob lowers `INTERPRETER_PROBE_SECONDS`, and no observation lists surviving processes.
+- `relay_delay + elapsed`: supported now; the timeout proof is converted.
+- `status_env`: `status`/`hook` run with `environ={}` and the real `HOME`, so a `~` path cannot be pointed into the case directory.
+- `entry_env_cwd`: `entry` always sets `CODEX_HOME` to the case root and inherits the pytest cwd. `run.argv` does not expand `${HOME}`, and there is no `env` override/removal or `cwd`.
+- `call_count`: asserts how many times ONE status call reads a resource, which defends against a concurrent Stop landing between two reads. Without a live interleave the only observation is an internal call count (mock side_effect), which no runner exposes. The Go port must re-prove each as a package test.
+- `no_surface`: asserts module tables, source text (ast/inspect) or a pure internal helper with no process surface at all. These are class B/C in substance and belong to an inventory-check or Go package test; no run kind can express them.
+- `expected_template`: check values are not template-expanded, so `${PYTHON}` (the interpreter the probe ran) cannot be asserted. It is host-specific.
+
+
+## round 2 lane L1
+
+Converted 7 additional cases with the reachable hook kinds: broken and live pointer status, dangling journal path, timeout with elapsed bound, literal tilde launcher, wrapper exit status and direct adapter execution. Kept 26 live interleaves under the README exception. The other 70 remain blocked as individually listed above; `install` is present in the hook driver but unreachable from the shared dispatcher, and this lane cannot edit runner code. The remaining `call_count` and `no_surface` tests need Go package or inventory checks rather than a weaker fixture.

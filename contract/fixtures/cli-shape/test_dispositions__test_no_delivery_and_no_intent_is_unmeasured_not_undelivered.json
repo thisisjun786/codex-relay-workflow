@@ -1,0 +1,60 @@
+{
+ "given": {
+  "sql_seed": "INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, superseded_by, created_at, updated_at) VALUES ('rel-1', 'CRW-1', 'active', '01parent-task', 'host-a', '01child-task', 'host-a', 1, '[]', '[\"01parent-task\"]', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');\nINSERT INTO relationship_scope (relationship_id, project_key, recorded_at) VALUES ('rel-1', 'PROJ-CRW-163', '2026-09-21T00:00:00Z');\nINSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, finalized_at, suppressed_reason, first_seen_at, last_seen_at) VALUES ('e1', 'rel-1', 1, '0000000000000000000000000000000000000000000000000000000000000000', 'blocked_needs_input', 'child', 1, '01child-task', 'turn-dispatch-1', 'completed', '{}', 'final', '2026-09-21T00:00:00Z', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');"
+ },
+ "run": {
+  "kind": "cli",
+  "argv": [
+   "dispositions-show",
+   "--project",
+   "PROJ-CRW-163"
+  ],
+  "env": {
+   "XDG_STATE_HOME": "${HOME}/xdg-state"
+  }
+ },
+ "expect": {
+  "exit": 0,
+  "checks": [
+   {
+    "kind": "eq",
+    "path": [
+     "stdout_json",
+     "children",
+     0,
+     "events",
+     0,
+     "delivery",
+     "observation"
+    ],
+    "value": "unmeasured"
+   },
+   {
+    "kind": "contains",
+    "path": [
+     "stdout_json",
+     "children",
+     0,
+     "events",
+     0,
+     "delivery",
+     "detail"
+    ],
+    "value": "--no-enqueue"
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "stdout_json",
+     "children",
+     0,
+     "events",
+     0,
+     "delivery",
+     "state"
+    ],
+    "value": null
+   }
+  ]
+ }
+}

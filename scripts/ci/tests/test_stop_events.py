@@ -220,18 +220,19 @@ class RealPathControls(unittest.TestCase):
                 self.assert_answered_once(host, answers)
 
     def test_the_user_registration_replayed_asks_once(self):
-        host = self.fresh("replay")
-        payload = at_stop(host, self.document, 0)
-        answers = [run_one(host.checkout(), payload), run_one(host.checkout(), payload)]
-        self.assert_answered_once(host, answers)
+        from contract.runner import FIXTURES, run_scenario
+        with tempfile.TemporaryDirectory() as raw:
+            run_scenario(FIXTURES / "hook" /
+                         "test_stop_events__test_the_user_registration_replayed_asks_once.json",
+                         Path(raw))
 
     def test_the_user_registration_twice_at_once_asks_once(self):
-        for round_number in range(10):
-            with self.subTest(round=round_number):
-                host = self.fresh("checkout-%d" % round_number)
-                payload = at_stop(host, self.document, 0)
-                answers = run_together([host.checkout(), host.checkout()], payload)
-                self.assert_answered_once(host, answers)
+        from contract.runner import FIXTURES, run_scenario
+        for _ in range(10):
+            with tempfile.TemporaryDirectory() as raw:
+                run_scenario(FIXTURES / "hook" /
+                             "test_stop_events__test_the_user_registration_twice_at_once_asks_once.json",
+                             Path(raw))
 
     def test_the_plugin_and_the_user_registration_on_one_stop_ask_once(self):
         """The shape the 2026-09-20 journal carried: both registrations answering every Stop.
@@ -373,17 +374,11 @@ class VerifierTests(unittest.TestCase):
         self.assertEqual(answer["unjudgedInvocations"], {"unestablished:transcript_path_missing": 2})
 
     def test_rows_from_before_event_identity_are_legacy_and_never_judged(self):
-        host = self.fresh("legacy")
-        day = host.journal / "20260921"
-        day.mkdir(parents=True)
-        for index in range(2):
-            (day / ("%032x.json" % index)).write_text(written(
-                {"recordVersion": 1, "sessionId": "s", "turnId": "t", "at": "2026-09-21T00:00:00Z",
-                 "stopHookActive": bool(index)}), encoding="utf-8")
-        code, answer = verify(host.journal)
-        self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"), "nothing was judged")
-        self.assertEqual(answer["legacyRows"], 2)
-        self.assertEqual(answer["supersededPerTurn"]["pairsWithMoreThanOneRow"], 1)
+        from contract.runner import FIXTURES, run_scenario
+        with tempfile.TemporaryDirectory() as raw:
+            run_scenario(FIXTURES / "hook" /
+                         "test_stop_events__test_rows_from_before_event_identity_are_legacy_and_never_judged.json",
+                         Path(raw))
 
     def test_a_torn_accepted_record_reads_unreadable(self):
         host = self.fresh("torn")
@@ -971,9 +966,11 @@ class ReviewRoundFiveControls(OneEventRecords, unittest.TestCase):
     """
 
     def test_a_complete_event_reads_true(self):
-        host, _records = self.one_event()
-        self.assertEqual(verify(host.journal)[:1] + (verify(host.journal)[1]["verdict"],),
-                         (0, "TRUE"))
+        from contract.runner import FIXTURES, run_scenario
+        with tempfile.TemporaryDirectory() as raw:
+            run_scenario(FIXTURES / "hook" /
+                         "test_stop_events__test_a_complete_event_reads_true.json",
+                         Path(raw))
 
     def test_records_of_one_event_that_disagree_are_not_vouched_for(self):
         slot = self.SLOT

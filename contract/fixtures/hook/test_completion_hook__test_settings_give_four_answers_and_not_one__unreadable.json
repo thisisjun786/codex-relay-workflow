@@ -1,0 +1,25 @@
+{
+  "given": {
+    "settings": false,
+    "files": {
+      "crw-completion-hook.json": "{ not json"
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "configuration",
+          "value"
+        ],
+        "value": "config_unreadable"
+      }
+    ]
+  }
+}

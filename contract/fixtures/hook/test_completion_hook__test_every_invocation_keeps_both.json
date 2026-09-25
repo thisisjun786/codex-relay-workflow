@@ -1,0 +1,22 @@
+{
+  "given": {
+    "relay": {
+      "stdout": "{\"decision\": \"release\", \"state\": \"unmanaged\", \"observation\": \"unmanaged\", \"reason\": \"No marker names this workspace.\", \"assignmentId\": null, \"counters\": {}, \"recordedAs\": null, \"hook_output\": {}}"
+    }
+  },
+  "run": {
+    "kind": "hook"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "length",
+        "path": [
+          "rows"
+        ],
+        "value": 1
+      }
+    ]
+  }
+}

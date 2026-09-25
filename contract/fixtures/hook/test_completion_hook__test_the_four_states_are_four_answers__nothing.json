@@ -1,0 +1,20 @@
+{
+  "given": {},
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "relayExecutable",
+          "value"
+        ],
+        "value": "ABSENT"
+      }
+    ]
+  }
+}

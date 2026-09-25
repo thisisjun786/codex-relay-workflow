@@ -2,6 +2,7 @@
 # ruff: noqa: ASYNC240
 import subprocess
 
+import anyio
 import pytest
 from conftest import EFFORT, EXECUTION, MODEL
 
@@ -45,35 +46,12 @@ def repository(tmp_path):
     }
 
 
-async def test_readiness_launch_retains_exact_base_without_carrying_dirty_changes(
-    bridge, fake_server, repository
-):
-    from pathlib import Path
+async def test_readiness_launch_retains_exact_base_without_carrying_dirty_changes(tmp_path):
+    from contract.runner import FIXTURES, run_scenario
 
-    source = Path(repository["source_repository"])
-    before = git(source, "status", "--porcelain=v1", "--ignored")
-    index_before = git(source, "diff", "--cached", "--binary")
-    receipt = await bridge.create_worktree_thread(**repository)
-    assert receipt["status"] == "accepted", receipt
-    assert receipt["worktree"]["initialRevision"] == repository["starting_revision"]
-    assert receipt["worktree"]["ownership"] == "bridge-managed"
-    assert receipt["worktree"]["lifecycle"] == "retained-until-manual-cleanup"
-    checkout = Path(receipt["worktree"]["checkout"])
-    assert checkout == Path(repository["destination"])
-    assert (checkout / "tracked").read_text() == "base\n"
-    assert not (checkout / "untracked").exists() and not (checkout / "ignored").exists()
-    assert git(source, "status", "--porcelain=v1", "--ignored") == before
-    assert git(source, "diff", "--cached", "--binary") == index_before
-    assert (source / "tracked").read_text() == "unstaged\n"
-    assert (source / "untracked").read_text() == "untracked\n"
-    assert (source / "ignored").read_text() == "ignored\n"
-    assert "locked" in git(source, "worktree", "list", "--porcelain")
-    assert receipt["creation"]["cwd"] == str(checkout)
-    assert receipt["permissionReceipt"]["sandbox"] == repository["expected_sandbox_policy"]
-    assert receipt["creation"]["model"] == MODEL
-    assert receipt["desktopProjectAssociation"]["status"] == "unverified"
-    assert (await bridge.read_thread(receipt["threadId"]))["turnsPage"]["data"] == []
-    assert (await bridge.get_goal(receipt["threadId"]))["goal"] is None
+    await anyio.to_thread.run_sync(run_scenario, FIXTURES / "git" /
+        "test_worktree__test_readiness_launch_retains_exact_base_without_carrying_dirty_changes.json",
+        tmp_path)
 
 
 @pytest.mark.parametrize("field", ["source_repository", "destination"])
@@ -98,23 +76,15 @@ async def test_launch_preserves_trailing_whitespace_in_paths(bridge, repository,
     assert len(turns) == 1 and turns[0]["items"][0]["text"] == "READY"
 
 
-@pytest.mark.parametrize(
-    "policy",
-    [
-        {"type": "readOnly"},
-        {"type": "readOnly", "networkAccess": "false"},
-        {"type": "readOnly", "networkAccess": False, "unknown": True},
-    ],
-)
+@pytest.mark.parametrize("policy_id", [0, 1, 2])
 async def test_invalid_permission_contract_has_no_filesystem_or_api_effects(
-    bridge, fake_server, repository, policy
+    tmp_path, policy_id
 ):
-    from pathlib import Path
+    from contract.runner import FIXTURES, run_scenario
 
-    with pytest.raises(ValueError, match="sandbox policy"):
-        await bridge.create_worktree_thread(**{**repository, "expected_sandbox_policy": policy})
-    assert not Path(repository["destination"]).exists()
-    assert not fake_server[0].threads
+    await anyio.to_thread.run_sync(run_scenario, FIXTURES / "git" /
+        f"test_worktree__test_invalid_permission_contract_has_no_filesystem_or_api_effects__{policy_id}.json",
+        tmp_path)
 
 
 @pytest.mark.parametrize(
@@ -152,56 +122,22 @@ async def test_path_collisions_leave_existing_content_untouched(
         assert not target.exists()
 
 
-@pytest.mark.parametrize("revision", ["HEAD", "main", "HEAD~1", "a" * 12, "0" * 40])
-async def test_only_available_full_commit_ids_are_accepted(
-    bridge, fake_server, repository, revision
-):
-    from pathlib import Path
+@pytest.mark.parametrize("revision_id", ["head", "main", "ancestor", "short", "missing"])
+async def test_only_available_full_commit_ids_are_accepted(tmp_path, revision_id):
+    from contract.runner import FIXTURES, run_scenario
 
-    receipt = await bridge.create_worktree_thread(**{**repository, "starting_revision": revision})
-    assert receipt["status"] == "failed"
-    assert not Path(repository["destination"]).exists()
-    assert not fake_server[0].threads
+    await anyio.to_thread.run_sync(run_scenario, FIXTURES / "git" /
+        f"test_worktree__test_only_available_full_commit_ids_are_accepted__{revision_id}.json",
+        tmp_path)
 
 
-@pytest.mark.parametrize("stage", ["thread/start", "thread/name/set", "turn/start"])
-async def test_lost_responses_replay_after_restart_without_duplicate_artifacts(
-    bridge, fake_server, repository, tmp_path, stage
-):
-    from pathlib import Path
+@pytest.mark.parametrize("stage", ["thread-start", "thread-name-set", "turn-start"])
+async def test_lost_responses_replay_after_restart_without_duplicate_artifacts(tmp_path, stage):
+    from contract.runner import FIXTURES, run_scenario
 
-    from codex_thread_bridge.bridge import Bridge
-    from codex_thread_bridge.ledger import Ledger
-
-    fake, _ = fake_server
-    fake.drop_after = stage
-    args = {**repository, "prompt": "  exact\ninitial  ", "title": "Retained"}
-    first = await bridge.create_worktree_thread(**args)
-    assert first["status"] == "outcome_unknown"
-    assert first["recoveryRequired"]
-    assert Path(first["worktree"]["checkout"]).is_dir()
-    assert first["worktree"]["initialRevision"] == args["starting_revision"]
-    if stage != "thread/start":
-        assert first["threadId"] in fake.threads
-    if stage == "turn/start":
-        assert first["initialPrompt"]["state"] == "outcome_unknown"
-    else:
-        assert first["initialPrompt"]["state"] == "not_sent"
-    worktrees = git(args["source_repository"], "worktree", "list", "--porcelain")
-    calls_before = list(fake.calls)
-    fake.drop_after = None
-    ledger = Ledger(tmp_path / "state" / "operations.sqlite3")
-    try:
-        restarted = Bridge(bridge.rpc, ledger)
-        repeated = await restarted.create_worktree_thread(**args)
-        assert repeated["replayed"] and repeated["worktree"] == first["worktree"]
-        assert ledger.get(args["request_id"])["status"] == "outcome_unknown"
-        assert fake.calls == calls_before
-        assert git(args["source_repository"], "worktree", "list", "--porcelain") == worktrees
-        with pytest.raises(ValueError, match="different arguments"):
-            await restarted.create_worktree_thread(**{**args, "prompt": "changed"})
-    finally:
-        ledger.close()
+    await anyio.to_thread.run_sync(run_scenario, FIXTURES / "git" /
+        f"test_worktree__test_lost_responses_replay_after_restart_without_duplicate_artifacts__{stage}.json",
+        tmp_path)
 
 
 async def test_mcp_isolated_launch_and_followup_are_durable(fake_server, repository, tmp_path):
@@ -256,28 +192,11 @@ async def test_mcp_isolated_launch_and_followup_are_durable(fake_server, reposit
     assert receipts[0]["creation"]["reasoningEffort"] == "high"
 
 
-async def test_git_hooks_filters_and_fsmonitor_are_not_run(bridge, repository, tmp_path):
-    from pathlib import Path
+async def test_git_hooks_filters_and_fsmonitor_are_not_run(tmp_path):
+    from contract.runner import FIXTURES, run_scenario
 
-    source = Path(repository["source_repository"])
-    marker = tmp_path / "unexpected-effect"
-    script = tmp_path / "side-effect"
-    script.write_text(f"#!/bin/sh\ntouch '{marker}'\ncat\n")
-    script.chmod(0o755)
-    (source / ".gitattributes").write_text("tracked filter=example\n")
-    git(source, "add", ".gitattributes")
-    git(source, "commit", "-m", "attributes")
-    args = {**repository, "starting_revision": git(source, "rev-parse", "HEAD")}
-    hook = source / ".git" / "hooks" / "post-checkout"
-    hook.write_bytes(script.read_bytes())
-    hook.chmod(0o755)
-    git(source, "config", "filter.example.smudge", str(script))
-    git(source, "config", "filter.example.clean", str(script))
-    git(source, "config", "filter.example.required", "true")
-    git(source, "config", "core.fsmonitor", str(script))
-    receipt = await bridge.create_worktree_thread(**args)
-    assert receipt["status"] == "accepted", receipt
-    assert not marker.exists()
+    await anyio.to_thread.run_sync(run_scenario, FIXTURES / "git" /
+        "test_worktree__test_git_hooks_filters_and_fsmonitor_are_not_run.json", tmp_path)
 
 
 @pytest.mark.parametrize("stage", ["thread/start", "turn/start"])
@@ -311,30 +230,15 @@ async def test_interrupted_dispatch_is_retained_and_never_repeated(
         fake.release.set()
 
 
-@pytest.mark.parametrize(
-    "override",
-    [
-        {"cwd": "/wrong"},
-        {"runtimeWorkspaceRoots": ["/wrong"]},
-        {"approvalPolicy": "on-request"},
-        {"sandbox": {"type": "readOnly", "networkAccess": True}},
-        {"model": "different"},
-        {"reasoningEffort": "different"},
-    ],
-)
+@pytest.mark.parametrize("override_id", ["cwd", "roots", "approval", "sandbox", "model", "effort"])
 async def test_environment_mismatch_retains_actual_receipt_and_withholds_prompt(
-    bridge, fake_server, repository, override
+    tmp_path, override_id
 ):
-    fake, _ = fake_server
-    fake.override_creation = override
-    receipt = await bridge.create_worktree_thread(
-        **{**repository, "prompt": "WITHHOLD", "model": "expected", "reasoning_effort": "high"}
-    )
-    assert receipt["status"] == "failed"
-    assert receipt["initialPrompt"]["state"] == "not_sent"
-    assert receipt["recoveryRequired"]
-    assert all(receipt["creation"][k] == v for k, v in override.items())
-    assert fake.threads[receipt["threadId"]]["turns"] == []
+    from contract.runner import FIXTURES, run_scenario
+
+    await anyio.to_thread.run_sync(run_scenario, FIXTURES / "git" /
+        f"test_worktree__test_environment_mismatch_retains_actual_receipt_and_withholds_prompt__{override_id}.json",
+        tmp_path)
 
 
 async def test_checkout_change_during_thread_start_withholds_prompt(
@@ -410,19 +314,11 @@ async def test_cancellation_after_git_creation_retains_checkout_without_starting
     assert (await bridge.create_worktree_thread(**repository, prompt="WITHHOLD"))["replayed"]
 
 
-async def test_known_thread_failure_retains_worktree_and_prevents_retry(
-    bridge, fake_server, repository
-):
-    from pathlib import Path
+async def test_known_thread_failure_retains_worktree_and_prevents_retry(tmp_path):
+    from contract.runner import FIXTURES, run_scenario
 
-    fake, _ = fake_server
-    fake.reject["thread/start"] = {"code": -32602, "message": "rejected"}
-    receipt = await bridge.create_worktree_thread(**repository, prompt="WITHHOLD")
-    assert receipt["status"] == "failed"
-    assert receipt["phase"] == "creating_thread"
-    assert Path(receipt["worktree"]["checkout"]).is_dir()
-    assert not fake.threads
-    assert (await bridge.create_worktree_thread(**repository, prompt="WITHHOLD"))["replayed"]
+    await anyio.to_thread.run_sync(run_scenario, FIXTURES / "git" /
+        "test_worktree__test_known_thread_failure_retains_worktree_and_prevents_retry.json", tmp_path)
 
 
 async def test_a_lost_project_read_leaves_no_worktree_and_keeps_the_id(
@@ -447,35 +343,12 @@ async def test_a_lost_project_read_leaves_no_worktree_and_keeps_the_id(
     assert retried["recoveryRequired"] is False
 
 
-async def test_a_reserved_destination_is_an_attempt_even_with_no_request_sent(
-    bridge, fake_server, repository
-):
-    """A worktree is an effect the host never hears about, and it spends the request id anyway."""
-    from pathlib import Path
+async def test_a_reserved_destination_is_an_attempt_even_with_no_request_sent(tmp_path):
+    from contract.runner import FIXTURES, run_scenario
 
-    from codex_thread_bridge.rpc import TransportError
-
-    fake, _ = fake_server
-    original = bridge.rpc.call
-
-    async def unreachable(method, params):
-        if method == "thread/start":
-            raise TransportError("App Server is not connected")
-        return await original(method, params)
-
-    bridge.rpc.call = unreachable
-    receipt = await bridge.create_worktree_thread(**repository, prompt="hello")
-    assert receipt["status"] == "outcome_unknown" and not receipt["retrySafe"]
-    assert receipt["attemptedEffects"] == [
-        "worktree/reserve",
-        "worktree/create",
-        "worktree/checkout",
-    ]
-    assert Path(receipt["worktree"]["checkout"]).is_dir() and receipt["recoveryRequired"]
-
-    bridge.rpc.call = original
-    replay = await bridge.create_worktree_thread(**repository, prompt="hello")
-    assert replay["replayed"] and not fake.threads
+    await anyio.to_thread.run_sync(run_scenario, FIXTURES / "git" /
+        "test_worktree__test_a_reserved_destination_is_an_attempt_even_with_no_request_sent.json",
+        tmp_path)
 
 
 async def test_a_known_validation_failure_keeps_its_request_id(bridge, fake_server, repository):
@@ -497,84 +370,41 @@ async def test_a_known_validation_failure_keeps_its_request_id(bridge, fake_serv
     assert not fake_server[0].threads
 
 
-async def test_a_prompt_whose_frame_never_went_out_is_not_left_unknown(
-    bridge, fake_server, repository
-):
-    """The dispatching checkpoint guesses pessimistically so a crash cannot hide the prompt.
+async def test_a_prompt_whose_frame_never_went_out_is_not_left_unknown(tmp_path):
+    from contract.runner import FIXTURES, run_scenario
 
-    Once the operation ends the guess is checkable, and here it is wrong: the connection failed
-    before turn/start was written, so the prompt was not sent rather than possibly delivered.
-    """
-    from codex_thread_bridge.rpc import TransportError
-
-    original = bridge.rpc.call
-
-    async def unreachable(method, params):
-        if method == "turn/start":
-            raise TransportError("App Server is not connected")
-        return await original(method, params)
-
-    bridge.rpc.call = unreachable
-    receipt = await bridge.create_worktree_thread(**repository, prompt="WITHHOLD")
-    assert receipt["status"] == "outcome_unknown"
-    assert "thread/start" in receipt["attemptedEffects"]
-    assert "turn/start" not in receipt["attemptedEffects"]
-    assert receipt["initialPrompt"] == {"state": "not_sent"}
+    await anyio.to_thread.run_sync(run_scenario, FIXTURES / "git" /
+        "test_worktree__test_a_prompt_whose_frame_never_went_out_is_not_left_unknown.json", tmp_path)
 
 
-async def test_a_prompt_the_host_refused_is_recorded_as_refused(bridge, fake_server, repository):
-    """The host answered, so the one thing the receipt must not say is that nobody knows."""
-    fake, _ = fake_server
-    fake.reject["turn/start"] = {"code": -32602, "message": "turn rejected"}
-    receipt = await bridge.create_worktree_thread(**repository, prompt="WITHHOLD")
-    assert receipt["status"] == "failed"
-    assert receipt["attemptedEffects"][-1] == "turn/start"
-    assert receipt["initialPrompt"] == {"state": "rejected"}
-    assert receipt["recoveryRequired"]
+async def test_a_prompt_the_host_refused_is_recorded_as_refused(tmp_path):
+    from contract.runner import FIXTURES, run_scenario
 
-async def test_replay_survives_removed_checkout_and_source_paths(
-    bridge, fake_server, repository, tmp_path
-):
-    from pathlib import Path
+    await anyio.to_thread.run_sync(run_scenario, FIXTURES / "git" /
+        "test_worktree__test_a_prompt_the_host_refused_is_recorded_as_refused.json", tmp_path)
 
-    first = await bridge.create_worktree_thread(**repository)
-    Path(repository["destination"]).rename(tmp_path / "moved-checkout")
-    Path(repository["source_repository"]).rename(tmp_path / "moved-source")
-    before = list(fake_server[0].calls)
-    repeated = await bridge.create_worktree_thread(**repository)
-    assert repeated["replayed"] and repeated["threadId"] == first["threadId"]
-    assert repeated["worktree"] == first["worktree"]
-    assert fake_server[0].calls == before
+async def test_replay_survives_removed_checkout_and_source_paths(tmp_path):
+    from contract.runner import FIXTURES, run_scenario
+
+    await anyio.to_thread.run_sync(run_scenario, FIXTURES / "git" /
+        "test_worktree__test_replay_survives_removed_checkout_and_source_paths.json",
+        tmp_path)
 
 
-async def test_concurrent_requests_cannot_adopt_same_destination(bridge, fake_server, repository):
-    import asyncio
+async def test_concurrent_requests_cannot_adopt_same_destination(tmp_path):
+    from contract.runner import FIXTURES, run_scenario
 
-    receipts = await asyncio.gather(
-        *[
-            bridge.create_worktree_thread(**{**repository, "request_id": request_id})
-            for request_id in ["first", "first", "second"]
-        ]
-    )
-    assert receipts[0]["status"] == "accepted"
-    assert receipts[1]["replayed"] and receipts[1]["threadId"] == receipts[0]["threadId"]
-    assert receipts[2]["status"] == "failed"
-    assert len(fake_server[0].threads) == 1
+    await anyio.to_thread.run_sync(run_scenario, FIXTURES / "git" /
+        "test_worktree__test_concurrent_requests_cannot_adopt_same_destination.json",
+        tmp_path)
 
 
-async def test_inherited_git_environment_cannot_redirect_checkout(
-    bridge, repository, tmp_path, monkeypatch
-):
-    from pathlib import Path
+async def test_inherited_git_environment_cannot_redirect_checkout(tmp_path):
+    from contract.runner import FIXTURES, run_scenario
 
-    monkeypatch.setenv("GIT_DIR", str(tmp_path / "wrong-git"))
-    monkeypatch.setenv("GIT_WORK_TREE", str(tmp_path / "wrong-tree"))
-    monkeypatch.setenv("GIT_INDEX_FILE", str(tmp_path / "wrong-index"))
-    receipt = await bridge.create_worktree_thread(**repository)
-    assert receipt["status"] == "accepted", receipt
-    assert (Path(receipt["worktree"]["checkout"]) / "tracked").read_text() == "base\n"
-    assert not (tmp_path / "wrong-tree").exists()
-    assert not (tmp_path / "wrong-index").exists()
+    await anyio.to_thread.run_sync(run_scenario, FIXTURES / "git" /
+        "test_worktree__test_inherited_git_environment_cannot_redirect_checkout.json",
+        tmp_path)
 
 
 async def test_destination_conditional_filters_are_disabled_before_checkout(
@@ -596,89 +426,19 @@ async def test_destination_conditional_filters_are_disabled_before_checkout(
     assert not marker.exists()
 
 
-async def test_a_dispatched_worktree_task_is_annotated_like_the_other_paths(
-    bridge, fake_server, repository
-):
-    """The worktree path has the WIDEST window between its check and its dispatch.
+async def test_a_dispatched_worktree_task_is_annotated_like_the_other_paths(tmp_path):
+    from contract.runner import FIXTURES, run_scenario
 
-    It observes the settings at creation, then names the thread and re-inspects the checkout
-    before turn/start, so if any path needs the post-acceptance diagnostic it is this one.
-    """
-    result = await bridge.create_worktree_thread(
-        **{**repository, "prompt": "do the work", "model": MODEL, "reasoning_effort": EFFORT}
-    )
-    assert result["status"] == "accepted" and result["turnId"]
-    assert result["settings"]["verification"] == "observed_at_creation"
-    note = result["settingsAfterDispatch"]
-    assert note["concurrentChange"] is False
-    assert note["covers"] == ["cwd", "model", "reasoningEffort"]
-    assert note["unobserved"] == []
+    await anyio.to_thread.run_sync(run_scenario, FIXTURES / "git" /
+        "test_worktree__test_a_dispatched_worktree_task_is_annotated_like_the_other_paths.json", tmp_path)
 
 
-async def test_a_retained_receipt_survives_validation_this_version_added(
-    bridge, fake_server, repository
-):
-    """New validation applies to new requests, never to the recovery of an old one.
+async def test_a_retained_receipt_survives_validation_this_version_added(tmp_path):
+    from contract.runner import FIXTURES, run_scenario
 
-    This tool predates the transmittability check, so a receipt can be retained for a policy the
-    check now refuses. Reusing the stable request ID is the one recovery route the tool tells
-    callers to use, and a check that ran before the ledger lookup would close it.
-    """
-    import json
-
-    legacy = {
-        **repository,
-        "request_id": "legacy-worktree",
-        "expected_sandbox_policy": {"type": "readOnly", "networkAccess": True},
-    }
-    # The retained receipt predates BOTH the transmittability check and the execution policy, so
-    # its arguments carried neither. A replay has to reproduce that exact shape, which is also the
-    # proof that the policy check runs after the ledger lookup rather than in front of it.
-    for retired in ("model", "reasoning_effort"):
-        legacy.pop(retired)
-    params = {
-        "source_repository": legacy["source_repository"],
-        "starting_revision": legacy["starting_revision"],
-        "destination": legacy["destination"],
-        "worktree_mode": "bridge-managed-retained",
-        "sandbox": "read-only",
-        "expected_sandbox_policy": legacy["expected_sandbox_policy"],
-        "prompt": None,
-        "title": None,
-        "model": None,
-        "reasoning_effort": None,
-        "app_server_project_id": None,
-    }
-    fingerprint = bridge.ledger._fingerprint("legacy-worktree", "create_worktree_thread", params)
-    bridge.ledger.db.execute(
-        "INSERT INTO operations VALUES (?, ?, ?)",
-        (
-            "legacy-worktree",
-            fingerprint,
-            json.dumps(
-                {
-                    "requestId": "legacy-worktree",
-                    "operation": "create_worktree_thread",
-                    "status": "outcome_unknown",
-                    "threadId": "older-thread",
-                    "recoveryRequired": True,
-                    "fingerprintVersion": 2,
-                }
-            ),
-        ),
-    )
-    bridge.ledger.db.commit()
-
-    recovered = await bridge.create_worktree_thread(**legacy)
-    assert recovered["replayed"]
-    assert recovered["threadId"] == "older-thread"
-    assert recovered["recoveryRequired"]
-
-    # The same policy in a FRESH request is still refused, before anything is created.
-    with pytest.raises(ValueError, match="setting_untransmittable"):
-        await bridge.create_worktree_thread(
-            **{**legacy, **EXECUTION, "request_id": "fresh-worktree"}
-        )
+    await anyio.to_thread.run_sync(run_scenario, FIXTURES / "git" /
+        "test_worktree__test_a_retained_receipt_survives_validation_this_version_added.json",
+        tmp_path)
 
 
 async def test_a_worktree_launch_without_a_stated_pair_creates_nothing(
@@ -704,19 +464,11 @@ async def test_a_worktree_launch_without_a_stated_pair_creates_nothing(
     assert fake.calls == []
 
 
-async def test_a_worktree_launch_transmits_the_pair_it_was_authorized_for(
-    bridge, fake_server, repository
-):
-    fake, _ = fake_server
-    receipt = await bridge.create_worktree_thread(**{**repository, "prompt": "work"})
-    assert receipt["status"] == "accepted"
-    start = next(params for name, params in fake.calls if name == "thread/start")
-    assert start["model"] == MODEL
-    assert start["config"]["model_reasoning_effort"] == EFFORT
-    assert receipt["executionPolicy"]["model"] == MODEL
-    assert receipt["executionPolicy"]["reasoningEffort"] == EFFORT
-    assert receipt["settings"]["requested"]["model"] == MODEL
-    assert receipt["settings"]["requested"]["reasoningEffort"] == EFFORT
+async def test_a_worktree_launch_transmits_the_pair_it_was_authorized_for(tmp_path):
+    from contract.runner import FIXTURES, run_scenario
+
+    await anyio.to_thread.run_sync(run_scenario, FIXTURES / "git" /
+        "test_worktree__test_a_worktree_launch_transmits_the_pair_it_was_authorized_for.json", tmp_path)
 
 
 async def test_a_worktree_exception_covers_only_the_destination_it_names(

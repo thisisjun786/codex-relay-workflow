@@ -1,0 +1,57 @@
+{
+  "given": {
+    "relay": {
+      "stdout": "{\"decision\":\"release\",\"state\":\"unmanaged\",\"hook_output\":{}}"
+    },
+    "settings_overrides": {
+      "owner": null,
+      "adapterInterpreter": null,
+      "adapterEntryPoint": null
+    }
+  },
+  "run": {
+    "kind": "stop",
+    "stdin": {
+      "session_id": "s"
+    }
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "length",
+        "path": [
+          "row_files"
+        ],
+        "value": 1
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "row_files",
+          0,
+          "mode"
+        ],
+        "value": 384
+      },
+      {
+        "kind": "regex",
+        "path": [
+          "row_files",
+          0,
+          "day"
+        ],
+        "value": "^[0-9]{8}$"
+      },
+      {
+        "kind": "regex",
+        "path": [
+          "row_files",
+          0,
+          "name"
+        ],
+        "value": "^[0-9a-f]{32}\\.json$"
+      }
+    ]
+  }
+}

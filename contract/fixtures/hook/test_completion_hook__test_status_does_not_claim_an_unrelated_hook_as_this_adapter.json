@@ -1,0 +1,35 @@
+{
+  "given": {
+    "settings": false,
+    "files": {
+      "not-completion_hook.py": "",
+      "hooks.json": "{\"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"${HOME}/not-completion_hook.py\", \"timeout\": 10}]}]}}"
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "registration",
+          "thisAdapter"
+        ],
+        "value": []
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "registeredCommandTarget",
+          "value"
+        ],
+        "value": "not_read"
+      }
+    ]
+  }
+}

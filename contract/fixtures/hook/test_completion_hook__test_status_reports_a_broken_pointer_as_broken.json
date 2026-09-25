@@ -1,0 +1,1 @@
+{"given":{"symlinks":{"codex-session-relay":"${HOME}/gone"}},"run":{"kind":"status"},"expect":{"exit":0,"checks":[{"kind":"eq","path":["status","relayExecutable","value"],"value":"UNREADABLE"}]}}

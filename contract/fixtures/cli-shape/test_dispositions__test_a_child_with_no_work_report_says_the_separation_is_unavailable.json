@@ -1,0 +1,145 @@
+{
+ "given": {
+  "sql_seed": "INSERT INTO relationship_scope (relationship_id, project_key, recorded_at) VALUES ('rel-46d5b5ac690ef861', 'PROJ-CRW-163', '2026-09-21T00:00:00Z');"
+ },
+ "run": {
+  "kind": "cli",
+  "steps": [
+   {
+    "id": "register",
+    "env": {
+     "XDG_STATE_HOME": "${HOME}/xdg-state"
+    },
+    "argv": [
+     "register",
+     "--parent-task",
+     "01parent-task",
+     "--parent-host",
+     "host-a",
+     "--child-task",
+     "01child-task",
+     "--child-host",
+     "host-a",
+     "--issue",
+     "REL-1",
+     "--artifact-root",
+     "${HOME}/work",
+     "--allowed-recipient",
+     "01parent-task",
+     "--dispatch-request-id",
+     "dispatch-1",
+     "--dispatch-turn-id",
+     "turn-dispatch-1"
+    ]
+   },
+   {
+    "id": "emit",
+    "env": {
+     "XDG_STATE_HOME": "${HOME}/xdg-state"
+    },
+    "argv": [
+     "emit",
+     "--relationship",
+     {
+      "$step": "register",
+      "path": [
+       "stdout_json",
+       "relationshipId"
+      ]
+     },
+     "--generation",
+     "1",
+     "--attempt",
+     "1",
+     "--outcome",
+     "blocked_needs_input",
+     "--turn-thread",
+     "01child-task",
+     "--turn-id",
+     "turn-dispatch-1",
+     "--turn-status",
+     "completed",
+     "--no-enqueue"
+    ]
+   },
+   {
+    "id": "read",
+    "env": {
+     "XDG_STATE_HOME": "${HOME}/xdg-state"
+    },
+    "argv": [
+     "dispositions-show",
+     "--project",
+     "PROJ-CRW-163"
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "exit": 0,
+  "checks": [
+   {
+    "kind": "eq",
+    "path": [
+     "steps",
+     "register",
+     "exit"
+    ],
+    "value": 0
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "steps",
+     "emit",
+     "exit"
+    ],
+    "value": 0
+   },
+   {
+    "kind": "same",
+    "path": [
+     "steps",
+     "read",
+     "stdout_json",
+     "children",
+     0,
+     "relationshipId"
+    ],
+    "value": null,
+    "other": [
+     "steps",
+     "register",
+     "stdout_json",
+     "relationshipId"
+    ]
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "steps",
+     "read",
+     "stdout_json",
+     "children",
+     0,
+     "events",
+     0,
+     "workReport",
+     "recorded"
+    ],
+    "value": false
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "steps",
+     "read",
+     "stdout_json",
+     "counts",
+     "workReportMissing"
+    ],
+    "value": 1
+   }
+  ]
+ }
+}

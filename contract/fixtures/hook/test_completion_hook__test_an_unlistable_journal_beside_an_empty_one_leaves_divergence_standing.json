@@ -1,0 +1,42 @@
+{
+  "given": {
+    "settings": false,
+    "relay": {
+      "stdout": "{\"decision\": \"release\", \"state\": \"unmanaged\", \"observation\": \"unmanaged\", \"reason\": \"No marker names this workspace.\", \"assignmentId\": null, \"counters\": {}, \"recordedAs\": null, \"hook_output\": {}}"
+    },
+    "files": {
+      "crw-completion-hook.json": "{\"configVersion\": 1, \"event\": \"Stop\", \"relayExecutable\": \"${HOME}/codex-session-relay\", \"markerRoot\": \"${HOME}/marker\", \"dbPath\": null, \"mode\": \"observe\", \"timeoutSeconds\": 5, \"journalRoot\": \"${HOME}/journal\", \"journalPolicy\": \"every_invocation\", \"installedBy\": \"CRW-100\", \"isolationAssertedBy\": null}",
+      "hooks.json": "{\"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"${PYTHON} ${ENTRY} ${HOME}/crw-completion-hook.json\", \"timeout\": 10}, {\"type\": \"command\", \"command\": \"${PYTHON} ${ENTRY} ${HOME}/other-settings.json\", \"timeout\": 10}]}]}}",
+      "other-settings.json": "{\"configVersion\": 1, \"event\": \"Stop\", \"relayExecutable\": \"${HOME}/codex-session-relay\", \"markerRoot\": \"${HOME}/marker\", \"dbPath\": null, \"mode\": \"observe\", \"timeoutSeconds\": 5, \"journalRoot\": \"${HOME}/not-a-journal\", \"journalPolicy\": \"every_invocation\", \"installedBy\": \"CRW-100\", \"isolationAssertedBy\": null}",
+      "not-a-journal": ""
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "firingRecordAbsence",
+          "candidates",
+          0,
+          "cause"
+        ],
+        "value": "recorded_on_another_path"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "firingRecordAbsence",
+          "value"
+        ],
+        "value": "cause_unreadable"
+      }
+    ]
+  }
+}

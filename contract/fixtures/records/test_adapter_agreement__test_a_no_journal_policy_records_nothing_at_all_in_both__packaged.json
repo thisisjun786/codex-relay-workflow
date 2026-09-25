@@ -1,0 +1,41 @@
+{
+ "given": {
+  "relay": {
+   "stdout": "this is not json"
+  },
+  "settings_overrides": {
+   "journalPolicy": "no_journal",
+   "owner": null,
+   "adapterInterpreter": null,
+   "adapterEntryPoint": null
+  }
+ },
+ "run": {
+  "kind": "stop",
+  "stdin": {
+   "session_id": "s-1",
+   "turn_id": "t-1",
+   "cwd": "/tmp/workspace",
+   "stop_hook_active": false
+  }
+ },
+ "expect": {
+  "exit": 0,
+  "checks": [
+   {
+    "kind": "eq",
+    "path": [
+     "stdout"
+    ],
+    "value": ""
+   },
+   {
+    "kind": "length",
+    "path": [
+     "rows"
+    ],
+    "value": 0
+   }
+  ]
+ }
+}
