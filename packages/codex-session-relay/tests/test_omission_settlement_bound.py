@@ -124,14 +124,26 @@ class ASharedHost(StoreOmissionCase):
         self.assertEqual(code, 0, answer)
         return answer
 
-    def this_assignment_last_in_the_rotation(self):
-        """Stand the relationship rotation where it reaches this assignment last."""
+    def this_assignment_last_in_the_rotation(self, rid=None):
+        """Stand the relationship rotation where it reaches this assignment (or rid) last."""
         order = [one["relationshipId"] for one in self.daemon._active_relationships()]
-        cursor = (order.index(self.rid) + 1) % len(order)
+        cursor = (order.index(rid or self.rid) + 1) % len(order)
         self.store.db.execute(
             "INSERT INTO discovery_cursors (task_id, listing, cursor, updated_at)"
             " VALUES ('scheduler','relationships',?,?) ON CONFLICT(task_id, listing)"
             " DO UPDATE SET cursor = excluded.cursor", (str(cursor), self.clock.iso()))
+
+    def read_in_the_last_tick(self, turn=BUSINESS):
+        """Tick until the frontier's last read of the turn is this tick's, so least-recently-read
+        order alone would not pick it next: what follows is then decided by the stop signal."""
+        for _ in range(8):
+            self.tick(advance=TICK)
+            row = self.store.one(
+                "SELECT last_attempt_at FROM poll_observations WHERE relationship_id = ?"
+                " AND turn_id = ?", (self.rid, turn))
+            if row and row["last_attempt_at"] == self.clock.iso():
+                return
+        self.fail("the turn was never read in the tick just gone")
 
 
 class AnOmittedTurnAmongManyAssignmentsAndLongHistory(ASharedHost):
@@ -198,15 +210,16 @@ class AnOmittedTurnAmongManyAssignmentsAndLongHistory(ASharedHost):
                          "the stopped child was below the first page and nobody paged to it")
 
     def test_a_failed_listing_keeps_its_watermark(self):
-        """A listing that fails part way must not move the mark past rows it never read."""
-        self.daemon.policy = RetryPolicy(thread_activity_listing_limit=2,
-                                         thread_activity_listing_pages=4)
+        """A listing that fails part way must not move the mark past rows it never read.
+        Prepared under the default policy, whose first listing reaches its floor in one tick."""
         for index in range(5):
             self.other(OTHERS + index, running=True)
         self.business_turn_starts()
         self.tick(advance=TICK)
         before = getattr(self.daemon, "_activity_since", None)
         self.assertIsNotNone(before, "a listing that read its pages sets the mark")
+        self.daemon.policy = RetryPolicy(thread_activity_listing_limit=2,
+                                         thread_activity_listing_pages=4)
         original = self.adapter.recent_threads
 
         def failing(limit, cursor=None):
@@ -623,18 +636,6 @@ class TheHostListingItReads(DeliveryTestCase):
 class WhatTheFinalReviewOf81dd75a5Found(ASharedHost):
     """Two High findings on 81dd75a5 and the restart the listing could not see."""
 
-    def read_in_the_last_tick(self, turn=BUSINESS):
-        """Tick until the frontier's last read of the turn is this tick's, so least-recently-read
-        order alone would not pick it next: what follows is then decided by the stop signal."""
-        for _ in range(8):
-            self.tick(advance=TICK)
-            row = self.store.one(
-                "SELECT last_attempt_at FROM poll_observations WHERE relationship_id = ?"
-                " AND turn_id = ?", (self.rid, turn))
-            if row and row["last_attempt_at"] == self.clock.iso():
-                return
-        self.fail("the turn was never read in the tick just gone")
-
     def test_a_range_holding_none_of_this_assignments_rows_ends_the_pass(self):
         """Finding 1: a cursor whose remaining range held only other assignments' rows never
         refreshed its ceiling, so an admission past it was never read."""
@@ -720,7 +721,9 @@ class WhatTheFinalReviewOf81dd75a5Found(ASharedHost):
         """Audit 1 on 020: a sweep over several ticks keeps its first mark, or threads updated
         between two marks would sit above the sweep's cursor and below the next listing's mark.
         Twelve children stop one second apart after the watermark, so their updatedAt stays put
-        below the sweep's cursor while this assignment's running child keeps page 1's top."""
+        below the sweep's cursor while this assignment's running child keeps page 1's top. Each
+        tick's head covers what changed above the mark, so the watermark the sweep leaves is the
+        newest head's, and every child that stopped between the marks is on record."""
         running = [self.other(OTHERS + index, running=True) for index in range(12)]
         self.business_turn_starts()
         self.tick(advance=TICK)
@@ -741,7 +744,10 @@ class WhatTheFinalReviewOf81dd75a5Found(ASharedHost):
                 break
             self.tick(advance=TICK)
         self.assertIsNone(self.daemon._activity_sweep, "the sweep never ended")
-        self.assertEqual(self.daemon._activity_since, mark)
+        self.assertGreater(self.daemon._activity_since, mark,
+                           "the finished sweep left the first mark, not the last head's")
+        self.assertEqual([self.daemon._listed[child].status for _, child in running],
+                         ["idle"] * len(running), "a child that stopped between marks was skipped")
 
     def test_a_turn_whose_settlement_never_commits_is_first_only_three_times(self):
         """Audit 2 on 020: a priority read that ends without a settlement counts toward the same
@@ -904,3 +910,261 @@ class AnAbsentTurnIsAnAnswer(ASharedHost):
             self.tick(advance=TICK)
         self.assertLessEqual(reads.count("never-started"), 1,
                              "a turn the host reports absent kept a stopped-first slot")
+
+
+class WhatTheFinalReviewOf82a79b1bFound(ASharedHost):
+    """Findings 1 and 2 of the final review of 82a79b1b, and what the audit of their fix found."""
+
+    def test_a_child_that_stopped_before_any_answered_read_is_found_below_page_one(self):
+        """Finding 1: with no answered read of any open frontier turn the first listing read one
+        page and set its mark there, so a child that had already stopped below that page waited
+        for least-recently-read order. Twelve children keep running above it; its assignment is
+        the one that order and the rotation reach last. The time the relay opened each turn now
+        seeds how far the listing reaches."""
+        running = [(self.other(OTHERS + index, running=True), OTHERS + index)
+                   for index in range(13)]
+        (rid, child), index = max(running)
+        anchor = f"turn-other-{index:02}"
+        self.this_assignment_last_in_the_rotation(rid)
+        self.clock.advance(2)
+        self.adapter.finish_turn(child, anchor)
+        self.daemon.policy = RetryPolicy(thread_activity_listing_limit=4,
+                                         thread_activity_listing_pages=4)
+        self.tick(advance=TICK)
+        self.assertIsNotNone(self.store.one(
+            "SELECT 1 FROM assignment_settlements WHERE relationship_id = ? AND turn_id = ?",
+            (rid, anchor)), "the stopped child below page one waited for least-recently-read order")
+
+    def test_a_child_that_stopped_while_paused_is_read_first_after_the_resume(self):
+        """Architect on the review of 82a79b1b: a child that stopped while its assignment was
+        paused was listed only while nothing of that assignment was open, and once the watermark
+        passed it no later listing showed it, so after the resume its ended turn waited for
+        least-recently-read order. The record keeps what the listing showed of every live child,
+        paused ones included. After the resume sixteen children run above it and four never-read
+        turns come first in least-recently-read order."""
+        for index in range(12):
+            self.other(OTHERS + index, running=True)
+        late = [(self.other(OTHERS + 12 + index, running=True), OTHERS + 12 + index)
+                for index in range(4)]
+        self.business_turn_starts()
+        self.read_in_the_last_tick()
+        self.registry.set_status(self.rid, "paused", actor="user")
+        self.business_turn_ends()
+        self.tick(advance=TICK)
+        for (_, child), index in late:
+            self.clock.advance(1)
+            self.adapter.finish_turn(child, f"turn-other-{index:02}")
+        self.tick(advance=TICK)
+        for index in range(4):
+            self.other(OTHERS + 16 + index, running=True)
+        record = self.registry.get(self.rid)
+        self.registry.resume(
+            self.rid, expect_generation=record["executionGeneration"],
+            expect_artifact_roots=record["authorizedScope"]["artifactRoots"],
+            expect_allowed_recipients=record["authorizedScope"]["allowedRecipients"],
+            actor="user")
+        self.this_assignment_last_in_the_rotation()
+        self.daemon.policy = RetryPolicy(thread_activity_listing_limit=4,
+                                         thread_activity_listing_pages=4)
+        self.assertEqual(self.ticks_until_settled(1), 1,
+                         "the stop seen while paused was lost once the watermark passed it")
+
+    def test_a_child_the_listing_never_shows_does_not_keep_it_deep(self):
+        """A guard for the record: a child the default listing leaves out (archived here, an
+        exec-source thread on the host) is recorded as not listed once a listing reaches below
+        its turn's reference, so later listings stop paging down to that reference every tick.
+        This turn's reads never answer, so its reference stays the generation's opening."""
+        for index in range(2):
+            self.other(OTHERS + index, running=True)
+        self.business_turn_starts()
+        self.adapter.threads[CHILD].archived = True
+        original_read = self.adapter.read_turn
+
+        def failing(thread, turn):
+            if turn == BUSINESS:
+                raise ConnectionError("this turn never answers")
+            return original_read(thread, turn)
+
+        self.adapter.read_turn = failing
+        original_list, calls = self.adapter.recent_threads, []
+
+        def counted(limit, cursor=None):
+            calls.append(cursor)
+            return original_list(limit, cursor=cursor)
+
+        self.adapter.recent_threads = counted
+        self.daemon.policy = RetryPolicy(thread_activity_listing_limit=4,
+                                         thread_activity_listing_pages=4)
+        for _ in range(12):
+            self.tick(advance=TICK)
+            if getattr(self.daemon, "_activity_sweep", None) is None and calls:
+                break
+        self.assertIsNone(getattr(self.daemon, "_activity_sweep", None), "the sweep never ended")
+        del calls[:]
+        for _ in range(3):
+            self.tick(advance=TICK)
+        self.assertEqual(len(calls), 3, "a child the listing never shows kept every listing deep")
+
+    def test_a_first_listing_that_fails_after_page_one_does_not_leave_page_one_alone(self):
+        """A guard from the audit of the fix for 82a79b1b (it holds there too): after a restart
+        the first listing puts every open turn's child on record from page 1 and then fails.
+        Were a child on record to ask for nothing, no later tick would have a floor to reach
+        for, each would read page 1 alone for the rest of the run, and a child that stopped
+        below it would wait for least-recently-read order. Until a listing reaches its floor in
+        a run, every open turn's reference sets it. Seven running children and one busy parent
+        fill page 1; one frontier read a tick, and this turn was the last read before the
+        restart."""
+        for index in range(6):
+            self.other(OTHERS + index, running=True)
+        self.business_turn_starts()
+        self.read_in_the_last_tick()
+        self.adapter.start_turn("01parent-other-09", turn_id="parent-work-early",
+                                status="inProgress")
+        self.daemon = self.build_daemon(self.channel)
+        self.daemon.policy = RetryPolicy(frontier_reads_per_tick=1,
+                                         thread_activity_listing_limit=8,
+                                         thread_activity_listing_pages=4)
+        original, failed = self.adapter.recent_threads, []
+
+        def page_two_fails_once(limit, cursor=None):
+            if cursor is not None and not failed:
+                failed.append(cursor)
+                raise ConnectionError("page two never came")
+            return original(limit, cursor=cursor)
+
+        self.adapter.recent_threads = page_two_fails_once
+        report = self.tick(advance=TICK)
+        self.assertTrue(failed and any("listing failed" in note for note in report.notes),
+                        report.notes)
+        self.adapter.recent_threads = original
+        self.business_turn_ends()
+        for index in range(8):
+            self.adapter.start_turn(f"01parent-other-{index:02}", turn_id=f"parent-work-{index}",
+                                    status="inProgress")
+        self.this_assignment_last_in_the_rotation()
+        self.assertEqual(self.ticks_until_settled(1), 1,
+                         "after a failed first listing only page 1 was ever read again")
+
+    def test_a_child_that_stops_while_a_sweep_is_pending_is_read_on_the_next_tick(self):
+        """Audit of the fix for 82a79b1b (head first): while a sweep was pending the listing read
+        page 1 and then went on below the sweep's cursor, so a child that stopped just below
+        page 1 waited for the sweep to end. Each tick now first reads its head, everything
+        updated since the last tick. Five children keep running above it, twelve parents'
+        turns ending in a burst saturate the listing, and one frontier read a tick goes to the
+        stopped turn or to least-recently-read order, which reached this turn last."""
+        for index in range(5):
+            self.other(OTHERS + index, running=True)
+        self.business_turn_starts()
+        self.read_in_the_last_tick()
+        self.daemon.policy = RetryPolicy(frontier_reads_per_tick=1,
+                                         thread_activity_listing_limit=4,
+                                         thread_activity_listing_pages=3)
+        for index in range(12):
+            self.clock.advance(1)
+            self.adapter.start_turn(f"01parent-other-{index:02}", turn_id=f"burst-{index}",
+                                    status="completed")
+        report = self.tick(advance=TICK)
+        self.assertTrue(any("saturated" in note for note in report.notes), report.notes)
+        self.business_turn_ends()
+        self.this_assignment_last_in_the_rotation()
+        self.assertEqual(self.ticks_until_settled(1), 1,
+                         "a stop above the pending sweep waited for the sweep to end")
+
+
+class AListingWithNoSeed(DaemonTestCase):
+    def test_it_carries_a_pending_sweep_to_its_floor(self):
+        """Finding 2 on 82a79b1b: a tick with no reference to reach for ended a pending sweep
+        and raised the mark past the pages the sweep had not read. The sweep goes on to the
+        floor it began with, and only then moves the mark."""
+        from types import SimpleNamespace
+
+        from codex_session_relay.daemon import TickReport
+        from codex_session_relay.hostadapter import ThreadActivity, ThreadActivityPage
+
+        threads = [ThreadActivity(f"t{index}", "active", 120 - index, None) for index in range(8)]
+        calls, shown = [], []
+
+        def recent_threads(limit, cursor=None):
+            calls.append(cursor)
+            rest = [one for one in threads if cursor is None or one.updated_at < float(cursor)]
+            page = rest[:limit]
+            shown.extend(one.thread_id for one in page)
+            return ThreadActivityPage(tuple(page), str(page[-1].updated_at)
+                                      if len(rest) > len(page) else None)
+
+        self.daemon.adapter = SimpleNamespace(recent_threads=recent_threads)
+        self.daemon.policy = RetryPolicy(thread_activity_listing_limit=2,
+                                         thread_activity_listing_pages=2)
+        self.daemon._thread_activity(TickReport(), 100)
+        sweep = dict(self.daemon._activity_sweep)
+        self.daemon._thread_activity(TickReport(), None)
+        self.assertIsNone(self.daemon._activity_since,
+                          "a tick with no seed ended the sweep before its floor")
+        self.assertEqual(self.daemon._activity_sweep["floor"], sweep["floor"])
+        self.assertIn(sweep["cursor"], calls, "the sweep did not go on from its cursor")
+        for _ in range(4):
+            if self.daemon._activity_sweep is None:
+                break
+            self.daemon._thread_activity(TickReport(), None)
+        self.assertEqual(self.daemon._activity_since, 120)
+        self.assertIn("t7", shown)
+
+
+
+class ASweepWhoseTargetRises(DaemonTestCase):
+    def test_it_pages_to_its_own_floor_and_keeps_what_earlier_pages_recorded(self):
+        """Architect on the review of 82a79b1b, R2's real path: the open turns change while a
+        sweep is pending and the listing's target rises. The sweep still pages to the floor it
+        began with, the watermark waits for it, and what its earlier pages showed of a live child
+        stays on record for the turns that open meanwhile."""
+        from types import SimpleNamespace
+
+        from codex_session_relay.daemon import TickReport
+        from codex_session_relay.hostadapter import ThreadActivity, ThreadActivityPage
+
+        self.register()
+        names = [f"t{index}" for index in range(12)]
+        names[5] = CHILD
+        threads = [ThreadActivity(name, "active" if index < 4 else "idle", 120 - index, None)
+                   for index, name in enumerate(names)]
+        pages = []
+
+        def recent_threads(limit, cursor=None):
+            rest = [one for one in threads if cursor is None or one.updated_at < float(cursor)]
+            page = rest[:limit]
+            pages.append([one.thread_id for one in page])
+            return ThreadActivityPage(tuple(page), str(page[-1].updated_at)
+                                      if len(rest) > len(page) else None)
+
+        self.daemon.adapter = SimpleNamespace(recent_threads=recent_threads)
+        self.daemon.policy = RetryPolicy(thread_activity_listing_limit=2,
+                                         thread_activity_listing_pages=2)
+        self.daemon._thread_activity(TickReport(), 105)
+        self.daemon._thread_activity(TickReport(), 105)
+        self.daemon._thread_activity(TickReport(), 116)
+        self.assertIsNone(self.daemon._activity_since,
+                          "a risen target ended the sweep before the floor it began with")
+        self.assertEqual(self.daemon._activity_sweep["floor"], 105)
+        self.assertIn(CHILD, self.daemon._listed, "an earlier page's entry left the record")
+        for _ in range(4):
+            if self.daemon._activity_sweep is None:
+                break
+            self.daemon._thread_activity(TickReport(), 116)
+        self.assertEqual(self.daemon._activity_since, 120)
+        self.assertIn("t11", [name for page in pages for name in page])
+
+
+class AGraceNoTimestampCanHold(ASharedHost):
+    def test_the_reading_stands_and_its_wait_has_no_end(self):
+        """Devin on #166: an infinite or very large --grace overflowed the grace's end, so
+        reporting-derive answered nothing for a settled omission inside it."""
+        self.business_turn_starts()
+        self.tick(advance=TICK)
+        self.business_turn_ends()
+        self.tick(advance=TICK)
+        self.assertTrue(self.settled())
+        for grace in ("inf", "1e300"):
+            answer = self.shown("reporting-derive", "--grace", grace)
+            self.assertEqual((answer.get("owedReason"), answer.get("waiting")),
+                             ("within_report_grace", {"for": "report_grace", "until": None}),
+                             grace)
