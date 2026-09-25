@@ -7,9 +7,54 @@ import (
 	"fmt"
 )
 
-// Transaction runs a group of writes on one connection under BEGIN IMMEDIATE.
+// ErrNestedTransaction is Python sqlite3's refusal of BEGIN inside an open transaction.
+var ErrNestedTransaction = errors.New("cannot start a transaction within a transaction")
+
+// openTx is the transaction a context carries: Python's self.db.in_transaction, bound to the
+// call chain that opened it rather than to the Store, so a concurrent caller (a context without
+// it) waits for the one connection while a nested call (a context with it) is refused at once.
+type openTx struct {
+	store     *Store
+	conn      *sql.Conn
+	composing bool
+}
+
+type openTxKey struct{}
+
+// Compose deliberately joins nested Transaction calls into one commit (store.py composing()).
+// Outside this scope, a Transaction inside a Transaction is ErrNestedTransaction.
+func (s *Store) Compose(ctx context.Context, run func(context.Context, *sql.Conn) error) error {
+	return s.Transaction(ctx, func(txCtx context.Context, conn *sql.Conn) error {
+		return run(context.WithValue(txCtx, openTxKey{}, openTx{store: s, conn: conn, composing: true}), conn)
+	})
+}
+
+// querier is what a store read needs: the pool or the one connection a transaction holds.
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// q is where a read runs: on the open transaction's connection when ctx carries one of this
+// store's, so it sees that transaction's own writes (Python reads on self.db, the one
+// connection); otherwise on the pool, waiting for the connection like any other caller.
+func (s *Store) q(ctx context.Context) querier {
+	if open, ok := ctx.Value(openTxKey{}).(openTx); ok && open.store == s {
+		return open.conn
+	}
+	return s.DB
+}
+
+// Transaction runs a group of writes on the store's one connection under BEGIN IMMEDIATE, and
+// hands run a context carrying the open transaction; store calls inside run must use it.
 // A failed body or COMMIT rolls back while preserving the original failure.
-func (s *Store) Transaction(ctx context.Context, run func(*sql.Conn) error) (err error) {
+func (s *Store) Transaction(ctx context.Context, run func(context.Context, *sql.Conn) error) (err error) {
+	if open, ok := ctx.Value(openTxKey{}).(openTx); ok && open.store == s {
+		if open.composing {
+			return run(ctx, open.conn)
+		}
+		return ErrNestedTransaction
+	}
 	conn, err := s.DB.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("transaction connection: %w", err)
@@ -25,8 +70,11 @@ func (s *Store) Transaction(ctx context.Context, run func(*sql.Conn) error) (err
 			}
 		}
 	}()
-	if err = run(conn); err != nil {
+	if err = run(context.WithValue(ctx, openTxKey{}, openTx{store: s, conn: conn}), conn); err != nil {
 		return fmt.Errorf("transaction body: %w", err)
+	}
+	if s.faultHook != nil {
+		s.faultHook()
 	}
 	if _, err = conn.ExecContext(ctx, "COMMIT"); err != nil {
 		return fmt.Errorf("commit: %w", err)
@@ -50,7 +98,7 @@ type Relationship struct {
 
 func (s *Store) Relationship(ctx context.Context, id string) (Relationship, error) {
 	var row Relationship
-	err := s.DB.QueryRowContext(ctx, `SELECT relationship_id, issue_key, status, parent_task_id, child_task_id,
+	err := s.q(ctx).QueryRowContext(ctx, `SELECT relationship_id, issue_key, status, parent_task_id, child_task_id,
  execution_generation, artifact_roots, allowed_recipients, created_at, updated_at
  FROM relationships WHERE relationship_id=?`, id).Scan(&row.ID, &row.IssueKey, &row.Status,
 		&row.ParentTaskID, &row.ChildTaskID, &row.Generation, &row.ArtifactRoots,
@@ -73,7 +121,7 @@ type Generation struct {
 
 func (s *Store) Generation(ctx context.Context, relationshipID string, number int64) (Generation, error) {
 	var row Generation
-	err := s.DB.QueryRowContext(ctx, `SELECT relationship_id, execution_generation, dispatch_request_id,
+	err := s.q(ctx).QueryRowContext(ctx, `SELECT relationship_id, execution_generation, dispatch_request_id,
  anchor_state, dispatch_turn_id, opened_at, bound_at FROM generations
  WHERE relationship_id=? AND execution_generation=?`, relationshipID, number).Scan(
 		&row.RelationshipID, &row.Number, &row.DispatchRequestID, &row.AnchorState,
@@ -95,16 +143,17 @@ type Event struct {
 	TurnID         string
 	TurnStatus     string
 	Receipt        string
+	PathBinding    sql.NullString
 	Stage          string
 }
 
 func (s *Store) Event(ctx context.Context, id string) (Event, error) {
 	var row Event
-	err := s.DB.QueryRowContext(ctx, `SELECT event_id, relationship_id, execution_generation, revision_hash,
- outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage
+	err := s.q(ctx).QueryRowContext(ctx, `SELECT event_id, relationship_id, execution_generation, revision_hash,
+ outcome, producer, turn_thread_id, turn_id, turn_status, receipt, path_binding_mode, stage
  FROM events WHERE event_id=?`, id).Scan(&row.ID, &row.RelationshipID, &row.Generation,
 		&row.RevisionHash, &row.Outcome, &row.Producer, &row.TurnThreadID,
-		&row.TurnID, &row.TurnStatus, &row.Receipt, &row.Stage)
+		&row.TurnID, &row.TurnStatus, &row.Receipt, &row.PathBinding, &row.Stage)
 	if err != nil {
 		return Event{}, fmt.Errorf("event %q: %w", id, err)
 	}
@@ -126,7 +175,7 @@ type Delivery struct {
 
 func (s *Store) Delivery(ctx context.Context, eventID string) (Delivery, error) {
 	var row Delivery
-	err := s.DB.QueryRowContext(ctx, `SELECT event_id, relationship_id, kind, recipient_task_id,
+	err := s.q(ctx).QueryRowContext(ctx, `SELECT event_id, relationship_id, kind, recipient_task_id,
  recipient_thread_id, state, attempt_count, hold_reason, created_at, updated_at
  FROM deliveries WHERE event_id=?`, eventID).Scan(&row.EventID, &row.RelationshipID,
 		&row.Kind, &row.RecipientTaskID, &row.RecipientThreadID, &row.State,
@@ -151,7 +200,7 @@ type Attempt struct {
 
 func (s *Store) Attempt(ctx context.Context, requestID string) (Attempt, error) {
 	var row Attempt
-	err := s.DB.QueryRowContext(ctx, `SELECT request_id, event_id, attempt_no, kind,
+	err := s.q(ctx).QueryRowContext(ctx, `SELECT request_id, event_id, attempt_no, kind,
  internal_state, state, record, sealed, observed_at FROM attempts WHERE request_id=?`, requestID).Scan(
 		&row.RequestID, &row.EventID, &row.Number, &row.Kind, &row.InternalState,
 		&row.State, &row.Record, &row.Sealed, &row.ObservedAt)
@@ -169,7 +218,7 @@ type Challenge struct {
 
 func (s *Store) Challenge(ctx context.Context, nonce string) (Challenge, error) {
 	var row Challenge
-	err := s.DB.QueryRowContext(ctx, `SELECT nonce, written_by, written_at FROM store_challenge
+	err := s.q(ctx).QueryRowContext(ctx, `SELECT nonce, written_by, written_at FROM store_challenge
  WHERE nonce=?`, nonce).Scan(&row.Nonce, &row.WrittenBy, &row.WrittenAt)
 	if err != nil {
 		return Challenge{}, fmt.Errorf("challenge %q: %w", nonce, err)
@@ -178,7 +227,7 @@ func (s *Store) Challenge(ctx context.Context, nonce string) (Challenge, error) 
 }
 
 func (s *Store) WriteChallenge(ctx context.Context, challenge Challenge) error {
-	return s.Transaction(ctx, func(conn *sql.Conn) error {
+	return s.Transaction(ctx, func(ctx context.Context, conn *sql.Conn) error {
 		_, err := conn.ExecContext(ctx, `INSERT INTO store_challenge (nonce, written_by, written_at)
    VALUES (?,?,?)`, challenge.Nonce, challenge.WrittenBy, challenge.WrittenAt)
 		return err
@@ -194,7 +243,7 @@ type JournalEntry struct {
 }
 
 func (s *Store) Journal(ctx context.Context, kind, subject string) ([]JournalEntry, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT seq, at, kind, subject, detail FROM journal
+	rows, err := s.q(ctx).QueryContext(ctx, `SELECT seq, at, kind, subject, detail FROM journal
  WHERE kind=? AND subject=? ORDER BY seq`, kind, subject)
 	if err != nil {
 		return nil, fmt.Errorf("journal query: %w", err)
@@ -215,7 +264,7 @@ func (s *Store) Journal(ctx context.Context, kind, subject string) ([]JournalEnt
 }
 
 func (s *Store) AppendJournal(ctx context.Context, entry JournalEntry) error {
-	return s.Transaction(ctx, func(conn *sql.Conn) error {
+	return s.Transaction(ctx, func(ctx context.Context, conn *sql.Conn) error {
 		_, err := conn.ExecContext(ctx, `INSERT INTO journal (at, kind, subject, detail)
    VALUES (?,?,?,?)`, entry.At, entry.Kind, entry.Subject, entry.Detail)
 		return err

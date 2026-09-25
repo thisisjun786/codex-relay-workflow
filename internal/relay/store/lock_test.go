@@ -99,11 +99,9 @@ func TestLock_python_write_is_busy_when_go_holds_immediate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		t.Fatal(err)
 	}
-	defer conn.ExecContext(ctx, "ROLLBACK")
 	// When: Python attempts a competing write.
 	cmd := exec.Command("python3", "-c", pythonWriter, path)
 	cmd.Env = isolatedEnv(t)
@@ -113,6 +111,9 @@ func TestLock_python_write_is_busy_when_go_holds_immediate(t *testing.T) {
 		t.Fatalf("Python should see SQLITE_BUSY: %v: %s", err, output)
 	}
 	if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Close(); err != nil {
 		t.Fatal(err)
 	}
 	var integrity string

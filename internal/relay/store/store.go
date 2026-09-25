@@ -30,6 +30,10 @@ type Store struct {
 	DB                *sql.DB
 	Path              string
 	UnenforcedIndexes []string
+
+	// faultHook runs inside every opened transaction after its body and before COMMIT
+	// (store.py fault_hook). Tests use it to die at that point; nil in production.
+	faultHook func()
 }
 
 // The frozen contract contains DDL, then guard indexes, then illustrative seed SQL.
@@ -46,36 +50,9 @@ func Open(ctx context.Context, path, socketPath string) (*Store, error) {
 // Open creates a new database, or opens an existing one without changing its schema.
 // The connection hook runs for every connection, not just the first one.
 func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ *Store, err error) {
-	live := filepath.Join(homeDir(), ".local", "state", "codex-session-relay")
-	if state := os.Getenv("XDG_STATE_HOME"); state != "" {
-		live = filepath.Join(state, "codex-session-relay")
-	}
-	absolute := path
-	if !filepath.IsAbs(path) {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return nil, fmt.Errorf("absolute database path: %w", err)
-		}
-		absolute = cwd + "/" + path
-	}
-	live, err = filepath.Abs(live)
+	resolved, err := refuseLiveState(path)
 	if err != nil {
-		return nil, fmt.Errorf("absolute live state: %w", err)
-	}
-	live, err = resolvePath(live)
-	if err != nil {
-		return nil, fmt.Errorf("resolve live state: %w", err)
-	}
-	resolved, err := resolvePath(absolute)
-	if err != nil {
-		return nil, fmt.Errorf("resolve database: %w", err)
-	}
-	relative, err := filepath.Rel(live, resolved)
-	if err != nil {
-		return nil, fmt.Errorf("relative live state: %w", err)
-	}
-	if os.Getenv("CRW_ALLOW_LIVE_STATE") != "1" && relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
-		return nil, ErrLiveState
+		return nil, err
 	}
 	if err := os.MkdirAll(filepath.Dir(resolved), 0700); err != nil {
 		return nil, fmt.Errorf("create state directory: %w", err)
@@ -110,7 +87,7 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
-	db.SetMaxOpenConns(8)
+	db.SetMaxOpenConns(1)
 	defer func() {
 		if err != nil {
 			_ = db.Close()
@@ -169,6 +146,49 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	return result, nil
 }
 
+// refuseLiveState resolves path and refuses it when it lies under a live relay state directory:
+// ~/.local/state/codex-session-relay and $XDG_STATE_HOME/codex-session-relay are both live,
+// whichever of them the environment currently selects, unless CRW_ALLOW_LIVE_STATE=1.
+func refuseLiveState(path string) (string, error) {
+	absolute := path
+	if !filepath.IsAbs(path) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("absolute database path: %w", err)
+		}
+		absolute = cwd + "/" + path
+	}
+	resolved, err := resolvePath(absolute)
+	if err != nil {
+		return "", fmt.Errorf("resolve database: %w", err)
+	}
+	if os.Getenv("CRW_ALLOW_LIVE_STATE") == "1" {
+		return resolved, nil
+	}
+	lives := []string{filepath.Join(homeDir(), ".local", "state", "codex-session-relay")}
+	if state := os.Getenv("XDG_STATE_HOME"); state != "" {
+		lives = append(lives, filepath.Join(state, "codex-session-relay"))
+	}
+	for _, live := range lives {
+		live, err := filepath.Abs(live)
+		if err != nil {
+			return "", fmt.Errorf("absolute live state: %w", err)
+		}
+		live, err = resolvePath(live)
+		if err != nil {
+			return "", fmt.Errorf("resolve live state: %w", err)
+		}
+		relative, err := filepath.Rel(live, resolved)
+		if err != nil {
+			return "", fmt.Errorf("relative live state: %w", err)
+		}
+		if relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+			return "", ErrLiveState
+		}
+	}
+	return resolved, nil
+}
+
 func randomBytes(size int) ([]byte, error) {
 	b := make([]byte, size)
 	if _, err := rand.Read(b); err != nil {
@@ -204,17 +224,17 @@ func (s *Store) Locate(ctx context.Context) (Location, error) {
 			result.RealPath = real
 		}
 	}
-	if err := s.DB.QueryRowContext(ctx, "SELECT value FROM schema_meta WHERE key='store_id'").Scan(&result.StoreID); err != nil {
+	if err := s.q(ctx).QueryRowContext(ctx, "SELECT value FROM schema_meta WHERE key='store_id'").Scan(&result.StoreID); err != nil {
 		return result, fmt.Errorf("store_id: %w", err)
 	}
-	if err := s.DB.QueryRowContext(ctx, "SELECT value FROM schema_meta WHERE key='store_created_at'").Scan(&result.CreatedAt); err != nil {
+	if err := s.q(ctx).QueryRowContext(ctx, "SELECT value FROM schema_meta WHERE key='store_created_at'").Scan(&result.CreatedAt); err != nil {
 		return result, fmt.Errorf("created_at: %w", err)
 	}
-	if err := s.DB.QueryRowContext(ctx, "SELECT value FROM schema_meta WHERE key='version'").Scan(&result.SchemaVersion); err != nil {
+	if err := s.q(ctx).QueryRowContext(ctx, "SELECT value FROM schema_meta WHERE key='version'").Scan(&result.SchemaVersion); err != nil {
 		return result, fmt.Errorf("version: %w", err)
 	}
 	var opened string
-	if err := s.DB.QueryRowContext(ctx, "PRAGMA database_list").Scan(new(int), new(string), &opened); err != nil {
+	if err := s.q(ctx).QueryRowContext(ctx, "PRAGMA database_list").Scan(new(int), new(string), &opened); err != nil {
 		return result, fmt.Errorf("database_list: %w", err)
 	}
 	if err == nil {

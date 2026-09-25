@@ -14,7 +14,7 @@ type VerificationClaim struct {
 
 func (s *Store) VerificationClaim(ctx context.Context, eventID string) (VerificationClaim, error) {
 	var r VerificationClaim
-	err := s.DB.QueryRowContext(ctx, `SELECT event_id,claim_turn_id,claimed_at FROM verification_claims WHERE event_id=?`, eventID).Scan(&r.EventID, &r.TurnID, &r.ClaimedAt)
+	err := s.q(ctx).QueryRowContext(ctx, `SELECT event_id,claim_turn_id,claimed_at FROM verification_claims WHERE event_id=?`, eventID).Scan(&r.EventID, &r.TurnID, &r.ClaimedAt)
 	if err != nil {
 		return VerificationClaim{}, fmt.Errorf("verification claim %q: %w", eventID, err)
 	}
@@ -32,7 +32,7 @@ type Refusal struct {
 }
 
 func (s *Store) Refusals(ctx context.Context, relationshipID string) ([]Refusal, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,at,relationship_id,event_id,reason,detail,payload FROM refusals WHERE relationship_id=? ORDER BY id`, relationshipID)
+	rows, err := s.q(ctx).QueryContext(ctx, `SELECT id,at,relationship_id,event_id,reason,detail,payload FROM refusals WHERE relationship_id=? ORDER BY id`, relationshipID)
 	if err != nil {
 		return nil, fmt.Errorf("refusals %q: %w", relationshipID, err)
 	}
@@ -65,7 +65,7 @@ type WorkReport struct {
 
 func (s *Store) WorkReport(ctx context.Context, eventID string, submission int64) (WorkReport, error) {
 	var r WorkReport
-	err := s.DB.QueryRowContext(ctx, `SELECT event_id,submission_no,relationship_id,execution_generation,revision_hash,repository,summary,next_action,recorded_at FROM work_reports WHERE event_id=? AND submission_no=?`, eventID, submission).Scan(&r.EventID, &r.Submission, &r.RelationshipID, &r.Generation, &r.RevisionHash, &r.Repository, &r.Summary, &r.NextAction, &r.RecordedAt)
+	err := s.q(ctx).QueryRowContext(ctx, `SELECT event_id,submission_no,relationship_id,execution_generation,revision_hash,repository,summary,next_action,recorded_at FROM work_reports WHERE event_id=? AND submission_no=?`, eventID, submission).Scan(&r.EventID, &r.Submission, &r.RelationshipID, &r.Generation, &r.RevisionHash, &r.Repository, &r.Summary, &r.NextAction, &r.RecordedAt)
 	if err != nil {
 		return WorkReport{}, fmt.Errorf("work report %q/%d: %w", eventID, submission, err)
 	}
@@ -85,7 +85,7 @@ type WorkReportHandoff struct {
 
 func (s *Store) WorkReportHandoff(ctx context.Context, eventID string, submission int64) (WorkReportHandoff, error) {
 	var r WorkReportHandoff
-	err := s.DB.QueryRowContext(ctx, `SELECT event_id,submission_no,is_draft,required_declared,checks,review_coverage,thread_dispositions,recorded_at FROM work_report_handoffs WHERE event_id=? AND submission_no=?`, eventID, submission).Scan(&r.EventID, &r.Submission, &r.IsDraft, &r.RequiredDeclared, &r.Checks, &r.ReviewCoverage, &r.ThreadDispositions, &r.RecordedAt)
+	err := s.q(ctx).QueryRowContext(ctx, `SELECT event_id,submission_no,is_draft,required_declared,checks,review_coverage,thread_dispositions,recorded_at FROM work_report_handoffs WHERE event_id=? AND submission_no=?`, eventID, submission).Scan(&r.EventID, &r.Submission, &r.IsDraft, &r.RequiredDeclared, &r.Checks, &r.ReviewCoverage, &r.ThreadDispositions, &r.RecordedAt)
 	if err != nil {
 		return WorkReportHandoff{}, fmt.Errorf("work report handoff %q/%d: %w", eventID, submission, err)
 	}
@@ -101,7 +101,7 @@ type AttemptReportSubmission struct {
 
 func (s *Store) AttemptReportSubmission(ctx context.Context, requestID string) (AttemptReportSubmission, error) {
 	var r AttemptReportSubmission
-	err := s.DB.QueryRowContext(ctx, `SELECT request_id,event_id,submission_no,frozen_at FROM attempt_report_submissions WHERE request_id=?`, requestID).Scan(&r.RequestID, &r.EventID, &r.Submission, &r.FrozenAt)
+	err := s.q(ctx).QueryRowContext(ctx, `SELECT request_id,event_id,submission_no,frozen_at FROM attempt_report_submissions WHERE request_id=?`, requestID).Scan(&r.RequestID, &r.EventID, &r.Submission, &r.FrozenAt)
 	if err != nil {
 		return AttemptReportSubmission{}, fmt.Errorf("attempt report submission %q: %w", requestID, err)
 	}
@@ -119,7 +119,7 @@ type FailedOperation struct {
 
 func (s *Store) FailedOperation(ctx context.Context, scopeKey, operation string) (FailedOperation, error) {
 	var r FailedOperation
-	err := s.DB.QueryRowContext(ctx, `SELECT scope_key,operation,relationship_id,detail,error_code,occurred_at FROM failed_operations WHERE scope_key=? AND operation=?`, scopeKey, operation).Scan(&r.ScopeKey, &r.Operation, &r.RelationshipID, &r.Detail, &r.ErrorCode, &r.OccurredAt)
+	err := s.q(ctx).QueryRowContext(ctx, `SELECT scope_key,operation,relationship_id,detail,error_code,occurred_at FROM failed_operations WHERE scope_key=? AND operation=?`, scopeKey, operation).Scan(&r.ScopeKey, &r.Operation, &r.RelationshipID, &r.Detail, &r.ErrorCode, &r.OccurredAt)
 	if err != nil {
 		return FailedOperation{}, fmt.Errorf("failed operation %q/%q: %w", scopeKey, operation, err)
 	}
@@ -136,7 +136,7 @@ type ReconcileGate struct {
 
 func (s *Store) ReconcileGate(ctx context.Context, requestID string) (ReconcileGate, error) {
 	var r ReconcileGate
-	err := s.DB.QueryRowContext(ctx, `SELECT request_id,fingerprint,retry_required,last_error,updated_at FROM reconcile_gate WHERE request_id=?`, requestID).Scan(&r.RequestID, &r.Fingerprint, &r.RetryRequired, &r.LastError, &r.UpdatedAt)
+	err := s.q(ctx).QueryRowContext(ctx, `SELECT request_id,fingerprint,retry_required,last_error,updated_at FROM reconcile_gate WHERE request_id=?`, requestID).Scan(&r.RequestID, &r.Fingerprint, &r.RetryRequired, &r.LastError, &r.UpdatedAt)
 	if err != nil {
 		return ReconcileGate{}, fmt.Errorf("reconcile gate %q: %w", requestID, err)
 	}
@@ -154,7 +154,7 @@ type DiscoveryCursor struct {
 
 func (s *Store) DiscoveryCursor(ctx context.Context, taskID, listing string) (DiscoveryCursor, error) {
 	var r DiscoveryCursor
-	err := s.DB.QueryRowContext(ctx, `SELECT task_id,listing,cursor,exhausted,scanned,updated_at FROM discovery_cursors WHERE task_id=? AND listing=?`, taskID, listing).Scan(&r.TaskID, &r.Listing, &r.Cursor, &r.Exhausted, &r.Scanned, &r.UpdatedAt)
+	err := s.q(ctx).QueryRowContext(ctx, `SELECT task_id,listing,cursor,exhausted,scanned,updated_at FROM discovery_cursors WHERE task_id=? AND listing=?`, taskID, listing).Scan(&r.TaskID, &r.Listing, &r.Cursor, &r.Exhausted, &r.Scanned, &r.UpdatedAt)
 	if err != nil {
 		return DiscoveryCursor{}, fmt.Errorf("discovery cursor %q/%q: %w", taskID, listing, err)
 	}

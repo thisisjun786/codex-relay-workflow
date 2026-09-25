@@ -68,7 +68,7 @@ func TestTransaction_refuses_immediate_foreign_key_violation(t *testing.T) {
 		t.Fatal(err)
 	}
 	// When: writing a child without a parent in the transaction.
-	err := store.Transaction(ctx, func(conn *sql.Conn) error {
+	err := store.Transaction(ctx, func(ctx context.Context, conn *sql.Conn) error {
 		_, err := conn.ExecContext(ctx, `INSERT INTO immediate_guard (id,parent) VALUES (1,2)`)
 		return err
 	})

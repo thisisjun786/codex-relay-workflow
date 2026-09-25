@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -33,30 +34,23 @@ func recordStore(t *testing.T) *Store {
 	return store
 }
 
-func TestTransaction_rolls_back_when_process_dies_before_commit(t *testing.T) {
-	// Given: a child process that signals immediately after its write inside BEGIN IMMEDIATE.
+// dieInsideTransaction re-runs the named test as a child process that opens store.Path, runs
+// write through Store.Transaction, and blocks in the fault hook after the body and before
+// COMMIT. The parent kills it there, so what survives is what a crash mid-transaction leaves.
+func dieInsideTransaction(t *testing.T, store *Store, write func(context.Context, *Store) error) {
+	t.Helper()
 	if path := os.Getenv("CRW_CRASH_DB"); path != "" {
-		db, err := sql.Open("sqlite", "file:"+path+"?mode=rw")
+		child, err := Open(context.Background(), path, "")
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer db.Close()
-		conn, err := db.Conn(context.Background())
-		if err != nil {
-			t.Fatal(err)
+		child.faultHook = func() {
+			fmt.Println("written")
+			_, _ = io.Copy(io.Discard, os.Stdin)
 		}
-		defer conn.Close()
-		if _, err := conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := conn.ExecContext(context.Background(), `INSERT INTO journal (at,kind,subject,detail) VALUES ('t','crash','s','d')`); err != nil {
-			t.Fatal(err)
-		}
-		fmt.Println("written")
-		_, _ = io.Copy(io.Discard, os.Stdin)
+		t.Fatalf("the transaction reached COMMIT: %v", write(context.Background(), child))
 	}
-	store := recordStore(t)
-	cmd := exec.Command(os.Args[0], "-test.run=^TestTransaction_rolls_back_when_process_dies_before_commit$")
+	cmd := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$")
 	cmd.Env = append(os.Environ(), "CRW_CRASH_DB="+store.Path)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -76,15 +70,23 @@ func TestTransaction_rolls_back_when_process_dies_before_commit(t *testing.T) {
 			_ = cmd.Wait()
 		}
 	})
-	// When: the parent receives the write signal and kills the process before COMMIT.
 	line := bufio.NewScanner(out)
 	if !line.Scan() || line.Text() != "written" {
-		t.Fatalf("child did not write: %q: %v", line.Text(), line.Err())
+		t.Fatalf("child did not reach the fault hook: %q: %v", line.Text(), line.Err())
 	}
 	if err := cmd.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
 	_ = cmd.Wait() // a killed process exits unsuccessfully by design.
+}
+
+func TestTransaction_rolls_back_when_process_dies_before_commit(t *testing.T) {
+	// Given: a fresh durable store.
+	store := recordStore(t)
+	// When: a process dies inside Store.Transaction after its write and before COMMIT.
+	dieInsideTransaction(t, store, func(ctx context.Context, s *Store) error {
+		return s.AppendJournal(ctx, JournalEntry{At: "t", Kind: "crash", Subject: "s", Detail: "d"})
+	})
 	// Then: a distinct connection finds no durable row.
 	entries, err := store.Journal(context.Background(), "crash", "s")
 	if err != nil || len(entries) != 0 {
@@ -98,7 +100,7 @@ func TestTransaction_rolls_back_when_body_fails(t *testing.T) {
 	ctx := context.Background()
 	failure := errors.New("interrupted")
 	// When: a process reports failure after writing but before commit.
-	err := store.Transaction(ctx, func(conn *sql.Conn) error {
+	err := store.Transaction(ctx, func(ctx context.Context, conn *sql.Conn) error {
 		if _, err := conn.ExecContext(ctx, `INSERT INTO journal (at,kind,subject,detail) VALUES ('t','k','s','d')`); err != nil {
 			return err
 		}
@@ -114,16 +116,25 @@ func TestTransaction_rolls_back_when_body_fails(t *testing.T) {
 	}
 }
 
+// test_a_failing_commit_leaves_the_store_usable: COMMIT itself is refused (a deferred
+// foreign key is checked only there), and the store must stay usable afterwards.
 func TestTransaction_rolls_back_when_commit_fails(t *testing.T) {
+	t.Run("test_a_failing_commit_leaves_the_store_usable", testFailingCommitLeavesTheStoreUsable)
+}
+
+func testFailingCommitLeavesTheStoreUsable(t *testing.T) {
 	// Given: a deferred foreign-key constraint checked only at COMMIT.
 	store := recordStore(t)
 	ctx := context.Background()
-	_, err := store.DB.ExecContext(ctx, `CREATE TABLE commit_guard (id INTEGER PRIMARY KEY, parent INTEGER REFERENCES missing_parent(id) DEFERRABLE INITIALLY DEFERRED)`)
+	_, err := store.DB.ExecContext(ctx, `CREATE TABLE commit_parent (id INTEGER PRIMARY KEY); CREATE TABLE commit_guard (id INTEGER PRIMARY KEY, parent INTEGER REFERENCES commit_parent(id) DEFERRABLE INITIALLY DEFERRED)`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// When: committing a row violating the deferred constraint.
-	err = store.Transaction(ctx, func(conn *sql.Conn) error {
+	err = store.Transaction(ctx, func(ctx context.Context, conn *sql.Conn) error {
+		if _, err := conn.ExecContext(ctx, `INSERT INTO journal (at,kind,subject,detail) VALUES ('t','k','s','d')`); err != nil {
+			return err
+		}
 		_, err := conn.ExecContext(ctx, `INSERT INTO commit_guard (id, parent) VALUES (1, 1)`)
 		return err
 	})
@@ -135,8 +146,27 @@ func TestTransaction_rolls_back_when_commit_fails(t *testing.T) {
 	if err := store.DB.QueryRowContext(ctx, `SELECT count(*) FROM commit_guard`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("partial committed row: %d: %v", count, err)
 	}
-	if err := store.AppendJournal(ctx, JournalEntry{At: "t", Kind: "k", Subject: "s", Detail: "d"}); err != nil {
+	if !strings.Contains(err.Error(), "commit") {
+		t.Fatalf("the failure was not the COMMIT: %v", err)
+	}
+	if err := store.AppendJournal(ctx, JournalEntry{At: "t", Kind: "k2", Subject: "s", Detail: "d"}); err != nil {
 		t.Fatalf("transaction remains locked: %v", err)
+	}
+	var kinds []string
+	rows, err := store.DB.QueryContext(ctx, `SELECT kind FROM journal`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind string
+		if err := rows.Scan(&kind); err != nil {
+			t.Fatal(err)
+		}
+		kinds = append(kinds, kind)
+	}
+	if err := rows.Err(); err != nil || len(kinds) != 1 || kinds[0] != "k2" {
+		t.Fatalf("journal %v: %v", kinds, err)
 	}
 }
 

@@ -59,7 +59,7 @@ Class C: files=20 tests=2143
 | `packages/codex-session-relay/tests/test_ack_reconcile.py` | 40 | B | ACK, verdicts, reconciliation and restart recovery | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
 | `packages/codex-session-relay/tests/test_anchor_binding.py` | 14 | B | an anchor binds on every route to dispatched | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
 | `packages/codex-session-relay/tests/test_assignment.py` | 58 | B | assignment ledger: one issue, one responsible child | - | todo 25 / CRW-154 | go-test: `internal/relay/registry` (todo 25) | - |
-| `packages/codex-session-relay/tests/test_attempt_message_atomicity.py` | 13 | B | a send carries the message its attempt froze | - | todo 18 / CRW-152 | go-test: `internal/relay/store` (todo 18) | - |
+| `packages/codex-session-relay/tests/test_attempt_message_atomicity.py` | 13 | B | a send carries the message its attempt froze | - | todo 18 / CRW-152 | go-test: `internal/relay/store` (todo 18); DeliveryService pre-claim seam, reconciliation and cmd_show preview halves of 6 cases -> todo 21 `internal/relay/delivery` | - |
 | `packages/codex-session-relay/tests/test_bridge_adapter.py` | 75 | B | bridge adapter logic over an injected RPC surface | `codex_session_relay.fakehost` | todo 28 / CRW-154 | go-test: bridge adapter package (todo 28) | - |
 | `packages/codex-session-relay/tests/test_bridge_load_roots.py` | 12 | B | a parent loaded by another task's bridge is still reached (CRW-235) | - | todo 28 / CRW-154 | go-test: bridge adapter package (todo 28) | - |
 | `packages/codex-session-relay/tests/test_capacity.py` | 30 | B | capacity counting and refusal to infer | - | todo 27 / CRW-154 | go-test: capacity package (todo 27) | - |

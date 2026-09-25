@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -71,38 +73,50 @@ func TestOpen_preserves_python_database_when_reopened(t *testing.T) {
 	}
 }
 func TestOpen_enforces_foreign_keys_on_every_connection(t *testing.T) {
-	// Given: a store with an eight-connection pool.
+	// Given: a store whose pool holds one connection (decisions.md section 4), and that
+	// connection discarded so the pool must dial a fresh one each round.
 	ctx := context.Background()
 	store, err := Open(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	// When: all eight connections are held concurrently.
-	conns := make([]*sql.Conn, 8)
-	for i := range conns {
-		conns[i], err = store.DB.Conn(ctx)
+	if max := store.DB.Stats().MaxOpenConnections; max != 1 {
+		t.Fatalf("max open connections %d", max)
+	}
+	for round := range 3 {
+		// When: a connection is taken; the previous one was closed out of the pool.
+		conn, err := store.DB.Conn(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer conns[i].Close()
-	}
-	// Then: each independently enforces foreign keys and synchronous durability.
-	for i, conn := range conns {
+		// Then: every new connection enforces foreign keys and synchronous durability.
 		var foreign, sync, busy int
 		var journal string
 		if err := conn.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&journal); err != nil || journal != "wal" {
-			t.Fatalf("connection %d: journal_mode=%s: %v", i, journal, err)
+			t.Fatalf("connection %d: journal_mode=%s: %v", round, journal, err)
 		}
 		if err := conn.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&foreign); err != nil || foreign != 1 {
-			t.Fatalf("connection %d: foreign_keys=%d: %v", i, foreign, err)
+			t.Fatalf("connection %d: foreign_keys=%d: %v", round, foreign, err)
 		}
 		if err := conn.QueryRowContext(ctx, "PRAGMA synchronous").Scan(&sync); err != nil || sync != 2 {
-			t.Fatalf("connection %d: synchronous=%d: %v", i, sync, err)
+			t.Fatalf("connection %d: synchronous=%d: %v", round, sync, err)
 		}
 		if err := conn.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&busy); err != nil || busy != 30000 {
-			t.Fatalf("connection %d: busy_timeout=%d: %v", i, busy, err)
+			t.Fatalf("connection %d: busy_timeout=%d: %v", round, busy, err)
 		}
+		// Undo the pragma on this connection, then discard it, so the next round can pass only
+		// if the connection hook ran again on a new connection.
+		if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
+			t.Fatal(err)
+		}
+		// Raw returning ErrBadConn removes the connection from the pool and closes it.
+		if err := conn.Raw(func(any) error { return driver.ErrBadConn }); !errors.Is(err, driver.ErrBadConn) {
+			t.Fatalf("discard connection: %v", err)
+		}
+	}
+	if opened := store.DB.Stats().OpenConnections; opened > 1 {
+		t.Fatalf("open connections %d", opened)
 	}
 }
 func TestDiscoverStateDir_adopts_legacy_noncanonical_sibling(t *testing.T) {
@@ -175,4 +189,35 @@ func repositoryRoot(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return strings.TrimSuffix(wd, "/internal/relay/store")
+}
+
+func TestOpen_refuses_both_live_state_locations_when_xdg_state_home_is_set(t *testing.T) {
+	for _, location := range []struct {
+		name string
+		path func(home, xdg string) string
+	}{
+		{"xdg", func(_, xdg string) string { return filepath.Join(xdg, "codex-session-relay", "s", "relay.sqlite3") }},
+		{"home", func(home, _ string) string {
+			return filepath.Join(home, ".local", "state", "codex-session-relay", "s", "relay.sqlite3")
+		}},
+	} {
+		t.Run(location.name, func(t *testing.T) {
+			// Given: HOME and a different XDG_STATE_HOME, both under a temporary root.
+			root := t.TempDir()
+			home, xdg := filepath.Join(root, "home"), filepath.Join(root, "xdg")
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_STATE_HOME", xdg)
+			t.Setenv("CRW_ALLOW_LIVE_STATE", "")
+			path := location.path(home, xdg)
+			// When: a store is opened at that live-state location.
+			_, err := Open(context.Background(), path, "")
+			// Then: it is refused before the database exists.
+			if !errors.Is(err, ErrLiveState) {
+				t.Fatalf("got %v", err)
+			}
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatalf("database created: %v", err)
+			}
+		})
+	}
 }

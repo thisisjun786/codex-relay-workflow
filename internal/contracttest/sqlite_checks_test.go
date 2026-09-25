@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"os"
 	"os/exec"
@@ -79,24 +80,32 @@ func checkSQLiteContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer s.Close()
-		conns := make([]*sql.Conn, 8)
-		for i := range conns {
-			conns[i], err = s.DB.Conn(context.Background())
+		// The relay store has one connection (decisions.md section 4); each round discards it,
+		// so every round's PRAGMAs come from the connection hook on a freshly dialled connection.
+		if max := s.DB.Stats().MaxOpenConnections; max != 1 {
+			t.Fatalf("max open connections %d", max)
+		}
+		for round := range 3 {
+			conn, err := s.DB.Conn(context.Background())
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer conns[i].Close()
-		}
-		for _, conn := range conns {
 			for query, want := range map[string]int{"PRAGMA foreign_keys": 1, "PRAGMA synchronous": 2, "PRAGMA busy_timeout": 30000} {
 				var got int
 				if err := conn.QueryRowContext(context.Background(), query).Scan(&got); err != nil || got != want {
-					t.Fatalf("%s=%d want %d: %v", query, got, want, err)
+					t.Fatalf("connection %d: %s=%d want %d: %v", round, query, got, want, err)
 				}
 			}
 			var journal string
 			if err := conn.QueryRowContext(context.Background(), "PRAGMA journal_mode").Scan(&journal); err != nil || journal != "wal" {
-				t.Fatalf("journal=%q: %v", journal, err)
+				t.Fatalf("connection %d: journal=%q: %v", round, journal, err)
+			}
+			if _, err := conn.ExecContext(context.Background(), "PRAGMA foreign_keys=OFF"); err != nil {
+				t.Fatal(err)
+			}
+			// Raw returning ErrBadConn removes the connection from the pool and closes it.
+			if err := conn.Raw(func(any) error { return driver.ErrBadConn }); !errors.Is(err, driver.ErrBadConn) {
+				t.Fatalf("discard connection: %v", err)
 			}
 		}
 	})
@@ -155,11 +164,9 @@ func checkSQLiteContract(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer conn.Close()
 		if _, err := conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
 			t.Fatal(err)
 		}
-		defer conn.ExecContext(context.Background(), "ROLLBACK")
 		writer := exec.Command("python3", "-c", "import sqlite3,sys; c=sqlite3.connect(sys.argv[1],timeout=0.2,isolation_level=None); c.execute('BEGIN IMMEDIATE'); c.execute(\"INSERT INTO schema_meta VALUES ('lock_probe','value')\"); c.execute('COMMIT')", path)
 		writer.Env = sqliteEnv(t)
 		output, err := writer.CombinedOutput()
@@ -167,6 +174,10 @@ func checkSQLiteContract(t *testing.T) {
 			t.Fatalf("Python should see SQLITE_BUSY: %v: %s", err, output)
 		}
 		if _, err := conn.ExecContext(context.Background(), "ROLLBACK"); err != nil {
+			t.Fatal(err)
+		}
+		// The store has one connection: release it before asking the store anything else.
+		if err := conn.Close(); err != nil {
 			t.Fatal(err)
 		}
 		var integrity string

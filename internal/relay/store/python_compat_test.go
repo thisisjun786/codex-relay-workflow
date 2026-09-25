@@ -12,11 +12,17 @@ import (
 
 func pythonStoreValue(t *testing.T, script string, args ...string) string {
 	t.Helper()
+	return pythonStoreValueIn(t, repositoryRoot(t), script, args...)
+}
+
+// pythonStoreValueIn runs the repository's Python from dir, so package-local test support imports.
+func pythonStoreValueIn(t *testing.T, dir, script string, args ...string) string {
+	t.Helper()
 	cmd := exec.Command("uv", append([]string{"run", "--no-sync", "python", "-c", script}, args...)...)
-	cmd.Dir = repositoryRoot(t)
-	cmd.Env = append(isolatedEnv(t), "PYTHONPATH="+filepath.Join(repositoryRoot(t), "packages/codex-session-relay/src"))
-	// Preserve the caller's isolated HOME and XDG state for the Python comparison.
-	for _, key := range []string{"HOME", "XDG_STATE_HOME", "CODEX_SESSION_RELAY_STATE"} {
+	cmd.Dir = dir
+	cmd.Env = append(isolatedEnv(t), "PYTHONPATH="+filepath.Join(repositoryRoot(t), "packages/codex-session-relay/src")+":"+dir)
+	// Preserve the caller's isolated HOME, XDG state and temporary root for the Python comparison.
+	for _, key := range []string{"HOME", "XDG_STATE_HOME", "CODEX_SESSION_RELAY_STATE", "TMPDIR"} {
 		if value, ok := os.LookupEnv(key); ok {
 			cmd.Env = append(cmd.Env, key+"="+value)
 		}
