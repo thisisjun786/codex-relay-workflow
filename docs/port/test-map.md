@@ -134,7 +134,7 @@ Class C: files=20 tests=2140
 | `packages/codex-session-relay/tests/test_settings_hold_naming.py` | 31 | B | settings hold names reason and recovery (CRW-235) | - | todo 25 / CRW-154 | go-test: `internal/relay/registry` (todo 25) | - |
 | `packages/codex-session-relay/tests/test_settings_preservation.py` | 36 | B | execution settings carried; refuse to send without them | - | todo 25 / CRW-154 | go-test: `internal/relay/registry` (todo 25) | - |
 | `packages/codex-session-relay/tests/test_stop_adapter.py` | 17 | A | Stop adapter process: stdin, settings, exit, concurrency | `packages/codex-session-relay/tests/fixtures/stop_event_r1.json` | todo 33 / CRW-156 | corpus: hook | - |
-| `packages/codex-session-relay/tests/test_store.py` | 65 | B | durable store: a failed transition is never a success | - | todo 17 / CRW-152 | go-test: `internal/relay/store` (todo 17) | - |
+| `packages/codex-session-relay/tests/test_store.py` | 65 | B | durable store: a failed transition is never a success | - | todo 18 / CRW-152 | go-test: `internal/relay/store` (todo 18) | - |
 | `packages/codex-session-relay/tests/test_store_reception.py` | 74 | B | packet-check --receiver against a real store | - | todo 23 / CRW-153 | go-test: `internal/relay/reception` (todo 23) | - |
 | `packages/codex-session-relay/tests/test_supersession.py` | 22 | B | stale event stopped before the send | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
 | `packages/codex-session-relay/tests/test_supervisor_autosend.py` | 22 | B | daemon tick stages and sends what the supervisor is owed | - | todo 24 / CRW-153 | go-test: `internal/relay/supervisor` (todo 24) | - |

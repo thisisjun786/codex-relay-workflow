@@ -19,6 +19,9 @@ import (
 // <case>/state <argv>` as a real process under an isolated HOME/XDG/CODEX_HOME.
 func runCLI(t *testing.T, scenario Scenario) (map[string]any, error) {
 	t.Helper()
+	if scenario.Domain == "sqlite-ddl" {
+		return runSQLite(t, scenario)
+	}
 	// given.sql_seed goes through the real relay Store and given.host through the relay's
 	// App Server socket; neither exists in Go yet.
 	for _, key := range []string{"sql_seed", "host"} {

@@ -34,7 +34,7 @@ var runners = map[RunKind]Runner{
 // ported lists the domains whose Go implementation is registered. A domain joins this set in
 // the todo that ports it (for example cli-shape once the relay commands its fixtures call are
 // registered in internal/relay/cli); until then every scenario in it is skipped and counted.
-var ported = map[string]bool{}
+var ported = map[string]bool{"sqlite-ddl": true}
 
 // crwBinary is the crw under test: CRW_TEST_BINARY, or ./cmd/crw built once per package run
 // into buildDir, which TestMain creates and removes.

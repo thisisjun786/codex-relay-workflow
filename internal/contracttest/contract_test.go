@@ -57,6 +57,9 @@ func TestDomain(t *testing.T) {
 		}
 		skips := 0
 		t.Run(domain, func(t *testing.T) {
+			if domain == "sqlite-ddl" {
+				checkSQLiteContract(t)
+			}
 			if !ported[domain] {
 				for _, kind := range kindsOf(scenarios) {
 					t.Run(string(kind), func(t *testing.T) {
