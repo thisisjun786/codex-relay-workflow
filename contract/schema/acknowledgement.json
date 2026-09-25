@@ -1,0 +1,104 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Acknowledgement",
+  "description": "Written by the parent from inside a real parent turn. The only transition that closes dispatched -> acknowledged. An acknowledgement is authored by the recipient; a delivered message quoting these fields is not one.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventId",
+    "relationshipId",
+    "executionGeneration",
+    "revisionHash",
+    "ackTurnId",
+    "accepted",
+    "rejectionReason",
+    "ackAt",
+    "ackProof"
+  ],
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "relationshipId": {
+      "type": "string"
+    },
+    "executionGeneration": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "revisionHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "ackTurnId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The parent's own turn that produced this ack. Must be a turn that started after the delivery attempt, not a pre-existing one."
+    },
+    "accepted": {
+      "type": "boolean",
+      "description": "False when the parent rejects the event as stale, duplicate, or from an unknown generation."
+    },
+    "rejectionReason": {
+      "enum": [
+        "stale_generation",
+        "unknown_generation",
+        "duplicate_event",
+        "relationship_not_active",
+        "revision_mismatch",
+        null
+      ]
+    },
+    "ackAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "ackProof": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "sha256(eventId|ackTurnId), computed by the recipient over its OWN turn id. That turn id is not present in the delivered message, so quoting the request back cannot produce this value. This is what separates an acknowledgement from an echo."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "accepted"
+        ],
+        "properties": {
+          "accepted": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "rejectionReason": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "accepted"
+        ],
+        "properties": {
+          "accepted": {
+            "const": false
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "rejectionReason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  ]
+}

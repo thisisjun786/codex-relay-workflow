@@ -1,0 +1,221 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Relationship",
+  "description": "A registered parent<->child link between two independent Codex tasks. Identity is the pair of actual task ids scoped by issue key; hostId is carried for routing and audit but is deliberately outside the hash because thread ids are already globally unique. Semantic invariant a validator must also enforce, because JSON Schema cannot: executionGeneration must appear in generations[].",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "relationshipId",
+    "parent",
+    "child",
+    "issueKey",
+    "status",
+    "createdAt",
+    "executionGeneration",
+    "generations",
+    "authorizedScope"
+  ],
+  "properties": {
+    "relationshipId": {
+      "type": "string",
+      "pattern": "^rel-[0-9a-f]{16}$",
+      "description": "rel- + first 16 hex of sha256(parentTaskId|childTaskId|issueKey). Deterministic so re-registration after an uncertain response is idempotent."
+    },
+    "parent": {
+      "$ref": "#/definitions/endpoint"
+    },
+    "child": {
+      "$ref": "#/definitions/endpoint"
+    },
+    "issueKey": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "active",
+        "paused",
+        "cancelled",
+        "archived"
+      ],
+      "description": "paused, cancelled and archived are never auto-resumed by the delivery loop."
+    },
+    "executionGeneration": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Pointer to the current entry in generations[]. A receipt naming an older generation is stale; one naming an absent generation is unknown_generation."
+    },
+    "generations": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Every generation ever opened, retained so historical anchors are never overwritten.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "executionGeneration",
+          "dispatchRequestId",
+          "anchorState",
+          "openedAt"
+        ],
+        "properties": {
+          "executionGeneration": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "dispatchRequestId": {
+            "type": "string",
+            "description": "The transport request id that authorized this generation. A replay of the same request id must not open a new generation."
+          },
+          "anchorState": {
+            "enum": [
+              "bound",
+              "anchor_pending"
+            ],
+            "description": "anchor_pending never auto-binds; it stays pending and reportable until an exact dispatch turn id is supplied."
+          },
+          "dispatchTurnId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The exact child turn id from that dispatch receipt, or recovered by re-reading the same operation. Never inferred from whichever child turn appears next after registration."
+          },
+          "openedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "boundAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "reason": {
+            "enum": [
+              "initial_assignment",
+              "needs_changes_revision",
+              null
+            ]
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "anchorState"
+              ],
+              "properties": {
+                "anchorState": {
+                  "const": "bound"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "dispatchTurnId",
+                "boundAt"
+              ],
+              "properties": {
+                "dispatchTurnId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "boundAt": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "anchorState"
+              ],
+              "properties": {
+                "anchorState": {
+                  "const": "anchor_pending"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "dispatchTurnId": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "supersedes": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "authorizedScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifactRoots",
+        "allowedRecipients"
+      ],
+      "description": "The scope this registration authorizes. A delivery naming a recipient outside allowedRecipients, or a manifest path outside artifactRoots, is refused before any transport call. This binds allowed paths and recipients; it is not a general authorization framework.",
+      "properties": {
+        "artifactRoots": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          },
+          "description": "Absolute directory prefixes. Every completion-receipt manifest path must lie under one of these."
+        },
+        "allowedRecipients": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          },
+          "description": "Task ids this relationship may deliver to. Normally just the parent."
+        },
+        "scopeRef": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional pointer to the record that authorized this scope, for audit."
+        }
+      }
+    }
+  },
+  "definitions": {
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "taskId",
+        "hostId"
+      ],
+      "properties": {
+        "taskId": {
+          "type": "string"
+        },
+        "hostId": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}
