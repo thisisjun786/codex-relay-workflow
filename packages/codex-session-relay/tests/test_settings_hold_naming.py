@@ -304,6 +304,28 @@ class APreSendRefusal(SettingsHoldCase):
                 self.adapter.threads[PARENT].archived = False
                 self.clock.advance(1)
 
+    def test_the_refusal_text_is_the_chosen_withholds_own(self):
+        """RED: refusalDetail was read from the settings_check failure row, which the attempt path
+        also writes before it settles; a relay stopped in that window left the pre-send hold
+        naming the in-flight attempt's text (the review of 77c0c641)."""
+        _relationship, event_id = self.queued_event()
+        row = self.delivery_row(event_id)
+        gate = "the gate's own repair for role_binding_mismatch"
+        self.delivery._withhold_settings(
+            event_id, self.clock.now(),
+            DeliveryRefused(RefusalReason.ROLE_BINDING_MISMATCH, gate),
+            attempts=row["attempt_count"], row=row)
+        self.clock.advance(1)
+        # What a send writes before its settlement, left there by a relay that stopped.
+        self.delivery.record_failure(
+            event_id, "settings_check", detail="thread/resume: settings_not_preserved",
+            relationship_id=row["relationship_id"], error_code=NOT_PRESERVED, retry_safe=True)
+        item = self.status_of(event_id)
+        self.assertEqual((item["settingsHold"]["source"], item["settingsHold"]["reason"]),
+                         ("pre_send", RefusalReason.ROLE_BINDING_MISMATCH.value))
+        self.assertEqual(item["recovery"]["refusalDetail"], gate)
+        self.assertEqual(self.recovery().get("refusalDetail"), gate)
+
     def test_a_withhold_that_did_not_take_effect_earns_no_recovery(self):
         """GREEN: its refusal is still counted, and nothing names a hold the row is not in."""
         _relationship, event_id = self.queued_event()
@@ -515,6 +537,19 @@ class RowsRecordedBeforeThisRevision(SettingsHoldCase):
             self.assertIn("generation-open", recovery.get("then") or "")
             self.assertIn("nothing here claims a settings fix", recovery.get("then") or "")
         self.assertEqual(self.next_action(), PARENT_RECOVERS_SETTINGS_HOLD_ACTION)
+
+    def test_a_strictly_later_pause_is_no_settings_hold(self):
+        """RED: a pause writes no failure row, so a settings refusal followed by a pause, both
+        recorded before this revision, still read as an undetermined settings hold (Devin on
+        77c0c641)."""
+        event_id = self.refused()
+        self.clock.advance(5)
+        self.registry.set_status(self._rid, "paused", actor="test")
+        self.attempt(event_id, now=self.delivery_row(event_id)["next_eligible_at"])
+        self.strip_this_revisions_records(event_id)
+        item = self.status_of(event_id)
+        self.assertIsNone(item["settingsHold"])
+        self.assertIsNone(item["recovery"])
 
     def test_a_strictly_later_lifecycle_withhold_is_no_settings_hold(self):
         """GREEN: a later lifecycle withhold recorded before this revision names no settings hold."""

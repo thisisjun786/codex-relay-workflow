@@ -429,7 +429,8 @@ reconciliation) or a pre-send withhold that took effect (`delivery_presend_withh
 came later in the journal. Two limits follow. A state recorded before this revision has neither,
 so its hold is named `undetermined`, with the event's attempts and receipts as the path and no
 claim of a settings fix, and its actor still follows its state: the daemon retries an uncapped
-withhold, and the parent reads what a cap or a closed channel stopped; a strictly later lifecycle withhold still clears it, and a closed channel,
+withhold, and the parent reads what a cap or a closed channel stopped; a strictly later lifecycle
+withhold or pause still clears it, and a closed channel,
 which only a settings refusal produces, is always named `undetermined`. And the reader
 trusts the newest recorded transition, so a pre-send withhold that a still-running older relay
 program writes after a newer program's settlement, which only an upgrade window allows (the

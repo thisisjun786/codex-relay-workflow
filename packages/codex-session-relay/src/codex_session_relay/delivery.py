@@ -1263,7 +1263,10 @@ class DeliveryService:
                 # delivery_withheld row above, whose streak counting (I-373) reads every refusal.
                 self.store.journal(
                     PRESEND_WITHHELD, event_id,
-                    {"reason": reason, "operation": "settings_check"}, at=stamp,
+                    # The refusal's own text travels with the transition, so a reader names the
+                    # repair this refusal gave and never another transition's (CRW-235).
+                    {"reason": reason, "operation": "settings_check",
+                     "detail": refusal.detail}, at=stamp,
                 )
 
     def record_settings_violation(self, request_id: str, event_id: str, findings) -> dict:
@@ -2156,13 +2159,13 @@ SETTINGS_HOLD_COLUMNS = (
     "   ORDER BY shp.seq DESC LIMIT 1) AS sh_presend,"
     " (SELECT shf.occurred_at FROM failed_operations shf WHERE shf.scope_key = {event}"
     "   AND shf.operation = 'settings_check') AS sh_settings_at,"
-    # The pre-send refusal's own text, from the row its withhold wrote in the same transaction
-    # (one per event and operation), so a recovery can carry the repair the refusal names rather
-    # than point at whichever failure row a timestamp puts last (the review of fd2ee727).
-    " (SELECT shd.detail FROM failed_operations shd WHERE shd.scope_key = {event}"
-    "   AND shd.operation = 'settings_check') AS sh_settings_detail,"
     " (SELECT shl.occurred_at FROM failed_operations shl WHERE shl.scope_key = {event}"
-    "   AND shl.operation = 'lifecycle_read') AS sh_lifecycle_at"
+    "   AND shl.operation = 'lifecycle_read') AS sh_lifecycle_at,"
+    # A pause writes no failure row, only this journal kind; a legacy settings row a strictly
+    # later pause followed is no settings hold (Devin on 77c0c641).
+    " (SELECT shi.at FROM journal shi WHERE shi.subject = {event}"
+    "   AND +shi.kind = 'delivery_withheld_inactive' ORDER BY shi.seq DESC LIMIT 1)"
+    "   AS sh_inactive_at"
 )
 
 
@@ -2203,7 +2206,8 @@ def settings_hold_reading(row) -> dict:
       a lifecycle or pause reason is none;
     - attempt: the row's settingsRefusal key decides, null meaning none;
     - otherwise the transition was recorded before this revision (no key, no marker): no hold
-      when the event has no settings_check failure row or a strictly later lifecycle_read one,
+      when the event has no settings_check failure row, or a strictly later lifecycle_read one or
+      pause (delivery_withheld_inactive, which writes no failure row; Devin on 77c0c641),
       else an undetermined one; and a closed channel (inbox_only) always an undetermined one,
       because only a settings refusal (the approval policy) closes it and that refusal records
       its failure under thread/resume, never settings_check (the review of aa9724f4). Nothing
@@ -2236,12 +2240,13 @@ def settings_hold_reading(row) -> dict:
         reading.update(chosen="pre_send", definitive=True,
                        presendOperation=operation if isinstance(operation, str) else None)
         if isinstance(reason, str) and reason in PRESEND_SETTINGS_REFUSALS:
-            # The settings_check row is this withhold's: a settings withhold writes it with its
-            # presend row, and any later settings transition writes a later row of its own.
-            detail_text = row["sh_settings_detail"] if operation == "settings_check" else None
+            # The refusal's own text, written on this very row by the withhold that took effect,
+            # so it cannot be another transition's (the review of 77c0c641: the settings_check
+            # failure row is shared with the attempt path, which writes it before settling).
+            refusal_text = detail.get("detail")
             reading["hold"] = {"source": "pre_send", "reason": reason, "field": None,
                                "requestId": None,
-                               "detail": detail_text if isinstance(detail_text, str) else None}
+                               "detail": refusal_text if isinstance(refusal_text, str) else None}
         return reading
     if settlement is not None and "settingsRefusal" in settlement[1]:
         reading.update(chosen="attempt", definitive=True)
@@ -2253,10 +2258,12 @@ def settings_hold_reading(row) -> dict:
                                "requestId": row["sh_request"]}
         return reading
     reading["chosen"] = "legacy" if row["sh_request"] is not None else None
-    settings_at, lifecycle_at = row["sh_settings_at"], row["sh_lifecycle_at"]
+    settings_at = row["sh_settings_at"]
+    cleared = settings_at is not None and any(
+        later is not None and later > settings_at
+        for later in (row["sh_lifecycle_at"], row["sh_inactive_at"]))
     if kind == "channel_closed" or (
-            settings_at is not None and not (lifecycle_at is not None
-                                             and lifecycle_at > settings_at)):
+            settings_at is not None and not cleared):
         reading["hold"] = {"source": "undetermined", "reason": None, "field": None,
                            "requestId": None}
     return reading
