@@ -29,10 +29,12 @@ func (s *Store) Compose(ctx context.Context, run func(context.Context, *sql.Conn
 	})
 }
 
-// querier is what a store read needs: the pool or the one connection a transaction holds.
+// querier is what a store read or domain write needs: the pool or the one connection a
+// transaction holds.
 type querier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
 // q is where a read runs: on the open transaction's connection when ctx carries one of this
