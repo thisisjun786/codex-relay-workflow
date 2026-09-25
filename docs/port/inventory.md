@@ -28,7 +28,7 @@ differ, when a line count differs from `wc -l`, when an owning issue is missing,
 
 ## Files
 
-Total non-test lines: 99367
+Total non-test lines: 99368
 
 | path | lines | invoked | runs | owner | disposition | consumer_search | removal_trigger |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -119,7 +119,7 @@ Total non-test lines: 99367
 | `scripts/ci/gate.py` | 45 | CI: ci.yml:122 required-checks gate | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/packages.py` | 206 | CI: ci.yml:104 per-package pytest (RELAY_CONFORMANCE_REQUIRED=1) | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/plugin.py` | 964 | CI: ci.yml:54; spawned by crw_transition/steps.py:562 (`--payload`) | dev/CI | CRW-160 | port | - | - |
-| `scripts/ci/scope.py` | 154 | CI: ci.yml:39 path-scope selection | dev/CI | CRW-160 | port | - | - |
+| `scripts/ci/scope.py` | 155 | CI: ci.yml:39 path-scope selection | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/validate.py` | 145 | CI: ci.yml:53 link/metadata validation | dev/CI | CRW-160 | port | - | - |
 | `scripts/completion_hook.py` | 53 | user-owner Stop hook: `<CODEX_HOME>/hooks.json` entry `<python> <checkout>/scripts/completion_hook.py` written by runtime_install.py `hook --owner user`; imports crw_runtime.completion | end user + relay host | CRW-156 | retire-with-evidence | `grep -rn completion_hook` over scripts/, docs/, packages/ (consumers: crw_runtime/completion.py:59 ENTRY_POINT_NAME, crw_transition/inventory.py:59/529, docs/runtime-install.md:1511, docs/plugin-transition.md:18) + host scan of `<CODEX_HOME>/hooks.json` | todo 38 `crw install hook` registers `crw hook` for owner=user; deleted in todo 44 after todo 43's retention scan finds no hooks.json entry naming it |
 | `scripts/crw_runtime/bridgerecord.py` | 455 | imported by runtime_install, crw_transition.inventory, crw_transition.steps | relay host | CRW-157 | port | - | - |
