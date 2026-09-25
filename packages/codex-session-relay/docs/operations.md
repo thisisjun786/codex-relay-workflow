@@ -381,8 +381,8 @@ transport call.
 | `awaiting_ack:turn_check_undecided` | delivered, acknowledgement outstanding, and the relay could not tell whether the host still has the delivery's turn; waiting will not tell it either (see "When the host loses an accepted turn") |
 | `redelivering:host_lost_turn` | the host lost the turn the last attempt started; the same event is queued for its next attempt |
 | `held:host_lost_turn` | the host lost the redelivery's turn as well; held, and nothing sends it again |
-| `held:unknown_send_lost` | the last attempt's send got no answer and the recipient keeps no trace of it; held for the parent, never sent again, and still settled by a message found later (see "When an uncertain send leaves no trace") |
-| `held:unknown_send_undecided` | an uncertain send whose reading cannot decide however long the relay waits; held for the parent in the same way |
+| `held:unknown_send_lost` | the last attempt's send got no answer and the recipient keeps no trace of it; held for the parent, never sent again, and still settled by a message found later (see "When an uncertain send leaves no trace"); once a newer generation or the answer to a correction supersedes it, it reads `superseded:<reason>` instead |
+| `held:unknown_send_undecided` | an uncertain send whose reading cannot decide however long the relay waits; held for the parent in the same way, and read as `superseded:<reason>` in the same way |
 | `awaiting_child_receipt` | a revision request was delivered; contract v1 defines no acknowledgement for that direction, so the child answers with its next completion receipt |
 | `awaiting_grant_acknowledgement` | a merge-turn grant was delivered and its turn has not recorded the acknowledgement; it is answered with `merge-turn-acknowledge`, never with an `ack` |
 | `grant_acknowledged` | the grant was acknowledged on its merge turn, in any delivery state (a parent can answer before the notice is sent) and including after that turn later landed or was returned |
@@ -780,11 +780,48 @@ pending, turnId}`, where the finding is `present`, `unknown_send_lost` or `unkno
 it, the same `nextExpectedAction`, `reason` and `recovery`. `status` reads the phase
 `held:unknown_send_lost` or `held:unknown_send_undecided`.
 
+Once such an uncertain send (`held_uncertain`, held or not) is superseded, because the parent
+opened a new generation or a correction's generation was answered by a final event, nothing is owed
+on it whatever its hold says. `reconcile`
+then answers `nextExpectedAction` `none` with reason `superseded:<reason>` and no `recovery`, or
+`parent_reads_child_disposition` for a correction its generation answered, as `assignment-show` does
+for one. The reason is the supersession note status reads, so a correction answered before yet
+another generation opened keeps its answer. `status` reports `superseded:<reason>` as both phase
+and reported state for such a send (a superseded delivery in another state, a dispatched one say,
+keeps its own reported state beside the superseded phase, as before). The row is still
+reconciled, as the send path leaves it, so a lost response can still settle it. CRW-124's R5
+re-check found the old generation's held attempt still naming `parent_recovers_unknown_send_lost`
+after the parent had recovered.
+
+A merge-turn grant sent this way is answered on its own merge turn, and `reconcile` asks that turn
+first, as `status` does. A grant the parent has since acknowledged answers `nextExpectedAction`
+`none` with reason `grant_acknowledged`, the word `status` reports for it, and no `recovery`:
+acknowledgement is how a grant ordinarily ends, and nothing replaced it. A grant its turn moved past
+(regranted, closed, gone or unreadable) answers `none` with `superseded:<reason>`, as status
+reports it.
+
 A hold only the parent can recover (`host_lost_turn`, `unknown_send_lost`,
 `unknown_send_undecided`) is a broken `delivery_stalled` fault as soon as the sweep reads it, so it
-is opened and published rather than left observed. Before this change the hold page reported a
-delivery held on its first attempt as degraded, and the retry page's broken reading of the same
-attempt shared its occurrence key, so the ledger kept the degraded one.
+is opened and published rather than left observed. An uncertain send's hold is named only after the
+61-second allowance, and the daemon's sweep usually reads the settled attempt well before that and
+records it degraded under the attempt's key (about twenty seconds after the send in CRW-124's R5
+re-check, where the hold's broken reading under the same key was then dropped as already recorded
+and the fault stayed degraded). So an `unknown_send_*` hold is recorded as its own occurrence,
+`delivery:<request id>:held:<hold>:<n>`, where `<n>` is the journal sequence of the reconciliation
+that gave the hold that name (`unknown_send_hold_named`, written only when the name changes; a hold
+named before this revision has no `<n>`): it escalates the fault to broken and names the hold in the
+fault's detail and in the publication that opening or escalating the fault queues, whatever the
+sweep recorded first. From then on the retry page leaves that attempt to the hold page, so a later
+reading of the attempt cannot replace the detail that names the hold. Each name a sweep finds
+standing is one occurrence on the same fault and updates its detail, which `fault-show` reads, even
+when the hold has returned to a name the fault already recorded (undecided to lost, or back again);
+a reading that keeps the name adds nothing. The fault records what each sweep finds: a naming that a
+later one replaced before any sweep read it (two `reconcile` passes between sweeps, say) stays in
+the journal as `unknown_send_hold_named` and is not an occurrence, and the detail ends on the name
+standing when the sweep read. Like every fault the ledger records, an open fault is not published again
+for a changed detail, so its published record keeps the hold it was opened or escalated with, while
+`assignment-show` and `reconcile` name the current one. A `host_lost_turn` hold keeps the attempt's own key: it is set in the
+same settlement that ends a dispatched attempt, which the retry page never reads first.
 
 Status: implemented, and tested against the fake host (`tests/test_unknown_send_lost.py`). Whether
 the installed App Server leaves no trace the way K5ctl did, and whether the hold then names the

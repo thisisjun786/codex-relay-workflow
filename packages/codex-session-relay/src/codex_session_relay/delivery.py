@@ -2072,7 +2072,7 @@ class DeliveryService:
                 "kind": row["kind"],
                 "recipient": row["recipient_task_id"],
                 "state": row["state"],
-                "reported": _reported_state(row, ack, grant),
+                "reported": _reported_state(row, ack, grant, superseded),
                 "attempts": row["attempt_count"],
                 "holdReason": row["hold_reason"],
                 "nextEligibleAt": row["next_eligible_at"],
@@ -2474,7 +2474,7 @@ def _required_for_notice(record, required):
     )
 
 
-def _reported_state(row, ack, grant=None) -> str:
+def _reported_state(row, ack, grant=None, superseded=None) -> str:
     """What an operator should read, as distinct from the raw state.
 
     An inbox-only event is stored and NOT woken, and saying so plainly is the point: a durable
@@ -2487,6 +2487,12 @@ def _reported_state(row, ack, grant=None) -> str:
     notice is sent, since it reads its own claims on entry, and the send path then suppresses
     the notice, so a suppressed row is exactly where an answered grant is reported most often;
     its hold_reason stays on the row for whoever reconciles it.
+
+    superseded is the delivery's supersession note, which the phase reads too. An uncertain send
+    whose obligation it records as overtaken reports that, held or not: nothing is owed on it any
+    more, and naming its hold told the parent to recover a report a later generation had already
+    replaced (CRW-124 R5 O-R5-1), while an unheld one said it was waiting for evidence nothing
+    needs (independent review of ea197703).
     """
     if ack is not None and ack["verified"] == "verified" and ack["accepted"]:
         return "acknowledged"
@@ -2504,6 +2510,8 @@ def _reported_state(row, ack, grant=None) -> str:
     if row["state"] == DISPATCHED:
         return "dispatched_awaiting_ack"
     if row["state"] == HELD_UNCERTAIN:
+        if superseded is not None:
+            return f"superseded:{superseded['reason']}"
         # A hold on an uncertain send is the parent's (unknown_send_lost or
         # unknown_send_undecided, CRW-231); without one the evidence may still come.
         if row["hold_reason"]:

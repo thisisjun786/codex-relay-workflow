@@ -41,7 +41,8 @@ from . import hostloss
 from .delivery import COMPLETION, REVISION, SENDING, SETTINGS_NOTED, settings_refusal_of
 from .hostadapter import TokenScan
 from .policy import (
-    HOST_LOST_TURN, TURN_CHECK_UNDECIDED, UNKNOWN_SEND_LOST, UNKNOWN_SEND_UNDECIDED,
+    HOST_LOST_TURN, TURN_CHECK_UNDECIDED, UNKNOWN_SEND_HOLD_NAMED, UNKNOWN_SEND_LOST,
+    UNKNOWN_SEND_UNDECIDED,
 )
 from .transport import (
     DEFERRED_BUSY,
@@ -689,6 +690,11 @@ class Reconciler:
                 ) != (attempt["internal_state"], attempt["state"], attempt["affirmative_evidence"])
                     or (expect_scan and now_row["recipient_scan"] != attempt["recipient_scan"]))
             if current:
+                # The name the delivery carried before this write, read inside it, so that a
+                # reading giving the hold a new name journals that naming exactly once.
+                named_before = db.execute(
+                    "SELECT hold_reason FROM deliveries WHERE event_id = ?", (attempt["event_id"],),
+                ).fetchone() if hold is not None else None
                 promoted = db.execute(
                     "UPDATE deliveries SET state = ?, next_eligible_at = ?,"
                     # A pass that decided nothing keeps the hold an uncertain send's reading set.
@@ -715,6 +721,13 @@ class Reconciler:
                 # after which the turn the real dispatch reached can never bind.
                 if promoted == 1 and (aggregate or state) == DISPATCHED:
                     anchor = self._bind_promoted_anchor(db, attempt, delivery, dispatch_turn_id)
+                previous = named_before["hold_reason"] if named_before is not None else None
+                if promoted == 1 and hold is not None and previous != hold:
+                    self.store.journal(
+                        UNKNOWN_SEND_HOLD_NAMED, attempt["request_id"],
+                        {"hold": hold, "previous": previous, "eventId": attempt["event_id"]},
+                        at=now_iso,
+                    )
             self.store.journal(
                 "reconciled", attempt["request_id"],
                 # settingsRefusal is always written by this revision, null for a settlement that
@@ -827,16 +840,52 @@ def _awaiting(kind, outcome, reading, stored=None, *, event_id=None, store=None)
     Only for an outcome this reconciliation left uncertain; a promotion or a pre-send rejection is
     answered by the delivery state it wrote. The reconciled event need not be its assignment's
     head, so the words are taken from assignment.py rather than from a projection.
+
+    A delivery its obligation no longer stands for - a later generation, a correction its
+    generation already answered - is asked about first, because nothing is owed on it whatever
+    its hold says: the answer is the supersession, as status reports it, and no recovery is
+    named (CRW-124 R5 O-R5-1). The reason is the stored supersession note, which status and the
+    correction projection read, so an answered correction keeps its answer after a later
+    generation opens (Devin on a4c13aec); a delivery with no note (a grant) is asked the send
+    path's own live rule (delivery.supersession_reason). The row itself is left reconcilable, as
+    the send path leaves it.
+
+    A merge-turn grant is answered on its own turn, and status settles it from there before
+    anything else (delivery._phase and _reported_state), so it is asked there first here too.
+    Acknowledged is a grant's ordinary end and reads grant_acknowledged, status's word, with
+    nothing owed; any other answer from its turn (regranted, closed, gone, unreadable) is what
+    replaced it (independent review of b05b452f: an answered grant read as a supersession).
     """
     from .assignment import (
-        CORRECTION_HELD_ACTION, CORRECTION_UNCONFIRMED_ACTION, PARENT_RECOVERY_THEN,
-        RECONCILE_ACTION, UNKNOWN_SEND_HELD_ACTION, UNKNOWN_SEND_UNDECIDED_ACTION,
-        recovery_command, store_directory,
+        CORRECTION_ANSWERED_ACTION, CORRECTION_HELD_ACTION, CORRECTION_UNCONFIRMED_ACTION,
+        PARENT_RECOVERY_THEN, RECONCILE_ACTION, UNKNOWN_SEND_HELD_ACTION,
+        UNKNOWN_SEND_UNDECIDED_ACTION, recovery_command, store_directory,
     )
+    from .currency import SUPERSEDED as SUPERSEDED_REVISION
+    from .delivery import MERGE_TURN_GRANT, supersession_reason
+    from .mergeturn import MERGE_TURN_GRANT_ANSWERED
 
     if outcome.get("state") != HELD_UNCERTAIN:
         return {}
     correction = kind == REVISION
+    superseded = None
+    if event_id is not None and store is not None:
+        if kind == MERGE_TURN_GRANT:
+            superseded = supersession_reason(store.db, event_id)
+            if superseded == MERGE_TURN_GRANT_ANSWERED:
+                return {"nextExpectedAction": "none", "reason": "grant_acknowledged"}
+        if superseded is None:
+            note = store.one("SELECT reason FROM delivery_supersession WHERE event_id = ?",
+                             (event_id,))
+            superseded = (note["reason"] if note is not None
+                          else supersession_reason(store.db, event_id))
+    if superseded is not None:
+        # "none" is assignment's word for nothing owed (NEXT_ACTION); a correction its
+        # generation answered is the parent's to read, as correction_next_action says.
+        return {"nextExpectedAction": (CORRECTION_ANSWERED_ACTION
+                                       if correction and superseded == SUPERSEDED_REVISION
+                                       else "none"),
+                "reason": f"superseded:{superseded}"}
     hold = stored["hold_reason"] if stored is not None else None
     mark = stored["recipient_scan"] if stored is not None else None
     if hold == UNKNOWN_SEND_LOST:
