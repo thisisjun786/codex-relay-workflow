@@ -794,10 +794,13 @@ def _awaiting(kind, outcome, reading, stored=None, *, event_id=None, store=None)
     head, so the words are taken from assignment.py rather than from a projection.
 
     A delivery its obligation no longer stands for - a later generation, a correction its
-    generation already answered - is asked about first, by the send path's own rule
-    (delivery.supersession_reason), because nothing is owed on it whatever its hold says: the
-    answer is the supersession, as status reports it, and no recovery is named (CRW-124 R5
-    O-R5-1). The row itself is left reconcilable, as the send path leaves it.
+    generation already answered - is asked about first, because nothing is owed on it whatever
+    its hold says: the answer is the supersession, as status reports it, and no recovery is
+    named (CRW-124 R5 O-R5-1). The reason is the stored supersession note, which status and the
+    correction projection read, so an answered correction keeps its answer after a later
+    generation opens (Devin on a4c13aec); a delivery with no note (a grant) is asked the send
+    path's own live rule (delivery.supersession_reason). The row itself is left reconcilable, as
+    the send path leaves it.
     """
     from .assignment import (
         CORRECTION_ANSWERED_ACTION, CORRECTION_HELD_ACTION, CORRECTION_UNCONFIRMED_ACTION,
@@ -810,8 +813,12 @@ def _awaiting(kind, outcome, reading, stored=None, *, event_id=None, store=None)
     if outcome.get("state") != HELD_UNCERTAIN:
         return {}
     correction = kind == REVISION
-    superseded = (supersession_reason(store.db, event_id)
-                  if event_id is not None and store is not None else None)
+    superseded = None
+    if event_id is not None and store is not None:
+        note = store.one("SELECT reason FROM delivery_supersession WHERE event_id = ?",
+                         (event_id,))
+        superseded = (note["reason"] if note is not None
+                      else supersession_reason(store.db, event_id))
     if superseded is not None:
         # "none" is assignment's word for nothing owed (NEXT_ACTION); a correction its
         # generation answered is the parent's to read, as correction_next_action says.

@@ -736,11 +736,15 @@ pending, turnId}`, where the finding is `present`, `unknown_send_lost` or `unkno
 it, the same `nextExpectedAction`, `reason` and `recovery`. `status` reads the phase
 `held:unknown_send_lost` or `held:unknown_send_undecided`.
 
-Once the delivery is superseded, because the parent opened a new generation or a correction's
-generation was answered by a final event, nothing is owed on it whatever its hold says. `reconcile`
+Once such an uncertain send (`held_uncertain`, held or not) is superseded, because the parent
+opened a new generation or a correction's generation was answered by a final event, nothing is owed
+on it whatever its hold says. `reconcile`
 then answers `nextExpectedAction` `none` with reason `superseded:<reason>` and no `recovery`, or
 `parent_reads_child_disposition` for a correction its generation answered, as `assignment-show` does
-for one. `status` reports `superseded:<reason>` as both phase and reported state. The row is still
+for one. The reason is the supersession note status reads, so a correction answered before yet
+another generation opened keeps its answer. `status` reports `superseded:<reason>` as both phase
+and reported state for such a send (a superseded delivery in another state, a dispatched one say,
+keeps its own reported state beside the superseded phase, as before). The row is still
 reconciled, as the send path leaves it, so a lost response can still settle it. CRW-124's R5
 re-check found the old generation's held attempt still naming `parent_recovers_unknown_send_lost`
 after the parent had recovered.

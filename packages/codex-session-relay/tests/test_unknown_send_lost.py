@@ -1067,7 +1067,8 @@ class ASupersededHoldNamesTheSupersession(UnknownSendCase):
         self.assertNotIn("recovery", outcome)
         self.assertEqual(self.sends_to(), [first])
 
-    def test_a_held_correction_its_generation_answered_names_the_child_disposition(self):
+    def answered_correction(self):
+        """A correction held unknown_send_lost whose generation a final event then answered."""
         _completion, correction = self.correction_after_needs_changes()
         self.adapter.start_turn(CHILD, turn_id="child-earlier", status="completed")
         self.clock.advance(300)
@@ -1086,9 +1087,33 @@ class ASupersededHoldNamesTheSupersession(UnknownSendCase):
                                   source="dispatch_receipt")
         relationship = self.registry.get(self._rid)
         turn = self.assigned_turn("failed", thread=CHILD, turn="child-late")
-        self.accept(self.execution_payload(relationship, "failed", generation=2, turn=turn))
-        outcome = self.reconciler.reconcile_attempt(record["requestId"], self.adapter)
+        answer = self.execution_payload(relationship, "failed", generation=2, turn=turn)
+        self.accept(answer)
+        # Queued as the real path queues a final event, which annotates what it answers.
+        self.delivery.enqueue(answer["eventId"])
+        return correction, record["requestId"]
+
+    def test_a_held_correction_its_generation_answered_names_the_child_disposition(self):
+        correction, request_id = self.answered_correction()
+        outcome = self.reconciler.reconcile_attempt(request_id, self.adapter)
         self.assertEqual((outcome.get("nextExpectedAction"), outcome.get("reason")),
                          ("parent_reads_child_disposition", "superseded:superseded_revision"))
         self.assertNotIn("recovery", outcome)
-        self.assertEqual(self.sends_to(CHILD), [record["requestId"]])
+        self.assertEqual(self.sends_to(CHILD), [request_id])
+
+    def test_an_answered_correction_a_later_generation_passed_keeps_its_answer(self):
+        """Devin on a4c13aec: once another generation opened after the answer, the live rule
+        says stale_generation first, and reconcile answered none while status, which reads the
+        stored note, still said superseded:superseded_revision."""
+        correction, request_id = self.answered_correction()
+        self.adapter.start_turn(CHILD, turn_id="turn-dispatch-3", status="inProgress")
+        self.registry.open_generation(self._rid, dispatch_request_id="dispatch-3",
+                                      reason="needs_changes_revision",
+                                      dispatch_turn_id="turn-dispatch-3")
+        outcome = self.reconciler.reconcile_attempt(request_id, self.adapter)
+        self.assertEqual((outcome.get("nextExpectedAction"), outcome.get("reason")),
+                         ("parent_reads_child_disposition", "superseded:superseded_revision"))
+        self.assertNotIn("recovery", outcome)
+        item = self.status_of(correction)
+        self.assertEqual((item["phase"], item["reported"]),
+                         ("superseded:superseded_revision", "superseded:superseded_revision"))
