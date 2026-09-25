@@ -88,8 +88,9 @@ PARENT_HOLDS = (HOST_LOST_TURN, UNKNOWN_SEND_LOST, UNKNOWN_SEND_UNDECIDED)
 # n the journal sequence of the reconciliation that gave it that name (UNKNOWN_SEND_HOLD_NAMED) - and
 # the ledger records it, escalating the fault to broken and naming the hold, whatever the retry page
 # recorded first (CRW-124 R5 F-R5-1: under the attempt's own key it was dropped as already recorded
-# and the fault stayed degraded). Each naming is one occurrence, a name the hold returns to
-# included, and a reading that keeps the name adds none. From then on the attempt is the hold
+# and the fault stayed degraded). Each name a sweep finds standing is one occurrence, a name the
+# hold returns to included; a reading that keeps the name adds none, and a naming replaced before
+# any sweep read it stays in the journal only. From then on the attempt is the hold
 # page's alone: the retry page skips a delivery's current attempt while it carries one of these
 # holds, so a later retry-page occurrence cannot replace the detail that names the hold. A
 # host_lost_turn hold is written in the same settlement that ends a dispatched attempt the retry
@@ -610,8 +611,10 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None,
             # Ended with the journal sequence of the reconciliation that gave the hold this name
             # (UNKNOWN_SEND_HOLD_NAMED): readings can move it from undecided to lost and back, and
             # a name it returns to must be recorded again rather than dropped as the occurrence
-            # its first naming already was (independent review of 72178ee8). A hold named before
-            # the journal kind existed keeps the bare key.
+            # its first naming already was (independent review of 72178ee8). The sweep records the
+            # name standing when it reads; namings replaced in between stay in the journal
+            # (independent review of 66328cb4). A hold named before the journal kind existed keeps
+            # the bare key.
             named = store.one(
                 "SELECT MAX(seq) AS seq FROM journal WHERE kind = ? AND subject = ?",
                 (UNKNOWN_SEND_HOLD_NAMED, row["last_request"]),

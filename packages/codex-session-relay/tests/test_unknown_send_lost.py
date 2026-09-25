@@ -1057,6 +1057,33 @@ class AHoldReachesItsFaultWhateverTheSweepSawFirst(UnknownSendCase):
         self.assertEqual(self.stall()["occurrence_count"], 3)
         self.assertEqual(self.sends_to(), [first])
 
+    def test_namings_between_two_sweeps_leave_the_standing_name(self):
+        """Independent review of 66328cb4: the fault records the name a sweep finds standing, one
+        occurrence for each such name. Namings a later one replaced before any sweep read them -
+        here two reconcile passes between sweeps, lost and then undecided again - are kept in the
+        journal (unknown_send_hold_named) and are not fault occurrences."""
+        event_id, first = self.unknown_send(history=False)
+        self.ticks(1)
+        self.assert_held(event_id, first, UNDECIDED, f"{UNDECIDED}:listing_empty")
+        self.assert_broken_naming(UNDECIDED)
+        turn = self.adapter.start_turn(PARENT, status="completed", text="the operator asked something")
+        self.reconciler.reconcile_attempt(first, self.adapter)
+        self.assert_held(event_id, first, UNKNOWN_LOST, NO_TRACE)
+        thread = self.adapter.threads[PARENT]
+        thread.turns = [one for one in thread.turns if one.turn_id != turn.turn_id]
+        thread.items = [one for one in thread.items if one[0] != turn.turn_id]
+        self.reconciler.reconcile_attempt(first, self.adapter)
+        self.assert_held(event_id, first, UNDECIDED, f"{UNDECIDED}:listing_empty")
+        self.assert_broken_naming(UNDECIDED)
+        self.assertEqual(self.keys(), [f"delivery:{first}:held:{UNDECIDED}:#",
+                                       f"delivery:{first}:held:{UNDECIDED}:#"])
+        self.assertEqual(self.stall()["occurrence_count"], 2)
+        named = [json.loads(row["detail"])["hold"] for row in self.store.all(
+            "SELECT detail FROM journal WHERE kind = 'unknown_send_hold_named' AND subject = ?"
+            " ORDER BY seq", (first,))]
+        self.assertEqual(named, [UNDECIDED, UNKNOWN_LOST, UNDECIDED])
+        self.assertEqual(self.sends_to(), [first])
+
     def test_readings_that_keep_the_name_record_nothing_new(self):
         """Every unknown_send_* hold is read again every ten minutes; a reading that finds the
         same name is not another naming and adds nothing to the fault."""

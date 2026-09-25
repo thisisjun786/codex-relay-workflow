@@ -812,10 +812,13 @@ that gave the hold that name (`unknown_send_hold_named`, written only when the n
 named before this revision has no `<n>`): it escalates the fault to broken and names the hold in the
 fault's detail and in the publication that opening or escalating the fault queues, whatever the
 sweep recorded first. From then on the retry page leaves that attempt to the hold page, so a later
-reading of the attempt cannot replace the detail that names the hold. A later reading that changes
-the hold (undecided to lost, or back again) is another occurrence on the same fault and updates its
-detail, which `fault-show` reads, even when the name is one the fault already recorded; a reading
-that keeps the name adds nothing. Like every fault the ledger records, an open fault is not published again
+reading of the attempt cannot replace the detail that names the hold. Each name a sweep finds
+standing is one occurrence on the same fault and updates its detail, which `fault-show` reads, even
+when the hold has returned to a name the fault already recorded (undecided to lost, or back again);
+a reading that keeps the name adds nothing. The fault records what each sweep finds: a naming that a
+later one replaced before any sweep read it (two `reconcile` passes between sweeps, say) stays in
+the journal as `unknown_send_hold_named` and is not an occurrence, and the detail ends on the name
+standing when the sweep read. Like every fault the ledger records, an open fault is not published again
 for a changed detail, so its published record keeps the hold it was opened or escalated with, while
 `assignment-show` and `reconcile` name the current one. A `host_lost_turn` hold keeps the attempt's own key: it is set in the
 same settlement that ends a dispatched attempt, which the retry page never reads first.
