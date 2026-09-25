@@ -1,0 +1,107 @@
+{
+  "completionHook": {
+    "file": "crw-completion-hook.json",
+    "version": 1,
+    "keys": [
+      "configVersion",
+      "event",
+      "relayExecutable",
+      "markerRoot",
+      "dbPath",
+      "mode",
+      "timeoutSeconds",
+      "journalRoot",
+      "journalPolicy",
+      "installedBy",
+      "isolationAssertedBy",
+      "socketPath",
+      "owner",
+      "adapterInterpreter",
+      "adapterEntryPoint"
+    ]
+  },
+  "bridgeMcp": {
+    "file": "crw-bridge-mcp.json",
+    "versions": [
+      1,
+      2
+    ],
+    "keys": [
+      "recordVersion",
+      "owner",
+      "serverName",
+      "bridgeExecutable",
+      "args",
+      "installedBy",
+      "executionPolicy"
+    ],
+    "executionPolicyKeys": [
+      "digest",
+      "path"
+    ]
+  },
+  "hostRecord": {
+    "file": "host-record.json",
+    "keys": [
+      "recordVersion",
+      "definitionVersion",
+      "host",
+      "user",
+      "components",
+      "outgoing",
+      "pointer",
+      "selected"
+    ],
+    "componentKeys": [
+      "installs",
+      "measuredPoints"
+    ]
+  },
+  "stagingClaim": {
+    "file": ".crw-staging-claim.json",
+    "keys": [
+      "claimVersion",
+      "state",
+      "writtenBy",
+      "issue",
+      "run",
+      "pid",
+      "host",
+      "writtenAt",
+      "livenessNote"
+    ],
+    "version": 1,
+    "states": [
+      "STAGING",
+      "COMPLETE"
+    ]
+  },
+  "daemon": {
+    "file": "daemon.json",
+    "keys": [
+      "pid",
+      "startTicks",
+      "bootId",
+      "workerPid",
+      "token",
+      "launchId",
+      "takeover",
+      "readyAt",
+      "storeId",
+      "installationId",
+      "stateDir",
+      "socketPath",
+      "scopeAuthority",
+      "scopeRoot",
+      "startedAt",
+      "restarts",
+      "consecutiveFailures",
+      "lastExit",
+      "nextRestartAt",
+      "workerStartTicks",
+      "degraded",
+      "stoppedAt",
+      "stoppedBy"
+    ]
+  }
+}

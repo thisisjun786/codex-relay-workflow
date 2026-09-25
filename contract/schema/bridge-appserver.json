@@ -1,0 +1,51 @@
+{
+  "methods": [
+    "initialize",
+    "initialized",
+    "project/read",
+    "thread/goal/get",
+    "thread/goal/set",
+    "thread/items/list",
+    "thread/list",
+    "thread/name/set",
+    "thread/read",
+    "thread/resume",
+    "thread/start",
+    "thread/turns/list",
+    "turn/start",
+    "turn/steer"
+  ],
+  "refusedServerRequests": [
+    "applyPatchApproval",
+    "execCommandApproval",
+    "item/commandExecution/requestApproval",
+    "item/fileChange/requestApproval",
+    "item/permissions/requestApproval",
+    "item/tool/requestUserInput",
+    "mcpServer/elicitation/request"
+  ],
+  "maxFrameBytes": 16777216,
+  "phaseTimeoutsSeconds": {
+    "establish": 20,
+    "transmit": 20,
+    "ack": 20
+  },
+  "closeTimeoutSeconds": 2,
+  "refusedRequestsKept": 64,
+  "clamps": {
+    "limit": [
+      1,
+      100
+    ],
+    "maxTextChars": [
+      100,
+      20000
+    ],
+    "waitSeconds": [
+      0,
+      50
+    ],
+    "detailTurns": 1,
+    "itemPage": 10
+  }
+}
