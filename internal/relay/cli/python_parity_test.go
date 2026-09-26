@@ -254,3 +254,13 @@ func lastLine(text string) string {
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
 	return lines[len(lines)-1]
 }
+
+// pythonSnippet runs `python -c script args...` in the relay's uv environment.
+func pythonSnippet(dir, script string, args ...string) (string, error) {
+	_, file, _, _ := runtime.Caller(0)
+	repo := filepath.Join(filepath.Dir(file), "..", "..", "..")
+	command := exec.Command("uv", append([]string{"run", "--no-sync", "--project", repo, "python", "-c", script}, args...)...)
+	command.Dir = dir
+	out, err := command.CombinedOutput()
+	return string(out), err
+}

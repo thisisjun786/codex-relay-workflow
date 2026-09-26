@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	relaycli "github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,12 +24,10 @@ func runCLI(t *testing.T, scenario Scenario) (map[string]any, error) {
 	if scenario.Domain == "sqlite-ddl" {
 		return runSQLite(t, scenario)
 	}
-	// given.sql_seed goes through the real relay Store and given.host through the relay's
-	// App Server socket; neither exists in Go yet.
-	for _, key := range []string{"sql_seed", "host"} {
-		if _, present := scenario.Given[key]; present {
-			return nil, fmt.Errorf("%w: %s/cli given.%s", ErrNotPorted, scenario.Domain, key)
-		}
+	// given.host goes through the relay's App Server socket, which the Go build does not serve
+	// yet (todo 21/28).
+	if _, present := scenario.Given["host"]; present {
+		return nil, fmt.Errorf("%w: %s/cli given.host", ErrNotPorted, scenario.Domain)
 	}
 	binary, err := crwBinary()
 	if err != nil {
@@ -41,6 +40,13 @@ func runCLI(t *testing.T, scenario Scenario) (map[string]any, error) {
 	}
 	if script, ok := scenario.Given["sql"].(string); ok {
 		if err := seedSQL(state, script); err != nil {
+			return nil, err
+		}
+	}
+	// given.sql_seed opens the real relay Store (the Go one), then runs the test-owned SQL on
+	// its connection, as contract/runner/cli.py does with Store(...).db.executescript.
+	if script, ok := scenario.Given["sql_seed"].(string); ok {
+		if err := seedStore(state, script); err != nil {
 			return nil, err
 		}
 	}
@@ -172,6 +178,18 @@ func runStep(binary, home string, step, results map[string]any) (map[string]any,
 		}
 	}
 	return map[string]any{"exit": float64(exit), "stdout": stdout.String(), "stderr": stderr.String(), "stdout_json": parsed}, nil
+}
+
+func seedStore(state, script string) error {
+	s, err := store.Open(context.Background(), filepath.Join(state, "relay.sqlite3"), "")
+	if err != nil {
+		return fmt.Errorf("given.sql_seed: %w", err)
+	}
+	if _, err := s.DB.ExecContext(context.Background(), script); err != nil {
+		_ = s.Close()
+		return fmt.Errorf("given.sql_seed: %w", err)
+	}
+	return s.Close()
 }
 
 // resolve expands {"$step": id, "path": [...]} references and ${HOME} in strings.

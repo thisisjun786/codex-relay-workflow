@@ -1,0 +1,242 @@
+{
+ "argparse_stray_positional": [
+  {
+   "exit": 2,
+   "stdout": ""
+  }
+ ],
+ "clear_and_cite": [
+  {
+   "exit": 4,
+   "stdout": "{\n  \"error\": \"usage\",\n  \"detail\": \"--clear-exception drops the citation and --exception records one; state one\"\n}\n"
+  }
+ ],
+ "contested_project": [
+  {
+   "exit": 0,
+   "stdout": "{\n  \"task\": \"nobody\",\n  \"settings\": null,\n  \"usable\": false,\n  \"deliverable\": false,\n  \"missing\": [\n    \"sandbox\",\n    \"approvalPolicy\",\n    \"cwd\",\n    \"runtimeWorkspaceRoots\",\n    \"model\",\n    \"reasoningEffort\",\n    \"environments\"\n  ],\n  \"recordFinding\": null\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"foreign_scope\",\n  \"detail\": \"issue 'REL-1' is assigned under parent '01parent-task', but project 'PROJ-1' is executed by '01parent-two'; an issue belongs to its own project\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"foreign_scope\",\n  \"detail\": \"issue 'REL-1' is assigned under parent '01parent-task', but project 'PROJ-1' is executed by '01parent-two'; an issue belongs to its own project\"\n}\n"
+  }
+ ],
+ "generations_cli": [
+  {
+   "exit": 0,
+   "stdout": "{\n  \"relationshipId\": \"rel-46d5b5ac690ef861\",\n  \"parent\": {\n    \"taskId\": \"01parent-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null\n  },\n  \"child\": {\n    \"taskId\": \"01child-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null\n  },\n  \"issueKey\": \"REL-1\",\n  \"status\": \"active\",\n  \"createdAt\": \"<T>\",\n  \"executionGeneration\": 1,\n  \"generations\": [\n    {\n      \"executionGeneration\": 1,\n      \"dispatchRequestId\": \"dispatch-1\",\n      \"anchorState\": \"anchor_pending\",\n      \"dispatchTurnId\": null,\n      \"openedAt\": \"<T>\",\n      \"boundAt\": null,\n      \"reason\": \"initial_assignment\"\n    }\n  ],\n  \"authorizedScope\": {\n    \"artifactRoots\": [\n      \"<HOME>/work\"\n    ],\n    \"allowedRecipients\": [\n      \"01parent-task\"\n    ]\n  },\n  \"authorizedSettings\": null\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"relationshipId\": \"rel-46d5b5ac690ef861\",\n  \"executionGeneration\": 1,\n  \"dispatchRequestId\": \"dispatch-1\",\n  \"anchorState\": \"bound\",\n  \"dispatchTurnId\": \"t1\",\n  \"openedAt\": \"<T>\",\n  \"boundAt\": \"<T>\",\n  \"reason\": \"initial_assignment\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"anchor_already_bound\",\n  \"detail\": \"generation 1 is already bound to 't1'\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"relationshipId\": \"rel-46d5b5ac690ef861\",\n  \"executionGeneration\": 2,\n  \"dispatchRequestId\": \"d2\",\n  \"anchorState\": \"bound\",\n  \"dispatchTurnId\": \"t2\",\n  \"openedAt\": \"<T>\",\n  \"boundAt\": \"<T>\",\n  \"reason\": \"needs_changes_revision\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"relationshipId\": \"rel-46d5b5ac690ef861\",\n  \"executionGeneration\": 2,\n  \"dispatchRequestId\": \"d2\",\n  \"anchorState\": \"bound\",\n  \"dispatchTurnId\": \"t2\",\n  \"openedAt\": \"<T>\",\n  \"boundAt\": \"<T>\",\n  \"reason\": \"needs_changes_revision\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"relationship\": \"rel-46d5b5ac690ef861\",\n  \"generation\": 2,\n  \"turn\": \"t3\",\n  \"evidence\": \"explicit_admission\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"unknown_generation\",\n  \"detail\": \"admission needs an existing generation\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"unregistered_relationship\",\n  \"detail\": \"no relationship 'rel-0000000000000000'\"\n}\n"
+  }
+ ],
+ "host_errors": [
+  {
+   "exit": 3,
+   "stdout": "{\n  \"error\": \"host\",\n  \"detail\": \"FileNotFoundError: [Errno 2] No such file or directory: '<HOME>/missing.json'\"\n}\n"
+  },
+  {
+   "exit": 3,
+   "stdout": "{\n  \"error\": \"host\",\n  \"detail\": \"JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"task\": \"01parent-task\",\n  \"settings\": null,\n  \"usable\": false,\n  \"deliverable\": false,\n  \"missing\": [\n    \"sandbox\",\n    \"approvalPolicy\",\n    \"cwd\",\n    \"runtimeWorkspaceRoots\",\n    \"model\",\n    \"reasoningEffort\",\n    \"environments\"\n  ],\n  \"recordFinding\": null\n}\n"
+  },
+  {
+   "exit": 3,
+   "stdout": "{\n  \"error\": \"host\",\n  \"detail\": \"ValueError: an admitted turn needs an exact turn id\"\n}\n"
+  }
+ ],
+ "pause_resume": [
+  {
+   "exit": 0,
+   "stdout": "{\n  \"relationshipId\": \"rel-46d5b5ac690ef861\",\n  \"parent\": {\n    \"taskId\": \"01parent-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null\n  },\n  \"child\": {\n    \"taskId\": \"01child-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null\n  },\n  \"issueKey\": \"REL-1\",\n  \"status\": \"active\",\n  \"createdAt\": \"<T>\",\n  \"executionGeneration\": 1,\n  \"generations\": [\n    {\n      \"executionGeneration\": 1,\n      \"dispatchRequestId\": \"dispatch-1\",\n      \"anchorState\": \"bound\",\n      \"dispatchTurnId\": \"turn-dispatch-1\",\n      \"openedAt\": \"<T>\",\n      \"boundAt\": \"<T>\",\n      \"reason\": \"initial_assignment\"\n    }\n  ],\n  \"authorizedScope\": {\n    \"artifactRoots\": [\n      \"<HOME>/work\"\n    ],\n    \"allowedRecipients\": [\n      \"01parent-task\"\n    ]\n  },\n  \"authorizedSettings\": null\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"relationshipId\": \"rel-46d5b5ac690ef861\",\n  \"parent\": {\n    \"taskId\": \"01parent-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null\n  },\n  \"child\": {\n    \"taskId\": \"01child-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null\n  },\n  \"issueKey\": \"REL-1\",\n  \"status\": \"paused\",\n  \"createdAt\": \"<T>\",\n  \"executionGeneration\": 1,\n  \"generations\": [\n    {\n      \"executionGeneration\": 1,\n      \"dispatchRequestId\": \"dispatch-1\",\n      \"anchorState\": \"bound\",\n      \"dispatchTurnId\": \"turn-dispatch-1\",\n      \"openedAt\": \"<T>\",\n      \"boundAt\": \"<T>\",\n      \"reason\": \"initial_assignment\"\n    }\n  ],\n  \"authorizedScope\": {\n    \"artifactRoots\": [\n      \"<HOME>/work\"\n    ],\n    \"allowedRecipients\": [\n      \"01parent-task\"\n    ]\n  }\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"relationship_not_active\",\n  \"detail\": \"resume refused: generation is 1, not 9\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"relationshipId\": \"rel-46d5b5ac690ef861\",\n  \"parent\": {\n    \"taskId\": \"01parent-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null\n  },\n  \"child\": {\n    \"taskId\": \"01child-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null\n  },\n  \"issueKey\": \"REL-1\",\n  \"status\": \"active\",\n  \"createdAt\": \"<T>\",\n  \"executionGeneration\": 1,\n  \"generations\": [\n    {\n      \"executionGeneration\": 1,\n      \"dispatchRequestId\": \"dispatch-1\",\n      \"anchorState\": \"bound\",\n      \"dispatchTurnId\": \"turn-dispatch-1\",\n      \"openedAt\": \"<T>\",\n      \"boundAt\": \"<T>\",\n      \"reason\": \"initial_assignment\"\n    }\n  ],\n  \"authorizedScope\": {\n    \"artifactRoots\": [\n      \"<HOME>/work\"\n    ],\n    \"allowedRecipients\": [\n      \"01parent-task\"\n    ]\n  }\n}\n"
+  }
+ ],
+ "project_attach": [
+  {
+   "exit": 0,
+   "stdout": "{\n  \"task\": \"nobody\",\n  \"settings\": null,\n  \"usable\": false,\n  \"deliverable\": false,\n  \"missing\": [\n    \"sandbox\",\n    \"approvalPolicy\",\n    \"cwd\",\n    \"runtimeWorkspaceRoots\",\n    \"model\",\n    \"reasoningEffort\",\n    \"environments\"\n  ],\n  \"recordFinding\": null\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"relationshipId\": \"rel-46d5b5ac690ef861\",\n  \"parent\": {\n    \"taskId\": \"01parent-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null\n  },\n  \"child\": {\n    \"taskId\": \"01child-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null\n  },\n  \"issueKey\": \"REL-1\",\n  \"status\": \"active\",\n  \"createdAt\": \"<T>\",\n  \"executionGeneration\": 1,\n  \"generations\": [\n    {\n      \"executionGeneration\": 1,\n      \"dispatchRequestId\": \"dispatch-1\",\n      \"anchorState\": \"bound\",\n      \"dispatchTurnId\": \"turn-dispatch-1\",\n      \"openedAt\": \"<T>\",\n      \"boundAt\": \"<T>\",\n      \"reason\": \"initial_assignment\"\n    }\n  ],\n  \"authorizedScope\": {\n    \"artifactRoots\": [\n      \"<HOME>/work\"\n    ],\n    \"allowedRecipients\": [\n      \"01parent-task\"\n    ]\n  },\n  \"authorizedSettings\": {\n    \"01child-task\": \"recorded\"\n  }\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"task\": \"01child-task\",\n  \"settings\": {\n    \"approvalPolicy\": \"never\",\n    \"citedRole\": \"child\",\n    \"cwd\": \"/w\",\n    \"environments\": [],\n    \"model\": \"m\",\n    \"reasoningEffort\": \"x\",\n    \"runtimeWorkspaceRoots\": [\n      \"/w\"\n    ],\n    \"sandbox\": {\n      \"excludeSlashTmp\": false,\n      \"excludeTmpdirEnvVar\": false,\n      \"networkAccess\": false,\n      \"type\": \"workspaceWrite\",\n      \"writableRoots\": []\n    }\n  },\n  \"usable\": true,\n  \"missing\": [],\n  \"deliverable\": false,\n  \"recordFinding\": null,\n  \"citedRole\": \"child\",\n  \"citedException\": null,\n  \"boundRole\": \"child\",\n  \"boundRoles\": null,\n  \"rolePolicyDigest\": null,\n  \"rolePolicy\": \"unresolved\",\n  \"roleFinding\": {\n    \"code\": \"role_policy_unconfigured\",\n    \"boundRole\": \"child\",\n    \"detail\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY is not set in this process, so no role policy can be read\",\n    \"recovery\": \"set this process's execution policy and restart it; deliveries held meanwhile resume on the next pass\"\n  }\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"relationshipId\": \"rel-46d5b5ac690ef861\",\n  \"parent\": {\n    \"taskId\": \"01parent-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null\n  },\n  \"child\": {\n    \"taskId\": \"01child-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null\n  },\n  \"issueKey\": \"REL-1\",\n  \"status\": \"paused\",\n  \"createdAt\": \"<T>\",\n  \"executionGeneration\": 1,\n  \"generations\": [\n    {\n      \"executionGeneration\": 1,\n      \"dispatchRequestId\": \"dispatch-1\",\n      \"anchorState\": \"bound\",\n      \"dispatchTurnId\": \"turn-dispatch-1\",\n      \"openedAt\": \"<T>\",\n      \"boundAt\": \"<T>\",\n      \"reason\": \"initial_assignment\"\n    }\n  ],\n  \"authorizedScope\": {\n    \"artifactRoots\": [\n      \"<HOME>/work\"\n    ],\n    \"allowedRecipients\": [\n      \"01parent-task\"\n    ]\n  }\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"role_binding_mismatch\",\n  \"detail\": \"'01child-task' was created citing role 'child' and this record states 'parent'. The creation role is not something a later write changes; correct whichever of the two is wrong at its source\"\n}\n"
+  }
+ ],
+ "re_record_replaces": [
+  {
+   "exit": 0,
+   "stdout": "{\n  \"taskId\": \"01other\",\n  \"source\": \"creation_result\",\n  \"settings\": {\n    \"sandbox\": {\n      \"type\": \"workspaceWrite\",\n      \"writableRoots\": [],\n      \"networkAccess\": false,\n      \"excludeTmpdirEnvVar\": false,\n      \"excludeSlashTmp\": false\n    },\n    \"approvalPolicy\": \"never\",\n    \"cwd\": \"/a\",\n    \"runtimeWorkspaceRoots\": [\n      \"/a\"\n    ],\n    \"model\": \"anthropic/claude-opus-5\",\n    \"reasoningEffort\": \"xhigh\",\n    \"environments\": [\n      {\n        \"environmentId\": \"local\",\n        \"cwd\": \"/a\",\n        \"runtimeWorkspaceRoots\": [\n          \"/a\"\n        ]\n      }\n    ]\n  }\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"taskId\": \"01other\",\n  \"source\": \"user_transition\",\n  \"settings\": {\n    \"sandbox\": {\n      \"type\": \"workspaceWrite\",\n      \"writableRoots\": [],\n      \"networkAccess\": false,\n      \"excludeTmpdirEnvVar\": false,\n      \"excludeSlashTmp\": false\n    },\n    \"approvalPolicy\": \"never\",\n    \"cwd\": \"/b\",\n    \"runtimeWorkspaceRoots\": [\n      \"/b\"\n    ],\n    \"model\": \"anthropic/claude-opus-5\",\n    \"reasoningEffort\": \"xhigh\",\n    \"environments\": [\n      {\n        \"environmentId\": \"local\",\n        \"cwd\": \"/b\",\n        \"runtimeWorkspaceRoots\": [\n          \"/b\"\n        ]\n      }\n    ]\n  }\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"task\": \"01other\",\n  \"settings\": {\n    \"approvalPolicy\": \"never\",\n    \"cwd\": \"/b\",\n    \"environments\": [\n      {\n        \"cwd\": \"/b\",\n        \"environmentId\": \"local\",\n        \"runtimeWorkspaceRoots\": [\n          \"/b\"\n        ]\n      }\n    ],\n    \"model\": \"anthropic/claude-opus-5\",\n    \"reasoningEffort\": \"xhigh\",\n    \"runtimeWorkspaceRoots\": [\n      \"/b\"\n    ],\n    \"sandbox\": {\n      \"excludeSlashTmp\": false,\n      \"excludeTmpdirEnvVar\": false,\n      \"networkAccess\": false,\n      \"type\": \"workspaceWrite\",\n      \"writableRoots\": []\n    }\n  },\n  \"usable\": true,\n  \"missing\": [],\n  \"deliverable\": true,\n  \"recordFinding\": null,\n  \"citedRole\": null,\n  \"citedException\": null,\n  \"boundRole\": null,\n  \"boundRoles\": null,\n  \"rolePolicyDigest\": null,\n  \"rolePolicy\": \"unresolved\",\n  \"roleFinding\": null\n}\n"
+  }
+ ],
+ "register_refusals": [
+  {
+   "exit": 0,
+   "stdout": "{\n  \"relationshipId\": \"rel-46d5b5ac690ef861\",\n  \"parent\": {\n    \"taskId\": \"01parent-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null\n  },\n  \"child\": {\n    \"taskId\": \"01child-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null\n  },\n  \"issueKey\": \"REL-1\",\n  \"status\": \"active\",\n  \"createdAt\": \"<T>\",\n  \"executionGeneration\": 1,\n  \"generations\": [\n    {\n      \"executionGeneration\": 1,\n      \"dispatchRequestId\": \"dispatch-1\",\n      \"anchorState\": \"bound\",\n      \"dispatchTurnId\": \"turn-dispatch-1\",\n      \"openedAt\": \"<T>\",\n      \"boundAt\": \"<T>\",\n      \"reason\": \"initial_assignment\"\n    }\n  ],\n  \"authorizedScope\": {\n    \"artifactRoots\": [\n      \"<HOME>/work\"\n    ],\n    \"allowedRecipients\": [\n      \"01parent-task\"\n    ]\n  },\n  \"authorizedSettings\": null\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"relationship_conflict\",\n  \"detail\": \"'rel-46d5b5ac690ef861' already exists with a different scope or hosts\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"duplicate_assignment\",\n  \"detail\": \"issue 'REL-1' is already assigned to child '01child-task' under 'rel-46d5b5ac690ef861' (active, parent '01parent-task'); reuse that assignment, or pass supersedes to replace it deliberately\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"settings_incomplete\",\n  \"detail\": \"missing environments\"\n}\n"
+  }
+ ],
+ "register_with_settings": [
+  {
+   "exit": 0,
+   "stdout": "{\n  \"relationshipId\": \"rel-46d5b5ac690ef861\",\n  \"parent\": {\n    \"taskId\": \"01parent-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null\n  },\n  \"child\": {\n    \"taskId\": \"01child-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null\n  },\n  \"issueKey\": \"REL-1\",\n  \"status\": \"active\",\n  \"createdAt\": \"<T>\",\n  \"executionGeneration\": 1,\n  \"generations\": [\n    {\n      \"executionGeneration\": 1,\n      \"dispatchRequestId\": \"dispatch-1\",\n      \"anchorState\": \"bound\",\n      \"dispatchTurnId\": \"turn-dispatch-1\",\n      \"openedAt\": \"<T>\",\n      \"boundAt\": \"<T>\",\n      \"reason\": \"initial_assignment\"\n    }\n  ],\n  \"authorizedScope\": {\n    \"artifactRoots\": [\n      \"<HOME>/work\"\n    ],\n    \"allowedRecipients\": [\n      \"01parent-task\"\n    ]\n  },\n  \"authorizedSettings\": {\n    \"01parent-task\": \"recorded\",\n    \"01child-task\": \"recorded\"\n  }\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"task\": \"01parent-task\",\n  \"settings\": {\n    \"approvalPolicy\": \"never\",\n    \"cwd\": \"/parent\",\n    \"environments\": [\n      {\n        \"cwd\": \"/parent\",\n        \"environmentId\": \"local\",\n        \"runtimeWorkspaceRoots\": [\n          \"/parent\"\n        ]\n      }\n    ],\n    \"model\": \"anthropic/claude-opus-5\",\n    \"reasoningEffort\": \"xhigh\",\n    \"runtimeWorkspaceRoots\": [\n      \"/parent\"\n    ],\n    \"sandbox\": {\n      \"excludeSlashTmp\": false,\n      \"excludeTmpdirEnvVar\": false,\n      \"networkAccess\": false,\n      \"type\": \"workspaceWrite\",\n      \"writableRoots\": []\n    }\n  },\n  \"usable\": true,\n  \"missing\": [],\n  \"deliverable\": true,\n  \"recordFinding\": null,\n  \"citedRole\": null,\n  \"citedException\": null,\n  \"boundRole\": null,\n  \"boundRoles\": null,\n  \"rolePolicyDigest\": null,\n  \"rolePolicy\": \"unresolved\",\n  \"roleFinding\": null\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"task\": \"01child-task\",\n  \"settings\": {\n    \"approvalPolicy\": \"never\",\n    \"cwd\": \"<HOME>/work\",\n    \"environments\": [\n      {\n        \"cwd\": \"<HOME>/work\",\n        \"environmentId\": \"local\",\n        \"runtimeWorkspaceRoots\": [\n          \"<HOME>/work\"\n        ]\n      }\n    ],\n    \"model\": \"anthropic/claude-opus-5\",\n    \"reasoningEffort\": \"xhigh\",\n    \"runtimeWorkspaceRoots\": [\n      \"<HOME>/work\"\n    ],\n    \"sandbox\": {\n      \"excludeSlashTmp\": false,\n      \"excludeTmpdirEnvVar\": false,\n      \"networkAccess\": false,\n      \"type\": \"workspaceWrite\",\n      \"writableRoots\": []\n    }\n  },\n  \"usable\": true,\n  \"missing\": [],\n  \"deliverable\": true,\n  \"recordFinding\": null,\n  \"citedRole\": null,\n  \"citedException\": null,\n  \"boundRole\": null,\n  \"boundRoles\": null,\n  \"rolePolicyDigest\": null,\n  \"rolePolicy\": \"unresolved\",\n  \"roleFinding\": null\n}\n"
+  }
+ ],
+ "register_without_settings": [
+  {
+   "exit": 0,
+   "stdout": "{\n  \"relationshipId\": \"rel-46d5b5ac690ef861\",\n  \"parent\": {\n    \"taskId\": \"01parent-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null\n  },\n  \"child\": {\n    \"taskId\": \"01child-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null\n  },\n  \"issueKey\": \"REL-1\",\n  \"status\": \"active\",\n  \"createdAt\": \"<T>\",\n  \"executionGeneration\": 1,\n  \"generations\": [\n    {\n      \"executionGeneration\": 1,\n      \"dispatchRequestId\": \"dispatch-1\",\n      \"anchorState\": \"bound\",\n      \"dispatchTurnId\": \"turn-dispatch-1\",\n      \"openedAt\": \"<T>\",\n      \"boundAt\": \"<T>\",\n      \"reason\": \"initial_assignment\"\n    }\n  ],\n  \"authorizedScope\": {\n    \"artifactRoots\": [\n      \"<HOME>/work\"\n    ],\n    \"allowedRecipients\": [\n      \"01parent-task\"\n    ]\n  },\n  \"authorizedSettings\": null\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"task\": \"01parent-task\",\n  \"settings\": null,\n  \"usable\": false,\n  \"deliverable\": false,\n  \"missing\": [\n    \"sandbox\",\n    \"approvalPolicy\",\n    \"cwd\",\n    \"runtimeWorkspaceRoots\",\n    \"model\",\n    \"reasoningEffort\",\n    \"environments\"\n  ],\n  \"recordFinding\": null\n}\n"
+  }
+ ],
+ "settings_incomplete": [
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"settings_incomplete\",\n  \"detail\": \"missing environments\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"task\": \"01parent-task\",\n  \"settings\": null,\n  \"usable\": false,\n  \"deliverable\": false,\n  \"missing\": [\n    \"sandbox\",\n    \"approvalPolicy\",\n    \"cwd\",\n    \"runtimeWorkspaceRoots\",\n    \"model\",\n    \"reasoningEffort\",\n    \"environments\"\n  ],\n  \"recordFinding\": null\n}\n"
+  }
+ ],
+ "settings_mistyped": [
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"settings_mistyped\",\n  \"detail\": \"model is int, not str\"\n}\n"
+  }
+ ],
+ "settings_record_file": [
+  {
+   "exit": 0,
+   "stdout": "{\n  \"taskId\": \"01parent-task\",\n  \"source\": \"creation_result\",\n  \"settings\": {\n    \"sandbox\": {\n      \"type\": \"workspaceWrite\",\n      \"writableRoots\": [],\n      \"networkAccess\": false,\n      \"excludeTmpdirEnvVar\": false,\n      \"excludeSlashTmp\": false\n    },\n    \"approvalPolicy\": \"never\",\n    \"cwd\": \"/parent\",\n    \"runtimeWorkspaceRoots\": [\n      \"/parent\"\n    ],\n    \"model\": \"anthropic/claude-opus-5\",\n    \"reasoningEffort\": \"xhigh\",\n    \"environments\": [\n      {\n        \"environmentId\": \"local\",\n        \"cwd\": \"/parent\",\n        \"runtimeWorkspaceRoots\": [\n          \"/parent\"\n        ]\n      }\n    ]\n  }\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"task\": \"01parent-task\",\n  \"settings\": {\n    \"approvalPolicy\": \"never\",\n    \"cwd\": \"/parent\",\n    \"environments\": [\n      {\n        \"cwd\": \"/parent\",\n        \"environmentId\": \"local\",\n        \"runtimeWorkspaceRoots\": [\n          \"/parent\"\n        ]\n      }\n    ],\n    \"model\": \"anthropic/claude-opus-5\",\n    \"reasoningEffort\": \"xhigh\",\n    \"runtimeWorkspaceRoots\": [\n      \"/parent\"\n    ],\n    \"sandbox\": {\n      \"excludeSlashTmp\": false,\n      \"excludeTmpdirEnvVar\": false,\n      \"networkAccess\": false,\n      \"type\": \"workspaceWrite\",\n      \"writableRoots\": []\n    }\n  },\n  \"usable\": true,\n  \"missing\": [],\n  \"deliverable\": true,\n  \"recordFinding\": null,\n  \"citedRole\": null,\n  \"citedException\": null,\n  \"boundRole\": null,\n  \"boundRoles\": null,\n  \"rolePolicyDigest\": null,\n  \"rolePolicy\": \"unresolved\",\n  \"roleFinding\": null\n}\n"
+  }
+ ],
+ "settings_sandbox_list": [
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"unsupported_sandbox_type\",\n  \"detail\": \"the recorded sandbox is list, not the policy object a creation result reports, so it does not record the full policy a resume would have to restore\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"task\": \"01other\",\n  \"settings\": null,\n  \"usable\": false,\n  \"deliverable\": false,\n  \"missing\": [\n    \"sandbox\",\n    \"approvalPolicy\",\n    \"cwd\",\n    \"runtimeWorkspaceRoots\",\n    \"model\",\n    \"reasoningEffort\",\n    \"environments\"\n  ],\n  \"recordFinding\": null\n}\n"
+  }
+ ],
+ "settings_untrusted": [
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"unsupported_approval_policy\",\n  \"detail\": \"the recorded approvalPolicy is 'untrusted'; this transport carries only 'never' and 'on-request', leaving every approval a turn raises with the thread's own approver\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"task\": \"01parent-task\",\n  \"settings\": null,\n  \"usable\": false,\n  \"deliverable\": false,\n  \"missing\": [\n    \"sandbox\",\n    \"approvalPolicy\",\n    \"cwd\",\n    \"runtimeWorkspaceRoots\",\n    \"model\",\n    \"reasoningEffort\",\n    \"environments\"\n  ],\n  \"recordFinding\": null\n}\n"
+  }
+ ],
+ "show_bare_sandbox": [
+  {
+   "exit": 0,
+   "stdout": "{\n  \"taskId\": \"01parent-task\",\n  \"source\": \"creation_result\",\n  \"settings\": {\n    \"sandbox\": {\n      \"type\": \"workspaceWrite\",\n      \"writableRoots\": [],\n      \"networkAccess\": false,\n      \"excludeTmpdirEnvVar\": false,\n      \"excludeSlashTmp\": false\n    },\n    \"approvalPolicy\": \"never\",\n    \"cwd\": \"/parent\",\n    \"runtimeWorkspaceRoots\": [\n      \"/parent\"\n    ],\n    \"model\": \"anthropic/claude-opus-5\",\n    \"reasoningEffort\": \"xhigh\",\n    \"environments\": [\n      {\n        \"environmentId\": \"local\",\n        \"cwd\": \"/parent\",\n        \"runtimeWorkspaceRoots\": [\n          \"/parent\"\n        ]\n      }\n    ]\n  }\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"task\": \"01parent-task\",\n  \"settings\": {\n    \"sandbox\": \"workspaceWrite\",\n    \"approvalPolicy\": \"never\",\n    \"cwd\": \"/parent\",\n    \"runtimeWorkspaceRoots\": [\n      \"/parent\"\n    ],\n    \"model\": \"anthropic/claude-opus-5\",\n    \"reasoningEffort\": \"xhigh\",\n    \"environments\": [\n      {\n        \"environmentId\": \"local\",\n        \"cwd\": \"/parent\",\n        \"runtimeWorkspaceRoots\": [\n          \"/parent\"\n        ]\n      }\n    ]\n  },\n  \"usable\": true,\n  \"missing\": [],\n  \"deliverable\": false,\n  \"recordFinding\": {\n    \"code\": \"unsupported_sandbox_type\",\n    \"detail\": \"the recorded sandbox is str, not the policy object a creation result reports, so it does not record the full policy a resume would have to restore\"\n  },\n  \"citedRole\": null,\n  \"citedException\": null,\n  \"boundRole\": null,\n  \"boundRoles\": null,\n  \"rolePolicyDigest\": null,\n  \"rolePolicy\": \"unresolved\",\n  \"roleFinding\": null\n}\n"
+  }
+ ],
+ "show_cwd_int": [
+  {
+   "exit": 0,
+   "stdout": "{\n  \"taskId\": \"01parent-task\",\n  \"source\": \"creation_result\",\n  \"settings\": {\n    \"sandbox\": {\n      \"type\": \"workspaceWrite\",\n      \"writableRoots\": [],\n      \"networkAccess\": false,\n      \"excludeTmpdirEnvVar\": false,\n      \"excludeSlashTmp\": false\n    },\n    \"approvalPolicy\": \"never\",\n    \"cwd\": \"/parent\",\n    \"runtimeWorkspaceRoots\": [\n      \"/parent\"\n    ],\n    \"model\": \"anthropic/claude-opus-5\",\n    \"reasoningEffort\": \"xhigh\",\n    \"environments\": [\n      {\n        \"environmentId\": \"local\",\n        \"cwd\": \"/parent\",\n        \"runtimeWorkspaceRoots\": [\n          \"/parent\"\n        ]\n      }\n    ]\n  }\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"task\": \"01parent-task\",\n  \"settings\": {\n    \"sandbox\": {\n      \"type\": \"workspaceWrite\",\n      \"writableRoots\": [],\n      \"networkAccess\": false,\n      \"excludeTmpdirEnvVar\": false,\n      \"excludeSlashTmp\": false\n    },\n    \"approvalPolicy\": \"never\",\n    \"cwd\": 7,\n    \"runtimeWorkspaceRoots\": [\n      7\n    ],\n    \"model\": \"anthropic/claude-opus-5\",\n    \"reasoningEffort\": \"xhigh\",\n    \"environments\": [\n      {\n        \"environmentId\": \"local\",\n        \"cwd\": 7,\n        \"runtimeWorkspaceRoots\": [\n          7\n        ]\n      }\n    ]\n  },\n  \"usable\": true,\n  \"missing\": [],\n  \"deliverable\": false,\n  \"recordFinding\": {\n    \"code\": \"settings_mistyped\",\n    \"detail\": \"cwd is int, not str; runtimeWorkspaceRoots is a list holding int, not a list of str; environments[0].cwd is int, not str\"\n  },\n  \"citedRole\": null,\n  \"citedException\": null,\n  \"boundRole\": null,\n  \"boundRoles\": null,\n  \"rolePolicyDigest\": null,\n  \"rolePolicy\": \"unresolved\",\n  \"roleFinding\": null\n}\n"
+  }
+ ]
+}

@@ -91,13 +91,18 @@ func TestCLIRunner_reports_an_unregistered_relay_command_as_not_ported(t *testin
 	}
 }
 
-func TestCLIRunner_reports_a_relay_store_seed_as_not_ported(t *testing.T) {
-	// Given: given.sql_seed, which needs the real relay Store.
-	scenario := scenarioFrom(t, `{"given":{"sql_seed":"SELECT 1"},"run":{"kind":"cli","argv":["x"]},"expect":{"exit":0}}`)
+func TestCLIRunner_seeds_given_sql_seed_through_the_real_relay_store(t *testing.T) {
+	// Given: given.sql_seed on top of the relay schema, read back with a query.
+	scenario := scenarioFrom(t, `{"given":{"sql_seed":"INSERT INTO relationship_scope (relationship_id, project_key, recorded_at) VALUES ('r','p','t');"},`+
+		`"run":{"kind":"cli","argv":["dispositions-show","--relationship","r"]},"expect":{"exit":0,"queries":{"seeded":"SELECT project_key FROM relationship_scope"}}}`)
 	// When
-	_, err := runCLI(t, scenario)
-	// Then
-	if !errors.Is(err, ErrNotPorted) {
-		t.Fatalf("want ErrNotPorted, got %v", err)
+	actual, err := runCLI(t, scenario)
+	// Then: the seed landed in a relay store the command could read.
+	if err != nil {
+		t.Fatal(err)
+	}
+	seeded := actual["sql"].(map[string]any)["seeded"].([]any)
+	if len(seeded) != 1 || actual["exit"] != float64(0) {
+		t.Fatalf("seeded %v exit %v", seeded, actual["exit"])
 	}
 }

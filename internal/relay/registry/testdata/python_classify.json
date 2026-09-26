@@ -1,0 +1,50 @@
+{
+ "environments_unknown": {
+  "deliveryState": "withheld_pre_send",
+  "failedOperation": "thread/resume",
+  "retrySafe": true,
+  "sendAttempted": "no"
+ },
+ "setting_unobservable": {
+  "deliveryState": "withheld_pre_send",
+  "failedOperation": "thread/resume",
+  "retrySafe": true,
+  "sendAttempted": "no"
+ },
+ "settings_differ_after_load": {
+  "deliveryState": "withheld_pre_send",
+  "failedOperation": "thread/resume",
+  "retrySafe": true,
+  "sendAttempted": "no"
+ },
+ "settings_not_preserved": {
+  "deliveryState": "withheld_pre_send",
+  "failedOperation": "thread/resume",
+  "retrySafe": true,
+  "sendAttempted": "no"
+ },
+ "thread_busy": {
+  "deliveryState": "held_uncertain",
+  "failedOperation": "unclassified",
+  "retrySafe": false,
+  "sendAttempted": "unknown"
+ },
+ "unknown": {
+  "deliveryState": "held_uncertain",
+  "failedOperation": "unclassified",
+  "retrySafe": false,
+  "sendAttempted": "unknown"
+ },
+ "unsupported_approval_policy": {
+  "deliveryState": "inbox_only",
+  "failedOperation": "thread/resume",
+  "retrySafe": false,
+  "sendAttempted": "no"
+ },
+ "unverifiable_permission_profile": {
+  "deliveryState": "withheld_pre_send",
+  "failedOperation": "thread/resume",
+  "retrySafe": true,
+  "sendAttempted": "no"
+ }
+}
