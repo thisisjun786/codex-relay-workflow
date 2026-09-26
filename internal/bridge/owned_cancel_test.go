@@ -3,9 +3,11 @@ package bridge
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 )
 
@@ -42,6 +44,72 @@ func Test_test_cancellation_keeps_unknown_receipt_and_prevents_retry(t *testing.
 	replay, err := b.CreateThread(context.Background(), input)
 	if err != nil || replay["replayed"] != true || host.Count("thread/start") != 1 {
 		t.Fatalf("replay=%v err=%v calls=%v", replay, err, host.Requests())
+	}
+}
+
+func Test_test_cancellation_keeps_unknown_receipt_when_reader_outcome_wins(t *testing.T) {
+	for _, outcome := range []string{"disconnect", "response", "rpc_error"} {
+		t.Run(outcome, func(t *testing.T) {
+			b, host := testBridge(t)
+			cwd := t.TempDir()
+			paused := make(chan struct{})
+			release := make(chan struct{})
+			unblock := sync.OnceFunc(func() { close(release) })
+			t.Cleanup(unblock)
+			reply := startReply(cwd)
+			if outcome == "rpc_error" {
+				reply = fakehost.Reply{Error: &fakehost.RPCError{Code: -32603, Message: "rejected"}}
+			}
+			reply.Paused, reply.Release = paused, release
+			host.Respond("thread/start", reply)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			selected := make(chan struct{})
+			ctx = appserver.WithOutcomeHook(ctx, func(method string) {
+				if method == "thread/start" {
+					// Force the reader branch to win, then cancel before it is interpreted.
+					// Making both select cases ready alone would still leave the test random.
+					cancel()
+					close(selected)
+				}
+			})
+			input := createInput(cwd, "cancel")
+			input.Title, input.Prompt = "title", "work"
+			result := make(chan error, 1)
+			go func() { _, err := b.CreateThread(ctx, input); result <- err }()
+			select {
+			case <-paused:
+			case <-time.After(5 * time.Second):
+				t.Fatal("thread/start did not reach host")
+			}
+			if outcome == "disconnect" {
+				// The reader can fail even while the host still withholds the answer.
+				host.Close()
+			} else {
+				unblock()
+			}
+			select {
+			case err := <-result:
+				if !errors.Is(err, context.Canceled) {
+					t.Errorf("cancellation not propagated: %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("cancellation did not finish")
+			}
+			select {
+			case <-selected:
+			default:
+				t.Fatal("reader outcome was not selected")
+			}
+			receipt, err := b.GetOperation(context.Background(), "cancel")
+			if err != nil || receipt["status"] != "outcome_unknown" || receipt["retrySafe"] != false || receipt["threadId"] != nil || len(receipt["attemptedEffects"].([]any)) != 1 || receipt["attemptedEffects"].([]any)[0] != "thread/start" {
+				t.Errorf("receipt=%v err=%v", receipt, err)
+			}
+			replay, err := b.CreateThread(context.Background(), input)
+			if err != nil || replay["replayed"] != true || host.Count("thread/start") != 1 || host.Count("thread/name/set") != 0 || host.Count("turn/start") != 0 {
+				t.Fatalf("replay=%v err=%v calls=%v", replay, err, host.Requests())
+			}
+		})
 	}
 }
 
