@@ -216,13 +216,18 @@ func gate(ctx context.Context, rc *Reconciler, adapter Adapter, attempt Row) (bo
 	if readErr != nil {
 		return true, nil, markGate(ctx, rc, id, nil, true, readErr.Error())
 	}
-	status := "missing"
+	status, turnID := "missing", ""
 	if receipt != nil {
 		if v, ok := get(receipt, "status"); ok {
 			status = pyStr(v)
 		}
+		if v, ok := get(receipt, "turnId"); ok {
+			if turn, ok := usableTurnID(v).(string); ok {
+				turnID = turn
+			}
+		}
 	}
-	fingerprint := status + "|" + content
+	fingerprint := status + "|" + turnID + "|" + content
 	if row == nil || row.I("retry_required") != 0 {
 		return true, fingerprint, nil
 	}

@@ -162,6 +162,22 @@ func requireSameDeliveryTables(t *testing.T, f *fixture, python pyCapture) {
 	got := normalizeJSON(t, f.tables()).(map[string]any)
 	want := normalizeJSON(t, python.Tables).(map[string]any)
 	for _, n := range deliveryTables {
+		if n == "reconcile_gate" && got[n] != nil {
+			// Python's gate omits the receipt turn id. Compare its other persisted fields
+			// unchanged while the Go-only regression tests verify the extra component.
+			for _, value := range got[n].([]any) {
+				row := value.(map[string]any)
+				if fingerprint, ok := row["fingerprint"].(string); ok {
+					status, tail, found := strings.Cut(fingerprint, "|")
+					if found {
+						_, content, found := strings.Cut(tail, "|")
+						if found {
+							row["fingerprint"] = status + "|" + content
+						}
+					}
+				}
+			}
+		}
 		if !reflect.DeepEqual(got[n], want[n]) {
 			g, _ := json.MarshalIndent(got[n], "", " ")
 			w, _ := json.MarshalIndent(want[n], "", " ")
