@@ -127,6 +127,24 @@ The fault sweep/ledger (todo 22) and the merge-turn grant rule (todo 26) these p
 ported as marked subsets in `internal/relay/faults` and `internal/relay/mergeturn`; the recipient
 reads of the bridge adapter (todo 28) as `delivery.BridgeReads`.
 
+## Todo 21 part C acknowledgement, re-review and recovery property progress (2026-09-26)
+
+Same method as part B2 (`testdata/capture.py` + the Go twin of each Python test, every asserted
+value and the delivery tables compared; the re-review tests also compare the review tables).
+
+| Python file | properties | Go tests | python-internal (not ported) |
+| --- | ---: | ---: | --- |
+| `test_ack_reconcile.py` | 23 | 23 | - |
+| `test_ack_disposition_race.py` | 3 | 3 | - |
+| `test_rereview_deadlock.py` | 9 | 9 | - |
+| `test_recovery_negatives.py` | 3 | 3 | - |
+| **Total** | **38** | **38** | **0** |
+
+Carried from todo 25A into `internal/relay/delivery`: `test_cli.py` CLI-5, CLI-7, CLI-9, CLI-21,
+CLI-38 (`Test25_CLI*`, whole stdout against the Python command) and
+`test_registration_contention.py` RCT-1, RCT-4 for their `intent.bind` marker half (`Test25_RCT*`;
+the guard-evaluate half is todo 33).
+
 ## Files
 
 | path | tests | class | family | fixtures | owner | destination | coupling |

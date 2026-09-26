@@ -212,6 +212,8 @@ func (h *fakeHost) SendMessage(requestID, thread, message string, settings *Task
 	switch outcome {
 	case "in_progress":
 		return append(Obj(nil), receipt...), nil
+	case "process_death":
+		return nil, &HostError{Kind: "ProcessDied", Message: "the relay process was killed mid-send"}
 	case "busy":
 		receipt = set(receipt, "status", FailedStatus)
 		receipt = set(receipt, "error", "thread/read: Thread is active; message withheld. Wait for completion.")
