@@ -3,6 +3,7 @@ package delivery
 import (
 	"fmt"
 	"strings"
+	"sync"
 )
 
 // fakeThread and fakeHost are fakehost.FakeHostAdapter: a deterministic host shaped like the
@@ -34,6 +35,9 @@ type fakeHost struct {
 	calls        []string
 	onGoalRead   func(thread string)
 	onArchived   func(thread string) (*bool, error)
+	// mu serialises the call log: two parents acknowledging at one instant (MPI-2) read the
+	// host from two goroutines, which the Python fake never had to survive under its GIL.
+	mu sync.Mutex
 }
 
 func newFakeHost(clock *FakeClock) *fakeHost {
@@ -71,6 +75,8 @@ func (h *fakeHost) finishTurn(thread, turnID, status string) {
 }
 
 func (h *fakeHost) guard(name string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.calls = append(h.calls, name)
 	if h.readFailures[name] {
 		return &HostError{Kind: "ConnectionError", Message: name + " unavailable"}

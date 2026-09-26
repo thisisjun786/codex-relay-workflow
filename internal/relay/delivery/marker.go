@@ -501,4 +501,3 @@ func fieldOf(record Obj, key string) any {
 	v, _ := get(record, key)
 	return v
 }
-

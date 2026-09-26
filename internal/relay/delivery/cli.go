@@ -30,6 +30,9 @@ type flagSpec struct {
 type commandSpec struct {
 	flags []flagSpec
 	run   func(*cliRun) (any, error)
+	// exempt is _reads_no_selected_store: the command answers without the store discovery picks,
+	// so the selection refusal is not asked.
+	exempt func(map[string]any) bool
 }
 
 var deliveryCommands = map[string]commandSpec{
@@ -227,7 +230,9 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 		if err != nil {
 			return reply(stdout, Obj{{Key: "error", Value: "host"}, {Key: "detail", Value: "OSError: " + err.Error()}}, contract.ExitHost), true
 		}
-		if check != nil {
+		if spec.exempt != nil && spec.exempt(parsed) {
+			// Marker-only: no selection refusal (cli._refuse_ambiguous_state's exemption).
+		} else if check != nil {
 			if err := check(selection, socket); err != nil {
 				var payload PayloadError
 				if errors.As(err, &payload) {
@@ -249,9 +254,13 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 	result, err := spec.run(run)
 	var usage *usageError
 	var refused *store.RefusedError
+	var whole PayloadError
 	switch {
 	case errors.As(err, &usage):
 		return reply(stdout, Obj{{Key: "error", Value: "usage"}, {Key: "detail", Value: usage.detail}}, usage.code), true
+	case errors.As(err, &whole):
+		body, code := whole.ExitPayload()
+		return reply(stdout, body, code), true
 	case errors.As(err, &refused):
 		return reply(stdout, Obj{{Key: "error", Value: "refused"}, {Key: "reason", Value: refused.Reason}, {Key: "detail", Value: refused.Detail}}, contract.ExitRefused), true
 	case err != nil:
@@ -489,5 +498,5 @@ func cmdVerdict(c *cliRun) (any, error) {
 
 // CommandNames are the relay subcommands this package serves, in cli.py's add_parser order.
 func CommandNames() []string {
-	return []string{"emit", "deliver", "reconcile", "recover", "claim", "ack-proof", "ack", "verdict", "criteria-register", "criteria-show", "revision-head", "verify-acks"}
+	return append([]string{"emit", "deliver", "reconcile", "recover", "claim", "ack-proof", "ack", "verdict", "criteria-register", "criteria-show", "revision-head", "verify-acks"}, intentCommandNames...)
 }

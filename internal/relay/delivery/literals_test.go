@@ -28,6 +28,10 @@ var literalWords = map[string][]string{
 	"registry.py":          {"anchor_pending", "bound", "needs_changes_revision", "initial_assignment", "anchor_conflict", "anchor_bound", "generation_opened", "status_changed"},
 	"supervisorchannel.py": {"turn_predates_send"},
 	"sync.py":              {"coordination_document", "sync_enqueued", "pending", "claimed", "confirmed"},
+	"intent.py":            {"relationship_registered", "identity_bound", "ambiguous_identity", "intent_expired", "creation_unknown", "creation_accepted", "intent_declared", "bound", "unchanged", "conflict", "current", "stale", "absent", "accepted", "unknown", "failed", "in_progress", "blocked_needs_input", "interrupted", "ready_for_review"},
+	"marker.py":            {"published", "exists", "flag", "env", "xdg", "home"},
+	"declarations.py":      {"declarations/1", "recorded", "unchanged", "conflict", "not_recorded", "failed", "store_disagrees", "no_store_recorded", "store_absent", "store_unreadable", "store_not_a_file", "store_unopenable", "store_write_failed", "store_locked"},
+	"cli.py#marker":        {"marker_unreadable", "marker_malformed", "claim_not_standing", "claim_uncorrelated", "store_changed"},
 }
 
 func TestLiteralReasons_outside_the_frozen_enum_are_spelled_as_python_spells_them(t *testing.T) {
@@ -40,7 +44,7 @@ func TestLiteralReasons_outside_the_frozen_enum_are_spelled_as_python_spells_the
 	src := filepath.Join(repoRoot(t), "packages", "codex-session-relay", "src", "codex_session_relay")
 	checked := 0
 	for file, words := range literalWords {
-		raw, err := os.ReadFile(filepath.Join(src, file))
+		raw, err := os.ReadFile(filepath.Join(src, strings.Split(file, "#")[0]))
 		mustDo(t, err)
 		text := string(raw)
 		for _, w := range words {
@@ -57,6 +61,10 @@ func TestLiteralReasons_outside_the_frozen_enum_are_spelled_as_python_spells_the
 		{AckPredatesAttempt, "ack_predates_attempt"}, {PresendWithheld, "delivery_presend_withheld"}, {SettingsNoted, "delivery_settings_noted"},
 		{Sole, "sole_revision"}, {Chain, "declared_chain"}, {TurnFound, "turn_found"}, {ApprovalDiffersFromRecord, "approval_policy_differs_from_record"},
 		{TurnPredatesSend, "turn_predates_send"}, {SettingsDifferAfterLoad, "settings_differ_after_load"},
+		{RelationshipRegistered, "relationship_registered"}, {IdentityBound, "identity_bound"}, {AmbiguousIdentity, "ambiguous_identity"}, {IntentExpired, "intent_expired"},
+		{CreationUnknown, "creation_unknown"}, {CreationAccepted, "creation_accepted"}, {IntentDeclared, "intent_declared"}, {Bound, "bound"}, {Unchanged, "unchanged"}, {Conflict, "conflict"},
+		{DispatchCurrent, "current"}, {DispatchStale, "stale"}, {DispatchAbsent, "absent"}, {declarationsCapability, "declarations/1"}, {declRecorded, "recorded"},
+		{declNotRecordedState, "not_recorded"}, {declFailed, "failed"}, {Published, "published"}, {Exists, "exists"},
 	} {
 		if pair[0] != pair[1] {
 			t.Errorf("constant %q != %q", pair[0], pair[1])
@@ -65,7 +73,8 @@ func TestLiteralReasons_outside_the_frozen_enum_are_spelled_as_python_spells_the
 	// Every refusal reason the package raises IS an enum member (or one of the cli.py literals).
 	for _, r := range []string{NotClaimable, RecipientNotAuthorized, ScopeEscape, RelationshipNotActive, UnregisteredRelationship, UnknownGeneration, RelationUnreadable, RelationOwnerDrift, DuplicateScopeOwner, LinkConflict, UnregisteredScope,
 		SettingsUnavailable, SettingsIncomplete, SettingsMistyped, UnsupportedSandboxType, UnsupportedApprovalPolicy, RolePolicyUnconfigured, RoleBindingMismatch, CriteriaUnregistered, CriteriaNotCovered, CriteriaSetChanged,
-		UnknownCriterion, FindingsRequired, DispositionConflict, ReviewNotBound, WrongDeliveryKind, AckProofMismatch, AckTurnUnverified, NotAcknowledged, RestorationUndeliverable, StaleGeneration, SupersededRevision, RevisionAmbiguous, SyncNotClaimable} {
+		UnknownCriterion, FindingsRequired, DispositionConflict, ReviewNotBound, WrongDeliveryKind, AckProofMismatch, AckTurnUnverified, NotAcknowledged, RestorationUndeliverable, StaleGeneration, SupersededRevision, RevisionAmbiguous, SyncNotClaimable,
+		RelationshipConflict, UnboundGeneration, OutcomeInconsistent} {
 		if !enum[r] {
 			t.Errorf("%q is raised as a refusal but is not in the frozen enum", r)
 		}

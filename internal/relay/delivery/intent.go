@@ -722,7 +722,7 @@ func publishNumbered(directory, kind string, payload Obj, root string) (string, 
 
 // IntentDeclaration is declare_intent's keyword arguments.
 type IntentDeclaration struct {
-	Workspace, DispatchRequestID, IssueKey, DeclaredAt string
+	Workspace, DispatchRequestID, IssueKey, DeclaredAt           string
 	CriteriaSource, BaselineRevision, AuthorizedSettings, DBPath any
 }
 
@@ -943,4 +943,3 @@ func PublishDisposition(root, workspace string, assignment, sessionID, turnID an
 	}
 	return Obj{{Key: "assignmentId", Value: assignment}, {Key: "sessionId", Value: session}, {Key: "turnId", Value: turn}, {Key: "outcome", Value: outcome}, {Key: "published", Value: published}}, nil
 }
-

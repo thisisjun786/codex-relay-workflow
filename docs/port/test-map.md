@@ -91,6 +91,24 @@ byte for byte like Python (`TestCLI_every_delivery_command_answers_byte_for_byte
 `deliver`, `reconcile`, `recover` and `verify-acks` with `--socket` need the host adapter
 (todo 28).
 
+## Todo 21 part B1 intent and marker property progress (2026-09-26)
+
+Go tests in `internal/relay/delivery`, named `Test<ID>_...` after
+`.omo/ulw-execute/todo21-properties.md`; each runs one JSON op list through the real `marker.py` /
+`intent.py` (`testdata/markerops.py`) and the Go port over the same tree and compares the whole
+answers (records, refusal reason and detail, derived states, fact reads).
+
+| Python file | properties | Go tests | python-internal (not ported) |
+| --- | ---: | ---: | --- |
+| `test_intent.py` | 23 | 23 | - |
+| `test_marker.py` | 8 | 8 | - |
+| **Total** | **31** | **31** | **0** |
+
+The eight marker commands (`intent-declare`, `intent-attempt`, `intent-bind`, `intent-register`,
+`intent-claim`, `intent-disposition`, `intent-resolve`, `intent-show`), with the store records
+`intent-claim` and `intent-disposition` mirror (declarations.py), answer byte for byte like Python
+(`TestCLI_every_intent_command_answers_byte_for_byte_like_python`); `guard-evaluate` is todo 33.
+
 ## Files
 
 | path | tests | class | family | fixtures | owner | destination | coupling |
