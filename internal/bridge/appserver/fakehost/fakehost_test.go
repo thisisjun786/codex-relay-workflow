@@ -110,6 +110,11 @@ func TestHandshake_isAccepted_whenClientSendsPythonInitializeThenInitialized(t *
 	if string(after.ID) != "2" || after.Error != nil {
 		t.Fatalf("request after handshake = %+v", after)
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := server.WaitCount(ctx, "initialized", 1); err != nil {
+		t.Fatal(err)
+	}
 	requests := server.Requests()
 	var params struct {
 		ClientInfo   struct{ Name string } `json:"clientInfo"`

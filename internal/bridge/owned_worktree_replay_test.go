@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
@@ -58,6 +59,11 @@ func Test_test_lost_responses_replay_after_restart_without_duplicate_artifacts(t
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = nextClient.Close() })
+			handshake, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := host.WaitCount(handshake, "initialized", 2); err != nil {
+				t.Fatalf("new client handshake not recorded: %v", err)
+			}
 			// Reopen the same SQLite file: a replay must survive a new ledger process.
 			nextStore, err := ledger.Open(ledgerPath)
 			if err != nil {
