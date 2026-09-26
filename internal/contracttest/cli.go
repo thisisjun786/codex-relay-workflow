@@ -47,6 +47,11 @@ func runCLI(t *testing.T, scenario Scenario) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	for _, step := range steps {
+		if argv, _ := stringList(step["argv"]); len(argv) > 0 && corpusDomains[scenario.Domain] && !portedCommands[argv[0]] {
+			return nil, fmt.Errorf("%w: %s/cli command %s", ErrNotPorted, scenario.Domain, argv[0])
+		}
+	}
 	results := map[string]any{}
 	var last map[string]any
 	for index, step := range steps {

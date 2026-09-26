@@ -10,6 +10,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
 
 var version = "dev"
@@ -45,6 +46,9 @@ func run(ctx context.Context, program string, args []string) int {
 	}
 	switch mode {
 	case "relay":
+		if code, handled := delivery.ExecuteCLI(ctx, args, os.Stdout, os.Stderr); handled {
+			return code
+		}
 		return cli.Execute(ctx, args, os.Stdout, os.Stderr)
 	case "bridge":
 		return mcp.Run(ctx, args)

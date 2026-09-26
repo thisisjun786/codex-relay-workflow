@@ -241,3 +241,9 @@ func DiscoverStateDir(socket string) (StateSelection, error) {
 	return chosen, nil
 }
 func exists(path string) bool { _, err := os.Stat(path); return err == nil }
+
+// RecordedSocket is store_socket: the canonical socket a store recorded, or "" when none.
+func RecordedSocket(dbPath string) string { return storeSocket(dbPath) }
+
+// CanonicalSocket is canonical_socket: the socket path as a store records it.
+func CanonicalSocket(path string) (string, error) { return canonicalSocket(path) }

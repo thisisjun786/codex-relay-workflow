@@ -65,6 +65,32 @@ Go tests in `internal/bridge`, each reviewed against its Python property:
 
 The remaining MCP case is deferred to todo 16's "Expose the bridge as an MCP stdio server and wire `crw bridge`" and "QA scenarios: happy = stdio round trip create_thread against fakehost via an MCP client in Go test". Property parity is recorded row by row in the todo-15 ledger below. The todo-15 bridge fakehost work is separate from the 36 execution and 23 settings package properties counted under todo 14 in the file rows below.
 
+## Todo 21 part A delivery property progress (2026-09-26)
+
+Ported by property (Jun, 2026-09-26). Go tests in `internal/relay/delivery`, named
+`Test<ID>_...` after `.omo/ulw-execute/todo21-properties.md`; each runs the same scenario through
+the real Python package over the same fixture tree and compares records, refusals and every table
+row with Python's.
+
+| Python file | properties | Go tests | python-internal (not ported) |
+| --- | ---: | ---: | --- |
+| `test_delivery.py` | 35 | 35 | - |
+| `test_delivery_relation.py` | 5 | 4 | DRL-0 (drift guard between two Python spellings; Go has one constant) |
+| `test_supersession.py` | 8 | 8 | - |
+| `test_multi_parent_isolation.py` | 5 | 5 | - |
+| `test_on_request_delivery.py` | 9 | 9 | - |
+| `test_anchor_binding.py` | 8 | 8 | - |
+| `test_criteria_registration.py` | 7 | 7 | - |
+| `test_revision_roundtrip.py` | 5 | 5 | - |
+| `test_verification_currency.py` | 13 | 12 | VCU-5 (`inspect.signature`; Go `RecordVerdict` has no bypass parameter) |
+| **Total** | **95** | **93** | **2** |
+
+The twelve delivery commands (`emit`, `deliver`, `reconcile`, `recover`, `claim`, `ack-proof`,
+`ack`, `verdict`, `criteria-register`, `criteria-show`, `revision-head`, `verify-acks`) answer
+byte for byte like Python (`TestCLI_every_delivery_command_answers_byte_for_byte_like_python`);
+`deliver`, `reconcile`, `recover` and `verify-acks` with `--socket` need the host adapter
+(todo 28).
+
 ## Files
 
 | path | tests | class | family | fixtures | owner | destination | coupling |
