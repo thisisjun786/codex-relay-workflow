@@ -120,24 +120,33 @@ func (c *Client) request(ctx context.Context, ws *websocket.Conn, method string,
 	}
 	ack, cancel := context.WithTimeout(ctx, c.bounds.Ack)
 	defer cancel()
+	var result outcome
 	select {
-	case result := <-ch:
-		if result.err != nil {
-			return nil, result.err
+	case result = <-ch:
+		if hook, ok := ctx.Value(outcomeHookKey{}).(func(string)); ok {
+			hook(method)
 		}
-		if result.response.Error != nil {
-			return nil, rpcError(method, result.response.Error)
-		}
-		if result.response.Result == nil {
-			return nil, &TransportError{method + ": invalid response; outcome unknown"}
-		}
-		return result.response.Result, nil
 	case <-ack.Done():
-		if errors.Is(ack.Err(), context.DeadlineExceeded) {
+	}
+	// Both cases can be ready, including when cancellation closes the socket during a
+	// successful write. Cancellation must win over the reader's response or transport error:
+	// the bridge records ordinary failures as receipts, but must propagate cancellation.
+	if err := ack.Err(); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
 			return nil, &PhaseTimeout{method, "ack", c.bounds.Ack}
 		}
-		return nil, fmt.Errorf("%s: response unavailable: %w", method, ack.Err())
+		return nil, fmt.Errorf("%s: response unavailable: %w", method, err)
 	}
+	if result.err != nil {
+		return nil, result.err
+	}
+	if result.response.Error != nil {
+		return nil, rpcError(method, result.response.Error)
+	}
+	if result.response.Result == nil {
+		return nil, &TransportError{method + ": invalid response; outcome unknown"}
+	}
+	return result.response.Result, nil
 }
 func (c *Client) write(ctx context.Context, ws *websocket.Conn, message map[string]any, method string) error {
 	raw, err := json.Marshal(message)
