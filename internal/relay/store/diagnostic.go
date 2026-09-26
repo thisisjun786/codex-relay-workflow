@@ -54,7 +54,7 @@ func holdDatabase(ctx context.Context, path string) (*os.File, string, string) {
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, "", err.Error()
+		return nil, "", PythonOSError(err)
 	}
 	if seams.afterOpen != nil {
 		seams.afterOpen(path)

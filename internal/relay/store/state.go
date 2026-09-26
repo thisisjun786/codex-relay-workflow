@@ -3,6 +3,7 @@ package store
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"os/user"
@@ -131,6 +132,10 @@ func absoluteExpanded(path string) (string, error) {
 	}
 	return pathlibSpelling(expanded), nil
 }
+
+// ErrNoHome is pathlib's RuntimeError("Could not determine home directory.") for an unknown ~user.
+var ErrNoHome = errors.New("could not determine home directory")
+
 func expandUser(path string) (string, error) {
 	if !strings.HasPrefix(path, "~") {
 		return path, nil
@@ -140,7 +145,7 @@ func expandUser(path string) (string, error) {
 	if name != "" {
 		user, err := user.Lookup(name)
 		if err != nil {
-			return "", fmt.Errorf("cannot determine home directory for %q: %w", name, err)
+			return "", fmt.Errorf("cannot determine home directory for %q: %w: %w", name, ErrNoHome, err)
 		}
 		home = user.HomeDir
 	}

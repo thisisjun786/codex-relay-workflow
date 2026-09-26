@@ -21,6 +21,9 @@ type CompareExpectations struct {
 	Inode   string
 	Log     string
 	Nonce   *NonceReading
+	// The *Given flags mark an expectation supplied as the empty string, which Python's
+	// `is not None` still counts as asked and grades like any other unusable value.
+	StoreIDGiven, InodeGiven, LogGiven bool
 }
 
 type StoreComparison struct {
@@ -48,7 +51,7 @@ const (
 func CompareStore(loc Location, expected CompareExpectations) StoreComparison {
 	var reasons []gradedReason
 	add := func(verdict StoreVerdict, detail string) { reasons = append(reasons, gradedReason{verdict, detail}) }
-	if expected.StoreID != "" {
+	if expected.StoreID != "" || expected.StoreIDGiven {
 		switch {
 		case loc.StoreID == "":
 			add(Unproven, "this store states no identity, so it cannot be compared")
@@ -58,8 +61,8 @@ func CompareStore(loc Location, expected CompareExpectations) StoreComparison {
 			add("", "store id matches")
 		}
 	}
-	physical := comparePhysical(loc, expected.Inode, add)
-	logLocation := compareLog(loc, expected.Log, add)
+	physical := comparePhysical(loc, expected.Inode, expected.InodeGiven, add)
+	logLocation := compareLog(loc, expected.Log, expected.LogGiven, add)
 	if n := expected.Nonce; n != nil {
 		gradeNonce(loc, *n, physical, logLocation, add)
 	}
@@ -109,8 +112,8 @@ func nonceLinks(n *NonceReading) uint64 {
 	return n.Links
 }
 
-func comparePhysical(loc Location, expect string, add func(StoreVerdict, string)) tristate {
-	if expect == "" {
+func comparePhysical(loc Location, expect string, given bool, add func(StoreVerdict, string)) tristate {
+	if expect == "" && !given {
 		return notCompared
 	}
 	want := strings.Split(expect, ":")
@@ -127,8 +130,8 @@ func comparePhysical(loc Location, expect string, add func(StoreVerdict, string)
 	}
 }
 
-func compareLog(loc Location, expect string, add func(StoreVerdict, string)) tristate {
-	if expect == "" {
+func compareLog(loc Location, expect string, given bool, add func(StoreVerdict, string)) tristate {
+	if expect == "" && !given {
 		return notCompared
 	}
 	// <device>:<inode>:<name>, split at most twice so a name containing a colon survives.

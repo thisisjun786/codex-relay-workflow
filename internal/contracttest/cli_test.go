@@ -23,15 +23,16 @@ func scenarioFrom(t *testing.T, text string) Scenario {
 }
 
 func TestCLIRunner_observes_exit_stderr_and_step_results_of_the_built_crw(t *testing.T) {
-	// Given: a two-step scenario against commands the Go relay does not register yet, so the
-	// real binary answers with its usage exit (4), and the second step references the first.
+	// Given: a two-step scenario. The first step is an argparse refusal (exit 2, usage on
+	// stderr); the second references the first step's output and is Python's usage exit (4).
 	scenario := scenarioFrom(t, `{"run":{"kind":"cli","steps":[
-		{"id":"first","argv":["no-such-command"],"stdin":{"x":1}},
-		{"id":"second","argv":[{"$step":"first","path":["stderr"]}]}]},
+		{"id":"first","argv":["store-challenge","--bogus"],"stdin":{"x":1}},
+		{"id":"second","argv":["store-challenge","--actor",{"$step":"first","path":["stderr"]}]}]},
 		"expect":{"exit":4,"checks":[
-			{"kind":"eq","path":["steps","first","exit"],"value":4},
-			{"kind":"contains","path":["steps","first","stderr"],"value":"usage: crw relay"},
-			{"kind":"eq","path":["stdout_json"],"value":null}]}}`)
+			{"kind":"eq","path":["steps","first","exit"],"value":2},
+			{"kind":"contains","path":["steps","first","stderr"],"value":"usage: crw relay store-challenge"},
+			{"kind":"eq","path":["steps","first","stdout_json"],"value":null},
+			{"kind":"eq","path":["stdout_json","error"],"value":"usage"}]}}`)
 	// When
 	actual, err := runCLI(t, scenario)
 	// Then
@@ -45,7 +46,7 @@ func TestCLIRunner_observes_exit_stderr_and_step_results_of_the_built_crw(t *tes
 
 func TestCLIRunner_fails_a_scenario_whose_exit_differs(t *testing.T) {
 	// Given: an expectation the binary does not meet.
-	scenario := scenarioFrom(t, `{"run":{"kind":"cli","argv":["no-such-command"]},"expect":{"exit":0}}`)
+	scenario := scenarioFrom(t, `{"run":{"kind":"cli","argv":["store-challenge"]},"expect":{"exit":0}}`)
 	// When
 	actual, err := runCLI(t, scenario)
 	if err != nil {
@@ -61,7 +62,7 @@ func TestCLIRunner_reads_sqlite_rows_and_file_observations(t *testing.T) {
 	// Given: a standalone database from given.sql and a text file from given.files.
 	scenario := scenarioFrom(t, `{"given":{"sql":"CREATE TABLE t (a TEXT, b INTEGER); INSERT INTO t VALUES ('x', 7);",
 		"files":{"note.txt":"hi"}},
-		"run":{"kind":"cli","argv":["no-such-command"]},
+		"run":{"kind":"cli","argv":["store-challenge"]},
 		"expect":{"exit":4,"files":{"note.txt":true,"absent":false},"observe":["note.txt","state"],
 			"queries":{"rows":"SELECT a, b FROM t"},
 			"checks":[{"kind":"eq","path":["sql","rows"],"value":[["x",7]]},
@@ -76,6 +77,17 @@ func TestCLIRunner_reads_sqlite_rows_and_file_observations(t *testing.T) {
 	}
 	if err := Assert(scenario, actual); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCLIRunner_reports_an_unregistered_relay_command_as_not_ported(t *testing.T) {
+	// Given: a command the Go relay does not register yet.
+	scenario := scenarioFrom(t, `{"run":{"kind":"cli","argv":["no-such-command"]},"expect":{"exit":0}}`)
+	// When
+	_, err := runCLI(t, scenario)
+	// Then: a counted skip, never a run against the usage path.
+	if !errors.Is(err, ErrNotPorted) {
+		t.Fatalf("want ErrNotPorted, got %v", err)
 	}
 }
 

@@ -25,11 +25,14 @@ const SchemaVersion = "1"
 
 var ErrLiveState = errors.New("store: live state requires CRW_ALLOW_LIVE_STATE=1")
 
+// UnenforcedIndex is one guard index the store could not install ({"index", "detail"}).
+type UnenforcedIndex struct{ Index, Detail string }
+
 // Store owns a bounded pool of connections to one durable SQLite database.
 type Store struct {
 	DB                *sql.DB
 	Path              string
-	UnenforcedIndexes []string
+	UnenforcedIndexes []UnenforcedIndex
 
 	// faultHook runs inside every opened transaction after its body and before COMMIT
 	// (store.py fault_hook). Tests use it to die at that point; nil in production.
@@ -118,7 +121,8 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 			continue
 		}
 		if _, guardErr := db.ExecContext(ctx, statement); guardErr != nil {
-			result.UnenforcedIndexes = append(result.UnenforcedIndexes, fmt.Sprintf("%s: %v", statement, guardErr))
+			name := strings.Fields(strings.TrimPrefix(statement, "CREATE UNIQUE INDEX IF NOT EXISTS "))[0]
+			result.UnenforcedIndexes = append(result.UnenforcedIndexes, UnenforcedIndex{Index: name, Detail: PythonSQLiteMessage(guardErr)})
 		}
 	}
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
