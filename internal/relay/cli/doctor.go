@@ -373,10 +373,10 @@ func settingsJSON(raw string) (any, error) {
 	return value, nil
 }
 
-// jsonErrorText approximates json.JSONDecodeError's message for the common shapes.
+// jsonErrorText is str(json.JSONDecodeError) for data json.loads refuses.
 func jsonErrorText(data []byte, err error) string {
-	if strings.TrimSpace(string(data)) == "" {
-		return "Expecting value: line 1 column 1 (char 0)"
+	if message := store.PythonJSONError(string(data)); message != "" {
+		return message
 	}
 	return err.Error()
 }

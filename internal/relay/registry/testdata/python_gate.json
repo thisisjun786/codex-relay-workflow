@@ -1,0 +1,140 @@
+{
+ "bare_sandbox": {
+  "refused": {
+   "detail": "the recorded sandbox is str, not the policy object a creation result reports, so it does not record the full policy a resume would have to restore",
+   "reason": "unsupported_sandbox_type"
+  }
+ },
+ "external": {
+  "refused": {
+   "detail": "'externalSandbox' has no ThreadResumeParams.sandbox mode, so it cannot be restored on a resume",
+   "reason": "unsupported_sandbox_type"
+  }
+ },
+ "incomplete": {
+  "refused": {
+   "detail": "missing environments",
+   "reason": "settings_incomplete"
+  }
+ },
+ "malformed_sandbox": {
+  "refused": {
+   "detail": "the recorded sandbox policy cannot be read in full, so no response could confirm it",
+   "reason": "unsupported_sandbox_type"
+  }
+ },
+ "mistyped_cwd": {
+  "refused": {
+   "detail": "cwd is int, not str; runtimeWorkspaceRoots is a list holding int, not a list of str; environments[0].cwd is int, not str",
+   "reason": "settings_mistyped"
+  }
+ },
+ "on_request": {
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": true,
+     "writable_roots": [
+      "/x"
+     ]
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "settings": {
+   "approvalPolicy": "on-request",
+   "cwd": "/parent",
+   "environments": [
+    {
+     "cwd": "/parent",
+     "environmentId": "local",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": {
+    "networkAccess": true,
+    "type": "workspaceWrite",
+    "writableRoots": [
+     "/x"
+    ]
+   }
+  },
+  "settingsFree": false
+ },
+ "ordinary": {
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "settings": {
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "environments": [
+    {
+     "cwd": "/parent",
+     "environmentId": "local",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": {
+    "excludeSlashTmp": false,
+    "excludeTmpdirEnvVar": false,
+    "networkAccess": false,
+    "type": "workspaceWrite",
+    "writableRoots": []
+   }
+  },
+  "settingsFree": false
+ },
+ "unrecorded": {
+  "refused": {
+   "detail": "no authorized settings recorded for '01parent-task'; register them from the creation result before a send can preserve them",
+   "reason": "settings_unavailable"
+  }
+ },
+ "untrusted": {
+  "refused": {
+   "detail": "the recorded approvalPolicy is 'untrusted'; this transport carries only 'never' and 'on-request', leaving every approval a turn raises with the thread's own approver",
+   "reason": "unsupported_approval_policy"
+  }
+ }
+}

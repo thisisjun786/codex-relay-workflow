@@ -1,0 +1,3026 @@
+[
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "settings_not_preserved",
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "bring the recipient back under its recorded settings - another client loaded it under other ones, and it loads under the record once the host has unloaded it and the relay loads it again - or, if the user changed the task, re-record it with settings-record --source user_transition; a refusal of the record itself names its own recovery. The daemon retries on its own each pass until the attempt cap",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "settings_not_preserved",
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "bring the recipient back under its recorded settings - another client loaded it under other ones, and it loads under the record once the host has unloaded it and the relay loads it again - or, if the user changed the task, re-record it with settings-record --source user_transition; a refusal of the record itself names its own recovery. The daemon retries on its own each pass until the attempt cap",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "setting_unobservable",
+  "revision": false,
+  "recovery": {
+   "actor": "daemon",
+   "command": "settings-show",
+   "then": "the daemon retries on its own each pass; if the host keeps answering without the setting, the operator compares its reading with settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "setting_unobservable",
+  "revision": true,
+  "recovery": {
+   "actor": "daemon",
+   "command": "settings-show",
+   "then": "the daemon retries on its own each pass; if the host keeps answering without the setting, the operator compares its reading with settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "environments_unknown",
+  "revision": false,
+  "recovery": {
+   "actor": "daemon",
+   "command": "settings-show",
+   "then": "the daemon retries on its own each pass; if the host keeps answering without the setting, the operator compares its reading with settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "environments_unknown",
+  "revision": true,
+  "recovery": {
+   "actor": "daemon",
+   "command": "settings-show",
+   "then": "the daemon retries on its own each pass; if the host keeps answering without the setting, the operator compares its reading with settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "unverifiable_permission_profile",
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "bring the recipient back under its recorded settings - another client loaded it under other ones, and it loads under the record once the host has unloaded it and the relay loads it again - or, if the user changed the task, re-record it with settings-record --source user_transition; a refusal of the record itself names its own recovery. The daemon retries on its own each pass until the attempt cap",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "unverifiable_permission_profile",
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "bring the recipient back under its recorded settings - another client loaded it under other ones, and it loads under the record once the host has unloaded it and the relay loads it again - or, if the user changed the task, re-record it with settings-record --source user_transition; a refusal of the record itself names its own recovery. The daemon retries on its own each pass until the attempt cap",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "settings_differ_after_load",
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "bring the recipient back under its recorded settings - another client loaded it under other ones, and it loads under the record once the host has unloaded it and the relay loads it again - or, if the user changed the task, re-record it with settings-record --source user_transition; a refusal of the record itself names its own recovery. The daemon retries on its own each pass until the attempt cap",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "settings_differ_after_load",
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "bring the recipient back under its recorded settings - another client loaded it under other ones, and it loads under the record once the host has unloaded it and the relay loads it again - or, if the user changed the task, re-record it with settings-record --source user_transition; a refusal of the record itself names its own recovery. The daemon retries on its own each pass until the attempt cap",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "unsupported_approval_policy",
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "bring the recipient back under its recorded settings - another client loaded it under other ones, and it loads under the record once the host has unloaded it and the relay loads it again - or, if the user changed the task, re-record it with settings-record --source user_transition; a refusal of the record itself names its own recovery. The daemon retries on its own each pass until the attempt cap",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "unsupported_approval_policy",
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "bring the recipient back under its recorded settings - another client loaded it under other ones, and it loads under the record once the host has unloaded it and the relay loads it again - or, if the user changed the task, re-record it with settings-record --source user_transition; a refusal of the record itself names its own recovery. The daemon retries on its own each pass until the attempt cap",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "settings_unavailable",
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "settings_unavailable",
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "settings_incomplete",
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "settings_incomplete",
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "settings_mistyped",
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "settings_mistyped",
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "unsupported_sandbox_type",
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "unsupported_sandbox_type",
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "role_policy_unconfigured",
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "role_policy_unconfigured",
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "role_binding_mismatch",
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "role_binding_mismatch",
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "settings_record_stale_for_role",
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": "settings_record_stale_for_role",
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": null,
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "bring the recipient back under its recorded settings - another client loaded it under other ones, and it loads under the record once the host has unloaded it and the relay loads it again - or, if the user changed the task, re-record it with settings-record --source user_transition; a refusal of the record itself names its own recovery. The daemon retries on its own each pass until the attempt cap",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "attempt",
+  "code": null,
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "bring the recipient back under its recorded settings - another client loaded it under other ones, and it loads under the record once the host has unloaded it and the relay loads it again - or, if the user changed the task, re-record it with settings-record --source user_transition; a refusal of the record itself names its own recovery. The daemon retries on its own each pass until the attempt cap",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "settings_not_preserved",
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "bring the recipient back under its recorded settings - another client loaded it under other ones, and it loads under the record once the host has unloaded it and the relay loads it again - or, if the user changed the task, re-record it with settings-record --source user_transition; a refusal of the record itself names its own recovery. The daemon retries on its own each pass until the attempt cap",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "settings_not_preserved",
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "bring the recipient back under its recorded settings - another client loaded it under other ones, and it loads under the record once the host has unloaded it and the relay loads it again - or, if the user changed the task, re-record it with settings-record --source user_transition; a refusal of the record itself names its own recovery. The daemon retries on its own each pass until the attempt cap",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "setting_unobservable",
+  "revision": false,
+  "recovery": {
+   "actor": "daemon",
+   "command": "settings-show",
+   "then": "the daemon retries on its own each pass; if the host keeps answering without the setting, the operator compares its reading with settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "setting_unobservable",
+  "revision": true,
+  "recovery": {
+   "actor": "daemon",
+   "command": "settings-show",
+   "then": "the daemon retries on its own each pass; if the host keeps answering without the setting, the operator compares its reading with settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "environments_unknown",
+  "revision": false,
+  "recovery": {
+   "actor": "daemon",
+   "command": "settings-show",
+   "then": "the daemon retries on its own each pass; if the host keeps answering without the setting, the operator compares its reading with settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "environments_unknown",
+  "revision": true,
+  "recovery": {
+   "actor": "daemon",
+   "command": "settings-show",
+   "then": "the daemon retries on its own each pass; if the host keeps answering without the setting, the operator compares its reading with settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "unverifiable_permission_profile",
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "bring the recipient back under its recorded settings - another client loaded it under other ones, and it loads under the record once the host has unloaded it and the relay loads it again - or, if the user changed the task, re-record it with settings-record --source user_transition; a refusal of the record itself names its own recovery. The daemon retries on its own each pass until the attempt cap",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "unverifiable_permission_profile",
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "bring the recipient back under its recorded settings - another client loaded it under other ones, and it loads under the record once the host has unloaded it and the relay loads it again - or, if the user changed the task, re-record it with settings-record --source user_transition; a refusal of the record itself names its own recovery. The daemon retries on its own each pass until the attempt cap",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "settings_differ_after_load",
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "bring the recipient back under its recorded settings - another client loaded it under other ones, and it loads under the record once the host has unloaded it and the relay loads it again - or, if the user changed the task, re-record it with settings-record --source user_transition; a refusal of the record itself names its own recovery. The daemon retries on its own each pass until the attempt cap",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "settings_differ_after_load",
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "bring the recipient back under its recorded settings - another client loaded it under other ones, and it loads under the record once the host has unloaded it and the relay loads it again - or, if the user changed the task, re-record it with settings-record --source user_transition; a refusal of the record itself names its own recovery. The daemon retries on its own each pass until the attempt cap",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "unsupported_approval_policy",
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "bring the recipient back under its recorded settings - another client loaded it under other ones, and it loads under the record once the host has unloaded it and the relay loads it again - or, if the user changed the task, re-record it with settings-record --source user_transition; a refusal of the record itself names its own recovery. The daemon retries on its own each pass until the attempt cap",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "unsupported_approval_policy",
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "bring the recipient back under its recorded settings - another client loaded it under other ones, and it loads under the record once the host has unloaded it and the relay loads it again - or, if the user changed the task, re-record it with settings-record --source user_transition; a refusal of the record itself names its own recovery. The daemon retries on its own each pass until the attempt cap",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "settings_unavailable",
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "settings_unavailable",
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "settings_incomplete",
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "settings_incomplete",
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "settings_mistyped",
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "settings_mistyped",
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "unsupported_sandbox_type",
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "unsupported_sandbox_type",
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "role_policy_unconfigured",
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "role_policy_unconfigured",
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "role_binding_mismatch",
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "role_binding_mismatch",
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "settings_record_stale_for_role",
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": "settings_record_stale_for_role",
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": null,
+  "revision": false,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "bring the recipient back under its recorded settings - another client loaded it under other ones, and it loads under the record once the host has unloaded it and the relay loads it again - or, if the user changed the task, re-record it with settings-record --source user_transition; a refusal of the record itself names its own recovery. The daemon retries on its own each pass until the attempt cap",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "pre_send",
+  "code": null,
+  "revision": true,
+  "recovery": {
+   "actor": "operator",
+   "command": "settings-show",
+   "then": "bring the recipient back under its recorded settings - another client loaded it under other ones, and it loads under the record once the host has unloaded it and the relay loads it again - or, if the user changed the task, re-record it with settings-record --source user_transition; a refusal of the record itself names its own recovery. The daemon retries on its own each pass until the attempt cap",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "settings_not_preserved",
+  "revision": false,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "settings_not_preserved",
+  "revision": true,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "setting_unobservable",
+  "revision": false,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "setting_unobservable",
+  "revision": true,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "environments_unknown",
+  "revision": false,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "environments_unknown",
+  "revision": true,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "unverifiable_permission_profile",
+  "revision": false,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "unverifiable_permission_profile",
+  "revision": true,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "settings_differ_after_load",
+  "revision": false,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "settings_differ_after_load",
+  "revision": true,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "unsupported_approval_policy",
+  "revision": false,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "unsupported_approval_policy",
+  "revision": true,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "settings_unavailable",
+  "revision": false,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "settings_unavailable",
+  "revision": true,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "settings_incomplete",
+  "revision": false,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "settings_incomplete",
+  "revision": true,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "settings_mistyped",
+  "revision": false,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "settings_mistyped",
+  "revision": true,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "unsupported_sandbox_type",
+  "revision": false,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "unsupported_sandbox_type",
+  "revision": true,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "role_policy_unconfigured",
+  "revision": false,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "role_policy_unconfigured",
+  "revision": true,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "role_binding_mismatch",
+  "revision": false,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "role_binding_mismatch",
+  "revision": true,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "settings_record_stale_for_role",
+  "revision": false,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": "settings_record_stale_for_role",
+  "revision": true,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": null,
+  "revision": false,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "withheld",
+  "source": "undetermined",
+  "code": null,
+  "revision": true,
+  "recovery": {
+   "actor": "daemon",
+   "command": "show-event",
+   "then": "the daemon retries on its own each pass; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix: if it stays withheld, read the event's attempts and their receipts, then settings-show",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "settings_not_preserved",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "settings_not_preserved",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "setting_unobservable",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "setting_unobservable",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "environments_unknown",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "environments_unknown",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "unverifiable_permission_profile",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "unverifiable_permission_profile",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "settings_differ_after_load",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "settings_differ_after_load",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "unsupported_approval_policy",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "unsupported_approval_policy",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "settings_unavailable",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "settings_unavailable",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "settings_incomplete",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "settings_incomplete",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "settings_mistyped",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "settings_mistyped",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "unsupported_sandbox_type",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "unsupported_sandbox_type",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "role_policy_unconfigured",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "role_policy_unconfigured",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "role_binding_mismatch",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "role_binding_mismatch",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "settings_record_stale_for_role",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": "settings_record_stale_for_role",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": null,
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "attempt",
+  "code": null,
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "settings_not_preserved",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "settings_not_preserved",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "setting_unobservable",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "setting_unobservable",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "environments_unknown",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "environments_unknown",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "unverifiable_permission_profile",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "unverifiable_permission_profile",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "settings_differ_after_load",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "settings_differ_after_load",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "unsupported_approval_policy",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "unsupported_approval_policy",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "settings_unavailable",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "settings_unavailable",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "settings_incomplete",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "settings_incomplete",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "settings_mistyped",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "settings_mistyped",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "unsupported_sandbox_type",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "unsupported_sandbox_type",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the recipient's authorization record was refused before any host call (missing, incomplete, mistyped, or a sandbox it does not state as a policy this transport carries), as refusalDetail beside this recovery says: record it again from the creation result or a user-attributed source (settings-record --source user_transition), and the next pass reads it again"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "role_policy_unconfigured",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "role_policy_unconfigured",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "role_binding_mismatch",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "role_binding_mismatch",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "settings_record_stale_for_role",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": "settings_record_stale_for_role",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the role gate refused the recorded authorization, and its refusal names the repair for the exact cause: refusalDetail beside this recovery is that refusal as the relay service wrote it. Declare the role in this host's execution policy, give the relay process its policy and restart it, fix the binding or the creation, or re-record from a user-attributed source, whichever it names; the code alone does not tell them apart"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": null,
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "pre_send",
+  "code": null,
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+   "laterDeliveries": "for later deliveries, the operator brings the recipient back under its recorded settings or re-records it (settings-record --source user_transition); settings-show names the difference"
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "settings_not_preserved",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "settings_not_preserved",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "setting_unobservable",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "setting_unobservable",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "environments_unknown",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "environments_unknown",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "unverifiable_permission_profile",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "unverifiable_permission_profile",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "settings_differ_after_load",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "settings_differ_after_load",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "unsupported_approval_policy",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "unsupported_approval_policy",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "settings_unavailable",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "settings_unavailable",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "settings_incomplete",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "settings_incomplete",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "settings_mistyped",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "settings_mistyped",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "unsupported_sandbox_type",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "unsupported_sandbox_type",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "role_policy_unconfigured",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "role_policy_unconfigured",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "role_binding_mismatch",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "role_binding_mismatch",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "settings_record_stale_for_role",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": "settings_record_stale_for_role",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": null,
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "capped",
+  "source": "undetermined",
+  "code": null,
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "nothing sends this delivery again: read the report, then open a fresh execution generation (generation-open) if the work still needs verifying; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": null
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "settings_not_preserved",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "settings_not_preserved",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "setting_unobservable",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "setting_unobservable",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "environments_unknown",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "environments_unknown",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "unverifiable_permission_profile",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "unverifiable_permission_profile",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "settings_differ_after_load",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "settings_differ_after_load",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "unsupported_approval_policy",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "unsupported_approval_policy",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "settings_unavailable",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "settings_unavailable",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "settings_incomplete",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "settings_incomplete",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "settings_mistyped",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "settings_mistyped",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "unsupported_sandbox_type",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "unsupported_sandbox_type",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "role_policy_unconfigured",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "role_policy_unconfigured",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "role_binding_mismatch",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "role_binding_mismatch",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "settings_record_stale_for_role",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": "settings_record_stale_for_role",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": null,
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "attempt",
+  "code": null,
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "settings_not_preserved",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "settings_not_preserved",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "setting_unobservable",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "setting_unobservable",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "environments_unknown",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "environments_unknown",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "unverifiable_permission_profile",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "unverifiable_permission_profile",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "settings_differ_after_load",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "settings_differ_after_load",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "unsupported_approval_policy",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "unsupported_approval_policy",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "settings_unavailable",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "settings_unavailable",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "settings_incomplete",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "settings_incomplete",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "settings_mistyped",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "settings_mistyped",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "unsupported_sandbox_type",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "unsupported_sandbox_type",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "role_policy_unconfigured",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "role_policy_unconfigured",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "role_binding_mismatch",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "role_binding_mismatch",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "settings_record_stale_for_role",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": "settings_record_stale_for_role",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": null,
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "pre_send",
+  "code": null,
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "settings_not_preserved",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "settings_not_preserved",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "setting_unobservable",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "setting_unobservable",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "environments_unknown",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "environments_unknown",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "unverifiable_permission_profile",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "unverifiable_permission_profile",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "settings_differ_after_load",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "settings_differ_after_load",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "unsupported_approval_policy",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "unsupported_approval_policy",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "settings_unavailable",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "settings_unavailable",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "settings_incomplete",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "settings_incomplete",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "settings_mistyped",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "settings_mistyped",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "unsupported_sandbox_type",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "unsupported_sandbox_type",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "role_policy_unconfigured",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "role_policy_unconfigured",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "role_binding_mismatch",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "role_binding_mismatch",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "settings_record_stale_for_role",
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": "settings_record_stale_for_role",
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": null,
+  "revision": false,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the report is stored where the recipient reads it: read it and acknowledge; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ },
+ {
+  "kind": "channel_closed",
+  "source": "undetermined",
+  "code": null,
+  "revision": true,
+  "recovery": {
+   "actor": "parent",
+   "command": "show-event",
+   "then": "the revision request is stored where the child reads it, without waking the child, and it takes no acknowledgement: read it, then open a fresh execution generation (generation-open) if the child still has to be given it; its settings cause was recorded before this revision wrote causes down and is not established here, so nothing here claims a settings fix",
+   "laterDeliveries": "for later deliveries, the thread's owner switches it back to an approval policy this transport carries (never or on-request)"
+  }
+ }
+]

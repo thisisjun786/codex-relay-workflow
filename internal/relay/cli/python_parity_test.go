@@ -250,7 +250,39 @@ func TestKindModule_matches_python_for_an_unimportable_module(t *testing.T) {
 	}
 }
 
+func TestRegistry_kind_module_refusal_matches_python_before_register(t *testing.T) {
+	home := pythonHome(t)
+	state := filepath.Join(home, "state")
+	args := []string{"--state", state, "--kind-module", "does_not_exist", "register",
+		"--parent-task", "p", "--parent-host", "p", "--child-task", "c", "--child-host", "c",
+		"--issue", "I-1", "--artifact-root", home, "--allowed-recipient", "p",
+		"--dispatch-request-id", "req"}
+	py, got := python(t, home, args...), golang(t, home, args...)
+	if py.code != got.code || py.stdout != got.stdout || py.stderr != got.stderr {
+		t.Fatalf("python %+v; go %+v", py, got)
+	}
+	if py.code != 4 || strings.Contains(py.stdout, "relationshipId") {
+		t.Fatalf("unexpected registration: %+v", py)
+	}
+	// Without the invalid global option the same handler still behaves as Python's.
+	valid := append(append([]string{}, args[:2]...), args[4:]...)
+	py, got = python(t, home, valid...), golang(t, home, valid...)
+	if py.code != got.code || py.stdout != got.stdout || py.stderr != got.stderr {
+		t.Fatalf("valid: python %+v; go %+v", py, got)
+	}
+}
+
 func lastLine(text string) string {
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
 	return lines[len(lines)-1]
+}
+
+// pythonSnippet runs `python -c script args...` in the relay's uv environment.
+func pythonSnippet(dir, script string, args ...string) (string, error) {
+	_, file, _, _ := runtime.Caller(0)
+	repo := filepath.Join(filepath.Dir(file), "..", "..", "..")
+	command := exec.Command("uv", append([]string{"run", "--no-sync", "--project", repo, "python", "-c", script}, args...)...)
+	command.Dir = dir
+	out, err := command.CombinedOutput()
+	return string(out), err
 }

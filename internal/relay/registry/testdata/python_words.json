@@ -1,0 +1,52 @@
+{
+ "CORRECTION_ACTIONS": [
+  "daemon_delivers_correction",
+  "daemon_confirms_correction",
+  "parent_recovers_held_correction",
+  "parent_reads_child_disposition"
+ ],
+ "DISPOSITION_READING_LIMITS": "A reading of what this scope's children last reported and what the store observed about sending it, not a completion verdict and not an assignment state. The send axis is derived from the relay's own records and the receiving axis from acknowledgement evidence; unmeasured means nobody established the fact, never that the fact is false. Which reviewable event is the current head is not decided here - read it with assignment-show - and neither is integration or verification. unreadable, an empty list and 'nothing is wrong' are three different answers and none of them means finished.",
+ "EXECUTION_ONLY": [
+  "failed",
+  "interrupted",
+  "blocked_needs_input"
+ ],
+ "LIFECYCLE_WITHHOLD_SOURCE": "failed_operations.lifecycle_read",
+ "NEXT_ACTION": {
+  "abandoned": "none",
+  "ambiguous": "child_declares_supersession",
+  "closed": "none",
+  "corrected": "parent_verifies",
+  "merged": "none",
+  "needs_changes": "child_corrects",
+  "paused": "owner_resumes",
+  "re_review_needed": "parent_verifies",
+  "received": "daemon_delivers",
+  "requested": "child_emits",
+  "verified": "coordinator_integrates",
+  "verifying": "parent_verifies"
+ },
+ "OBSERVATION_BY_STATE": {
+  "acknowledged": "dispatched",
+  "deferred_busy": "not_sent",
+  "dispatched": "dispatched",
+  "held_uncertain": "send_uncertain",
+  "inbox_only": "stored_not_woken",
+  "queued": "not_sent",
+  "sending": "send_uncertain",
+  "superseded": "superseded",
+  "withheld_pre_send": "not_sent"
+ },
+ "OBSERVATION_DETAIL": {
+  "dispatched": null,
+  "not_sent": "the delivery exists and nothing has been sent yet",
+  "send_uncertain": "a send is in flight or answered unusably, which is not evidence of non-delivery",
+  "stored_not_woken": "stored where the recipient reads it, with no turn woken; a durable inbox item is not a successful wake",
+  "superseded": "this delivery is no longer what the assignment stands on; its state is left alone so reconciliation can still settle it"
+ },
+ "PARENT_RECOVERY_THEN": "read the report, then open a fresh execution generation (generation-open) if the work still needs verifying",
+ "RECIPIENT_UNMEASURED_DETAIL": "no acknowledgement and no acknowledgement evidence is recorded, so whether the recipient observed this event is not measured here; a dispatched delivery is not an acknowledgement and not a verification",
+ "RECOVERY": "Re-record this task's authorized settings from a source attributable to the user, with relay settings record --source user_transition, once its current settings have been read.",
+ "SETTINGS_DIFFER_AFTER_LOAD": "settings_differ_after_load",
+ "UNMEASURED_DETAIL": "nothing in this store establishes whether a delivery was ever attempted or even wanted for this event: absence of a delivery row covers an event emitted with --no-enqueue, an event stranded by an old generation, and a refusal recorded before delivery intents existed, and those are not merged into 'not delivered'"
+}

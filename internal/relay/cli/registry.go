@@ -6,9 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -43,14 +45,7 @@ type Command struct {
 var Commands = []Command{doctorCommand, storeIdentityCommand, storeChallengeCommand, showCommand, statusCommand}
 
 // Registered reports whether this build implements the relay command name.
-func Registered(name string) bool {
-	for _, command := range Commands {
-		if command.Name == name {
-			return true
-		}
-	}
-	return false
-}
+func Registered(name string) bool { return slices.Contains(allNames(), name) }
 
 // UsageError is SystemExit2: {"error": "usage", "detail": ...} with its own exit code.
 type UsageError struct {
@@ -67,6 +62,9 @@ type PayloadExit struct {
 }
 
 func (e *PayloadExit) Error() string { return fmt.Sprint(get(e.Payload, "detail")) }
+
+// ExitPayload lets another relay package print this answer whole (registry.PayloadError).
+func (e *PayloadExit) ExitPayload() (contract.OrderedObject, int) { return e.Payload, e.Code }
 
 // HostError is an unexpected failure whose Python class name is known, so the host envelope
 // can carry Python's f"{type(error).__name__}: {error}" unchanged.
@@ -119,6 +117,19 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 	remaining := globals.Args()
 	if len(remaining) == 0 {
 		return parseError(globalUsage, "the following arguments are required: command")
+	}
+	if slices.Contains(registry.Names(), remaining[0]) {
+		return registry.ExecuteAs(ctx, prog, argv, stdout, stderr, func(selection store.StateSelection, socket string) error {
+			services := Services{Selection: selection, SocketPath: socket, AdapterRequested: socket != "", Program: program(argv0)}
+			refusal, err := selectionRefusal(services)
+			if err != nil {
+				return err
+			}
+			if refusal != nil {
+				return &PayloadExit{Payload: refusal, Code: contract.ExitRefused}
+			}
+			return kindModuleRefusal(*kindModules)
+		})
 	}
 	var command *Command
 	for i := range Commands {
@@ -207,6 +218,20 @@ func importKindModules(names []string) error {
 	return nil
 }
 
+// Delegated commands run their selection check before importing modules. Give their
+// runners the same complete CLI error envelope as the ordinary command path.
+func kindModuleRefusal(names []string) error {
+	err := importKindModules(names)
+	if err == nil {
+		return nil
+	}
+	var usage *UsageError
+	if errors.As(err, &usage) {
+		return &PayloadExit{Payload: contract.OrderedObject{{Key: "error", Value: "usage"}, {Key: "detail", Value: usage.Detail}}, Code: usage.Code}
+	}
+	return &PayloadExit{Payload: contract.OrderedObject{{Key: "error", Value: "host"}, {Key: "detail", Value: err.Error()}}, Code: contract.ExitHost}
+}
+
 func emit(stdout, stderr io.Writer, result any, err error) int {
 	var usage *UsageError
 	var payload *PayloadExit
@@ -255,18 +280,21 @@ func argparseMessage(err error) string {
 	return text
 }
 
-func commandNames() string {
-	names := make([]string, len(Commands))
-	for i, command := range Commands {
-		names[i] = command.Name
+// allNames is every relay command this build registers: this package's and registry's.
+func allNames() []string {
+	names := make([]string, 0, len(Commands))
+	for _, command := range Commands {
+		names = append(names, command.Name)
 	}
-	return strings.Join(names, ",")
+	return append(names, registry.Names()...)
 }
 
+func commandNames() string { return strings.Join(allNames(), ",") }
+
 func choices() string {
-	names := make([]string, len(Commands))
-	for i, command := range Commands {
-		names[i] = store.PythonRepr(command.Name)
+	names := allNames()
+	for i, name := range names {
+		names[i] = store.PythonRepr(name)
 	}
 	return strings.Join(names, ", ")
 }
