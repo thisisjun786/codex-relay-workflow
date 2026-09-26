@@ -45,27 +45,6 @@ func (in ReceiptIntake) activeGeneration(ctx context.Context, id string, number 
 	return relationship, generation, nil
 }
 
-// admitTurn is _check_turn_identity with the AnchorOrExplicit strategy and no continuation
-// claim: the thread must be the registered child, and the turn the anchor or a turn already
-// explicitly admitted against this anchor.
-func (s *Store) admitTurn(ctx context.Context, relationship Relationship, generation Generation, turn TurnReference) (string, error) {
-	if turn.ThreadID != relationship.ChildTaskID {
-		return "", refuse(ReasonUnassignedTurn, "turnRef names thread %q, but the registered child of this relationship is %q", turn.ThreadID, relationship.ChildTaskID)
-	}
-	if generation.DispatchTurnID.Valid && turn.TurnID == generation.DispatchTurnID.String {
-		return "anchor", nil
-	}
-	var evidence string
-	err := s.q(ctx).QueryRowContext(ctx, `SELECT t.evidence FROM generation_turns t JOIN generations g ON g.relationship_id=t.relationship_id AND g.execution_generation=t.execution_generation WHERE t.relationship_id=? AND t.execution_generation=? AND t.turn_id=? AND g.dispatch_turn_id IS NOT NULL AND g.dispatch_turn_id <> '' AND t.evidence = (?||g.dispatch_turn_id)`, relationship.ID, generation.Number, turn.TurnID, boundExplicitPrefix).Scan(&evidence)
-	if err == nil {
-		return "explicit_admission", nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("admitted turn: %w", err)
-	}
-	return "", refuse(ReasonUnassignedTurn, "turn %q is not admitted to generation %d (anchor %s): a turn other than the anchor needs an explicit continuation admission naming the generation, its anchor, an actor and a reason", turn.TurnID, generation.Number, strconv.Quote(generation.DispatchTurnID.String))
-}
-
 // DaemonObservation synthesizes a receipt from an observed terminal turn. Only failure and
 // interruption: a daemon cannot know a completed turn produced something reviewable.
 func (in ReceiptIntake) DaemonObservation(ctx context.Context, relationshipID string, turn TurnReference) (StoredReceipt, error) {
@@ -80,7 +59,7 @@ func (in ReceiptIntake) DaemonObservation(ctx context.Context, relationshipID st
 	if err != nil {
 		return StoredReceipt{}, err
 	}
-	if _, err := in.Store.admitTurn(ctx, relationship, generation, turn); err != nil {
+	if err := in.checkTurnIdentity(ctx, relationship, generation, turn, nil); err != nil {
 		return StoredReceipt{}, err
 	}
 	event, err := EventID(relationshipID, int(generation.Number), NoDeliverable, turn.Status, turn.TurnID, nil)
@@ -103,7 +82,7 @@ func (in ReceiptIntake) DaemonObservation(ctx context.Context, relationshipID st
 		{"eventId", str(event)},
 	}}
 	claim := ReceiptClaim{EventID: event, RelationshipID: relationshipID, Generation: generation.Number, RevisionHash: NoDeliverable, Outcome: ObservationOutcome(turn.Status), Producer: ProducerDaemon, Turn: turn, manifest: null, document: document}
-	return in.storeEvent(ctx, claim, sql.NullString{})
+	return in.storeEvent(ctx, claim, sql.NullString{}, nil)
 }
 
 // RecordObservation is record_observation: the daemon's (thread, turn, terminal status) key

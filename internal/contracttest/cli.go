@@ -50,6 +50,8 @@ func runCLI(t *testing.T, scenario Scenario) (map[string]any, error) {
 	}
 	// A scenario that drives a relay command the Go build has not registered yet is not ported:
 	// it is counted as a skip (a failure under CRW_CONTRACT_STRICT=1), never run against usage.
+	// relaycli.Registered is the union of both gates: the delivery commands (todo 21) and the
+	// diagnostics commands of internal/relay/cli (todo 20: doctor, status, show, store-*).
 	for _, step := range steps {
 		if argv, _ := step["argv"].([]any); len(argv) > 0 {
 			if name, ok := argv[0].(string); ok && !relaycli.Registered(name) {
