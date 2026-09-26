@@ -5,7 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -28,7 +32,8 @@ func startWire(t *testing.T) *wire {
 		w.done <- Main(t.Context(), []string{"--socket", filepath.Join(home, "absent.sock"), "--state-dir", filepath.Join(home, "ledger")}, env, serverIn, serverOut, io.Discard)
 		_ = serverOut.Close()
 	}()
-	t.Cleanup(func() { _ = in.Close(); <-w.done })
+	// Closing stdin ends Main once it has written what it owes; draining stdout lets it.
+	t.Cleanup(func() { _ = in.Close(); go func() { _, _ = io.Copy(io.Discard, out) }(); <-w.done })
 	w.send(t, `{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"wire","version":"0"}}}`)
 	return w
 }
@@ -143,5 +148,131 @@ func Test_an_unknown_method_is_answered_as_python_answers_it(t *testing.T) {
 	w.send(t, `{"jsonrpc":"2.0","id":21,"method":"ping"}`)
 	if frame := w.next(t); string(frame["id"]) != "21" {
 		t.Errorf("a response followed the log notification: %v", frame)
+	}
+}
+
+// pythonWireCase is one entry of testdata/wire_python.json, written by gen_wire_python.py: a
+// line sent to `python -m codex_thread_bridge.server` (mcp 1.30.0) and the exact lines it wrote
+// before answering the ping that followed.
+type pythonWireCase struct {
+	Case   string   `json:"case"`
+	Send   string   `json:"send"`
+	Frames []string `json:"frames"`
+}
+
+func recordedWire(t *testing.T, name string) pythonWireCase {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", "wire_python.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []pythonWireCase
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cases {
+		if c.Case == name {
+			return c
+		}
+	}
+	t.Fatalf("no recorded case %q", name)
+	return pythonWireCase{}
+}
+
+// framesBefore sends line and then a ping, and returns every line written before its answer.
+func (w *wire) framesBefore(t *testing.T, line string, ping int) []string {
+	t.Helper()
+	w.send(t, line)
+	w.send(t, fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"ping"}`, ping))
+	var frames []string
+	for {
+		if !w.lines.Scan() {
+			t.Fatalf("stdout ended: %v", w.lines.Err())
+		}
+		var frame struct {
+			ID json.RawMessage `json:"id"`
+		}
+		if err := json.Unmarshal(w.lines.Bytes(), &frame); err != nil {
+			t.Fatalf("non-JSON frame %q", w.lines.Text())
+		}
+		if string(frame.ID) == strconv.Itoa(ping) {
+			return frames
+		}
+		frames = append(frames, w.lines.Text())
+	}
+}
+
+// matchesPython replays the named recorded cases on one Go server. A response must be Python's
+// bytes; a notification need only be JSON-equal, as Python writes its "jsonrpc" member last.
+func matchesPython(t *testing.T, names ...string) {
+	w := startWire(t)
+	w.next(t) // initialize
+	w.send(t, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
+	for i, name := range names {
+		c := recordedWire(t, name)
+		got := w.framesBefore(t, c.Send, 900+i)
+		if len(got) != len(c.Frames) {
+			t.Errorf("%s: %s\n got %d frames %q\nwant %d frames %q", name, c.Send, len(got), got, len(c.Frames), c.Frames)
+			continue
+		}
+		for j, want := range c.Frames {
+			var decodedGot, decodedWant map[string]any
+			if err := json.Unmarshal([]byte(got[j]), &decodedGot); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(want), &decodedWant); err != nil {
+				t.Fatal(err)
+			}
+			_, response := decodedWant["id"]
+			if response && got[j] != want || !reflect.DeepEqual(decodedGot, decodedWant) {
+				t.Errorf("%s: %s\n got %s\nwant %s", name, c.Send, got[j], want)
+			}
+		}
+	}
+}
+
+func Test_an_unknown_notification_with_non_object_params_logs_as_python_does(t *testing.T) {
+	matchesPython(t, "unknown-notification-array-params", "unknown-notification-string-params")
+}
+
+func Test_a_known_notification_with_array_params_logs_as_python_does(t *testing.T) {
+	matchesPython(t, "initialized-array-params", "cancelled-array-params")
+}
+
+func Test_a_known_request_with_non_object_params_logs_and_gets_no_reply_as_in_python(t *testing.T) {
+	matchesPython(t, "ping-array-params", "tools-list-array-params", "ping-string-params")
+}
+
+func Test_tools_call_with_a_numeric_name_is_refused_as_python_refuses_it(t *testing.T) {
+	matchesPython(t, "tools-call-numeric-name", "tools-call-missing-name", "tools-call-array-arguments")
+}
+
+// tools/list is Python's reply, JSON-equal (the SDK decides member order inside each tool),
+// and writes '<', '>' and '&' as Python does: unescaped. The reply is read directly because the
+// SDK may answer a following ping first.
+func Test_tools_list_writes_angle_brackets_unescaped_as_python_does(t *testing.T) {
+	c := recordedWire(t, "tools-list")
+	w := startWire(t)
+	w.next(t) // initialize
+	w.send(t, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
+	w.send(t, c.Send)
+	if !w.lines.Scan() {
+		t.Fatalf("stdout ended: %v", w.lines.Err())
+	}
+	got := w.lines.Text()
+	var decodedGot, decodedWant any
+	if err := json.Unmarshal([]byte(got), &decodedGot); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(c.Frames[0]), &decodedWant); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(decodedGot, decodedWant) {
+		t.Errorf("tools/list differs from Python's\n got %s\nwant %s", got, c.Frames[0])
+	}
+	for _, escape := range []string{`\u003c`, `\u003e`, `\u0026`} {
+		if strings.Contains(got, escape) {
+			t.Errorf("tools/list writes %s where Python writes the character", escape)
+		}
 	}
 }
