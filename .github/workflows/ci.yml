@@ -27,6 +27,11 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # The CI checks live in the development binary, which release archives never carry.
+      - run: go build -tags dev -o "$RUNNER_TEMP/crw-dev" ./cmd/crw-dev
       - id: scope
         name: Select checks from changed paths
         env:
@@ -36,7 +41,7 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
           REF: ${{ github.ref }}
         run: >-
-          python3 scripts/ci/scope.py --base "$BASE_SHA" --head "$HEAD_SHA"
+          "$RUNNER_TEMP/crw-dev" ci scope --base "$BASE_SHA" --head "$HEAD_SHA"
           --event "$EVENT_NAME" --base-ref "$BASE_REF" --ref "$REF"
 
   validate:
@@ -50,8 +55,18 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.10'
-      - run: python3 scripts/ci/validate.py
-      - run: python3 scripts/ci/plugin.py
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # The CI checks live in the development binary, which release archives never carry.
+      - run: go build -tags dev -o "$RUNNER_TEMP/crw-dev" ./cmd/crw-dev
+      # Python stays for the syntax check of the remaining Python sources and for the contract
+      # checkers other components still own.
+      - run: '"$RUNNER_TEMP/crw-dev" ci validate'
+      - run: '"$RUNNER_TEMP/crw-dev" ci plugin'
+      - run: '"$RUNNER_TEMP/crw-dev" ci contracts'
+      # Transitional: scripts/ci/tests/test_gate.py, which the tests job still runs, pins this
+      # step in validate. Both go when scripts/ci is deleted before todo 48.
       - run: python3 scripts/ci/contracts.py
 
   tests:
@@ -134,7 +149,7 @@ jobs:
           if-no-files-found: error
       - name: Check the plugin payload with the native wiring
         if: hashFiles('plugins/crw/wiring/crw-bridge.sh') != ''
-        run: python3 scripts/ci/plugin.py
+        run: go run -tags dev ./cmd/crw-dev ci plugin
 
   packages:
     needs: selection
@@ -166,6 +181,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # The CI checks live in the development binary, which release archives never carry.
+      - run: go build -tags dev -o "$RUNNER_TEMP/crw-dev" ./cmd/crw-dev
       - name: Aggregate results
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
@@ -173,4 +193,4 @@ jobs:
           HEAD_SHA: ${{ github.sha }}
           REF: ${{ github.ref }}
           BASE_REF: ${{ github.base_ref }}
-        run: python3 scripts/ci/gate.py
+        run: '"$RUNNER_TEMP/crw-dev" ci gate'
