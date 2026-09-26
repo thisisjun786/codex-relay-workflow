@@ -145,6 +145,14 @@ CLI-38 (`Test25_CLI*`, whole stdout against the Python command) and
 `test_registration_contention.py` RCT-1, RCT-4 for their `intent.bind` marker half (`Test25_RCT*`;
 the guard-evaluate half is todo 33).
 
+Carried from todo 18 into todo 21: `test_attempt_message_atomicity.py` AMA-1..AMA-6
+(`Test21_AMA1..6` in `internal/relay/delivery/attempt_message_atomicity_test.go`,
+with `cmd_show` AMA-4..AMA-6 in `internal/relay/cli/attempt_message_atomicity_test.go`).
+The Go mirrors compare the Python tests' captured assertions via `testdata/capture.py`;
+AMA-6 pins oldest-first order independently in both Service.AttemptMessages and CLI show.
+`Test21_RegistrationHold_refuses_resolved_live_state` pins the registration hold's
+write admission against a symlink into a temporary live-state-shaped directory.
+
 ## Files
 
 | path | tests | class | family | fixtures | owner | destination | coupling |
@@ -153,7 +161,7 @@ the guard-evaluate half is todo 33).
 | `packages/codex-session-relay/tests/test_ack_reconcile.py` | 40 | B | ACK, verdicts, reconciliation and restart recovery | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
 | `packages/codex-session-relay/tests/test_anchor_binding.py` | 14 | B | an anchor binds on every route to dispatched | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
 | `packages/codex-session-relay/tests/test_assignment.py` | 58 | B | assignment ledger: one issue, one responsible child | - | todo 25 / CRW-154 | go-test: `internal/relay/registry` (todo 25) + go-test: `internal/relay/store` (todo 19: typed queries, guard-index refusals and Python-store parity for the tables this file writes) | - |
-| `packages/codex-session-relay/tests/test_attempt_message_atomicity.py` | 13 | B | a send carries the message its attempt froze | - | todo 18 / CRW-152 | go-test: `internal/relay/store` (todo 18); DeliveryService pre-claim seam, reconciliation and cmd_show preview halves of 6 cases -> todo 21 `internal/relay/delivery` | - |
+| `packages/codex-session-relay/tests/test_attempt_message_atomicity.py` | 13 | B | a send carries the message its attempt froze | - | todo 18 / CRW-152 | go-test: `internal/relay/store` (todo 18); DeliveryService pre-claim seam, reconciliation and cmd_show preview halves of 6 cases -> todo 21 `internal/relay/delivery` and `internal/relay/cli` (`Test21_AMA1..6`, plus CLI AMA-4..6) | - |
 | `packages/codex-session-relay/tests/test_bridge_adapter.py` | 75 | B | bridge adapter logic over an injected RPC surface | `codex_session_relay.fakehost` | todo 28 / CRW-154 | go-test: bridge adapter package (todo 28) | - |
 | `packages/codex-session-relay/tests/test_bridge_load_roots.py` | 12 | B | a parent loaded by another task's bridge is still reached (CRW-235) | - | todo 28 / CRW-154 | go-test: bridge adapter package (todo 28) | - |
 | `packages/codex-session-relay/tests/test_capacity.py` | 30 | B | capacity counting and refusal to infer | - | todo 27 / CRW-154 | go-test: capacity package (todo 27) + go-test: `internal/relay/store` (todo 19: typed queries, guard-index refusals and Python-store parity for the tables this file writes) | - |
