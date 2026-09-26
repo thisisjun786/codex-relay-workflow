@@ -120,15 +120,17 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 	}
 	if slices.Contains(delivery.CommandNames(), remaining[0]) {
 		code, _ := delivery.ExecuteAs(ctx, prog, argv, stdout, stderr, func(selection store.StateSelection, socket string) error {
-			services := Services{Selection: selection, SocketPath: socket, AdapterRequested: socket != "", Program: program(argv0)}
-			refusal, err := selectionRefusal(services)
-			if err != nil {
-				return err
+			if remaining[0] != "ack-proof" {
+				services := Services{Selection: selection, SocketPath: socket, AdapterRequested: socket != "", Program: program(argv0)}
+				refusal, err := selectionRefusal(services)
+				if err != nil {
+					return err
+				}
+				if refusal != nil {
+					return &PayloadExit{Payload: refusal, Code: contract.ExitRefused}
+				}
 			}
-			if refusal != nil {
-				return &PayloadExit{Payload: refusal, Code: contract.ExitRefused}
-			}
-			return nil
+			return kindModuleRefusal(*kindModules)
 		})
 		return code
 	}
@@ -217,6 +219,20 @@ func importKindModules(names []string) error {
 		}
 	}
 	return nil
+}
+
+// Delegated commands run their selection check before importing modules. Give their
+// runners the same complete CLI error envelope as the ordinary command path.
+func kindModuleRefusal(names []string) error {
+	err := importKindModules(names)
+	if err == nil {
+		return nil
+	}
+	var usage *UsageError
+	if errors.As(err, &usage) {
+		return &PayloadExit{Payload: contract.OrderedObject{{Key: "error", Value: "usage"}, {Key: "detail", Value: usage.Detail}}, Code: usage.Code}
+	}
+	return &PayloadExit{Payload: contract.OrderedObject{{Key: "error", Value: "host"}, {Key: "detail", Value: err.Error()}}, Code: contract.ExitHost}
 }
 
 func emit(stdout, stderr io.Writer, result any, err error) int {

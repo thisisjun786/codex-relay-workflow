@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -143,6 +144,63 @@ func TestANB01_every_route_to_dispatched_binds_the_new_anchor(t *testing.T) {
 			out["receipt"] = a.childReceipt()
 		})
 	})
+}
+
+func TestBindAnchor_concurrent_turns_never_replace_the_winner(t *testing.T) {
+	a := newANB(t, t.TempDir())
+	a.revisionPending()
+	var start sync.WaitGroup
+	start.Add(1)
+	type outcome struct {
+		turn string
+		row  Obj
+		err  error
+	}
+	results := make(chan outcome, 2)
+	for _, turn := range []string{"turn-A", "turn-B"} {
+		go func(turn string) {
+			start.Wait()
+			row, err := BindAnchor(a.ctx, a.store, a.clock, a.rid, 2, turn)
+			results <- outcome{turn, row, err}
+		}(turn)
+	}
+	start.Done()
+	first, second := <-results, <-results
+	var winner, loser outcome
+	if first.err == nil {
+		winner, loser = first, second
+	} else {
+		winner, loser = second, first
+	}
+	if winner.err != nil || Reason(loser.err) != "anchor_already_bound" ||
+		str(winner.row, "dispatchTurnId") != winner.turn ||
+		str(a.gen2(), "dispatchTurnId") != winner.turn {
+		t.Fatalf("winner=%+v loser=%+v generation=%v", winner, loser, a.gen2())
+	}
+	if _, err := BindAnchor(a.ctx, a.store, a.clock, a.rid, 2, winner.turn); err != nil {
+		t.Fatalf("same-turn replay: %v", err)
+	}
+	if a.one("SELECT count(*) AS n FROM journal WHERE kind = 'anchor_bound'").I("n") != 1 {
+		t.Fatal("binding journal must be written once")
+	}
+}
+
+func TestBindPendingAnchors_recovers_acknowledged_revision(t *testing.T) {
+	a := newANB(t, t.TempDir())
+	rev := a.dispatchRevision("")
+	a.clock.Advance(3600)
+	a.mustAttempt(rev, at(a.clock.Now()))
+	if str(a.gen2(), "anchorState") != "anchor_pending" {
+		t.Fatalf("expected pending generation: %v", a.gen2())
+	}
+	_, err := execSQL(a.ctx, a.store, "UPDATE deliveries SET state = ? WHERE event_id = ?", Acknowledged, rev)
+	mustDo(t, err)
+	// Python ack.bind_dispatched_revision rejects ACKNOWLEDGED despite selecting it
+	// in bind_pending_anchors. Recovery must bind it rather than pin that defect.
+	bound := a.bindPending()
+	if len(bound) != 1 || bound[0] != rev || str(a.gen2(), "anchorState") != "bound" || len(a.bindPending()) != 0 {
+		t.Fatalf("bound=%v generation=%v", bound, a.gen2())
+	}
 }
 
 func TestANB02_an_unbound_generation_refuses_the_childs_receipt(t *testing.T) {

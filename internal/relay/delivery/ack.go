@@ -776,7 +776,7 @@ func (a *Ack) settlePendingAck(ctx context.Context, eventID string, pending Row,
 // BindDispatchedRevision is bind_dispatched_revision.
 func (a *Ack) BindDispatchedRevision(ctx context.Context, revisionEvent string) (Obj, error) {
 	row, err := a.Delivery.Find(ctx, revisionEvent)
-	if err != nil || row == nil || row.S("state") != Dispatched || !truthy(row.Opt("dispatch_turn_id")) {
+	if err != nil || row == nil || !slices.Contains([]string{Dispatched, Acknowledged}, row.S("state")) || !truthy(row.Opt("dispatch_turn_id")) {
 		return nil, err
 	}
 	event, err := a.Delivery.eventRow(ctx, revisionEvent)
@@ -791,32 +791,37 @@ func BindAnchor(ctx context.Context, s *store.Store, clock Clock, rid string, nu
 	if strings.TrimSpace(turn) == "" {
 		return nil, refuse("unbound_generation", "an anchor needs an exact dispatch turn id")
 	}
-	r, err := LoadRelationship(ctx, s, rid)
-	if err != nil {
-		return nil, err
-	}
-	current := r.generation(number)
-	if current == nil {
-		return nil, refuse(UnknownGeneration, "%s has no generation %d", store.PyRepr(rid), number)
-	}
-	if current.S("anchor_state") == "bound" {
-		if current.S("dispatch_turn_id") == turn {
-			return generationRecord(current), nil
+	var bound Obj
+	err := s.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
+		r, err := LoadRelationship(ctx, s, rid)
+		if err != nil {
+			return err
 		}
-		return nil, refuse("anchor_already_bound", "generation %d is already bound to %s", number, pyReprValue(current.Opt("dispatch_turn_id")))
-	}
-	now := clock.ISO()
-	err = s.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
+		current := r.generation(number)
+		if current == nil {
+			return refuse(UnknownGeneration, "%s has no generation %d", store.PyRepr(rid), number)
+		}
+		if current.S("anchor_state") == "bound" {
+			if current.S("dispatch_turn_id") == turn {
+				bound = generationRecord(current)
+				return nil
+			}
+			return refuse("anchor_already_bound", "generation %d is already bound to %s", number, pyReprValue(current.Opt("dispatch_turn_id")))
+		}
+		now := clock.ISO()
 		if _, err := execSQL(ctx, s, "UPDATE generations SET anchor_state = ?, dispatch_turn_id = ?, bound_at = ? WHERE relationship_id = ? AND execution_generation = ?", "bound", turn, now, rid, number); err != nil {
 			return err
 		}
-		return journal(ctx, s, "anchor_bound", rid, Obj{{Key: "generation", Value: number}}, now)
+		if err := journal(ctx, s, "anchor_bound", rid, Obj{{Key: "generation", Value: number}}, now); err != nil {
+			return err
+		}
+		current, err = one(ctx, s, "SELECT * FROM generations WHERE relationship_id = ? AND execution_generation = ?", rid, number)
+		if err == nil {
+			bound = generationRecord(current)
+		}
+		return err
 	})
-	if err != nil {
-		return nil, err
-	}
-	g, err := one(ctx, s, "SELECT * FROM generations WHERE relationship_id = ? AND execution_generation = ?", rid, number)
-	return generationRecord(g), err
+	return bound, err
 }
 
 func generationRecord(g Row) Obj {

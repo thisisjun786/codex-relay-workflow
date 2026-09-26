@@ -225,6 +225,16 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 		return 2, true
 	}
 	run := &cliRun{ctx: ctx, args: parsed, socket: socket, clock: SystemClock{}}
+	if command == "ack-proof" && check != nil {
+		if err := check(store.StateSelection{}, socket); err != nil {
+			var payload PayloadError
+			if errors.As(err, &payload) {
+				body, code := payload.ExitPayload()
+				return reply(stdout, body, code), true
+			}
+			return reply(stdout, Obj{{Key: "error", Value: "host"}, {Key: "detail", Value: hostDetail(err)}}, contract.ExitHost), true
+		}
+	}
 	if command != "ack-proof" {
 		selection, err := store.ResolveStateDir(state, socket)
 		if err != nil {
