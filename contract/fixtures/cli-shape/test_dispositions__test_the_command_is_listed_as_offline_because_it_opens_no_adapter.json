@@ -1,0 +1,26 @@
+{
+ "given": {},
+ "run": {
+  "kind": "cli",
+  "argv": [
+   "doctor"
+  ],
+  "env": {
+   "XDG_STATE_HOME": "${HOME}/xdg-state"
+  }
+ },
+ "expect": {
+  "exit": 0,
+  "checks": [
+   {
+    "kind": "contains",
+    "path": [
+     "stdout_json",
+     "actorReachability",
+     "offlineCommands"
+    ],
+    "value": "dispositions-show"
+   }
+  ]
+ }
+}

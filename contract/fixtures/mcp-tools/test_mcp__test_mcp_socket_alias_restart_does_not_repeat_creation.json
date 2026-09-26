@@ -1,0 +1,106 @@
+{
+  "given": {},
+  "run": {
+    "kind": "mcp",
+    "socket_alias": true,
+    "sessions": [
+      [
+        {
+          "tool": "create_thread",
+          "arguments": {
+            "request_id": "stable-create",
+            "cwd": "${HOME}",
+            "prompt": "READY",
+            "model": "anthropic/claude-opus-5",
+            "reasoning_effort": "xhigh"
+          }
+        }
+      ],
+      [
+        {
+          "tool": "create_thread",
+          "arguments": {
+            "request_id": "stable-create",
+            "cwd": "${HOME}",
+            "prompt": "READY",
+            "model": "anthropic/claude-opus-5",
+            "reasoning_effort": "xhigh"
+          }
+        }
+      ]
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "results",
+          1,
+          "structured",
+          "replayed"
+        ],
+        "value": true
+      },
+      {
+        "kind": "same",
+        "path": [
+          "results",
+          0,
+          "structured",
+          "threadId"
+        ],
+        "other": [
+          "results",
+          1,
+          "structured",
+          "threadId"
+        ]
+      },
+      {
+        "kind": "length",
+        "path": [
+          "calls"
+        ],
+        "value": 2
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "results",
+          0,
+          "error"
+        ],
+        "value": false
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "results",
+          1,
+          "error"
+        ],
+        "value": false
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "calls",
+          0,
+          0
+        ],
+        "value": "thread/start"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "calls",
+          1,
+          0
+        ],
+        "value": "turn/start"
+      }
+    ]
+  }
+}

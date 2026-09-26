@@ -1,0 +1,22 @@
+{
+  "given": {
+    "settings": false
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "configuration",
+          "value"
+        ],
+        "value": "config_absent"
+      }
+    ]
+  }
+}

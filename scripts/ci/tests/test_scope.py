@@ -61,9 +61,30 @@ class ScopeTests(unittest.TestCase):
     def test_runtime_manifest_and_ci_select_both(self):
         for path in ("packages/bridge/src/a.py", "scripts/runtime_install.py",
                      "plugins/crw/wiring/launch.py", "plugins/crw/.codex-plugin/plugin.json",
-                     ".github/workflows/ci.yml", "pyproject.toml"):
+                     ".github/workflows/ci.yml", "pyproject.toml", "conftest.py",
+                     "contract/runner/core.py", "contract/fixtures/records/a.json",
+                     "docs/port/test-map.md"):
             with self.subTest(path=path):
                 self.assertEqual(scope.classify(path), "full")
+
+    def test_go_product_paths_are_registered_and_select_full(self):
+        paths = ("go.mod", "go.sum", "tools.go", "Makefile", ".goreleaser.yaml",
+                 "cmd/crw/main.go", "internal/contract/emit.go",
+                 "contract/schema/relay-cli.json", "docs/port/inventory.md",
+                 "scripts/port/check_inventory.py")
+        for path in paths:
+            self.write(path, "x\n")
+        self.commit()
+        result = self.select()
+        self.assertEqual(result["unknown"], [])
+        self.assertEqual(result["changed"], sorted(paths))
+        self.assertEqual(result["selected"], {"tests": True, "packages": True})
+        scope.validate_selection(result)
+
+    def test_unregistered_go_lookalike_stays_unknown(self):
+        for path in ("go.work", "cmdx/main.go", "docs/portable.md.txt"):
+            with self.subTest(path=path):
+                self.assertEqual(scope.classify(path), "unknown")
 
     def test_skill_plus_manifest_stays_conservatively_full(self):
         self.write("plugins/crw/skills/crw-run/SKILL.md", "instructions\n")

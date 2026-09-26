@@ -1,0 +1,18 @@
+{
+  "given": {
+    "host": {"threads": {"01child-task": {"id": "01child-task", "cwd": "/child", "source": "cli", "archived": true, "status": {"type": "idle"}, "turns": []}}},
+    "sql_seed": "INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, superseded_by, created_at, updated_at) VALUES ('rel-1', 'CRW-1', 'active', '01parent-task', 'host-a', '01child-task', 'host-a', 2, '[]', '[\"01parent-task\",\"01child-task\"]', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z'); INSERT INTO generations (relationship_id, execution_generation, dispatch_request_id, anchor_state, dispatch_turn_id, reason, opened_at, bound_at) VALUES ('rel-1', 2, 'dispatch-2', 'bound', 'turn-dispatch-2', 'needs_changes_revision', '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z'); INSERT INTO relationship_scope (relationship_id, project_key, recorded_at) VALUES ('rel-1', 'PROJ-CRW-163', '2026-09-21T00:00:00Z'); INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, finalized_at, suppressed_reason, first_seen_at, last_seen_at) VALUES ('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'rel-1', 2, '0000000000000000000000000000000000000000000000000000', 'revision_request', 'relay', 1, '01child-task', 'turn-dispatch-2', 'completed', '{}', 'final', '2026-09-21T00:00:00Z', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z'); INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, next_eligible_at, hold_reason, dispatch_evidence, dispatch_turn_id, created_at, updated_at) VALUES ('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'rel-1', 'revision_request', '01child-task', '01child-task', 'queued', 0, NULL, NULL, NULL, NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');"
+  },
+  "run": {"kind": "cli", "steps": [
+    {"id": "withhold", "argv": ["deliver", "--event", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]},
+    {"id": "read", "argv": ["dispositions-show", "--relationship", "rel-1"]}
+  ]},
+  "expect": {"exit": 0, "checks": [
+    {"kind": "eq", "path": ["steps", "withhold", "exit"], "value": 0},
+    {"kind": "eq", "path": ["stdout_json", "children", 0, "correction", "eventId"], "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+    {"kind": "eq", "path": ["stdout_json", "children", 0, "correction", "delivery", "observation"], "value": "not_sent"},
+    {"kind": "eq", "path": ["stdout_json", "children", 0, "correction", "undeliveredReason", "value"], "value": "recipient_archived"},
+    {"kind": "eq", "path": ["stdout_json", "counts", "correctionNotSent"], "value": 1},
+    {"kind": "eq", "path": ["stdout_json", "counts", "correctionWithheld"], "value": 1}
+  ]}
+}

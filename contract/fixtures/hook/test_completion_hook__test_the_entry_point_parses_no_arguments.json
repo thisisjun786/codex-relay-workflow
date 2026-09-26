@@ -1,0 +1,25 @@
+{
+  "given": {
+    "relay": {
+      "stdout": "{\"decision\": \"release\", \"state\": \"unmanaged\", \"observation\": \"unmanaged\", \"reason\": \"No marker names this workspace.\", \"assignmentId\": null, \"counters\": {}, \"recordedAs\": null, \"hook_output\": {}}"
+    }
+  },
+  "run": {
+    "kind": "entry",
+    "argv": [
+      "--some-flag-from-an-older-install"
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "stderr"
+        ],
+        "value": ""
+      }
+    ]
+  }
+}

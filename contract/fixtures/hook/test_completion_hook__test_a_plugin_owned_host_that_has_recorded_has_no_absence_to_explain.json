@@ -1,0 +1,100 @@
+{
+  "given": {
+    "settings": false,
+    "relay": {
+      "stdout": "{\"decision\": \"release\", \"state\": \"unmanaged\", \"observation\": \"unmanaged\", \"reason\": \"No marker names this workspace.\", \"assignmentId\": null, \"counters\": {}, \"recordedAs\": null, \"hook_output\": {}}"
+    },
+    "files": {
+      "crw-completion-hook.json": "{\"configVersion\": 1, \"event\": \"Stop\", \"relayExecutable\": \"${HOME}/codex-session-relay\", \"markerRoot\": \"${HOME}/marker\", \"dbPath\": null, \"mode\": \"observe\", \"timeoutSeconds\": 5, \"journalRoot\": \"${HOME}/journal\", \"journalPolicy\": \"every_invocation\", \"installedBy\": \"CRW-100\", \"isolationAssertedBy\": null, \"owner\": \"plugin\", \"adapterInterpreter\": \"${PYTHON}\", \"adapterEntryPoint\": \"${ENTRY}\"}"
+    }
+  },
+  "run": {
+    "kind": "hook",
+    "status": true
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "firingJournal",
+          "value"
+        ],
+        "value": "1"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "registrationOwner",
+          "value"
+        ],
+        "value": "plugin"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "configuration",
+          "namedSettings"
+        ],
+        "value": []
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "firingRecordAbsence",
+          "value"
+        ],
+        "value": "records_found"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "firingRecordAbsence",
+          "ruledOut",
+          0,
+          "cause"
+        ],
+        "value": "not_registered"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "firingRecordAbsence",
+          "ruledOut",
+          0,
+          "standing"
+        ],
+        "value": "ruled_out"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "firingRecordAbsence",
+          "ruledOut",
+          2,
+          "cause"
+        ],
+        "value": "adapter_cannot_run"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "firingRecordAbsence",
+          "ruledOut",
+          2,
+          "standing"
+        ],
+        "value": "ruled_out"
+      }
+    ]
+  }
+}

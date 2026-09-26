@@ -1,0 +1,147 @@
+{
+  "given": {
+    "files": {
+      "policy.json": "{\"allowed\": [{\"model\": \"anthropic/claude-opus-5\", \"efforts\": [\"xhigh\"]}], \"exceptions\": {\"one-task\": {\"model\": \"openai/gpt-6-astra\", \"reasoningEffort\": \"high\", \"cwd\": [\"${HOME}\"]}}}"
+    }
+  },
+  "run": {
+    "kind": "mcp",
+    "env": {
+      "CODEX_THREAD_BRIDGE_EXECUTION_POLICY": "${HOME}/policy.json"
+    },
+    "steps": [
+      {
+        "tool": "create_thread",
+        "arguments": {
+          "model": "openai/gpt-6-astra",
+          "reasoning_effort": "high",
+          "request_id": "self-approved",
+          "cwd": "${HOME}",
+          "approved": true
+        }
+      },
+      {
+        "tool": "create_thread",
+        "arguments": {
+          "model": "openai/gpt-6-astra",
+          "reasoning_effort": "high",
+          "request_id": "self-allowlisted",
+          "cwd": "${HOME}",
+          "allowed_models": [
+            "openai/gpt-6-astra"
+          ]
+        }
+      },
+      {
+        "tool": "create_thread",
+        "arguments": {
+          "model": "openai/gpt-6-astra",
+          "reasoning_effort": "high",
+          "request_id": "misspelled-exception",
+          "cwd": "${HOME}",
+          "policy_exceptions": "one-task"
+        }
+      },
+      {
+        "tool": "create_thread",
+        "arguments": {
+          "model": "openai/gpt-6-astra",
+          "reasoning_effort": "high",
+          "request_id": "cited",
+          "cwd": "${HOME}",
+          "policy_exception": "one-task"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "results",
+          0,
+          "error"
+        ],
+        "value": true
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "results",
+          1,
+          "error"
+        ],
+        "value": true
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "results",
+          2,
+          "error"
+        ],
+        "value": true
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "results",
+          0,
+          "content",
+          0,
+          "text"
+        ],
+        "value": "execution_not_allowed"
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "results",
+          1,
+          "content",
+          0,
+          "text"
+        ],
+        "value": "execution_not_allowed"
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "results",
+          2,
+          "content",
+          0,
+          "text"
+        ],
+        "value": "execution_not_allowed"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "results",
+          3,
+          "error"
+        ],
+        "value": false
+      },
+      {
+        "kind": "length",
+        "path": [
+          "calls"
+        ],
+        "value": 1
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "calls",
+          0,
+          0
+        ],
+        "value": "thread/start"
+      }
+    ]
+  }
+}

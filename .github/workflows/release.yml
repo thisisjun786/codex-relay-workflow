@@ -142,6 +142,18 @@ jobs:
             echo '::error::Configure RELEASE_TOKEN before publishing (Contents and Workflows write; Actions read).'
             exit 1
           fi
+      - name: Set up the pinned Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - id: release-go-snapshot
+        name: Build the static binaries as a snapshot without publishing
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.18.2
+          args: release --snapshot --clean
 
   publish:
     needs: validate
@@ -272,3 +284,47 @@ jobs:
             printf -- '- Commit: %s\n- Tag: %s\n' "$RELEASE_SHA" "$RELEASE_TAG"
             printf -- '- main now identifies the released commit.\n'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  release-go:
+    needs: [validate, publish]
+    if: inputs.dry_run == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout the published commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: release-go-source
+        name: Require the published tag on the validated commit
+        run: |
+          set -euo pipefail
+          # fetch-depth 0 fetched every tag, including the one publish pushed.
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || {
+            echo '::error::The checkout does not identify the released commit.'
+            exit 1
+          }
+          [[ "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" == "$RELEASE_SHA" ]] || {
+            echo '::error::The release tag does not identify the released commit; binaries were not published.'
+            exit 1
+          }
+      - name: Set up the pinned Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - id: release-go-publish
+        name: Attach static binaries and SHA256SUMS to the source release
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ inputs.tag }}
+        with:
+          distribution: goreleaser
+          version: v2.18.2
+          args: release --clean

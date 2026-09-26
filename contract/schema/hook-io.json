@@ -1,0 +1,87 @@
+{
+  "stdin": {
+    "type": "object",
+    "identityFields": [
+      "transcript_path",
+      "session_id",
+      "turn_id",
+      "stop_hook_active",
+      "last_assistant_message"
+    ]
+  },
+  "stdout": {
+    "emptyAllowed": true,
+    "block": {
+      "decision": "block",
+      "reason": "string",
+      "continue": true
+    }
+  },
+  "exit": 0,
+  "configName": "crw-completion-hook.json",
+  "settingsKeys": [
+    "configVersion",
+    "event",
+    "relayExecutable",
+    "markerRoot",
+    "dbPath",
+    "mode",
+    "timeoutSeconds",
+    "journalRoot",
+    "journalPolicy",
+    "installedBy",
+    "isolationAssertedBy",
+    "socketPath",
+    "owner",
+    "adapterInterpreter",
+    "adapterEntryPoint"
+  ],
+  "launcher": {
+    "MARGIN_SECONDS": 2,
+    "MAX_SECONDS": 9
+  },
+  "validation": {
+    "configVersion": 1,
+    "modes": [
+      "observe",
+      "hold"
+    ],
+    "owners": [
+      "user",
+      "plugin"
+    ],
+    "journalPolicies": [
+      "every_invocation",
+      "faults_only",
+      "no_journal"
+    ],
+    "required": [
+      "configVersion",
+      "relayExecutable",
+      "markerRoot",
+      "mode"
+    ],
+    "holdRequires": [
+      "isolationAssertedBy"
+    ],
+    "pluginRequires": [
+      "adapterInterpreter",
+      "adapterEntryPoint"
+    ],
+    "adapterPluginTimeoutLessThan": 9,
+    "installerPluginTimeoutMaxInclusive": 7,
+    "timeoutSeconds": {
+      "minExclusive": 0,
+      "maxInclusive": 86400
+    },
+    "pathsMustBeAbsolute": [
+      "relayExecutable",
+      "markerRoot",
+      "dbPath",
+      "journalRoot",
+      "socketPath",
+      "adapterInterpreter",
+      "adapterEntryPoint"
+    ]
+  }
+}

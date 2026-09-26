@@ -1,0 +1,31 @@
+{
+  "given": {
+    "settings_overrides": {
+      "journalPolicy": "faults_only"
+    }
+  },
+  "run": {
+    "kind": "hook"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "length",
+        "path": [
+          "rows"
+        ],
+        "value": 1
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "rows",
+          0,
+          "adapterOutcome"
+        ],
+        "value": "guard_unreachable"
+      }
+    ]
+  }
+}

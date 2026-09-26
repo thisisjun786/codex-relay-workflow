@@ -1,0 +1,31 @@
+{
+  "given": {
+    "relay": {
+      "stdout": "{\"decision\": \"block\", \"hook_output\": {\"decision\": \"block\", \"reason\": \"r\", \"continue\": false}}"
+    }
+  },
+  "run": {
+    "kind": "hook"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "stdout"
+        ],
+        "value": ""
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "rows",
+          0,
+          "adapterOutcome"
+        ],
+        "value": "guard_verdict_incomplete"
+      }
+    ]
+  }
+}

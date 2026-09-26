@@ -1,0 +1,128 @@
+{
+  "given": {
+    "settings": false,
+    "files": {
+      "lf.json": "{\"configVersion\": 1,\n  bad}",
+      "cr.json": "{\"configVersion\": 1,\r  bad}",
+      "crlf.json": "{\"configVersion\": 1,\r\n  bad}",
+      "hooks.json": "{\"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"${PYTHON} ${ENTRY} ${HOME}/lf.json\", \"timeout\": 10}]}, {\"hooks\": [{\"type\": \"command\", \"command\": \"${PYTHON} ${ENTRY} ${HOME}/cr.json\", \"timeout\": 10}]}, {\"hooks\": [{\"type\": \"command\", \"command\": \"${PYTHON} ${ENTRY} ${HOME}/crlf.json\", \"timeout\": 10}]}]}}"
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "length",
+        "path": [
+          "status",
+          "configuration",
+          "namedSettings"
+        ],
+        "value": 3
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "configuration",
+          "namedSettings",
+          0,
+          "settingsState"
+        ],
+        "value": "UNREADABLE"
+      },
+      {
+        "kind": "truthy",
+        "path": [
+          "status",
+          "configuration",
+          "namedSettings",
+          0,
+          "detail"
+        ],
+        "value": null
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "configuration",
+          "namedSettings",
+          1,
+          "settingsState"
+        ],
+        "value": "UNREADABLE"
+      },
+      {
+        "kind": "truthy",
+        "path": [
+          "status",
+          "configuration",
+          "namedSettings",
+          1,
+          "detail"
+        ],
+        "value": null
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "configuration",
+          "namedSettings",
+          2,
+          "settingsState"
+        ],
+        "value": "UNREADABLE"
+      },
+      {
+        "kind": "truthy",
+        "path": [
+          "status",
+          "configuration",
+          "namedSettings",
+          2,
+          "detail"
+        ],
+        "value": null
+      },
+      {
+        "kind": "same",
+        "path": [
+          "status",
+          "configuration",
+          "namedSettings",
+          1,
+          "detail"
+        ],
+        "other": [
+          "status",
+          "configuration",
+          "namedSettings",
+          0,
+          "detail"
+        ]
+      },
+      {
+        "kind": "same",
+        "path": [
+          "status",
+          "configuration",
+          "namedSettings",
+          2,
+          "detail"
+        ],
+        "other": [
+          "status",
+          "configuration",
+          "namedSettings",
+          0,
+          "detail"
+        ]
+      }
+    ]
+  }
+}

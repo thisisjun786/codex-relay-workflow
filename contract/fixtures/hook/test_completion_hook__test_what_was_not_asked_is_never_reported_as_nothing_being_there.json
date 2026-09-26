@@ -1,0 +1,94 @@
+{
+  "given": {
+    "settings": false
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "hostTrust",
+          "value"
+        ],
+        "value": "not_read"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "guardRecords",
+          "value"
+        ],
+        "value": "not_read"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "daemon",
+          "value"
+        ],
+        "value": "not_read"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "firingJournal",
+          "value"
+        ],
+        "value": "not_read"
+      },
+      {
+        "kind": "truthy",
+        "path": [
+          "status",
+          "hostTrust",
+          "evidence"
+        ],
+        "value": null
+      },
+      {
+        "kind": "truthy",
+        "path": [
+          "status",
+          "guardRecords",
+          "evidence"
+        ],
+        "value": null
+      },
+      {
+        "kind": "truthy",
+        "path": [
+          "status",
+          "daemon",
+          "evidence"
+        ],
+        "value": null
+      },
+      {
+        "kind": "truthy",
+        "path": [
+          "status",
+          "firingJournal",
+          "evidence"
+        ],
+        "value": null
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "configuration",
+          "value"
+        ],
+        "value": "config_absent"
+      }
+    ]
+  }
+}

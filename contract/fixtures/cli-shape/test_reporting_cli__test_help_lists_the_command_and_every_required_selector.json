@@ -1,0 +1,62 @@
+{
+  "given": {},
+  "run": {
+    "kind": "cli",
+    "steps": [
+      {
+        "id": "help",
+        "argv": [
+          "reporting-show",
+          "--help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "contains",
+        "path": [
+          "stdout"
+        ],
+        "value": "--marker-root"
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "stdout"
+        ],
+        "value": "--workspace"
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "stdout"
+        ],
+        "value": "--assignment"
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "stdout"
+        ],
+        "value": "--session"
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "stdout"
+        ],
+        "value": "--turn"
+      },
+      {
+        "kind": "excludes",
+        "path": [
+          "stdout"
+        ],
+        "value": "--socket"
+      }
+    ]
+  }
+}

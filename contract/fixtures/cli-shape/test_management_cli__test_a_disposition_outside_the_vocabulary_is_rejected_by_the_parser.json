@@ -1,0 +1,69 @@
+{
+  "given": {},
+  "run": {
+    "kind": "cli",
+    "steps": [
+      {
+        "id": "declare",
+        "argv": [
+          "intent-declare",
+          "--marker-root",
+          "${HOME}/markers",
+          "--workspace",
+          "${HOME}/workspace",
+          "--dispatch-request-id",
+          "dispatch-1",
+          "--issue",
+          "REL-1"
+        ]
+      },
+      {
+        "id": "dispose",
+        "argv": [
+          "intent-disposition",
+          "--marker-root",
+          "${HOME}/markers",
+          "--workspace",
+          "${HOME}/workspace",
+          "--assignment",
+          {
+            "$step": "declare",
+            "path": [
+              "stdout_json",
+              "assignmentId"
+            ]
+          },
+          "--session",
+          "01child-task",
+          "--turn",
+          "turn-dispatch-1",
+          "--outcome",
+          "done"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 2,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "dispose",
+          "exit"
+        ],
+        "value": 2
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "steps",
+          "dispose",
+          "stderr"
+        ],
+        "value": "invalid choice"
+      }
+    ]
+  }
+}

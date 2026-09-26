@@ -1,0 +1,71 @@
+{
+  "given": {
+    "settings": false,
+    "relay": {
+      "stdout": "{\"decision\": \"release\", \"state\": \"unmanaged\", \"observation\": \"unmanaged\", \"reason\": \"No marker names this workspace.\", \"assignmentId\": null, \"counters\": {}, \"recordedAs\": null, \"hook_output\": {}}"
+    },
+    "files": {
+      "crw-completion-hook.json": "{\"configVersion\": 1, \"event\": \"Stop\", \"relayExecutable\": \"${HOME}/codex-session-relay\", \"markerRoot\": \"${HOME}/marker\", \"dbPath\": null, \"mode\": \"observe\", \"timeoutSeconds\": 5, \"journalRoot\": \"${HOME}/journal\", \"journalPolicy\": \"every_invocation\", \"installedBy\": \"CRW-100\", \"isolationAssertedBy\": null}",
+      "hooks.json": "{\"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"./python ${ENTRY} ${HOME}/crw-completion-hook.json\", \"timeout\": 10}]}]}}"
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "length",
+        "path": [
+          "status",
+          "configuration",
+          "namedSettings"
+        ],
+        "value": 1
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "configuration",
+          "namedSettings",
+          0,
+          "startable"
+        ],
+        "value": null
+      },
+      {
+        "kind": "length",
+        "path": [
+          "status",
+          "firingRecordAbsence",
+          "candidates"
+        ],
+        "value": 2
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "firingRecordAbsence",
+          "candidates",
+          0,
+          "cause"
+        ],
+        "value": "adapter_cannot_run"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "firingRecordAbsence",
+          "candidates",
+          1,
+          "cause"
+        ],
+        "value": "nothing_recorded"
+      }
+    ]
+  }
+}

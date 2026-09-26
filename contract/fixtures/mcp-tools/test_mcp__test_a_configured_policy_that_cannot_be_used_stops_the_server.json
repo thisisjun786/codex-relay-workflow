@@ -1,0 +1,47 @@
+{
+  "given": {
+    "files": {
+      "broken.json": "{ not json"
+    }
+  },
+  "run": {
+    "kind": "mcp",
+    "process": true,
+    "env": {
+      "CODEX_THREAD_BRIDGE_EXECUTION_POLICY": "${HOME}/broken.json"
+    }
+  },
+  "expect": {
+    "exit": 1,
+    "checks": [
+      {
+        "kind": "ne",
+        "path": [
+          "exit"
+        ],
+        "value": 0
+      },
+      {
+        "kind": "contains",
+        "path": [
+          "stderr"
+        ],
+        "value": "execution_policy_unreadable"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "state_exists"
+        ],
+        "value": false
+      },
+      {
+        "kind": "length",
+        "path": [
+          "calls"
+        ],
+        "value": 0
+      }
+    ]
+  }
+}

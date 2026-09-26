@@ -1,0 +1,25 @@
+{
+  "given": {
+    "relay": {
+      "stdout": "{\"error\": \"host\"}",
+      "exit": 3
+    }
+  },
+  "run": {
+    "kind": "hook"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "rows",
+          0,
+          "adapterOutcome"
+        ],
+        "value": "guard_host_error"
+      }
+    ]
+  }
+}

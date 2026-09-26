@@ -1,0 +1,8 @@
+{
+  "given": {"files": {"state/relay.sqlite3": ""}},
+  "run": {"kind": "cli", "argv": ["dispositions-show", "--project", "PROJ-CRW-163"]},
+  "expect": {"exit": 2, "observe": ["state/relay.sqlite3", "state"], "checks": [
+    {"kind": "eq", "path": ["observed", "state/relay.sqlite3", "size"], "value": 0},
+    {"kind": "eq", "path": ["observed", "state", "entries"], "value": ["relay.sqlite3"]}
+  ]}
+}

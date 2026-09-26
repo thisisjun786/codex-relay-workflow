@@ -165,6 +165,19 @@ class WorkflowTests(unittest.TestCase):
         self.assertIsNotNone(re.search(r"checksum: '[0-9a-f]{64}'", body))
         self.assertIsNotNone(re.search(r"version: '\d+\.\d+\.\d+'", body))
 
+    def test_go_product_always_runs_and_builds_every_static_target(self):
+        body = workflow_jobs()["go-product"]
+        self.assertNotRegex(body, r"(?m)^    if:")
+        self.assertIn("go-version-file: go.mod", body)
+        self.assertIn("make lint test contract", body)
+        self.assertIn("CGO_ENABLED=0", body)
+        for target in ("linux/amd64", "linux/arm64", "darwin/arm64"):
+            self.assertIn(target, body)
+        for artifact in ("crw_linux_amd64", "crw_linux_arm64", "crw_darwin_arm64", "SHA256SUMS"):
+            self.assertRegex(body, rf"(?m)^          name: {artifact}$")
+        for action in re.findall(r"uses: (\S+)", body):
+            self.assertRegex(action, r"@[0-9a-f]{40}$")
+
 
 if __name__ == "__main__":
     unittest.main()

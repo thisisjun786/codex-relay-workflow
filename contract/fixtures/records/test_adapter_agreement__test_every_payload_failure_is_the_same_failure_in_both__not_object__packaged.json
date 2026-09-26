@@ -1,0 +1,240 @@
+{
+ "given": {
+  "relay": {
+   "stdout": "{\"decision\": \"release\", \"state\": \"unmanaged\", \"hook_output\": {}}"
+  },
+  "settings_overrides": {
+   "owner": null,
+   "adapterInterpreter": null,
+   "adapterEntryPoint": null
+  }
+ },
+ "run": {
+  "kind": "stop",
+  "stdin": "[1,2,3]"
+ },
+ "expect": {
+  "exit": 0,
+  "checks": [
+   {
+    "kind": "eq",
+    "path": [
+     "stdout"
+    ],
+    "value": ""
+   },
+   {
+    "kind": "length",
+    "path": [
+     "rows"
+    ],
+    "value": 1
+   },
+   {
+    "kind": "set_eq",
+    "path": [
+     "rows",
+     0
+    ],
+    "value": [
+     "acceptance",
+     "acceptedAs",
+     "adapterOutcome",
+     "assignmentId",
+     "at",
+     "configuration",
+     "detail",
+     "elapsedMs",
+     "event",
+     "eventIdentity",
+     "eventKey",
+     "guardDecision",
+     "guardInvoked",
+     "guardMode",
+     "guardRecordedAs",
+     "guardState",
+     "held",
+     "identityScanMs",
+     "processEnding",
+     "recordVersion",
+     "stdoutReading"
+    ]
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "rows",
+     0,
+     "acceptance"
+    ],
+    "value": null
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "rows",
+     0,
+     "acceptedAs"
+    ],
+    "value": null
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "rows",
+     0,
+     "adapterOutcome"
+    ],
+    "value": "stdin_not_object"
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "rows",
+     0,
+     "assignmentId"
+    ],
+    "value": null
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "rows",
+     0,
+     "detail"
+    ],
+    "value": "the Stop payload is a list, not an object"
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "rows",
+     0,
+     "event"
+    ],
+    "value": "Stop"
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "rows",
+     0,
+     "eventIdentity"
+    ],
+    "value": null
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "rows",
+     0,
+     "eventKey"
+    ],
+    "value": null
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "rows",
+     0,
+     "guardDecision"
+    ],
+    "value": null
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "rows",
+     0,
+     "guardInvoked"
+    ],
+    "value": false
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "rows",
+     0,
+     "guardMode"
+    ],
+    "value": null
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "rows",
+     0,
+     "guardRecordedAs"
+    ],
+    "value": null
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "rows",
+     0,
+     "guardState"
+    ],
+    "value": null
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "rows",
+     0,
+     "held"
+    ],
+    "value": false
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "rows",
+     0,
+     "processEnding"
+    ],
+    "value": null
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "rows",
+     0,
+     "recordVersion"
+    ],
+    "value": 2
+   },
+   {
+    "kind": "eq",
+    "path": [
+     "rows",
+     0,
+     "stdoutReading"
+    ],
+    "value": null
+   },
+   {
+    "kind": "length",
+    "path": [
+     "observed",
+     "journal",
+     "entries"
+    ],
+    "value": 1
+   },
+   {
+    "kind": "regex",
+    "path": [
+     "observed",
+     "journal",
+     "entries",
+     0
+    ],
+    "value": "^[0-9]{8}$"
+   }
+  ],
+  "observe": [
+   "journal"
+  ]
+ }
+}

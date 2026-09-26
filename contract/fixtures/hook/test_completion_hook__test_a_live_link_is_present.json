@@ -1,0 +1,1 @@
+{"given":{"files":{"real":""},"symlinks":{"codex-session-relay":"${HOME}/real"}},"run":{"kind":"status"},"expect":{"exit":0,"checks":[{"kind":"eq","path":["status","relayExecutable","value"],"value":"PRESENT"}]}}

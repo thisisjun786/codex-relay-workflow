@@ -1,0 +1,81 @@
+{
+  "given": {
+    "relay": {
+      "stdout": "{\"decision\":\"release\",\"state\":\"unmanaged\",\"hook_output\":{}}"
+    },
+    "settings_overrides": {
+      "owner": null,
+      "adapterInterpreter": null,
+      "adapterEntryPoint": null
+    }
+  },
+  "run": {
+    "kind": "stop",
+    "stdin": {
+      "session_id": "s-1",
+      "turn_id": "t-1",
+      "cwd": "/tmp/workspace",
+      "stop_hook_active": false
+    }
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "length",
+        "path": [
+          "calls"
+        ],
+        "value": 1
+      },
+      {
+        "kind": "length",
+        "path": [
+          "calls",
+          0,
+          "argv"
+        ],
+        "value": 3
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "calls",
+          0,
+          "argv",
+          0
+        ],
+        "value": "guard-evaluate"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "calls",
+          0,
+          "argv",
+          1
+        ],
+        "value": "--marker-root"
+      },
+      {
+        "kind": "regex",
+        "path": [
+          "calls",
+          0,
+          "argv",
+          2
+        ],
+        "value": "/marker$"
+      },
+      {
+        "kind": "excludes",
+        "path": [
+          "calls",
+          0,
+          "argv"
+        ],
+        "value": "--socket"
+      }
+    ]
+  }
+}

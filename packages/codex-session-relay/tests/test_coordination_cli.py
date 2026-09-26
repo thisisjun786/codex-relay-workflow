@@ -127,19 +127,9 @@ class AFullMergeTurnThroughTheCommandSurface(CoordinationCliTestCase):
         self.assertEqual(shown["blocked"]["cause"], "target_unreadable")
 
     def test_a_refusal_prints_its_reason_and_exits_two(self):
-        self.bind("PRJ-A", "task-alpha")
-        _code, claimed = self.run_cli(
-            "merge-turn-request", "--repository", "owner/repo", "--base-ref", "dev",
-            "--project", "PRJ-A", "--task", "task-alpha", "--host", "host-a",
-            "--head", "head-a", "--ready")
-        self.answer_grant(claimed, "task-alpha")
-        code, payload = self.run_cli(
-            "merge-turn-check", "--turn", claimed["turnId"], "--actor", "task-alpha",
-            "--head-sha", "head-moved", "--base-sha", "base-0",
-            "--checks", self.CHECKS, "--review", self.GREEN)
-        self.assertEqual(code, cli.EXIT_REFUSED)
-        self.assertEqual(payload["error"], "refused")
-        self.assertEqual(payload["reason"], "merge_candidate_moved")
+        from contract.runner import FIXTURES, run_scenario
+        from pathlib import Path
+        run_scenario(FIXTURES / "cli-shape" / "test_coordination_cli__test_a_refusal_prints_its_reason_and_exits_two.json", Path(self.tmp))
 
     def test_malformed_json_refuses_instead_of_reporting_a_host_fault(self):
         self.bind("PRJ-A", "task-alpha")
@@ -159,29 +149,16 @@ class AFullMergeTurnThroughTheCommandSurface(CoordinationCliTestCase):
             self.assertIn(flag, payload["detail"])
 
     def test_a_parent_that_came_back_asks_with_the_only_identifier_it_has(self):
-        self.bind("PRJ-A", "task-alpha")
-        _code, claimed = self.run_cli(
-            "merge-turn-request", "--repository", "owner/repo", "--base-ref", "dev",
-            "--project", "PRJ-A", "--task", "task-alpha", "--host", "host-a",
-            "--head", "head-a", "--pr", "73", "--ready")
-        code, mine = self.run_cli("merge-turn-show", "--parent-task", "task-alpha")
-        self.assertEqual(code, cli.EXIT_OK)
-        self.assertEqual([record["turnId"] for record in mine["claims"]],
-                         [claimed["turnId"]])
-        self.assertEqual(mine["claims"][0]["state"], "holding")
-        self.assertFalse(mine["claims"][0]["targetFree"])
+        from contract.runner import FIXTURES, run_scenario
+        from pathlib import Path
+        run_scenario(FIXTURES / "cli-shape" / "test_coordination_cli__test_a_parent_that_came_back_asks_with_the_only_identifier_it_has.json", Path(self.tmp))
 
     def test_two_selectors_refuse_instead_of_answering_about_one_of_them(self):
-        self.bind("PRJ-A", "task-alpha")
-        for arguments in (
-                ("--parent-task", "task-alpha", "--repository", "owner/repo",
-                 "--base-ref", "dev"),
-                ("--repository", "owner/repo"),
-                (),
-        ):
-            code, payload = self.run_cli("merge-turn-show", *arguments)
-            self.assertEqual(code, cli.EXIT_REFUSED, arguments)
-            self.assertEqual(payload["reason"], "bad_invocation", arguments)
+        from contract.runner import FIXTURES, run_scenario
+        from pathlib import Path
+        run_scenario(FIXTURES / "cli-shape" /
+                     "test_coordination_cli__test_two_selectors_refuse_instead_of_answering_about_one_of_them.json",
+                     Path(self.tmp))
 
     def test_acknowledging_a_grant_twice_converges_on_one_record(self):
         self.bind("PRJ-A", "task-alpha")
@@ -201,16 +178,9 @@ class AFullMergeTurnThroughTheCommandSurface(CoordinationCliTestCase):
         self.assertEqual(len(entries), 1)
 
     def test_a_grant_that_is_not_this_tenures_is_refused_at_the_surface(self):
-        self.bind("PRJ-A", "task-alpha")
-        _code, claimed = self.run_cli(
-            "merge-turn-request", "--repository", "owner/repo", "--base-ref", "dev",
-            "--project", "PRJ-A", "--task", "task-alpha", "--host", "host-a",
-            "--head", "head-a", "--ready")
-        code, payload = self.run_cli(
-            "merge-turn-acknowledge", "--turn", claimed["turnId"], "--actor", "task-alpha",
-            "--grant", "mtg-somethingelse", "--evidence", "I still had the old one")
-        self.assertEqual(code, cli.EXIT_REFUSED)
-        self.assertEqual(payload["reason"], "merge_turn_not_held")
+        from contract.runner import FIXTURES, run_scenario
+        from pathlib import Path
+        run_scenario(FIXTURES / "cli-shape" / "test_coordination_cli__test_a_grant_that_is_not_this_tenures_is_refused_at_the_surface.json", Path(self.tmp))
 
     def test_a_stated_cause_travels_with_the_readiness_it_withdrew(self):
         self.bind("PRJ-A", "task-alpha")
@@ -229,39 +199,14 @@ class AFullMergeTurnThroughTheCommandSurface(CoordinationCliTestCase):
 
 class TheCapacityAndRegionSurfaces(CoordinationCliTestCase):
     def test_a_slot_is_reserved_released_and_reported(self):
-        self.bind("PRJ-A", "task-alpha")
-        code, reserved = self.run_cli(
-            "slot-reserve", "--kind", "assignment", "--subject", "REL-1",
-            "--parent-task", "task-alpha", "--project", "PRJ-A", "--actor", "task-alpha")
-        self.assertEqual(code, cli.EXIT_OK)
-        self.assertFalse(reserved["alreadyHeld"])
-        code, shown = self.run_cli("capacity-show", "--project", "PRJ-A")
-        self.assertEqual((code, shown["total"]), (cli.EXIT_OK, 1))
-        code, released = self.run_cli(
-            "slot-release", "--kind", "assignment", "--subject", "REL-1",
-            "--actor", "task-alpha", "--reason", "completed")
-        self.assertEqual((code, released["state"]), (cli.EXIT_OK, "released"))
+        from contract.runner import FIXTURES, run_scenario
+        from pathlib import Path
+        run_scenario(FIXTURES / "cli-shape" / "test_coordination_cli__test_a_slot_is_reserved_released_and_reported.json", Path(self.tmp))
 
     def test_a_declared_bound_reports_how_its_number_was_reached(self):
-        self.bind("PRJ-A", "task-alpha")
-        code, _declared = self.run_cli(
-            "limit-declare", "--scope-kind", "project", "--scope", "PRJ-A",
-            "--dimension", "file_descriptors", "--unit", "fds", "--ceiling", "100",
-            "--declared-by", "task-alpha", "--source", "operator", "--no-enforce")
-        self.assertEqual(code, cli.EXIT_OK, "only the scope's owner may state its bound")
-        code, shown = self.run_cli(
-            "capacity-show", "--scope-kind", "project", "--scope", "PRJ-A")
-        self.assertEqual(code, cli.EXIT_OK)
-        entry = shown["headroom"]["dimensions"][0]
-        self.assertEqual((entry["used"], entry["proof"]), (None, "unmeasured"))
-        code, _observed = self.run_cli(
-            "usage-observe", "--scope-kind", "project", "--scope", "PRJ-A",
-            "--dimension", "file_descriptors", "--observed", "42",
-            "--observed-by", "task-alpha", "--method", "counted the descriptors")
-        self.assertEqual(code, cli.EXIT_OK)
-        _code, again = self.run_cli(
-            "capacity-show", "--scope-kind", "project", "--scope", "PRJ-A")
-        self.assertEqual(again["headroom"]["dimensions"][0]["proof"], "observed")
+        from contract.runner import FIXTURES, run_scenario
+        from pathlib import Path
+        run_scenario(FIXTURES / "cli-shape" / "test_coordination_cli__test_a_declared_bound_reports_how_its_number_was_reached.json", Path(self.tmp))
 
     def test_a_region_is_proposed_settled_and_shown(self):
         self.bind("PRJ-A", "task-alpha")
@@ -288,28 +233,9 @@ class TheCapacityAndRegionSurfaces(CoordinationCliTestCase):
         self.assertEqual((code, len(shown["exclusive"])), (cli.EXIT_OK, 1))
 
     def test_a_follow_up_nobody_took_cannot_be_reported_done(self):
-        self.bind("PRJ-A", "task-alpha")
-        self.bind("PRJ-B", "task-beta", host="host-b")
-        _code, link = self.run_cli(
-            "linkage-peer", "--left-project", "PRJ-A", "--left-task", "task-alpha",
-            "--left-host", "host-a", "--right-project", "PRJ-B",
-            "--right-task", "task-beta", "--right-host", "host-b")
-        _code, proposed = self.run_cli(
-            "region-propose", "--repository", "owner/repo", "--revision", "rev-1",
-            "--path", "src/a.py", "--kind", "file", "--left-project", "PRJ-A",
-            "--right-project", "PRJ-B", "--peer-link", link["linkId"],
-            "--task", "task-alpha", "--constraint", "keep the signature")
-        code, item = self.run_cli(
-            "region-followup", "--agreement", proposed["agreementId"],
-            "--trigger", "a temporary duplicate implementation",
-            "--acceptance", "the duplicate is gone", "--recorded-by", "task-alpha",
-            "--issue-ref", "CRW-200")
-        self.assertEqual(code, cli.EXIT_OK)
-        code, payload = self.run_cli(
-            "region-followup-settle", "--followup", item["followupId"],
-            "--actor", "task-alpha", "--disposition", "done")
-        self.assertEqual(code, cli.EXIT_REFUSED)
-        self.assertEqual(payload["reason"], "followup_unassigned")
+        from contract.runner import FIXTURES, run_scenario
+        from pathlib import Path
+        run_scenario(FIXTURES / "cli-shape" / "test_coordination_cli__test_a_follow_up_nobody_took_cannot_be_reported_done.json", Path(self.tmp))
 
     def peers(self):
         self.bind("PRJ-A", "task-alpha")

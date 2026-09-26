@@ -1,0 +1,287 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DeliveryAttempt",
+  "description": "One attempt to hand a completion receipt to the parent. An attempt never leaves held_uncertain because time passed; only affirmative evidence moves it. Contradictory safety states are refused by the allOf invariants below, not left to prose.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "requestId",
+    "eventId",
+    "attemptNo",
+    "recipientTaskId",
+    "deliveryState",
+    "sendAttempted",
+    "retrySafe",
+    "observedAt"
+  ],
+  "properties": {
+    "requestId": {
+      "type": "string",
+      "pattern": "^del-[0-9a-f]{12}-a[0-9]+$",
+      "description": "del- + first 12 hex of eventId + -a<attemptNo>. Stable within an attempt so an uncertain send is reconciled, never duplicated."
+    },
+    "eventId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "attemptNo": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "recipientTaskId": {
+      "type": "string",
+      "description": "Must equal the relationship's registered parent taskId. A recipient outside the registry is refused before any transport call."
+    },
+    "deliveryState": {
+      "enum": [
+        "queued",
+        "deferred_busy",
+        "withheld_pre_send",
+        "dispatched",
+        "held_uncertain",
+        "inbox_only",
+        "acknowledged",
+        "superseded"
+      ],
+      "description": "dispatched means turn/start returned a turn id; it is not acknowledgement and not verification. No state is reachable by timeout alone."
+    },
+    "recipientStatusBefore": {
+      "enum": [
+        "idle",
+        "active",
+        "notLoaded",
+        "systemError",
+        "unknown"
+      ],
+      "description": "Read immediately before the send. Point-in-time and possibly stale by the next instant."
+    },
+    "recipientApprovalPolicy": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Verbatim from the transport receipt's resumed.approvalPolicy. Any value other than 'never' closes the push channel, so this is what distinguishes an inbox_only fallback from a push never attempted."
+    },
+    "sendAttempted": {
+      "enum": [
+        "no",
+        "yes",
+        "unknown"
+      ],
+      "description": "Whether turn/start was actually reached. 'no' requires a COMPLETED failure receipt attributable to an operation before turn/start. An unfinished receipt (in_progress_or_unknown) is always 'unknown', because the bridge persists a receipt before its RPCs run and that snapshot legitimately lacks 'resumed' while the operation may still reach turn/start."
+    },
+    "failedOperation": {
+      "enum": [
+        "initialize",
+        "thread/read",
+        "thread/resume",
+        "turn/start",
+        "transport",
+        "unclassified",
+        null
+      ],
+      "description": "Recovered from the receipt: rpcError.code plus the method prefix of receipt.error, which renders as '<method>: <message>'. connect() runs inside every call, so an initialize failure is reachable even after resume succeeded. Anything not matched maps to 'unclassified' and is treated conservatively as uncertain."
+    },
+    "transportReceiptStatus": {
+      "enum": [
+        "accepted",
+        "failed",
+        "outcome_unknown",
+        "in_progress_or_unknown"
+      ],
+      "description": "Verbatim transport receipt status."
+    },
+    "turnId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Present only when the transport returned a started turn."
+    },
+    "retrySafe": {
+      "type": "boolean",
+      "description": "True only for a completed, attributable pre-send rejection. Never true for an uncertain, unknown or unfinished outcome, regardless of elapsed time."
+    },
+    "reconciliation": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "description": "Required before any further send once deliveryState is held_uncertain. Fixed order: operation receipt first, then the recipient's exact actual turns.",
+      "properties": {
+        "operationReceiptChecked": {
+          "type": "boolean"
+        },
+        "recipientTurnsChecked": {
+          "type": "boolean"
+        },
+        "affirmativeEvidence": {
+          "enum": [
+            "turn_found",
+            "receipt_turn_id",
+            "confirmed_pre_send_rejection",
+            "none"
+          ],
+          "description": "none keeps the attempt held; it never licenses a new attempt."
+        },
+        "checkedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "observedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "deliveryState"
+        ],
+        "properties": {
+          "deliveryState": {
+            "const": "held_uncertain"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "retrySafe": {
+            "const": false
+          },
+          "sendAttempted": {
+            "enum": [
+              "unknown",
+              "yes"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "retrySafe"
+        ],
+        "properties": {
+          "retrySafe": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "sendAttempted",
+          "transportReceiptStatus",
+          "failedOperation"
+        ],
+        "properties": {
+          "sendAttempted": {
+            "const": "no"
+          },
+          "transportReceiptStatus": {
+            "const": "failed"
+          },
+          "deliveryState": {
+            "enum": [
+              "withheld_pre_send",
+              "deferred_busy"
+            ]
+          },
+          "failedOperation": {
+            "enum": [
+              "thread/read",
+              "thread/resume"
+            ],
+            "description": "retrySafe is only meaningful when a specific pre-send operation refused. turn/start, transport, initialize, unclassified and null can never justify it."
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "transportReceiptStatus"
+        ],
+        "properties": {
+          "transportReceiptStatus": {
+            "const": "in_progress_or_unknown"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "sendAttempted": {
+            "const": "unknown"
+          },
+          "retrySafe": {
+            "const": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "deliveryState"
+        ],
+        "properties": {
+          "deliveryState": {
+            "const": "dispatched"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "turnId"
+        ],
+        "properties": {
+          "turnId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sendAttempted": {
+            "const": "yes"
+          },
+          "retrySafe": {
+            "const": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "failedOperation"
+        ],
+        "properties": {
+          "failedOperation": {
+            "enum": [
+              "turn/start",
+              "transport",
+              "initialize",
+              "unclassified"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "retrySafe": {
+            "const": false
+          },
+          "sendAttempted": {
+            "enum": [
+              "unknown",
+              "yes"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

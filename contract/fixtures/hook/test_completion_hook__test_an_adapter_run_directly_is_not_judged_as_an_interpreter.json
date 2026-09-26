@@ -1,0 +1,40 @@
+{
+  "given": {
+    "settings": false,
+    "relay": {
+      "stdout": "{\"decision\": \"release\", \"state\": \"unmanaged\", \"observation\": \"unmanaged\", \"reason\": \"No marker names this workspace.\", \"assignmentId\": null, \"counters\": {}, \"recordedAs\": null, \"hook_output\": {}}"
+    },
+    "files": {
+      "crw-completion-hook.json": "{\"configVersion\": 1, \"event\": \"Stop\", \"relayExecutable\": \"${HOME}/codex-session-relay\", \"markerRoot\": \"${HOME}/marker\", \"dbPath\": null, \"mode\": \"observe\", \"timeoutSeconds\": 5, \"journalRoot\": \"${HOME}/journal\", \"journalPolicy\": \"every_invocation\", \"installedBy\": \"CRW-100\", \"isolationAssertedBy\": null}",
+      "hooks.json": "{\"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"${HOME}/completion_hook.py ${HOME}/crw-completion-hook.json\", \"timeout\": 10}]}]}}",
+      "completion_hook.py": "#!/bin/sh\nexit 0\n"
+    },
+    "modes": {
+      "completion_hook.py": 493
+    }
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": ["status", "firingRecordAbsence", "candidates", 0, "cause"],
+        "value": "adapter_cannot_run"
+      },
+      {
+        "kind": "ne",
+        "path": [
+          "status",
+          "firingRecordAbsence",
+          "candidates",
+          0,
+          "standing"
+        ],
+        "value": "established"
+      }
+    ]
+  }
+}

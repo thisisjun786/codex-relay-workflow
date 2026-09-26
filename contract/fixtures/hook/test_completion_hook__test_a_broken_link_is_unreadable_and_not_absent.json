@@ -1,0 +1,1 @@
+{"given":{"symlinks":{"codex-session-relay":"${HOME}/gone"},"settings_overrides":{"relayExecutable":"${HOME}/codex-session-relay"}},"run":{"kind":"status"},"expect":{"exit":0,"checks":[{"kind":"eq","path":["status","relayExecutable","value"],"value":"UNREADABLE"},{"kind":"contains","path":["status","relayExecutable","evidence"],"value":"target does not exist"}]}}

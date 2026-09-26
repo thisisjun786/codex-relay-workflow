@@ -1,0 +1,143 @@
+{
+  "given": {},
+  "run": {
+    "kind": "mcp",
+    "steps": [
+      {
+        "tool": "create_thread",
+        "id": "created",
+        "arguments": {
+          "request_id": "approved",
+          "cwd": "${HOME}",
+          "prompt": "READY",
+          "model": "anthropic/claude-opus-5",
+          "reasoning_effort": "xhigh"
+        }
+      },
+      {
+        "host_set": {
+          "path": [
+            "complete_turns"
+          ],
+          "value": false
+        }
+      },
+      {
+        "tool": "send_message_to_thread",
+        "id": "sent",
+        "arguments": {
+          "request_id": "running",
+          "thread_id": {
+            "$step": "created",
+            "path": [
+              "structured",
+              "threadId"
+            ]
+          },
+          "message": "LONG WORK",
+          "expected_settings": {
+            "model": "anthropic/claude-opus-5",
+            "reasoning_effort": "xhigh"
+          }
+        }
+      },
+      {
+        "host_set": {
+          "path": [
+            "threads",
+            "thread-1",
+            "status"
+          ],
+          "value": {
+            "type": "active",
+            "activeFlags": []
+          }
+        }
+      },
+      {
+        "tool": "get_active_turn",
+        "arguments": {
+          "thread_id": "thread-1"
+        }
+      },
+      {
+        "tool": "steer_thread",
+        "arguments": {
+          "request_id": "mcp-steer",
+          "thread_id": "thread-1",
+          "expected_turn_id": "turn-2",
+          "message": "SCOPE CHANGE"
+        }
+      },
+      {
+        "tool": "pause_goal",
+        "arguments": {
+          "request_id": "mcp-pause",
+          "thread_id": "thread-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "results",
+          2,
+          "structured",
+          "activeTurnId"
+        ],
+        "value": "turn-2"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "results",
+          2,
+          "structured",
+          "steerable"
+        ],
+        "value": true
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "results",
+          3,
+          "structured",
+          "status"
+        ],
+        "value": "accepted"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "results",
+          4,
+          "structured",
+          "rpcError",
+          "code"
+        ],
+        "value": "no_goal"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "calls",
+          5,
+          0
+        ],
+        "value": "turn/steer"
+      },
+      {
+        "kind": "length",
+        "path": [
+          "calls"
+        ],
+        "value": 6
+      }
+    ]
+  }
+}

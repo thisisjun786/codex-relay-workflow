@@ -1,0 +1,19 @@
+{
+  "given": {
+    "host": {"threads": {"01parent-task": {"id": "01parent-task", "cwd": "/parent", "archived": false, "status": {"type": "idle"}, "turns": [], "settings": {"approvalPolicy": "never", "sandbox": {"type": "readOnly", "networkAccess": false}, "cwd": "/parent", "runtimeWorkspaceRoots": ["/parent"], "model": "configured-default", "reasoningEffort": "medium", "environments": []}}}},
+    "sql_seed": "INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, superseded_by, created_at, updated_at) VALUES ('rel-1', 'CRW-1', 'active', '01parent-task', 'host-a', '01child-task', 'host-a', 1, '[]', '[\"01parent-task\"]', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z'); INSERT INTO generations (relationship_id, execution_generation, dispatch_request_id, anchor_state, dispatch_turn_id, reason, opened_at, bound_at) VALUES ('rel-1', 1, 'dispatch-1', 'bound', 'turn-dispatch-1', 'initial_assignment', '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z'); INSERT INTO authorized_settings (task_id, settings, source, recorded_at) VALUES ('01parent-task', '{\"sandbox\":{\"type\":\"readOnly\",\"networkAccess\":false},\"approvalPolicy\":\"never\",\"cwd\":\"/parent\",\"runtimeWorkspaceRoots\":[\"/parent\"],\"model\":\"configured-default\",\"reasoningEffort\":\"medium\",\"environments\":[]}', 'creation_result', '2026-09-21T00:00:00Z'); INSERT INTO relationship_scope (relationship_id, project_key, recorded_at) VALUES ('rel-1', 'PROJ-CRW-163', '2026-09-21T00:00:00Z'); INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, finalized_at, suppressed_reason, first_seen_at, last_seen_at) VALUES ('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'rel-1', 1, '0000000000000000000000000000000000000000000000000000', 'blocked_needs_input', 'child', 1, '01child-task', 'turn-dispatch-1', 'completed', '{}', 'final', '2026-09-21T00:00:00Z', NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z'); INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, next_eligible_at, hold_reason, dispatch_evidence, dispatch_turn_id, created_at, updated_at) VALUES ('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'rel-1', 'completion_event', '01parent-task', '01parent-task', 'queued', 0, NULL, NULL, NULL, NULL, '2026-09-21T00:00:00Z', '2026-09-21T00:00:00Z');"
+  },
+  "run": {"kind": "cli", "steps": [
+    {"id": "queued", "argv": ["dispositions-show", "--relationship", "rel-1"]},
+    {"id": "dispatch", "argv": ["deliver", "--event", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]},
+    {"id": "sent", "argv": ["dispositions-show", "--relationship", "rel-1"]}
+  ]},
+  "expect": {"exit": 0, "checks": [
+    {"kind": "eq", "path": ["steps", "queued", "stdout_json", "children", 0, "events", 0, "delivery", "observation"], "value": "not_sent"},
+    {"kind": "eq", "path": ["steps", "queued", "stdout_json", "children", 0, "events", 0, "delivery", "state"], "value": "queued"},
+    {"kind": "eq", "path": ["steps", "dispatch", "exit"], "value": 0},
+    {"kind": "eq", "path": ["steps", "sent", "stdout_json", "children", 0, "events", 0, "delivery", "observation"], "value": "dispatched"},
+    {"kind": "eq", "path": ["steps", "sent", "stdout_json", "children", 0, "events", 0, "delivery", "recipientObservation"], "value": "unmeasured"},
+    {"kind": "truthy", "path": ["steps", "sent", "stdout_json", "children", 0, "events", 0, "delivery", "currentAttempt"], "value": null}
+  ]}
+}

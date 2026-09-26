@@ -8,5 +8,6 @@ __pycache__/
 .venv/
 .pytest_cache/
 .ruff_cache/
-dist/
+/dist/
+.omo/evidence/bin/
 *.egg-info/

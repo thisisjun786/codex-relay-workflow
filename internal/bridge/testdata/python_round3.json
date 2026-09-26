@@ -1,0 +1,240 @@
+{
+ "approvalRequests": {
+  "approvalsLeftForThisThread": 1,
+  "notRetained": 0,
+  "note": "Requests recorded between the two marks this receipt spans. A turn outlives that window, so a request the turn raises later is handled the same way and is simply not on this receipt. An approval-class request is never answered here: the host sends it to every client subscribed to the thread and applies the first answer, so it stays with the thread's own approver. Nothing here was granted or denied.",
+  "otherThreads": 0,
+  "refusedForThisThread": 0,
+  "thisThread": [
+   {
+    "answered": "left_for_thread_approver",
+    "approval": true,
+    "index": 1,
+    "method": "item/commandExecution/requestApproval",
+    "threadId": "thread-1",
+    "turnId": "turn-waiting"
+   }
+  ],
+  "unattributed": []
+ },
+ "branch_named_like_sha": {
+  "detached": true,
+  "status": "accepted"
+ },
+ "busy": {
+  "error": "thread/read: Thread is active; message withheld. This path starts a new turn and an active thread already has one. To instruct the turn that is running, read get_active_turn and call steer_thread with that turn id. Waiting is for when there is nothing to say yet.",
+  "rpcError": {
+   "code": "thread_busy",
+   "message": "Thread is active; message withheld. This path starts a new turn and an active thread already has one. To instruct the turn that is running, read get_active_turn and call steer_thread with that turn id. Waiting is for when there is nothing to say yet."
+  }
+ },
+ "capabilities": {
+  "approvals": {
+   "approverRoute": "The host's, not this bridge's. Measured on codex-cli 0.154.0, the host sends an approval request to every client subscribed to the thread, replays a pending one to a client that resumes the thread later, and applies the first answer from any of them. This bridge therefore answers none and the thread's own client decides; that it does so on the connected server is not re-measured by this call, and how a particular client such as Desktop presents the request is not established here.",
+   "declarable": [
+    "never",
+    "on-request",
+    "untrusted"
+   ],
+   "limits": "This bridge answers no approval request: it never grants one, never denies one, and a report message never stands in for one. Measured on codex-cli 0.154.0, the host sends each approval request of a turn to every client subscribed to the thread, replays a pending one to a client that resumes the thread later, and applies the first answer from any of them, an error answer as a denial. An answer from this bridge would therefore decide for the thread's approver, so it records each request and leaves it unanswered; the thread's own client decides it, now or when it next opens the thread, and the turn waits until then. That measurement is of that release, not a reading of the connected server, and how a particular client such as Desktop presents a request it did not ask for is not established here. Delivering a report and servicing the code execution a report may provoke are separate capabilities, and only the first one is claimed.",
+   "onApprovalRequest": "left_for_thread_approver",
+   "preservation": "send_message_to_thread omits approvalPolicy from thread/resume, so it cannot set or change the policy of a thread it did not create. That is true by reading this bridge; what the host does with the omission was read once, and is reported as its own observation.",
+   "preservationObserved": {
+    "note": "A reading taken on the named host version, not a probe of the server connected now. sameVersionConnected is the only measured value here.",
+    "observation": "Read in both directions: the resume reports the thread's own policy and does not inherit the CODEX_HOME config default.",
+    "observedOn": "codex-cli 0.154.0",
+    "observedServer": "fake Codex/0.153.4",
+    "sameVersionConnected": false
+   },
+   "servicesApprovals": false,
+   "transmitsApprovalPolicy": false
+  },
+  "capabilities": {
+   "bridgeManagedWorktrees": true,
+   "clientSideToolsAndApprovals": false,
+   "createThread": true,
+   "goalRead": true,
+   "listReadWait": true,
+   "projectImport": false,
+   "sendMessage": true
+  },
+  "capabilitiesNote": "What this bridge implements, and nothing else. Every value is true by reading this bridge's own code, so none of it was asked of the connected host and none of it is an answer about one. The two goal questions are answered precisely in exposure, as goalObjectiveWrite and goalPause. Questions about the host that nothing here asked are in hostNotProbed, which carries no values at all.",
+  "desktopVisibility": {
+   "note": "A reading taken on the named host version, not a probe of the server connected now. sameVersionConnected is the only measured value here.",
+   "observation": "Threads created in an existing project checkout appeared in Desktop. Verify the actual Desktop listing for each launch; backend project IDs are separate.",
+   "observedOn": "codex-cli 0.153.4",
+   "observedServer": "fake Codex/0.153.4",
+   "sameVersionConnected": true
+  },
+  "executionPolicy": {
+   "digest": null,
+   "mode": "presence_only",
+   "roles": {}
+  },
+  "exposure": {
+   "goalObjectiveWrite": false,
+   "goalPause": true,
+   "note": "Tool exposure by this bridge version. Not a probe of the connected host.",
+   "steerActiveTurn": true,
+   "turnInterrupt": false,
+   "turnQueue": false
+  },
+  "hostNotProbed": {
+   "desktopManagedWorktrees": "Not asked. Worktrees made through this bridge are bridge-managed, which is reported as bridgeManagedWorktrees. Whether the connected host offers a Desktop-managed worktree of its own is carried by a host feature flag rather than an App Server method, so this transport never sees it, and a flag that is switched off is not a capability absent.",
+   "desktopProjectRegistry": "Not asked. This bridge imports and creates no project, which is reported as projectImport, and it uses only a project id a caller supplies. What the connected host's project registry holds is not read here, and an empty backend listing seen once on one setup is not a statement that the registry is missing."
+  },
+  "hostNotProbedNote": "Questions this tool does not answer. No capability probe is performed, so each entry is a sentence and not a value: there is nothing here to read as true or false. hostSupport.state compares the connected server's version against the one this bridge was built against, and does not reach these questions, which are unanswered on every version including that one.",
+  "hostSupport": {
+   "goalPause": "thread/goal/set, status paused",
+   "note": "Generated from the tested host's protocol. No live capability probe is performed, and an unrecognised server is reported unknown rather than assumed.",
+   "observedServer": "fake Codex/0.153.4",
+   "state": "unknown_host_version",
+   "steerActiveTurn": "turn/steer, requires expectedTurnId",
+   "testedHost": "codex-cli 0.154.0"
+  },
+  "server": {
+   "platformOs": "linux",
+   "userAgent": "fake Codex/0.153.4"
+  },
+  "socket": "<SOCKET>",
+  "transport": "same-host Unix WebSocket"
+ },
+ "create_model_mismatch": {
+  "error": "thread/start: settings_not_preserved: model returned 'other', expected 'explicit-model'; initial prompt withheld. Inspect creation receipt. The thread remains retained.",
+  "rpcError": {
+   "code": "settings_not_preserved",
+   "message": "settings_not_preserved: model returned 'other', expected 'explicit-model'; initial prompt withheld. Inspect creation receipt. The thread remains retained."
+  }
+ },
+ "create_sandbox_mismatch": {
+  "error": "thread/start: settings_not_preserved: sandbox returned {'type': 'dangerFullAccess'}, expected {'type': 'readOnly'}; initial prompt withheld. Inspect creation receipt. The thread remains retained.",
+  "rpcError": {
+   "code": "settings_not_preserved",
+   "message": "settings_not_preserved: sandbox returned {'type': 'dangerFullAccess'}, expected {'type': 'readOnly'}; initial prompt withheld. Inspect creation receipt. The thread remains retained."
+  }
+ },
+ "dispatching_row": {
+  "initialPrompt": {
+   "state": "outcome_unknown"
+  },
+  "keys": [
+   "checkoutBeforeDispatch",
+   "creation",
+   "desktopProjectAssociation",
+   "executionPolicy",
+   "fingerprintVersion",
+   "initialPrompt",
+   "operation",
+   "permissionReceipt",
+   "phase",
+   "recovery",
+   "recoveryRequired",
+   "requestId",
+   "requestedCheckout",
+   "retrySafe",
+   "settings",
+   "startedAt",
+   "status",
+   "threadId",
+   "updatedAt",
+   "worktree"
+  ],
+  "phase": "dispatching_initial_prompt",
+  "recovery": "Inspect this receipt, the destination and Git worktree list, and backend/Desktop tasks before manual recovery. Retain all artifacts; do not retry with a new request ID. Unknown thread/turn outcomes need reconciliation.",
+  "recoveryRequired": true,
+  "status": "in_progress_or_unknown"
+ },
+ "refusals": {
+  "create_policy_relative_root": "Expected sandbox policy writableRoots must be absolute paths",
+  "create_roots_relative": "runtime_workspace_roots must be absolute paths",
+  "list_limit_0": "limit must be between 1 and 100",
+  "list_limit_101": "limit must be between 1 and 100",
+  "read_chars_20001": "limit must be 1\u2013100 and max_text_chars must be 100\u201320000",
+  "read_chars_99": "limit must be 1\u2013100 and max_text_chars must be 100\u201320000",
+  "read_limit_0": "limit must be 1\u2013100 and max_text_chars must be 100\u201320000",
+  "read_limit_101": "limit must be 1\u2013100 and max_text_chars must be 100\u201320000",
+  "send_cwd_blank": "cwd must be a non-empty string when supplied",
+  "send_policy_without_type": "Expected sandbox policy must contain all and only its protocol fields",
+  "send_roots_relative": "runtime_workspace_roots must be absolute paths",
+  "send_sandbox_bogus": "Unsupported sandbox 'bogus'",
+  "wait_-0.001": "timeout_seconds must be between 0 and 50",
+  "wait_50.001": "timeout_seconds must be between 0 and 50",
+  "wt_blank_app_server_project_id": "app_server_project_id must contain 1\u2013100000 characters",
+  "wt_blank_prompt": "prompt must contain 1\u2013100000 characters",
+  "wt_blank_source_repository": "source_repository must contain 1\u2013100000 characters",
+  "wt_blank_title": "title must contain 1\u2013100000 characters",
+  "wt_bogus_type": "Expected sandbox policy must contain all and only its protocol fields",
+  "wt_flag_before_roots": "Expected sandbox policy flags must be booleans",
+  "wt_mode_disagrees": "sandbox and expected_sandbox_policy.type must agree",
+  "wt_parent_is_file": {
+   "error": "destination must be absent with an existing parent directory",
+   "status": "failed"
+  },
+  "wt_parent_missing": {
+   "error": "destination must be absent with an existing parent directory",
+   "status": "failed"
+  },
+  "wt_registered_worktree": {
+   "error": "destination must be outside existing worktrees and Git metadata",
+   "status": "failed"
+  },
+  "wt_roots_not_list": "Expected sandbox policy writableRoots must be absolute paths",
+  "wt_roots_not_string": "Expected sandbox policy writableRoots must be absolute paths",
+  "wt_roots_relative": "Expected sandbox policy writableRoots must be absolute paths"
+ },
+ "worktree_accepted_keys": [
+  "attemptedEffects",
+  "checkoutBeforeDispatch",
+  "creation",
+  "desktopProjectAssociation",
+  "executionPolicy",
+  "fingerprintVersion",
+  "initialPrompt",
+  "operation",
+  "permissionReceipt",
+  "phase",
+  "recovery",
+  "recoveryRequired",
+  "requestId",
+  "requestedCheckout",
+  "retrySafe",
+  "settings",
+  "settingsAfterDispatch",
+  "startedAt",
+  "status",
+  "threadId",
+  "turnId",
+  "updatedAt",
+  "worktree"
+ ],
+ "worktree_model_mismatch": {
+  "error": "settings_not_preserved: model returned 'other', expected 'explicit-model'; initial prompt withheld. Inspect creation receipt",
+  "status": "failed"
+ },
+ "worktree_sandbox_mismatch": {
+  "error": "settings_not_preserved: sandbox returned {'writableRoots': ['/w'], 'networkAccess': False, 'excludeTmpdirEnvVar': False, 'excludeSlashTmp': False, 'type': 'workspaceWrite'}, expected {'networkAccess': False, 'type': 'readOnly'}; initial prompt withheld. Inspect creation receipt",
+  "status": "failed"
+ },
+ "worktree_validation_failure": {
+  "desktopProjectAssociation": {
+   "sourceRepository": "<ROOT>/source",
+   "status": "unverified"
+  },
+  "keys": [
+   "attemptedEffects",
+   "desktopProjectAssociation",
+   "error",
+   "executionPolicy",
+   "fingerprintVersion",
+   "initialPrompt",
+   "operation",
+   "phase",
+   "requestId",
+   "requestedCheckout",
+   "retrySafe",
+   "startedAt",
+   "status",
+   "updatedAt"
+  ]
+ }
+}

@@ -1,0 +1,22 @@
+{
+  "given": {
+    "settings": false
+  },
+  "run": {
+    "kind": "status"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "regex",
+        "path": [
+          "status",
+          "configuration",
+          "configuration"
+        ],
+        "value": "/crw-completion-hook\\.json$"
+      }
+    ]
+  }
+}

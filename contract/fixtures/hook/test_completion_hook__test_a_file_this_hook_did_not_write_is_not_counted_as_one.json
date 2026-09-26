@@ -1,0 +1,30 @@
+{
+  "given": {
+    "relay": {
+      "stdout": "{\"decision\": \"release\", \"state\": \"unmanaged\", \"observation\": \"unmanaged\", \"reason\": \"No marker names this workspace.\", \"assignmentId\": null, \"counters\": {}, \"recordedAs\": null, \"hook_output\": {}}"
+    },
+    "files": {
+      "journal/20000101/notes.txt": "someone else's",
+      "journal/20000101/readme.json": "{}",
+      "journal/scratch/x.json": "{}"
+    }
+  },
+  "run": {
+    "kind": "hook",
+    "status": true
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "status",
+          "firingJournal",
+          "value"
+        ],
+        "value": "1"
+      }
+    ]
+  }
+}

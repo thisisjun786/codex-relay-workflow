@@ -1,0 +1,1 @@
+{"given":{},"run":{"kind":"release","job":"validate","step":"release-inputs"},"expect":{"exit":0,"checks":[{"kind":"eq","path":["stderr"],"value":""}]}}

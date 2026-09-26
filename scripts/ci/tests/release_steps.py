@@ -54,3 +54,8 @@ def step_block(job, step, text=None):
     script = re.sub(r"^          ", "", run.group("body"), flags=re.M)
     metadata = section[:run.start()]
     return {"metadata": metadata, "script": script}
+
+
+def step_ids(job, text=None):
+    """Return the ids of a job's steps in workflow order."""
+    return [match.group("name") for match in _STEP.finditer(job_body(job, text))]

@@ -1,0 +1,1 @@
+{"given":{"symlinks":{"journal-link":"${HOME}/missing-journal"},"settings_overrides":{"journalRoot":"${HOME}/journal-link"}},"run":{"kind":"status"},"expect":{"exit":0,"checks":[{"kind":"ne","path":["status","firingJournal","value"],"value":"ABSENT"}]}}

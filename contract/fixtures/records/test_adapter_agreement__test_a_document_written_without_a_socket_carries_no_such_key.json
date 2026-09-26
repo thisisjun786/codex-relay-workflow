@@ -1,0 +1,1 @@
+{"given":{},"run":{"kind":"status","document":true,"relay":"/opt/relay","marker_root":"/markers"},"expect":{"exit":0,"checks":[{"kind":"excludes","path":["stdout_json"],"value":"socketPath"},{"kind":"eq","path":["stdout_json","relayExecutable"],"value":"/opt/relay"}]}}

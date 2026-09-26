@@ -82,6 +82,60 @@ jobs:
           persist-credentials: false
       - run: bash scripts/ci/secrets.sh
 
+  go-product:
+    needs: selection
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # Go tests compare against the Python implementation (schema validation, contract records),
+      # so the Python workspace is synced before they run.
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: '0.11.32'
+          checksum: 'aab924fd522efd06f1c5f3b93a243864fc453132c94b2dc49f1371b528a4b967'
+          python-version: '3.13'
+          enable-cache: false
+      - run: uv sync --locked
+      - name: Lint, test and replay the contract corpus
+        run: make lint test contract
+      - name: Build the static binaries for every published target
+        run: |
+          for target in linux/amd64 linux/arm64 darwin/arm64; do
+            os=${target%/*}
+            arch=${target#*/}
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" make dist BINARY="dist/crw_${os}_${arch}/crw"
+          done
+          (cd dist && sha256sum crw_*/crw > SHA256SUMS && cat SHA256SUMS)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: crw_linux_amd64
+          path: dist/crw_linux_amd64/crw
+          if-no-files-found: error
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: crw_linux_arm64
+          path: dist/crw_linux_arm64/crw
+          if-no-files-found: error
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: crw_darwin_arm64
+          path: dist/crw_darwin_arm64/crw
+          if-no-files-found: error
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: SHA256SUMS
+          path: dist/SHA256SUMS
+          if-no-files-found: error
+      - name: Check the plugin payload with the native wiring
+        if: hashFiles('plugins/crw/wiring/crw-bridge.sh') != ''
+        run: python3 scripts/ci/plugin.py
+
   packages:
     needs: selection
     if: needs.selection.outputs.packages == 'true'
@@ -105,7 +159,7 @@ jobs:
 
   dev-gate:
     if: always()
-    needs: [selection, validate, tests, secrets, packages]
+    needs: [selection, validate, tests, secrets, packages, go-product]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

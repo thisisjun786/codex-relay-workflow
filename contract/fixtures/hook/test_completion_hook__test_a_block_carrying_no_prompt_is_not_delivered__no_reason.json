@@ -1,0 +1,31 @@
+{
+  "given": {
+    "relay": {
+      "stdout": "{\"decision\": \"block\", \"state\": \"receipt_missing\", \"observation\": \"receipt_missing\", \"reason\": \"This turn declared itself ready for review and no receipt names it.\", \"assignmentId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"counters\": {\"holdsThisTurn\": 0}, \"recordedAs\": \"hook/s/t/0.json\", \"hook_output\": {\"decision\": \"block\", \"continue\": true}}"
+    }
+  },
+  "run": {
+    "kind": "hook"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "stdout"
+        ],
+        "value": ""
+      },
+      {
+        "kind": "falsy",
+        "path": [
+          "rows",
+          0,
+          "held"
+        ],
+        "value": null
+      }
+    ]
+  }
+}

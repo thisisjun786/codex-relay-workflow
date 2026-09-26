@@ -1,0 +1,20 @@
+{
+  "given": {
+    "settings": false
+  },
+  "run": {
+    "kind": "entry"
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "stdout"
+        ],
+        "value": ""
+      }
+    ]
+  }
+}

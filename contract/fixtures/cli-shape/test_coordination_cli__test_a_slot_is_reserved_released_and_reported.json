@@ -1,0 +1,122 @@
+{
+  "given": {},
+  "run": {
+    "kind": "cli",
+    "steps": [
+      {
+        "id": "bind",
+        "argv": [
+          "linkage-bind",
+          "--role",
+          "parent",
+          "--scope",
+          "PRJ-A",
+          "--task",
+          "task-alpha",
+          "--host",
+          "host-a"
+        ]
+      },
+      {
+        "id": "reserve",
+        "argv": [
+          "slot-reserve",
+          "--kind",
+          "assignment",
+          "--subject",
+          "REL-1",
+          "--parent-task",
+          "task-alpha",
+          "--project",
+          "PRJ-A",
+          "--actor",
+          "task-alpha"
+        ]
+      },
+      {
+        "id": "show",
+        "argv": [
+          "capacity-show",
+          "--project",
+          "PRJ-A"
+        ]
+      },
+      {
+        "id": "release",
+        "argv": [
+          "slot-release",
+          "--kind",
+          "assignment",
+          "--subject",
+          "REL-1",
+          "--actor",
+          "task-alpha",
+          "--reason",
+          "completed"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "reserve",
+          "exit"
+        ],
+        "value": 0
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "reserve",
+          "stdout_json",
+          "alreadyHeld"
+        ],
+        "value": false
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "show",
+          "exit"
+        ],
+        "value": 0
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "show",
+          "stdout_json",
+          "total"
+        ],
+        "value": 1
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "release",
+          "exit"
+        ],
+        "value": 0
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "release",
+          "stdout_json",
+          "state"
+        ],
+        "value": "released"
+      }
+    ]
+  }
+}
