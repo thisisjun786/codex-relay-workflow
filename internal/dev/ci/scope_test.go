@@ -266,6 +266,18 @@ func Test47_SCOPE_7_CLIWritesJSONAndJobOutputs(t *testing.T) {
 	}
 }
 
+func TestScopeOutputWriteFailureParity(t *testing.T) {
+	r, base := scopeRepo(t)
+	args := scopeArgs(base, nil)
+	env := []string{"GITHUB_OUTPUT=/dev/full"}
+	py := python(t, r.root, env, "scripts/ci/scope.py", args...)
+	got := goCheck(t, r.root, env, "scope", args...)
+	sameResult(t, "output write failure", py, got)
+	if py.code != 1 || py.stdout != "" || !strings.HasPrefix(py.stderr, "Selection failed: ") {
+		t.Fatalf("Python output failure: %+v", py)
+	}
+}
+
 // Every named root prose file is a docs path in both implementations, POLICY.md included:
 // a POLICY.md-only diff selects no expensive suite.
 func Test47_SCOPE_1_RootProseFilesAreDocs(t *testing.T) {

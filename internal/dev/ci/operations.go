@@ -17,8 +17,8 @@ import (
 // contract they claim to follow. Citation and shape only; see that script's docstring.
 var (
 	opsClause      = regexp.MustCompile(`OPS-\d+(?:\.\d+)?`)
-	opsHeading     = regexp.MustCompile(`^#{2,3}\s+(OPS-\d+(?:\.\d+)?)\b`)
-	opsNormative   = regexp.MustCompile(`^###\s+(OPS-\d+\.\d+)\b`)
+	opsHeading     = regexp.MustCompile(`^#{2,3}\s+(OPS-\d+(?:\.\d+)?)`)
+	opsNormative   = regexp.MustCompile(`^###\s+(OPS-\d+\.\d+)`)
 	opsRegisterRow = regexp.MustCompile(`^\|\s*(OPS-\d+\.\d+)\s*\|`)
 	opsTicked      = regexp.MustCompile("`([A-Za-z][A-Za-z0-9_]*)`")
 	opsScenario    = regexp.MustCompile(`^##\s+(S\d+)\s+(.+)$`)
@@ -44,8 +44,16 @@ func init() {
 func contractClauses(text string) (map[string]bool, map[string]bool) {
 	defined, normative := map[string]bool{}, map[string]bool{}
 	for _, line := range pySplitlines(text) {
-		if m := opsHeading.FindStringSubmatch(line); m != nil && pyWordBoundaryAfter(line, m[0]) {
-			defined[m[1]] = true
+		if m := opsHeading.FindStringSubmatch(line); m != nil {
+			if pyWordBoundaryAfter(line, m[0]) {
+				defined[m[1]] = true
+			} else if base, _, dotted := strings.Cut(m[1], "."); dotted {
+				// Python backtracks the optional .digits when the trailing boundary fails.
+				prefix := strings.TrimSuffix(m[0], m[1]) + base
+				if pyWordBoundaryAfter(line, prefix) {
+					defined[base] = true
+				}
+			}
 		}
 		if m := opsNormative.FindStringSubmatch(line); m != nil && pyWordBoundaryAfter(line, m[0]) {
 			normative[m[1]] = true
@@ -60,8 +68,8 @@ func contractClauses(text string) (map[string]bool, map[string]bool) {
 	return defined, normative
 }
 
-// pyWordBoundaryAfter re-checks the trailing \b with Python's Unicode notion of a word
-// character (Go's \b is ASCII-only).
+// pyWordBoundaryAfter enforces Python's Unicode trailing \b after the regex match
+// (Go's \b is ASCII-only and rejects matches ending in a Unicode digit).
 func pyWordBoundaryAfter(line, match string) bool {
 	rest := []rune(line[len(match):])
 	return len(rest) == 0 || !isPyWord(rest[0])

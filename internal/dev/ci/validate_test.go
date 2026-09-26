@@ -89,6 +89,35 @@ func Test47_VAL_2_LocalLinksResolveInsideTheRepository(t *testing.T) {
 	expectEqual(t, "cli", got, result{1, "", strings.Join(errs, "\n") + "\n"})
 }
 
+func TestURLNetlocNFKCParity(t *testing.T) {
+	for _, delimiter := range []string{"／", "？", "＃", "＠", "：", "℀"} {
+		t.Run(delimiter, func(t *testing.T) {
+			url := "https://exa" + delimiter + "mple.com/path"
+			r := validateRepo(t)
+			r.write("README.md", "[remote]("+url+")\n")
+			py := runCommand(t, r.root, nil, "python3", "-c", `
+import importlib.util, pathlib, sys
+spec = importlib.util.spec_from_file_location("validator", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+try:
+    print(module.link_errors(pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])))
+except ValueError as exc:
+    print(str(exc))
+`, filepath.Join(repoRoot(), "scripts/ci/validate.py"), filepath.Join(r.root, "README.md"), r.root)
+			_, err := LinkErrors(r.root, "README.md")
+			if err == nil || strings.TrimSpace(py.stdout) != err.Error() {
+				t.Errorf("link %s: Python %q, Go %v", delimiter, py.stdout, err)
+			}
+			if py.code != 0 || !strings.Contains(py.stdout, "contains invalid characters under NFKC normalization") {
+				t.Fatalf("Python did not reject URL: %+v", py)
+			}
+			manifestParity(t, testManifest().set("repository", url), "crw", nil)
+			manifestParity(t, withIface("documentationUrl", url), "crw", nil)
+		})
+	}
+}
+
 // The skill name pattern is lowercase words joined by single hyphens: an underscore, an
 // uppercase letter or a doubled/edge hyphen is refused exactly as validate.py refuses it.
 func Test47_VAL_1_SkillNamePattern(t *testing.T) {

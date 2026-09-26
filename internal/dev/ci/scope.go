@@ -409,13 +409,26 @@ func Scope(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return failf(stderr, "Selection failed: %s", pyOSErrorText(err))
 		}
-		fmt.Fprintf(output, "scope=%s\ntests=%t\npackages=%t\n", encoded, result.Selected.Tests, result.Selected.Packages)
-		if err := output.Close(); err != nil {
-			return failf(stderr, "Selection failed: %s", pyOSErrorText(err))
+		_, writeErr := fmt.Fprintf(output, "scope=%s\ntests=%t\npackages=%t\n", encoded, result.Selected.Tests, result.Selected.Packages)
+		closeErr := output.Close()
+		if writeErr != nil {
+			return failf(stderr, "Selection failed: %s", pyOSErrorText(stripPath(writeErr)))
+		}
+		if closeErr != nil {
+			return failf(stderr, "Selection failed: %s", pyOSErrorText(stripPath(closeErr)))
 		}
 	}
 	fmt.Fprintln(stdout, encoded)
 	return 0
+}
+
+// Python's file.write and file.close errors carry no filename, unlike Go's PathError.
+func stripPath(err error) error {
+	var path *os.PathError
+	if errors.As(err, &path) {
+		return path.Err
+	}
+	return err
 }
 
 // pyOSError is f"{type(error).__name__}: {error}" for an OSError.

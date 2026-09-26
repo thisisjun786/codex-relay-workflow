@@ -111,6 +111,20 @@ func Test47_OperationsContractParity(t *testing.T) {
 	}
 }
 
+func TestOperationsUnicodeClauseBoundaryParity(t *testing.T) {
+	root := opsCopy(t)
+	editOps(t, root, "operations.md", func(s string) string {
+		return s + "\n### OPS-٢.٣ Unicode clause\n## OPS-٤ Unicode section\n### OPS-٩.١suffix Not a clause\n"
+	})
+	editOps(t, root, "operations/scenarios.md", func(s string) string {
+		return s + "\nCitation: OPS-٢.٣ and OPS-٤\n"
+	})
+	got := opsParity(t, "unicode headings and citations", root)
+	if got.code != 0 {
+		t.Fatalf("Unicode clauses must be defined and cited: %+v", got)
+	}
+}
+
 // contractsRepo is a Git checkout holding contracts.py and the named files (empty).
 func contractsRepo(t *testing.T, present ...string) *fixtureRepo {
 	t.Helper()

@@ -6,12 +6,14 @@ import (
 	"net/netip"
 	"regexp"
 	"strings"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 var ipvFuture = regexp.MustCompile(`^v[a-fA-F0-9]+\..+$`)
 
 // pyURLSplit returns urllib.parse.urlsplit(target)'s scheme, netloc and path, with the
-// ValueError texts urlsplit raises for a malformed bracketed host.
+// ValueError texts urlsplit raises for a malformed authority.
 func pyURLSplit(target string) (scheme, netloc, path string, err error) {
 	target = strings.TrimLeft(target, "\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\v\f\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f ")
 	target = strings.NewReplacer("\t", "", "\r", "", "\n", "").Replace(target)
@@ -29,6 +31,9 @@ func pyURLSplit(target string) (scheme, netloc, path string, err error) {
 			}
 		}
 		netloc, target = target[2:end], target[end:]
+		if err := checkNetloc(netloc); err != nil {
+			return "", "", "", err
+		}
 		open, close := strings.Contains(netloc, "["), strings.Contains(netloc, "]")
 		if open != close {
 			return "", "", "", valueError{"Invalid IPv6 URL"}
@@ -46,6 +51,29 @@ func pyURLSplit(target string) (scheme, netloc, path string, err error) {
 		target = target[:i]
 	}
 	return scheme, netloc, target, nil
+}
+
+// checkNetloc mirrors urllib.parse._checknetloc: existing delimiters are ignored
+// before NFKC so only delimiters introduced by normalization are invalid.
+func checkNetloc(netloc string) error {
+	if netloc == "" || isASCII(netloc) {
+		return nil
+	}
+	clean := strings.NewReplacer("@", "", ":", "", "#", "", "?", "").Replace(netloc)
+	normalized := norm.NFKC.String(clean)
+	if clean != normalized && strings.ContainsAny(normalized, "/?#@:") {
+		return valueError{"netloc '" + netloc + "' contains invalid characters under NFKC normalization"}
+	}
+	return nil
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 128 {
+			return false
+		}
+	}
+	return true
 }
 
 func isASCIILetter(c byte) bool { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') }
