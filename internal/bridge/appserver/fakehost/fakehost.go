@@ -124,6 +124,7 @@ type Server struct {
 	handlerFor     map[string]Handler
 	standing       map[string]Reply
 	requests       []Request
+	recorded       chan struct{}
 	malformed      []Malformed
 	raised         []ServerRequest
 	answers        []Answer
@@ -152,6 +153,7 @@ func Start(tb testing.TB) *Server {
 		scripted:   map[string][]Reply{},
 		handlerFor: map[string]Handler{},
 		standing:   map[string]Reply{},
+		recorded:   make(chan struct{}),
 	}
 	s.httpSrv = &http.Server{
 		Handler:           http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.accept(ctx, w, r) }),
@@ -221,6 +223,31 @@ func (s *Server) Count(method string) int {
 		}
 	}
 	return count
+}
+
+// WaitCount blocks until method has been recorded at least n times, or ctx expires.
+// Subscribe under the recording lock so a request cannot be missed between checks.
+func (s *Server) WaitCount(ctx context.Context, method string, n int) error {
+	for {
+		s.mu.Lock()
+		count := 0
+		for _, request := range s.requests {
+			if request.Method == method {
+				count++
+			}
+		}
+		if count >= n {
+			s.mu.Unlock()
+			return nil
+		}
+		recorded := s.recorded
+		s.mu.Unlock()
+		select {
+		case <-recorded:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 // Malformed returns every frame refused as outside the envelope, in order.
@@ -304,6 +331,8 @@ func (s *Server) record(apply func(*Server)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	apply(s)
+	close(s.recorded)
+	s.recorded = make(chan struct{})
 }
 
 func (s *Server) nextServerRequest(method string) string {

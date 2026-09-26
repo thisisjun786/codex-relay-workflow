@@ -163,8 +163,27 @@ func parseArgs(spec commandSpec, argv []string) (map[string]any, string) {
 	return out, ""
 }
 
-// ExecuteCLI runs one delivery command of `crw relay`. handled is false for any other command.
+// SelectionCheck is cli._refuse_ambiguous_state for the resolved selection: nil, or an error
+// carrying the refusal payload (PayloadError). The relay CLI passes its own, so the recovery
+// lines name the program as it was invoked.
+type SelectionCheck func(selection store.StateSelection, socket string) error
+
+// PayloadError is an answer printed whole with its own exit code (cli.PayloadExit).
+type PayloadError interface {
+	error
+	ExitPayload() (contract.OrderedObject, int)
+}
+
+// ExecuteCLI runs one delivery command as the codex-session-relay console script, with this
+// package's own selection refusal. handled is false for any other command.
 func ExecuteCLI(ctx context.Context, argv []string, stdout, stderr io.Writer) (int, bool) {
+	return ExecuteAs(ctx, "codex-session-relay", argv, stdout, stderr, nil)
+}
+
+// ExecuteAs runs one delivery command of the relay CLI, as cli.main does for it: prog is the
+// program name argparse prints, check the selection refusal applied before the handler (nil
+// uses this package's). handled is false for any other command.
+func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr io.Writer, check SelectionCheck) (int, bool) {
 	var state, socket string
 	i := 0
 	for ; i < len(argv); i++ {
@@ -199,7 +218,7 @@ func ExecuteCLI(ctx context.Context, argv []string, stdout, stderr io.Writer) (i
 	}
 	parsed, problem := parseArgs(spec, argv[i+1:])
 	if problem != "" {
-		fmt.Fprintf(stderr, "usage: codex-session-relay %s [-h] ...\ncodex-session-relay %s: error: %s\n", command, command, problem)
+		fmt.Fprintf(stderr, "usage: %s %s [-h] ...\n%s %s: error: %s\n", prog, command, prog, command, problem)
 		return 2, true
 	}
 	run := &cliRun{ctx: ctx, args: parsed, socket: socket, clock: SystemClock{}}
@@ -208,7 +227,16 @@ func ExecuteCLI(ctx context.Context, argv []string, stdout, stderr io.Writer) (i
 		if err != nil {
 			return reply(stdout, Obj{{Key: "error", Value: "host"}, {Key: "detail", Value: "OSError: " + err.Error()}}, contract.ExitHost), true
 		}
-		if refusal := selectionRefusal(selection, socket); refusal != nil {
+		if check != nil {
+			if err := check(selection, socket); err != nil {
+				var payload PayloadError
+				if errors.As(err, &payload) {
+					body, code := payload.ExitPayload()
+					return reply(stdout, body, code), true
+				}
+				return reply(stdout, Obj{{Key: "error", Value: "host"}, {Key: "detail", Value: hostDetail(err)}}, contract.ExitHost), true
+			}
+		} else if refusal := selectionRefusal(selection, socket); refusal != nil {
 			return reply(stdout, refusal, contract.ExitRefused), true
 		}
 		run.state = selection.Path
@@ -459,12 +487,7 @@ func cmdVerdict(c *cliRun) (any, error) {
 	return append(record, F{Key: "_restoration", Value: restoration}), nil
 }
 
-// CommandNames are the relay subcommands this package serves.
+// CommandNames are the relay subcommands this package serves, in cli.py's add_parser order.
 func CommandNames() []string {
-	names := make([]string, 0, len(deliveryCommands))
-	for name := range deliveryCommands {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	return names
+	return []string{"emit", "deliver", "reconcile", "recover", "claim", "ack-proof", "ack", "verdict", "criteria-register", "criteria-show", "revision-head", "verify-acks"}
 }

@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
 
 // Runner executes one scenario and returns its observation (see evaluate.go for its shape).
@@ -41,21 +39,6 @@ var runners = map[RunKind]Runner{
 // the todo that ports it (for example cli-shape once the relay commands its fixtures call are
 // registered in internal/relay/cli); until then every scenario in it is skipped and counted.
 var ported = map[string]bool{"sqlite-ddl": true, "appserver": true, "ledger-fingerprint": true, "git": true, "mcp-tools": true, "cli-shape": true}
-
-// corpusDomains are the fixture domains whose cli scenarios are gated on portedCommands; the
-// runner's own tests use synthetic scenarios outside them.
-var corpusDomains = map[string]bool{"cli-shape": true}
-
-// portedCommands are the relay subcommands the built crw serves. A cli scenario runs only when
-// every step's command is one of them; any other is an explicit, counted skip (a failure under
-// CRW_CONTRACT_STRICT=1) until the todo that ports its command registers it here.
-var portedCommands = func() map[string]bool {
-	set := map[string]bool{}
-	for _, name := range delivery.CommandNames() {
-		set[name] = true
-	}
-	return set
-}()
 
 // crwBinary is the crw under test: CRW_TEST_BINARY, or ./cmd/crw built once per package run
 // into buildDir, which TestMain creates and removes.

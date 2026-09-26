@@ -31,7 +31,7 @@ func withoutStateEnv() string {
 func selectionRefusal(selection store.StateSelection, socket string) Obj {
 	if socket != "" {
 		if _, err := os.Stat(selection.DBPath()); err == nil {
-			recorded := store.RecordedSocket(selection.DBPath())
+			recorded := store.StoreSocket(selection.DBPath())
 			wanted, err := store.CanonicalSocket(socket)
 			if err == nil && recorded != "" && recorded != wanted {
 				return Obj{{Key: "error", Value: "refused"}, {Key: "reason", Value: "state_directory_serves_another_socket"},

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	relaycli "github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,9 +48,15 @@ func runCLI(t *testing.T, scenario Scenario) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A scenario that drives a relay command the Go build has not registered yet is not ported:
+	// it is counted as a skip (a failure under CRW_CONTRACT_STRICT=1), never run against usage.
+	// relaycli.Registered is the union of both gates: the delivery commands (todo 21) and the
+	// diagnostics commands of internal/relay/cli (todo 20: doctor, status, show, store-*).
 	for _, step := range steps {
-		if argv, _ := stringList(step["argv"]); len(argv) > 0 && corpusDomains[scenario.Domain] && !portedCommands[argv[0]] {
-			return nil, fmt.Errorf("%w: %s/cli command %s", ErrNotPorted, scenario.Domain, argv[0])
+		if argv, _ := step["argv"].([]any); len(argv) > 0 {
+			if name, ok := argv[0].(string); ok && !relaycli.Registered(name) {
+				return nil, fmt.Errorf("%w: %s/cli command %q", ErrNotPorted, scenario.Domain, name)
+			}
 		}
 	}
 	results := map[string]any{}

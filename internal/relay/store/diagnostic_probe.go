@@ -34,7 +34,7 @@ func Probe(ctx context.Context, selection StateSelection) (result ProbeResult) {
 	if info, err := os.Stat(selection.Path); err == nil {
 		result.Access.DirectoryExists = info.IsDir()
 	} else if !os.IsNotExist(err) {
-		notes = append(notes, "directory stat failed: "+err.Error())
+		notes = append(notes, "directory stat failed: "+PythonOSError(err))
 	}
 	if result.Access.DirectoryExists {
 		result.Access.DirectoryReadable = syscall.Access(selection.Path, 0x4|0x1) == nil
@@ -44,12 +44,12 @@ func Probe(ctx context.Context, selection StateSelection) (result ProbeResult) {
 			_ = temp.Close()
 			_ = os.Remove(temp.Name())
 		} else {
-			notes = append(notes, "directory write failed: "+err.Error())
+			notes = append(notes, "directory write failed: "+PythonOSError(err))
 		}
 	}
 	if _, err := os.Stat(selection.DBPath()); err != nil {
 		if result.Access.DirectoryExists {
-			notes = append(notes, "database stat failed: "+err.Error())
+			notes = append(notes, "database stat failed: "+PythonOSError(err))
 		}
 		return result
 	}
@@ -94,7 +94,7 @@ func probeRead(ctx context.Context, file *os.File, expected string, result *Prob
 	}
 	conn, err := openHeld(ctx, file, "ro")
 	if err != nil {
-		*notes = append(*notes, "database read failed: "+err.Error())
+		*notes = append(*notes, "database read failed: "+PythonSQLiteError(err))
 		return
 	}
 	defer conn.close()
@@ -110,7 +110,7 @@ func probeRead(ctx context.Context, file *os.File, expected string, result *Prob
 		// A store written before identity existed has no row: absence stays absence.
 		err := conn.scanRow(ctx, "SELECT value FROM schema_meta WHERE key=?", []any{field.key}, field.dest)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			*notes = append(*notes, "database read failed: "+err.Error())
+			*notes = append(*notes, "database read failed: "+PythonSQLiteError(err))
 			return
 		}
 	}
@@ -119,7 +119,7 @@ func probeRead(ctx context.Context, file *os.File, expected string, result *Prob
 func probeWrite(ctx context.Context, file *os.File, expected string, result *ProbeResult, notes *[]string) {
 	conn, err := openHeld(ctx, file, "rw")
 	if err != nil {
-		*notes = append(*notes, "database write probe failed: "+err.Error())
+		*notes = append(*notes, "database write probe failed: "+PythonSQLiteError(err))
 		return
 	}
 	defer conn.close()
@@ -129,11 +129,11 @@ func probeWrite(ctx context.Context, file *os.File, expected string, result *Pro
 		return
 	}
 	if err := conn.exec(ctx, "BEGIN IMMEDIATE"); err != nil {
-		*notes = append(*notes, "database write probe failed: "+err.Error())
+		*notes = append(*notes, "database write probe failed: "+PythonSQLiteError(err))
 		return
 	}
 	if err := conn.exec(ctx, "ROLLBACK"); err != nil {
-		*notes = append(*notes, "database write probe failed: "+err.Error())
+		*notes = append(*notes, "database write probe failed: "+PythonSQLiteError(err))
 		return
 	}
 	result.Access.DBWritable = true

@@ -47,6 +47,9 @@ func TestCall_correlates_interleaved_responses(t *testing.T) {
 		}
 	})
 	wg.Wait()
+	if err := host.WaitCount(ctx, "initialized", 1); err != nil {
+		t.Fatal(err)
+	}
 	for _, err := range errorsByCall {
 		if err != nil {
 			t.Fatal(err)

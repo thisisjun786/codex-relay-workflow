@@ -546,7 +546,7 @@ func (d *Service) render(ctx context.Context, row Row, record Obj, request strin
 		return "", err
 	}
 	if report {
-		return "", fmt.Errorf("delivery: the composed report rendering (report.py) is owned by todo 24")
+		return "", fmt.Errorf("%w: the composed report rendering (report.py) is owned by todo 24", ErrRendererNotPorted)
 	}
 	switch row.S("kind") {
 	case Revision:
@@ -554,7 +554,17 @@ func (d *Service) render(ctx context.Context, row Row, record Obj, request strin
 	case Completion:
 		return renderCompletion(row, record, request), nil
 	}
-	return "", fmt.Errorf("delivery: the merge-turn grant notice is owned by the merge-turn port (todo 26)")
+	return "", fmt.Errorf("%w: the merge-turn grant notice is owned by the merge-turn port (todo 26)", ErrRendererNotPorted)
+}
+
+// ErrRendererNotPorted marks a message whose bytes come from a renderer another todo ports; the
+// message is refused rather than rendered differently.
+var ErrRendererNotPorted = errors.New("delivery: renderer not ported")
+
+// Preview is preview_message for a reader that holds only a store (show --event --message).
+// Reads use ctx, so a caller inside a transaction sees its writes.
+func Preview(ctx context.Context, s *store.Store, eventID string) (string, error) {
+	return NewService(s, SystemClock{}).PreviewMessage(ctx, eventID)
 }
 
 // PreviewMessage is preview_message / render_message: what the NEXT attempt would say.

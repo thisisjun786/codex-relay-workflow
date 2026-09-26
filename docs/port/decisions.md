@@ -361,6 +361,30 @@ Evidence: packages/codex-thread-bridge/LICENSE:1-3 (MIT, codex-thread-bridge con
 scripts/crw_runtime/components.json:20-26 (upstream remote, revision, licence); draft A9,
 F12; AGENTS.md provenance rule.
 
+## 20. Library-generated MCP text is not reproduced
+
+Decision: where the Python bridge's caller-visible text is produced by a Python library
+rather than by the bridge, the Go bridge keeps the machine-readable parts exact and writes
+the prose itself. Four places, recorded as accepted differences:
+- Tool-argument validation: the first line `Error executing tool <t>: <N> validation
+  error(s) for <t>Arguments`, the error count and the failing field locations in signature
+  order are Python's; each field's reason line is the bridge's own, without pydantic's
+  `[type=...]` detail or the version-specific `errors.pydantic.dev/<ver>` URL.
+- `initialize.serverInfo.version` is the bridge's version (0.1.0, as `--version` prints);
+  FastMCP sends the mcp library version (1.30.0 at the pin).
+- The JSON inside a tool reply's text content is compared as parsed values; its key order
+  is Go's, not the dict insertion order of the Python receipt.
+- An execution-policy file that is not valid JSON is refused with the same exit code,
+  empty stdout and `execution_policy_unreadable` prefix; the decoder message after it is
+  Go's, not CPython's `json.JSONDecodeError` text.
+Every other reply on the wire is Python's bytes (decision 5, todo 16 wire tests).
+
+Evidence: packages/codex-thread-bridge/src/codex_thread_bridge/server.py (FastMCP tool
+registration); todo-16 checker comparison against mcp 1.30.0 / pydantic 2.13.5 recorded in
+.omo/evidence/task-16-crw-go-port.txt; the question to Jun on 2026-09-25 went unanswered
+for 30 minutes and the recommended option was taken, reversible by changing
+internal/bridge/mcp/validate.go and server.go.
+
 ## How this file is checked
 
 The acceptance check for this document is structural: every decision heading is followed

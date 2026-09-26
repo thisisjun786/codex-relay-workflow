@@ -114,11 +114,14 @@ func toolsLikePython(listed *sdk.ListToolsResult) (sdk.Result, error) {
 			delete(annotations, "idempotentHint")
 		}
 	}
-	raw, err = json.Marshal(map[string]any{"tools": tools})
-	if err != nil {
+	// Python writes '<', '>' and '&' as themselves; json.Marshal would escape them.
+	var out bytes.Buffer
+	encoder := json.NewEncoder(&out)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(map[string]any{"tools": tools}); err != nil {
 		return nil, err
 	}
-	return &rawResult{raw: raw}, nil
+	return &rawResult{raw: bytes.TrimSuffix(out.Bytes(), []byte("\n"))}, nil
 }
 
 // unknownTool is FastMCP's answer to a tool it does not have: a result flagged isError, not a
@@ -289,17 +292,22 @@ var clientNotifications = map[string]bool{
 	"notifications/roots/list_changed": true, "notifications/tasks/status": true,
 }
 
-// invalidRequest is what the Python server answers a request outside ClientRequest whose params
-// are absent, null or an object: its union validation fails and it reports that failure.
+// invalidRequest is what the Python server answers a request whose params are absent, null or an
+// object when it names a method outside ClientRequest, or is a tools/call whose params fail
+// CallToolRequestParams: its union validation fails and it reports that failure.
 var invalidRequest = &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: "Invalid request parameters", Data: json.RawMessage(`""`)}
 
-// internalErrorLog is what the Python server sends instead of a response when such a request
-// carries params that are not an object: its exception handler logs to the client.
+// internalErrorLog is what the Python server sends instead of anything else when a message,
+// request or notification, known or not, carries params that are neither null nor an object:
+// its exception handler logs to the client.
 var internalErrorLog = json.RawMessage(`{"level":"error","logger":"mcp.server.exception_handler","data":"Internal Server Error"}`)
 
 // Read answers, itself, every message Python's server rejects before dispatch, so the SDK never
-// sees it: a request outside ClientRequest gets Python's reply, and a notification outside
-// ClientNotification is dropped, as Python drops it.
+// sees it. Any message whose params are present but neither null nor an object fails Python's
+// parsing outright: its exception handler logs to the client and nothing else is sent. Otherwise
+// a request outside ClientRequest, or a tools/call that fails CallToolRequestParams, gets
+// Python's invalid-params reply, and a notification outside ClientNotification is dropped, as
+// Python drops it.
 func (c pythonConnection) Read(ctx context.Context) (jsonrpc.Message, error) {
 	for {
 		message, err := c.Connection.Read(ctx)
@@ -310,25 +318,42 @@ func (c pythonConnection) Read(ctx context.Context) (jsonrpc.Message, error) {
 		if !ok {
 			return message, nil
 		}
-		if !request.IsCall() {
+		params := bytes.TrimSpace(request.Params)
+		switch {
+		case len(params) > 0 && string(params) != "null" && params[0] != '{':
+			err = c.Connection.Write(ctx, &jsonrpc.Request{Method: "notifications/message", Params: internalErrorLog})
+		case !request.IsCall():
 			if clientNotifications[request.Method] {
 				return message, nil
 			}
 			continue
-		}
-		if clientRequests[request.Method] {
+		case clientRequests[request.Method] && (request.Method != "tools/call" || validCallParams(params)):
 			return message, nil
-		}
-		params := bytes.TrimSpace(request.Params)
-		if len(params) == 0 || string(params) == "null" || params[0] == '{' {
+		default:
 			err = c.Connection.Write(ctx, &jsonrpc.Response{ID: request.ID, Error: invalidRequest})
-		} else {
-			err = c.Connection.Write(ctx, &jsonrpc.Request{Method: "notifications/message", Params: internalErrorLog})
 		}
 		if err != nil {
 			return nil, err
 		}
 	}
+}
+
+// validCallParams is whether params pass mcp 1.30.0's CallToolRequestParams: an object whose
+// name is a string and whose arguments, when present, are null or an object.
+func validCallParams(params json.RawMessage) bool {
+	var call struct {
+		Name      *json.RawMessage `json:"name"`
+		Arguments json.RawMessage  `json:"arguments"`
+	}
+	if len(params) == 0 || json.Unmarshal(params, &call) != nil || call.Name == nil {
+		return false
+	}
+	var name string
+	if json.Unmarshal(*call.Name, &name) != nil || string(*call.Name) == "null" {
+		return false
+	}
+	arguments := bytes.TrimSpace(call.Arguments)
+	return len(arguments) == 0 || string(arguments) == "null" || arguments[0] == '{'
 }
 
 func (c pythonConnection) Write(ctx context.Context, message jsonrpc.Message) error {
