@@ -39,7 +39,8 @@ type Registry struct {
 	Policy RolePolicy
 	// beforeRegisterTx runs between register's pre-check and its write transaction: the
 	// window test_linkage's racer is injected into (mock.patch of _register_in_transaction).
-	beforeRegisterTx func(Registration)
+	beforeRegisterTx    func(Registration)
+	beforeManagedAttach func() error
 }
 
 // SystemISO is SystemClock.iso: UTC, microseconds, "+00:00".
@@ -305,6 +306,7 @@ type Registration struct {
 	DispatchTurnID    sql.NullString
 	Supersedes        string
 	ProjectKey        string
+	ManagedRequestID  string // optional: the accepted receipt owns this registration
 }
 
 func anchorFor(turn sql.NullString, at string) (string, sql.NullString) {
@@ -339,6 +341,11 @@ func (r *Registry) Register(ctx context.Context, in Registration) (Relationship,
 		return Relationship{}, err
 	}
 	if existing != nil {
+		if in.ManagedRequestID != "" {
+			if err := r.guardManagedRegistration(ctx, in); err != nil {
+				return Relationship{}, err
+			}
+		}
 		record, err := r.toRecord(ctx, existing)
 		if err != nil {
 			return record, err
@@ -439,7 +446,7 @@ func (r *Registry) attachExisting(ctx context.Context, rid string, in Registrati
 		if fresh == nil {
 			return refuse(contract.RefusalUnregisteredRelationship, "no relationship %s", pyStr(rid))
 		}
-		if err := r.guardIssueReservation(ctx, in.IssueKey); err != nil {
+		if err := r.guardManagedRegistration(ctx, in); err != nil {
 			return err
 		}
 		if refusal, err = link.attachIn(ctx, fresh, in.ProjectKey, r.now(), ""); err != nil || refusal == nil {
@@ -491,7 +498,7 @@ func (r *Registry) registerInTransaction(ctx context.Context, rid string, in Reg
 		if err != nil {
 			return err
 		}
-		if err := r.guardIssueReservation(ctx, in.IssueKey); err != nil {
+		if err := r.guardManagedRegistration(ctx, in); err != nil {
 			return err
 		}
 		var rival struct{ id, child, parent, status string }
@@ -534,6 +541,14 @@ func (r *Registry) registerInTransaction(ctx context.Context, rid string, in Reg
 			return fmt.Errorf("insert generation: %w", err)
 		}
 		if err := journal(ctx, r.Store, "relationship_registered", rid, contract.OrderedObject{{Key: "issueKey", Value: in.IssueKey}}, now); err != nil {
+			return err
+		}
+		if r.beforeManagedAttach != nil {
+			if err := r.beforeManagedAttach(); err != nil {
+				return err
+			}
+		}
+		if err := r.attachManagedRegistration(ctx, in.ManagedRequestID, rid, now); err != nil {
 			return err
 		}
 		if in.ProjectKey == "" {

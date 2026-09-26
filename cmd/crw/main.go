@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	// The merge-turn-* relay commands register themselves on the relay CLI.
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -31,7 +33,7 @@ func run(ctx context.Context, program string, args []string, stdout, stderr io.W
 	cli.Version = version
 	switch filepath.Base(program) {
 	case "codex-session-relay":
-		return cli.ExecuteAs(ctx, program, args, stdout, stderr)
+		return relay(ctx, program, args, stdout, stderr)
 	case "codex-thread-bridge":
 		return mcp.Run(ctx, args)
 	case "crw-completion-hook":
@@ -46,7 +48,7 @@ func run(ctx context.Context, program string, args []string, stdout, stderr io.W
 	}
 	switch mode, rest := args[0], args[1:]; mode {
 	case "relay":
-		return cli.ExecuteAs(ctx, "crw relay", rest, stdout, stderr)
+		return relay(ctx, "crw relay", rest, stdout, stderr)
 	case "bridge":
 		return mcp.Run(ctx, rest)
 	case "help", "-h", "--help":
@@ -60,6 +62,19 @@ func run(ctx context.Context, program string, args []string, stdout, stderr io.W
 		fmt.Fprintf(stderr, "crw: error: argument command: invalid choice: %s (choose from 'relay', 'bridge', 'help', 'version')\n", store.PythonRepr(mode))
 		return parserExit
 	}
+}
+
+// relay is the relay CLI. The capacity and edit-region commands (todo 27) parse their own line
+// first, as argparse would, and are then dispatched through the relay CLI's command list.
+func relay(ctx context.Context, program string, args []string, stdout, stderr io.Writer) int {
+	prog := filepath.Base(program)
+	if program == "crw relay" {
+		prog = program
+	}
+	if code, handled := capacity.Precheck(prog, args, stdout, stderr); handled {
+		return code
+	}
+	return cli.ExecuteAs(ctx, program, args, stdout, stderr)
 }
 
 func usage(w io.Writer) {
