@@ -37,7 +37,7 @@ type TurnPresence struct {
 	Turn      *TurnInfo
 	Scanned   int
 	Stop      string
-	Seen      []string
+	Seen      []any
 	Older     []string
 	SeenTurns []TurnInfo
 	StopTurn  *TurnInfo
@@ -68,24 +68,40 @@ func olderTurns(turns []TurnInfo, cutoff float64) []string {
 	return out
 }
 
-// FindInListing is find_in_listing. turnID "" lists the turns since a send with no turn id.
+// FindInListing is find_in_listing over pages already read.
 func FindInListing(pages []ListingPage, turnID string, sentAt float64) (TurnPresence, error) {
+	next := 0
+	return FindInListingPaged(func() (ListingPage, error) {
+		page := pages[next]
+		next++
+		return page, nil
+	}, len(pages), turnID, sentAt)
+}
+
+// FindInListingPaged is find_in_listing over a lazy listing: read yields the next page, at most
+// bound pages are read, and nothing past the answer is read. turnID "" lists the turns since a
+// send with no turn id; a listed turn without an id is never taken for it.
+func FindInListingPaged(read func() (ListingPage, error), bound int, turnID string, sentAt float64) (TurnPresence, error) {
 	cutoff := sentAt - TurnStartPrecisionSeconds - DispatchTurnSkewSeconds
 	scanned := 0
-	var seen []string
+	seen := []any{}
 	var seenTurns []TurnInfo
-	for p, page := range pages {
+	for p := 0; p < bound; p++ {
+		page, err := read()
+		if err != nil {
+			return TurnPresence{}, err
+		}
 		for i, turn := range page.Turns {
 			scanned++
 			if turnID != "" && turn.TurnID == turnID {
 				match := turn
-				return TurnPresence{TurnPresent, &match, scanned, "matched", seen, olderAfterMatch(page.Turns[i+1:], page.Follows, pages[p+1:], cutoff), seenTurns, nil}, nil
+				return TurnPresence{TurnPresent, &match, scanned, "matched", seen, olderAfterMatch(page.Turns[i+1:], page.Follows, read, bound-p-1, cutoff), seenTurns, nil}, nil
 			}
 			if turn.StartedAt != nil && *turn.StartedAt <= cutoff {
 				stop := turn
 				return TurnPresence{TurnAbsent, nil, scanned, "older_than_send", seen, olderTurns(page.Turns[i:], cutoff), seenTurns, &stop}, nil
 			}
-			seen = append(seen, turn.TurnID)
+			seen = append(seen, idOf(turn))
 			seenTurns = append(seenTurns, turn)
 		}
 		if !page.Follows {
@@ -102,17 +118,32 @@ func FindInListing(pages []ListingPage, turnID string, sentAt float64) (TurnPres
 	return TurnPresence{}, &ListingBounded{fmt.Sprintf("%s was not among %d turns and the bounded listing never reached the send; this is not evidence of absence", subject, scanned)}
 }
 
-func olderAfterMatch(rest []TurnInfo, follows bool, pages []ListingPage, cutoff float64) []string {
+// idOf is a listed turn's id, None when the host gave none.
+func idOf(turn TurnInfo) any {
+	if turn.TurnID == "" {
+		return nil
+	}
+	return turn.TurnID
+}
+
+// olderAfterMatch is _older_after_match: after a match, read on to the first turn begun before
+// the send. A failed read or the page bound gives none; the match stands either way.
+func olderAfterMatch(rest []TurnInfo, follows bool, read func() (ListingPage, error), left int, cutoff float64) []string {
 	for {
 		for i, turn := range rest {
 			if turn.StartedAt != nil && *turn.StartedAt <= cutoff {
 				return olderTurns(rest[i:], cutoff)
 			}
 		}
-		if !follows || len(pages) == 0 {
+		if !follows || left <= 0 {
 			return nil
 		}
-		rest, follows, pages = pages[0].Turns, pages[0].Follows, pages[1:]
+		page, err := read()
+		if err != nil {
+			return nil
+		}
+		left--
+		rest, follows = page.Turns, page.Follows
 	}
 }
 

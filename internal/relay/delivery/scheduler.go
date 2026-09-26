@@ -16,8 +16,9 @@ type TickCounts struct {
 // Scheduler is the delivery pass of RelayDaemon.tick (daemon._deliver), with its persisted
 // rotation cursors. The daemon (todo 29) owns the rest of the tick and calls this pass.
 type Scheduler struct {
-	Delivery     *Service
-	Ack          *Ack
+	Delivery *Service
+	Ack      *Ack
+	// MaxSendsTick is policy.max_sends_per_tick: 0 means its default 4, a negative value 0.
 	MaxSendsTick int
 }
 
@@ -79,6 +80,9 @@ func (sc *Scheduler) Deliver(ctx context.Context, adapter Adapter, now float64, 
 	limit := sc.MaxSendsTick
 	if limit == 0 {
 		limit = 4
+	}
+	if limit < 0 {
+		limit = 0
 	}
 	eligible, err := d.Eligible(ctx, now, limit, 0, cursor, offsets)
 	if err != nil {

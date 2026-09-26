@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -215,7 +216,7 @@ func (rc *Reconciler) reconcile(ctx context.Context, requestID string, adapter A
 		}
 	}
 	if attempt.S("state") == HeldUncertain && attempt.S("affirmative_evidence") == TurnFound {
-		return nil, fmt.Errorf("delivery: re-reading a token-confirmed send's turn is the host-loss port's (part B)")
+		return rc.settleConfirmed(ctx, attempt, delivery, observation, adapter)
 	}
 	scanDetail := "not scanned"
 	scanned := false
@@ -235,7 +236,7 @@ func (rc *Reconciler) reconcile(ctx context.Context, requestID string, adapter A
 		answer = receiptAnswer(facts)
 	}
 	if scanned && answer != "" {
-		reading = ReadUnknownSend(adapter, rc.Clock, attempt, delivery, answer)
+		reading = readUnknownSend(adapter, rc.Clock, attempt, delivery, answer)
 		if str(reading, "finding") == Present {
 			turn, _ := get(reading, "turnId")
 			out, err := rc.settleFromScan(ctx, attempt, delivery, TokenScan{Found: true, TurnID: turn}, observation, "found since the send in turn "+pyStr(turn), now)
@@ -311,6 +312,10 @@ func (rc *Reconciler) settleDispatched(ctx context.Context, attempt, delivery Ro
 	}
 	return out, nil
 }
+
+// readUnknownSend is ReadUnknownSend behind a test seam (Python's tests patch
+// hostloss.read_unknown_send to stage a reader racing another); never reassigned in production.
+var readUnknownSend = ReadUnknownSend
 
 // forceCurrent stands in for Python's mock.patch of _is_current (a test seam, never set in
 // production): the guarded UPDATE, not the snapshot, must decide.
@@ -543,15 +548,27 @@ func (rc *Reconciler) awaiting(ctx context.Context, kind string, outcome Obj, re
 		return nil, nil
 	}
 	correction := kind == Revision
-	note, err := one(ctx, rc.Store, "SELECT reason FROM delivery_supersession WHERE event_id = ?", eventID)
-	if err != nil {
-		return nil, err
-	}
 	superseded := ""
-	if note != nil {
-		superseded = note.S("reason")
-	} else if superseded, err = rc.Delivery.SupersessionReason(ctx, eventID); err != nil {
-		return nil, err
+	if kind == MergeTurnGrant {
+		grant, err := rc.Delivery.SupersessionReason(ctx, eventID)
+		if err != nil {
+			return nil, err
+		}
+		if grant == mergeturn.GrantAnswered {
+			return Obj{{Key: "nextExpectedAction", Value: "none"}, {Key: "reason", Value: "grant_acknowledged"}}, nil
+		}
+		superseded = grant
+	}
+	if superseded == "" {
+		note, err := one(ctx, rc.Store, "SELECT reason FROM delivery_supersession WHERE event_id = ?", eventID)
+		if err != nil {
+			return nil, err
+		}
+		if note != nil {
+			superseded = note.S("reason")
+		} else if superseded, err = rc.Delivery.SupersessionReason(ctx, eventID); err != nil {
+			return nil, err
+		}
 	}
 	if superseded != "" {
 		action := "none"

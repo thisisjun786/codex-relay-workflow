@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 )
 
 // Every reason, hold, state and next-action word this package emits that is NOT a member of the
@@ -31,6 +34,16 @@ var literalWords = map[string][]string{
 	"intent.py":            {"relationship_registered", "identity_bound", "ambiguous_identity", "intent_expired", "creation_unknown", "creation_accepted", "intent_declared", "bound", "unchanged", "conflict", "current", "stale", "absent", "accepted", "unknown", "failed", "in_progress", "blocked_needs_input", "interrupted", "ready_for_review"},
 	"marker.py":            {"published", "exists", "flag", "env", "xdg", "home"},
 	"declarations.py":      {"declarations/1", "recorded", "unchanged", "conflict", "not_recorded", "failed", "store_disagrees", "no_store_recorded", "store_absent", "store_unreadable", "store_not_a_file", "store_unopenable", "store_write_failed", "store_locked"},
+	"hostloss.py#b2":       {"queued"},
+	"daemon.py":            {"turnsLost", "turnsUndecided"},
+	"assignment.py#b2":     {"parent_acknowledges", "daemon_verifies_acknowledgement", "parent_reacknowledges", "daemon_redelivers_host_lost_turn", "parent_recovers_host_lost_turn", "operator_changes_send_policy", "daemon_delivers_correction", "parent_verifies", "daemon_delivers"},
+	"delivery.py#b2":       {"dispatched_awaiting_grant_acknowledgement", "grant_acknowledged", "prepared", "confirmed_unsent", "uncertain", "unavailable", "redelivering:", "awaiting_ack:", "awaiting_send:"},
+	"reconcile.py#b2":      {"grant_acknowledged", "recipientTrace", "recipientTurn", "undecidedChanged"},
+	"assignment.py#b3":     {"turnCheck", "hostLostAttempts"},
+	"mergeturn.py":         {"merge_turn_absent", "merge_turn_closed", "merge_turn_regranted", "merge_turn_grant_answered", "merge_turn_grant_unreadable", "grant_acknowledged", "holding", "merging"},
+	"faultsweep.py":        {"delivery_stalled", "delivery_retrying", "recovered"},
+	"faults.py":            {"open_record", "append_comment", "blocking", "observed", "open", "broken", "degraded", "occurrence", "escalate", "team+project", "none"},
+	"bridge_adapter.py":    {"thread/turns/list", "thread/items/list", "notLoaded", "desc", "asc", "nextCursor", "startedAt"},
 	"cli.py#marker":        {"marker_unreadable", "marker_malformed", "claim_not_standing", "claim_uncorrelated", "store_changed"},
 }
 
@@ -65,6 +78,13 @@ func TestLiteralReasons_outside_the_frozen_enum_are_spelled_as_python_spells_the
 		{CreationUnknown, "creation_unknown"}, {CreationAccepted, "creation_accepted"}, {IntentDeclared, "intent_declared"}, {Bound, "bound"}, {Unchanged, "unchanged"}, {Conflict, "conflict"},
 		{DispatchCurrent, "current"}, {DispatchStale, "stale"}, {DispatchAbsent, "absent"}, {declarationsCapability, "declarations/1"}, {declRecorded, "recorded"},
 		{declNotRecordedState, "not_recorded"}, {declFailed, "failed"}, {Published, "published"}, {Exists, "exists"},
+		{TurnCheckUndecided, "turn_check_undecided"}, {UnknownSendLost, "unknown_send_lost"}, {UnknownSendUndecided, "unknown_send_undecided"}, {UnknownSendHoldNamed, "unknown_send_hold_named"},
+		{Requeued, "queued"}, {HeldRedelivery, "held"}, {NotMoved, "not_moved"}, {ReportOnly, "report_only"}, {ListingBoundedW, "listing_bounded"}, {ListingEmptyW, "listing_empty"},
+		{TokenScanBounded, "token_scan_bounded"}, {TokenWithoutTurn, "token_without_turn"}, {TokenInOtherItem, "token_in_other_item"}, {NoSendTime, "no_send_time"}, {NoTurn, "no_turn"},
+		{ReceiptUnsettled, "receipt_unsettled"}, {ReceiptMissing, "receipt_missing"}, {reconcileAction, "daemon_reconciles_delivery"}, {unknownSendHeldAction, "parent_recovers_unknown_send_lost"},
+		{unknownSendUndecidedAction, "parent_recovers_unknown_send_undecided"}, {correctionHeld, "parent_recovers_held_correction"}, {correctionAnswered, "parent_reads_child_disposition"},
+		{mergeturn.Absent, "merge_turn_absent"}, {mergeturn.Closed, "merge_turn_closed"}, {mergeturn.Regranted, "merge_turn_regranted"}, {mergeturn.GrantAnswered, "merge_turn_grant_answered"}, {mergeturn.GrantUnreadable, "merge_turn_grant_unreadable"},
+		{faults.Broken, "broken"}, {faults.Degraded, "degraded"}, {faults.Open, "open"}, {faults.Observed, "observed"},
 	} {
 		if pair[0] != pair[1] {
 			t.Errorf("constant %q != %q", pair[0], pair[1])

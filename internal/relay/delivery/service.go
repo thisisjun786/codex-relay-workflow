@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -433,7 +434,7 @@ func (d *Service) SupersessionReason(ctx context.Context, eventID string) (strin
 		return "", err
 	}
 	if event.S("outcome") == MergeTurnGrant {
-		return "", fmt.Errorf("delivery: merge-turn grant supersession is owned by the merge-turn port (todo 26)")
+		return mergeturn.GrantSupersessionFor(ctx, d.Store, event.S("receipt"))
 	}
 	rel, err := one(ctx, d.Store, "SELECT execution_generation FROM relationships WHERE relationship_id = ?", event.S("relationship_id"))
 	if err != nil || rel == nil {

@@ -1,6 +1,8 @@
 package delivery
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"sync"
@@ -35,6 +37,8 @@ type fakeHost struct {
 	calls        []string
 	onGoalRead   func(thread string)
 	onArchived   func(thread string) (*bool, error)
+	// scanLimit is FakeHostAdapter.scan_limit: a bound below the caller's on item scans.
+	scanLimit int
 	// mu serialises the call log: two parents acknowledging at one instant (MPI-2) read the
 	// host from two goroutines, which the Python fake never had to survive under its GIL.
 	mu sync.Mutex
@@ -153,18 +157,42 @@ func (h *fakeHost) FindToken(thread, token string, limit int, messageOnly bool) 
 		return TokenScan{}, err
 	}
 	items := h.threads[thread].items
+	bound := h.bound(limit)
 	scanned := 0
-	for i := len(items) - 1; i >= 0 && scanned < limit; i-- {
+	for i := len(items) - 1; i >= 0 && scanned < bound; i-- {
 		scanned++
 		item := items[i]
-		if messageOnly && item[2] != "userMessage" {
+		if messageOnly && !isMessage(item[2]) {
 			continue
 		}
 		if strings.Contains(item[1], token) {
 			return TokenScan{Found: true, TurnID: item[0], Exhausted: scanned >= len(items), Scanned: scanned}, nil
 		}
 	}
-	return TokenScan{Found: false, Exhausted: limit >= len(items), Scanned: scanned}, nil
+	return TokenScan{Found: false, Exhausted: bound >= len(items), Scanned: scanned}, nil
+}
+
+func (h *fakeHost) bound(limit int) int {
+	if h.scanLimit > 0 {
+		return min(limit, h.scanLimit)
+	}
+	return limit
+}
+
+// RecipientFingerprint is FakeHostAdapter.recipient_fingerprint (window 8).
+func (h *fakeHost) RecipientFingerprint(thread string) (string, error) {
+	if err := h.guard("recipient_fingerprint"); err != nil {
+		return "", err
+	}
+	digest := sha256.New()
+	for i, item := range h.newestItems(thread) {
+		if i == 8 {
+			break
+		}
+		body := sha256.Sum256([]byte(item.Text))
+		digest.Write([]byte(item.Turn + ":" + hex.EncodeToString(body[:]) + "|"))
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
 func (h *fakeHost) SendMessage(requestID, thread, message string, settings *TaskSettings) (Obj, error) {
@@ -250,8 +278,8 @@ func (h *fakeHost) FindTokenSince(thread, token string, older []string, limit in
 		return TokenScan{}, err
 	}
 	items := h.newestItems(thread)
-	bound := min(limit, len(items))
-	return FindTokenIn([]ItemPage{{items[:bound], bound < len(items)}}, token, older), nil
+	bound := h.bound(limit)
+	return FindTokenIn([]ItemPage{{items[:min(bound, len(items))], bound < len(items)}}, token, older), nil
 }
 
 func (h *fakeHost) FindTokenInTurn(thread, token, turnID string, limit int) (TokenScan, error) {

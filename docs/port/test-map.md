@@ -109,6 +109,24 @@ The eight marker commands (`intent-declare`, `intent-attempt`, `intent-bind`, `i
 `intent-claim` and `intent-disposition` mirror (declarations.py), answer byte for byte like Python
 (`TestCLI_every_intent_command_answers_byte_for_byte_like_python`); `guard-evaluate` is todo 33.
 
+## Todo 21 part B2 host-loss and unknown-send property progress (2026-09-26)
+
+Go tests in `internal/relay/delivery`, named `Test21_<ID>_...` after
+`.omo/ulw-execute/todo21-properties.md`. `testdata/capture.py` runs every Python test of the file,
+each in its own tree, and records every value it asserts; the Go twin of each test runs the same
+steps in the same tree and must produce the same values, delivery tables, `delivery_stalled`
+fault rows and host sends.
+
+| Python file | properties | Go tests | python-internal (not ported) |
+| --- | ---: | ---: | --- |
+| `test_host_lost_turn.py` | 29 | 29 | - |
+| `test_unknown_send_lost.py` | 23 | 22 | USL-18 (`assertIs` on `cli.Services` wiring; covered by USL-15/17) |
+| **Total** | **52** | **51** | **1** |
+
+The fault sweep/ledger (todo 22) and the merge-turn grant rule (todo 26) these properties read are
+ported as marked subsets in `internal/relay/faults` and `internal/relay/mergeturn`; the recipient
+reads of the bridge adapter (todo 28) as `delivery.BridgeReads`.
+
 ## Files
 
 | path | tests | class | family | fixtures | owner | destination | coupling |

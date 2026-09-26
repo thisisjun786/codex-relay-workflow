@@ -52,4 +52,6 @@ type Adapter interface {
 	FindDispatchedTurn(thread, turnID string, sentAt float64) (TurnPresence, error)
 	FindTokenSince(thread, token string, older []string, limit int) (TokenScan, error)
 	FindTokenInTurn(thread, token, turnID string, limit int) (TokenScan, error)
+	// RecipientFingerprint digests the newest items' content, so an append shows up.
+	RecipientFingerprint(thread string) (string, error)
 }

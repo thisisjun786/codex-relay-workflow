@@ -326,8 +326,19 @@ func cmdAck(c *cliRun) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	reject := c.opt("--reject")
-	record, err := ack.Acknowledge(c.ctx, c.s("--event"), c.s("--ack-turn"), c.s("--ack-proof"), !truthy(reject), reject, nil)
+	return AckCommand(c.ctx, ack, nil, nil, c.s("--event"), c.s("--ack-turn"), c.s("--ack-proof"), c.opt("--reject"))
+}
+
+// AckCommand is cmd_ack. With a host adapter and reconciler, a delivery the relay has not
+// confirmed is reconciled first through the acknowledging turn (the proof is checked first,
+// locally, so a wrong one makes no host read).
+func AckCommand(ctx context.Context, ack *Ack, rc *Reconciler, adapter Adapter, event, ackTurn, proof string, reject any) (Obj, error) {
+	if adapter != nil && rc != nil && proof == AckProof(event, ackTurn) {
+		if _, err := rc.ConfirmDelivery(ctx, event, adapter, ackTurn); err != nil {
+			return nil, err
+		}
+	}
+	record, err := ack.Acknowledge(ctx, event, ackTurn, proof, !truthy(reject), reject, adapter)
 	if err != nil {
 		return nil, err
 	}
@@ -337,6 +348,60 @@ func cmdAck(c *cliRun) (any, error) {
 		record = append(record, F{Key: "_note", Value: "recorded as the parent's authored intent; this turn is not established yet, so it does not close the attempt and cannot yet produce a verdict. Run verify-acks from a process with host access."})
 	}
 	return record, nil
+}
+
+// CompleteKeptAcknowledgement is _complete_kept_acknowledgement: before a verdict, a kept
+// acknowledgement's delivery is confirmed through its turn and the acknowledgement completed.
+func CompleteKeptAcknowledgement(ctx context.Context, ack *Ack, rc *Reconciler, adapter Adapter, event string) error {
+	if adapter == nil {
+		return nil
+	}
+	turn, err := ack.KeptTurn(ctx, event)
+	if err != nil || turn == "" {
+		return err
+	}
+	if rc != nil {
+		if _, err := rc.ConfirmDelivery(ctx, event, adapter, turn); err != nil {
+			return err
+		}
+	}
+	_, err = ack.CompletePending(ctx, event, adapter)
+	return err
+}
+
+// VerifyAcksCommand is cmd_verify_acks: kept acknowledgements have their delivery confirmed
+// through their turn first, then the pending pass completes what it can.
+func VerifyAcksCommand(ctx context.Context, ack *Ack, rc *Reconciler, adapter Adapter, limit int) (Obj, error) {
+	confirmations := []any{}
+	kept, err := ack.KeptUnconfirmed(ctx, ack.Clock.Now(), limit)
+	if err != nil {
+		return nil, err
+	}
+	for _, k := range kept {
+		outcome, err := rc.ConfirmDelivery(ctx, k[0], adapter, k[1])
+		if err != nil {
+			return nil, err
+		}
+		if outcome == nil {
+			continue
+		}
+		picked := Obj{}
+		for _, key := range []string{"eventId", "requestId", "confirmed", "turnRead", "error"} {
+			if v, ok := get(outcome, key); ok {
+				picked = append(picked, F{Key: key, Value: v})
+			}
+		}
+		confirmations = append(confirmations, picked)
+	}
+	results, err := ack.VerifyPendingAcks(ctx, adapter, limit, nil)
+	if err != nil {
+		return nil, err
+	}
+	out := Obj{{Key: "results", Value: results}}
+	if len(confirmations) > 0 {
+		out = append(out, F{Key: "confirmations", Value: confirmations})
+	}
+	return out, nil
 }
 
 func cmdCriteriaRegister(c *cliRun) (any, error) {
