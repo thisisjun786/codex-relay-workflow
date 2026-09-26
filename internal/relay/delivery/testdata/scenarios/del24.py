@@ -1,0 +1,15 @@
+_r, e = c.queued_event()
+if sys.argv[3] == "busy":
+    out["record"] = c.attempt(e)
+    row = c.delivery_row(e)
+    c.delivery._defer_busy(e, dict(row, state="queued", attempt_count=0), c.clock.now())
+    c.clock.advance(100000)
+    out["again"] = c.attempt(e, now=c.clock.now())
+else:
+    c.adapter.script("busy")
+    first = c.attempt(e)
+    c.clock.advance(3600)
+    out["second"] = c.attempt(e, now=c.clock.now())
+    out["reconciled"] = c.reconciler.reconcile_attempt(first["requestId"], c.adapter)
+    c.clock.advance(100000)
+    out["again"] = c.attempt(e, now=c.clock.now())

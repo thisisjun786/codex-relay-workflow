@@ -250,6 +250,17 @@ func TestKindModule_matches_python_for_an_unimportable_module(t *testing.T) {
 	}
 }
 
+func TestDelivery_kind_module_refusal_matches_python_before_ack_proof(t *testing.T) {
+	home := pythonHome(t)
+	args := []string{"--kind-module", "does_not_exist", "ack-proof", "--event", "0123456789abcdef0123456789abcdef", "--turn", "turn-1"}
+	for _, argv := range [][]string{args, args[2:]} {
+		py, got := python(t, home, argv...), golang(t, home, argv...)
+		if py.code != got.code || py.stdout != got.stdout || py.stderr != got.stderr {
+			t.Fatalf("%v: python %+v; go %+v", argv, py, got)
+		}
+	}
+}
+
 func TestRegistry_kind_module_refusal_matches_python_before_register(t *testing.T) {
 	home := pythonHome(t)
 	state := filepath.Join(home, "state")

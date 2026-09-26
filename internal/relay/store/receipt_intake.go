@@ -37,9 +37,23 @@ type StoredReceipt struct {
 
 // AcceptChildReceipt is accept_child_receipt: every refusal is recorded for an operator.
 func (in ReceiptIntake) AcceptChildReceipt(ctx context.Context, payload []byte, observation TurnReference) (StoredReceipt, error) {
-	stored, err := in.accept(ctx, payload, observation)
+	return in.AcceptChildReceiptWith(ctx, payload, observation, AcceptOptions{})
+}
+
+// AcceptOptions carries what accept_child_receipt takes beside the payload: a continuation
+// admission (JSON, nil for none) and the revision a re-emission declares it supersedes.
+type AcceptOptions struct {
+	Continuation       []byte
+	SupersedesRevision *string
+}
+
+// AcceptChildReceiptWith is accept_child_receipt with its continuation and supersedes_revision.
+func (in ReceiptIntake) AcceptChildReceiptWith(ctx context.Context, payload []byte, observation TurnReference, options AcceptOptions) (StoredReceipt, error) {
+	stored, err := in.accept(ctx, payload, observation, options)
 	if reason := RefusalReason(err); reason != "" {
-		refusal := Refusal{At: in.Now(), Reason: reason, Detail: sql.NullString{String: err.Error(), Valid: true}, Payload: sql.NullString{String: string(payload), Valid: true}}
+		var refused *RefusedError
+		errors.As(err, &refused)
+		refusal := Refusal{At: in.Now(), Reason: reason, Detail: sql.NullString{String: refused.Detail, Valid: true}, Payload: sql.NullString{String: string(payload), Valid: true}}
 		if document, decodeErr := decodeOrdered(payload); decodeErr == nil && document.kind == jsonObject {
 			if rid, ok := document.field("relationshipId"); ok {
 				refusal.RelationshipID = sql.NullString{String: pythonStr(rid), Valid: !rid.isNull()}
@@ -58,7 +72,7 @@ func (in ReceiptIntake) AcceptChildReceipt(ctx context.Context, payload []byte, 
 	return stored, err
 }
 
-func (in ReceiptIntake) accept(ctx context.Context, payload []byte, observation TurnReference) (StoredReceipt, error) {
+func (in ReceiptIntake) accept(ctx context.Context, payload []byte, observation TurnReference, options AcceptOptions) (StoredReceipt, error) {
 	claim, err := ParseReceipt(payload)
 	if err != nil {
 		return StoredReceipt{}, err
@@ -79,7 +93,11 @@ func (in ReceiptIntake) accept(ctx context.Context, payload []byte, observation 
 	if claim.Turn != observation {
 		return StoredReceipt{}, refuse(ReasonTurnRefMismatch, "turnRef must equal the observation that accompanied this receipt")
 	}
-	if _, err := in.Store.admitTurn(ctx, relationship, generation, claim.Turn); err != nil {
+	continuation, err := parseContinuation(options.Continuation)
+	if err != nil {
+		return StoredReceipt{}, err
+	}
+	if err := in.checkTurnIdentity(ctx, relationship, generation, claim.Turn, continuation); err != nil {
 		return StoredReceipt{}, err
 	}
 	allowed := compatibleTurnStatus(claim.Outcome, claim.Turn.Status)
@@ -105,7 +123,7 @@ func (in ReceiptIntake) accept(ctx context.Context, payload []byte, observation 
 	if claim.EventID != expected {
 		return StoredReceipt{}, refuse(ReasonEventIDMismatch, "event id should be %s for these fields", expected)
 	}
-	return in.storeEvent(ctx, claim, binding)
+	return in.storeEvent(ctx, claim, binding, options.SupersedesRevision)
 }
 
 // checkDeliverable branches on OUTCOME before producer: a reviewable receipt must verify its
@@ -178,7 +196,7 @@ func (in ReceiptIntake) requireMinimum(mode PathBinding) (PathBinding, error) {
 }
 
 // storeEvent is _store_event: re-observing one revision is one fact seen twice.
-func (in ReceiptIntake) storeEvent(ctx context.Context, claim ReceiptClaim, binding sql.NullString) (StoredReceipt, error) {
+func (in ReceiptIntake) storeEvent(ctx context.Context, claim ReceiptClaim, binding sql.NullString, supersedes *string) (StoredReceipt, error) {
 	now := in.Now()
 	record, err := pythonDumps(claim.document)
 	if err != nil {
@@ -214,8 +232,7 @@ func (in ReceiptIntake) storeEvent(ctx context.Context, claim ReceiptClaim, bind
 			return nil
 		}
 		// Atomic with the receipt: a revision stored without its declaration reads as undeclared.
-		_, err := conn.ExecContext(ctx, `INSERT OR IGNORE INTO revision_lineage (relationship_id,execution_generation,event_id,revision_hash,supersedes_hash,declared_by,recorded_at) VALUES (?,?,?,?,NULL,'undeclared',?)`, claim.RelationshipID, claim.Generation, claim.EventID, claim.RevisionHash, now)
-		return err
+		return recordLineage(ctx, conn, claim.RelationshipID, claim.Generation, claim.EventID, claim.RevisionHash, supersedes, now)
 	})
 	return result, err
 }

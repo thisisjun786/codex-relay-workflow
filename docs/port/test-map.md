@@ -65,6 +65,94 @@ Go tests in `internal/bridge`, each reviewed against its Python property:
 
 The remaining MCP case is deferred to todo 16's "Expose the bridge as an MCP stdio server and wire `crw bridge`" and "QA scenarios: happy = stdio round trip create_thread against fakehost via an MCP client in Go test". Property parity is recorded row by row in the todo-15 ledger below. The todo-15 bridge fakehost work is separate from the 36 execution and 23 settings package properties counted under todo 14 in the file rows below.
 
+## Todo 21 part A delivery property progress (2026-09-26)
+
+Ported by property (Jun, 2026-09-26). Go tests in `internal/relay/delivery`, named
+`Test<ID>_...` after `.omo/ulw-execute/todo21-properties.md`; each runs the same scenario through
+the real Python package over the same fixture tree and compares records, refusals and every table
+row with Python's.
+
+| Python file | properties | Go tests | python-internal (not ported) |
+| --- | ---: | ---: | --- |
+| `test_delivery.py` | 35 | 35 | - |
+| `test_delivery_relation.py` | 5 | 4 | DRL-0 (drift guard between two Python spellings; Go has one constant) |
+| `test_supersession.py` | 8 | 8 | - |
+| `test_multi_parent_isolation.py` | 5 | 5 | - |
+| `test_on_request_delivery.py` | 9 | 9 | - |
+| `test_anchor_binding.py` | 8 | 8 | - |
+| `test_criteria_registration.py` | 7 | 7 | - |
+| `test_revision_roundtrip.py` | 5 | 5 | - |
+| `test_verification_currency.py` | 13 | 12 | VCU-5 (`inspect.signature`; Go `RecordVerdict` has no bypass parameter) |
+| **Total** | **95** | **93** | **2** |
+
+The twelve delivery commands (`emit`, `deliver`, `reconcile`, `recover`, `claim`, `ack-proof`,
+`ack`, `verdict`, `criteria-register`, `criteria-show`, `revision-head`, `verify-acks`) answer
+byte for byte like Python (`TestCLI_every_delivery_command_answers_byte_for_byte_like_python`);
+`deliver`, `reconcile`, `recover` and `verify-acks` with `--socket` need the host adapter
+(todo 28).
+
+## Todo 21 part B1 intent and marker property progress (2026-09-26)
+
+Go tests in `internal/relay/delivery`, named `Test<ID>_...` after
+`.omo/ulw-execute/todo21-properties.md`; each runs one JSON op list through the real `marker.py` /
+`intent.py` (`testdata/markerops.py`) and the Go port over the same tree and compares the whole
+answers (records, refusal reason and detail, derived states, fact reads).
+
+| Python file | properties | Go tests | python-internal (not ported) |
+| --- | ---: | ---: | --- |
+| `test_intent.py` | 23 | 23 | - |
+| `test_marker.py` | 8 | 8 | - |
+| **Total** | **31** | **31** | **0** |
+
+The eight marker commands (`intent-declare`, `intent-attempt`, `intent-bind`, `intent-register`,
+`intent-claim`, `intent-disposition`, `intent-resolve`, `intent-show`), with the store records
+`intent-claim` and `intent-disposition` mirror (declarations.py), answer byte for byte like Python
+(`TestCLI_every_intent_command_answers_byte_for_byte_like_python`); `guard-evaluate` is todo 33.
+
+## Todo 21 part B2 host-loss and unknown-send property progress (2026-09-26)
+
+Go tests in `internal/relay/delivery`, named `Test21_<ID>_...` after
+`.omo/ulw-execute/todo21-properties.md`. `testdata/capture.py` runs every Python test of the file,
+each in its own tree, and records every value it asserts; the Go twin of each test runs the same
+steps in the same tree and must produce the same values, delivery tables, `delivery_stalled`
+fault rows and host sends.
+
+| Python file | properties | Go tests | python-internal (not ported) |
+| --- | ---: | ---: | --- |
+| `test_host_lost_turn.py` | 29 | 29 | - |
+| `test_unknown_send_lost.py` | 23 | 22 | USL-18 (`assertIs` on `cli.Services` wiring; covered by USL-15/17) |
+| **Total** | **52** | **51** | **1** |
+
+The fault sweep/ledger (todo 22) and the merge-turn grant rule (todo 26) these properties read are
+ported as marked subsets in `internal/relay/faults` and `internal/relay/mergeturn`; the recipient
+reads of the bridge adapter (todo 28) as `delivery.BridgeReads`.
+
+## Todo 21 part C acknowledgement, re-review and recovery property progress (2026-09-26)
+
+Same method as part B2 (`testdata/capture.py` + the Go twin of each Python test, every asserted
+value and the delivery tables compared; the re-review tests also compare the review tables).
+
+| Python file | properties | Go tests | python-internal (not ported) |
+| --- | ---: | ---: | --- |
+| `test_ack_reconcile.py` | 23 | 23 | - |
+| `test_ack_disposition_race.py` | 3 | 3 | - |
+| `test_rereview_deadlock.py` | 9 | 9 | - |
+| `test_recovery_negatives.py` | 3 | 3 | - |
+| **Total** | **38** | **38** | **0** |
+
+Carried from todo 25A into `internal/relay/delivery`: `test_cli.py` CLI-5, CLI-7, CLI-9, CLI-21,
+CLI-38 (`Test25_CLI*`, whole stdout against the Python command) and
+`test_registration_contention.py` RCT-1, RCT-4 for their `intent.bind` marker half (`Test25_RCT*`;
+the guard-evaluate half is todo 33).
+
+Carried from todo 18 into todo 21: `test_attempt_message_atomicity.py` AMA-1..AMA-6
+(`Test21_AMA1..6` in `internal/relay/delivery/attempt_message_atomicity_test.go`,
+with `cmd_show` AMA-4..AMA-6 in `internal/relay/cli/attempt_message_atomicity_test.go`).
+The Go mirrors compare the Python tests' captured assertions via `testdata/capture.py`;
+AMA-6 pins oldest-first order independently in both Service.AttemptMessages and CLI show.
+`Test21_RegistrationHold_refuses_resolved_live_state` pins the registration hold's
+write admission against a symlink into a temporary live-state-shaped directory.
+
 ## Files
 
 | path | tests | class | family | fixtures | owner | destination | coupling |
@@ -73,7 +161,7 @@ The remaining MCP case is deferred to todo 16's "Expose the bridge as an MCP std
 | `packages/codex-session-relay/tests/test_ack_reconcile.py` | 40 | B | ACK, verdicts, reconciliation and restart recovery | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
 | `packages/codex-session-relay/tests/test_anchor_binding.py` | 14 | B | an anchor binds on every route to dispatched | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
 | `packages/codex-session-relay/tests/test_assignment.py` | 58 | B | assignment ledger: one issue, one responsible child | - | todo 25 / CRW-154 | go-test: `internal/relay/registry` (todo 25: Test25_ASG1..19, whole answers vs testdata/python_assignment.json) + go-test: `internal/relay/store` (todo 19: typed queries, guard-index refusals and Python-store parity for the tables this file writes) | - |
-| `packages/codex-session-relay/tests/test_attempt_message_atomicity.py` | 13 | B | a send carries the message its attempt froze | - | todo 18 / CRW-152 | go-test: `internal/relay/store` (todo 18); DeliveryService pre-claim seam, reconciliation and cmd_show preview halves of 6 cases -> todo 21 `internal/relay/delivery` | - |
+| `packages/codex-session-relay/tests/test_attempt_message_atomicity.py` | 13 | B | a send carries the message its attempt froze | - | todo 18 / CRW-152 | go-test: `internal/relay/store` (todo 18); DeliveryService pre-claim seam, reconciliation and cmd_show preview halves of 6 cases -> todo 21 `internal/relay/delivery` and `internal/relay/cli` (`Test21_AMA1..6`, plus CLI AMA-4..6) | - |
 | `packages/codex-session-relay/tests/test_bridge_adapter.py` | 75 | B | bridge adapter logic over an injected RPC surface | `codex_session_relay.fakehost` | todo 28 / CRW-154 | go-test: bridge adapter package (todo 28) | - |
 | `packages/codex-session-relay/tests/test_bridge_load_roots.py` | 12 | B | a parent loaded by another task's bridge is still reached (CRW-235) | - | todo 28 / CRW-154 | go-test: bridge adapter package (todo 28) | - |
 | `packages/codex-session-relay/tests/test_capacity.py` | 30 | B | capacity counting and refusal to infer | - | todo 27 / CRW-154 | go-test: capacity package (todo 27) + go-test: `internal/relay/store` (todo 19: typed queries, guard-index refusals and Python-store parity for the tables this file writes) | - |

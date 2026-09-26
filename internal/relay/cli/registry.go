@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -63,7 +64,7 @@ type PayloadExit struct {
 
 func (e *PayloadExit) Error() string { return fmt.Sprint(get(e.Payload, "detail")) }
 
-// ExitPayload lets another relay package print this answer whole (registry.PayloadError).
+// ExitPayload lets another relay package print this answer whole (registry.PayloadError, delivery.PayloadError).
 func (e *PayloadExit) ExitPayload() (contract.OrderedObject, int) { return e.Payload, e.Code }
 
 // HostError is an unexpected failure whose Python class name is known, so the host envelope
@@ -130,6 +131,22 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 			}
 			return kindModuleRefusal(*kindModules)
 		})
+	}
+	if slices.Contains(delivery.CommandNames(), remaining[0]) {
+		code, _ := delivery.ExecuteAs(ctx, prog, argv, stdout, stderr, func(selection store.StateSelection, socket string) error {
+			if remaining[0] != "ack-proof" {
+				services := Services{Selection: selection, SocketPath: socket, AdapterRequested: socket != "", Program: program(argv0)}
+				refusal, err := selectionRefusal(services)
+				if err != nil {
+					return err
+				}
+				if refusal != nil {
+					return &PayloadExit{Payload: refusal, Code: contract.ExitRefused}
+				}
+			}
+			return kindModuleRefusal(*kindModules)
+		})
+		return code
 	}
 	var command *Command
 	for i := range Commands {
@@ -280,13 +297,14 @@ func argparseMessage(err error) string {
 	return text
 }
 
-// allNames is every relay command this build registers: this package's and registry's.
+// allNames is every relay command this build registers: this package's, registry's and delivery's.
 func allNames() []string {
 	names := make([]string, 0, len(Commands))
 	for _, command := range Commands {
 		names = append(names, command.Name)
 	}
-	return append(names, registry.Names()...)
+	names = append(names, registry.Names()...)
+	return append(names, delivery.CommandNames()...)
 }
 
 func commandNames() string { return strings.Join(allNames(), ",") }
