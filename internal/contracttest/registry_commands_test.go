@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -26,6 +28,21 @@ var registryCommands = []string{"register", "settings-record", "settings-show", 
 var isoStamp = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}\+00:00`)
 
 func TestRegistryCommands_the_built_crw_prints_what_python_printed(t *testing.T) {
+	replayCLICases(t, filepath.Join("internal", "relay", "registry", "testdata"), registryCommands)
+}
+
+// replayCLICases replays <dir>/cli_cases.json through the built `crw relay` and compares every
+// step's stdout bytes and exit code with <dir>/python_cli.json; every command in commands must
+// be exercised by some case.
+func replayCLICases(t *testing.T, dir string, commands []string) {
+	t.Helper()
+	replayCLICasesOnly(t, dir, commands, nil)
+}
+
+// replayCLICasesOnly replays the named cases only (every case when only is nil); commands are
+// asserted covered only when every case ran.
+func replayCLICasesOnly(t *testing.T, dir string, commands, only []string) {
+	t.Helper()
 	binary, err := crwBinary()
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +51,7 @@ func TestRegistryCommands_the_built_crw_prints_what_python_printed(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	data := filepath.Join(root, "internal", "relay", "registry", "testdata")
+	data := filepath.Join(root, dir)
 	var cases map[string][]struct {
 		Argv  []string          `json:"argv"`
 		Files map[string]string `json:"files"`
@@ -55,8 +72,13 @@ func TestRegistryCommands_the_built_crw_prints_what_python_printed(t *testing.T)
 	}
 	covered := map[string]bool{}
 	for name, steps := range cases {
+		if only != nil && !slices.Contains(only, name) {
+			continue
+		}
 		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
+			targetNames := map[string]string{}
+			targetPattern := regexp.MustCompile(`tgt-[0-9a-f]{32}`)
 			state := filepath.Join(home, "state")
 			index := 0
 			for _, step := range steps {
@@ -100,6 +122,16 @@ func TestRegistryCommands_the_built_crw_prints_what_python_printed(t *testing.T)
 					exit = exitErr.ExitCode()
 				}
 				got := strings.ReplaceAll(isoStamp.ReplaceAllString(stdout.String(), "<T>"), home, "<HOME>")
+				if dir == filepath.Join("internal", "relay", "mergeturn", "testdata") {
+					got = targetPattern.ReplaceAllStringFunc(got, func(value string) string {
+						if name, ok := targetNames[value]; ok {
+							return name
+						}
+						name := fmt.Sprintf("<target-key-%d>", len(targetNames)+1)
+						targetNames[value] = name
+						return name
+					})
+				}
 				if exit != want[name][index].Exit || got != want[name][index].Stdout {
 					t.Errorf("step %d %v: crw exit %d\n%s\npython exit %d\n%s\nstderr: %s", index, step.Argv, exit, got, want[name][index].Exit, want[name][index].Stdout, stderr.String())
 				}
@@ -107,8 +139,8 @@ func TestRegistryCommands_the_built_crw_prints_what_python_printed(t *testing.T)
 			}
 		})
 	}
-	for _, command := range registryCommands {
-		if !covered[command] {
+	for _, command := range commands {
+		if only == nil && !covered[command] {
 			t.Errorf("no case exercises %s", command)
 		}
 	}

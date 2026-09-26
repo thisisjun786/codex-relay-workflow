@@ -72,6 +72,9 @@ func phase(row Row, attempts []Row, ack, failure Row, grant string, superseded R
 		if row.S("kind") == Revision {
 			return "awaiting_child_receipt"
 		}
+		if row.S("kind") == MergeTurnGrant {
+			return "awaiting_grant_acknowledgement"
+		}
 		if n := len(attempts); n > 0 && strings.HasPrefix(attempts[n-1].S("recipient_scan"), TurnCheckUndecided+":") {
 			return "awaiting_ack:" + TurnCheckUndecided
 		}
@@ -176,14 +179,24 @@ func (d *Service) SnapshotItem(ctx context.Context, eventID string) (Obj, error)
 	if note != nil {
 		noteObj = Obj{{Key: "reason", Value: note.S("reason")}, {Key: "noted_at", Value: note.S("noted_at")}}
 	}
-	return Obj{
+	view := Obj{
 		{Key: "eventId", Value: eventID}, {Key: "kind", Value: row.S("kind")}, {Key: "recipient", Value: row.S("recipient_task_id")},
 		{Key: "state", Value: row.S("state")}, {Key: "reported", Value: reportedState(row, ack, grant, note)},
 		{Key: "attempts", Value: row.I("attempt_count")}, {Key: "holdReason", Value: row.Opt("hold_reason")},
 		{Key: "nextEligibleAt", Value: row.Opt("next_eligible_at")}, {Key: "dispatchEvidence", Value: row.Opt("dispatch_evidence")},
 		{Key: "acknowledged", Value: ack != nil}, {Key: "attemptDetail", Value: detail}, {Key: "phase", Value: phase(row, attempts, ack, failure, grant, note, pacing)}, {Key: "pacing", Value: pacingValue},
 		{Key: "supersededNote", Value: noteObj},
-	}, nil
+	}
+	if row.S("kind") == MergeTurnGrant {
+		var verified any
+		if ack != nil {
+			verified = ack.Opt("verified")
+		}
+		view = append(view, F{Key: "ackVerified", Value: verified}, F{Key: "verdict", Value: nil},
+			F{Key: "lastFailedOperation", Value: failure}, F{Key: "settingsHold", Value: nil},
+			F{Key: "recovery", Value: nil}, F{Key: "nextRetryAt", Value: row.Opt("next_eligible_at")})
+	}
+	return view, nil
 }
 
 // AttemptMessages is attempt_messages: every attempt's bytes with the status those bytes

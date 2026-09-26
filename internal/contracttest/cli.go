@@ -6,7 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	// The todo 27 commands register themselves in the relay CLI when their package loads.
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
 	relaycli "github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	// Registers the merge-turn-* commands, as cmd/crw does, so Registered agrees with the binary.
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"os"
 	"os/exec"

@@ -1,0 +1,2308 @@
+{
+ "lpr1_one_record": [
+  {
+   "ok": {
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "kind": "peer",
+    "linkId": "lnk-e983eba862108d9c6fb632aff03036f1",
+    "lower": {
+     "scopeKey": "PROJ-2",
+     "scopeKind": "project",
+     "taskId": "01parent-two"
+    },
+    "revision": 1,
+    "status": "active",
+    "supersededBy": null,
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+    "upper": {
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "taskId": "01parent-task"
+    }
+   }
+  },
+  {
+   "ok": {
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "kind": "peer",
+    "linkId": "lnk-e983eba862108d9c6fb632aff03036f1",
+    "lower": {
+     "scopeKey": "PROJ-2",
+     "scopeKind": "project",
+     "taskId": "01parent-two"
+    },
+    "revision": 1,
+    "status": "active",
+    "supersededBy": null,
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+    "upper": {
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "taskId": "01parent-task"
+    }
+   }
+  },
+  {
+   "ok": [
+    {
+     "link_id": "lnk-e983eba862108d9c6fb632aff03036f1"
+    }
+   ]
+  },
+  {
+   "ok": {
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "kind": "peer",
+    "linkId": "lnk-e983eba862108d9c6fb632aff03036f1",
+    "lower": {
+     "scopeKey": "PROJ-2",
+     "scopeKind": "project",
+     "taskId": "01parent-three"
+    },
+    "revision": 2,
+    "status": "active",
+    "supersededBy": null,
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+    "upper": {
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "taskId": "01parent-task"
+    }
+   }
+  },
+  {
+   "ok": [
+    {
+     "link_id": "lnk-e983eba862108d9c6fb632aff03036f1"
+    }
+   ]
+  }
+ ],
+ "lpr2_no_level": [
+  {
+   "ok": [
+    {
+     "link_id": "lnk-0a5110fd49dda6172d1dc0fed28ca52c",
+     "lower_key": "PROJ-2",
+     "lower_task_id": "01parent-two"
+    },
+    {
+     "link_id": "lnk-17fe34823302c1302c735eb1ffd28014",
+     "lower_key": "PROJ-1",
+     "lower_task_id": "01parent-task"
+    }
+   ]
+  },
+  {
+   "ok": {
+    "contention": [],
+    "gaps": [],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-supervisor"
+       },
+       "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/supervisor",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "supervisor",
+       "scopeKey": "INIT-1",
+       "scopeKind": "initiative",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01supervisor-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "INIT-1",
+      "scopeKind": "initiative"
+     },
+     {
+      "depth": 1,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-1",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     },
+     {
+      "depth": 1,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-6debc9f540166f9ab2f89f1129e0ca28",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-2",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-two",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-2",
+      "scopeKind": "project"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  },
+  {
+   "ok": {
+    "contention": [],
+    "gaps": [],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-1",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     },
+     {
+      "depth": 1,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-supervisor"
+       },
+       "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/supervisor",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "supervisor",
+       "scopeKey": "INIT-1",
+       "scopeKind": "initiative",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01supervisor-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "INIT-1",
+      "scopeKind": "initiative"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  },
+  {
+   "ok": {
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "kind": "peer",
+    "linkId": "lnk-e983eba862108d9c6fb632aff03036f1",
+    "lower": {
+     "scopeKey": "PROJ-2",
+     "scopeKind": "project",
+     "taskId": "01parent-two"
+    },
+    "revision": 1,
+    "status": "active",
+    "supersededBy": null,
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+    "upper": {
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "taskId": "01parent-task"
+    }
+   }
+  },
+  {
+   "ok": [
+    {
+     "link_id": "lnk-0a5110fd49dda6172d1dc0fed28ca52c",
+     "lower_key": "PROJ-2",
+     "lower_task_id": "01parent-two"
+    },
+    {
+     "link_id": "lnk-17fe34823302c1302c735eb1ffd28014",
+     "lower_key": "PROJ-1",
+     "lower_task_id": "01parent-task"
+    }
+   ]
+  },
+  {
+   "ok": {
+    "contention": [],
+    "gaps": [],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-supervisor"
+       },
+       "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/supervisor",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "supervisor",
+       "scopeKey": "INIT-1",
+       "scopeKind": "initiative",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01supervisor-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "INIT-1",
+      "scopeKind": "initiative"
+     },
+     {
+      "depth": 1,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-1",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     },
+     {
+      "depth": 1,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-6debc9f540166f9ab2f89f1129e0ca28",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-2",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-two",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-2",
+      "scopeKind": "project"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  },
+  {
+   "ok": {
+    "contention": [],
+    "gaps": [],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-1",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     },
+     {
+      "depth": 1,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-supervisor"
+       },
+       "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/supervisor",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "supervisor",
+       "scopeKey": "INIT-1",
+       "scopeKind": "initiative",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01supervisor-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "INIT-1",
+      "scopeKind": "initiative"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  },
+  {
+   "ok": [
+    {
+     "task_id": "01parent-task"
+    }
+   ]
+  },
+  {
+   "ok": [
+    {
+     "task_id": "01parent-two"
+    }
+   ]
+  }
+ ],
+ "lpr3_refusals": [
+  {
+   "refused": {
+    "detail": "project 'PROJ-1' is not its own peer",
+    "reason": "scope_cycle"
+   }
+  },
+  {
+   "refused": {
+    "detail": "task '01parent-three' is not the registered parent of project 'PROJ-2', which is held by '01parent-two'; a peer link joins two project parents",
+    "reason": "scope_role_mismatch"
+   }
+  },
+  {
+   "refused": {
+    "detail": "task '01parent-three' is not the registered parent of project 'PROJ-3', which has no registered parent; a peer link joins two project parents",
+    "reason": "scope_role_mismatch"
+   }
+  }
+ ],
+ "lpr4_linked": [
+  {
+   "ok": {
+    "counterpart": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-6debc9f540166f9ab2f89f1129e0ca28",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-2",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-two",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "currentOwner": null,
+    "findings": [],
+    "from": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "link": {
+     "kind": "peer",
+     "linkId": "lnk-e983eba862108d9c6fb632aff03036f1",
+     "revision": 1,
+     "status": "active"
+    },
+    "readable": true,
+    "state": "linked"
+   }
+  }
+ ],
+ "lpr5_other_scope_and_roles": [
+  {
+   "ok": {
+    "counterpart": null,
+    "currentOwner": null,
+    "findings": [
+     "foreign_scope",
+     "unregistered_link"
+    ],
+    "from": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "link": null,
+    "readable": true,
+    "state": "unlinked"
+   }
+  },
+  {
+   "ok": {
+    "counterpart": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "currentOwner": null,
+    "findings": [],
+    "from": {
+     "_bindings": {
+      "cxcSession": "cxc-supervisor"
+     },
+     "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/supervisor",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "supervisor",
+     "scopeKey": "INIT-1",
+     "scopeKind": "initiative",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01supervisor-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "link": {
+     "kind": "execution",
+     "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+     "revision": 1,
+     "status": "active"
+    },
+    "readable": true,
+    "state": "linked"
+   }
+  },
+  {
+   "ok": {
+    "counterpart": {
+     "_bindings": {
+      "cxcSession": "cxc-child"
+     },
+     "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/work",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "child",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01child-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "currentOwner": null,
+    "findings": [
+     "unregistered_link",
+     "wrong_role"
+    ],
+    "from": {
+     "_bindings": {
+      "cxcSession": "cxc-supervisor"
+     },
+     "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/supervisor",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "supervisor",
+     "scopeKey": "INIT-1",
+     "scopeKind": "initiative",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01supervisor-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "link": null,
+    "readable": true,
+    "state": "unlinked"
+   }
+  }
+ ],
+ "lpr5_recipient_replaced": [
+  {
+   "ok": {
+    "counterpart": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-cc503dfe3f97deee8f7cf30bee24608f",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": "the peer project changed hands",
+     "hostId": "host-a",
+     "revision": 2,
+     "role": "parent",
+     "scopeKey": "PROJ-2",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": "bnd-6debc9f540166f9ab2f89f1129e0ca28",
+     "taskId": "01parent-three",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "currentOwner": null,
+    "findings": [
+     "stale_revision"
+    ],
+    "from": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "link": {
+     "kind": "peer",
+     "linkId": "lnk-e983eba862108d9c6fb632aff03036f1",
+     "revision": 2,
+     "status": "active"
+    },
+    "readable": true,
+    "state": "linked"
+   }
+  },
+  {
+   "ok": {
+    "counterpart": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-6debc9f540166f9ab2f89f1129e0ca28",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-2",
+     "scopeKind": "project",
+     "status": "archived",
+     "supersededBy": "bnd-cc503dfe3f97deee8f7cf30bee24608f",
+     "supersedes": null,
+     "taskId": "01parent-two",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "currentOwner": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-cc503dfe3f97deee8f7cf30bee24608f",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": "the peer project changed hands",
+     "hostId": "host-a",
+     "revision": 2,
+     "role": "parent",
+     "scopeKey": "PROJ-2",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": "bnd-6debc9f540166f9ab2f89f1129e0ca28",
+     "taskId": "01parent-three",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "findings": [
+     "stale_owner"
+    ],
+    "from": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "link": {
+     "kind": "peer",
+     "linkId": "lnk-e983eba862108d9c6fb632aff03036f1",
+     "revision": 2,
+     "status": "active"
+    },
+    "readable": true,
+    "state": "linked"
+   }
+  }
+ ],
+ "lpr5_sender_replaced": [
+  {
+   "ok": {
+    "counterpart": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-6debc9f540166f9ab2f89f1129e0ca28",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-2",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-two",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "currentOwner": null,
+    "findings": [
+     "stale_sender"
+    ],
+    "from": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "archived",
+     "supersededBy": "bnd-132cf01232c3130781e7aadba31a651d",
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "link": {
+     "kind": "peer",
+     "linkId": "lnk-e983eba862108d9c6fb632aff03036f1",
+     "revision": 2,
+     "status": "active"
+    },
+    "readable": true,
+    "state": "linked"
+   }
+  }
+ ],
+ "lpr6_unregistered_and_unreadable": [
+  {
+   "ok": {
+    "counterpart": null,
+    "currentOwner": null,
+    "findings": [
+     "unregistered_link"
+    ],
+    "from": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "link": null,
+    "readable": true,
+    "state": "unlinked"
+   }
+  },
+  {
+   "ok": {
+    "counterpart": null,
+    "currentOwner": null,
+    "detail": "ProgrammingError: Cannot operate on a closed database.",
+    "findings": [],
+    "from": null,
+    "link": null,
+    "readable": false,
+    "state": "unreadable"
+   }
+  }
+ ],
+ "lqy1_three_levels": [
+  {
+   "ok": {
+    "contention": [],
+    "gaps": [],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-supervisor"
+       },
+       "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/supervisor",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "supervisor",
+       "scopeKey": "INIT-1",
+       "scopeKind": "initiative",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01supervisor-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "INIT-1",
+      "scopeKind": "initiative"
+     },
+     {
+      "depth": 1,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-1",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     },
+     {
+      "depth": 2,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-child"
+       },
+       "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/work",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "child",
+       "scopeKey": "REL-1",
+       "scopeKind": "issue",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01child-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "REL-1",
+      "scopeKind": "issue"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  },
+  {
+   "ok": {
+    "contention": [],
+    "gaps": [],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-child"
+       },
+       "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/work",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "child",
+       "scopeKey": "REL-1",
+       "scopeKind": "issue",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01child-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "REL-1",
+      "scopeKind": "issue"
+     },
+     {
+      "depth": 1,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-1",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     },
+     {
+      "depth": 2,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-supervisor"
+       },
+       "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/supervisor",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "supervisor",
+       "scopeKey": "INIT-1",
+       "scopeKind": "initiative",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01supervisor-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "INIT-1",
+      "scopeKind": "initiative"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  },
+  {
+   "ok": {
+    "contention": [],
+    "gaps": [],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-child"
+       },
+       "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/work",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "child",
+       "scopeKey": "REL-1",
+       "scopeKind": "issue",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01child-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "REL-1",
+      "scopeKind": "issue"
+     },
+     {
+      "depth": 1,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-1",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     },
+     {
+      "depth": 2,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-supervisor"
+       },
+       "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/supervisor",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "supervisor",
+       "scopeKey": "INIT-1",
+       "scopeKind": "initiative",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01supervisor-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "INIT-1",
+      "scopeKind": "initiative"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  }
+ ],
+ "lqy2_unreadable": [
+  {
+   "ok": {
+    "contention": [],
+    "detail": "ProgrammingError: Cannot operate on a closed database.",
+    "gaps": [],
+    "levels": [],
+    "readable": false,
+    "state": "unreadable"
+   }
+  },
+  {
+   "ok": {
+    "contention": [],
+    "detail": "ProgrammingError: Cannot operate on a closed database.",
+    "gaps": [],
+    "levels": [],
+    "readable": false,
+    "state": "unreadable"
+   }
+  }
+ ],
+ "lqy3_no_supervisor": [
+  {
+   "ok": {
+    "contention": [],
+    "gaps": [
+     {
+      "gap": "no_supervisor",
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-1",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  }
+ ],
+ "lqy3_project_without_parent": [
+  {
+   "ok": {
+    "contention": [],
+    "gaps": [
+     {
+      "gap": "project_without_parent",
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-supervisor"
+       },
+       "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/supervisor",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "supervisor",
+       "scopeKey": "INIT-1",
+       "scopeKind": "initiative",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01supervisor-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "INIT-1",
+      "scopeKind": "initiative"
+     },
+     {
+      "depth": 1,
+      "owner": null,
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  }
+ ],
+ "lqy3_unscoped_assignment": [
+  {
+   "ok": {
+    "contention": [],
+    "gaps": [
+     {
+      "gap": "unscoped_assignment",
+      "issueKey": "REL-1",
+      "relationshipId": null,
+      "taskId": null
+     }
+    ],
+    "levels": [],
+    "readable": true,
+    "state": "unregistered"
+   }
+  }
+ ],
+ "lqy4_instruction_pair": [
+  {
+   "ok": {
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "kind": "reference",
+    "linkId": "lnk-119b7cc12608dd24fcccbd6f0ae518fe",
+    "lower": {
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "taskId": "01parent-task"
+    },
+    "revision": 1,
+    "status": "active",
+    "supersededBy": null,
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+    "upper": {
+     "scopeKey": "INIT-2",
+     "scopeKind": "initiative",
+     "taskId": "01supervisor-two"
+    }
+   }
+  },
+  {
+   "ok": {
+    "decidedAt": null,
+    "decidedBy": null,
+    "digest": "d-one",
+    "directiveId": "dir-41ebcf5acb2ad8d09063077a355b4267",
+    "disposition": null,
+    "fromScopeKey": "INIT-1",
+    "fromTaskId": "01supervisor-task",
+    "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+    "linkKind": "execution",
+    "recordedAt": "2023-11-14T22:13:20.000000+00:00",
+    "reference": null,
+    "revision": 1,
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project"
+   }
+  },
+  {
+   "ok": {
+    "decidedAt": null,
+    "decidedBy": null,
+    "digest": "d-two",
+    "directiveId": "dir-725d6f843fe7ca1f71d6fc41e37fc832",
+    "disposition": null,
+    "fromScopeKey": "INIT-1",
+    "fromTaskId": "01supervisor-task",
+    "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+    "linkKind": "execution",
+    "recordedAt": "2023-11-14T22:13:20.000000+00:00",
+    "reference": null,
+    "revision": 1,
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project"
+   }
+  },
+  {
+   "ok": {
+    "contention": [
+     {
+      "contention": "instruction_conflict",
+      "digest": "d-one",
+      "directiveId": "dir-41ebcf5acb2ad8d09063077a355b4267",
+      "fromScopeKey": "INIT-1",
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     },
+     {
+      "contention": "instruction_conflict",
+      "digest": "d-two",
+      "directiveId": "dir-725d6f843fe7ca1f71d6fc41e37fc832",
+      "fromScopeKey": "INIT-1",
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "gaps": [],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-1",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  }
+ ],
+ "lqy4_owner_drift": [
+  {
+   "ok": {
+    "contention": [
+     {
+      "contention": "owner_drift",
+      "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+      "live": "01parent-two",
+      "recorded": "01parent-task"
+     }
+    ],
+    "gaps": [],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-supervisor"
+       },
+       "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/supervisor",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "supervisor",
+       "scopeKey": "INIT-1",
+       "scopeKind": "initiative",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01supervisor-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "INIT-1",
+      "scopeKind": "initiative"
+     },
+     {
+      "depth": 1,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-1",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-two",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  }
+ ],
+ "lqy4_recorded_conflict": [
+  {
+   "refused": {
+    "detail": "project 'PROJ-1' already has its execution supervisor under lnk-17fe34823302c1302c735eb1ffd28014 from initiative 'INIT-1'; another initiative references it instead of supervising it again",
+    "reason": "duplicate_scope_owner"
+   }
+  },
+  {
+   "ok": {
+    "contention": [
+     {
+      "at": "2023-11-14T22:13:20.000000+00:00",
+      "challenger": "INIT-9",
+      "detail": "project 'PROJ-1' already has its execution supervisor under lnk-17fe34823302c1302c735eb1ffd28014 from initiative 'INIT-1'; another initiative references it instead of supervising it again",
+      "incumbent": "INIT-1",
+      "reason": "duplicate_scope_owner",
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "gaps": [],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-1",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  }
+ ],
+ "lqy5_project_context": [
+  {
+   "ok": {
+    "parentOwnsProject": true,
+    "projectKey": "PROJ-1",
+    "projectParentTaskId": "01parent-task",
+    "responsibleChild": "01child-task",
+    "responsibleRelationship": "rel-46d5b5ac690ef861",
+    "scopeState": "scoped"
+   }
+  },
+  {
+   "ok": {
+    "parentOwnsProject": "<absent>",
+    "projectKey": null,
+    "projectParentTaskId": null,
+    "responsibleChild": "01child-task",
+    "responsibleRelationship": "rel-46d5b5ac690ef861",
+    "scopeState": "unreadable"
+   }
+  }
+ ],
+ "lqy5_unscoped": [
+  {
+   "ok": {
+    "parentOwnsProject": "<absent>",
+    "projectKey": null,
+    "projectParentTaskId": null,
+    "responsibleChild": "01child-task",
+    "responsibleRelationship": "rel-46d5b5ac690ef861",
+    "scopeState": "unscoped"
+   }
+  }
+ ],
+ "lrc1_existing_store": [
+  {
+   "ok": [
+    {
+     "child_task_id": "01child-task",
+     "execution_generation": 1,
+     "issue_key": "REL-1",
+     "parent_task_id": "01parent-task",
+     "relationship_id": "rel-46d5b5ac690ef861",
+     "status": "active"
+    }
+   ]
+  },
+  {
+   "ok": [
+    {
+     "anchor_state": "bound",
+     "dispatch_request_id": "dispatch-1",
+     "dispatch_turn_id": "turn-dispatch-1",
+     "execution_generation": 1,
+     "relationship_id": "rel-46d5b5ac690ef861"
+    }
+   ]
+  },
+  {
+   "ok": [
+    {
+     "event_id": "evt-legacy",
+     "outcome": "ready_for_review",
+     "relationship_id": "rel-46d5b5ac690ef861",
+     "revision_hash": "sha256:abc",
+     "stage": "accepted"
+    }
+   ]
+  },
+  {
+   "ok": [
+    {
+     "attempt_count": 1,
+     "event_id": "evt-legacy",
+     "hold_reason": null,
+     "kind": "completion",
+     "recipient_task_id": "01parent-task",
+     "relationship_id": "rel-46d5b5ac690ef861",
+     "state": "in_flight"
+    }
+   ]
+  },
+  {
+   "ok": [
+    {
+     "attempt_no": 1,
+     "event_id": "evt-legacy",
+     "internal_state": "transmitting",
+     "kind": "completion",
+     "request_id": "req-legacy",
+     "sealed": 0,
+     "state": null
+    }
+   ]
+  },
+  {
+   "ok": [
+    {
+     "child_task_id": "01child-task",
+     "execution_generation": 1,
+     "issue_key": "REL-1",
+     "parent_task_id": "01parent-task",
+     "relationship_id": "rel-46d5b5ac690ef861",
+     "status": "active"
+    }
+   ]
+  },
+  {
+   "ok": [
+    {
+     "anchor_state": "bound",
+     "dispatch_request_id": "dispatch-1",
+     "dispatch_turn_id": "turn-dispatch-1",
+     "execution_generation": 1,
+     "relationship_id": "rel-46d5b5ac690ef861"
+    }
+   ]
+  },
+  {
+   "ok": [
+    {
+     "event_id": "evt-legacy",
+     "outcome": "ready_for_review",
+     "relationship_id": "rel-46d5b5ac690ef861",
+     "revision_hash": "sha256:abc",
+     "stage": "accepted"
+    }
+   ]
+  },
+  {
+   "ok": [
+    {
+     "attempt_count": 1,
+     "event_id": "evt-legacy",
+     "hold_reason": null,
+     "kind": "completion",
+     "recipient_task_id": "01parent-task",
+     "relationship_id": "rel-46d5b5ac690ef861",
+     "state": "in_flight"
+    }
+   ]
+  },
+  {
+   "ok": [
+    {
+     "attempt_no": 1,
+     "event_id": "evt-legacy",
+     "internal_state": "transmitting",
+     "kind": "completion",
+     "request_id": "req-legacy",
+     "sealed": 0,
+     "state": null
+    }
+   ]
+  },
+  {
+   "ok": [
+    {
+     "name": "linkage_conflicts"
+    },
+    {
+     "name": "relationship_scope"
+    },
+    {
+     "name": "scope_bindings"
+    },
+    {
+     "name": "scope_directives"
+    },
+    {
+     "name": "scope_links"
+    }
+   ]
+  },
+  {
+   "ok": {
+    "child": {
+     "_bindings": {
+      "cxcSession": "cxc-child"
+     },
+     "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/work",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "child",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01child-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "contention": [],
+    "issueKey": "REL-1",
+    "link": {
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "kind": "execution",
+     "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+     "lower": {
+      "scopeKey": "REL-1",
+      "scopeKind": "issue",
+      "taskId": "01child-task"
+     },
+     "revision": 1,
+     "status": "active",
+     "supersededBy": null,
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+     "upper": {
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project",
+      "taskId": "01parent-task"
+     }
+    },
+    "parent": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "projectKey": "PROJ-1",
+    "relationshipId": "rel-46d5b5ac690ef861"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-child"
+    },
+    "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/work",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  }
+ ],
+ "lrc2_register_with_project": [
+  {
+   "ok": "rel-fde4cb9d4dd87fb0"
+  },
+  {
+   "ok": [
+    {
+     "project_key": "PROJ-1"
+    }
+   ]
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": null
+    },
+    "bindingId": "bnd-4c0dc3d9084dd050c06a7bfb30c3545d",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": null,
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-NEW",
+    "scopeKind": "issue",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "kind": "execution",
+    "linkId": "lnk-f789c4a604de8f1a0929140e8c993934",
+    "lower": {
+     "scopeKey": "REL-NEW",
+     "scopeKind": "issue",
+     "taskId": "01child-task"
+    },
+    "revision": 1,
+    "status": "active",
+    "supersededBy": null,
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+    "upper": {
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "taskId": "01parent-task"
+    }
+   }
+  }
+ ],
+ "lrc2_reregister": [
+  {
+   "ok": null
+  },
+  {
+   "ok": {
+    "executionGeneration": 1,
+    "issueKey": "REL-1",
+    "relationshipId": "rel-46d5b5ac690ef861",
+    "status": "active"
+   }
+  },
+  {
+   "ok": 1
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-child"
+    },
+    "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/work",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "child": {
+     "_bindings": {
+      "cxcSession": "cxc-child"
+     },
+     "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/work",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "child",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01child-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "contention": [],
+    "issueKey": "REL-1",
+    "link": {
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "kind": "execution",
+     "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+     "lower": {
+      "scopeKey": "REL-1",
+      "scopeKind": "issue",
+      "taskId": "01child-task"
+     },
+     "revision": 1,
+     "status": "active",
+     "supersededBy": null,
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+     "upper": {
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project",
+      "taskId": "01parent-task"
+     }
+    },
+    "parent": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "projectKey": "PROJ-1",
+    "relationshipId": "rel-46d5b5ac690ef861"
+   }
+  },
+  {
+   "refused": {
+    "detail": "'rel-46d5b5ac690ef861' is already scoped to project 'PROJ-1', not 'PROJ-2'",
+    "reason": "relationship_conflict"
+   }
+  }
+ ],
+ "lrc3_archive": [
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-child"
+    },
+    "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/work",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "archived",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "kind": "execution",
+    "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+    "lower": {
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "taskId": "01child-task"
+    },
+    "revision": 1,
+    "status": "archived",
+    "supersededBy": null,
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+    "upper": {
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "taskId": "01parent-task"
+    }
+   }
+  },
+  {
+   "ok": null
+  }
+ ],
+ "lrc3_replacement": [
+  {
+   "ok": "archived"
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": null
+    },
+    "bindingId": "bnd-829fd4469f60387fc7d6cce5149772b3",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": null,
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-two",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "kind": "execution",
+    "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+    "lower": {
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "taskId": "01child-two"
+    },
+    "revision": 2,
+    "status": "active",
+    "supersededBy": null,
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+    "upper": {
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "taskId": "01parent-task"
+    }
+   }
+  },
+  {
+   "ok": {
+    "child": {
+     "_bindings": {
+      "cxcSession": null
+     },
+     "bindingId": "bnd-829fd4469f60387fc7d6cce5149772b3",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": null,
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "child",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01child-two",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "contention": [],
+    "issueKey": "REL-1",
+    "link": {
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "kind": "execution",
+     "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+     "lower": {
+      "scopeKey": "REL-1",
+      "scopeKind": "issue",
+      "taskId": "01child-two"
+     },
+     "revision": 2,
+     "status": "active",
+     "supersededBy": null,
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+     "upper": {
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project",
+      "taskId": "01parent-task"
+     }
+    },
+    "parent": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "projectKey": "PROJ-1",
+    "relationshipId": "rel-3cd86f8e43cdb471"
+   }
+  }
+ ],
+ "lrc3_resume": [
+  {
+   "ok": null
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-child"
+    },
+    "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/work",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "kind": "execution",
+    "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+    "lower": {
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "taskId": "01child-task"
+    },
+    "revision": 1,
+    "status": "active",
+    "supersededBy": null,
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+    "upper": {
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "taskId": "01parent-task"
+    }
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-child"
+    },
+    "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/work",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  }
+ ],
+ "lrc3_unscoped": [
+  {
+   "ok": []
+  },
+  {
+   "ok": []
+  }
+ ],
+ "lrc4_failure_partway": [
+  {
+   "ok": null
+  },
+  {
+   "ok": [
+    {
+     "project_key": "PROJ-1",
+     "relationship_id": "rel-46d5b5ac690ef861"
+    }
+   ]
+  },
+  {
+   "ok": []
+  },
+  {
+   "ok": null
+  },
+  {
+   "ok": null
+  },
+  {
+   "ok": {
+    "child": {
+     "_bindings": {
+      "cxcSession": "cxc-child"
+     },
+     "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/work",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "child",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01child-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "contention": [],
+    "issueKey": "REL-1",
+    "link": {
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "kind": "execution",
+     "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+     "lower": {
+      "scopeKey": "REL-1",
+      "scopeKind": "issue",
+      "taskId": "01child-task"
+     },
+     "revision": 1,
+     "status": "active",
+     "supersededBy": null,
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+     "upper": {
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project",
+      "taskId": "01parent-task"
+     }
+    },
+    "parent": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "projectKey": "PROJ-1",
+    "relationshipId": "rel-46d5b5ac690ef861"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-child"
+    },
+    "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/work",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  }
+ ],
+ "lrc4_half_written": [
+  {
+   "ok": {
+    "contention": [],
+    "gaps": [
+     {
+      "gap": "issue_without_child",
+      "scopeKey": "REL-1",
+      "scopeKind": "issue"
+     }
+    ],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": null,
+      "scopeKey": "REL-1",
+      "scopeKind": "issue"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  }
+ ],
+ "lrc4_refused_supervision": [
+  {
+   "refused": {
+    "detail": "task '01parent-two' is already the child of issue 'ISS-OTHER', so it cannot also be a parent",
+    "reason": "scope_role_mismatch"
+   }
+  },
+  {
+   "ok": null
+  },
+  {
+   "ok": [
+    {
+     "scope_key": "ISS-OTHER"
+    }
+   ]
+  },
+  {
+   "ok": []
+  },
+  {
+   "ok": [
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "01parent-two",
+     "detail": "task '01parent-two' is already the child of issue 'ISS-OTHER', so it cannot also be a parent",
+     "id": 1,
+     "incumbent": "ISS-OTHER",
+     "reason": "scope_role_mismatch",
+     "scope_key": "PROJ-1",
+     "scope_kind": "project"
+    }
+   ]
+  }
+ ],
+ "lrc5_concurrent_attach": [
+  {
+   "ok": {
+    "refusals": [
+     "foreign_scope"
+    ],
+    "rows": 1,
+    "wins": 1
+   }
+  }
+ ]
+}

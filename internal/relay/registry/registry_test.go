@@ -1,7 +1,10 @@
 package registry
 
 import (
+	"context"
 	"database/sql"
+	"errors"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -346,6 +349,77 @@ func Test25_REG11_a_stale_resume_never_leaves_the_newer_generation_active(t *tes
 		}
 		if staleErr != nil {
 			mustReason(t, staleErr, contract.RefusalRelationshipNotActive)
+		}
+	}
+}
+
+// Test27_MRS_3_RealAttachFailureRollsBackRegistration exercises the actual attach update.
+// The request passes the pre-insert guard, but SQLite ignores the attach update itself.
+func Test27_MRS_3_RealAttachFailureRollsBackRegistration(t *testing.T) {
+	ctx := context.Background()
+	r := newRegistry(t)
+	s := r.Store
+	in := fixture()
+	in.ManagedRequestID = "managed-attach-failure"
+	if err := s.ReserveManagedStart(ctx, store.ManagedStartRequestsRow{
+		RequestID: in.ManagedRequestID, IssueKey: in.IssueKey, RequestFingerprint: "fingerprint",
+		FingerprintVersion: "1", Workspace: "/work", MarkerRoot: "/markers",
+		SocketIdentity: "/socket", CreateRequestID: "create", DispatchRequestID: in.DispatchRequestID,
+		CreatedAt: fakeISO, UpdatedAt: fakeISO,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	armed, err := s.ArmManagedStart(ctx, in.ManagedRequestID, 0, fakeISO)
+	if err != nil || !armed {
+		t.Fatalf("arm request: changed=%v err=%v", armed, err)
+	}
+	if err := s.RecordManagedStartReceipt(ctx, in.ManagedRequestID, "accepted", ns(in.Child.TaskID), in.DispatchTurnID, fakeISO); err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.ManagedStartRequest(ctx, in.ManagedRequestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The guard sees a valid armed receipt; only the real AttachManagedStart UPDATE fails.
+	if _, err := s.DB.ExecContext(ctx, `CREATE TRIGGER ignore_managed_attach BEFORE UPDATE OF state ON managed_start_requests
+		WHEN NEW.state = 'attached' BEGIN SELECT RAISE(IGNORE); END`); err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.Register(ctx, in)
+	mustReason(t, err, contract.RefusalRelationshipConflict)
+	for _, table := range []string{"relationships", "generations", "journal"} {
+		var count int
+		if err := s.DB.QueryRowContext(ctx, "SELECT count(*) FROM "+table).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("%s count=%d err=%v", table, count, err)
+		}
+	}
+	after, err := s.ManagedStartRequest(ctx, in.ManagedRequestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("reservation changed: before=%+v after=%+v", before, after)
+	}
+}
+
+// Test27_MRS_3_AttachFailureRollsBackRegistration pins the attach to the write transaction.
+func Test27_MRS_3_AttachFailureRollsBackRegistration(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	r := &Registry{Store: s, beforeManagedAttach: func() error { return errors.New("injected attach failure") }}
+	// The hook follows the relationship and generation inserts, but precedes attach.
+	_, err = r.Register(ctx, Registration{Parent: Endpoint{TaskID: "parent", HostID: "host"}, Child: Endpoint{TaskID: "child", HostID: "host"}, IssueKey: "issue", ArtifactRoots: []string{"/tmp"}, AllowedRecipients: []string{"parent"}, DispatchRequestID: "dispatch"})
+	if err == nil || !strings.Contains(err.Error(), "injected attach failure") {
+		t.Fatalf("attach failure: %v", err)
+	}
+	for _, table := range []string{"relationships", "generations", "journal"} {
+		var count int
+		if err := s.DB.QueryRowContext(ctx, "SELECT count(*) FROM "+table).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("%s count=%d err=%v", table, count, err)
 		}
 	}
 }

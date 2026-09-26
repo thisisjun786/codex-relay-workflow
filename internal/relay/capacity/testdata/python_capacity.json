@@ -1,0 +1,435 @@
+{
+ "cap1": [
+  {
+   "ok": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": true\n}"
+  },
+  {
+   "ok": "{\n  \"held\": [\n    {\n      \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-1\",\n      \"parentTaskId\": \"task-alpha\",\n      \"projectKey\": \"PRJ-A\",\n      \"initiativeKey\": \"INIT-1\",\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-alpha\",\n      \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    }\n  ],\n  \"total\": 1,\n  \"perParent\": {\n    \"task-alpha\": 1\n  },\n  \"staleSlots\": []\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"released\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedBy\": \"task-alpha\",\n  \"releaseReason\": \"completed\",\n  \"detail\": null,\n  \"alreadyReleased\": false\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"released\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedBy\": \"task-alpha\",\n  \"releaseReason\": \"completed\",\n  \"detail\": null,\n  \"alreadyReleased\": true\n}"
+  },
+  {
+   "ok": "{\n  \"held\": [],\n  \"total\": 0,\n  \"perParent\": {},\n  \"staleSlots\": []\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-d66a7d2488ab00bb8fe7750260c23e37\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-2\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-d66a7d2488ab00bb8fe7750260c23e37\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-2\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"released\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedBy\": \"task-alpha\",\n  \"releaseReason\": \"completed\",\n  \"detail\": null,\n  \"alreadyReleased\": false\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-d66a7d2488ab00bb8fe7750260c23e37\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-2\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"released\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedBy\": \"task-alpha\",\n  \"releaseReason\": \"completed\",\n  \"detail\": null,\n  \"alreadyReleased\": true\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-d66a7d2488ab00bb8fe7750260c23e37\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-2\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"released\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedBy\": \"task-alpha\",\n  \"releaseReason\": \"completed\",\n  \"detail\": null,\n  \"alreadyReleased\": true\n}"
+  },
+  {
+   "ok": "[\n  {\n    \"slot_id\": \"slt-d66a7d2488ab00bb8fe7750260c23e37\",\n    \"subject_kind\": \"assignment\",\n    \"subject_key\": \"REL-2\",\n    \"parent_task_id\": \"task-alpha\",\n    \"project_key\": \"PRJ-A\",\n    \"initiative_key\": \"INIT-1\",\n    \"tenure\": 1,\n    \"state\": \"released\",\n    \"reserved_by\": \"task-alpha\",\n    \"reserved_at\": \"2023-11-14T22:13:20.000000+00:00\",\n    \"released_at\": \"2023-11-14T22:13:20.000000+00:00\",\n    \"released_by\": \"task-alpha\",\n    \"release_reason\": \"completed\",\n    \"detail\": null\n  }\n]"
+  },
+  {
+   "ok": "[\n  {\n    \"kind\": \"slot_reserved\",\n    \"subject\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n    \"detail\": \"{\\\"subjectKey\\\": \\\"REL-1\\\", \\\"parentTaskId\\\": \\\"task-alpha\\\", \\\"tenure\\\": 1}\"\n  },\n  {\n    \"kind\": \"slot_released\",\n    \"subject\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n    \"detail\": \"{\\\"subjectKey\\\": \\\"REL-1\\\", \\\"reason\\\": \\\"completed\\\"}\"\n  },\n  {\n    \"kind\": \"slot_reserved\",\n    \"subject\": \"slt-d66a7d2488ab00bb8fe7750260c23e37\",\n    \"detail\": \"{\\\"subjectKey\\\": \\\"REL-2\\\", \\\"parentTaskId\\\": \\\"task-alpha\\\", \\\"tenure\\\": 1}\"\n  },\n  {\n    \"kind\": \"slot_released\",\n    \"subject\": \"slt-d66a7d2488ab00bb8fe7750260c23e37\",\n    \"detail\": \"{\\\"subjectKey\\\": \\\"REL-2\\\", \\\"reason\\\": \\\"completed\\\"}\"\n  }\n]"
+  }
+ ],
+ "cap2": [
+  {
+   "ok": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"released\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedBy\": \"task-alpha\",\n  \"releaseReason\": \"completed\",\n  \"detail\": null,\n  \"alreadyReleased\": false\n}"
+  },
+  {
+   "refused": {
+    "detail": "slot 'slt-51fd729f21bb74f9348ef120d1ba0593' was released as 'completed' by 'task-alpha'; a later notification restates that reason rather than replacing it",
+    "reason": "disposition_conflict"
+   }
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"released\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedBy\": \"task-alpha\",\n  \"releaseReason\": \"completed\",\n  \"detail\": null\n}"
+  },
+  {
+   "ok": "[\n  {\n    \"at\": \"2023-11-14T22:13:20.000000+00:00\",\n    \"domain\": \"execution_subject\",\n    \"subject\": \"REL-1\",\n    \"reason\": \"disposition_conflict\",\n    \"detail\": \"slot 'slt-51fd729f21bb74f9348ef120d1ba0593' was released as 'completed' by 'task-alpha'; a later notification restates that reason rather than replacing it\",\n    \"incumbent\": \"completed\",\n    \"challenger\": \"failed\"\n  }\n]"
+  },
+  {
+   "refused": {
+    "detail": "no slot was ever reserved for assignment 'REL-NEVER'",
+    "reason": "slot_unknown"
+   }
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-d66a7d2488ab00bb8fe7750260c23e37\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-2\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}"
+  },
+  {
+   "refused": {
+    "detail": "'REL-2' is already held by 'task-alpha' for project 'PRJ-A', not by 'task-beta' for 'PRJ-B'",
+    "reason": "disposition_conflict"
+   }
+  },
+  {
+   "ok": "[\n  {\n    \"at\": \"2023-11-14T22:13:20.000000+00:00\",\n    \"domain\": \"execution_subject\",\n    \"subject\": \"REL-2\",\n    \"reason\": \"disposition_conflict\",\n    \"detail\": \"'REL-2' is already held by 'task-alpha' for project 'PRJ-A', not by 'task-beta' for 'PRJ-B'\",\n    \"incumbent\": \"task-alpha\",\n    \"challenger\": \"task-beta\"\n  }\n]"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-84c914eca5c452b9d1142cac7b86a55b\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 2,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}"
+  },
+  {
+   "refused": {
+    "detail": "assignment 'REL-1' has tenures [2, 1]; name the one this release settles, because the newest is not necessarily the one a delayed notification is about",
+    "reason": "disposition_conflict"
+   }
+  },
+  {
+   "ok": "{\n  \"held\": [\n    {\n      \"slotId\": \"slt-84c914eca5c452b9d1142cac7b86a55b\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-1\",\n      \"parentTaskId\": \"task-alpha\",\n      \"projectKey\": \"PRJ-A\",\n      \"initiativeKey\": \"INIT-1\",\n      \"tenure\": 2,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-alpha\",\n      \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    },\n    {\n      \"slotId\": \"slt-d66a7d2488ab00bb8fe7750260c23e37\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-2\",\n      \"parentTaskId\": \"task-alpha\",\n      \"projectKey\": \"PRJ-A\",\n      \"initiativeKey\": \"INIT-1\",\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-alpha\",\n      \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    }\n  ],\n  \"total\": 2,\n  \"perParent\": {\n    \"task-alpha\": 2\n  },\n  \"staleSlots\": []\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"released\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedBy\": \"task-alpha\",\n  \"releaseReason\": \"completed\",\n  \"detail\": null,\n  \"alreadyReleased\": true\n}"
+  },
+  {
+   "ok": "{\n  \"held\": [\n    {\n      \"slotId\": \"slt-84c914eca5c452b9d1142cac7b86a55b\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-1\",\n      \"parentTaskId\": \"task-alpha\",\n      \"projectKey\": \"PRJ-A\",\n      \"initiativeKey\": \"INIT-1\",\n      \"tenure\": 2,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-alpha\",\n      \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    },\n    {\n      \"slotId\": \"slt-d66a7d2488ab00bb8fe7750260c23e37\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-2\",\n      \"parentTaskId\": \"task-alpha\",\n      \"projectKey\": \"PRJ-A\",\n      \"initiativeKey\": \"INIT-1\",\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-alpha\",\n      \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    }\n  ],\n  \"total\": 2,\n  \"perParent\": {\n    \"task-alpha\": 2\n  },\n  \"staleSlots\": []\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-84c914eca5c452b9d1142cac7b86a55b\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 2,\n  \"state\": \"released\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedBy\": \"task-alpha\",\n  \"releaseReason\": \"completed\",\n  \"detail\": null,\n  \"alreadyReleased\": false\n}"
+  },
+  {
+   "ok": "{\n  \"held\": [\n    {\n      \"slotId\": \"slt-d66a7d2488ab00bb8fe7750260c23e37\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-2\",\n      \"parentTaskId\": \"task-alpha\",\n      \"projectKey\": \"PRJ-A\",\n      \"initiativeKey\": \"INIT-1\",\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-alpha\",\n      \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    }\n  ],\n  \"total\": 1,\n  \"perParent\": {\n    \"task-alpha\": 1\n  },\n  \"staleSlots\": []\n}"
+  },
+  {
+   "refused": {
+    "detail": "no slot was ever reserved for assignment 'REL-1'",
+    "reason": "slot_unknown"
+   }
+  }
+ ],
+ "cap3": [
+  {
+   "ok": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"released\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedBy\": \"task-alpha\",\n  \"releaseReason\": \"completed\",\n  \"detail\": null,\n  \"alreadyReleased\": false\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-84c914eca5c452b9d1142cac7b86a55b\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 2,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}"
+  },
+  {
+   "ok": "[\n  {\n    \"tenure\": 1,\n    \"state\": \"released\",\n    \"release_reason\": \"completed\"\n  },\n  {\n    \"tenure\": 2,\n    \"state\": \"held\",\n    \"release_reason\": null\n  }\n]"
+  },
+  {
+   "ok": "{\n  \"held\": [\n    {\n      \"slotId\": \"slt-84c914eca5c452b9d1142cac7b86a55b\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-1\",\n      \"parentTaskId\": \"task-alpha\",\n      \"projectKey\": \"PRJ-A\",\n      \"initiativeKey\": \"INIT-1\",\n      \"tenure\": 2,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-alpha\",\n      \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    }\n  ],\n  \"total\": 1,\n  \"perParent\": {\n    \"task-alpha\": 1\n  },\n  \"staleSlots\": []\n}"
+  }
+ ],
+ "cap4": [
+  {
+   "ok": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}"
+  },
+  {
+   "refused": {
+    "detail": "slot 'slt-51fd729f21bb74f9348ef120d1ba0593' is held by 'task-alpha', so 'task-beta' cannot release it",
+    "reason": "scope_role_mismatch"
+   }
+  },
+  {
+   "ok": "{\n  \"held\": [\n    {\n      \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-1\",\n      \"parentTaskId\": \"task-alpha\",\n      \"projectKey\": \"PRJ-A\",\n      \"initiativeKey\": \"INIT-1\",\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-alpha\",\n      \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    }\n  ],\n  \"total\": 1,\n  \"perParent\": {\n    \"task-alpha\": 1\n  },\n  \"staleSlots\": []\n}"
+  },
+  {
+   "refused": {
+    "detail": "task 'task-beta' is not the registered parent of project 'PRJ-A', which is held by 'task-alpha'",
+    "reason": "scope_role_mismatch"
+   }
+  },
+  {
+   "ok": "[\n  {\n    \"at\": \"2023-11-14T22:13:20.000000+00:00\",\n    \"domain\": \"execution_subject\",\n    \"subject\": \"REL-2\",\n    \"reason\": \"scope_role_mismatch\",\n    \"detail\": \"task 'task-beta' is not the registered parent of project 'PRJ-A', which is held by 'task-alpha'\",\n    \"incumbent\": \"task-alpha\",\n    \"challenger\": \"task-beta\"\n  }\n]"
+  },
+  {
+   "refused": {
+    "detail": "project 'PRJ-NONE' has no registered parent",
+    "reason": "unregistered_scope"
+   }
+  },
+  {
+   "ok": "[\n  {\n    \"at\": \"2023-11-14T22:13:20.000000+00:00\",\n    \"domain\": \"execution_subject\",\n    \"subject\": \"REL-3\",\n    \"reason\": \"unregistered_scope\",\n    \"detail\": \"project 'PRJ-NONE' has no registered parent\",\n    \"incumbent\": null,\n    \"challenger\": \"task-alpha\"\n  }\n]"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"released\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedBy\": \"task-supervisor\",\n  \"releaseReason\": \"parent stopped answering\",\n  \"detail\": null,\n  \"alreadyReleased\": false\n}"
+  },
+  {
+   "refused": {
+    "detail": "task 'task-stranger' is not the registered parent of project 'PRJ-A', which is held by 'task-alpha', so it cannot state a bound for it",
+    "reason": "scope_role_mismatch"
+   }
+  },
+  {
+   "refused": {
+    "detail": "task 'task-stranger' is not the registered supervisor of initiative 'INIT-1', which is held by 'task-supervisor', so it cannot state a bound for it",
+    "reason": "scope_role_mismatch"
+   }
+  },
+  {
+   "refused": {
+    "detail": "task 'task-stranger' holds no live supervisor binding, and the store scope has no owner of its own to speak for it",
+    "reason": "scope_role_mismatch"
+   }
+  },
+  {
+   "refused": {
+    "detail": "task 'task-stranger' is not the registered parent of project 'PRJ-A', which is held by 'task-alpha', so it cannot state a bound for it",
+    "reason": "scope_role_mismatch"
+   }
+  },
+  {
+   "ok": "{\n  \"dimension\": \"runs\",\n  \"unit\": \"runs\",\n  \"ceiling\": 9.0,\n  \"used\": 0,\n  \"proof\": \"derived_from_slots\",\n  \"state\": \"within\",\n  \"enforce\": true,\n  \"revision\": 1,\n  \"declaredBy\": \"task-supervisor\",\n  \"source\": \"operator\",\n  \"overBy\": 0,\n  \"note\": null,\n  \"limitId\": \"lim-eaa32d632a22e130ce3109c26f1758e2\"\n}"
+  },
+  {
+   "ok": "{\n  \"scopeKind\": \"initiative\",\n  \"scopeKey\": \"INIT-1\",\n  \"dimensions\": [\n    {\n      \"dimension\": \"runs\",\n      \"unit\": \"runs\",\n      \"ceiling\": 9.0,\n      \"used\": 0,\n      \"proof\": \"derived_from_slots\",\n      \"state\": \"within\",\n      \"enforce\": true,\n      \"revision\": 1,\n      \"declaredBy\": \"task-supervisor\",\n      \"source\": \"operator\",\n      \"overBy\": 0,\n      \"note\": null\n    }\n  ]\n}"
+  }
+ ],
+ "cap5": [
+  {
+   "refused": {
+    "detail": "runs is derived from held slots and is never observed; recording one would put a second, disagreeing figure beside the counted one",
+    "reason": "link_not_active"
+   }
+  },
+  {
+   "refused": {
+    "detail": "a usage scope is one of initiative, project, store, not 'galaxy'",
+    "reason": "link_not_active"
+   }
+  },
+  {
+   "refused": {
+    "detail": "a ceiling is a finite number of zero or more, not nan",
+    "reason": "link_not_active"
+   }
+  },
+  {
+   "refused": {
+    "detail": "a ceiling is a finite number of zero or more, not inf",
+    "reason": "link_not_active"
+   }
+  },
+  {
+   "refused": {
+    "detail": "a ceiling is a finite number of zero or more, not -1.0",
+    "reason": "link_not_active"
+   }
+  },
+  {
+   "refused": {
+    "detail": "an observation is a finite number of zero or more, not nan",
+    "reason": "link_not_active"
+   }
+  },
+  {
+   "refused": {
+    "detail": "the store scope has one key, 'store', not 'global'; enforcement reads that key and a ceiling under any other would be recorded and never applied",
+    "reason": "link_not_active"
+   }
+  },
+  {
+   "refused": {
+    "detail": "a limit scope is one of initiative, project, store, not 'galaxy'",
+    "reason": "link_not_active"
+   }
+  },
+  {
+   "refused": {
+    "detail": "a dimension must not contain '|', which is the field separator",
+    "reason": "unregistered_scope"
+   }
+  },
+  {
+   "refused": {
+    "detail": "a measurement method must be a non-empty string, not ' '",
+    "reason": "unregistered_scope"
+   }
+  },
+  {
+   "refused": {
+    "detail": "a dimension must not contain '|', which is the field separator",
+    "reason": "unregistered_scope"
+   }
+  },
+  {
+   "ok": "[\n  {\n    \"n\": 0\n  }\n]"
+  }
+ ],
+ "cap6": [
+  {
+   "ok": "{\n  \"dimension\": \"runs\",\n  \"unit\": \"runs\",\n  \"ceiling\": 1.0,\n  \"used\": 0,\n  \"proof\": \"derived_from_slots\",\n  \"state\": \"within\",\n  \"enforce\": true,\n  \"revision\": 1,\n  \"declaredBy\": \"task-alpha\",\n  \"source\": \"operator\",\n  \"overBy\": 0,\n  \"note\": null,\n  \"limitId\": \"lim-0745b1e7b71024856bf58a0376a1b5a6\"\n}"
+  },
+  {
+   "ok": "{\n  \"dimension\": \"runs\",\n  \"unit\": \"runs\",\n  \"ceiling\": 3.0,\n  \"used\": 0,\n  \"proof\": \"derived_from_slots\",\n  \"state\": \"within\",\n  \"enforce\": true,\n  \"revision\": 1,\n  \"declaredBy\": \"task-supervisor\",\n  \"source\": \"operator\",\n  \"overBy\": 0,\n  \"note\": null,\n  \"limitId\": \"lim-d863bfd722bfd40cb23e0c3a1a51fe6f\"\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}"
+  },
+  {
+   "refused": {
+    "detail": "project 'PRJ-A' already holds 1 of 1.0 runs",
+    "reason": "capacity_exhausted"
+   }
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-ca03c7e0c6b77a98de822c45d4b27b5d\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-3\",\n  \"parentTaskId\": \"task-beta\",\n  \"projectKey\": \"PRJ-B\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-beta\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}"
+  },
+  {
+   "ok": "{\n  \"held\": [\n    {\n      \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-1\",\n      \"parentTaskId\": \"task-alpha\",\n      \"projectKey\": \"PRJ-A\",\n      \"initiativeKey\": \"INIT-1\",\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-alpha\",\n      \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    },\n    {\n      \"slotId\": \"slt-ca03c7e0c6b77a98de822c45d4b27b5d\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-3\",\n      \"parentTaskId\": \"task-beta\",\n      \"projectKey\": \"PRJ-B\",\n      \"initiativeKey\": \"INIT-1\",\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-beta\",\n      \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    }\n  ],\n  \"total\": 2,\n  \"perParent\": {\n    \"task-alpha\": 1,\n    \"task-beta\": 1\n  },\n  \"staleSlots\": []\n}"
+  },
+  {
+   "ok": "[\n  {\n    \"at\": \"2023-11-14T22:13:20.000000+00:00\",\n    \"domain\": \"execution_subject\",\n    \"subject\": \"REL-2\",\n    \"reason\": \"capacity_exhausted\",\n    \"detail\": \"project 'PRJ-A' already holds 1 of 1.0 runs\",\n    \"incumbent\": \"PRJ-A\",\n    \"challenger\": \"task-alpha\"\n  }\n]"
+  },
+  {
+   "ok": "{\n  \"scopeKind\": \"store\",\n  \"scopeKey\": \"store\",\n  \"dimensions\": [\n    {\n      \"dimension\": \"runs\",\n      \"unit\": \"runs\",\n      \"ceiling\": 3.0,\n      \"used\": 2,\n      \"proof\": \"derived_from_slots\",\n      \"state\": \"within\",\n      \"enforce\": true,\n      \"revision\": 1,\n      \"declaredBy\": \"task-supervisor\",\n      \"source\": \"operator\",\n      \"overBy\": 0,\n      \"note\": null\n    }\n  ]\n}"
+  }
+ ],
+ "cap6_lowered": [
+  {
+   "ok": "{\n  \"dimension\": \"runs\",\n  \"unit\": \"runs\",\n  \"ceiling\": 5.0,\n  \"used\": 0,\n  \"proof\": \"derived_from_slots\",\n  \"state\": \"within\",\n  \"enforce\": true,\n  \"revision\": 1,\n  \"declaredBy\": \"task-alpha\",\n  \"source\": \"operator\",\n  \"overBy\": 0,\n  \"note\": null,\n  \"limitId\": \"lim-0745b1e7b71024856bf58a0376a1b5a6\"\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-d66a7d2488ab00bb8fe7750260c23e37\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-2\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-ca03c7e0c6b77a98de822c45d4b27b5d\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-3\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}"
+  },
+  {
+   "ok": "{\n  \"dimension\": \"runs\",\n  \"unit\": \"runs\",\n  \"ceiling\": 1.0,\n  \"used\": 3,\n  \"proof\": \"derived_from_slots\",\n  \"state\": \"over_ceiling\",\n  \"enforce\": true,\n  \"revision\": 2,\n  \"declaredBy\": \"task-alpha\",\n  \"source\": \"operator\",\n  \"overBy\": 2.0,\n  \"note\": null,\n  \"limitId\": \"lim-0745b1e7b71024856bf58a0376a1b5a6\"\n}"
+  },
+  {
+   "ok": "{\n  \"held\": [\n    {\n      \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-1\",\n      \"parentTaskId\": \"task-alpha\",\n      \"projectKey\": \"PRJ-A\",\n      \"initiativeKey\": \"INIT-1\",\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-alpha\",\n      \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    },\n    {\n      \"slotId\": \"slt-ca03c7e0c6b77a98de822c45d4b27b5d\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-3\",\n      \"parentTaskId\": \"task-alpha\",\n      \"projectKey\": \"PRJ-A\",\n      \"initiativeKey\": \"INIT-1\",\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-alpha\",\n      \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    },\n    {\n      \"slotId\": \"slt-d66a7d2488ab00bb8fe7750260c23e37\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-2\",\n      \"parentTaskId\": \"task-alpha\",\n      \"projectKey\": \"PRJ-A\",\n      \"initiativeKey\": \"INIT-1\",\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-alpha\",\n      \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    }\n  ],\n  \"total\": 3,\n  \"perParent\": {\n    \"task-alpha\": 3\n  },\n  \"staleSlots\": []\n}"
+  },
+  {
+   "refused": {
+    "detail": "project 'PRJ-A' already holds 3 of 1.0 runs",
+    "reason": "capacity_exhausted"
+   }
+  },
+  {
+   "ok": "[\n  {\n    \"kind\": \"execution_limit_declared\",\n    \"subject\": \"lim-0745b1e7b71024856bf58a0376a1b5a6\",\n    \"detail\": \"{\\\"dimension\\\": \\\"runs\\\", \\\"ceiling\\\": 5.0, \\\"previousCeiling\\\": null, \\\"revision\\\": 1}\"\n  },\n  {\n    \"kind\": \"execution_limit_declared\",\n    \"subject\": \"lim-0745b1e7b71024856bf58a0376a1b5a6\",\n    \"detail\": \"{\\\"dimension\\\": \\\"runs\\\", \\\"ceiling\\\": 1.0, \\\"previousCeiling\\\": 5.0, \\\"revision\\\": 2}\"\n  }\n]"
+  }
+ ],
+ "cap6_store": [
+  {
+   "ok": "{\n  \"dimension\": \"runs\",\n  \"unit\": \"runs\",\n  \"ceiling\": 1.0,\n  \"used\": 0,\n  \"proof\": \"derived_from_slots\",\n  \"state\": \"within\",\n  \"enforce\": true,\n  \"revision\": 1,\n  \"declaredBy\": \"task-supervisor\",\n  \"source\": \"operator\",\n  \"overBy\": 0,\n  \"note\": null,\n  \"limitId\": \"lim-d863bfd722bfd40cb23e0c3a1a51fe6f\"\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}"
+  },
+  {
+   "refused": {
+    "detail": "store 'store' already holds 1 of 1.0 runs",
+    "reason": "capacity_exhausted"
+   }
+  }
+ ],
+ "cap6_unenforced": [
+  {
+   "ok": "{\n  \"dimension\": \"model_cost\",\n  \"unit\": \"usd\",\n  \"ceiling\": 1.0,\n  \"used\": null,\n  \"proof\": \"unmeasured\",\n  \"state\": \"unmeasured\",\n  \"enforce\": false,\n  \"revision\": 1,\n  \"declaredBy\": \"task-alpha\",\n  \"source\": \"operator\",\n  \"overBy\": 0,\n  \"note\": \"a slot count is not a measurement of this dimension\",\n  \"limitId\": \"lim-5b04e9e44650c1a5cf29601de35962bc\"\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}"
+  },
+  {
+   "ok": "{\n  \"scopeKind\": \"project\",\n  \"scopeKey\": \"PRJ-A\",\n  \"dimensions\": [\n    {\n      \"dimension\": \"model_cost\",\n      \"unit\": \"usd\",\n      \"ceiling\": 1.0,\n      \"used\": null,\n      \"proof\": \"unmeasured\",\n      \"state\": \"unmeasured\",\n      \"enforce\": false,\n      \"revision\": 1,\n      \"declaredBy\": \"task-alpha\",\n      \"source\": \"operator\",\n      \"overBy\": 0,\n      \"note\": \"a slot count is not a measurement of this dimension\"\n    }\n  ]\n}"
+  }
+ ],
+ "cap7": [
+  {
+   "ok": "{\n  \"dimension\": \"file_descriptors\",\n  \"unit\": \"fds\",\n  \"ceiling\": 100.0,\n  \"used\": null,\n  \"proof\": \"unmeasured\",\n  \"state\": \"unmeasured\",\n  \"enforce\": false,\n  \"revision\": 1,\n  \"declaredBy\": \"task-alpha\",\n  \"source\": \"operator\",\n  \"overBy\": 0,\n  \"note\": \"a slot count is not a measurement of this dimension\",\n  \"limitId\": \"lim-a14742a3221f92d4475b5a673b5f6023\"\n}"
+  },
+  {
+   "ok": "{\n  \"scopeKind\": \"project\",\n  \"scopeKey\": \"PRJ-A\",\n  \"dimensions\": [\n    {\n      \"dimension\": \"file_descriptors\",\n      \"unit\": \"fds\",\n      \"ceiling\": 100.0,\n      \"used\": null,\n      \"proof\": \"unmeasured\",\n      \"state\": \"unmeasured\",\n      \"enforce\": false,\n      \"revision\": 1,\n      \"declaredBy\": \"task-alpha\",\n      \"source\": \"operator\",\n      \"overBy\": 0,\n      \"note\": \"a slot count is not a measurement of this dimension\"\n    }\n  ]\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-d66a7d2488ab00bb8fe7750260c23e37\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-2\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-ca03c7e0c6b77a98de822c45d4b27b5d\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-3\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}"
+  },
+  {
+   "ok": "{\n  \"scopeKind\": \"project\",\n  \"scopeKey\": \"PRJ-A\",\n  \"dimensions\": [\n    {\n      \"dimension\": \"file_descriptors\",\n      \"unit\": \"fds\",\n      \"ceiling\": 100.0,\n      \"used\": null,\n      \"proof\": \"unmeasured\",\n      \"state\": \"unmeasured\",\n      \"enforce\": false,\n      \"revision\": 1,\n      \"declaredBy\": \"task-alpha\",\n      \"source\": \"operator\",\n      \"overBy\": 0,\n      \"note\": \"a slot count is not a measurement of this dimension\"\n    }\n  ]\n}"
+  }
+ ],
+ "cap7_observed": [
+  {
+   "ok": "{\n  \"dimension\": \"file_descriptors\",\n  \"unit\": \"fds\",\n  \"ceiling\": 100.0,\n  \"used\": null,\n  \"proof\": \"unmeasured\",\n  \"state\": \"unmeasured\",\n  \"enforce\": true,\n  \"revision\": 1,\n  \"declaredBy\": \"task-alpha\",\n  \"source\": \"operator\",\n  \"overBy\": 0,\n  \"note\": \"a slot count is not a measurement of this dimension\",\n  \"limitId\": \"lim-a14742a3221f92d4475b5a673b5f6023\"\n}"
+  },
+  {
+   "ok": "{\n  \"scopeKind\": \"project\",\n  \"scopeKey\": \"PRJ-A\",\n  \"dimension\": \"file_descriptors\",\n  \"observed\": 99.0,\n  \"observedBy\": \"task-alpha\",\n  \"method\": \"counted /proc/<pid>/fd\",\n  \"observedAt\": \"2023-11-14T22:13:20.000000+00:00\"\n}"
+  },
+  {
+   "ok": "{\n  \"scopeKind\": \"project\",\n  \"scopeKey\": \"PRJ-A\",\n  \"dimensions\": [\n    {\n      \"dimension\": \"file_descriptors\",\n      \"unit\": \"fds\",\n      \"ceiling\": 100.0,\n      \"used\": 99.0,\n      \"proof\": \"observed\",\n      \"state\": \"within\",\n      \"enforce\": true,\n      \"revision\": 1,\n      \"declaredBy\": \"task-alpha\",\n      \"source\": \"operator\",\n      \"overBy\": 0,\n      \"note\": \"a slot count is not a measurement of this dimension\"\n    }\n  ]\n}"
+  },
+  {
+   "ok": "{\n  \"scopeKind\": \"project\",\n  \"scopeKey\": \"PRJ-A\",\n  \"dimension\": \"file_descriptors\",\n  \"observed\": 120.0,\n  \"observedBy\": \"task-alpha\",\n  \"method\": \"counted /proc/<pid>/fd\",\n  \"observedAt\": \"2023-11-14T22:13:20.000000+00:00\"\n}"
+  },
+  {
+   "ok": "{\n  \"scopeKind\": \"project\",\n  \"scopeKey\": \"PRJ-A\",\n  \"dimensions\": [\n    {\n      \"dimension\": \"file_descriptors\",\n      \"unit\": \"fds\",\n      \"ceiling\": 100.0,\n      \"used\": 120.0,\n      \"proof\": \"observed\",\n      \"state\": \"over_ceiling\",\n      \"enforce\": true,\n      \"revision\": 1,\n      \"declaredBy\": \"task-alpha\",\n      \"source\": \"operator\",\n      \"overBy\": 20.0,\n      \"note\": \"a slot count is not a measurement of this dimension\"\n    }\n  ]\n}"
+  },
+  {
+   "refused": {
+    "detail": "'file_descriptors' was observed at 120.0 fds against a ceiling of 100.0",
+    "reason": "capacity_exhausted"
+   }
+  }
+ ],
+ "cap7_runs": [
+  {
+   "ok": "{\n  \"dimension\": \"runs\",\n  \"unit\": \"runs\",\n  \"ceiling\": 5.0,\n  \"used\": 0,\n  \"proof\": \"derived_from_slots\",\n  \"state\": \"within\",\n  \"enforce\": true,\n  \"revision\": 1,\n  \"declaredBy\": \"task-alpha\",\n  \"source\": \"operator\",\n  \"overBy\": 0,\n  \"note\": null,\n  \"limitId\": \"lim-0745b1e7b71024856bf58a0376a1b5a6\"\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}"
+  },
+  {
+   "ok": "{\n  \"scopeKind\": \"project\",\n  \"scopeKey\": \"PRJ-A\",\n  \"dimensions\": [\n    {\n      \"dimension\": \"runs\",\n      \"unit\": \"runs\",\n      \"ceiling\": 5.0,\n      \"used\": 1,\n      \"proof\": \"derived_from_slots\",\n      \"state\": \"within\",\n      \"enforce\": true,\n      \"revision\": 1,\n      \"declaredBy\": \"task-alpha\",\n      \"source\": \"operator\",\n      \"overBy\": 0,\n      \"note\": null\n    }\n  ]\n}"
+  }
+ ],
+ "cap7_unmeasured": [
+  {
+   "ok": "{\n  \"dimension\": \"model_cost\",\n  \"unit\": \"usd\",\n  \"ceiling\": 50.0,\n  \"used\": null,\n  \"proof\": \"unmeasured\",\n  \"state\": \"unmeasured\",\n  \"enforce\": true,\n  \"revision\": 1,\n  \"declaredBy\": \"task-alpha\",\n  \"source\": \"operator\",\n  \"overBy\": 0,\n  \"note\": \"a slot count is not a measurement of this dimension\",\n  \"limitId\": \"lim-5b04e9e44650c1a5cf29601de35962bc\"\n}"
+  },
+  {
+   "refused": {
+    "detail": "an enforced ceiling of 50.0 usd is declared for 'model_cost' on project 'PRJ-A' and nothing has measured it. A count of running tasks is not a measurement of this dimension, so there is no basis to say whether the bound holds",
+    "reason": "capacity_unmeasured"
+   }
+  },
+  {
+   "ok": "[\n  {\n    \"at\": \"2023-11-14T22:13:20.000000+00:00\",\n    \"domain\": \"execution_subject\",\n    \"subject\": \"REL-1\",\n    \"reason\": \"capacity_unmeasured\",\n    \"detail\": \"an enforced ceiling of 50.0 usd is declared for 'model_cost' on project 'PRJ-A' and nothing has measured it. A count of running tasks is not a measurement of this dimension, so there is no basis to say whether the bound holds\",\n    \"incumbent\": \"model_cost\",\n    \"challenger\": \"task-alpha\"\n  }\n]"
+  }
+ ],
+ "cap8": [
+  {
+   "ok": "{\n  \"dimension\": \"runs\",\n  \"unit\": \"runs\",\n  \"ceiling\": 5.0,\n  \"used\": 0,\n  \"proof\": \"derived_from_slots\",\n  \"state\": \"within\",\n  \"enforce\": true,\n  \"revision\": 1,\n  \"declaredBy\": \"task-alpha\",\n  \"source\": \"operator\",\n  \"overBy\": 0,\n  \"note\": null,\n  \"limitId\": \"lim-0745b1e7b71024856bf58a0376a1b5a6\"\n}"
+  },
+  {
+   "ok": "{\n  \"dimension\": \"file_descriptors\",\n  \"unit\": \"fds\",\n  \"ceiling\": 100.0,\n  \"used\": null,\n  \"proof\": \"unmeasured\",\n  \"state\": \"unmeasured\",\n  \"enforce\": false,\n  \"revision\": 1,\n  \"declaredBy\": \"task-alpha\",\n  \"source\": \"operator\",\n  \"overBy\": 0,\n  \"note\": \"a slot count is not a measurement of this dimension\",\n  \"limitId\": \"lim-a14742a3221f92d4475b5a673b5f6023\"\n}"
+  },
+  {
+   "ok": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}"
+  },
+  {
+   "ok": "{\n  \"held\": [\n    {\n      \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-1\",\n      \"parentTaskId\": \"task-alpha\",\n      \"projectKey\": \"PRJ-A\",\n      \"initiativeKey\": \"INIT-1\",\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-alpha\",\n      \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    }\n  ],\n  \"total\": 1,\n  \"perParent\": {\n    \"task-alpha\": 1\n  },\n  \"staleSlots\": []\n}"
+  },
+  {
+   "ok": "{\n  \"scopeKind\": \"project\",\n  \"scopeKey\": \"PRJ-A\",\n  \"dimensions\": [\n    {\n      \"dimension\": \"file_descriptors\",\n      \"unit\": \"fds\",\n      \"ceiling\": 100.0,\n      \"used\": null,\n      \"proof\": \"unmeasured\",\n      \"state\": \"unmeasured\",\n      \"enforce\": false,\n      \"revision\": 1,\n      \"declaredBy\": \"task-alpha\",\n      \"source\": \"operator\",\n      \"overBy\": 0,\n      \"note\": \"a slot count is not a measurement of this dimension\"\n    },\n    {\n      \"dimension\": \"runs\",\n      \"unit\": \"runs\",\n      \"ceiling\": 5.0,\n      \"used\": 1,\n      \"proof\": \"derived_from_slots\",\n      \"state\": \"within\",\n      \"enforce\": true,\n      \"revision\": 1,\n      \"declaredBy\": \"task-alpha\",\n      \"source\": \"operator\",\n      \"overBy\": 0,\n      \"note\": null\n    }\n  ]\n}"
+  },
+  {
+   "ok": "{\n  \"held\": [\n    {\n      \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-1\",\n      \"parentTaskId\": \"task-alpha\",\n      \"projectKey\": \"PRJ-A\",\n      \"initiativeKey\": \"INIT-1\",\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-alpha\",\n      \"reservedAt\": \"2023-11-14T22:13:20.000000+00:00\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    }\n  ],\n  \"total\": 1,\n  \"perParent\": {\n    \"task-alpha\": 1\n  },\n  \"staleSlots\": []\n}"
+  },
+  {
+   "ok": "{\n  \"scopeKind\": \"project\",\n  \"scopeKey\": \"PRJ-A\",\n  \"dimensions\": [\n    {\n      \"dimension\": \"file_descriptors\",\n      \"unit\": \"fds\",\n      \"ceiling\": 100.0,\n      \"used\": null,\n      \"proof\": \"unmeasured\",\n      \"state\": \"unmeasured\",\n      \"enforce\": false,\n      \"revision\": 1,\n      \"declaredBy\": \"task-alpha\",\n      \"source\": \"operator\",\n      \"overBy\": 0,\n      \"note\": \"a slot count is not a measurement of this dimension\"\n    },\n    {\n      \"dimension\": \"runs\",\n      \"unit\": \"runs\",\n      \"ceiling\": 5.0,\n      \"used\": 1,\n      \"proof\": \"derived_from_slots\",\n      \"state\": \"within\",\n      \"enforce\": true,\n      \"revision\": 1,\n      \"declaredBy\": \"task-alpha\",\n      \"source\": \"operator\",\n      \"overBy\": 0,\n      \"note\": null\n    }\n  ]\n}"
+  }
+ ]
+}

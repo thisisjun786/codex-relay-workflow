@@ -546,6 +546,13 @@ func (d *Service) render(ctx context.Context, row Row, record Obj, request strin
 	if err != nil {
 		return "", err
 	}
+	if row.S("kind") == MergeTurnGrant {
+		reading, err := grantRequired(ctx, d.Store, row, record)
+		if err != nil {
+			return "", err
+		}
+		return renderGrant(row.S("event_id"), record, request, reading), nil
+	}
 	if report {
 		return "", fmt.Errorf("%w: the composed report rendering (report.py) is owned by todo 24", ErrRendererNotPorted)
 	}

@@ -1,0 +1,202 @@
+{
+ "limits": [
+  {
+   "exit": 0,
+   "stdout": "{\n  \"held\": [],\n  \"total\": 0,\n  \"perParent\": {},\n  \"staleSlots\": []\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"dimension\": \"runs\",\n  \"unit\": \"runs\",\n  \"ceiling\": 1.0,\n  \"used\": 0,\n  \"proof\": \"derived_from_slots\",\n  \"state\": \"within\",\n  \"enforce\": true,\n  \"revision\": 1,\n  \"declaredBy\": \"task-alpha\",\n  \"source\": \"operator\",\n  \"overBy\": 0,\n  \"note\": null,\n  \"limitId\": \"lim-0745b1e7b71024856bf58a0376a1b5a6\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"dimension\": \"runs\",\n  \"unit\": \"runs\",\n  \"ceiling\": 3.0,\n  \"used\": 0,\n  \"proof\": \"derived_from_slots\",\n  \"state\": \"within\",\n  \"enforce\": true,\n  \"revision\": 1,\n  \"declaredBy\": \"task-supervisor\",\n  \"source\": \"operator\",\n  \"overBy\": 0,\n  \"note\": null,\n  \"limitId\": \"lim-d863bfd722bfd40cb23e0c3a1a51fe6f\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"dimension\": \"model_cost\",\n  \"unit\": \"usd\",\n  \"ceiling\": 12.5,\n  \"used\": null,\n  \"proof\": \"unmeasured\",\n  \"state\": \"unmeasured\",\n  \"enforce\": false,\n  \"revision\": 1,\n  \"declaredBy\": \"task-supervisor\",\n  \"source\": \"budget\",\n  \"overBy\": 0,\n  \"note\": \"a slot count is not a measurement of this dimension\",\n  \"limitId\": \"lim-07f5208d99e1f7985e4c655d5209a34a\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"<T>\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"capacity_exhausted\",\n  \"detail\": \"project 'PRJ-A' already holds 1 of 1.0 runs\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"dimension\": \"runs\",\n  \"unit\": \"runs\",\n  \"ceiling\": 0.0,\n  \"used\": 1,\n  \"proof\": \"derived_from_slots\",\n  \"state\": \"over_ceiling\",\n  \"enforce\": true,\n  \"revision\": 2,\n  \"declaredBy\": \"task-alpha\",\n  \"source\": \"operator\",\n  \"overBy\": 1.0,\n  \"note\": null,\n  \"limitId\": \"lim-0745b1e7b71024856bf58a0376a1b5a6\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"dimension\": \"file_descriptors\",\n  \"unit\": \"fds\",\n  \"ceiling\": 100.0,\n  \"used\": null,\n  \"proof\": \"unmeasured\",\n  \"state\": \"unmeasured\",\n  \"enforce\": true,\n  \"revision\": 1,\n  \"declaredBy\": \"task-alpha\",\n  \"source\": \"operator\",\n  \"overBy\": 0,\n  \"note\": \"a slot count is not a measurement of this dimension\",\n  \"limitId\": \"lim-a14742a3221f92d4475b5a673b5f6023\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"held\": [\n    {\n      \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-1\",\n      \"parentTaskId\": \"task-alpha\",\n      \"projectKey\": \"PRJ-A\",\n      \"initiativeKey\": \"INIT-1\",\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-alpha\",\n      \"reservedAt\": \"<T>\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    }\n  ],\n  \"total\": 1,\n  \"perParent\": {\n    \"task-alpha\": 1\n  },\n  \"staleSlots\": [],\n  \"headroom\": {\n    \"scopeKind\": \"project\",\n    \"scopeKey\": \"PRJ-A\",\n    \"dimensions\": [\n      {\n        \"dimension\": \"file_descriptors\",\n        \"unit\": \"fds\",\n        \"ceiling\": 100.0,\n        \"used\": null,\n        \"proof\": \"unmeasured\",\n        \"state\": \"unmeasured\",\n        \"enforce\": true,\n        \"revision\": 1,\n        \"declaredBy\": \"task-alpha\",\n        \"source\": \"operator\",\n        \"overBy\": 0,\n        \"note\": \"a slot count is not a measurement of this dimension\"\n      },\n      {\n        \"dimension\": \"runs\",\n        \"unit\": \"runs\",\n        \"ceiling\": 0.0,\n        \"used\": 1,\n        \"proof\": \"derived_from_slots\",\n        \"state\": \"over_ceiling\",\n        \"enforce\": true,\n        \"revision\": 2,\n        \"declaredBy\": \"task-alpha\",\n        \"source\": \"operator\",\n        \"overBy\": 1.0,\n        \"note\": null\n      }\n    ]\n  }\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"slotId\": \"slt-ca03c7e0c6b77a98de822c45d4b27b5d\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-3\",\n  \"parentTaskId\": \"task-beta\",\n  \"projectKey\": \"PRJ-B\",\n  \"initiativeKey\": null,\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-beta\",\n  \"reservedAt\": \"<T>\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"scopeKind\": \"project\",\n  \"scopeKey\": \"PRJ-A\",\n  \"dimension\": \"file_descriptors\",\n  \"observed\": 120.25,\n  \"observedBy\": \"task-alpha\",\n  \"method\": \"counted\",\n  \"observedAt\": \"<T>\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"held\": [\n    {\n      \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-1\",\n      \"parentTaskId\": \"task-alpha\",\n      \"projectKey\": \"PRJ-A\",\n      \"initiativeKey\": \"INIT-1\",\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-alpha\",\n      \"reservedAt\": \"<T>\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    },\n    {\n      \"slotId\": \"slt-ca03c7e0c6b77a98de822c45d4b27b5d\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-3\",\n      \"parentTaskId\": \"task-beta\",\n      \"projectKey\": \"PRJ-B\",\n      \"initiativeKey\": null,\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-beta\",\n      \"reservedAt\": \"<T>\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    }\n  ],\n  \"total\": 2,\n  \"perParent\": {\n    \"task-alpha\": 1,\n    \"task-beta\": 1\n  },\n  \"staleSlots\": [],\n  \"headroom\": {\n    \"scopeKind\": \"project\",\n    \"scopeKey\": \"PRJ-A\",\n    \"dimensions\": [\n      {\n        \"dimension\": \"file_descriptors\",\n        \"unit\": \"fds\",\n        \"ceiling\": 100.0,\n        \"used\": 120.25,\n        \"proof\": \"observed\",\n        \"state\": \"over_ceiling\",\n        \"enforce\": true,\n        \"revision\": 1,\n        \"declaredBy\": \"task-alpha\",\n        \"source\": \"operator\",\n        \"overBy\": 20.25,\n        \"note\": \"a slot count is not a measurement of this dimension\"\n      },\n      {\n        \"dimension\": \"runs\",\n        \"unit\": \"runs\",\n        \"ceiling\": 0.0,\n        \"used\": 1,\n        \"proof\": \"derived_from_slots\",\n        \"state\": \"over_ceiling\",\n        \"enforce\": true,\n        \"revision\": 2,\n        \"declaredBy\": \"task-alpha\",\n        \"source\": \"operator\",\n        \"overBy\": 1.0,\n        \"note\": null\n      }\n    ]\n  }\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"held\": [\n    {\n      \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-1\",\n      \"parentTaskId\": \"task-alpha\",\n      \"projectKey\": \"PRJ-A\",\n      \"initiativeKey\": \"INIT-1\",\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-alpha\",\n      \"reservedAt\": \"<T>\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    },\n    {\n      \"slotId\": \"slt-ca03c7e0c6b77a98de822c45d4b27b5d\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-3\",\n      \"parentTaskId\": \"task-beta\",\n      \"projectKey\": \"PRJ-B\",\n      \"initiativeKey\": null,\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-beta\",\n      \"reservedAt\": \"<T>\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    }\n  ],\n  \"total\": 2,\n  \"perParent\": {\n    \"task-alpha\": 1,\n    \"task-beta\": 1\n  },\n  \"staleSlots\": [],\n  \"headroom\": {\n    \"scopeKind\": \"initiative\",\n    \"scopeKey\": \"INIT-1\",\n    \"dimensions\": [\n      {\n        \"dimension\": \"model_cost\",\n        \"unit\": \"usd\",\n        \"ceiling\": 12.5,\n        \"used\": null,\n        \"proof\": \"unmeasured\",\n        \"state\": \"unmeasured\",\n        \"enforce\": false,\n        \"revision\": 1,\n        \"declaredBy\": \"task-supervisor\",\n        \"source\": \"budget\",\n        \"overBy\": 0,\n        \"note\": \"a slot count is not a measurement of this dimension\"\n      }\n    ]\n  }\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"held\": [\n    {\n      \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-1\",\n      \"parentTaskId\": \"task-alpha\",\n      \"projectKey\": \"PRJ-A\",\n      \"initiativeKey\": \"INIT-1\",\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-alpha\",\n      \"reservedAt\": \"<T>\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    },\n    {\n      \"slotId\": \"slt-ca03c7e0c6b77a98de822c45d4b27b5d\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-3\",\n      \"parentTaskId\": \"task-beta\",\n      \"projectKey\": \"PRJ-B\",\n      \"initiativeKey\": null,\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-beta\",\n      \"reservedAt\": \"<T>\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    }\n  ],\n  \"total\": 2,\n  \"perParent\": {\n    \"task-alpha\": 1,\n    \"task-beta\": 1\n  },\n  \"staleSlots\": [],\n  \"headroom\": {\n    \"scopeKind\": \"store\",\n    \"scopeKey\": \"store\",\n    \"dimensions\": [\n      {\n        \"dimension\": \"runs\",\n        \"unit\": \"runs\",\n        \"ceiling\": 3.0,\n        \"used\": 2,\n        \"proof\": \"derived_from_slots\",\n        \"state\": \"within\",\n        \"enforce\": true,\n        \"revision\": 1,\n        \"declaredBy\": \"task-supervisor\",\n        \"source\": \"operator\",\n        \"overBy\": 0,\n        \"note\": null\n      }\n    ]\n  }\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"link_not_active\",\n  \"detail\": \"runs is derived from held slots and is never observed; recording one would put a second, disagreeing figure beside the counted one\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"link_not_active\",\n  \"detail\": \"an observation is a finite number of zero or more, not nan\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"scope_role_mismatch\",\n  \"detail\": \"task 'task-beta' is not the registered parent of project 'PRJ-A', which is held by 'task-alpha', so it cannot state a bound for it\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"link_not_active\",\n  \"detail\": \"a ceiling is a finite number of zero or more, not inf\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"link_not_active\",\n  \"detail\": \"a ceiling is a finite number of zero or more, not -1.0\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"link_not_active\",\n  \"detail\": \"the store scope has one key, 'store', not 'global'; enforcement reads that key and a ceiling under any other would be recorded and never applied\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"scope_role_mismatch\",\n  \"detail\": \"task 'task-alpha' holds no live supervisor binding, and the store scope has no owner of its own to speak for it\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": ""
+  },
+  {
+   "exit": 2,
+   "stdout": ""
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"link_not_active\",\n  \"detail\": \"a ceiling is a finite number of zero or more, not inf\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"dimension\": \"runs\",\n  \"unit\": \"runs\",\n  \"ceiling\": 10.0,\n  \"used\": 1,\n  \"proof\": \"derived_from_slots\",\n  \"state\": \"within\",\n  \"enforce\": true,\n  \"revision\": 3,\n  \"declaredBy\": \"task-alpha\",\n  \"source\": \"operator\",\n  \"overBy\": 0,\n  \"note\": null,\n  \"limitId\": \"lim-0745b1e7b71024856bf58a0376a1b5a6\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"dimension\": \"runs\",\n  \"unit\": \"runs\",\n  \"ceiling\": 1e+20,\n  \"used\": 1,\n  \"proof\": \"derived_from_slots\",\n  \"state\": \"within\",\n  \"enforce\": true,\n  \"revision\": 4,\n  \"declaredBy\": \"task-alpha\",\n  \"source\": \"operator\",\n  \"overBy\": 0,\n  \"note\": null,\n  \"limitId\": \"lim-0745b1e7b71024856bf58a0376a1b5a6\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"held\": [\n    {\n      \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-1\",\n      \"parentTaskId\": \"task-alpha\",\n      \"projectKey\": \"PRJ-A\",\n      \"initiativeKey\": \"INIT-1\",\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-alpha\",\n      \"reservedAt\": \"<T>\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    },\n    {\n      \"slotId\": \"slt-ca03c7e0c6b77a98de822c45d4b27b5d\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-3\",\n      \"parentTaskId\": \"task-beta\",\n      \"projectKey\": \"PRJ-B\",\n      \"initiativeKey\": null,\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-beta\",\n      \"reservedAt\": \"<T>\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": null\n    }\n  ],\n  \"total\": 2,\n  \"perParent\": {\n    \"task-alpha\": 1,\n    \"task-beta\": 1\n  },\n  \"staleSlots\": [],\n  \"headroom\": {\n    \"scopeKind\": \"project\",\n    \"scopeKey\": \"PRJ-A\",\n    \"dimensions\": [\n      {\n        \"dimension\": \"file_descriptors\",\n        \"unit\": \"fds\",\n        \"ceiling\": 100.0,\n        \"used\": 120.25,\n        \"proof\": \"observed\",\n        \"state\": \"over_ceiling\",\n        \"enforce\": true,\n        \"revision\": 1,\n        \"declaredBy\": \"task-alpha\",\n        \"source\": \"operator\",\n        \"overBy\": 20.25,\n        \"note\": \"a slot count is not a measurement of this dimension\"\n      },\n      {\n        \"dimension\": \"runs\",\n        \"unit\": \"runs\",\n        \"ceiling\": 1e+20,\n        \"used\": 1,\n        \"proof\": \"derived_from_slots\",\n        \"state\": \"within\",\n        \"enforce\": true,\n        \"revision\": 4,\n        \"declaredBy\": \"task-alpha\",\n        \"source\": \"operator\",\n        \"overBy\": 0,\n        \"note\": null\n      }\n    ]\n  }\n}\n"
+  }
+ ],
+ "slots": [
+  {
+   "exit": 0,
+   "stdout": "{\n  \"held\": [],\n  \"total\": 0,\n  \"perParent\": {},\n  \"staleSlots\": []\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"<T>\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": \"first run\",\n  \"alreadyHeld\": false\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"<T>\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": \"first run\",\n  \"alreadyHeld\": true\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"disposition_conflict\",\n  \"detail\": \"'REL-1' is already held by 'task-alpha' for project 'PRJ-A', not by 'task-beta' for 'PRJ-B'\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"scope_role_mismatch\",\n  \"detail\": \"task 'task-beta' is not the registered parent of project 'PRJ-A', which is held by 'task-alpha'\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"unregistered_scope\",\n  \"detail\": \"project 'PRJ-NONE' has no registered parent\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"held\": [\n    {\n      \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-1\",\n      \"parentTaskId\": \"task-alpha\",\n      \"projectKey\": \"PRJ-A\",\n      \"initiativeKey\": \"INIT-1\",\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-alpha\",\n      \"reservedAt\": \"<T>\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": \"first run\"\n    }\n  ],\n  \"total\": 1,\n  \"perParent\": {\n    \"task-alpha\": 1\n  },\n  \"staleSlots\": []\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"held\": [],\n  \"total\": 0,\n  \"perParent\": {},\n  \"staleSlots\": []\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"held\": [\n    {\n      \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n      \"subjectKind\": \"assignment\",\n      \"subjectKey\": \"REL-1\",\n      \"parentTaskId\": \"task-alpha\",\n      \"projectKey\": \"PRJ-A\",\n      \"initiativeKey\": \"INIT-1\",\n      \"tenure\": 1,\n      \"state\": \"held\",\n      \"reservedBy\": \"task-alpha\",\n      \"reservedAt\": \"<T>\",\n      \"releasedAt\": null,\n      \"releasedBy\": null,\n      \"releaseReason\": null,\n      \"detail\": \"first run\"\n    }\n  ],\n  \"total\": 1,\n  \"perParent\": {\n    \"task-alpha\": 1\n  },\n  \"staleSlots\": []\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"scope_role_mismatch\",\n  \"detail\": \"slot 'slt-51fd729f21bb74f9348ef120d1ba0593' is held by 'task-alpha', so 'task-beta' cannot release it\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"released\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"<T>\",\n  \"releasedAt\": \"<T>\",\n  \"releasedBy\": \"task-alpha\",\n  \"releaseReason\": \"completed\",\n  \"detail\": \"first run\",\n  \"alreadyReleased\": false\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"released\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"<T>\",\n  \"releasedAt\": \"<T>\",\n  \"releasedBy\": \"task-alpha\",\n  \"releaseReason\": \"completed\",\n  \"detail\": \"first run\",\n  \"alreadyReleased\": true\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"disposition_conflict\",\n  \"detail\": \"slot 'slt-51fd729f21bb74f9348ef120d1ba0593' was released as 'completed' by 'task-alpha'; a later notification restates that reason rather than replacing it\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"slotId\": \"slt-84c914eca5c452b9d1142cac7b86a55b\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 2,\n  \"state\": \"held\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"<T>\",\n  \"releasedAt\": null,\n  \"releasedBy\": null,\n  \"releaseReason\": null,\n  \"detail\": null,\n  \"alreadyHeld\": false\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"disposition_conflict\",\n  \"detail\": \"assignment 'REL-1' has tenures [2, 1]; name the one this release settles, because the newest is not necessarily the one a delayed notification is about\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"slotId\": \"slt-51fd729f21bb74f9348ef120d1ba0593\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 1,\n  \"state\": \"released\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"<T>\",\n  \"releasedAt\": \"<T>\",\n  \"releasedBy\": \"task-alpha\",\n  \"releaseReason\": \"completed\",\n  \"detail\": \"first run\",\n  \"alreadyReleased\": true\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"slotId\": \"slt-84c914eca5c452b9d1142cac7b86a55b\",\n  \"subjectKind\": \"assignment\",\n  \"subjectKey\": \"REL-1\",\n  \"parentTaskId\": \"task-alpha\",\n  \"projectKey\": \"PRJ-A\",\n  \"initiativeKey\": \"INIT-1\",\n  \"tenure\": 2,\n  \"state\": \"released\",\n  \"reservedBy\": \"task-alpha\",\n  \"reservedAt\": \"<T>\",\n  \"releasedAt\": \"<T>\",\n  \"releasedBy\": \"task-supervisor\",\n  \"releaseReason\": \"completed\",\n  \"detail\": null,\n  \"alreadyReleased\": false\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"slot_unknown\",\n  \"detail\": \"no slot was ever reserved for assignment 'REL-9'\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"unregistered_scope\",\n  \"detail\": \"a release reason must not contain '|', which is the field separator\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": ""
+  },
+  {
+   "exit": 2,
+   "stdout": ""
+  },
+  {
+   "exit": 2,
+   "stdout": ""
+  }
+ ]
+}

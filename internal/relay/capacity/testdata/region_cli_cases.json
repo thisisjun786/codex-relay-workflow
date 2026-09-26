@@ -1,0 +1,424 @@
+{
+ "regions": [
+  {
+   "argv": [
+    "region-show",
+    "--repository",
+    "owner/repo"
+   ]
+  },
+  {
+   "sql": "INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key, task_id, host_id, cwd, cxc_session, status, revision, supersedes, superseded_by, handover_note, created_at, updated_at) VALUES ('bnd-fb932ad8de44cd67e993f50dd94fa6c9','parent','project','PRJ-A','task-alpha','host-a',NULL,NULL,'active',1,NULL,NULL,NULL,'2023-11-14T22:13:20.000000+00:00','2023-11-14T22:13:20.000000+00:00');INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key, task_id, host_id, cwd, cxc_session, status, revision, supersedes, superseded_by, handover_note, created_at, updated_at) VALUES ('bnd-a42c0a8d69f384429513ef5af6e0f0b7','parent','project','PRJ-B','task-beta','host-b',NULL,NULL,'active',1,NULL,NULL,NULL,'2023-11-14T22:13:20.000000+00:00','2023-11-14T22:13:20.000000+00:00');INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key, task_id, host_id, cwd, cxc_session, status, revision, supersedes, superseded_by, handover_note, created_at, updated_at) VALUES ('bnd-f50df50ecb2c0a34bfb6a3a4a97d483b','parent','project','PRJ-Z','task-zeta','host-z',NULL,NULL,'active',1,NULL,NULL,NULL,'2023-11-14T22:13:20.000000+00:00','2023-11-14T22:13:20.000000+00:00');INSERT INTO scope_links (link_id, link_kind, upper_kind, upper_key, upper_task_id, lower_kind, lower_key, lower_task_id, status, revision, superseded_by, created_at, updated_at) VALUES ('lnk-ab','peer','project','PRJ-A','task-alpha','project','PRJ-B','task-beta','active',1,NULL,'2023-11-14T22:13:20.000000+00:00','2023-11-14T22:13:20.000000+00:00');INSERT INTO scope_links (link_id, link_kind, upper_kind, upper_key, upper_task_id, lower_kind, lower_key, lower_task_id, status, revision, superseded_by, created_at, updated_at) VALUES ('lnk-az','peer','project','PRJ-A','task-alpha','project','PRJ-Z','task-zeta','active',1,NULL,'2023-11-14T22:13:20.000000+00:00','2023-11-14T22:13:20.000000+00:00');"
+  },
+  {
+   "argv": [
+    "region-propose",
+    "--repository",
+    "owner/repo",
+    "--revision",
+    "rev-1",
+    "--path",
+    "src/a.py",
+    "--kind",
+    "file",
+    "--left-project",
+    "PRJ-A",
+    "--right-project",
+    "PRJ-B",
+    "--peer-link",
+    "lnk-ab",
+    "--task",
+    "task-alpha",
+    "--constraint",
+    "keep the signature",
+    "--issue",
+    "CRW-1",
+    "--next-owner",
+    "task-beta",
+    "--condition",
+    "alpha's terms"
+   ]
+  },
+  {
+   "argv": [
+    "region-propose",
+    "--repository",
+    "owner/repo",
+    "--revision",
+    "rev-1",
+    "--path",
+    "src/a.py",
+    "--kind",
+    "file",
+    "--left-project",
+    "PRJ-A",
+    "--right-project",
+    "PRJ-B",
+    "--peer-link",
+    "lnk-ab",
+    "--task",
+    "task-alpha",
+    "--constraint",
+    "keep the signature"
+   ]
+  },
+  {
+   "argv": [
+    "region-propose",
+    "--repository",
+    "owner/repo",
+    "--revision",
+    "rev-1",
+    "--path",
+    "src/a.py",
+    "--kind",
+    "file",
+    "--left-project",
+    "PRJ-A",
+    "--right-project",
+    "PRJ-Z",
+    "--peer-link",
+    "lnk-az",
+    "--task",
+    "task-alpha",
+    "--constraint",
+    "x"
+   ]
+  },
+  {
+   "argv": [
+    "region-propose",
+    "--repository",
+    "owner/repo",
+    "--revision",
+    "rev-1",
+    "--path",
+    "scripts/c.json",
+    "--kind",
+    "file",
+    "--class",
+    "generated",
+    "--regenerate-from",
+    "derive it",
+    "--left-project",
+    "PRJ-A",
+    "--right-project",
+    "PRJ-B",
+    "--peer-link",
+    "lnk-ab",
+    "--task",
+    "task-beta",
+    "--constraint",
+    "regenerate"
+   ]
+  },
+  {
+   "argv": [
+    "region-propose",
+    "--repository",
+    "owner/repo",
+    "--revision",
+    "rev-1",
+    "--path",
+    "src/b.py",
+    "--kind",
+    "symbol",
+    "--key",
+    "parse",
+    "--left-project",
+    "PRJ-A",
+    "--right-project",
+    "PRJ-B",
+    "--peer-link",
+    "lnk-ab",
+    "--task",
+    "task-zeta",
+    "--constraint",
+    "x"
+   ]
+  },
+  {
+   "argv": [
+    "region-propose",
+    "--repository",
+    "owner/repo",
+    "--revision",
+    "rev-1",
+    "--path",
+    "/src/b.py",
+    "--kind",
+    "file",
+    "--left-project",
+    "PRJ-A",
+    "--right-project",
+    "PRJ-B",
+    "--peer-link",
+    "lnk-ab",
+    "--task",
+    "task-alpha",
+    "--constraint",
+    "x"
+   ]
+  },
+  {
+   "argv": [
+    "region-settle",
+    "--agreement",
+    "agr-2b0df88e696e65a7d53e021e13dc9259",
+    "--actor",
+    "task-beta",
+    "--disposition",
+    "accepted",
+    "--condition",
+    "late terms"
+   ]
+  },
+  {
+   "argv": [
+    "region-settle",
+    "--agreement",
+    "agr-2b0df88e696e65a7d53e021e13dc9259",
+    "--actor",
+    "task-beta",
+    "--disposition",
+    "accepted"
+   ]
+  },
+  {
+   "argv": [
+    "region-settle",
+    "--agreement",
+    "agr-2b0df88e696e65a7d53e021e13dc9259",
+    "--actor",
+    "task-beta",
+    "--disposition",
+    "withdrawn"
+   ]
+  },
+  {
+   "argv": [
+    "region-followup",
+    "--agreement",
+    "agr-2b0df88e696e65a7d53e021e13dc9259",
+    "--trigger",
+    "a temporary duplicate implementation",
+    "--acceptance",
+    "the duplicate is gone",
+    "--recorded-by",
+    "task-alpha",
+    "--issue-ref",
+    "CRW-200"
+   ]
+  },
+  {
+   "argv": [
+    "region-followup-settle",
+    "--followup",
+    "fup-ac00ff17379791b35b583934e8774d3b",
+    "--actor",
+    "task-alpha",
+    "--disposition",
+    "done"
+   ]
+  },
+  {
+   "argv": [
+    "region-followup-accept",
+    "--followup",
+    "fup-ac00ff17379791b35b583934e8774d3b",
+    "--actor",
+    "task-beta",
+    "--assignee-project",
+    "PRJ-B"
+   ]
+  },
+  {
+   "argv": [
+    "region-followup-settle",
+    "--followup",
+    "fup-ac00ff17379791b35b583934e8774d3b",
+    "--actor",
+    "task-beta",
+    "--disposition",
+    "done",
+    "--reason",
+    "gone"
+   ]
+  },
+  {
+   "argv": [
+    "region-followup",
+    "--agreement",
+    "agr-2b0df88e696e65a7d53e021e13dc9259",
+    "--trigger",
+    "second",
+    "--acceptance",
+    "x",
+    "--recorded-by",
+    "task-alpha",
+    "--assignee",
+    "task-alpha",
+    "--assignee-project",
+    "PRJ-A"
+   ]
+  },
+  {
+   "argv": [
+    "region-show",
+    "--repository",
+    "owner/repo"
+   ]
+  },
+  {
+   "argv": [
+    "region-restate-revision",
+    "--repository",
+    "owner/repo",
+    "--from-revision",
+    "rev-1",
+    "--to-revision",
+    "rev-2",
+    "--actor",
+    "task-alpha"
+   ]
+  },
+  {
+   "argv": [
+    "region-restate-revision",
+    "--repository",
+    "owner/repo",
+    "--from-revision",
+    "rev-1",
+    "--to-revision",
+    "rev 3",
+    "--actor",
+    "task-alpha"
+   ]
+  },
+  {
+   "argv": [
+    "region-settle",
+    "--agreement",
+    "agr-2b0df88e696e65a7d53e021e13dc9259",
+    "--actor",
+    "task-beta",
+    "--disposition",
+    "declined"
+   ]
+  },
+  {
+   "argv": [
+    "region-reaffirm",
+    "--agreement",
+    "agr-2b0df88e696e65a7d53e021e13dc9259",
+    "--actor",
+    "task-beta",
+    "--revision",
+    "rev-2",
+    "--condition",
+    "beta's terms at rev-2"
+   ]
+  },
+  {
+   "argv": [
+    "region-show",
+    "--repository",
+    "owner/repo",
+    "--revision",
+    "rev-2",
+    "--project",
+    "PRJ-B",
+    "--path",
+    "src/a.py"
+   ]
+  },
+  {
+   "argv": [
+    "region-settle",
+    "--agreement",
+    "agr-6e77d62cdf1f58d0f269edfa27c07d59",
+    "--actor",
+    "task-alpha",
+    "--disposition",
+    "declined",
+    "--condition",
+    "only with forwarding",
+    "--reason",
+    "moved"
+   ]
+  },
+  {
+   "argv": [
+    "region-show",
+    "--repository",
+    "owner/repo"
+   ]
+  },
+  {
+   "argv": [
+    "region-propose",
+    "--repository",
+    "owner/repo"
+   ]
+  },
+  {
+   "argv": [
+    "region-propose",
+    "--repository",
+    "owner/repo",
+    "--revision",
+    "rev-1",
+    "--path",
+    "src/x.py",
+    "--kind",
+    "galaxy",
+    "--left-project",
+    "PRJ-A",
+    "--right-project",
+    "PRJ-B",
+    "--peer-link",
+    "lnk-ab",
+    "--task",
+    "task-alpha",
+    "--constraint",
+    "x"
+   ]
+  },
+  {
+   "argv": [
+    "region-settle",
+    "--agreement",
+    "agr-2b0df88e696e65a7d53e021e13dc9259",
+    "--actor",
+    "task-beta",
+    "--disposition",
+    "maybe"
+   ]
+  },
+  {
+   "argv": [
+    "region-followup-settle",
+    "--followup",
+    "fup-ac00ff17379791b35b583934e8774d3b",
+    "--actor",
+    "task-beta",
+    "--disposition",
+    "finished"
+   ]
+  },
+  {
+   "argv": [
+    "region-show"
+   ]
+  },
+  {
+   "argv": [
+    "region-show",
+    "--repository",
+    "owner/repo",
+    "--bogus",
+    "1"
+   ]
+  }
+ ]
+}

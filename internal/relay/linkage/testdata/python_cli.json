@@ -1,0 +1,218 @@
+{
+ "bind_and_refuse": [
+  {
+   "exit": 0,
+   "stdout": "{\n  \"bindingId\": \"bnd-8f4ae5af2c9a92f33320f88bcb74f422\",\n  \"role\": \"parent\",\n  \"scopeKind\": \"project\",\n  \"scopeKey\": \"PROJ-1\",\n  \"taskId\": \"01parent-task\",\n  \"hostId\": \"host-a\",\n  \"cwd\": \"/parent\",\n  \"status\": \"active\",\n  \"revision\": 1,\n  \"supersedes\": null,\n  \"supersededBy\": null,\n  \"handoverNote\": null,\n  \"createdAt\": \"<T>\",\n  \"updatedAt\": \"<T>\",\n  \"_bindings\": {\n    \"cxcSession\": \"cxc-p\"\n  }\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"bindingId\": \"bnd-8f4ae5af2c9a92f33320f88bcb74f422\",\n  \"role\": \"parent\",\n  \"scopeKind\": \"project\",\n  \"scopeKey\": \"PROJ-1\",\n  \"taskId\": \"01parent-task\",\n  \"hostId\": \"host-a\",\n  \"cwd\": \"/parent\",\n  \"status\": \"active\",\n  \"revision\": 1,\n  \"supersedes\": null,\n  \"supersededBy\": null,\n  \"handoverNote\": null,\n  \"createdAt\": \"<T>\",\n  \"updatedAt\": \"<T>\",\n  \"_bindings\": {\n    \"cxcSession\": \"cxc-p\"\n  }\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"duplicate_scope_owner\",\n  \"detail\": \"project 'PROJ-1' is already owned by '01parent-task' under bnd-8f4ae5af2c9a92f33320f88bcb74f422 (active); hand it over deliberately instead of opening a second owner\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": ""
+  },
+  {
+   "exit": 2,
+   "stdout": ""
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"unregistered_scope\",\n  \"detail\": \"a scope key must not contain '|', which is the field separator\"\n}\n"
+  }
+ ],
+ "directives": [
+  {
+   "exit": 0,
+   "stdout": "{\n  \"linkId\": \"lnk-17fe34823302c1302c735eb1ffd28014\",\n  \"kind\": \"execution\",\n  \"upper\": {\n    \"scopeKind\": \"initiative\",\n    \"scopeKey\": \"INIT-1\",\n    \"taskId\": \"01supervisor-task\"\n  },\n  \"lower\": {\n    \"scopeKind\": \"project\",\n    \"scopeKey\": \"PROJ-1\",\n    \"taskId\": \"01parent-task\"\n  },\n  \"status\": \"active\",\n  \"revision\": 1,\n  \"supersededBy\": null,\n  \"createdAt\": \"<T>\",\n  \"updatedAt\": \"<T>\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"directiveId\": \"dir-41ebcf5acb2ad8d09063077a355b4267\",\n  \"scopeKind\": \"project\",\n  \"scopeKey\": \"PROJ-1\",\n  \"fromTaskId\": \"01supervisor-task\",\n  \"fromScopeKey\": \"INIT-1\",\n  \"linkId\": \"lnk-17fe34823302c1302c735eb1ffd28014\",\n  \"linkKind\": \"execution\",\n  \"digest\": \"d-one\",\n  \"reference\": null,\n  \"revision\": 1,\n  \"disposition\": null,\n  \"decidedBy\": null,\n  \"decidedAt\": null,\n  \"recordedAt\": \"<T>\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"directiveId\": \"dir-41ebcf5acb2ad8d09063077a355b4267\",\n  \"scopeKind\": \"project\",\n  \"scopeKey\": \"PROJ-1\",\n  \"fromTaskId\": \"01supervisor-task\",\n  \"fromScopeKey\": \"INIT-1\",\n  \"linkId\": \"lnk-17fe34823302c1302c735eb1ffd28014\",\n  \"linkKind\": \"execution\",\n  \"digest\": \"d-one\",\n  \"reference\": null,\n  \"revision\": 1,\n  \"disposition\": null,\n  \"decidedBy\": null,\n  \"decidedAt\": null,\n  \"recordedAt\": \"<T>\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"link_conflict\",\n  \"detail\": \"project 'PROJ-1' has a live directive whose purpose was never recorded (directive 'dir-41ebcf5acb2ad8d09063077a355b4267', recorded <T> by '01supervisor-task' on link revision 1, reference None), so this one cannot be placed beside it and the two would read as contradictory instructions. Recorded, the two would hold every report the project owes upward until one was settled, so nothing was recorded and the contest is retained. To replace it, settle it first - codex-session-relay linkage-settle --directive dir-41ebcf5acb2ad8d09063077a355b4267 --disposition superseded --actor <your task id> - restating in this instruction whatever of it still applies, then record this one again\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"link_conflict\",\n  \"detail\": \"project 'PROJ-1' has a live directive whose purpose was never recorded (directive 'dir-41ebcf5acb2ad8d09063077a355b4267', recorded <T> by '01supervisor-task' on link revision 1, reference None), so this one cannot be placed beside it and the two would read as contradictory instructions. Recorded, the two would hold every report the project owes upward until one was settled, so nothing was recorded and the contest is retained. To replace it, settle it first - codex-session-relay linkage-settle --directive dir-41ebcf5acb2ad8d09063077a355b4267 --disposition superseded --actor <your task id> - restating in this instruction whatever of it still applies, then record this one again\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"link_conflict\",\n  \"detail\": \"project 'PROJ-1' has a live directive whose purpose was never recorded (directive 'dir-41ebcf5acb2ad8d09063077a355b4267', recorded <T> by '01supervisor-task' on link revision 1, reference None), so this one cannot be placed beside it and the two would read as contradictory instructions. Recorded, the two would hold every report the project owes upward until one was settled, so nothing was recorded and the contest is retained. To replace it, settle it first - codex-session-relay linkage-settle --directive dir-41ebcf5acb2ad8d09063077a355b4267 --disposition superseded --actor <your task id> - restating in this instruction whatever of it still applies, then record this one again\"\n}\n"
+  },
+  {
+   "exit": 4,
+   "stdout": "{\n  \"error\": \"usage\",\n  \"detail\": \"--correlation is part of an envelope pointer, so it requires --purpose\"\n}\n"
+  },
+  {
+   "exit": 4,
+   "stdout": "{\n  \"error\": \"usage\",\n  \"detail\": \"--purpose derives the envelope pointer, so it cannot be given with --reference\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"malformed_receipt\",\n  \"detail\": \"'-' is how the pointer spells no correlation, so it cannot also be one\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"link_conflict\",\n  \"detail\": \"the reference carries messageId bogusid, but this link and digest derive 767d0e8321141951fa3891f7cabf9d01; the pointer belongs to another instruction\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"link_conflict\",\n  \"detail\": \"this directive id is already recorded with a reference that is not an envelope pointer (None), so the purpose 'resume' and the correlation None you are asking for have nowhere to go on it. The recorded instruction is preserved; a later one is recorded as its own directive with its own digest. Settling the recorded one does not free this digest: the id is derived from it, live or settled\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": ""
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"unregistered_scope\",\n  \"detail\": \"no directive 'dir-missing'\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"state\": \"resolved\",\n  \"readable\": true,\n  \"levels\": [\n    {\n      \"scopeKind\": \"project\",\n      \"scopeKey\": \"PROJ-1\",\n      \"owner\": {\n        \"bindingId\": \"bnd-8f4ae5af2c9a92f33320f88bcb74f422\",\n        \"role\": \"parent\",\n        \"scopeKind\": \"project\",\n        \"scopeKey\": \"PROJ-1\",\n        \"taskId\": \"01parent-task\",\n        \"hostId\": \"host-a\",\n        \"cwd\": \"/parent\",\n        \"status\": \"active\",\n        \"revision\": 1,\n        \"supersedes\": null,\n        \"supersededBy\": null,\n        \"handoverNote\": null,\n        \"createdAt\": \"<T>\",\n        \"updatedAt\": \"<T>\",\n        \"_bindings\": {\n          \"cxcSession\": \"cxc-p\"\n        }\n      },\n      \"depth\": 0\n    }\n  ],\n  \"gaps\": [],\n  \"contention\": [\n    {\n      \"at\": \"<T>\",\n      \"scopeKind\": \"project\",\n      \"scopeKey\": \"PROJ-1\",\n      \"reason\": \"link_conflict\",\n      \"incumbent\": \"dir-41ebcf5acb2ad8d09063077a355b4267\",\n      \"challenger\": \"dir-725d6f843fe7ca1f71d6fc41e37fc832\",\n      \"detail\": \"project 'PROJ-1' has a live directive whose purpose was never recorded (directive 'dir-41ebcf5acb2ad8d09063077a355b4267', recorded <T> by '01supervisor-task' on link revision 1, reference None), so this one cannot be placed beside it and the two would read as contradictory instructions. Recorded, the two would hold every report the project owes upward until one was settled, so nothing was recorded and the contest is retained. To replace it, settle it first - codex-session-relay linkage-settle --directive dir-41ebcf5acb2ad8d09063077a355b4267 --disposition superseded --actor <your task id> - restating in this instruction whatever of it still applies, then record this one again\"\n    },\n    {\n      \"at\": \"<T>\",\n      \"scopeKind\": \"project\",\n      \"scopeKey\": \"PROJ-1\",\n      \"reason\": \"link_conflict\",\n      \"incumbent\": \"dir-41ebcf5acb2ad8d09063077a355b4267\",\n      \"challenger\": \"dir-962d89016a8a3a5577ee018a4db4fadc\",\n      \"detail\": \"project 'PROJ-1' has a live directive whose purpose was never recorded (directive 'dir-41ebcf5acb2ad8d09063077a355b4267', recorded <T> by '01supervisor-task' on link revision 1, reference None), so this one cannot be placed beside it and the two would read as contradictory instructions. Recorded, the two would hold every report the project owes upward until one was settled, so nothing was recorded and the contest is retained. To replace it, settle it first - codex-session-relay linkage-settle --directive dir-41ebcf5acb2ad8d09063077a355b4267 --disposition superseded --actor <your task id> - restating in this instruction whatever of it still applies, then record this one again\"\n    },\n    {\n      \"at\": \"<T>\",\n      \"scopeKind\": \"project\",\n      \"scopeKey\": \"PROJ-1\",\n      \"reason\": \"link_conflict\",\n      \"incumbent\": \"dir-41ebcf5acb2ad8d09063077a355b4267\",\n      \"challenger\": \"dir-d17bc613db90f05de61b14b232070d71\",\n      \"detail\": \"project 'PROJ-1' has a live directive whose purpose was never recorded (directive 'dir-41ebcf5acb2ad8d09063077a355b4267', recorded <T> by '01supervisor-task' on link revision 1, reference None), so this one cannot be placed beside it and the two would read as contradictory instructions. Recorded, the two would hold every report the project owes upward until one was settled, so nothing was recorded and the contest is retained. To replace it, settle it first - codex-session-relay linkage-settle --directive dir-41ebcf5acb2ad8d09063077a355b4267 --disposition superseded --actor <your task id> - restating in this instruction whatever of it still applies, then record this one again\"\n    },\n    {\n      \"at\": \"<T>\",\n      \"scopeKind\": \"project\",\n      \"scopeKey\": \"PROJ-1\",\n      \"reason\": \"link_conflict\",\n      \"incumbent\": \"lnk-17fe34823302c1302c735eb1ffd28014\",\n      \"challenger\": \"relay-envelope/1|supervisor_to_parent|resume|bogusid|-\",\n      \"detail\": \"the reference carries messageId bogusid, but this link and digest derive 767d0e8321141951fa3891f7cabf9d01; the pointer belongs to another instruction\"\n    },\n    {\n      \"at\": \"<T>\",\n      \"scopeKind\": \"project\",\n      \"scopeKey\": \"PROJ-1\",\n      \"reason\": \"link_conflict\",\n      \"incumbent\": \"None\",\n      \"challenger\": \"relay-envelope/1|supervisor_to_parent|resume|b07753e309919c6047fd6c5c5caef33c|-\",\n      \"detail\": \"this directive id is already recorded with a reference that is not an envelope pointer (None), so the purpose 'resume' and the correlation None you are asking for have nowhere to go on it. The recorded instruction is preserved; a later one is recorded as its own directive with its own digest. Settling the recorded one does not free this digest: the id is derived from it, live or settled\"\n    }\n  ]\n}\n"
+  }
+ ],
+ "peer": [
+  {
+   "exit": 0,
+   "stdout": "{\n  \"linkId\": \"lnk-17fe34823302c1302c735eb1ffd28014\",\n  \"kind\": \"execution\",\n  \"upper\": {\n    \"scopeKind\": \"initiative\",\n    \"scopeKey\": \"INIT-1\",\n    \"taskId\": \"01supervisor-task\"\n  },\n  \"lower\": {\n    \"scopeKind\": \"project\",\n    \"scopeKey\": \"PROJ-1\",\n    \"taskId\": \"01parent-task\"\n  },\n  \"status\": \"active\",\n  \"revision\": 1,\n  \"supersededBy\": null,\n  \"createdAt\": \"<T>\",\n  \"updatedAt\": \"<T>\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"linkId\": \"lnk-0a5110fd49dda6172d1dc0fed28ca52c\",\n  \"kind\": \"execution\",\n  \"upper\": {\n    \"scopeKind\": \"initiative\",\n    \"scopeKey\": \"INIT-1\",\n    \"taskId\": \"01supervisor-task\"\n  },\n  \"lower\": {\n    \"scopeKind\": \"project\",\n    \"scopeKey\": \"PROJ-2\",\n    \"taskId\": \"01parent-two\"\n  },\n  \"status\": \"active\",\n  \"revision\": 1,\n  \"supersededBy\": null,\n  \"createdAt\": \"<T>\",\n  \"updatedAt\": \"<T>\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"linkId\": \"lnk-e983eba862108d9c6fb632aff03036f1\",\n  \"kind\": \"peer\",\n  \"upper\": {\n    \"scopeKind\": \"project\",\n    \"scopeKey\": \"PROJ-1\",\n    \"taskId\": \"01parent-task\"\n  },\n  \"lower\": {\n    \"scopeKind\": \"project\",\n    \"scopeKey\": \"PROJ-2\",\n    \"taskId\": \"01parent-two\"\n  },\n  \"status\": \"active\",\n  \"revision\": 1,\n  \"supersededBy\": null,\n  \"createdAt\": \"<T>\",\n  \"updatedAt\": \"<T>\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"linkId\": \"lnk-e983eba862108d9c6fb632aff03036f1\",\n  \"kind\": \"peer\",\n  \"upper\": {\n    \"scopeKind\": \"project\",\n    \"scopeKey\": \"PROJ-1\",\n    \"taskId\": \"01parent-task\"\n  },\n  \"lower\": {\n    \"scopeKind\": \"project\",\n    \"scopeKey\": \"PROJ-2\",\n    \"taskId\": \"01parent-two\"\n  },\n  \"status\": \"active\",\n  \"revision\": 1,\n  \"supersededBy\": null,\n  \"createdAt\": \"<T>\",\n  \"updatedAt\": \"<T>\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"scope_role_mismatch\",\n  \"detail\": \"task '01wrong' is not the registered parent of project 'PROJ-1', which is held by '01parent-task'; a peer link joins two project parents\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"scope_cycle\",\n  \"detail\": \"project 'PROJ-1' is not its own peer\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"state\": \"linked\",\n  \"readable\": true,\n  \"link\": {\n    \"linkId\": \"lnk-e983eba862108d9c6fb632aff03036f1\",\n    \"kind\": \"peer\",\n    \"revision\": 1,\n    \"status\": \"active\"\n  },\n  \"from\": {\n    \"bindingId\": \"bnd-8f4ae5af2c9a92f33320f88bcb74f422\",\n    \"role\": \"parent\",\n    \"scopeKind\": \"project\",\n    \"scopeKey\": \"PROJ-1\",\n    \"taskId\": \"01parent-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": \"/parent\",\n    \"status\": \"active\",\n    \"revision\": 1,\n    \"supersedes\": null,\n    \"supersededBy\": null,\n    \"handoverNote\": null,\n    \"createdAt\": \"<T>\",\n    \"updatedAt\": \"<T>\",\n    \"_bindings\": {\n      \"cxcSession\": \"cxc-p\"\n    }\n  },\n  \"counterpart\": {\n    \"bindingId\": \"bnd-6debc9f540166f9ab2f89f1129e0ca28\",\n    \"role\": \"parent\",\n    \"scopeKind\": \"project\",\n    \"scopeKey\": \"PROJ-2\",\n    \"taskId\": \"01parent-two\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null,\n    \"status\": \"active\",\n    \"revision\": 1,\n    \"supersedes\": null,\n    \"supersededBy\": null,\n    \"handoverNote\": null,\n    \"createdAt\": \"<T>\",\n    \"updatedAt\": \"<T>\",\n    \"_bindings\": {\n      \"cxcSession\": null\n    }\n  },\n  \"currentOwner\": null,\n  \"findings\": []\n}\n"
+  }
+ ],
+ "supervise_attach_walks": [
+  {
+   "exit": 0,
+   "stdout": "{\n  \"linkId\": \"lnk-17fe34823302c1302c735eb1ffd28014\",\n  \"kind\": \"execution\",\n  \"upper\": {\n    \"scopeKind\": \"initiative\",\n    \"scopeKey\": \"INIT-1\",\n    \"taskId\": \"01supervisor-task\"\n  },\n  \"lower\": {\n    \"scopeKind\": \"project\",\n    \"scopeKey\": \"PROJ-1\",\n    \"taskId\": \"01parent-task\"\n  },\n  \"status\": \"active\",\n  \"revision\": 1,\n  \"supersededBy\": null,\n  \"createdAt\": \"<T>\",\n  \"updatedAt\": \"<T>\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"linkId\": \"lnk-17fe34823302c1302c735eb1ffd28014\",\n  \"kind\": \"execution\",\n  \"upper\": {\n    \"scopeKind\": \"initiative\",\n    \"scopeKey\": \"INIT-1\",\n    \"taskId\": \"01supervisor-task\"\n  },\n  \"lower\": {\n    \"scopeKind\": \"project\",\n    \"scopeKey\": \"PROJ-1\",\n    \"taskId\": \"01parent-task\"\n  },\n  \"status\": \"active\",\n  \"revision\": 1,\n  \"supersededBy\": null,\n  \"createdAt\": \"<T>\",\n  \"updatedAt\": \"<T>\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"linkId\": \"lnk-119b7cc12608dd24fcccbd6f0ae518fe\",\n  \"kind\": \"reference\",\n  \"upper\": {\n    \"scopeKind\": \"initiative\",\n    \"scopeKey\": \"INIT-2\",\n    \"taskId\": \"01sup-two\"\n  },\n  \"lower\": {\n    \"scopeKind\": \"project\",\n    \"scopeKey\": \"PROJ-1\",\n    \"taskId\": \"01parent-task\"\n  },\n  \"status\": \"active\",\n  \"revision\": 1,\n  \"supersededBy\": null,\n  \"createdAt\": \"<T>\",\n  \"updatedAt\": \"<T>\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": ""
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"relationshipId\": \"rel-46d5b5ac690ef861\",\n  \"parent\": {\n    \"taskId\": \"01parent-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null\n  },\n  \"child\": {\n    \"taskId\": \"01child-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null\n  },\n  \"issueKey\": \"REL-1\",\n  \"status\": \"active\",\n  \"createdAt\": \"<T>\",\n  \"executionGeneration\": 1,\n  \"generations\": [\n    {\n      \"executionGeneration\": 1,\n      \"dispatchRequestId\": \"dispatch-1\",\n      \"anchorState\": \"bound\",\n      \"dispatchTurnId\": \"turn-dispatch-1\",\n      \"openedAt\": \"<T>\",\n      \"boundAt\": \"<T>\",\n      \"reason\": \"initial_assignment\"\n    }\n  ],\n  \"authorizedScope\": {\n    \"artifactRoots\": [\n      \"<HOME>/work\"\n    ],\n    \"allowedRecipients\": [\n      \"01parent-task\"\n    ]\n  },\n  \"authorizedSettings\": null\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"relationshipId\": \"rel-46d5b5ac690ef861\",\n  \"projectKey\": \"PROJ-1\",\n  \"issueKey\": \"REL-1\",\n  \"child\": {\n    \"bindingId\": \"bnd-49d2b4e540ea04dbb7e42f651a32bad1\",\n    \"role\": \"child\",\n    \"scopeKind\": \"issue\",\n    \"scopeKey\": \"REL-1\",\n    \"taskId\": \"01child-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null,\n    \"status\": \"active\",\n    \"revision\": 1,\n    \"supersedes\": null,\n    \"supersededBy\": null,\n    \"handoverNote\": null,\n    \"createdAt\": \"<T>\",\n    \"updatedAt\": \"<T>\",\n    \"_bindings\": {\n      \"cxcSession\": null\n    }\n  },\n  \"parent\": {\n    \"bindingId\": \"bnd-8f4ae5af2c9a92f33320f88bcb74f422\",\n    \"role\": \"parent\",\n    \"scopeKind\": \"project\",\n    \"scopeKey\": \"PROJ-1\",\n    \"taskId\": \"01parent-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": \"/parent\",\n    \"status\": \"active\",\n    \"revision\": 1,\n    \"supersedes\": null,\n    \"supersededBy\": null,\n    \"handoverNote\": null,\n    \"createdAt\": \"<T>\",\n    \"updatedAt\": \"<T>\",\n    \"_bindings\": {\n      \"cxcSession\": \"cxc-p\"\n    }\n  },\n  \"link\": {\n    \"linkId\": \"lnk-043eb4c415b2e591d6e5e282a8682ef4\",\n    \"kind\": \"execution\",\n    \"upper\": {\n      \"scopeKind\": \"project\",\n      \"scopeKey\": \"PROJ-1\",\n      \"taskId\": \"01parent-task\"\n    },\n    \"lower\": {\n      \"scopeKind\": \"issue\",\n      \"scopeKey\": \"REL-1\",\n      \"taskId\": \"01child-task\"\n    },\n    \"status\": \"active\",\n    \"revision\": 1,\n    \"supersededBy\": null,\n    \"createdAt\": \"<T>\",\n    \"updatedAt\": \"<T>\"\n  },\n  \"contention\": []\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"unregistered_relationship\",\n  \"detail\": \"no relationship 'rel-missing'\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"projectKey\": \"PROJ-1\",\n  \"taskId\": null,\n  \"outstanding\": [\n    \"rel-46d5b5ac690ef861\"\n  ]\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"projectKey\": \"PROJ-1\",\n  \"taskId\": \"01nobody\",\n  \"outstanding\": []\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"state\": \"incomplete\",\n  \"readable\": true,\n  \"projectKey\": \"PROJ-1\",\n  \"attached\": [\n    \"rel-46d5b5ac690ef861\"\n  ],\n  \"outstanding\": [\n    \"rel-46d5b5ac690ef861\"\n  ],\n  \"unfinished\": [\n    {\n      \"relationshipId\": \"rel-46d5b5ac690ef861\",\n      \"state\": \"requested\"\n    }\n  ],\n  \"basis\": \"1 of 1 live assignments are unfinished\",\n  \"limits\": \"A reading of what this project's children report, not a completion verdict. The strongest state is complete_candidate: integration and verification are the parent's judgment and are not visible here. A child's own goal status is never consulted; each assignment's state is derived from receipts, verdicts and marks against the current head, generation and revision. unreadable, unregistered and ambiguous are three different answers and none of them means finished.\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"state\": \"unregistered\",\n  \"readable\": true,\n  \"projectKey\": \"PROJ-NONE\",\n  \"attached\": [],\n  \"outstanding\": [],\n  \"basis\": \"no live assignment is attached to this project, which is not the same as every assignment being finished\",\n  \"limits\": \"A reading of what this project's children report, not a completion verdict. The strongest state is complete_candidate: integration and verification are the parent's judgment and are not visible here. A child's own goal status is never consulted; each assignment's state is derived from receipts, verdicts and marks against the current head, generation and revision. unreadable, unregistered and ambiguous are three different answers and none of them means finished.\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"state\": \"resolved\",\n  \"readable\": true,\n  \"levels\": [\n    {\n      \"scopeKind\": \"initiative\",\n      \"scopeKey\": \"INIT-1\",\n      \"owner\": {\n        \"bindingId\": \"bnd-2b3e7750d9c1cfc96942e2521be700ee\",\n        \"role\": \"supervisor\",\n        \"scopeKind\": \"initiative\",\n        \"scopeKey\": \"INIT-1\",\n        \"taskId\": \"01supervisor-task\",\n        \"hostId\": \"host-a\",\n        \"cwd\": \"/sup\",\n        \"status\": \"active\",\n        \"revision\": 1,\n        \"supersedes\": null,\n        \"supersededBy\": null,\n        \"handoverNote\": null,\n        \"createdAt\": \"<T>\",\n        \"updatedAt\": \"<T>\",\n        \"_bindings\": {\n          \"cxcSession\": null\n        }\n      },\n      \"depth\": 0\n    },\n    {\n      \"scopeKind\": \"project\",\n      \"scopeKey\": \"PROJ-1\",\n      \"owner\": {\n        \"bindingId\": \"bnd-8f4ae5af2c9a92f33320f88bcb74f422\",\n        \"role\": \"parent\",\n        \"scopeKind\": \"project\",\n        \"scopeKey\": \"PROJ-1\",\n        \"taskId\": \"01parent-task\",\n        \"hostId\": \"host-a\",\n        \"cwd\": \"/parent\",\n        \"status\": \"active\",\n        \"revision\": 1,\n        \"supersedes\": null,\n        \"supersededBy\": null,\n        \"handoverNote\": null,\n        \"createdAt\": \"<T>\",\n        \"updatedAt\": \"<T>\",\n        \"_bindings\": {\n          \"cxcSession\": \"cxc-p\"\n        }\n      },\n      \"depth\": 1\n    },\n    {\n      \"scopeKind\": \"issue\",\n      \"scopeKey\": \"REL-1\",\n      \"owner\": {\n        \"bindingId\": \"bnd-49d2b4e540ea04dbb7e42f651a32bad1\",\n        \"role\": \"child\",\n        \"scopeKind\": \"issue\",\n        \"scopeKey\": \"REL-1\",\n        \"taskId\": \"01child-task\",\n        \"hostId\": \"host-a\",\n        \"cwd\": null,\n        \"status\": \"active\",\n        \"revision\": 1,\n        \"supersedes\": null,\n        \"supersededBy\": null,\n        \"handoverNote\": null,\n        \"createdAt\": \"<T>\",\n        \"updatedAt\": \"<T>\",\n        \"_bindings\": {\n          \"cxcSession\": null\n        }\n      },\n      \"depth\": 2\n    }\n  ],\n  \"gaps\": [],\n  \"contention\": []\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"state\": \"unregistered\",\n  \"readable\": true,\n  \"levels\": [],\n  \"gaps\": [\n    {\n      \"gap\": \"initiative_without_supervisor\",\n      \"scopeKind\": \"initiative\",\n      \"scopeKey\": \"INIT-NEVER\"\n    }\n  ],\n  \"contention\": []\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"state\": \"resolved\",\n  \"readable\": true,\n  \"levels\": [\n    {\n      \"scopeKind\": \"issue\",\n      \"scopeKey\": \"REL-1\",\n      \"owner\": {\n        \"bindingId\": \"bnd-49d2b4e540ea04dbb7e42f651a32bad1\",\n        \"role\": \"child\",\n        \"scopeKind\": \"issue\",\n        \"scopeKey\": \"REL-1\",\n        \"taskId\": \"01child-task\",\n        \"hostId\": \"host-a\",\n        \"cwd\": null,\n        \"status\": \"active\",\n        \"revision\": 1,\n        \"supersedes\": null,\n        \"supersededBy\": null,\n        \"handoverNote\": null,\n        \"createdAt\": \"<T>\",\n        \"updatedAt\": \"<T>\",\n        \"_bindings\": {\n          \"cxcSession\": null\n        }\n      },\n      \"depth\": 0\n    },\n    {\n      \"scopeKind\": \"project\",\n      \"scopeKey\": \"PROJ-1\",\n      \"owner\": {\n        \"bindingId\": \"bnd-8f4ae5af2c9a92f33320f88bcb74f422\",\n        \"role\": \"parent\",\n        \"scopeKind\": \"project\",\n        \"scopeKey\": \"PROJ-1\",\n        \"taskId\": \"01parent-task\",\n        \"hostId\": \"host-a\",\n        \"cwd\": \"/parent\",\n        \"status\": \"active\",\n        \"revision\": 1,\n        \"supersedes\": null,\n        \"supersededBy\": null,\n        \"handoverNote\": null,\n        \"createdAt\": \"<T>\",\n        \"updatedAt\": \"<T>\",\n        \"_bindings\": {\n          \"cxcSession\": \"cxc-p\"\n        }\n      },\n      \"depth\": 1\n    },\n    {\n      \"scopeKind\": \"initiative\",\n      \"scopeKey\": \"INIT-1\",\n      \"owner\": {\n        \"bindingId\": \"bnd-2b3e7750d9c1cfc96942e2521be700ee\",\n        \"role\": \"supervisor\",\n        \"scopeKind\": \"initiative\",\n        \"scopeKey\": \"INIT-1\",\n        \"taskId\": \"01supervisor-task\",\n        \"hostId\": \"host-a\",\n        \"cwd\": \"/sup\",\n        \"status\": \"active\",\n        \"revision\": 1,\n        \"supersedes\": null,\n        \"supersededBy\": null,\n        \"handoverNote\": null,\n        \"createdAt\": \"<T>\",\n        \"updatedAt\": \"<T>\",\n        \"_bindings\": {\n          \"cxcSession\": null\n        }\n      },\n      \"depth\": 2\n    }\n  ],\n  \"gaps\": [],\n  \"contention\": []\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"state\": \"resolved\",\n  \"readable\": true,\n  \"levels\": [\n    {\n      \"scopeKind\": \"issue\",\n      \"scopeKey\": \"REL-1\",\n      \"owner\": {\n        \"bindingId\": \"bnd-49d2b4e540ea04dbb7e42f651a32bad1\",\n        \"role\": \"child\",\n        \"scopeKind\": \"issue\",\n        \"scopeKey\": \"REL-1\",\n        \"taskId\": \"01child-task\",\n        \"hostId\": \"host-a\",\n        \"cwd\": null,\n        \"status\": \"active\",\n        \"revision\": 1,\n        \"supersedes\": null,\n        \"supersededBy\": null,\n        \"handoverNote\": null,\n        \"createdAt\": \"<T>\",\n        \"updatedAt\": \"<T>\",\n        \"_bindings\": {\n          \"cxcSession\": null\n        }\n      },\n      \"depth\": 0\n    },\n    {\n      \"scopeKind\": \"project\",\n      \"scopeKey\": \"PROJ-1\",\n      \"owner\": {\n        \"bindingId\": \"bnd-8f4ae5af2c9a92f33320f88bcb74f422\",\n        \"role\": \"parent\",\n        \"scopeKind\": \"project\",\n        \"scopeKey\": \"PROJ-1\",\n        \"taskId\": \"01parent-task\",\n        \"hostId\": \"host-a\",\n        \"cwd\": \"/parent\",\n        \"status\": \"active\",\n        \"revision\": 1,\n        \"supersedes\": null,\n        \"supersededBy\": null,\n        \"handoverNote\": null,\n        \"createdAt\": \"<T>\",\n        \"updatedAt\": \"<T>\",\n        \"_bindings\": {\n          \"cxcSession\": \"cxc-p\"\n        }\n      },\n      \"depth\": 1\n    },\n    {\n      \"scopeKind\": \"initiative\",\n      \"scopeKey\": \"INIT-1\",\n      \"owner\": {\n        \"bindingId\": \"bnd-2b3e7750d9c1cfc96942e2521be700ee\",\n        \"role\": \"supervisor\",\n        \"scopeKind\": \"initiative\",\n        \"scopeKey\": \"INIT-1\",\n        \"taskId\": \"01supervisor-task\",\n        \"hostId\": \"host-a\",\n        \"cwd\": \"/sup\",\n        \"status\": \"active\",\n        \"revision\": 1,\n        \"supersedes\": null,\n        \"supersededBy\": null,\n        \"handoverNote\": null,\n        \"createdAt\": \"<T>\",\n        \"updatedAt\": \"<T>\",\n        \"_bindings\": {\n          \"cxcSession\": null\n        }\n      },\n      \"depth\": 2\n    }\n  ],\n  \"gaps\": [],\n  \"contention\": []\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"state\": \"resolved\",\n  \"readable\": true,\n  \"levels\": [\n    {\n      \"scopeKind\": \"issue\",\n      \"scopeKey\": \"REL-1\",\n      \"owner\": {\n        \"bindingId\": \"bnd-49d2b4e540ea04dbb7e42f651a32bad1\",\n        \"role\": \"child\",\n        \"scopeKind\": \"issue\",\n        \"scopeKey\": \"REL-1\",\n        \"taskId\": \"01child-task\",\n        \"hostId\": \"host-a\",\n        \"cwd\": null,\n        \"status\": \"active\",\n        \"revision\": 1,\n        \"supersedes\": null,\n        \"supersededBy\": null,\n        \"handoverNote\": null,\n        \"createdAt\": \"<T>\",\n        \"updatedAt\": \"<T>\",\n        \"_bindings\": {\n          \"cxcSession\": null\n        }\n      },\n      \"depth\": 0\n    },\n    {\n      \"scopeKind\": \"project\",\n      \"scopeKey\": \"PROJ-1\",\n      \"owner\": {\n        \"bindingId\": \"bnd-8f4ae5af2c9a92f33320f88bcb74f422\",\n        \"role\": \"parent\",\n        \"scopeKind\": \"project\",\n        \"scopeKey\": \"PROJ-1\",\n        \"taskId\": \"01parent-task\",\n        \"hostId\": \"host-a\",\n        \"cwd\": \"/parent\",\n        \"status\": \"active\",\n        \"revision\": 1,\n        \"supersedes\": null,\n        \"supersededBy\": null,\n        \"handoverNote\": null,\n        \"createdAt\": \"<T>\",\n        \"updatedAt\": \"<T>\",\n        \"_bindings\": {\n          \"cxcSession\": \"cxc-p\"\n        }\n      },\n      \"depth\": 1\n    },\n    {\n      \"scopeKind\": \"initiative\",\n      \"scopeKey\": \"INIT-1\",\n      \"owner\": {\n        \"bindingId\": \"bnd-2b3e7750d9c1cfc96942e2521be700ee\",\n        \"role\": \"supervisor\",\n        \"scopeKind\": \"initiative\",\n        \"scopeKey\": \"INIT-1\",\n        \"taskId\": \"01supervisor-task\",\n        \"hostId\": \"host-a\",\n        \"cwd\": \"/sup\",\n        \"status\": \"active\",\n        \"revision\": 1,\n        \"supersedes\": null,\n        \"supersededBy\": null,\n        \"handoverNote\": null,\n        \"createdAt\": \"<T>\",\n        \"updatedAt\": \"<T>\",\n        \"_bindings\": {\n          \"cxcSession\": null\n        }\n      },\n      \"depth\": 2\n    }\n  ],\n  \"gaps\": [],\n  \"contention\": []\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": ""
+  },
+  {
+   "exit": 2,
+   "stdout": ""
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"ok\": false,\n  \"reason\": \"bad_invocation\",\n  \"detail\": \"--scope chooses between the scopes one TASK owns, so it goes with --task. With --issue or --relationship the starting scope is already decided and --scope would be silently ignored.\"\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"state\": \"linked\",\n  \"readable\": true,\n  \"link\": {\n    \"linkId\": \"lnk-043eb4c415b2e591d6e5e282a8682ef4\",\n    \"kind\": \"execution\",\n    \"revision\": 1,\n    \"status\": \"active\"\n  },\n  \"from\": {\n    \"bindingId\": \"bnd-8f4ae5af2c9a92f33320f88bcb74f422\",\n    \"role\": \"parent\",\n    \"scopeKind\": \"project\",\n    \"scopeKey\": \"PROJ-1\",\n    \"taskId\": \"01parent-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": \"/parent\",\n    \"status\": \"active\",\n    \"revision\": 1,\n    \"supersedes\": null,\n    \"supersededBy\": null,\n    \"handoverNote\": null,\n    \"createdAt\": \"<T>\",\n    \"updatedAt\": \"<T>\",\n    \"_bindings\": {\n      \"cxcSession\": \"cxc-p\"\n    }\n  },\n  \"counterpart\": {\n    \"bindingId\": \"bnd-49d2b4e540ea04dbb7e42f651a32bad1\",\n    \"role\": \"child\",\n    \"scopeKind\": \"issue\",\n    \"scopeKey\": \"REL-1\",\n    \"taskId\": \"01child-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": null,\n    \"status\": \"active\",\n    \"revision\": 1,\n    \"supersedes\": null,\n    \"supersededBy\": null,\n    \"handoverNote\": null,\n    \"createdAt\": \"<T>\",\n    \"updatedAt\": \"<T>\",\n    \"_bindings\": {\n      \"cxcSession\": null\n    }\n  },\n  \"currentOwner\": null,\n  \"findings\": []\n}\n"
+  },
+  {
+   "exit": 0,
+   "stdout": "{\n  \"state\": \"unlinked\",\n  \"readable\": true,\n  \"link\": null,\n  \"from\": {\n    \"bindingId\": \"bnd-8f4ae5af2c9a92f33320f88bcb74f422\",\n    \"role\": \"parent\",\n    \"scopeKind\": \"project\",\n    \"scopeKey\": \"PROJ-1\",\n    \"taskId\": \"01parent-task\",\n    \"hostId\": \"host-a\",\n    \"cwd\": \"/parent\",\n    \"status\": \"active\",\n    \"revision\": 1,\n    \"supersedes\": null,\n    \"supersededBy\": null,\n    \"handoverNote\": null,\n    \"createdAt\": \"<T>\",\n    \"updatedAt\": \"<T>\",\n    \"_bindings\": {\n      \"cxcSession\": \"cxc-p\"\n    }\n  },\n  \"counterpart\": null,\n  \"currentOwner\": null,\n  \"findings\": [\n    \"foreign_scope\",\n    \"unregistered_link\"\n  ]\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": ""
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"handover_unconfirmed\",\n  \"detail\": \"the outstanding work restated by this handover is [] but the store says it is ['rel-46d5b5ac690ef861']; a replacement owner confirms the unfinished work it takes on\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"handover_would_strand\",\n  \"detail\": \"project 'PROJ-1' still has unfinished work that this handover cannot move: ['rel-46d5b5ac690ef861'] (of which ['rel-46d5b5ac690ef861'] is unfinished; a settled one still reopens under the parent named on its own row). An assignment's identity and its queued deliveries name its parent, so each one is moved by registering its successor with supersedes before the scope changes hands\"\n}\n"
+  },
+  {
+   "exit": 2,
+   "stdout": ""
+  }
+ ]
+}
