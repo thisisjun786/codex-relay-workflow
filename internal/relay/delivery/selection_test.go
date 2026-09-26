@@ -70,5 +70,6 @@ func TestCLI_store_selection_refusals_match_python(t *testing.T) {
 	}
 }
 
-// programPath is the absolute program a recovery line names: each side names its own.
-var programPath = regexp.MustCompile(`"(env -u CODEX_SESSION_RELAY_STATE )?/\S*(?:/codex-session-relay|/crw) `)
+// programPath is the program a recovery line names: each side names its own (Python its console
+// script path, `crw relay` the argparse prog the multi-call entry passes, cli.ExecuteAs).
+var programPath = regexp.MustCompile(`"(env -u CODEX_SESSION_RELAY_STATE )?(?:/\S*(?:/codex-session-relay|/crw)|'crw relay') `)
