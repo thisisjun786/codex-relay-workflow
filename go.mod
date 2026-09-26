@@ -7,6 +7,7 @@ toolchain go1.27.1
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/modelcontextprotocol/go-sdk v1.8.0
+	golang.org/x/text v0.35.0
 	honnef.co/go/tools v0.8.1
 	modernc.org/sqlite v1.59.0
 )
