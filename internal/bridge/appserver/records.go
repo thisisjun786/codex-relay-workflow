@@ -164,6 +164,15 @@ func WithSendHook(ctx context.Context, hook func(method string)) context.Context
 	return context.WithValue(ctx, sendHookKey{}, hook)
 }
 
+type outcomeHookKey struct{}
+
+// WithOutcomeHook installs a test seam after a request selects a reader outcome but before it
+// interprets it. This forces cancellation to race a response or disconnect without relying on
+// which ready select case the scheduler chooses.
+func WithOutcomeHook(ctx context.Context, hook func(method string)) context.Context {
+	return context.WithValue(ctx, outcomeHookKey{}, hook)
+}
+
 func (c *Client) Notifications() <-chan Notification { return c.notifications }
 func (c *Client) RequestMark() uint64                { c.mu.Lock(); defer c.mu.Unlock(); return c.total }
 func (c *Client) RequestsSince(mark uint64, threadID string) RequestReport {
