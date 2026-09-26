@@ -7,14 +7,23 @@ the steps needed to activate GitHub enforcement.
 
 | Command | Purpose |
 | --- | --- |
-| `python3 scripts/ci/validate.py` | Skill metadata, local links and Python syntax |
-| `python3 scripts/ci/plugin.py` | Plugin package shape, payload hygiene and the release digest |
+| `crw-dev ci scope` | Select checks from Git evidence (the `selection` job) |
+| `crw-dev ci validate` | Skill metadata, local links and Python syntax |
+| `crw-dev ci plugin` | Plugin package shape, payload hygiene and the release digest |
 | `python3 -m unittest discover -s scripts/ci/tests -v` | Installer behavior and CI-control tests |
-| `python3 scripts/ci/contracts.py` | Run the owning hook replay and operations shape check when present; reject incomplete script/contract pairs |
+| `crw-dev ci contracts` | Run the owning hook replay and operations shape check when present; reject incomplete script/contract pairs |
+| `crw-dev ci operations` | The operations fixtures against their contract (the Go port of `scripts/check_operations_contract.py`, also run by `contracts`) |
 | `python3 scripts/ci/packages.py` | Install, test, run and build the two packages under `packages/` from the root lock file |
 | `bash scripts/ci/secrets.sh` | Checksum-pinned Gitleaks scan of all fetched history |
-| `python3 scripts/ci/gate.py` | Aggregate prerequisite results supplied by the workflow |
+| `crw-dev ci gate` | Aggregate prerequisite results supplied by the workflow |
 | `make lint test contract` then `CGO_ENABLED=0 make dist` per target | `go-product` job: vet, staticcheck, gofmt, Go tests and the contract corpus, then static `crw` binaries for linux/amd64, linux/arm64 and darwin/arm64 uploaded with `SHA256SUMS` |
+
+`crw-dev` is the development binary: `go build -tags dev -o dist/crw-dev ./cmd/crw-dev`
+(or `make crw-dev`). It builds only with the `dev` tag, so `make dist` and the release
+archives never contain it. Each `crw-dev ci` check replaces the Python script of the same
+name under `scripts/ci/` with identical exit codes and output; the scripts and their tests
+stay until they are deleted before todo 48 of the Go port, and until then `validate` also
+runs `scripts/ci/contracts.py`, which `test_gate.py` pins.
 
 See the [workflow](../.github/workflows/ci.yml) for exact job inputs and Python
 versions. PR validation uses GitHub's combined merge candidate; pushes to `dev`
@@ -23,7 +32,8 @@ CI dispatch runs all checks but does not produce release-eligible push evidence.
 
 ## Selection and aggregation
 
-The standard-library [selector](../scripts/ci/scope.py) owns the path map. It
+The [selector](../internal/dev/ci/scope.go) owns the path map (ported from
+[scope.py](../scripts/ci/scope.py), which keeps the same map until it is deleted). It
 records the actual comparison base, candidate, event, changed paths, unknown
 paths, selected jobs and reason. Renames include both old and new paths; mode and
 file-type changes cannot obtain a prose exemption. Candidate inventory is checked
@@ -45,7 +55,7 @@ version-only exemption from JSON contents. The PR template lives under `.github/
 and conservatively selects full coverage too.
 
 `selection` runs first. Selected test and package jobs and `validate` then run
-independently; secret scanning is independent. `contracts.py` runs once in
+independently; secret scanning is independent. The contract check runs once in
 `validate`, not in both test-matrix legs. `dev-gate` always runs, requires selection
 and the always-on producers to succeed, and accepts skipped jobs only when that
 selection explicitly did not request them. Missing, malformed, failed, cancelled
@@ -57,8 +67,8 @@ payload step runs only once the native wiring launcher
 `plugins/crw/wiring/crw-bridge.sh` exists; until then `validate` covers the
 payload.
 
-`test_gate.py` compares the gate's prerequisite inventory with the real workflow
-and refuses omitted/extra jobs or `continue-on-error`. Selector tests use real Git
+`test_gate.py` and the Go tests in `internal/dev/ci` compare the gate's prerequisite
+inventory with the real workflow and refuse omitted/extra jobs or `continue-on-error`. Selector tests use real Git
 histories, including renames and unknown candidate files. Release tests execute
 the release workflow's actual shell steps with disposable repositories and fake
 GitHub responses; they never create a real release.
@@ -71,8 +81,8 @@ that exact push run if the owner later chooses its commit for release.
 
 ## Plugin package
 
-`scripts/ci/plugin.py` runs as a step of the `validate` job, so the gate job set is
-unchanged. It reads `.agents/plugins/marketplace.json` and the manifest under
+`crw-dev ci plugin` (the port of `scripts/ci/plugin.py`, same flags and output) runs as a
+step of the `validate` job, so the gate job set is unchanged. It reads `.agents/plugins/marketplace.json` and the manifest under
 `plugins/crw/.codex-plugin/`, then rebuilds the release payload from a Git revision
 with `git ls-tree` and `git cat-file` rather than from the working tree. That
 revision is the oracle: comparing the working tree against itself would prove
