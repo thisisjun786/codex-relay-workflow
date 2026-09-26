@@ -1,0 +1,130 @@
+[
+ [
+  "",
+  "Expecting value: line 1 column 1 (char 0)"
+ ],
+ [
+  " ",
+  "Expecting value: line 1 column 2 (char 1)"
+ ],
+ [
+  "{not json",
+  "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+ ],
+ [
+  "{",
+  "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+ ],
+ [
+  "}",
+  "Expecting value: line 1 column 1 (char 0)"
+ ],
+ [
+  "[",
+  "Expecting value: line 1 column 2 (char 1)"
+ ],
+ [
+  "[1,",
+  "Expecting value: line 1 column 4 (char 3)"
+ ],
+ [
+  "[1,]",
+  "Illegal trailing comma before end of array: line 1 column 3 (char 2)"
+ ],
+ [
+  "{\"a\":1,}",
+  "Illegal trailing comma before end of object: line 1 column 7 (char 6)"
+ ],
+ [
+  "{\"a\" 1}",
+  "Expecting ':' delimiter: line 1 column 6 (char 5)"
+ ],
+ [
+  "{\"a\":}",
+  "Expecting value: line 1 column 6 (char 5)"
+ ],
+ [
+  "{\"a\":1 \"b\":2}",
+  "Expecting ',' delimiter: line 1 column 8 (char 7)"
+ ],
+ [
+  "{\"a\":\"x",
+  "Unterminated string starting at: line 1 column 6 (char 5)"
+ ],
+ [
+  "\"\\q\"",
+  "Invalid \\escape: line 1 column 2 (char 1)"
+ ],
+ [
+  "\"\\u12g4\"",
+  "Invalid \\uXXXX escape: line 1 column 3 (char 2)"
+ ],
+ [
+  "\"a\u0001b\"",
+  "Invalid control character at: line 1 column 3 (char 2)"
+ ],
+ [
+  "tru",
+  "Expecting value: line 1 column 1 (char 0)"
+ ],
+ [
+  "nul",
+  "Expecting value: line 1 column 1 (char 0)"
+ ],
+ [
+  "01",
+  "Extra data: line 1 column 2 (char 1)"
+ ],
+ [
+  "-",
+  "Expecting value: line 1 column 1 (char 0)"
+ ],
+ [
+  "1.",
+  "Extra data: line 1 column 2 (char 1)"
+ ],
+ [
+  "1e",
+  "Extra data: line 1 column 2 (char 1)"
+ ],
+ [
+  "1 2",
+  "Extra data: line 1 column 3 (char 2)"
+ ],
+ [
+  "{}x",
+  "Extra data: line 1 column 3 (char 2)"
+ ],
+ [
+  "{\"a\":[1,2",
+  "Expecting ',' delimiter: line 1 column 10 (char 9)"
+ ],
+ [
+  "\n\n  {\"a\": x}",
+  "Expecting value: line 3 column 9 (char 10)"
+ ],
+ [
+  "{\"\u00e9\": ?}",
+  "Expecting value: line 1 column 7 (char 6)"
+ ],
+ [
+  "NaN",
+  ""
+ ],
+ [
+  "-Infinity",
+  ""
+ ],
+ [
+  "[1,\n2,\n]",
+  "Illegal trailing comma before end of array: line 2 column 2 (char 5)"
+ ],
+ [
+  "{\"a\":1}\n\n?",
+  "Extra data: line 3 column 1 (char 9)"
+ ],
+ [
+  "[]]",
+  "Extra data: line 1 column 3 (char 2)"
+ ]
+]

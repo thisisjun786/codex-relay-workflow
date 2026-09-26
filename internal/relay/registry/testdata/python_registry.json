@@ -1,0 +1,1032 @@
+{
+ "anchors": [
+  {
+   "ok": {
+    "anchorState": "anchor_pending",
+    "boundAt": null,
+    "dispatchRequestId": "dispatch-1",
+    "dispatchTurnId": null,
+    "executionGeneration": 1,
+    "openedAt": "2023-11-14T22:13:20.000000+00:00",
+    "reason": "initial_assignment",
+    "relationshipId": "rel-46d5b5ac690ef861"
+   }
+  },
+  {
+   "refused": {
+    "detail": "an anchor binds only from a dispatch receipt, not from 'latest_turn'",
+    "reason": "unbound_generation"
+   }
+  },
+  {
+   "refused": {
+    "detail": "an anchor needs an exact dispatch turn id, not ''",
+    "reason": "unbound_generation"
+   }
+  },
+  {
+   "ok": {
+    "anchorState": "bound",
+    "boundAt": "2023-11-14T22:13:20.000000+00:00",
+    "dispatchRequestId": "dispatch-1",
+    "dispatchTurnId": "turn-exact",
+    "executionGeneration": 1,
+    "openedAt": "2023-11-14T22:13:20.000000+00:00",
+    "reason": "initial_assignment",
+    "relationshipId": "rel-46d5b5ac690ef861"
+   }
+  },
+  {
+   "ok": {
+    "anchorState": "bound",
+    "boundAt": "2023-11-14T22:13:20.000000+00:00",
+    "dispatchRequestId": "dispatch-1",
+    "dispatchTurnId": "turn-exact",
+    "executionGeneration": 1,
+    "openedAt": "2023-11-14T22:13:20.000000+00:00",
+    "reason": "initial_assignment",
+    "relationshipId": "rel-46d5b5ac690ef861"
+   }
+  },
+  {
+   "refused": {
+    "detail": "generation 1 is already bound to 'turn-exact'",
+    "reason": "anchor_already_bound"
+   }
+  },
+  {
+   "refused": {
+    "detail": "'rel-46d5b5ac690ef861' has no generation 7",
+    "reason": "unknown_generation"
+   }
+  }
+ ],
+ "generations": [
+  {
+   "ok": {
+    "anchorState": "anchor_pending",
+    "boundAt": null,
+    "dispatchRequestId": "dispatch-2",
+    "dispatchTurnId": null,
+    "executionGeneration": 2,
+    "openedAt": "2023-11-14T22:13:20.000000+00:00",
+    "reason": "needs_changes_revision",
+    "relationshipId": "rel-46d5b5ac690ef861"
+   }
+  },
+  {
+   "ok": {
+    "anchorState": "anchor_pending",
+    "boundAt": null,
+    "dispatchRequestId": "dispatch-2",
+    "dispatchTurnId": null,
+    "executionGeneration": 2,
+    "openedAt": "2023-11-14T22:13:20.000000+00:00",
+    "reason": "needs_changes_revision",
+    "relationshipId": "rel-46d5b5ac690ef861"
+   }
+  },
+  {
+   "ok": {
+    "anchorState": "bound",
+    "boundAt": "2023-11-14T22:13:20.000000+00:00",
+    "dispatchRequestId": "d3",
+    "dispatchTurnId": "t3",
+    "executionGeneration": 3,
+    "openedAt": "2023-11-14T22:13:20.000000+00:00",
+    "reason": "needs_changes_revision",
+    "relationshipId": "rel-46d5b5ac690ef861"
+   }
+  },
+  {
+   "refused": {
+    "detail": "bad reason 'bogus'",
+    "reason": "unknown_generation"
+   }
+  },
+  {
+   "refused": {
+    "detail": "an anchor needs an exact dispatch turn id, not ' '",
+    "reason": "unbound_generation"
+   }
+  },
+  {
+   "ok": {
+    "authorizedScope": {
+     "allowedRecipients": [
+      "01parent-task"
+     ],
+     "artifactRoots": [
+      "/work"
+     ]
+    },
+    "child": {
+     "cwd": "/work",
+     "hostId": "host-a",
+     "taskId": "01child-task"
+    },
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "executionGeneration": 3,
+    "generations": [
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-1",
+      "dispatchTurnId": "turn-dispatch-1",
+      "executionGeneration": 1,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "initial_assignment"
+     },
+     {
+      "anchorState": "anchor_pending",
+      "boundAt": null,
+      "dispatchRequestId": "dispatch-2",
+      "dispatchTurnId": null,
+      "executionGeneration": 2,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "needs_changes_revision"
+     },
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "d3",
+      "dispatchTurnId": "t3",
+      "executionGeneration": 3,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "needs_changes_revision"
+     }
+    ],
+    "issueKey": "REL-1",
+    "parent": {
+     "cwd": "/parent",
+     "hostId": "host-a",
+     "taskId": "01parent-task"
+    },
+    "relationshipId": "rel-46d5b5ac690ef861",
+    "status": "active"
+   }
+  }
+ ],
+ "identity": [
+  {
+   "ok": {
+    "_bindings": {
+     "childCxcSession": "cxc-child",
+     "parentCxcSession": "cxc-parent",
+     "supersededBy": null
+    },
+    "authorizedScope": {
+     "allowedRecipients": [
+      "01parent-task"
+     ],
+     "artifactRoots": [
+      "/work"
+     ],
+     "scopeRef": null
+    },
+    "child": {
+     "cwd": "/work",
+     "hostId": "host-a",
+     "taskId": "01child-task"
+    },
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "executionGeneration": 1,
+    "generations": [
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-1",
+      "dispatchTurnId": "turn-dispatch-1",
+      "executionGeneration": 1,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "initial_assignment"
+     }
+    ],
+    "issueKey": "REL-1",
+    "parent": {
+     "cwd": "/parent",
+     "hostId": "host-a",
+     "taskId": "01parent-task"
+    },
+    "relationshipId": "rel-46d5b5ac690ef861",
+    "status": "active",
+    "supersededBy": null
+   }
+  },
+  {
+   "ok": {
+    "authorizedScope": {
+     "allowedRecipients": [
+      "01parent-task"
+     ],
+     "artifactRoots": [
+      "/work"
+     ]
+    },
+    "child": {
+     "cwd": "/work",
+     "hostId": "host-a",
+     "taskId": "01child-task"
+    },
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "executionGeneration": 1,
+    "generations": [
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-1",
+      "dispatchTurnId": "turn-dispatch-1",
+      "executionGeneration": 1,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "initial_assignment"
+     }
+    ],
+    "issueKey": "REL-1",
+    "parent": {
+     "cwd": "/parent",
+     "hostId": "host-a",
+     "taskId": "01parent-task"
+    },
+    "relationshipId": "rel-46d5b5ac690ef861",
+    "status": "active"
+   }
+  },
+  {
+   "ok": {
+    "authorizedScope": {
+     "allowedRecipients": [
+      "01parent-task"
+     ],
+     "artifactRoots": [
+      "/work"
+     ]
+    },
+    "child": {
+     "cwd": "/work",
+     "hostId": "host-a",
+     "taskId": "01child-task"
+    },
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "executionGeneration": 1,
+    "generations": [
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-1",
+      "dispatchTurnId": "turn-dispatch-1",
+      "executionGeneration": 1,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "initial_assignment"
+     }
+    ],
+    "issueKey": "REL-1",
+    "parent": {
+     "cwd": "/parent",
+     "hostId": "host-a",
+     "taskId": "01parent-task"
+    },
+    "relationshipId": "rel-46d5b5ac690ef861",
+    "status": "active"
+   }
+  },
+  {
+   "refused": {
+    "detail": "'rel-46d5b5ac690ef861' already exists with a different scope or hosts",
+    "reason": "relationship_conflict"
+   }
+  },
+  {
+   "refused": {
+    "detail": "no relationship 'rel-0000000000000000'",
+    "reason": "unregistered_relationship"
+   }
+  }
+ ],
+ "lifecycle": [
+  {
+   "ok": {
+    "authorizedScope": {
+     "allowedRecipients": [
+      "01parent-task"
+     ],
+     "artifactRoots": [
+      "/work"
+     ]
+    },
+    "child": {
+     "cwd": "/work",
+     "hostId": "host-a",
+     "taskId": "01child-task"
+    },
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "executionGeneration": 1,
+    "generations": [
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-1",
+      "dispatchTurnId": "turn-dispatch-1",
+      "executionGeneration": 1,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "initial_assignment"
+     }
+    ],
+    "issueKey": "REL-1",
+    "parent": {
+     "cwd": "/parent",
+     "hostId": "host-a",
+     "taskId": "01parent-task"
+    },
+    "relationshipId": "rel-46d5b5ac690ef861",
+    "status": "paused"
+   }
+  },
+  {
+   "refused": {
+    "detail": "relationship 'rel-46d5b5ac690ef861' is 'paused' and is never auto-resumed",
+    "reason": "relationship_not_active"
+   }
+  },
+  {
+   "refused": {
+    "detail": "relationship 'rel-46d5b5ac690ef861' is 'paused' and is never auto-resumed",
+    "reason": "relationship_not_active"
+   }
+  },
+  {
+   "ok": {
+    "authorizedScope": {
+     "allowedRecipients": [
+      "01parent-task"
+     ],
+     "artifactRoots": [
+      "/work"
+     ]
+    },
+    "child": {
+     "cwd": "/work",
+     "hostId": "host-a",
+     "taskId": "01child-task"
+    },
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "executionGeneration": 1,
+    "generations": [
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-1",
+      "dispatchTurnId": "turn-dispatch-1",
+      "executionGeneration": 1,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "initial_assignment"
+     }
+    ],
+    "issueKey": "REL-1",
+    "parent": {
+     "cwd": "/parent",
+     "hostId": "host-a",
+     "taskId": "01parent-task"
+    },
+    "relationshipId": "rel-46d5b5ac690ef861",
+    "status": "active"
+   }
+  },
+  {
+   "ok": {
+    "authorizedScope": {
+     "allowedRecipients": [
+      "01parent-task"
+     ],
+     "artifactRoots": [
+      "/work"
+     ]
+    },
+    "child": {
+     "cwd": "/work",
+     "hostId": "host-a",
+     "taskId": "01child-task"
+    },
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "executionGeneration": 1,
+    "generations": [
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-1",
+      "dispatchTurnId": "turn-dispatch-1",
+      "executionGeneration": 1,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "initial_assignment"
+     }
+    ],
+    "issueKey": "REL-1",
+    "parent": {
+     "cwd": "/parent",
+     "hostId": "host-a",
+     "taskId": "01parent-task"
+    },
+    "relationshipId": "rel-46d5b5ac690ef861",
+    "status": "cancelled"
+   }
+  },
+  {
+   "refused": {
+    "detail": "relationship 'rel-46d5b5ac690ef861' is 'cancelled' and is never auto-resumed",
+    "reason": "relationship_not_active"
+   }
+  },
+  {
+   "refused": {
+    "detail": "relationship 'rel-46d5b5ac690ef861' is 'cancelled' and is never auto-resumed",
+    "reason": "relationship_not_active"
+   }
+  },
+  {
+   "ok": {
+    "authorizedScope": {
+     "allowedRecipients": [
+      "01parent-task"
+     ],
+     "artifactRoots": [
+      "/work"
+     ]
+    },
+    "child": {
+     "cwd": "/work",
+     "hostId": "host-a",
+     "taskId": "01child-task"
+    },
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "executionGeneration": 1,
+    "generations": [
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-1",
+      "dispatchTurnId": "turn-dispatch-1",
+      "executionGeneration": 1,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "initial_assignment"
+     }
+    ],
+    "issueKey": "REL-1",
+    "parent": {
+     "cwd": "/parent",
+     "hostId": "host-a",
+     "taskId": "01parent-task"
+    },
+    "relationshipId": "rel-46d5b5ac690ef861",
+    "status": "active"
+   }
+  },
+  {
+   "ok": {
+    "authorizedScope": {
+     "allowedRecipients": [
+      "01parent-task"
+     ],
+     "artifactRoots": [
+      "/work"
+     ]
+    },
+    "child": {
+     "cwd": "/work",
+     "hostId": "host-a",
+     "taskId": "01child-task"
+    },
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "executionGeneration": 1,
+    "generations": [
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-1",
+      "dispatchTurnId": "turn-dispatch-1",
+      "executionGeneration": 1,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "initial_assignment"
+     }
+    ],
+    "issueKey": "REL-1",
+    "parent": {
+     "cwd": "/parent",
+     "hostId": "host-a",
+     "taskId": "01parent-task"
+    },
+    "relationshipId": "rel-46d5b5ac690ef861",
+    "status": "archived"
+   }
+  },
+  {
+   "refused": {
+    "detail": "relationship 'rel-46d5b5ac690ef861' is 'archived' and is never auto-resumed",
+    "reason": "relationship_not_active"
+   }
+  },
+  {
+   "refused": {
+    "detail": "relationship 'rel-46d5b5ac690ef861' is 'archived' and is never auto-resumed",
+    "reason": "relationship_not_active"
+   }
+  },
+  {
+   "ok": {
+    "authorizedScope": {
+     "allowedRecipients": [
+      "01parent-task"
+     ],
+     "artifactRoots": [
+      "/work"
+     ]
+    },
+    "child": {
+     "cwd": "/work",
+     "hostId": "host-a",
+     "taskId": "01child-task"
+    },
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "executionGeneration": 1,
+    "generations": [
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-1",
+      "dispatchTurnId": "turn-dispatch-1",
+      "executionGeneration": 1,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "initial_assignment"
+     }
+    ],
+    "issueKey": "REL-1",
+    "parent": {
+     "cwd": "/parent",
+     "hostId": "host-a",
+     "taskId": "01parent-task"
+    },
+    "relationshipId": "rel-46d5b5ac690ef861",
+    "status": "active"
+   }
+  },
+  {
+   "ok": {
+    "anchorState": "bound",
+    "boundAt": "2023-11-14T22:13:20.000000+00:00",
+    "dispatchRequestId": "after",
+    "dispatchTurnId": "ta",
+    "executionGeneration": 2,
+    "openedAt": "2023-11-14T22:13:20.000000+00:00",
+    "reason": "needs_changes_revision",
+    "relationshipId": "rel-46d5b5ac690ef861"
+   }
+  },
+  {
+   "ok": {
+    "authorizedScope": {
+     "allowedRecipients": [
+      "01parent-task"
+     ],
+     "artifactRoots": [
+      "/work"
+     ]
+    },
+    "child": {
+     "cwd": "/work",
+     "hostId": "host-a",
+     "taskId": "01child-task"
+    },
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "executionGeneration": 2,
+    "generations": [
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-1",
+      "dispatchTurnId": "turn-dispatch-1",
+      "executionGeneration": 1,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "initial_assignment"
+     },
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "after",
+      "dispatchTurnId": "ta",
+      "executionGeneration": 2,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "needs_changes_revision"
+     }
+    ],
+    "issueKey": "REL-1",
+    "parent": {
+     "cwd": "/parent",
+     "hostId": "host-a",
+     "taskId": "01parent-task"
+    },
+    "relationshipId": "rel-46d5b5ac690ef861",
+    "status": "paused"
+   }
+  },
+  {
+   "refused": {
+    "detail": "bad status 'active'",
+    "reason": "relationship_not_active"
+   }
+  },
+  {
+   "ok": {
+    "authorizedScope": {
+     "allowedRecipients": [
+      "01parent-task"
+     ],
+     "artifactRoots": [
+      "/work"
+     ]
+    },
+    "child": {
+     "cwd": "/work",
+     "hostId": "host-a",
+     "taskId": "01child-task"
+    },
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "executionGeneration": 2,
+    "generations": [
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-1",
+      "dispatchTurnId": "turn-dispatch-1",
+      "executionGeneration": 1,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "initial_assignment"
+     },
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "after",
+      "dispatchTurnId": "ta",
+      "executionGeneration": 2,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "needs_changes_revision"
+     }
+    ],
+    "issueKey": "REL-1",
+    "parent": {
+     "cwd": "/parent",
+     "hostId": "host-a",
+     "taskId": "01parent-task"
+    },
+    "relationshipId": "rel-46d5b5ac690ef861",
+    "status": "cancelled"
+   }
+  },
+  {
+   "refused": {
+    "detail": "'rel-46d5b5ac690ef861' is 'cancelled', so 'paused' would bring it back to life. Restoring an assignment restates the generation and the scope it re-authorizes, which is relationship-resume; choosing a different live word does not make those checks optional",
+    "reason": "relationship_not_active"
+   }
+  }
+ ],
+ "resume_ownership": [
+  {
+   "refused": {
+    "detail": "issue 'REL-1' is now assigned to child 'different-child' under 'rel-b447a4cc27f2a5c1' (active); resuming 'rel-46d5b5ac690ef861' would leave the issue with two owners. Replace that assignment deliberately instead",
+    "reason": "duplicate_assignment"
+   }
+  },
+  {
+   "refused": {
+    "detail": "issue 'REL-1' is now assigned to child 'different-child' under 'rel-b447a4cc27f2a5c1' (paused); resuming 'rel-46d5b5ac690ef861' would leave the issue with two owners. Replace that assignment deliberately instead",
+    "reason": "duplicate_assignment"
+   }
+  },
+  {
+   "refused": {
+    "detail": "issue 'REL-1' is already assigned to child 'different-child' under 'rel-b447a4cc27f2a5c1' (paused, parent '01parent-task'); reuse that assignment, or pass supersedes to replace it deliberately",
+    "reason": "duplicate_assignment"
+   }
+  },
+  {
+   "ok": {
+    "authorizedScope": {
+     "allowedRecipients": [
+      "01parent-task"
+     ],
+     "artifactRoots": [
+      "/work"
+     ]
+    },
+    "child": {
+     "cwd": "/work",
+     "hostId": "host-a",
+     "taskId": "01child-task"
+    },
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "executionGeneration": 1,
+    "generations": [
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-1",
+      "dispatchTurnId": "turn-dispatch-1",
+      "executionGeneration": 1,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "initial_assignment"
+     }
+    ],
+    "issueKey": "REL-1",
+    "parent": {
+     "cwd": "/parent",
+     "hostId": "host-a",
+     "taskId": "01parent-task"
+    },
+    "relationshipId": "rel-46d5b5ac690ef861",
+    "status": "active"
+   }
+  }
+ ],
+ "resume_restatement": [
+  {
+   "refused": {
+    "detail": "resume refused: allowed recipients differ from the restated scope",
+    "reason": "relationship_not_active"
+   }
+  },
+  {
+   "refused": {
+    "detail": "resume refused: generation is 1, not 99; artifact roots differ from the restated scope; allowed recipients differ from the restated scope",
+    "reason": "relationship_not_active"
+   }
+  },
+  {
+   "refused": {
+    "detail": "no relationship 'rel-0000000000000000'",
+    "reason": "unregistered_relationship"
+   }
+  },
+  {
+   "ok": {
+    "authorizedScope": {
+     "allowedRecipients": [
+      "01parent-task",
+      "01child-task"
+     ],
+     "artifactRoots": [
+      "/work"
+     ]
+    },
+    "child": {
+     "cwd": "/work",
+     "hostId": "host-a",
+     "taskId": "01child-task"
+    },
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "executionGeneration": 1,
+    "generations": [
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-1",
+      "dispatchTurnId": "turn-dispatch-1",
+      "executionGeneration": 1,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "initial_assignment"
+     }
+    ],
+    "issueKey": "REL-1",
+    "parent": {
+     "cwd": "/parent",
+     "hostId": "host-a",
+     "taskId": "01parent-task"
+    },
+    "relationshipId": "rel-46d5b5ac690ef861",
+    "status": "active"
+   }
+  }
+ ],
+ "returning_tenure": [
+  {
+   "refused": {
+    "detail": "'rel-46d5b5ac690ef861' is 'cancelled' and this registration names no predecessor; its issue is free, so the way back for this same parent, child and issue is relationship-resume, which restates the generation and the scope it re-authorizes",
+    "reason": "relationship_conflict"
+   }
+  },
+  {
+   "ok": {
+    "authorizedScope": {
+     "allowedRecipients": [
+      "01parent-task"
+     ],
+     "artifactRoots": [
+      "/work"
+     ]
+    },
+    "child": {
+     "cwd": null,
+     "hostId": "host-a",
+     "taskId": "different-child"
+    },
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "executionGeneration": 1,
+    "generations": [
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "replacement-after-cancel",
+      "dispatchTurnId": "new-child-turn",
+      "executionGeneration": 1,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "initial_assignment"
+     }
+    ],
+    "issueKey": "REL-1",
+    "parent": {
+     "cwd": null,
+     "hostId": "host-a",
+     "taskId": "01parent-task"
+    },
+    "relationshipId": "rel-b447a4cc27f2a5c1",
+    "status": "active"
+   }
+  }
+ ],
+ "settings_records": [
+  {
+   "ok": {
+    "settings": {
+     "approvalPolicy": "never",
+     "cwd": "/parent",
+     "environments": [
+      {
+       "cwd": "/parent",
+       "environmentId": "local",
+       "runtimeWorkspaceRoots": [
+        "/parent"
+       ]
+      }
+     ],
+     "model": "anthropic/claude-opus-5",
+     "reasoningEffort": "xhigh",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ],
+     "sandbox": {
+      "excludeSlashTmp": false,
+      "excludeTmpdirEnvVar": false,
+      "networkAccess": false,
+      "type": "workspaceWrite",
+      "writableRoots": []
+     }
+    },
+    "source": "creation_result",
+    "taskId": "01parent-task"
+   }
+  },
+  {
+   "ok": {
+    "settings": {
+     "approvalPolicy": "never",
+     "citedRole": "parent",
+     "cwd": "/parent",
+     "environments": [
+      {
+       "cwd": "/parent",
+       "environmentId": "local",
+       "runtimeWorkspaceRoots": [
+        "/parent"
+       ]
+      }
+     ],
+     "model": "anthropic/claude-opus-5",
+     "reasoningEffort": "high",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ],
+     "sandbox": {
+      "excludeSlashTmp": false,
+      "excludeTmpdirEnvVar": false,
+      "networkAccess": false,
+      "type": "workspaceWrite",
+      "writableRoots": []
+     }
+    },
+    "source": "user_transition",
+    "taskId": "01parent-task"
+   }
+  },
+  {
+   "refused": {
+    "detail": "'01parent-task' was created citing role 'parent' and this record states 'child'. The creation role is not something a later write changes; correct whichever of the two is wrong at its source",
+    "reason": "role_binding_mismatch"
+   }
+  },
+  {
+   "ok": [
+    [
+     "01parent-task",
+     "{\"approvalPolicy\": \"never\", \"citedRole\": \"parent\", \"cwd\": \"/parent\", \"environments\": [{\"cwd\": \"/parent\", \"environmentId\": \"local\", \"runtimeWorkspaceRoots\": [\"/parent\"]}], \"model\": \"anthropic/claude-opus-5\", \"reasoningEffort\": \"high\", \"runtimeWorkspaceRoots\": [\"/parent\"], \"sandbox\": {\"excludeSlashTmp\": false, \"excludeTmpdirEnvVar\": false, \"networkAccess\": false, \"type\": \"workspaceWrite\", \"writableRoots\": []}}",
+     "user_transition"
+    ]
+   ]
+  }
+ ],
+ "superseded_resume": [
+  {
+   "refused": {
+    "detail": "resume refused: superseded by rel-newnewnewnew00",
+    "reason": "relationship_not_active"
+   }
+  }
+ ],
+ "supersession": [
+  {
+   "ok": {
+    "_bindings": {
+     "childCxcSession": "cxc-child",
+     "parentCxcSession": "cxc-parent",
+     "supersededBy": "rel-ef047314e42a26d5"
+    },
+    "authorizedScope": {
+     "allowedRecipients": [
+      "01parent-task"
+     ],
+     "artifactRoots": [
+      "/work"
+     ],
+     "scopeRef": null
+    },
+    "child": {
+     "cwd": "/work",
+     "hostId": "host-a",
+     "taskId": "01child-task"
+    },
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "executionGeneration": 1,
+    "generations": [
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-1",
+      "dispatchTurnId": "turn-dispatch-1",
+      "executionGeneration": 1,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "initial_assignment"
+     }
+    ],
+    "issueKey": "REL-1",
+    "parent": {
+     "cwd": "/parent",
+     "hostId": "host-a",
+     "taskId": "01parent-task"
+    },
+    "relationshipId": "rel-46d5b5ac690ef861",
+    "status": "archived",
+    "supersededBy": "rel-ef047314e42a26d5"
+   }
+  },
+  {
+   "ok": {
+    "authorizedScope": {
+     "allowedRecipients": [
+      "01new-parent"
+     ],
+     "artifactRoots": [
+      "/work"
+     ]
+    },
+    "child": {
+     "cwd": null,
+     "hostId": "host-a",
+     "taskId": "01child-task"
+    },
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "executionGeneration": 1,
+    "generations": [
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-replacement",
+      "dispatchTurnId": "turn-replacement",
+      "executionGeneration": 1,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "initial_assignment"
+     }
+    ],
+    "issueKey": "REL-1",
+    "parent": {
+     "cwd": null,
+     "hostId": "host-a",
+     "taskId": "01new-parent"
+    },
+    "relationshipId": "rel-ef047314e42a26d5",
+    "status": "active",
+    "supersedes": "rel-46d5b5ac690ef861"
+   }
+  },
+  {
+   "refused": {
+    "detail": "resume refused: superseded by rel-ef047314e42a26d5",
+    "reason": "relationship_not_active"
+   }
+  }
+ ]
+}

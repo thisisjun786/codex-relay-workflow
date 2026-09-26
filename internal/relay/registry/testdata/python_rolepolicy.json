@@ -1,0 +1,4437 @@
+{
+ "__roles__": [
+  {
+   "result": [
+    "child",
+    "parent",
+    "supervisor"
+   ],
+   "step": [
+    "roles"
+   ]
+  }
+ ],
+ "archive_never_blocked": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "d099175d",
+     "110c2f4eaaaf1e3e8fd6cc08c7cd134e068ea80d4ca7e006766496ee"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "parent",
+    "PROJ-1",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "authorizedScope": {
+      "allowedRecipients": [
+       "01parent-task"
+      ],
+      "artifactRoots": [
+       "${ROOT}"
+      ]
+     },
+     "child": {
+      "cwd": "${ROOT}",
+      "hostId": "host-a",
+      "taskId": "01child-task"
+     },
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "executionGeneration": 1,
+     "generations": [
+      {
+       "anchorState": "bound",
+       "boundAt": "2023-11-14T22:13:20.000000+00:00",
+       "dispatchRequestId": "dispatch-1",
+       "dispatchTurnId": "turn-dispatch-1",
+       "executionGeneration": 1,
+       "openedAt": "2023-11-14T22:13:20.000000+00:00",
+       "reason": "initial_assignment"
+      }
+     ],
+     "issueKey": "REL-1",
+     "parent": {
+      "cwd": "/parent",
+      "hostId": "host-a",
+      "taskId": "01parent-task"
+     },
+     "relationshipId": "rel-46d5b5ac690ef861",
+     "status": "active"
+    }
+   },
+   "step": [
+    "register",
+    "PROJ-1"
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "raw_settings",
+    "01child-task",
+    {
+     "cwd": "/child",
+     "overrides": {
+      "citedRole": "supervisor"
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "authorizedScope": {
+      "allowedRecipients": [
+       "01parent-task"
+      ],
+      "artifactRoots": [
+       "${ROOT}"
+      ]
+     },
+     "child": {
+      "cwd": "${ROOT}",
+      "hostId": "host-a",
+      "taskId": "01child-task"
+     },
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "executionGeneration": 1,
+     "generations": [
+      {
+       "anchorState": "bound",
+       "boundAt": "2023-11-14T22:13:20.000000+00:00",
+       "dispatchRequestId": "dispatch-1",
+       "dispatchTurnId": "turn-dispatch-1",
+       "executionGeneration": 1,
+       "openedAt": "2023-11-14T22:13:20.000000+00:00",
+       "reason": "initial_assignment"
+      }
+     ],
+     "issueKey": "REL-1",
+     "parent": {
+      "cwd": "/parent",
+      "hostId": "host-a",
+      "taskId": "01parent-task"
+     },
+     "relationshipId": "rel-46d5b5ac690ef861",
+     "status": "archived"
+    }
+   },
+   "step": [
+    "status",
+    "archived"
+   ]
+  }
+ ],
+ "binding_after_settings": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "d099175d",
+     "110c2f4eaaaf1e3e8fd6cc08c7cd134e068ea80d4ca7e006766496ee"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedRole": "parent",
+      "cwd": "/parent",
+      "environments": [
+       {
+        "cwd": "/parent",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "/parent"
+        ]
+       }
+      ],
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "creation_result",
+     "taskId": "01child-task"
+    }
+   },
+   "step": [
+    "record",
+    "01child-task",
+    {
+     "cwd": "/parent",
+     "overrides": {
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh"
+     }
+    },
+    "creation_result",
+    "parent",
+    null
+   ]
+  },
+  {
+   "result": {
+    "refused": {
+     "detail": "this task was created citing role 'parent' and is being bound as 'child'; one of the two is wrong, and re-recording its settings would only hide that",
+     "reason": "role_binding_mismatch"
+    }
+   },
+   "step": [
+    "bind",
+    "child",
+    "ISSUE-9",
+    "01child-task"
+   ]
+  },
+  {
+   "result": [],
+   "step": [
+    "bindings",
+    "01child-task"
+   ]
+  }
+ ],
+ "check_record_pairs": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "d099175d",
+     "110c2f4eaaaf1e3e8fd6cc08c7cd134e068ea80d4ca7e006766496ee"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "code": "settings_record_stale_for_role",
+    "digest": "${DIGEST}",
+    "expected": {
+     "model": "anthropic/claude-opus-5-5",
+     "reasoningEffort": "xhigh"
+    },
+    "recorded": {
+     "model": "devin/swe-2",
+     "reasoningEffort": "max"
+    },
+    "recovery": "Re-record this task's authorized settings from a source attributable to the user, with relay settings record --source user_transition, once its current settings have been read.",
+    "role": "parent"
+   },
+   "step": [
+    "check_record",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "model": "devin/swe-2",
+      "reasoningEffort": "max"
+     }
+    },
+    "parent"
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "check_record",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh"
+     }
+    },
+    "parent"
+   ]
+  },
+  {
+   "result": {
+    "code": "settings_record_stale_for_role",
+    "digest": "${DIGEST}",
+    "expected": {
+     "model": "anthropic/claude-opus-5-5",
+     "reasoningEffort": "xhigh"
+    },
+    "recorded": {
+     "model": "xai/grok-4.6",
+     "reasoningEffort": "xhigh"
+    },
+    "recovery": "Re-record this task's authorized settings from a source attributable to the user, with relay settings record --source user_transition, once its current settings have been read.",
+    "role": "parent"
+   },
+   "step": [
+    "check_record",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "model": "xai/grok-4.6",
+      "reasoningEffort": "xhigh"
+     }
+    },
+    "parent"
+   ]
+  },
+  {
+   "result": {
+    "code": "settings_record_stale_for_role",
+    "digest": "${DIGEST}",
+    "expected": {
+     "model": "anthropic/claude-opus-5-5",
+     "reasoningEffort": "xhigh"
+    },
+    "recorded": {
+     "model": "anthropic/claude-opus-5",
+     "reasoningEffort": "xhigh"
+    },
+    "recovery": "Re-record this task's authorized settings from a source attributable to the user, with relay settings record --source user_transition, once its current settings have been read.",
+    "role": "child"
+   },
+   "step": [
+    "check_record",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh"
+     }
+    },
+    "child"
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "check_record",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh"
+     }
+    },
+    "child"
+   ]
+  }
+ ],
+ "citation_carry_forward": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "b29024c0",
+     "c386c5b2ebeb50e0b7117c499dce2a034c07743be5e35fc4663f48d2"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}, \"exceptions\": {\"one-task\": {\"model\": \"gpt-6-astra\", \"reasoningEffort\": \"high\", \"cwd\": [\"${DIR}\"], \"role\": \"parent\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "exceptions": {
+      "one-task": {
+       "cwd": [
+        "${DIR}"
+       ],
+       "model": "gpt-6-astra",
+       "reasoningEffort": "high",
+       "role": "parent"
+      }
+     },
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "parent",
+    "PROJ-1",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedException": "one-task",
+      "citedRole": "parent",
+      "cwd": "${DIR}",
+      "environments": [
+       {
+        "cwd": "${DIR}",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "${DIR}"
+        ]
+       }
+      ],
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high",
+      "runtimeWorkspaceRoots": [
+       "${DIR}"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "creation_result",
+     "taskId": "01parent-task"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high"
+     }
+    },
+    "creation_result",
+    "parent",
+    "one-task"
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedException": "one-task",
+      "citedRole": "parent",
+      "cwd": "${DIR}",
+      "environments": [
+       {
+        "cwd": "${DIR}",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "${DIR}"
+        ]
+       }
+      ],
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high",
+      "runtimeWorkspaceRoots": [
+       "${DIR}"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "user_transition",
+     "taskId": "01parent-task"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high"
+     }
+    },
+    "user_transition",
+    null,
+    null
+   ]
+  },
+  {
+   "result": {
+    "approvalPolicy": "never",
+    "citedException": "one-task",
+    "citedRole": "parent",
+    "cwd": "${DIR}",
+    "environments": [
+     {
+      "cwd": "${DIR}",
+      "environmentId": "local",
+      "runtimeWorkspaceRoots": [
+       "${DIR}"
+      ]
+     }
+    ],
+    "model": "gpt-6-astra",
+    "reasoningEffort": "high",
+    "runtimeWorkspaceRoots": [
+     "${DIR}"
+    ],
+    "sandbox": {
+     "excludeSlashTmp": false,
+     "excludeTmpdirEnvVar": false,
+     "networkAccess": false,
+     "type": "workspaceWrite",
+     "writableRoots": []
+    }
+   },
+   "step": [
+    "stored",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedException": "one-task",
+      "citedRole": "parent",
+      "cwd": "${DIR}",
+      "environments": [
+       {
+        "cwd": "${DIR}",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "${DIR}"
+        ]
+       }
+      ],
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high",
+      "runtimeWorkspaceRoots": [
+       "${DIR}"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "creation_result",
+     "taskId": "01parent-task"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high"
+     }
+    },
+    "creation_result",
+    null,
+    null
+   ]
+  },
+  {
+   "result": {
+    "approvalPolicy": "never",
+    "citedException": "one-task",
+    "citedRole": "parent",
+    "cwd": "${DIR}",
+    "environments": [
+     {
+      "cwd": "${DIR}",
+      "environmentId": "local",
+      "runtimeWorkspaceRoots": [
+       "${DIR}"
+      ]
+     }
+    ],
+    "model": "gpt-6-astra",
+    "reasoningEffort": "high",
+    "runtimeWorkspaceRoots": [
+     "${DIR}"
+    ],
+    "sandbox": {
+     "excludeSlashTmp": false,
+     "excludeTmpdirEnvVar": false,
+     "networkAccess": false,
+     "type": "workspaceWrite",
+     "writableRoots": []
+    }
+   },
+   "step": [
+    "stored",
+    "01parent-task"
+   ]
+  }
+ ],
+ "exception_equal_to_the_role_pair": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "6f5130af",
+     "d53c8ad6c39597d26d2f605295835e641d2bf10fa63843218db3bee2"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}, \"exceptions\": {\"same-pair\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\", \"cwd\": [\"${DIR}\"], \"role\": \"parent\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "exceptions": {
+      "same-pair": {
+       "cwd": [
+        "${DIR}"
+       ],
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh",
+       "role": "parent"
+      }
+     },
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "refused": {
+     "detail": "'${DIR}' is bound as 'parent', the host reports it as notLoaded, and the pair this send would transmit was not derived from a declared role pair (policy ${DIGEST}). Nothing was sent and no turn was started: a resume may apply what it transmits to a thread the host has to load first, which would restore a pair the user may have changed. Send once the host has the thread loaded, or read its current settings and re-record the authorization from that reading.",
+     "reason": "unverified_pair_for_unloaded_thread"
+    }
+   },
+   "step": [
+    "unloaded",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "citedException": "same-pair",
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh"
+     }
+    },
+    "parent"
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "parent",
+    "PROJ-1",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedException": "same-pair",
+      "citedRole": "parent",
+      "cwd": "${DIR}",
+      "environments": [
+       {
+        "cwd": "${DIR}",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "${DIR}"
+        ]
+       }
+      ],
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "${DIR}"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "creation_result",
+     "taskId": "01parent-task"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh"
+     }
+    },
+    "creation_result",
+    "parent",
+    "same-pair"
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedRole": "parent",
+      "cwd": "${DIR}",
+      "environments": [
+       {
+        "cwd": "${DIR}",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "${DIR}"
+        ]
+       }
+      ],
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "${DIR}"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "user_transition",
+     "taskId": "01parent-task"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh"
+     }
+    },
+    "user_transition",
+    null,
+    null
+   ]
+  },
+  {
+   "result": {
+    "approvalPolicy": "never",
+    "citedRole": "parent",
+    "cwd": "${DIR}",
+    "environments": [
+     {
+      "cwd": "${DIR}",
+      "environmentId": "local",
+      "runtimeWorkspaceRoots": [
+       "${DIR}"
+      ]
+     }
+    ],
+    "model": "anthropic/claude-opus-5-5",
+    "reasoningEffort": "xhigh",
+    "runtimeWorkspaceRoots": [
+     "${DIR}"
+    ],
+    "sandbox": {
+     "excludeSlashTmp": false,
+     "excludeTmpdirEnvVar": false,
+     "networkAccess": false,
+     "type": "workspaceWrite",
+     "writableRoots": []
+    }
+   },
+   "step": [
+    "stored",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "unloaded_stored",
+    "01parent-task",
+    "parent"
+   ]
+  }
+ ],
+ "exception_for_undeclared_role": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "387be8f1",
+     "dcc8f7e9735848865e2ee45dbcf8783023636ad18c9cd2d3813fd06d"
+    ],
+    "text": "{\"roles\": {\"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}, \"exceptions\": {\"for-a-child\": {\"model\": \"gpt-6-astra\", \"reasoningEffort\": \"high\", \"cwd\": [\"${DIR}\"], \"role\": \"child\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "exceptions": {
+      "for-a-child": {
+       "cwd": [
+        "${DIR}"
+       ],
+       "model": "gpt-6-astra",
+       "reasoningEffort": "high",
+       "role": "child"
+      }
+     },
+     "roles": {
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "check_record",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "citedException": "for-a-child",
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high"
+     }
+    },
+    "child"
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "check_binding",
+    "child",
+    "child",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "citedException": "for-a-child",
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high"
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "code": "role_policy_unconfigured",
+    "digest": "${DIGEST}",
+    "recovery": "declare role 'child' in this host's execution policy",
+    "role": "child",
+    "undeclared": true
+   },
+   "step": [
+    "check_record",
+    {
+     "cwd": "${DIR}",
+     "overrides": {}
+    },
+    "child"
+   ]
+  }
+ ],
+ "exceptions": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "e405b2c4",
+     "afc460cf07ab6decaf829cf7a818b0aade7e111846c2eea5965b99dc"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}, \"exceptions\": {\"one-task\": {\"model\": \"gpt-6-astra\", \"reasoningEffort\": \"high\", \"cwd\": [\"${DIR}\"], \"role\": \"parent\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "exceptions": {
+      "one-task": {
+       "cwd": [
+        "${DIR}"
+       ],
+       "model": "gpt-6-astra",
+       "reasoningEffort": "high",
+       "role": "parent"
+      }
+     },
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "parent",
+    "PROJ-1",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": {
+    "refused": {
+     "detail": "this record cites exception 'one-task', and this host's execution policy does not authorize that id for role 'parent' with this pair and directory. Record what actually authorized the creation, or nothing at all",
+     "reason": "role_binding_mismatch"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "/somewhere-else",
+     "overrides": {
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high"
+     }
+    },
+    "creation_result",
+    "parent",
+    "one-task"
+   ]
+  },
+  {
+   "result": {
+    "refused": {
+     "detail": "this record cites exception 'not-written-by-anyone', and this host's execution policy does not authorize that id for role 'parent' with this pair and directory. Record what actually authorized the creation, or nothing at all",
+     "reason": "role_binding_mismatch"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high"
+     }
+    },
+    "creation_result",
+    "parent",
+    "not-written-by-anyone"
+   ]
+  },
+  {
+   "result": {
+    "refused": {
+     "detail": "this record cites exception 'not-written', and this host's execution policy does not authorize that id for role 'parent' with this pair and directory. Record what actually authorized the creation, or nothing at all",
+     "reason": "role_binding_mismatch"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh"
+     }
+    },
+    "creation_result",
+    "parent",
+    "not-written"
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedRole": "parent",
+      "cwd": "${DIR}",
+      "environments": [
+       {
+        "cwd": "${DIR}",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "${DIR}"
+        ]
+       }
+      ],
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "${DIR}"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "creation_result",
+     "taskId": "01parent-task"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh"
+     }
+    },
+    "creation_result",
+    "parent",
+    null
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedException": "one-task",
+      "citedRole": "parent",
+      "cwd": "${DIR}",
+      "environments": [
+       {
+        "cwd": "${DIR}",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "${DIR}"
+        ]
+       }
+      ],
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high",
+      "runtimeWorkspaceRoots": [
+       "${DIR}"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "creation_result",
+     "taskId": "01parent-task"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high"
+     }
+    },
+    "creation_result",
+    "parent",
+    "one-task"
+   ]
+  }
+ ],
+ "explicit_clear": [
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-5b742390fc188914558926ef69f32bb5",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "supervisor",
+     "scopeKey": "INIT-2",
+     "scopeKind": "initiative",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "supervisor",
+    "INIT-2",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "58a8556c",
+     "590b7c76760b75c91a408ddf5d34cba85837868bed1982a6583ba396"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}, \"exceptions\": {\"temporary\": {\"model\": \"gpt-6-astra\", \"reasoningEffort\": \"high\", \"cwd\": [\"${DIR}\"], \"role\": \"supervisor\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "exceptions": {
+      "temporary": {
+       "cwd": [
+        "${DIR}"
+       ],
+       "model": "gpt-6-astra",
+       "reasoningEffort": "high",
+       "role": "supervisor"
+      }
+     },
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedException": "temporary",
+      "citedRole": "supervisor",
+      "cwd": "${DIR}",
+      "environments": [
+       {
+        "cwd": "${DIR}",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "${DIR}"
+        ]
+       }
+      ],
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high",
+      "runtimeWorkspaceRoots": [
+       "${DIR}"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "creation_result",
+     "taskId": "01parent-task"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high"
+     }
+    },
+    "creation_result",
+    "supervisor",
+    "temporary"
+   ]
+  },
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "d099175d",
+     "110c2f4eaaaf1e3e8fd6cc08c7cd134e068ea80d4ca7e006766496ee"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedRole": "supervisor",
+      "cwd": "${DIR}",
+      "environments": [
+       {
+        "cwd": "${DIR}",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "${DIR}"
+        ]
+       }
+      ],
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high",
+      "runtimeWorkspaceRoots": [
+       "${DIR}"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "user_transition",
+     "taskId": "01parent-task"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high"
+     }
+    },
+    "user_transition",
+    null,
+    "__CLEAR__"
+   ]
+  },
+  {
+   "result": {
+    "approvalPolicy": "never",
+    "citedRole": "supervisor",
+    "cwd": "${DIR}",
+    "environments": [
+     {
+      "cwd": "${DIR}",
+      "environmentId": "local",
+      "runtimeWorkspaceRoots": [
+       "${DIR}"
+      ]
+     }
+    ],
+    "model": "gpt-6-astra",
+    "reasoningEffort": "high",
+    "runtimeWorkspaceRoots": [
+     "${DIR}"
+    ],
+    "sandbox": {
+     "excludeSlashTmp": false,
+     "excludeTmpdirEnvVar": false,
+     "networkAccess": false,
+     "type": "workspaceWrite",
+     "writableRoots": []
+    }
+   },
+   "step": [
+    "stored",
+    "01parent-task"
+   ]
+  }
+ ],
+ "gate_partial_policy": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "4dfab7b4",
+     "863ac3265c31f064d9a7f6c49a62816e46e226a861b5d33dc0c1c3eb"
+    ],
+    "text": "{\"roles\": {\"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-e902825e990193c087ed32f773555748",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "child",
+     "scopeKey": "ISSUE-9",
+     "scopeKind": "issue",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "child",
+    "ISSUE-9",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "raw_settings",
+    "01parent-task",
+    {
+     "cwd": "/parent",
+     "overrides": {}
+    }
+   ]
+  },
+  {
+   "result": {
+    "refused": {
+     "detail": "'01parent-task' is bound as 'child': this host's execution policy declares no such role, so its authorization cannot be checked (policy ${DIGEST}). Nothing was sent and no turn was started. declare role 'child' in this host's execution policy",
+     "reason": "role_policy_unconfigured"
+    }
+   },
+   "step": [
+    "gate",
+    "01parent-task"
+   ]
+  }
+ ],
+ "gate_released_by_re_record": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "d099175d",
+     "110c2f4eaaaf1e3e8fd6cc08c7cd134e068ea80d4ca7e006766496ee"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "parent",
+    "PROJ-1",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "raw_settings",
+    "01parent-task",
+    {
+     "cwd": "/parent",
+     "overrides": {}
+    }
+   ]
+  },
+  {
+   "result": {
+    "refused": {
+     "detail": "'01parent-task' is bound as 'parent': its recorded authorization is {'model': 'anthropic/claude-opus-5', 'reasoningEffort': 'xhigh'} while the policy for that role is {'model': 'anthropic/claude-opus-5-5', 'reasoningEffort': 'xhigh'} (policy ${DIGEST}). Nothing was sent and no turn was started. Re-record this task's authorized settings from a source attributable to the user, with relay settings record --source user_transition, once its current settings have been read.",
+     "reason": "settings_record_stale_for_role"
+    }
+   },
+   "step": [
+    "gate",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedRole": "parent",
+      "cwd": "/parent",
+      "environments": [
+       {
+        "cwd": "/parent",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "/parent"
+        ]
+       }
+      ],
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "user_transition",
+     "taskId": "01parent-task"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "/parent",
+     "overrides": {
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh"
+     }
+    },
+    "user_transition",
+    "parent",
+    null
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedRole": "parent",
+      "cwd": "/parent",
+      "environments": [
+       {
+        "cwd": "/parent",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "/parent"
+        ]
+       }
+      ],
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "settingsFree": false
+    }
+   },
+   "step": [
+    "gate",
+    "01parent-task"
+   ]
+  }
+ ],
+ "gate_stale_for_role": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "d099175d",
+     "110c2f4eaaaf1e3e8fd6cc08c7cd134e068ea80d4ca7e006766496ee"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "parent",
+    "PROJ-1",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "raw_settings",
+    "01parent-task",
+    {
+     "cwd": "/parent",
+     "overrides": {
+      "reasoningEffort": "xhigh"
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "refused": {
+     "detail": "'01parent-task' is bound as 'parent': its recorded authorization is {'model': 'anthropic/claude-opus-5', 'reasoningEffort': 'xhigh'} while the policy for that role is {'model': 'anthropic/claude-opus-5-5', 'reasoningEffort': 'xhigh'} (policy ${DIGEST}). Nothing was sent and no turn was started. Re-record this task's authorized settings from a source attributable to the user, with relay settings record --source user_transition, once its current settings have been read.",
+     "reason": "settings_record_stale_for_role"
+    }
+   },
+   "step": [
+    "gate",
+    "01parent-task"
+   ]
+  }
+ ],
+ "gate_unbound": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "d099175d",
+     "110c2f4eaaaf1e3e8fd6cc08c7cd134e068ea80d4ca7e006766496ee"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "parent",
+    "PROJ-1",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "cwd": "/child",
+      "environments": [
+       {
+        "cwd": "/child",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "/child"
+        ]
+       }
+      ],
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "/child"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "creation_result",
+     "taskId": "01child-task"
+    }
+   },
+   "step": [
+    "record",
+    "01child-task",
+    {
+     "cwd": "/child",
+     "overrides": {}
+    },
+    "creation_result",
+    null,
+    null
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "bound_role",
+    "01child-task"
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "cwd": "/child",
+      "environments": [
+       {
+        "cwd": "/child",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "/child"
+        ]
+       }
+      ],
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "/child"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "settingsFree": false
+    }
+   },
+   "step": [
+    "gate",
+    "01child-task"
+   ]
+  }
+ ],
+ "gate_unconfigured": [
+  {
+   "result": null,
+   "step": [
+    "unset"
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "parent",
+    "PROJ-1",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "raw_settings",
+    "01parent-task",
+    {
+     "cwd": "/parent",
+     "overrides": {}
+    }
+   ]
+  },
+  {
+   "result": {
+    "refused": {
+     "detail": "'01parent-task' is bound as 'parent' and this process cannot read a role policy to check its authorization against: CODEX_THREAD_BRIDGE_EXECUTION_POLICY is not set in this process, so no role policy can be read. Nothing was sent and no turn was started. Set the policy for this process and the held deliveries resume on the next pass.",
+     "reason": "role_policy_unconfigured"
+    }
+   },
+   "step": [
+    "gate",
+    "01parent-task"
+   ]
+  }
+ ],
+ "legacy_unauthorized_citation": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "d099175d",
+     "110c2f4eaaaf1e3e8fd6cc08c7cd134e068ea80d4ca7e006766496ee"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-0a0c2123e9a959953c8e0e2ca3091193",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "supervisor",
+     "scopeKey": "INIT-1",
+     "scopeKind": "initiative",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "supervisor",
+    "INIT-1",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "raw_settings",
+    "01parent-task",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "citedException": "not-written",
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh"
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "refused": {
+     "detail": "'01parent-task' is bound as 'supervisor': its record cites exception 'not-written', which this policy does not authorize for that role with this pair and directory (policy ${DIGEST}). Nothing was sent and no turn was started. Re-record this task's authorized settings from a source attributable to the user, with relay settings record --source user_transition, once its current settings have been read.",
+     "reason": "role_binding_mismatch"
+    }
+   },
+   "step": [
+    "gate",
+    "01parent-task"
+   ]
+  }
+ ],
+ "loaded_as_something_else": [
+  {
+   "result": {
+    "code": "settings_differ_after_load",
+    "findings": [
+     {
+      "code": "settings_not_preserved",
+      "expected": "anthropic/claude-opus-5",
+      "field": "model",
+      "returned": "someone/else-entirely"
+     }
+    ],
+    "response": {
+     "activePermissionProfile": null,
+     "approvalPolicy": "never",
+     "cwd": "/parent",
+     "model": "someone/else-entirely",
+     "reasoningEffort": "xhigh",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ],
+     "sandbox": {
+      "excludeSlashTmp": false,
+      "excludeTmpdirEnvVar": false,
+      "networkAccess": false,
+      "type": "workspaceWrite",
+      "writableRoots": []
+     },
+     "thread": {
+      "environments": [
+       {
+        "cwd": "/parent",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "/parent"
+        ]
+       }
+      ],
+      "id": "01parent-task"
+     }
+    }
+   },
+   "step": [
+    "loaded_mismatch"
+   ]
+  }
+ ],
+ "matching_role_and_pair": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "d099175d",
+     "110c2f4eaaaf1e3e8fd6cc08c7cd134e068ea80d4ca7e006766496ee"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "parent",
+    "PROJ-1",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedRole": "parent",
+      "cwd": "/parent",
+      "environments": [
+       {
+        "cwd": "/parent",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "/parent"
+        ]
+       }
+      ],
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "creation_result",
+     "taskId": "01parent-task"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "/parent",
+     "overrides": {
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh"
+     }
+    },
+    "creation_result",
+    "parent",
+    null
+   ]
+  },
+  {
+   "result": "parent",
+   "step": [
+    "bound_role",
+    "01parent-task"
+   ]
+  }
+ ],
+ "new_binding_refused_under_policy": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "d099175d",
+     "110c2f4eaaaf1e3e8fd6cc08c7cd134e068ea80d4ca7e006766496ee"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedRole": "child",
+      "cwd": "/parent",
+      "environments": [
+       {
+        "cwd": "/parent",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "/parent"
+        ]
+       }
+      ],
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "creation_result",
+     "taskId": "01parent-task"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "/parent",
+     "overrides": {
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh"
+     }
+    },
+    "creation_result",
+    "child",
+    null
+   ]
+  },
+  {
+   "result": {
+    "refused": {
+     "detail": "this task was created citing role 'child' and is being bound as 'parent'; one of the two is wrong, and re-recording its settings would only hide that",
+     "reason": "role_binding_mismatch"
+    }
+   },
+   "step": [
+    "bind",
+    "parent",
+    "PROJ-9",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "bound_role",
+    "01parent-task"
+   ]
+  }
+ ],
+ "pair_not_the_bound_roles": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "d099175d",
+     "110c2f4eaaaf1e3e8fd6cc08c7cd134e068ea80d4ca7e006766496ee"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "parent",
+    "PROJ-1",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": {
+    "refused": {
+     "detail": "this task's recorded pair is not the pair role 'parent' runs on, and it is being bound to that role now rather than having drifted afterwards",
+     "reason": "role_binding_mismatch"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "/parent",
+     "overrides": {
+      "reasoningEffort": "xhigh"
+     }
+    },
+    "creation_result",
+    "parent",
+    null
+   ]
+  }
+ ],
+ "re_record_keeps_cited_role": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "d099175d",
+     "110c2f4eaaaf1e3e8fd6cc08c7cd134e068ea80d4ca7e006766496ee"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedRole": "parent",
+      "cwd": "/parent",
+      "environments": [
+       {
+        "cwd": "/parent",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "/parent"
+        ]
+       }
+      ],
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "creation_result",
+     "taskId": "01parent-task"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "/parent",
+     "overrides": {
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh"
+     }
+    },
+    "creation_result",
+    "parent",
+    null
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedRole": "parent",
+      "cwd": "/parent",
+      "environments": [
+       {
+        "cwd": "/parent",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "/parent"
+        ]
+       }
+      ],
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "user_transition",
+     "taskId": "01parent-task"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "/parent",
+     "overrides": {
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh"
+     }
+    },
+    "user_transition",
+    null,
+    null
+   ]
+  },
+  {
+   "result": {
+    "approvalPolicy": "never",
+    "citedRole": "parent",
+    "cwd": "/parent",
+    "environments": [
+     {
+      "cwd": "/parent",
+      "environmentId": "local",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ]
+     }
+    ],
+    "model": "anthropic/claude-opus-5-5",
+    "reasoningEffort": "xhigh",
+    "runtimeWorkspaceRoots": [
+     "/parent"
+    ],
+    "sandbox": {
+     "excludeSlashTmp": false,
+     "excludeTmpdirEnvVar": false,
+     "networkAccess": false,
+     "type": "workspaceWrite",
+     "writableRoots": []
+    }
+   },
+   "step": [
+    "stored",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": {
+    "refused": {
+     "detail": "this task was created citing role 'parent' and is being bound as 'supervisor'; one of the two is wrong, and re-recording its settings would only hide that",
+     "reason": "role_binding_mismatch"
+    }
+   },
+   "step": [
+    "bind",
+    "supervisor",
+    "INIT-1",
+    "01parent-task"
+   ]
+  }
+ ],
+ "register_refuses_incomplete_settings": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "d099175d",
+     "110c2f4eaaaf1e3e8fd6cc08c7cd134e068ea80d4ca7e006766496ee"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "refused": {
+     "detail": "missing sandbox, approvalPolicy, cwd, runtimeWorkspaceRoots, reasoningEffort, environments",
+     "reason": "settings_incomplete"
+    }
+   },
+   "step": [
+    "register_cli",
+    {
+     "child_settings_raw": {
+      "model": "anthropic/claude-opus-5"
+     }
+    }
+   ]
+  },
+  {
+   "result": 0,
+   "step": [
+    "count",
+    "SELECT relationship_id FROM relationships"
+   ]
+  }
+ ],
+ "register_refuses_parent_citation_for_child": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "d099175d",
+     "110c2f4eaaaf1e3e8fd6cc08c7cd134e068ea80d4ca7e006766496ee"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "parent",
+    "PROJ-1",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": {
+    "refused": {
+     "detail": "this task was created citing role 'parent' and is being bound as 'child'; one of the two is wrong, and re-recording its settings would only hide that",
+     "reason": "role_binding_mismatch"
+    }
+   },
+   "step": [
+    "register_cli",
+    {
+     "child_role": "parent",
+     "child_settings": {
+      "cwd": "${ROOT}",
+      "overrides": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      }
+     },
+     "project": "PROJ-1"
+    }
+   ]
+  },
+  {
+   "result": 0,
+   "step": [
+    "count",
+    "SELECT relationship_id FROM relationships"
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "bound_role",
+    "01child-task"
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "stored",
+    "01child-task"
+   ]
+  }
+ ],
+ "replay_survives_policy_edit": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "d099175d",
+     "110c2f4eaaaf1e3e8fd6cc08c7cd134e068ea80d4ca7e006766496ee"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedRole": "parent",
+      "cwd": "/parent",
+      "environments": [
+       {
+        "cwd": "/parent",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "/parent"
+        ]
+       }
+      ],
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "creation_result",
+     "taskId": "01parent-task"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "/parent",
+     "overrides": {
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh"
+     }
+    },
+    "creation_result",
+    "parent",
+    null
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "parent",
+    "PROJ-1",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "89e70a39",
+     "ce1ef25396b2e7c0b99376b2139337528a7d1c04df7f3d4f713dc121"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"devin/swe-2\", \"reasoningEffort\": \"max\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "devin/swe-2",
+       "reasoningEffort": "max"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "parent",
+    "PROJ-1",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": "parent",
+   "step": [
+    "bound_role",
+    "01parent-task"
+   ]
+  }
+ ],
+ "resolve_declared": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "d099175d",
+     "110c2f4eaaaf1e3e8fd6cc08c7cd134e068ea80d4ca7e006766496ee"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "declared": true,
+    "detail": null,
+    "expectations": {
+     "child": {
+      "expectation": "pair",
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh"
+     },
+     "parent": {
+      "expectation": "pair",
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh"
+     },
+     "supervisor": {
+      "expectation": "record",
+      "model": null,
+      "reasoningEffort": null
+     }
+    },
+    "summary": {
+     "detail": null,
+     "digest": "${DIGEST}",
+     "roles": {
+      "child": {
+       "expectation": "pair",
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh",
+       "role": "child"
+      },
+      "parent": {
+       "expectation": "pair",
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh",
+       "role": "parent"
+      },
+      "supervisor": {
+       "expectation": "record",
+       "model": null,
+       "reasoningEffort": null,
+       "role": "supervisor"
+      }
+     },
+     "state": "declared"
+    }
+   },
+   "step": [
+    "resolve",
+    {
+     "file": true
+    }
+   ]
+  }
+ ],
+ "resolve_no_roles": [
+  {
+   "result": {
+    "digest": null,
+    "digestParts": null,
+    "text": "{\"allowed\": [{\"model\": \"anthropic/claude-opus-5\", \"efforts\": [\"xhigh\"]}]}"
+   },
+   "step": [
+    "policy",
+    {
+     "allowed": [
+      {
+       "efforts": [
+        "xhigh"
+       ],
+       "model": "anthropic/claude-opus-5"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "result": {
+    "declared": false,
+    "detail": "this host's execution policy declares no roles",
+    "expectations": null,
+    "summary": {
+     "detail": "execution policy declares no roles",
+     "digest": null,
+     "roles": {},
+     "state": "unresolved"
+    }
+   },
+   "step": [
+    "resolve",
+    {
+     "file": true
+    }
+   ]
+  }
+ ],
+ "resolve_unset": [
+  {
+   "result": {
+    "declared": false,
+    "detail": "CODEX_THREAD_BRIDGE_EXECUTION_POLICY is not set in this process, so no role policy can be read",
+    "expectations": null,
+    "summary": {
+     "detail": "execution policy environment is not configured in this process",
+     "digest": null,
+     "roles": {},
+     "state": "unresolved"
+    }
+   },
+   "step": [
+    "resolve",
+    {}
+   ]
+  }
+ ],
+ "sentinel_named_exception": [
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "parent",
+    "PROJ-1",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "ffc9bf57",
+     "fc3718e980c3a0f9b44d439b341876082d469395afc8965913a31fbc"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}, \"exceptions\": {\"__clear__\": {\"model\": \"gpt-6-astra\", \"reasoningEffort\": \"high\", \"cwd\": [\"${DIR}\"], \"role\": \"parent\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "exceptions": {
+      "__clear__": {
+       "cwd": [
+        "${DIR}"
+       ],
+       "model": "gpt-6-astra",
+       "reasoningEffort": "high",
+       "role": "parent"
+      }
+     },
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedException": "__clear__",
+      "citedRole": "parent",
+      "cwd": "${DIR}",
+      "environments": [
+       {
+        "cwd": "${DIR}",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "${DIR}"
+        ]
+       }
+      ],
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high",
+      "runtimeWorkspaceRoots": [
+       "${DIR}"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "creation_result",
+     "taskId": "01parent-task"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high"
+     }
+    },
+    "creation_result",
+    "parent",
+    "__clear__"
+   ]
+  },
+  {
+   "result": {
+    "approvalPolicy": "never",
+    "citedException": "__clear__",
+    "citedRole": "parent",
+    "cwd": "${DIR}",
+    "environments": [
+     {
+      "cwd": "${DIR}",
+      "environmentId": "local",
+      "runtimeWorkspaceRoots": [
+       "${DIR}"
+      ]
+     }
+    ],
+    "model": "gpt-6-astra",
+    "reasoningEffort": "high",
+    "runtimeWorkspaceRoots": [
+     "${DIR}"
+    ],
+    "sandbox": {
+     "excludeSlashTmp": false,
+     "excludeTmpdirEnvVar": false,
+     "networkAccess": false,
+     "type": "workspaceWrite",
+     "writableRoots": []
+    }
+   },
+   "step": [
+    "stored",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedException": "__clear__",
+      "citedRole": "parent",
+      "cwd": "${DIR}",
+      "environments": [
+       {
+        "cwd": "${DIR}",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "${DIR}"
+        ]
+       }
+      ],
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high",
+      "runtimeWorkspaceRoots": [
+       "${DIR}"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "user_transition",
+     "taskId": "01parent-task"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high"
+     }
+    },
+    "user_transition",
+    null,
+    null
+   ]
+  },
+  {
+   "result": {
+    "approvalPolicy": "never",
+    "citedException": "__clear__",
+    "citedRole": "parent",
+    "cwd": "${DIR}",
+    "environments": [
+     {
+      "cwd": "${DIR}",
+      "environmentId": "local",
+      "runtimeWorkspaceRoots": [
+       "${DIR}"
+      ]
+     }
+    ],
+    "model": "gpt-6-astra",
+    "reasoningEffort": "high",
+    "runtimeWorkspaceRoots": [
+     "${DIR}"
+    ],
+    "sandbox": {
+     "excludeSlashTmp": false,
+     "excludeTmpdirEnvVar": false,
+     "networkAccess": false,
+     "type": "workspaceWrite",
+     "writableRoots": []
+    }
+   },
+   "step": [
+    "stored",
+    "01parent-task"
+   ]
+  }
+ ],
+ "settings_after_binding": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "d099175d",
+     "110c2f4eaaaf1e3e8fd6cc08c7cd134e068ea80d4ca7e006766496ee"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "parent",
+    "PROJ-1",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": {
+    "refused": {
+     "detail": "this task was created citing role 'child' and is being bound as 'parent'; one of the two is wrong, and re-recording its settings would only hide that",
+     "reason": "role_binding_mismatch"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "/parent",
+     "overrides": {}
+    },
+    "creation_result",
+    "child",
+    null
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "stored",
+    "01parent-task"
+   ]
+  }
+ ],
+ "settings_free_supervisor": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "d099175d",
+     "110c2f4eaaaf1e3e8fd6cc08c7cd134e068ea80d4ca7e006766496ee"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-0a0c2123e9a959953c8e0e2ca3091193",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "supervisor",
+     "scopeKey": "INIT-1",
+     "scopeKind": "initiative",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "supervisor",
+    "INIT-1",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "raw_settings",
+    "01parent-task",
+    {
+     "cwd": "/parent",
+     "overrides": {}
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "cwd": "/parent",
+      "environments": [
+       {
+        "cwd": "/parent",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "/parent"
+        ]
+       }
+      ],
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "settingsFree": true
+    }
+   },
+   "step": [
+    "gate",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedRole": "child",
+      "cwd": "/child",
+      "environments": [
+       {
+        "cwd": "/child",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "/child"
+        ]
+       }
+      ],
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "/child"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "creation_result",
+     "taskId": "01child-task"
+    }
+   },
+   "step": [
+    "record",
+    "01child-task",
+    {
+     "cwd": "/child",
+     "overrides": {
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh"
+     }
+    },
+    "creation_result",
+    "child",
+    null
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-b1a27060a1babb31f19ddc93e2ae804b",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "child",
+     "scopeKey": "ISSUE-77",
+     "scopeKind": "issue",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01child-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "child",
+    "ISSUE-77",
+    "01child-task"
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedRole": "child",
+      "cwd": "/child",
+      "environments": [
+       {
+        "cwd": "/child",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "/child"
+        ]
+       }
+      ],
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "/child"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "settingsFree": false
+    }
+   },
+   "step": [
+    "gate",
+    "01child-task"
+   ]
+  }
+ ],
+ "settings_show_deliverable": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "d099175d",
+     "110c2f4eaaaf1e3e8fd6cc08c7cd134e068ea80d4ca7e006766496ee"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "parent",
+    "PROJ-1",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedRole": "parent",
+      "cwd": "/parent",
+      "environments": [
+       {
+        "cwd": "/parent",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "/parent"
+        ]
+       }
+      ],
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "creation_result",
+     "taskId": "01parent-task"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "/parent",
+     "overrides": {
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh"
+     }
+    },
+    "creation_result",
+    "parent",
+    null
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "boundRole": "parent",
+     "boundRoles": null,
+     "citedException": null,
+     "citedRole": "parent",
+     "deliverable": true,
+     "missing": [],
+     "recordFinding": null,
+     "roleFinding": null,
+     "rolePolicy": "declared",
+     "rolePolicyDigest": "${DIGEST}",
+     "settings": {
+      "approvalPolicy": "never",
+      "citedRole": "parent",
+      "cwd": "/parent",
+      "environments": [
+       {
+        "cwd": "/parent",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "/parent"
+        ]
+       }
+      ],
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "task": "01parent-task",
+     "usable": true
+    }
+   },
+   "step": [
+    "show",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "89e70a39",
+     "ce1ef25396b2e7c0b99376b2139337528a7d1c04df7f3d4f713dc121"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"devin/swe-2\", \"reasoningEffort\": \"max\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "devin/swe-2",
+       "reasoningEffort": "max"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "boundRole": "parent",
+     "boundRoles": null,
+     "citedException": null,
+     "citedRole": "parent",
+     "deliverable": false,
+     "missing": [],
+     "recordFinding": null,
+     "roleFinding": {
+      "code": "settings_record_stale_for_role",
+      "digest": "${DIGEST}",
+      "expected": {
+       "model": "devin/swe-2",
+       "reasoningEffort": "max"
+      },
+      "recorded": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "recovery": "Re-record this task's authorized settings from a source attributable to the user, with relay settings record --source user_transition, once its current settings have been read.",
+      "role": "parent"
+     },
+     "rolePolicy": "declared",
+     "rolePolicyDigest": "${DIGEST}",
+     "settings": {
+      "approvalPolicy": "never",
+      "citedRole": "parent",
+      "cwd": "/parent",
+      "environments": [
+       {
+        "cwd": "/parent",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "/parent"
+        ]
+       }
+      ],
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "task": "01parent-task",
+     "usable": true
+    }
+   },
+   "step": [
+    "show",
+    "01parent-task"
+   ]
+  }
+ ],
+ "settings_show_unresolved": [
+  {
+   "result": null,
+   "step": [
+    "unset"
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "parent",
+    "PROJ-1",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "cwd": "/parent",
+      "environments": [
+       {
+        "cwd": "/parent",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "/parent"
+        ]
+       }
+      ],
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "creation_result",
+     "taskId": "01parent-task"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "/parent",
+     "overrides": {
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh"
+     }
+    },
+    "creation_result",
+    null,
+    null
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "boundRole": "parent",
+     "boundRoles": null,
+     "citedException": null,
+     "citedRole": null,
+     "deliverable": false,
+     "missing": [],
+     "recordFinding": null,
+     "roleFinding": {
+      "boundRole": "parent",
+      "code": "role_policy_unconfigured",
+      "detail": "CODEX_THREAD_BRIDGE_EXECUTION_POLICY is not set in this process, so no role policy can be read",
+      "recovery": "set this process's execution policy and restart it; deliveries held meanwhile resume on the next pass"
+     },
+     "rolePolicy": "unresolved",
+     "rolePolicyDigest": null,
+     "settings": {
+      "approvalPolicy": "never",
+      "cwd": "/parent",
+      "environments": [
+       {
+        "cwd": "/parent",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "/parent"
+        ]
+       }
+      ],
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "task": "01parent-task",
+     "usable": true
+    }
+   },
+   "step": [
+    "show",
+    "01parent-task"
+   ]
+  }
+ ],
+ "superseded_binding": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "d099175d",
+     "110c2f4eaaaf1e3e8fd6cc08c7cd134e068ea80d4ca7e006766496ee"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "sql",
+    "INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key, task_id, host_id, status, revision, superseded_by, created_at, updated_at) VALUES ('b3','child','issue','ISSUE-9','01parent-task', 'host-a','active',1,'b4','t','t')"
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "bound_role",
+    "01parent-task"
+   ]
+  }
+ ],
+ "supervisor_user_transition_drops": [
+  {
+   "result": {
+    "ok": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-0a0c2123e9a959953c8e0e2ca3091193",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "supervisor",
+     "scopeKey": "INIT-1",
+     "scopeKind": "initiative",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    }
+   },
+   "step": [
+    "bind",
+    "supervisor",
+    "INIT-1",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "7f4add06",
+     "b4ea53986cf01412abb8f147e2ff2eeef92c723af5dc2337765571f1"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}, \"exceptions\": {\"temporary\": {\"model\": \"gpt-6-astra\", \"reasoningEffort\": \"high\", \"cwd\": [\"${DIR}\"], \"role\": \"supervisor\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "exceptions": {
+      "temporary": {
+       "cwd": [
+        "${DIR}"
+       ],
+       "model": "gpt-6-astra",
+       "reasoningEffort": "high",
+       "role": "supervisor"
+      }
+     },
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedException": "temporary",
+      "citedRole": "supervisor",
+      "cwd": "${DIR}",
+      "environments": [
+       {
+        "cwd": "${DIR}",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "${DIR}"
+        ]
+       }
+      ],
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high",
+      "runtimeWorkspaceRoots": [
+       "${DIR}"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "creation_result",
+     "taskId": "01parent-task"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high"
+     }
+    },
+    "creation_result",
+    "supervisor",
+    "temporary"
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "settings": {
+      "approvalPolicy": "never",
+      "citedRole": "supervisor",
+      "cwd": "${DIR}",
+      "environments": [
+       {
+        "cwd": "${DIR}",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "${DIR}"
+        ]
+       }
+      ],
+      "model": "gpt-6-astra",
+      "reasoningEffort": "max",
+      "runtimeWorkspaceRoots": [
+       "${DIR}"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "source": "user_transition",
+     "taskId": "01parent-task"
+    }
+   },
+   "step": [
+    "record",
+    "01parent-task",
+    {
+     "cwd": "${DIR}",
+     "overrides": {
+      "model": "gpt-6-astra",
+      "reasoningEffort": "max"
+     }
+    },
+    "user_transition",
+    null,
+    null
+   ]
+  },
+  {
+   "result": {
+    "approvalPolicy": "never",
+    "citedRole": "supervisor",
+    "cwd": "${DIR}",
+    "environments": [
+     {
+      "cwd": "${DIR}",
+      "environmentId": "local",
+      "runtimeWorkspaceRoots": [
+       "${DIR}"
+      ]
+     }
+    ],
+    "model": "gpt-6-astra",
+    "reasoningEffort": "max",
+    "runtimeWorkspaceRoots": [
+     "${DIR}"
+    ],
+    "sandbox": {
+     "excludeSlashTmp": false,
+     "excludeTmpdirEnvVar": false,
+     "networkAccess": false,
+     "type": "workspaceWrite",
+     "writableRoots": []
+    }
+   },
+   "step": [
+    "stored",
+    "01parent-task"
+   ]
+  }
+ ],
+ "two_live_roles": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "d099175d",
+     "110c2f4eaaaf1e3e8fd6cc08c7cd134e068ea80d4ca7e006766496ee"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "sql",
+    "INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key, task_id, host_id, status, revision, created_at, updated_at) VALUES ('b1','parent','project','PROJ-1','01parent-task', 'host-a','active',1,'t','t')"
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "sql",
+    "INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key, task_id, host_id, status, revision, created_at, updated_at) VALUES ('b2','child','issue','ISSUE-9','01parent-task', 'host-a','active',1,'t','t')"
+   ]
+  },
+  {
+   "result": {
+    "contested": [
+     "child",
+     "parent"
+    ]
+   },
+   "step": [
+    "bound_role",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "raw_settings",
+    "01parent-task",
+    {
+     "cwd": "/parent",
+     "overrides": {}
+    }
+   ]
+  },
+  {
+   "result": {
+    "refused": {
+     "detail": "'01parent-task' holds live bindings at ['child', 'parent'], and one task holds one role. Nothing was sent and no turn was started, because checking its authorization against either of them would report a clean answer derived from an arbitrary choice. Resolve the bindings first.",
+     "reason": "role_binding_mismatch"
+    }
+   },
+   "step": [
+    "gate",
+    "01parent-task"
+   ]
+  },
+  {
+   "result": {
+    "ok": {
+     "boundRole": null,
+     "boundRoles": [
+      "child",
+      "parent"
+     ],
+     "citedException": null,
+     "citedRole": null,
+     "deliverable": false,
+     "missing": [],
+     "recordFinding": null,
+     "roleFinding": {
+      "boundRoles": [
+       "child",
+       "parent"
+      ],
+      "code": "role_binding_mismatch",
+      "recovery": "one task holds one role; resolve these bindings before this task can be checked against either of them"
+     },
+     "rolePolicy": "declared",
+     "rolePolicyDigest": "${DIGEST}",
+     "settings": {
+      "approvalPolicy": "never",
+      "cwd": "/parent",
+      "environments": [
+       {
+        "cwd": "/parent",
+        "environmentId": "local",
+        "runtimeWorkspaceRoots": [
+         "/parent"
+        ]
+       }
+      ],
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ],
+      "sandbox": {
+       "excludeSlashTmp": false,
+       "excludeTmpdirEnvVar": false,
+       "networkAccess": false,
+       "type": "workspaceWrite",
+       "writableRoots": []
+      }
+     },
+     "task": "01parent-task",
+     "usable": true
+    }
+   },
+   "step": [
+    "show",
+    "01parent-task"
+   ]
+  }
+ ],
+ "unloaded_guard": [
+  {
+   "result": {
+    "digest": "${DIGEST}",
+    "digestParts": [
+     "d099175d",
+     "110c2f4eaaaf1e3e8fd6cc08c7cd134e068ea80d4ca7e006766496ee"
+    ],
+    "text": "{\"roles\": {\"supervisor\": {\"expectation\": \"record\"}, \"parent\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}, \"child\": {\"model\": \"anthropic/claude-opus-5-5\", \"reasoningEffort\": \"xhigh\"}}}"
+   },
+   "step": [
+    "policy",
+    {
+     "roles": {
+      "child": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "parent": {
+       "model": "anthropic/claude-opus-5-5",
+       "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+       "expectation": "record"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "result": null,
+   "step": [
+    "unloaded",
+    {
+     "cwd": "/parent",
+     "overrides": {
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "xhigh"
+     }
+    },
+    "parent"
+   ]
+  },
+  {
+   "result": {
+    "refused": {
+     "detail": "'/parent' is bound as 'parent', the host reports it as notLoaded, and the pair this send would transmit was not derived from a declared role pair (policy ${DIGEST}). Nothing was sent and no turn was started: a resume may apply what it transmits to a thread the host has to load first, which would restore a pair the user may have changed. Send once the host has the thread loaded, or read its current settings and re-record the authorization from that reading.",
+     "reason": "unverified_pair_for_unloaded_thread"
+    }
+   },
+   "step": [
+    "unloaded",
+    {
+     "cwd": "/parent",
+     "overrides": {
+      "model": "devin/swe-2",
+      "reasoningEffort": "xhigh"
+     }
+    },
+    "parent"
+   ]
+  },
+  {
+   "result": {
+    "refused": {
+     "detail": "'/parent' is bound as 'parent', the host reports it as notLoaded, and the pair this send would transmit was not derived from a declared role pair (policy ${DIGEST}). Nothing was sent and no turn was started: a resume may apply what it transmits to a thread the host has to load first, which would restore a pair the user may have changed. Send once the host has the thread loaded, or read its current settings and re-record the authorization from that reading.",
+     "reason": "unverified_pair_for_unloaded_thread"
+    }
+   },
+   "step": [
+    "unloaded",
+    {
+     "cwd": "/parent",
+     "overrides": {
+      "model": "anthropic/claude-opus-5-5",
+      "reasoningEffort": "max"
+     }
+    },
+    "parent"
+   ]
+  }
+ ]
+}

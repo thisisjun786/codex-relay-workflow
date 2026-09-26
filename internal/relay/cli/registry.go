@@ -11,6 +11,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -63,7 +64,7 @@ type PayloadExit struct {
 
 func (e *PayloadExit) Error() string { return fmt.Sprint(get(e.Payload, "detail")) }
 
-// ExitPayload lets another relay package print this answer whole (delivery.PayloadError).
+// ExitPayload lets another relay package print this answer whole (registry.PayloadError, delivery.PayloadError).
 func (e *PayloadExit) ExitPayload() (contract.OrderedObject, int) { return e.Payload, e.Code }
 
 // HostError is an unexpected failure whose Python class name is known, so the host envelope
@@ -117,6 +118,19 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 	remaining := globals.Args()
 	if len(remaining) == 0 {
 		return parseError(globalUsage, "the following arguments are required: command")
+	}
+	if slices.Contains(registry.Names(), remaining[0]) {
+		return registry.ExecuteAs(ctx, prog, argv, stdout, stderr, func(selection store.StateSelection, socket string) error {
+			services := Services{Selection: selection, SocketPath: socket, AdapterRequested: socket != "", Program: program(argv0)}
+			refusal, err := selectionRefusal(services)
+			if err != nil {
+				return err
+			}
+			if refusal != nil {
+				return &PayloadExit{Payload: refusal, Code: contract.ExitRefused}
+			}
+			return kindModuleRefusal(*kindModules)
+		})
 	}
 	if slices.Contains(delivery.CommandNames(), remaining[0]) {
 		code, _ := delivery.ExecuteAs(ctx, prog, argv, stdout, stderr, func(selection store.StateSelection, socket string) error {
@@ -283,12 +297,13 @@ func argparseMessage(err error) string {
 	return text
 }
 
-// allNames is every relay command this build registers: this package's and delivery's.
+// allNames is every relay command this build registers: this package's, registry's and delivery's.
 func allNames() []string {
 	names := make([]string, 0, len(Commands))
 	for _, command := range Commands {
 		names = append(names, command.Name)
 	}
+	names = append(names, registry.Names()...)
 	return append(names, delivery.CommandNames()...)
 }
 

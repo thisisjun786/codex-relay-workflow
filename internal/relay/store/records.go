@@ -273,9 +273,6 @@ func (s *Store) AppendJournal(ctx context.Context, entry JournalEntry) error {
 	})
 }
 
-// Querier is where a read or a write outside a transaction body runs.
-type Querier = querier
-
 // Q exposes the ctx-aware querier to domain packages: the open transaction's connection when ctx
 // carries one of this store's, otherwise the pool. Readers in other packages go through it so
 // they see the transaction's own uncommitted writes, as Python's one connection does.

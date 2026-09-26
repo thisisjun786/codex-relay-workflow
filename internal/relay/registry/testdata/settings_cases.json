@@ -1,0 +1,2219 @@
+{
+ "complete": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  },
+  "response": {
+   "approvalPolicy": "never",
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "thread": {
+    "environments": [
+     {
+      "environmentId": "local",
+      "cwd": "/parent",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ]
+     }
+    ]
+   }
+  }
+ },
+ "environments_empty": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": []
+  }
+ },
+ "environments_null": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": null
+  }
+ },
+ "environments_absent": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh"
+  }
+ },
+ "absent_before_mistyped": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": 7,
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "approval_null": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": null,
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "sandbox_null": {
+  "row": {
+   "sandbox": null,
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "sandbox_omitted": {
+  "row": {
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "mistyped_cwd_0": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": 7,
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "mistyped_cwd_1": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": {
+    "path": "/p"
+   },
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "mistyped_cwd_2": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": [
+    "/p"
+   ],
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "mistyped_model_3": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": 7,
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "mistyped_model_4": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": true,
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "mistyped_reasoningEffort_5": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": 7,
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "mistyped_reasoningEffort_6": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": {
+    "level": "x"
+   },
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "mistyped_all": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": 7,
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": true,
+   "reasoningEffort": [
+    "x"
+   ],
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "roots_string": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": "/a/bc",
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "env_bad": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": 7
+    }
+   ]
+  }
+ },
+ "approval_0": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "untrusted",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "approval_1": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never ",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "approval_2": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": 7,
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "approval_3": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": true,
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "approval_4": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": {
+    "mode": "on-request"
+   },
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "approval_on_request": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "on-request",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "sandbox_kind_0": {
+  "row": {
+   "sandbox": "workspaceWrite",
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "sandbox_kind_1": {
+  "row": {
+   "sandbox": "",
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "sandbox_kind_2": {
+  "row": {
+   "sandbox": [
+    "workspaceWrite"
+   ],
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "sandbox_kind_3": {
+  "row": {
+   "sandbox": [],
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "sandbox_kind_4": {
+  "row": {
+   "sandbox": 7,
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "sandbox_kind_5": {
+  "row": {
+   "sandbox": 0,
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "sandbox_kind_6": {
+  "row": {
+   "sandbox": 1.5,
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "sandbox_kind_7": {
+  "row": {
+   "sandbox": true,
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "sandbox_kind_8": {
+  "row": {
+   "sandbox": false,
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "sandbox_type_0": {
+  "row": {
+   "sandbox": {
+    "type": {
+     "mode": "x"
+    }
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "sandbox_type_1": {
+  "row": {
+   "sandbox": {
+    "type": [
+     "workspaceWrite"
+    ]
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "sandbox_type_2": {
+  "row": {
+   "sandbox": {
+    "type": 7
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "sandbox_type_3": {
+  "row": {
+   "sandbox": {
+    "type": true
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "sandbox_type_4": {
+  "row": {
+   "sandbox": {
+    "type": null
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "sandbox_type_missing": {
+  "row": {
+   "sandbox": {},
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "sandbox_external": {
+  "row": {
+   "sandbox": {
+    "type": "externalSandbox"
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "sandbox_malformed": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": null
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  },
+  "response": {
+   "approvalPolicy": "never",
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": null
+   },
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "thread": {
+    "environments": [
+     {
+      "environmentId": "local",
+      "cwd": "/parent",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ]
+     }
+    ]
+   }
+  }
+ },
+ "sandbox_readonly": {
+  "row": {
+   "sandbox": {
+    "type": "readOnly"
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "ladder_0": {
+  "row": {
+   "sandbox": {
+    "type": "externalSandbox"
+   },
+   "approvalPolicy": "untrusted",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": 7,
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "ladder_1": {
+  "row": {
+   "sandbox": {
+    "type": "externalSandbox"
+   },
+   "approvalPolicy": "untrusted",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": 7,
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "ladder_2": {
+  "row": {
+   "sandbox": {
+    "type": "externalSandbox"
+   },
+   "approvalPolicy": "untrusted",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "ladder_3": {
+  "row": {
+   "sandbox": {
+    "type": "externalSandbox"
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  }
+ },
+ "resp_approval_absent": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  },
+  "response": {
+   "approvalPolicy": null,
+   "sandbox": {
+    "type": "dangerFullAccess"
+   },
+   "thread": {
+    "environments": null
+   }
+  }
+ },
+ "resp_approval_untrusted": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  },
+  "response": {
+   "approvalPolicy": "untrusted",
+   "sandbox": {
+    "type": "dangerFullAccess"
+   },
+   "thread": {
+    "environments": null
+   }
+  }
+ },
+ "resp_approval_granular": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  },
+  "response": {
+   "approvalPolicy": {
+    "granular": {}
+   },
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "thread": {
+    "environments": [
+     {
+      "environmentId": "local",
+      "cwd": "/parent",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ]
+     }
+    ]
+   }
+  }
+ },
+ "resp_not_object": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  },
+  "response": [
+   1
+  ]
+ },
+ "resp_env_unknown": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  },
+  "response": {
+   "approvalPolicy": "never",
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "thread": {
+    "environments": null
+   }
+  }
+ },
+ "resp_thread_bad": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  },
+  "response": {
+   "approvalPolicy": "never",
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "thread": 3
+  }
+ },
+ "resp_env_unreadable": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  },
+  "response": {
+   "approvalPolicy": "never",
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "thread": {
+    "environments": [
+     {
+      "environmentId": 1,
+      "cwd": "/p"
+     }
+    ]
+   }
+  }
+ },
+ "resp_widened_sandbox": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  },
+  "response": {
+   "approvalPolicy": "never",
+   "sandbox": {
+    "type": "dangerFullAccess"
+   },
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "thread": {
+    "environments": [
+     {
+      "environmentId": "local",
+      "cwd": "/parent",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ]
+     }
+    ]
+   }
+  }
+ },
+ "resp_widened_roots": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  },
+  "response": {
+   "approvalPolicy": "never",
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [
+     "/parent",
+     "/etc"
+    ]
+   },
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent",
+    "/etc"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "thread": {
+    "environments": [
+     {
+      "environmentId": "local",
+      "cwd": "/parent",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ]
+     }
+    ]
+   }
+  }
+ },
+ "resp_narrower_loaded": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent",
+    "/x"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  },
+  "response": {
+   "approvalPolicy": "never",
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "thread": {
+    "environments": [
+     {
+      "environmentId": "local",
+      "cwd": "/parent",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ]
+     }
+    ]
+   }
+  },
+  "loadedBefore": true
+ },
+ "resp_narrower_transmitted": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent",
+    "/x"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  },
+  "response": {
+   "approvalPolicy": "never",
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "thread": {
+    "environments": [
+     {
+      "environmentId": "local",
+      "cwd": "/parent",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ]
+     }
+    ]
+   }
+  }
+ },
+ "resp_missing_fields": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  },
+  "response": {
+   "approvalPolicy": "on-request",
+   "thread": {
+    "environments": [
+     {
+      "environmentId": "local",
+      "cwd": "/parent",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ]
+     }
+    ]
+   }
+  }
+ },
+ "resp_model_differs": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  },
+  "response": {
+   "approvalPolicy": "never",
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "cwd": "/elsewhere",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "other",
+   "reasoningEffort": "low",
+   "thread": {
+    "environments": [
+     {
+      "environmentId": "local",
+      "cwd": "/parent",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ]
+     }
+    ]
+   }
+  }
+ },
+ "resp_bool_vs_int": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  },
+  "response": {
+   "approvalPolicy": "never",
+   "sandbox": {
+    "type": "workspaceWrite",
+    "networkAccess": 0
+   },
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "thread": {
+    "environments": [
+     {
+      "environmentId": "local",
+      "cwd": "/parent",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ]
+     }
+    ]
+   }
+  }
+ },
+ "resp_roots_text": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  },
+  "response": {
+   "approvalPolicy": "never",
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": "/parent",
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "thread": {
+    "environments": [
+     {
+      "environmentId": "local",
+      "cwd": "/parent",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ]
+     }
+    ]
+   }
+  }
+ },
+ "resp_profile_missing": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ],
+   "expectedPermissionProfile": {
+    "id": "p"
+   }
+  },
+  "response": {
+   "approvalPolicy": "never",
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "thread": {
+    "environments": [
+     {
+      "environmentId": "local",
+      "cwd": "/parent",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ]
+     }
+    ]
+   }
+  }
+ },
+ "resp_profile_other": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  },
+  "response": {
+   "approvalPolicy": "never",
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "thread": {
+    "environments": [
+     {
+      "environmentId": "local",
+      "cwd": "/parent",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ]
+     }
+    ]
+   },
+   "activePermissionProfile": {
+    "id": "q"
+   }
+  }
+ },
+ "resp_env_other": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent"
+     ]
+    }
+   ]
+  },
+  "response": {
+   "approvalPolicy": "never",
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "thread": {
+    "environments": [
+     {
+      "environmentId": "remote",
+      "cwd": "/parent"
+     }
+    ]
+   }
+  }
+ },
+ "resp_env_narrower_free": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent",
+      "/x"
+     ]
+    }
+   ]
+  },
+  "response": {
+   "approvalPolicy": "never",
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "anthropic/claude-opus-5",
+   "reasoningEffort": "xhigh",
+   "thread": {
+    "environments": [
+     {
+      "environmentId": "local",
+      "cwd": "/parent",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ]
+     }
+    ]
+   }
+  },
+  "transmitted": false
+ },
+ "narrow_all": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [
+     "/parent",
+     "/x"
+    ],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent",
+    "/x"
+   ],
+   "model": "m",
+   "reasoningEffort": "e",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent",
+      "/x"
+     ]
+    }
+   ]
+  },
+  "response": {
+   "approvalPolicy": "never",
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [
+     "/parent"
+    ]
+   },
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "model": "m",
+   "reasoningEffort": "e",
+   "thread": {
+    "environments": [
+     {
+      "environmentId": "local",
+      "cwd": "/parent",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ]
+     }
+    ]
+   }
+  },
+  "loadedBefore": true,
+  "narrowing": true
+ },
+ "narrow_reordered": {
+  "row": {
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [
+     "/parent",
+     "/x"
+    ],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "approvalPolicy": "never",
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/parent",
+    "/x"
+   ],
+   "model": "m",
+   "reasoningEffort": "e",
+   "environments": [
+    {
+     "environmentId": "local",
+     "cwd": "/parent",
+     "runtimeWorkspaceRoots": [
+      "/parent",
+      "/x"
+     ]
+    }
+   ]
+  },
+  "response": {
+   "approvalPolicy": "never",
+   "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [
+     "/parent",
+     "/x"
+    ],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+   },
+   "cwd": "/parent",
+   "runtimeWorkspaceRoots": [
+    "/x",
+    "/parent"
+   ],
+   "model": "m",
+   "reasoningEffort": "e",
+   "thread": {
+    "environments": [
+     {
+      "environmentId": "local",
+      "cwd": "/parent",
+      "runtimeWorkspaceRoots": [
+       "/parent",
+       "/x"
+      ]
+     }
+    ]
+   }
+  },
+  "loadedBefore": true,
+  "narrowing": true
+ }
+}

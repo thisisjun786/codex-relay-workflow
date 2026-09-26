@@ -1,0 +1,1233 @@
+{
+ "absent_before_mistyped": {
+  "missing": [
+   "cwd"
+  ],
+  "usable": {
+   "detail": "missing cwd",
+   "reason": "settings_incomplete"
+  }
+ },
+ "approval_0": {
+  "missing": [],
+  "usable": {
+   "detail": "the recorded approvalPolicy is 'untrusted'; this transport carries only 'never' and 'on-request', leaving every approval a turn raises with the thread's own approver",
+   "reason": "unsupported_approval_policy"
+  }
+ },
+ "approval_1": {
+  "missing": [],
+  "usable": {
+   "detail": "the recorded approvalPolicy is 'never '; this transport carries only 'never' and 'on-request', leaving every approval a turn raises with the thread's own approver",
+   "reason": "unsupported_approval_policy"
+  }
+ },
+ "approval_2": {
+  "missing": [],
+  "usable": {
+   "detail": "the recorded approvalPolicy is 7; this transport carries only 'never' and 'on-request', leaving every approval a turn raises with the thread's own approver",
+   "reason": "unsupported_approval_policy"
+  }
+ },
+ "approval_3": {
+  "missing": [],
+  "usable": {
+   "detail": "the recorded approvalPolicy is True; this transport carries only 'never' and 'on-request', leaving every approval a turn raises with the thread's own approver",
+   "reason": "unsupported_approval_policy"
+  }
+ },
+ "approval_4": {
+  "missing": [],
+  "usable": {
+   "detail": "the recorded approvalPolicy is {'mode': 'on-request'}; this transport carries only 'never' and 'on-request', leaving every approval a turn raises with the thread's own approver",
+   "reason": "unsupported_approval_policy"
+  }
+ },
+ "approval_null": {
+  "missing": [
+   "approvalPolicy"
+  ],
+  "usable": {
+   "detail": "missing approvalPolicy",
+   "reason": "settings_incomplete"
+  }
+ },
+ "approval_on_request": {
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "complete": {
+  "mismatches": [],
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "env_bad": {
+  "missing": [],
+  "usable": {
+   "detail": "environments[0].cwd is int, not str",
+   "reason": "settings_mistyped"
+  }
+ },
+ "environments_absent": {
+  "missing": [
+   "environments"
+  ],
+  "usable": {
+   "detail": "missing environments",
+   "reason": "settings_incomplete"
+  }
+ },
+ "environments_empty": {
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "environments_null": {
+  "missing": [
+   "environments"
+  ],
+  "usable": {
+   "detail": "missing environments",
+   "reason": "settings_incomplete"
+  }
+ },
+ "ladder_0": {
+  "missing": [
+   "cwd"
+  ],
+  "usable": {
+   "detail": "missing cwd",
+   "reason": "settings_incomplete"
+  }
+ },
+ "ladder_1": {
+  "missing": [],
+  "usable": {
+   "detail": "model is int, not str",
+   "reason": "settings_mistyped"
+  }
+ },
+ "ladder_2": {
+  "missing": [],
+  "usable": {
+   "detail": "the recorded approvalPolicy is 'untrusted'; this transport carries only 'never' and 'on-request', leaving every approval a turn raises with the thread's own approver",
+   "reason": "unsupported_approval_policy"
+  }
+ },
+ "ladder_3": {
+  "missing": [],
+  "usable": {
+   "detail": "'externalSandbox' has no ThreadResumeParams.sandbox mode, so it cannot be restored on a resume",
+   "reason": "unsupported_sandbox_type"
+  }
+ },
+ "mistyped_all": {
+  "missing": [],
+  "usable": {
+   "detail": "cwd is int, not str; model is bool, not str; reasoningEffort is list, not str",
+   "reason": "settings_mistyped"
+  }
+ },
+ "mistyped_cwd_0": {
+  "missing": [],
+  "usable": {
+   "detail": "cwd is int, not str",
+   "reason": "settings_mistyped"
+  }
+ },
+ "mistyped_cwd_1": {
+  "missing": [],
+  "usable": {
+   "detail": "cwd is dict, not str",
+   "reason": "settings_mistyped"
+  }
+ },
+ "mistyped_cwd_2": {
+  "missing": [],
+  "usable": {
+   "detail": "cwd is list, not str",
+   "reason": "settings_mistyped"
+  }
+ },
+ "mistyped_model_3": {
+  "missing": [],
+  "usable": {
+   "detail": "model is int, not str",
+   "reason": "settings_mistyped"
+  }
+ },
+ "mistyped_model_4": {
+  "missing": [],
+  "usable": {
+   "detail": "model is bool, not str",
+   "reason": "settings_mistyped"
+  }
+ },
+ "mistyped_reasoningEffort_5": {
+  "missing": [],
+  "usable": {
+   "detail": "reasoningEffort is int, not str",
+   "reason": "settings_mistyped"
+  }
+ },
+ "mistyped_reasoningEffort_6": {
+  "missing": [],
+  "usable": {
+   "detail": "reasoningEffort is dict, not str",
+   "reason": "settings_mistyped"
+  }
+ },
+ "narrow_all": {
+  "mismatches": [],
+  "missing": [],
+  "narrowing": [
+   {
+    "code": "runtime_roots_narrower_than_record",
+    "field": "runtimeWorkspaceRoots",
+    "observed": [
+     "/parent"
+    ],
+    "recorded": [
+     "/parent",
+     "/x"
+    ],
+    "statusBeforeResume": "idle"
+   },
+   {
+    "code": "runtime_roots_narrower_than_record",
+    "field": "environments[0].runtimeWorkspaceRoots",
+    "observed": [
+     "/parent"
+    ],
+    "recorded": [
+     "/parent",
+     "/x"
+    ],
+    "statusBeforeResume": "idle"
+   },
+   {
+    "code": "runtime_roots_narrower_than_record",
+    "field": "sandbox.writableRoots",
+    "observed": [
+     "/parent"
+    ],
+    "recorded": [
+     "/parent",
+     "/x"
+    ],
+    "statusBeforeResume": "idle"
+   }
+  ],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "e",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": [
+      "/parent",
+      "/x"
+     ]
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "m",
+   "runtimeWorkspaceRoots": [
+    "/parent",
+    "/x"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "narrow_reordered": {
+  "mismatches": [],
+  "missing": [],
+  "narrowing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "e",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": [
+      "/parent",
+      "/x"
+     ]
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "m",
+   "runtimeWorkspaceRoots": [
+    "/parent",
+    "/x"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "resp_approval_absent": {
+  "mismatches": [
+   {
+    "code": "setting_unobservable",
+    "expected": "never",
+    "field": "approvalPolicy",
+    "returned": null
+   }
+  ],
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "resp_approval_granular": {
+  "mismatches": [
+   {
+    "code": "unsupported_approval_policy",
+    "expected": [
+     "never",
+     "on-request"
+    ],
+    "field": "approvalPolicy",
+    "returned": "granular",
+    "returnedShape": "dict"
+   }
+  ],
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "resp_approval_untrusted": {
+  "mismatches": [
+   {
+    "code": "unsupported_approval_policy",
+    "expected": [
+     "never",
+     "on-request"
+    ],
+    "field": "approvalPolicy",
+    "returned": "untrusted",
+    "returnedShape": "str"
+   }
+  ],
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "resp_bool_vs_int": {
+  "mismatches": [
+   {
+    "code": "settings_not_preserved",
+    "expected": {
+     "excludeSlashTmp": false,
+     "excludeTmpdirEnvVar": false,
+     "networkAccess": false,
+     "type": "workspaceWrite",
+     "writableRoots": []
+    },
+    "field": "sandbox",
+    "returned": {
+     "networkAccess": 0,
+     "type": "workspaceWrite"
+    }
+   }
+  ],
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "resp_env_narrower_free": {
+  "mismatches": [],
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "resp_env_other": {
+  "mismatches": [
+   {
+    "code": "settings_not_preserved",
+    "expected": [
+     {
+      "cwd": "/parent",
+      "environmentId": "local",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ]
+     }
+    ],
+    "field": "environments",
+    "returned": [
+     {
+      "cwd": "/parent",
+      "environmentId": "remote",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ]
+     }
+    ]
+   }
+  ],
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "resp_env_unknown": {
+  "mismatches": [
+   {
+    "code": "environments_unknown",
+    "expected": [
+     {
+      "cwd": "/parent",
+      "environmentId": "local",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ]
+     }
+    ],
+    "field": "environments",
+    "returned": null
+   }
+  ],
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "resp_env_unreadable": {
+  "mismatches": [
+   {
+    "code": "setting_unobservable",
+    "expected": [
+     {
+      "cwd": "/parent",
+      "environmentId": "local",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ]
+     }
+    ],
+    "field": "environments",
+    "returned": null,
+    "returnedShape": "environments[0].environmentId is int, not str"
+   }
+  ],
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "resp_missing_fields": {
+  "mismatches": [
+   {
+    "code": "setting_unobservable",
+    "expected": {
+     "excludeSlashTmp": false,
+     "excludeTmpdirEnvVar": false,
+     "networkAccess": false,
+     "type": "workspaceWrite",
+     "writableRoots": []
+    },
+    "field": "sandbox",
+    "returned": null
+   },
+   {
+    "code": "setting_unobservable",
+    "expected": "/parent",
+    "field": "cwd",
+    "returned": null
+   },
+   {
+    "code": "setting_unobservable",
+    "expected": [
+     "/parent"
+    ],
+    "field": "runtimeWorkspaceRoots",
+    "returned": null
+   },
+   {
+    "code": "setting_unobservable",
+    "expected": "anthropic/claude-opus-5",
+    "field": "model",
+    "returned": null
+   },
+   {
+    "code": "setting_unobservable",
+    "expected": "xhigh",
+    "field": "reasoningEffort",
+    "returned": null
+   }
+  ],
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "resp_model_differs": {
+  "mismatches": [
+   {
+    "code": "settings_not_preserved",
+    "expected": "/parent",
+    "field": "cwd",
+    "returned": "/elsewhere"
+   },
+   {
+    "code": "settings_not_preserved",
+    "expected": "anthropic/claude-opus-5",
+    "field": "model",
+    "returned": "other"
+   },
+   {
+    "code": "settings_not_preserved",
+    "expected": "xhigh",
+    "field": "reasoningEffort",
+    "returned": "low"
+   }
+  ],
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "resp_narrower_loaded": {
+  "mismatches": [],
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent",
+    "/x"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "resp_narrower_transmitted": {
+  "mismatches": [
+   {
+    "code": "settings_not_preserved",
+    "expected": [
+     "/parent",
+     "/x"
+    ],
+    "field": "runtimeWorkspaceRoots",
+    "returned": [
+     "/parent"
+    ]
+   }
+  ],
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent",
+    "/x"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "resp_not_object": {
+  "mismatches": [
+   {
+    "code": "setting_unobservable",
+    "expected": "a resume response object",
+    "field": "response",
+    "returned": null,
+    "returnedShape": "list"
+   }
+  ],
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "resp_profile_missing": {
+  "mismatches": [
+   {
+    "code": "setting_unobservable",
+    "expected": {
+     "id": "p"
+    },
+    "field": "activePermissionProfile",
+    "returned": null
+   }
+  ],
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "resp_profile_other": {
+  "mismatches": [
+   {
+    "code": "unverifiable_permission_profile",
+    "expected": null,
+    "field": "activePermissionProfile",
+    "returned": {
+     "id": "q"
+    }
+   }
+  ],
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "resp_roots_text": {
+  "mismatches": [
+   {
+    "code": "setting_unobservable",
+    "expected": [
+     "/parent"
+    ],
+    "field": "runtimeWorkspaceRoots",
+    "returned": null,
+    "returnedShape": "str"
+   }
+  ],
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "resp_thread_bad": {
+  "mismatches": [
+   {
+    "code": "setting_unobservable",
+    "expected": [
+     {
+      "cwd": "/parent",
+      "environmentId": "local",
+      "runtimeWorkspaceRoots": [
+       "/parent"
+      ]
+     }
+    ],
+    "field": "environments",
+    "returned": null,
+    "returnedShape": "thread is int"
+   }
+  ],
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "resp_widened_roots": {
+  "mismatches": [
+   {
+    "code": "settings_not_preserved",
+    "expected": {
+     "excludeSlashTmp": false,
+     "excludeTmpdirEnvVar": false,
+     "networkAccess": false,
+     "type": "workspaceWrite",
+     "writableRoots": []
+    },
+    "field": "sandbox",
+    "returned": {
+     "excludeSlashTmp": false,
+     "excludeTmpdirEnvVar": false,
+     "networkAccess": false,
+     "type": "workspaceWrite",
+     "writableRoots": [
+      "/parent",
+      "/etc"
+     ]
+    }
+   },
+   {
+    "code": "settings_not_preserved",
+    "expected": [
+     "/parent"
+    ],
+    "field": "runtimeWorkspaceRoots",
+    "returned": [
+     "/parent",
+     "/etc"
+    ]
+   }
+  ],
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "resp_widened_sandbox": {
+  "mismatches": [
+   {
+    "code": "settings_not_preserved",
+    "expected": {
+     "excludeSlashTmp": false,
+     "excludeTmpdirEnvVar": false,
+     "networkAccess": false,
+     "type": "workspaceWrite",
+     "writableRoots": []
+    },
+    "field": "sandbox",
+    "returned": {
+     "type": "dangerFullAccess"
+    }
+   }
+  ],
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh",
+    "sandbox_workspace_write": {
+     "exclude_slash_tmp": false,
+     "exclude_tmpdir_env_var": false,
+     "network_access": false,
+     "writable_roots": []
+    }
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "workspace-write",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "roots_string": {
+  "missing": [],
+  "usable": {
+   "detail": "runtimeWorkspaceRoots is str, not a list of str",
+   "reason": "settings_mistyped"
+  }
+ },
+ "sandbox_external": {
+  "missing": [],
+  "usable": {
+   "detail": "'externalSandbox' has no ThreadResumeParams.sandbox mode, so it cannot be restored on a resume",
+   "reason": "unsupported_sandbox_type"
+  }
+ },
+ "sandbox_kind_0": {
+  "missing": [],
+  "usable": {
+   "detail": "the recorded sandbox is str, not the policy object a creation result reports, so it does not record the full policy a resume would have to restore",
+   "reason": "unsupported_sandbox_type"
+  }
+ },
+ "sandbox_kind_1": {
+  "missing": [],
+  "usable": {
+   "detail": "the recorded sandbox is str, not the policy object a creation result reports, so it does not record the full policy a resume would have to restore",
+   "reason": "unsupported_sandbox_type"
+  }
+ },
+ "sandbox_kind_2": {
+  "missing": [],
+  "usable": {
+   "detail": "the recorded sandbox is list, not the policy object a creation result reports, so it does not record the full policy a resume would have to restore",
+   "reason": "unsupported_sandbox_type"
+  }
+ },
+ "sandbox_kind_3": {
+  "missing": [],
+  "usable": {
+   "detail": "the recorded sandbox is list, not the policy object a creation result reports, so it does not record the full policy a resume would have to restore",
+   "reason": "unsupported_sandbox_type"
+  }
+ },
+ "sandbox_kind_4": {
+  "missing": [],
+  "usable": {
+   "detail": "the recorded sandbox is int, not the policy object a creation result reports, so it does not record the full policy a resume would have to restore",
+   "reason": "unsupported_sandbox_type"
+  }
+ },
+ "sandbox_kind_5": {
+  "missing": [],
+  "usable": {
+   "detail": "the recorded sandbox is int, not the policy object a creation result reports, so it does not record the full policy a resume would have to restore",
+   "reason": "unsupported_sandbox_type"
+  }
+ },
+ "sandbox_kind_6": {
+  "missing": [],
+  "usable": {
+   "detail": "the recorded sandbox is float, not the policy object a creation result reports, so it does not record the full policy a resume would have to restore",
+   "reason": "unsupported_sandbox_type"
+  }
+ },
+ "sandbox_kind_7": {
+  "missing": [],
+  "usable": {
+   "detail": "the recorded sandbox is bool, not the policy object a creation result reports, so it does not record the full policy a resume would have to restore",
+   "reason": "unsupported_sandbox_type"
+  }
+ },
+ "sandbox_kind_8": {
+  "missing": [],
+  "usable": {
+   "detail": "the recorded sandbox is bool, not the policy object a creation result reports, so it does not record the full policy a resume would have to restore",
+   "reason": "unsupported_sandbox_type"
+  }
+ },
+ "sandbox_malformed": {
+  "mismatches": [
+   {
+    "code": "settings_not_preserved",
+    "expected": {
+     "type": "workspaceWrite",
+     "writableRoots": null
+    },
+    "field": "sandbox",
+    "returned": {
+     "type": "workspaceWrite",
+     "writableRoots": null
+    }
+   }
+  ],
+  "missing": [],
+  "usable": {
+   "detail": "the recorded sandbox policy cannot be read in full, so no response could confirm it",
+   "reason": "unsupported_sandbox_type"
+  }
+ },
+ "sandbox_null": {
+  "missing": [
+   "sandbox"
+  ],
+  "usable": {
+   "detail": "missing sandbox",
+   "reason": "settings_incomplete"
+  }
+ },
+ "sandbox_omitted": {
+  "missing": [
+   "sandbox"
+  ],
+  "usable": {
+   "detail": "missing sandbox",
+   "reason": "settings_incomplete"
+  }
+ },
+ "sandbox_readonly": {
+  "missing": [],
+  "resumeParams": {
+   "config": {
+    "model_reasoning_effort": "xhigh"
+   },
+   "cwd": "/parent",
+   "excludeTurns": true,
+   "model": "anthropic/claude-opus-5",
+   "runtimeWorkspaceRoots": [
+    "/parent"
+   ],
+   "sandbox": "read-only",
+   "threadId": "t-1"
+  },
+  "usable": null
+ },
+ "sandbox_type_0": {
+  "missing": [],
+  "usable": {
+   "detail": "{'mode': 'x'} has no ThreadResumeParams.sandbox mode, so it cannot be restored on a resume",
+   "reason": "unsupported_sandbox_type"
+  }
+ },
+ "sandbox_type_1": {
+  "missing": [],
+  "usable": {
+   "detail": "['workspaceWrite'] has no ThreadResumeParams.sandbox mode, so it cannot be restored on a resume",
+   "reason": "unsupported_sandbox_type"
+  }
+ },
+ "sandbox_type_2": {
+  "missing": [],
+  "usable": {
+   "detail": "7 has no ThreadResumeParams.sandbox mode, so it cannot be restored on a resume",
+   "reason": "unsupported_sandbox_type"
+  }
+ },
+ "sandbox_type_3": {
+  "missing": [],
+  "usable": {
+   "detail": "True has no ThreadResumeParams.sandbox mode, so it cannot be restored on a resume",
+   "reason": "unsupported_sandbox_type"
+  }
+ },
+ "sandbox_type_4": {
+  "missing": [],
+  "usable": {
+   "detail": "None has no ThreadResumeParams.sandbox mode, so it cannot be restored on a resume",
+   "reason": "unsupported_sandbox_type"
+  }
+ },
+ "sandbox_type_missing": {
+  "missing": [],
+  "usable": {
+   "detail": "None has no ThreadResumeParams.sandbox mode, so it cannot be restored on a resume",
+   "reason": "unsupported_sandbox_type"
+  }
+ }
+}
