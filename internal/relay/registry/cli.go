@@ -242,6 +242,13 @@ func (c command) parse(prog string, argv []string) (parsed, error) {
 			continue
 		}
 		if o.flag {
+			if contains(c.exclusive, o.name) {
+				for _, other := range c.exclusive {
+					if other != o.name && p.set[other] {
+						return p, &usageError{c.usage(prog), "argument --" + o.name + ": not allowed with argument --" + other}
+					}
+				}
+			}
 			p.values[o.name] = []string{"true"}
 			p.set[o.name] = true
 			continue

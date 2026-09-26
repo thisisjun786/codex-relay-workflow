@@ -37,6 +37,9 @@ type Registry struct {
 	Now func() string
 	// Policy is this process's role-policy snapshot (rolepolicy.declared()).
 	Policy RolePolicy
+	// beforeRegisterTx runs between register's pre-check and its write transaction: the
+	// window test_linkage's racer is injected into (mock.patch of _register_in_transaction).
+	beforeRegisterTx func(Registration)
 }
 
 // SystemISO is SystemClock.iso: UTC, microseconds, "+00:00".
@@ -67,6 +70,11 @@ func journal(ctx context.Context, s *store.Store, kind, subject string, detail a
 		return fmt.Errorf("journal %s: %w", kind, err)
 	}
 	return nil
+}
+
+// Journal records an event through the current transaction connection.
+func (r *Registry) Journal(ctx context.Context, kind, subject string, detail any, at string) error {
+	return journal(ctx, r.Store, kind, subject, detail, at)
 }
 
 // row is one relationships row, every column.
@@ -378,6 +386,9 @@ func (r *Registry) Register(ctx context.Context, in Registration) (Relationship,
 		if pending != nil {
 			return Relationship{}, r.contestPending(ctx, pending)
 		}
+	}
+	if r.beforeRegisterTx != nil {
+		r.beforeRegisterTx(in)
 	}
 	record, err := r.registerInTransaction(ctx, rid, in, now)
 	if err != nil {

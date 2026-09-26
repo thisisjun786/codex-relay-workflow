@@ -1,0 +1,1351 @@
+{
+ "ccl2_refusal_exits_two": [
+  {
+   "argv": [
+    "linkage-bind",
+    "--role",
+    "parent",
+    "--scope",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-request",
+    "--repository",
+    "owner/repo",
+    "--base-ref",
+    "dev",
+    "--project",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a",
+    "--head",
+    "head-a",
+    "--ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-acknowledge",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--grant",
+    "mtg-19530b364d6659fc092253786921e44e",
+    "--evidence",
+    "read it and re-checked the head"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-check",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--head-sha",
+    "head-moved",
+    "--base-sha",
+    "base-0",
+    "--checks",
+    "[{\"runId\": \"run-1\", \"name\": \"dev-gate\", \"headSha\": \"head-a\", \"conclusion\": \"success\", \"attempt\": 1}]",
+    "--review",
+    "{\"hasNextPage\": false, \"pagesRead\": 1, \"totalCount\": 1, \"threadsSeen\": [\"thread-1\"], \"unresolved\": 0}",
+    "--required",
+    "dev-gate"
+   ]
+  }
+ ],
+ "ccl3_unread_target_holds": [
+  {
+   "argv": [
+    "linkage-bind",
+    "--role",
+    "parent",
+    "--scope",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-request",
+    "--repository",
+    "/nonexistent-crw-229/R.git",
+    "--base-ref",
+    "dev",
+    "--project",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a",
+    "--head",
+    "head-a",
+    "--pr",
+    "7",
+    "--ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-acknowledge",
+    "--turn",
+    "mtn-1e1566baa95cfaecac6f49e02d5188fe",
+    "--actor",
+    "task-alpha",
+    "--grant",
+    "mtg-75c9e888946f5f4c49b8816b63686581",
+    "--evidence",
+    "read it and re-checked the head"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-check",
+    "--turn",
+    "mtn-1e1566baa95cfaecac6f49e02d5188fe",
+    "--actor",
+    "task-alpha",
+    "--head-sha",
+    "head-a",
+    "--base-sha",
+    "base-0",
+    "--checks",
+    "[{\"runId\": \"run-1\", \"name\": \"dev-gate\", \"headSha\": \"head-a\", \"conclusion\": \"success\", \"attempt\": 1}]",
+    "--review",
+    "{\"hasNextPage\": false, \"pagesRead\": 1, \"totalCount\": 1, \"threadsSeen\": [\"thread-1\"], \"unresolved\": 0}",
+    "--required",
+    "dev-gate"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-show",
+    "--repository",
+    "/nonexistent-crw-229/R.git",
+    "--base-ref",
+    "dev"
+   ]
+  }
+ ],
+ "ccl4_malformed_json": [
+  {
+   "argv": [
+    "linkage-bind",
+    "--role",
+    "parent",
+    "--scope",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-request",
+    "--repository",
+    "owner/repo",
+    "--base-ref",
+    "dev",
+    "--project",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a",
+    "--head",
+    "head-a",
+    "--ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-check",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--head-sha",
+    "head-a",
+    "--base-sha",
+    "base-0",
+    "--checks",
+    "not json",
+    "--review",
+    "{\"hasNextPage\": false, \"pagesRead\": 1, \"totalCount\": 1, \"threadsSeen\": [\"thread-1\"], \"unresolved\": 0}",
+    "--required",
+    "dev-gate"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-check",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--head-sha",
+    "head-a",
+    "--base-sha",
+    "base-0",
+    "--checks",
+    "[{\"runId\": \"run-1\", \"name\": \"dev-gate\", \"headSha\": \"head-a\", \"conclusion\": \"success\", \"attempt\": 1}]",
+    "--review",
+    "{oops}",
+    "--required",
+    "dev-gate"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-check",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--head-sha",
+    "head-a",
+    "--base-sha",
+    "base-0",
+    "--checks",
+    "[1]",
+    "--review",
+    "{\"hasNextPage\": false, \"pagesRead\": 1, \"totalCount\": 1, \"threadsSeen\": [\"thread-1\"], \"unresolved\": 0}",
+    "--required",
+    "dev-gate"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-check",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--head-sha",
+    "head-a",
+    "--base-sha",
+    "base-0",
+    "--checks",
+    "{}",
+    "--review",
+    "{\"hasNextPage\": false, \"pagesRead\": 1, \"totalCount\": 1, \"threadsSeen\": [\"thread-1\"], \"unresolved\": 0}",
+    "--required",
+    "dev-gate"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-check",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--head-sha",
+    "head-a",
+    "--base-sha",
+    "base-0",
+    "--checks",
+    "[{\"runId\": \"run-1\", \"name\": \"dev-gate\", \"headSha\": \"head-a\", \"conclusion\": \"success\", \"attempt\": 1}]",
+    "--review",
+    "[]",
+    "--required",
+    "dev-gate"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-check",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--head-sha",
+    "head-a",
+    "--base-sha",
+    "base-0",
+    "--checks",
+    "[{\"runId\": \"run-1\", \"name\": \"dev-gate\", \"headSha\": \"head-a\", \"conclusion\": \"success\", \"attempt\": 1}]",
+    "--review",
+    "{\"hasNextPage\": false, \"pagesRead\": 1, \"totalCount\": 1, \"threadsSeen\": 1, \"unresolved\": 0}",
+    "--required",
+    "dev-gate"
+   ]
+  }
+ ],
+ "ccl5_parent_task": [
+  {
+   "argv": [
+    "linkage-bind",
+    "--role",
+    "parent",
+    "--scope",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a"
+   ]
+  },
+  {
+   "argv": [
+    "linkage-bind",
+    "--role",
+    "parent",
+    "--scope",
+    "PRJ-B",
+    "--task",
+    "task-beta",
+    "--host",
+    "host-b"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-request",
+    "--repository",
+    "owner/repo",
+    "--base-ref",
+    "dev",
+    "--project",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a",
+    "--head",
+    "head-a",
+    "--ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-request",
+    "--repository",
+    "owner/repo",
+    "--base-ref",
+    "dev",
+    "--project",
+    "PRJ-B",
+    "--task",
+    "task-beta",
+    "--host",
+    "host-b",
+    "--head",
+    "head-a",
+    "--ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-show",
+    "--parent-task",
+    "task-alpha"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-show",
+    "--parent-task",
+    "task-beta"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-show",
+    "--parent-task",
+    "task-nobody"
+   ]
+  }
+ ],
+ "ccl6_selectors": [
+  {
+   "argv": [
+    "linkage-bind",
+    "--role",
+    "parent",
+    "--scope",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-request",
+    "--repository",
+    "owner/repo",
+    "--base-ref",
+    "dev",
+    "--project",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a",
+    "--head",
+    "head-a",
+    "--ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-show",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--parent-task",
+    "task-alpha"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-show",
+    "--repository",
+    "owner/repo"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-show",
+    "--base-ref",
+    "dev"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-show"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-show",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--repository",
+    "owner/repo",
+    "--base-ref",
+    "dev",
+    "--parent-task",
+    "task-alpha"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-show",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-show",
+    "--turn",
+    "mtn-nothing"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-show",
+    "--repository",
+    "owner/repo",
+    "--base-ref",
+    "dev"
+   ]
+  }
+ ],
+ "ccl7_acknowledge_twice": [
+  {
+   "argv": [
+    "linkage-bind",
+    "--role",
+    "parent",
+    "--scope",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-request",
+    "--repository",
+    "owner/repo",
+    "--base-ref",
+    "dev",
+    "--project",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a",
+    "--head",
+    "head-a",
+    "--ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-acknowledge",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--grant",
+    "mtg-19530b364d6659fc092253786921e44e",
+    "--evidence",
+    "read it and re-checked the head"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-acknowledge",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--grant",
+    "mtg-19530b364d6659fc092253786921e44e",
+    "--evidence",
+    "read it and re-checked the head"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-acknowledge",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--grant",
+    "mtg-19530b364d6659fc092253786921e44e",
+    "--evidence",
+    " "
+   ]
+  }
+ ],
+ "ccl8_foreign_grant": [
+  {
+   "argv": [
+    "linkage-bind",
+    "--role",
+    "parent",
+    "--scope",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-request",
+    "--repository",
+    "owner/repo",
+    "--base-ref",
+    "dev",
+    "--project",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a",
+    "--head",
+    "head-a",
+    "--ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-acknowledge",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--grant",
+    "mtg-somethingelse",
+    "--evidence",
+    "read it and re-checked the head"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-acknowledge",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-beta",
+    "--grant",
+    "mtg-19530b364d6659fc092253786921e44e",
+    "--evidence",
+    "not mine"
+   ]
+  }
+ ],
+ "ccl9_withdraw_cause": [
+  {
+   "argv": [
+    "linkage-bind",
+    "--role",
+    "parent",
+    "--scope",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-request",
+    "--repository",
+    "owner/repo",
+    "--base-ref",
+    "dev",
+    "--project",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a",
+    "--head",
+    "head-a",
+    "--ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-ready",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--not-ready",
+    "--cause",
+    "the base moved to base-7"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-ready",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--ready",
+    "--head",
+    "head-b"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-ready",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-ready",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--ready",
+    "--not-ready"
+   ]
+  }
+ ],
+ "commands_queue_and_release": [
+  {
+   "argv": [
+    "linkage-bind",
+    "--role",
+    "parent",
+    "--scope",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a"
+   ]
+  },
+  {
+   "argv": [
+    "linkage-bind",
+    "--role",
+    "parent",
+    "--scope",
+    "PRJ-B",
+    "--task",
+    "task-beta",
+    "--host",
+    "host-b"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-request",
+    "--repository",
+    "owner/repo",
+    "--base-ref",
+    "dev",
+    "--project",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a",
+    "--head",
+    "head-a",
+    "--ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-request",
+    "--repository",
+    "owner/repo",
+    "--base-ref",
+    "dev",
+    "--project",
+    "PRJ-B",
+    "--task",
+    "task-beta",
+    "--host",
+    "host-b",
+    "--head",
+    "head-b",
+    "--ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-request",
+    "--repository",
+    "owner/repo",
+    "--base-ref",
+    "dev",
+    "--project",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a",
+    "--head",
+    "head-a",
+    "--ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-request",
+    "--repository",
+    "owner/repo",
+    "--base-ref",
+    "dev",
+    "--project",
+    "PRJ-A",
+    "--task",
+    "task-beta",
+    "--host",
+    "host-b",
+    "--head",
+    "head-a",
+    "--ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-request",
+    "--repository",
+    "owner/repo",
+    "--base-ref",
+    "dev",
+    "--project",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a",
+    "--head",
+    "head-a",
+    "--pr",
+    "x",
+    "--ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-attest",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--evidence-kind",
+    "transport_accepted",
+    "--idempotency-key",
+    "msg-1",
+    "--actor",
+    "task-beta",
+    "--evidence",
+    "accepted"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-attest",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--evidence-kind",
+    "grant",
+    "--idempotency-key",
+    "msg-2",
+    "--actor",
+    "task-beta",
+    "--evidence",
+    "{}"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-request-return",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-beta",
+    "--evidence",
+    "my candidate is green"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-show",
+    "--repository",
+    "owner/repo",
+    "--base-ref",
+    "dev"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-withdraw",
+    "--turn",
+    "mtn-a60cee81f951d2df9c88a000a44ccfb5",
+    "--actor",
+    "task-alpha"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-release",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--disposition",
+    "cancelled",
+    "--reason",
+    "done"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-release",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--disposition",
+    "landed",
+    "--reason",
+    "done"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-release",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--disposition",
+    "returned",
+    "--reason",
+    "deferring to a ready peer"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-release",
+    "--turn",
+    "mtn-fbf20d64678c00914b7e8dce6bd9518e",
+    "--actor",
+    "task-alpha",
+    "--disposition",
+    "returned",
+    "--reason",
+    "again"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-withdraw",
+    "--turn",
+    "mtn-a60cee81f951d2df9c88a000a44ccfb5",
+    "--actor",
+    "task-beta"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-show",
+    "--turn",
+    "mtn-nothing"
+   ]
+  }
+ ],
+ "commands_withdraw_waiting": [
+  {
+   "argv": [
+    "linkage-bind",
+    "--role",
+    "parent",
+    "--scope",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a"
+   ]
+  },
+  {
+   "argv": [
+    "linkage-bind",
+    "--role",
+    "parent",
+    "--scope",
+    "PRJ-B",
+    "--task",
+    "task-beta",
+    "--host",
+    "host-b"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-request",
+    "--repository",
+    "owner/repo",
+    "--base-ref",
+    "dev",
+    "--project",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a",
+    "--head",
+    "head-a",
+    "--ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-request",
+    "--repository",
+    "owner/repo",
+    "--base-ref",
+    "dev",
+    "--project",
+    "PRJ-B",
+    "--task",
+    "task-beta",
+    "--host",
+    "host-b",
+    "--head",
+    "head-b",
+    "--ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-withdraw",
+    "--turn",
+    "mtn-a60cee81f951d2df9c88a000a44ccfb5",
+    "--actor",
+    "task-beta"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-withdraw",
+    "--turn",
+    "mtn-nothing",
+    "--actor",
+    "task-beta"
+   ]
+  }
+ ],
+ "commands_outcomes_unreadable": [
+  {
+   "argv": [
+    "linkage-bind",
+    "--role",
+    "parent",
+    "--scope",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a"
+   ]
+  },
+  {
+   "argv": [
+    "linkage-supervise",
+    "--initiative",
+    "INIT-1",
+    "--project",
+    "PRJ-A",
+    "--supervisor-task",
+    "task-supervisor",
+    "--supervisor-host",
+    "host-s",
+    "--parent-task",
+    "task-alpha",
+    "--parent-host",
+    "host-a"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-request",
+    "--repository",
+    "/nonexistent-crw-229/R.git",
+    "--base-ref",
+    "dev",
+    "--project",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a",
+    "--head",
+    "head-a",
+    "--ready"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-land",
+    "--turn",
+    "mtn-1e1566baa95cfaecac6f49e02d5188fe",
+    "--actor",
+    "task-alpha",
+    "--landed-sha",
+    "merge-1",
+    "--evidence",
+    "merged"
+   ]
+  },
+  {
+   "sql": "UPDATE merge_turns SET state = 'merging', checked_base_sha = 'base-0' WHERE turn_id = 'mtn-1e1566baa95cfaecac6f49e02d5188fe'"
+  },
+  {
+   "argv": [
+    "merge-turn-land",
+    "--turn",
+    "mtn-1e1566baa95cfaecac6f49e02d5188fe",
+    "--actor",
+    "task-alpha",
+    "--landed-sha",
+    "merge-1",
+    "--evidence",
+    "merged"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-land",
+    "--turn",
+    "mtn-1e1566baa95cfaecac6f49e02d5188fe",
+    "--actor",
+    "task-alpha",
+    "--landed-sha",
+    "merge-1",
+    "--evidence",
+    " "
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-release",
+    "--turn",
+    "mtn-1e1566baa95cfaecac6f49e02d5188fe",
+    "--actor",
+    "task-alpha",
+    "--disposition",
+    "cancelled",
+    "--reason",
+    "stuck",
+    "--evidence",
+    "gone"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-unknown",
+    "--turn",
+    "mtn-1e1566baa95cfaecac6f49e02d5188fe",
+    "--actor",
+    "task-stranger",
+    "--reason",
+    "I say so"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-unknown",
+    "--turn",
+    "mtn-1e1566baa95cfaecac6f49e02d5188fe",
+    "--actor",
+    "task-alpha",
+    "--reason",
+    "lost the connection"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-resolve",
+    "--turn",
+    "mtn-1e1566baa95cfaecac6f49e02d5188fe",
+    "--actor",
+    "task-supervisor",
+    "--observed-base-sha",
+    "base-0",
+    "--pr-state",
+    "mergd",
+    "--evidence",
+    "x"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-resolve",
+    "--turn",
+    "mtn-1e1566baa95cfaecac6f49e02d5188fe",
+    "--actor",
+    "task-supervisor",
+    "--observed-base-sha",
+    "base-0",
+    "--pr-state",
+    "merged",
+    "--evidence",
+    "merged"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-resolve",
+    "--turn",
+    "mtn-1e1566baa95cfaecac6f49e02d5188fe",
+    "--actor",
+    "task-supervisor",
+    "--observed-base-sha",
+    "base-0",
+    "--pr-state",
+    "open",
+    "--evidence",
+    "still open"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-restate-base",
+    "--turn",
+    "mtn-1e1566baa95cfaecac6f49e02d5188fe",
+    "--actor",
+    "task-alpha",
+    "--evidence",
+    "read again"
+   ]
+  },
+  {
+   "sql": "UPDATE merge_turns SET state = 'landed', observed_base_sha = 'base-0' WHERE turn_id = 'mtn-1e1566baa95cfaecac6f49e02d5188fe'"
+  },
+  {
+   "argv": [
+    "merge-turn-restate-base",
+    "--turn",
+    "mtn-1e1566baa95cfaecac6f49e02d5188fe",
+    "--actor",
+    "task-alpha",
+    "--evidence",
+    "read again"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-restate-base",
+    "--turn",
+    "mtn-1e1566baa95cfaecac6f49e02d5188fe",
+    "--actor",
+    "task-stranger",
+    "--evidence",
+    "read again"
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-restate-base",
+    "--turn",
+    "mtn-1e1566baa95cfaecac6f49e02d5188fe",
+    "--actor",
+    "task-alpha",
+    "--evidence",
+    " "
+   ]
+  },
+  {
+   "argv": [
+    "merge-turn-show",
+    "--turn",
+    "mtn-1e1566baa95cfaecac6f49e02d5188fe"
+   ]
+  }
+ ],
+ "show_message_unsent_grant": [
+  {
+   "argv": [
+    "linkage-bind",
+    "--role",
+    "parent",
+    "--scope",
+    "PRJ-A",
+    "--task",
+    "task-alpha",
+    "--host",
+    "host-a"
+   ]
+  },
+  {
+   "sql": "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at, observation_count) VALUES ('67310000000000000000000000000000', 'rel-none', 1, 'no-deliverable', 'merge_turn_grant', 'relay', NULL, 'task-alpha', 'mtg-67310000000000000000000000000000', 'completed', '{\"baseRef\":\"dev\",\"candidateHead\":\"head-a\",\"grantId\":\"mtg-67310000000000000000000000000000\",\"grantedFrom\":\"promotion\",\"kind\":\"merge_turn_grant\",\"recipientTaskId\":\"task-alpha\",\"repository\":\"owner/repo\",\"sequence\":1,\"targetKey\":\"tgt-x\",\"tenure\":1,\"turnId\":\"mtn-67310000000000000000000000000000\",\"wake\":{\"eventId\":\"67310000000000000000000000000000\"}}', 'final', '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00', 1); INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, created_at, updated_at) VALUES ('67310000000000000000000000000000', 'rel-none', 'merge_turn_grant', 'task-alpha', 'thread-a', 'queued', 0, '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00');"
+  },
+  {
+   "argv": [
+    "show",
+    "--event",
+    "67310000000000000000000000000000",
+    "--message"
+   ]
+  },
+  {
+   "sql": "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at, observation_count) VALUES ('67320000000000000000000000000000', 'rel-named', 1, 'no-deliverable', 'merge_turn_grant', 'relay', NULL, 'task-alpha', 'mtg-67320000000000000000000000000000', 'completed', '{\"baseRef\":\"dev\",\"candidateHead\":\"head-a\",\"grantId\":\"mtg-67320000000000000000000000000000\",\"grantedFrom\":\"promotion\",\"kind\":\"merge_turn_grant\",\"recipientTaskId\":\"task-alpha\",\"repository\":\"owner/repo\",\"sequence\":1,\"targetKey\":\"tgt-x\",\"tenure\":1,\"turnId\":\"mtn-67320000000000000000000000000000\",\"wake\":{\"eventId\":\"67320000000000000000000000000000\"}}', 'final', '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00', 1); INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, created_at, updated_at) VALUES ('67320000000000000000000000000000', 'rel-named', 'merge_turn_grant', 'task-alpha', 'thread-a', 'queued', 0, '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00');INSERT INTO work_reports (event_id, submission_no, relationship_id, execution_generation, revision_hash, repository, base_ref, head_sha, cxc_status, cxc_reason, contract_version, summary, next_action, recorded_at) VALUES ('77320000000000000000000000000000', 1, 'rel-named', 1, 'rev', 'owner/repo', 'dev', 'head-a', 'done', 'r', '1', 's', 'n', '2023-11-14T22:13:20.000000+00:00'); INSERT INTO work_report_handoffs (event_id, submission_no, is_draft, required_declared, checks, review_coverage, thread_dispositions, recorded_at) VALUES ('77320000000000000000000000000000', 1, 0, '[\"dev-gate\", \"build linux\", \"it''s\"]', '[]', '{}', '[]', '2023-11-14T22:13:20.000000+00:00');"
+  },
+  {
+   "argv": [
+    "show",
+    "--event",
+    "67320000000000000000000000000000",
+    "--message"
+   ]
+  },
+  {
+   "sql": "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at, observation_count) VALUES ('67330000000000000000000000000000', 'rel-empty', 1, 'no-deliverable', 'merge_turn_grant', 'relay', NULL, 'task-alpha', 'mtg-67330000000000000000000000000000', 'completed', '{\"baseRef\":\"dev\",\"candidateHead\":\"head-a\",\"grantId\":\"mtg-67330000000000000000000000000000\",\"grantedFrom\":\"promotion\",\"kind\":\"merge_turn_grant\",\"recipientTaskId\":\"task-alpha\",\"repository\":\"owner/repo\",\"sequence\":1,\"targetKey\":\"tgt-x\",\"tenure\":1,\"turnId\":\"mtn-67330000000000000000000000000000\",\"wake\":{\"eventId\":\"67330000000000000000000000000000\"}}', 'final', '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00', 1); INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, created_at, updated_at) VALUES ('67330000000000000000000000000000', 'rel-empty', 'merge_turn_grant', 'task-alpha', 'thread-a', 'queued', 0, '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00');INSERT INTO work_reports (event_id, submission_no, relationship_id, execution_generation, revision_hash, repository, base_ref, head_sha, cxc_status, cxc_reason, contract_version, summary, next_action, recorded_at) VALUES ('77330000000000000000000000000000', 1, 'rel-empty', 1, 'rev', 'owner/repo', 'dev', 'head-a', 'done', 'r', '1', 's', 'n', '2023-11-14T22:13:20.000000+00:00'); INSERT INTO work_report_handoffs (event_id, submission_no, is_draft, required_declared, checks, review_coverage, thread_dispositions, recorded_at) VALUES ('77330000000000000000000000000000', 1, 0, '[]', '[]', '{}', '[]', '2023-11-14T22:13:20.000000+00:00');"
+  },
+  {
+   "argv": [
+    "show",
+    "--event",
+    "67330000000000000000000000000000",
+    "--message"
+   ]
+  },
+  {
+   "sql": "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at, observation_count) VALUES ('67340000000000000000000000000000', 'rel-other', 1, 'no-deliverable', 'merge_turn_grant', 'relay', NULL, 'task-alpha', 'mtg-67340000000000000000000000000000', 'completed', '{\"baseRef\":\"dev\",\"candidateHead\":\"head-a\",\"grantId\":\"mtg-67340000000000000000000000000000\",\"grantedFrom\":\"promotion\",\"kind\":\"merge_turn_grant\",\"recipientTaskId\":\"task-alpha\",\"repository\":\"owner/repo\",\"sequence\":1,\"targetKey\":\"tgt-x\",\"tenure\":1,\"turnId\":\"mtn-67340000000000000000000000000000\",\"wake\":{\"eventId\":\"67340000000000000000000000000000\"}}', 'final', '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00', 1); INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, created_at, updated_at) VALUES ('67340000000000000000000000000000', 'rel-other', 'merge_turn_grant', 'task-alpha', 'thread-a', 'queued', 0, '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00');INSERT INTO work_reports (event_id, submission_no, relationship_id, execution_generation, revision_hash, repository, base_ref, head_sha, cxc_status, cxc_reason, contract_version, summary, next_action, recorded_at) VALUES ('77340000000000000000000000000000', 1, 'rel-other', 1, 'rev', 'owner/repo', 'dev', 'head-z', 'done', 'r', '1', 's', 'n', '2023-11-14T22:13:20.000000+00:00'); INSERT INTO work_report_handoffs (event_id, submission_no, is_draft, required_declared, checks, review_coverage, thread_dispositions, recorded_at) VALUES ('77340000000000000000000000000000', 1, 0, '[]', '[]', '{}', '[]', '2023-11-14T22:13:20.000000+00:00');"
+  },
+  {
+   "argv": [
+    "show",
+    "--event",
+    "67340000000000000000000000000000",
+    "--message"
+   ]
+  },
+  {
+   "sql": "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at, observation_count) VALUES ('67350000000000000000000000000000', 'rel-nobase', 1, 'no-deliverable', 'merge_turn_grant', 'relay', NULL, 'task-alpha', 'mtg-67350000000000000000000000000000', 'completed', '{\"baseRef\":\"dev\",\"candidateHead\":\"head-a\",\"grantId\":\"mtg-67350000000000000000000000000000\",\"grantedFrom\":\"promotion\",\"kind\":\"merge_turn_grant\",\"recipientTaskId\":\"task-alpha\",\"repository\":\"owner/repo\",\"sequence\":1,\"targetKey\":\"tgt-x\",\"tenure\":1,\"turnId\":\"mtn-67350000000000000000000000000000\",\"wake\":{\"eventId\":\"67350000000000000000000000000000\"}}', 'final', '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00', 1); INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, created_at, updated_at) VALUES ('67350000000000000000000000000000', 'rel-nobase', 'merge_turn_grant', 'task-alpha', 'thread-a', 'queued', 0, '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00');INSERT INTO work_reports (event_id, submission_no, relationship_id, execution_generation, revision_hash, repository, base_ref, head_sha, cxc_status, cxc_reason, contract_version, summary, next_action, recorded_at) VALUES ('77350000000000000000000000000000', 1, 'rel-nobase', 1, 'rev', 'owner/repo', NULL, 'head-a', 'done', 'r', '1', 's', 'n', '2023-11-14T22:13:20.000000+00:00'); INSERT INTO work_report_handoffs (event_id, submission_no, is_draft, required_declared, checks, review_coverage, thread_dispositions, recorded_at) VALUES ('77350000000000000000000000000000', 1, 0, '[]', '[]', '{}', '[]', '2023-11-14T22:13:20.000000+00:00');"
+  },
+  {
+   "argv": [
+    "show",
+    "--event",
+    "67350000000000000000000000000000",
+    "--message"
+   ]
+  },
+  {
+   "sql": "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at, observation_count) VALUES ('67360000000000000000000000000000', 'rel-nohandoff', 1, 'no-deliverable', 'merge_turn_grant', 'relay', NULL, 'task-alpha', 'mtg-67360000000000000000000000000000', 'completed', '{\"baseRef\":\"dev\",\"candidateHead\":\"head-a\",\"grantId\":\"mtg-67360000000000000000000000000000\",\"grantedFrom\":\"promotion\",\"kind\":\"merge_turn_grant\",\"recipientTaskId\":\"task-alpha\",\"repository\":\"owner/repo\",\"sequence\":1,\"targetKey\":\"tgt-x\",\"tenure\":1,\"turnId\":\"mtn-67360000000000000000000000000000\",\"wake\":{\"eventId\":\"67360000000000000000000000000000\"}}', 'final', '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00', 1); INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, created_at, updated_at) VALUES ('67360000000000000000000000000000', 'rel-nohandoff', 'merge_turn_grant', 'task-alpha', 'thread-a', 'queued', 0, '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00');INSERT INTO work_reports (event_id, submission_no, relationship_id, execution_generation, revision_hash, repository, base_ref, head_sha, cxc_status, cxc_reason, contract_version, summary, next_action, recorded_at) VALUES ('77360000000000000000000000000000', 1, 'rel-nohandoff', 1, 'rev', 'owner/repo', 'dev', 'head-a', 'done', 'r', '1', 's', 'n', '2023-11-14T22:13:20.000000+00:00');"
+  },
+  {
+   "argv": [
+    "show",
+    "--event",
+    "67360000000000000000000000000000",
+    "--message"
+   ]
+  },
+  {
+   "sql": "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at, observation_count) VALUES ('67370000000000000000000000000000', 'rel-split', 1, 'no-deliverable', 'merge_turn_grant', 'relay', NULL, 'task-alpha', 'mtg-67370000000000000000000000000000', 'completed', '{\"baseRef\":\"dev\",\"candidateHead\":\"head-a\",\"grantId\":\"mtg-67370000000000000000000000000000\",\"grantedFrom\":\"promotion\",\"kind\":\"merge_turn_grant\",\"recipientTaskId\":\"task-alpha\",\"repository\":\"owner/repo\",\"sequence\":1,\"targetKey\":\"tgt-x\",\"tenure\":1,\"turnId\":\"mtn-67370000000000000000000000000000\",\"wake\":{\"eventId\":\"67370000000000000000000000000000\"}}', 'final', '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00', 1); INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, created_at, updated_at) VALUES ('67370000000000000000000000000000', 'rel-split', 'merge_turn_grant', 'task-alpha', 'thread-a', 'queued', 0, '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00');INSERT INTO work_reports (event_id, submission_no, relationship_id, execution_generation, revision_hash, repository, base_ref, head_sha, cxc_status, cxc_reason, contract_version, summary, next_action, recorded_at) VALUES ('77376100000000000000000000000000', 1, 'rel-split', 1, 'rev', 'owner/repo', 'dev', 'head-a', 'done', 'r', '1', 's', 'n', '2023-11-14T22:13:20.000000+00:00'); INSERT INTO work_report_handoffs (event_id, submission_no, is_draft, required_declared, checks, review_coverage, thread_dispositions, recorded_at) VALUES ('77376100000000000000000000000000', 1, 0, '[\"a\"]', '[]', '{}', '[]', '2023-11-14T22:13:20.000000+00:00');INSERT INTO work_reports (event_id, submission_no, relationship_id, execution_generation, revision_hash, repository, base_ref, head_sha, cxc_status, cxc_reason, contract_version, summary, next_action, recorded_at) VALUES ('77376200000000000000000000000000', 1, 'rel-split', 1, 'rev', 'owner/repo', 'dev', 'head-a', 'done', 'r', '1', 's', 'n', '2023-11-14T22:13:20.000000+00:00'); INSERT INTO work_report_handoffs (event_id, submission_no, is_draft, required_declared, checks, review_coverage, thread_dispositions, recorded_at) VALUES ('77376200000000000000000000000000', 1, 0, '[\"b\"]', '[]', '{}', '[]', '2023-11-14T22:13:20.000000+00:00');"
+  },
+  {
+   "argv": [
+    "show",
+    "--event",
+    "67370000000000000000000000000000",
+    "--message"
+   ]
+  },
+  {
+   "sql": "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at, observation_count) VALUES ('67380000000000000000000000000000', 'rel-bad', 1, 'no-deliverable', 'merge_turn_grant', 'relay', NULL, 'task-alpha', 'mtg-67380000000000000000000000000000', 'completed', '{\"baseRef\":\"dev\",\"candidateHead\":\"head-a\",\"grantId\":\"mtg-67380000000000000000000000000000\",\"grantedFrom\":\"promotion\",\"kind\":\"merge_turn_grant\",\"recipientTaskId\":\"task-alpha\",\"repository\":\"owner/repo\",\"sequence\":1,\"targetKey\":\"tgt-x\",\"tenure\":1,\"turnId\":\"mtn-67380000000000000000000000000000\",\"wake\":{\"eventId\":\"67380000000000000000000000000000\"}}', 'final', '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00', 1); INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, created_at, updated_at) VALUES ('67380000000000000000000000000000', 'rel-bad', 'merge_turn_grant', 'task-alpha', 'thread-a', 'queued', 0, '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00');INSERT INTO work_reports (event_id, submission_no, relationship_id, execution_generation, revision_hash, repository, base_ref, head_sha, cxc_status, cxc_reason, contract_version, summary, next_action, recorded_at) VALUES ('77380000000000000000000000000000', 1, 'rel-bad', 1, 'rev', 'owner/repo', 'dev', 'head-a', 'done', 'r', '1', 's', 'n', '2023-11-14T22:13:20.000000+00:00'); INSERT INTO work_report_handoffs (event_id, submission_no, is_draft, required_declared, checks, review_coverage, thread_dispositions, recorded_at) VALUES ('77380000000000000000000000000000', 1, 0, '[1]', '[]', '{}', '[]', '2023-11-14T22:13:20.000000+00:00');"
+  },
+  {
+   "argv": [
+    "show",
+    "--event",
+    "67380000000000000000000000000000",
+    "--message"
+   ]
+  },
+  {
+   "sql": "INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at, observation_count) VALUES ('67390000000000000000000000000000', 'rel-repo', 1, 'no-deliverable', 'merge_turn_grant', 'relay', NULL, 'task-alpha', 'mtg-67390000000000000000000000000000', 'completed', '{\"baseRef\":\"dev\",\"candidateHead\":\"head-a\",\"grantId\":\"mtg-67390000000000000000000000000000\",\"grantedFrom\":\"promotion\",\"kind\":\"merge_turn_grant\",\"recipientTaskId\":\"task-alpha\",\"repository\":\"own/other\",\"sequence\":1,\"targetKey\":\"tgt-x\",\"tenure\":1,\"turnId\":\"mtn-67390000000000000000000000000000\",\"wake\":{\"eventId\":\"67390000000000000000000000000000\"}}', 'final', '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00', 1); INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, created_at, updated_at) VALUES ('67390000000000000000000000000000', 'rel-repo', 'merge_turn_grant', 'task-alpha', 'thread-a', 'queued', 0, '2023-11-14T22:13:20.000000+00:00', '2023-11-14T22:13:20.000000+00:00');INSERT INTO work_reports (event_id, submission_no, relationship_id, execution_generation, revision_hash, repository, base_ref, head_sha, cxc_status, cxc_reason, contract_version, summary, next_action, recorded_at) VALUES ('77390000000000000000000000000000', 1, 'rel-repo', 1, 'rev', 'owner/repo', 'dev', 'head-a', 'done', 'r', '1', 's', 'n', '2023-11-14T22:13:20.000000+00:00'); INSERT INTO work_report_handoffs (event_id, submission_no, is_draft, required_declared, checks, review_coverage, thread_dispositions, recorded_at) VALUES ('77390000000000000000000000000000', 1, 0, '[]', '[]', '{}', '[]', '2023-11-14T22:13:20.000000+00:00');"
+  },
+  {
+   "argv": [
+    "show",
+    "--event",
+    "67390000000000000000000000000000",
+    "--message"
+   ]
+  }
+ ]
+}

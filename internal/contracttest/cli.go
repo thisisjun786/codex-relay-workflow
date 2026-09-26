@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	relaycli "github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	// Registers the merge-turn-* commands, as cmd/crw does, so Registered agrees with the binary.
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"os"
 	"os/exec"

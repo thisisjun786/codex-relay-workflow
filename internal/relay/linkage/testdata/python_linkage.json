@@ -1,0 +1,5244 @@
+{
+ "lnk10_directive_authority": [
+  {
+   "ok": {
+    "decidedAt": null,
+    "decidedBy": null,
+    "digest": "d-one",
+    "directiveId": "dir-41ebcf5acb2ad8d09063077a355b4267",
+    "disposition": null,
+    "fromScopeKey": "INIT-1",
+    "fromTaskId": "01supervisor-task",
+    "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+    "linkKind": "execution",
+    "recordedAt": "2023-11-14T22:13:20.000000+00:00",
+    "reference": null,
+    "revision": 1,
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project"
+   }
+  },
+  {
+   "refused": {
+    "detail": "link 'lnk-119b7cc12608dd24fcccbd6f0ae518fe' does not join 'INIT-2' down to project 'PROJ-1' by execution. A reference carries no authority to instruct: a secondary initiative references a project's outcome instead of issuing it work",
+    "reason": "unregistered_scope"
+   }
+  },
+  {
+   "refused": {
+    "detail": "task '01supervisor-two' does not own scope 'INIT-1', so it cannot instruct from it",
+    "reason": "scope_role_mismatch"
+   }
+  },
+  {
+   "refused": {
+    "detail": "link 'lnk-9f30afb3e666bd9537df2c9392512b5d' does not join 'INIT-1' down to project 'PROJ-1' by execution. A reference carries no authority to instruct: a secondary initiative references a project's outcome instead of issuing it work",
+    "reason": "unregistered_scope"
+   }
+  },
+  {
+   "refused": {
+    "detail": "task '01nobody' does not own scope 'INIT-1', so it cannot instruct from it",
+    "reason": "scope_role_mismatch"
+   }
+  },
+  {
+   "refused": {
+    "detail": "link 'lnk-17fe34823302c1302c735eb1ffd28014' does not join 'INIT-1' down to issue 'PROJ-1' by execution. A reference carries no authority to instruct: a secondary initiative references a project's outcome instead of issuing it work",
+    "reason": "unregistered_scope"
+   }
+  },
+  {
+   "ok": [
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "INIT-2",
+     "detail": "link 'lnk-119b7cc12608dd24fcccbd6f0ae518fe' does not join 'INIT-2' down to project 'PROJ-1' by execution. A reference carries no authority to instruct: a secondary initiative references a project's outcome instead of issuing it work",
+     "id": 1,
+     "incumbent": "lnk-119b7cc12608dd24fcccbd6f0ae518fe",
+     "reason": "unregistered_scope",
+     "scope_key": "PROJ-1",
+     "scope_kind": "project"
+    },
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "01supervisor-two",
+     "detail": "task '01supervisor-two' does not own scope 'INIT-1', so it cannot instruct from it",
+     "id": 2,
+     "incumbent": "INIT-1",
+     "reason": "scope_role_mismatch",
+     "scope_key": "PROJ-1",
+     "scope_kind": "project"
+    },
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "INIT-1",
+     "detail": "link 'lnk-9f30afb3e666bd9537df2c9392512b5d' does not join 'INIT-1' down to project 'PROJ-1' by execution. A reference carries no authority to instruct: a secondary initiative references a project's outcome instead of issuing it work",
+     "id": 3,
+     "incumbent": "lnk-9f30afb3e666bd9537df2c9392512b5d",
+     "reason": "unregistered_scope",
+     "scope_key": "PROJ-1",
+     "scope_kind": "project"
+    },
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "01nobody",
+     "detail": "task '01nobody' does not own scope 'INIT-1', so it cannot instruct from it",
+     "id": 4,
+     "incumbent": "INIT-1",
+     "reason": "scope_role_mismatch",
+     "scope_key": "PROJ-1",
+     "scope_kind": "project"
+    },
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "INIT-1",
+     "detail": "link 'lnk-17fe34823302c1302c735eb1ffd28014' does not join 'INIT-1' down to issue 'PROJ-1' by execution. A reference carries no authority to instruct: a secondary initiative references a project's outcome instead of issuing it work",
+     "id": 5,
+     "incumbent": "lnk-17fe34823302c1302c735eb1ffd28014",
+     "reason": "unregistered_scope",
+     "scope_key": "PROJ-1",
+     "scope_kind": "issue"
+    }
+   ]
+  }
+ ],
+ "lnk10_upper_endpoint": [
+  {
+   "refused": {
+    "detail": "link 'lnk-adb8352ccb9c1925e10b08aa15caa680' does not join 'INIT-1' down to project 'PROJ-1' by execution. A reference carries no authority to instruct: a secondary initiative references a project's outcome instead of issuing it work",
+    "reason": "unregistered_scope"
+   }
+  }
+ ],
+ "lnk11_contested_directives": [
+  {
+   "ok": {
+    "decidedAt": null,
+    "decidedBy": null,
+    "digest": "d-one",
+    "directiveId": "dir-41ebcf5acb2ad8d09063077a355b4267",
+    "disposition": null,
+    "fromScopeKey": "INIT-1",
+    "fromTaskId": "01supervisor-task",
+    "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+    "linkKind": "execution",
+    "recordedAt": "2023-11-14T22:13:20.000000+00:00",
+    "reference": null,
+    "revision": 1,
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project"
+   }
+  },
+  {
+   "ok": {
+    "decidedAt": null,
+    "decidedBy": null,
+    "digest": "d-two",
+    "directiveId": "dir-725d6f843fe7ca1f71d6fc41e37fc832",
+    "disposition": null,
+    "fromScopeKey": "INIT-1",
+    "fromTaskId": "01supervisor-task",
+    "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+    "linkKind": "execution",
+    "recordedAt": "2023-11-14T22:13:20.000000+00:00",
+    "reference": null,
+    "revision": 1,
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project"
+   }
+  },
+  {
+   "ok": [
+    {
+     "decidedAt": null,
+     "decidedBy": null,
+     "digest": "d-one",
+     "directiveId": "dir-41ebcf5acb2ad8d09063077a355b4267",
+     "disposition": null,
+     "fromScopeKey": "INIT-1",
+     "fromTaskId": "01supervisor-task",
+     "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+     "linkKind": "execution",
+     "recordedAt": "2023-11-14T22:13:20.000000+00:00",
+     "reference": null,
+     "revision": 1,
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project"
+    },
+    {
+     "decidedAt": null,
+     "decidedBy": null,
+     "digest": "d-two",
+     "directiveId": "dir-725d6f843fe7ca1f71d6fc41e37fc832",
+     "disposition": null,
+     "fromScopeKey": "INIT-1",
+     "fromTaskId": "01supervisor-task",
+     "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+     "linkKind": "execution",
+     "recordedAt": "2023-11-14T22:13:20.000000+00:00",
+     "reference": null,
+     "revision": 1,
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project"
+    }
+   ]
+  },
+  {
+   "ok": {
+    "decidedAt": "2023-11-14T22:13:20.000000+00:00",
+    "decidedBy": "alice",
+    "digest": "d-one",
+    "directiveId": "dir-41ebcf5acb2ad8d09063077a355b4267",
+    "disposition": "chosen",
+    "fromScopeKey": "INIT-1",
+    "fromTaskId": "01supervisor-task",
+    "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+    "linkKind": "execution",
+    "recordedAt": "2023-11-14T22:13:20.000000+00:00",
+    "reference": null,
+    "revision": 1,
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project"
+   }
+  },
+  {
+   "ok": {
+    "decidedAt": "2023-11-14T22:13:20.000000+00:00",
+    "decidedBy": "alice",
+    "digest": "d-two",
+    "directiveId": "dir-725d6f843fe7ca1f71d6fc41e37fc832",
+    "disposition": "superseded",
+    "fromScopeKey": "INIT-1",
+    "fromTaskId": "01supervisor-task",
+    "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+    "linkKind": "execution",
+    "recordedAt": "2023-11-14T22:13:20.000000+00:00",
+    "reference": null,
+    "revision": 1,
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project"
+   }
+  },
+  {
+   "ok": []
+  },
+  {
+   "refused": {
+    "detail": "directive 'dir-41ebcf5acb2ad8d09063077a355b4267' was already settled as 'chosen' by 'alice' at 2023-11-14T22:13:20.000000+00:00; the decision stands and a later instruction is recorded as its own directive",
+    "reason": "link_conflict"
+   }
+  },
+  {
+   "ok": {
+    "decidedAt": "2023-11-14T22:13:20.000000+00:00",
+    "decidedBy": "alice",
+    "digest": "d-one",
+    "directiveId": "dir-41ebcf5acb2ad8d09063077a355b4267",
+    "disposition": "chosen",
+    "fromScopeKey": "INIT-1",
+    "fromTaskId": "01supervisor-task",
+    "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+    "linkKind": "execution",
+    "recordedAt": "2023-11-14T22:13:20.000000+00:00",
+    "reference": null,
+    "revision": 1,
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project"
+   }
+  },
+  {
+   "ok": [
+    {
+     "decidedAt": "2023-11-14T22:13:20.000000+00:00",
+     "decidedBy": "alice",
+     "digest": "d-one",
+     "directiveId": "dir-41ebcf5acb2ad8d09063077a355b4267",
+     "disposition": "chosen",
+     "fromScopeKey": "INIT-1",
+     "fromTaskId": "01supervisor-task",
+     "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+     "linkKind": "execution",
+     "recordedAt": "2023-11-14T22:13:20.000000+00:00",
+     "reference": null,
+     "revision": 1,
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project"
+    },
+    {
+     "decidedAt": "2023-11-14T22:13:20.000000+00:00",
+     "decidedBy": "alice",
+     "digest": "d-two",
+     "directiveId": "dir-725d6f843fe7ca1f71d6fc41e37fc832",
+     "disposition": "superseded",
+     "fromScopeKey": "INIT-1",
+     "fromTaskId": "01supervisor-task",
+     "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+     "linkKind": "execution",
+     "recordedAt": "2023-11-14T22:13:20.000000+00:00",
+     "reference": null,
+     "revision": 1,
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project"
+    }
+   ]
+  },
+  {
+   "ok": [
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "bob",
+     "detail": "directive 'dir-41ebcf5acb2ad8d09063077a355b4267' was already settled as 'chosen' by 'alice' at 2023-11-14T22:13:20.000000+00:00; the decision stands and a later instruction is recorded as its own directive",
+     "incumbent": "alice",
+     "reason": "link_conflict",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project"
+    }
+   ]
+  }
+ ],
+ "lnk11_same_instruction_after_handover": [
+  {
+   "ok": {
+    "decidedAt": null,
+    "decidedBy": null,
+    "digest": "d-same",
+    "directiveId": "dir-c7c0745862a3f3a5c29767238b314180",
+    "disposition": null,
+    "fromScopeKey": "INIT-1",
+    "fromTaskId": "01supervisor-task",
+    "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+    "linkKind": "execution",
+    "recordedAt": "2023-11-14T22:13:20.000000+00:00",
+    "reference": null,
+    "revision": 1,
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-supervisor"
+    },
+    "bindingId": "bnd-c80c5e721fd7355002f08198cf71dea2",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/supervisor",
+    "handoverNote": "a new supervisor",
+    "hostId": "host-a",
+    "revision": 2,
+    "role": "supervisor",
+    "scopeKey": "INIT-1",
+    "scopeKind": "initiative",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+    "taskId": "01supervisor-two",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "decidedAt": null,
+    "decidedBy": null,
+    "digest": "d-same",
+    "directiveId": "dir-1e4dc053056f3269360cbd496c636bf9",
+    "disposition": null,
+    "fromScopeKey": "INIT-1",
+    "fromTaskId": "01supervisor-two",
+    "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+    "linkKind": "execution",
+    "recordedAt": "2023-11-14T22:13:20.000000+00:00",
+    "reference": null,
+    "revision": 2,
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project"
+   }
+  }
+ ],
+ "lnk12_handover_unconfirmed": [
+  {
+   "refused": {
+    "detail": "the outstanding work restated by this handover is [] but the store says it is ['rel-46d5b5ac690ef861']; a replacement owner confirms the unfinished work it takes on",
+    "reason": "handover_unconfirmed"
+   }
+  },
+  {
+   "refused": {
+    "detail": "this handover expects '01somebody-else' to hold 'PROJ-1', but it is held by '01parent-task'; re-read the scope before replacing its owner",
+    "reason": "handover_unconfirmed"
+   }
+  },
+  {
+   "refused": {
+    "detail": "a handover carries its evidence",
+    "reason": "handover_unconfirmed"
+   }
+  },
+  {
+   "refused": {
+    "detail": "task '01parent-task' already holds 'PROJ-1'; a handover replaces the owner with a different one",
+    "reason": "handover_unconfirmed"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01parent-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": [
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "01parent-two",
+     "detail": "this handover expects '01somebody-else' to hold 'PROJ-1', but it is held by '01parent-task'; re-read the scope before replacing its owner",
+     "incumbent": "01parent-task",
+     "reason": "handover_unconfirmed",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project"
+    },
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "01parent-task",
+     "detail": "task '01parent-task' already holds 'PROJ-1'; a handover replaces the owner with a different one",
+     "incumbent": "01parent-task",
+     "reason": "handover_unconfirmed",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project"
+    }
+   ]
+  },
+  {
+   "refused": {
+    "detail": "the replacement owner's task id must be a non-empty string, not ''",
+    "reason": "unregistered_scope"
+   }
+  },
+  {
+   "refused": {
+    "detail": "the replacement owner's host id must be a non-empty string, not ''",
+    "reason": "unregistered_scope"
+   }
+  },
+  {
+   "refused": {
+    "detail": "project 'PROJ-NOBODY' has no live owner to replace",
+    "reason": "unregistered_scope"
+   }
+  }
+ ],
+ "lnk12_second_stale_handover": [
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-75aa9e634becf2eedee43515f8ec0963",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": "the first handover",
+    "hostId": "host-a",
+    "revision": 2,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "taskId": "01parent-two",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "refused": {
+    "detail": "this handover expects '01parent-task' to hold 'PROJ-1', but it is held by '01parent-two'; re-read the scope before replacing its owner",
+    "reason": "handover_unconfirmed"
+   }
+  },
+  {
+   "ok": [
+    {
+     "task_id": "01parent-two"
+    }
+   ]
+  }
+ ],
+ "lnk12_self_handover_settled": [
+  {
+   "refused": {
+    "detail": "task '01parent-task' already holds 'PROJ-1'; a handover replaces the owner with a different one",
+    "reason": "handover_unconfirmed"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01parent-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": [
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "01parent-task",
+     "detail": "task '01parent-task' already holds 'PROJ-1'; a handover replaces the owner with a different one",
+     "incumbent": "01parent-task",
+     "reason": "handover_unconfirmed",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project"
+    }
+   ]
+  }
+ ],
+ "lnk13_third_parent": [
+  {
+   "ok": "rel-fbea7c96aeb9610c"
+  },
+  {
+   "ok": []
+  },
+  {
+   "refused": {
+    "detail": "project 'PROJ-1' still has unfinished work that this handover cannot move: ['rel-fbea7c96aeb9610c'] (of which ['rel-fbea7c96aeb9610c'] is unfinished; a settled one still reopens under the parent named on its own row). An assignment's identity and its queued deliveries name its parent, so each one is moved by registering its successor with supersedes before the scope changes hands",
+    "reason": "handover_would_strand"
+   }
+  }
+ ],
+ "lnk13_would_strand": [
+  {
+   "ok": [
+    "rel-46d5b5ac690ef861"
+   ]
+  },
+  {
+   "ok": []
+  },
+  {
+   "ok": [
+    "rel-46d5b5ac690ef861"
+   ]
+  },
+  {
+   "refused": {
+    "detail": "project 'PROJ-1' still has unfinished work that this handover cannot move: ['rel-46d5b5ac690ef861'] (of which ['rel-46d5b5ac690ef861'] is unfinished; a settled one still reopens under the parent named on its own row). An assignment's identity and its queued deliveries name its parent, so each one is moved by registering its successor with supersedes before the scope changes hands",
+    "reason": "handover_would_strand"
+   }
+  },
+  {
+   "refused": {
+    "detail": "project 'PROJ-1' still has unfinished work that this handover cannot move: ['rel-46d5b5ac690ef861'] (of which ['rel-46d5b5ac690ef861'] is unfinished; a settled one still reopens under the parent named on its own row). An assignment's identity and its queued deliveries name its parent, so each one is moved by registering its successor with supersedes before the scope changes hands",
+    "reason": "handover_would_strand"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01parent-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  }
+ ],
+ "lnk14_child_not_handed_over": [
+  {
+   "refused": {
+    "detail": "a child is replaced by registering its successor with supersedes, which moves the assignment and its issue scope together; handover covers a supervisor or a parent",
+    "reason": "scope_role_mismatch"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-child"
+    },
+    "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/work",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  }
+ ],
+ "lnk14_escape_route": [
+  {
+   "refused": {
+    "detail": "project 'PROJ-1' still has unfinished work that this handover cannot move: ['rel-46d5b5ac690ef861'] (of which ['rel-46d5b5ac690ef861'] is unfinished; a settled one still reopens under the parent named on its own row). An assignment's identity and its queued deliveries name its parent, so each one is moved by registering its successor with supersedes before the scope changes hands",
+    "reason": "handover_would_strand"
+   }
+  },
+  {
+   "ok": "rel-64f004bec86a10be"
+  },
+  {
+   "ok": []
+  },
+  {
+   "ok": [
+    "rel-64f004bec86a10be"
+   ]
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-75aa9e634becf2eedee43515f8ec0963",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": "the work moved first",
+    "hostId": "host-a",
+    "revision": 2,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "taskId": "01parent-two",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": null
+    },
+    "bindingId": "bnd-829fd4469f60387fc7d6cce5149772b3",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": null,
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-two",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  }
+ ],
+ "lnk14_settled_handover": [
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-75aa9e634becf2eedee43515f8ec0963",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": "the project has no unfinished issues left",
+    "hostId": "host-a",
+    "revision": 2,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "taskId": "01parent-two",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "archived",
+    "supersededBy": "bnd-75aa9e634becf2eedee43515f8ec0963",
+    "supersedes": null,
+    "taskId": "01parent-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "kind": "execution",
+    "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+    "lower": {
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "taskId": "01parent-two"
+    },
+    "revision": 2,
+    "status": "active",
+    "supersededBy": null,
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+    "upper": {
+     "scopeKey": "INIT-1",
+     "scopeKind": "initiative",
+     "taskId": "01supervisor-task"
+    }
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-75aa9e634becf2eedee43515f8ec0963",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": "the project has no unfinished issues left",
+    "hostId": "host-a",
+    "revision": 2,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "taskId": "01parent-two",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  }
+ ],
+ "lnk15_replay_other_host": [
+  {
+   "refused": {
+    "detail": "lnk-17fe34823302c1302c735eb1ffd28014 already joins these scopes with different endpoints: '01supervisor-task' over '01parent-task'",
+    "reason": "link_conflict"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01parent-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": [
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "01parent-task",
+     "detail": "lnk-17fe34823302c1302c735eb1ffd28014 already joins these scopes with different endpoints: '01supervisor-task' over '01parent-task'",
+     "incumbent": "01parent-task",
+     "reason": "link_conflict",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project"
+    }
+   ]
+  }
+ ],
+ "lnk15_restore_keeps_status": [
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": null
+    },
+    "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": null,
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "archived",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": null
+    },
+    "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": null,
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "paused",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  }
+ ],
+ "lnk15_take_back_from_new_host": [
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-first"
+    },
+    "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/first",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01parent-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-75aa9e634becf2eedee43515f8ec0963",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": "handed away",
+    "hostId": "host-a",
+    "revision": 2,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "taskId": "01parent-two",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-second"
+    },
+    "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/new-host",
+    "handoverNote": "taken back, from a different machine",
+    "hostId": "host-two",
+    "revision": 3,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": "bnd-75aa9e634becf2eedee43515f8ec0963",
+    "taskId": "01parent-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-second"
+    },
+    "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/new-host",
+    "handoverNote": "taken back, from a different machine",
+    "hostId": "host-two",
+    "revision": 3,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": "bnd-75aa9e634becf2eedee43515f8ec0963",
+    "taskId": "01parent-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "refused": {
+    "detail": "bnd-8f4ae5af2c9a92f33320f88bcb74f422 is already bound on another host",
+    "reason": "link_conflict"
+   }
+  }
+ ],
+ "lnk16_blank_child_host": [
+  {
+   "refused": {
+    "detail": "the child host id must be a non-empty string, not ''",
+    "reason": "unregistered_scope"
+   }
+  },
+  {
+   "ok": null
+  }
+ ],
+ "lnk16_blank_endpoints": [
+  {
+   "refused": {
+    "detail": "the supervisor's task id must be a non-empty string, not ''",
+    "reason": "unregistered_scope"
+   }
+  },
+  {
+   "refused": {
+    "detail": "the supervisor's host id must be a non-empty string, not ''",
+    "reason": "unregistered_scope"
+   }
+  },
+  {
+   "refused": {
+    "detail": "the parent's task id must be a non-empty string, not ''",
+    "reason": "unregistered_scope"
+   }
+  },
+  {
+   "refused": {
+    "detail": "the parent's host id must be a non-empty string, not ''",
+    "reason": "unregistered_scope"
+   }
+  },
+  {
+   "ok": []
+  },
+  {
+   "refused": {
+    "detail": "the left parent's task id must be a non-empty string, not ''",
+    "reason": "unregistered_scope"
+   }
+  }
+ ],
+ "lnk17_archived_then_resume": [
+  {
+   "ok": null
+  },
+  {
+   "refused": {
+    "detail": "'rel-46d5b5ac690ef861' is 'archived', so 'paused' would bring it back to life. Restoring an assignment restates the generation and the scope it re-authorizes, which is relationship-resume; choosing a different live word does not make those checks optional",
+    "reason": "relationship_not_active"
+   }
+  },
+  {
+   "ok": "archived"
+  },
+  {
+   "refused": {
+    "detail": "resume refused: generation is 1, not 7",
+    "reason": "relationship_not_active"
+   }
+  },
+  {
+   "ok": null
+  },
+  {
+   "ok": "archived"
+  },
+  {
+   "ok": null
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-child"
+    },
+    "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/work",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "child": {
+     "_bindings": {
+      "cxcSession": "cxc-child"
+     },
+     "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/work",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "child",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01child-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "contention": [],
+    "issueKey": "REL-1",
+    "link": {
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "kind": "execution",
+     "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+     "lower": {
+      "scopeKey": "REL-1",
+      "scopeKind": "issue",
+      "taskId": "01child-task"
+     },
+     "revision": 1,
+     "status": "active",
+     "supersededBy": null,
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+     "upper": {
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project",
+      "taskId": "01parent-task"
+     }
+    },
+    "parent": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "projectKey": "PROJ-1",
+    "relationshipId": "rel-46d5b5ac690ef861"
+   }
+  }
+ ],
+ "lnk17_pause_and_cancel": [
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-child"
+    },
+    "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/work",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "paused",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "contention": [],
+    "gaps": [],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-1",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     },
+     {
+      "depth": 1,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-child"
+       },
+       "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/work",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "child",
+       "scopeKey": "REL-1",
+       "scopeKind": "issue",
+       "status": "paused",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01child-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "REL-1",
+      "scopeKind": "issue"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  },
+  {
+   "ok": null
+  }
+ ],
+ "lnk18_project_changed_hands": [
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-75aa9e634becf2eedee43515f8ec0963",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": "the archived assignment left nothing behind",
+    "hostId": "host-a",
+    "revision": 2,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "taskId": "01parent-two",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "refused": {
+    "detail": "project 'PROJ-1' is now parented by '01parent-two', not by '01parent-task', so restoring 'rel-46d5b5ac690ef861' would reattach its issue under an owner the project no longer has; re-register the assignment under the current parent instead",
+    "reason": "foreign_scope"
+   }
+  },
+  {
+   "ok": "archived"
+  },
+  {
+   "ok": null
+  },
+  {
+   "ok": [
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "01parent-task",
+     "detail": "project 'PROJ-1' is now parented by '01parent-two', not by '01parent-task', so restoring 'rel-46d5b5ac690ef861' would reattach its issue under an owner the project no longer has; re-register the assignment under the current parent instead",
+     "incumbent": "01parent-two",
+     "reason": "foreign_scope",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project"
+    }
+   ]
+  }
+ ],
+ "lnk18_project_without_parent": [
+  {
+   "refused": {
+    "detail": "project 'PROJ-1' is now parented by nobody, not by '01parent-task', so restoring 'rel-46d5b5ac690ef861' would reattach its issue under an owner the project no longer has; re-register the assignment under the current parent instead",
+    "reason": "foreign_scope"
+   }
+  },
+  {
+   "ok": "archived"
+  }
+ ],
+ "lnk18_reassigned_issue": [
+  {
+   "refused": {
+    "detail": "issue 'REL-1' is now held by '01child-two', so restoring '01child-task' would leave it with two owners",
+    "reason": "duplicate_scope_owner"
+   }
+  },
+  {
+   "ok": [
+    {
+     "task_id": "01child-two"
+    }
+   ]
+  },
+  {
+   "ok": "cancelled"
+  },
+  {
+   "ok": [
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "01child-task",
+     "detail": "issue 'REL-1' is now held by '01child-two', so restoring '01child-task' would leave it with two owners",
+     "incumbent": "01child-two",
+     "reason": "duplicate_scope_owner",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue"
+    }
+   ]
+  }
+ ],
+ "lnk18_reclaimed_elsewhere": [
+  {
+   "refused": {
+    "detail": "child '01child-task' holds issue 'REL-1' on host 'host-two', but 'rel-46d5b5ac690ef861' records 'host-a'; restoring it would reactivate an assignment whose routing endpoint is not where the child is",
+    "reason": "link_conflict"
+   }
+  },
+  {
+   "ok": "archived"
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": null
+    },
+    "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": null,
+    "handoverNote": null,
+    "hostId": "host-two",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": [
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "host-a",
+     "detail": "child '01child-task' holds issue 'REL-1' on host 'host-two', but 'rel-46d5b5ac690ef861' records 'host-a'; restoring it would reactivate an assignment whose routing endpoint is not where the child is",
+     "incumbent": "host-two",
+     "reason": "link_conflict",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue"
+    }
+   ]
+  }
+ ],
+ "lnk18_refused_resume_contest": [
+  {
+   "refused": {
+    "detail": "issue 'REL-1' is now held by '01child-two', so restoring '01child-task' would leave it with two owners",
+    "reason": "duplicate_scope_owner"
+   }
+  },
+  {
+   "ok": [
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "01child-task",
+     "detail": "issue 'REL-1' is now held by '01child-two', so restoring '01child-task' would leave it with two owners",
+     "incumbent": "01child-two",
+     "reason": "duplicate_scope_owner",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue"
+    }
+   ]
+  },
+  {
+   "ok": "archived"
+  }
+ ],
+ "lnk19_borrowed_predecessor": [
+  {
+   "refused": {
+    "detail": "issue 'REL-FAR' is assigned under parent '01parent-two', but project 'PROJ-1' is executed by '01parent-task'; an issue belongs to its own project",
+    "reason": "foreign_scope"
+   }
+  },
+  {
+   "ok": "active"
+  }
+ ],
+ "lnk19_dead_predecessor": [
+  {
+   "refused": {
+    "detail": "issue 'REL-1' is assigned under parent '01parent-two', but project 'PROJ-1' is executed by '01parent-task'; an issue belongs to its own project",
+    "reason": "foreign_scope"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01parent-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  }
+ ],
+ "lnk19_other_issue_successor": [
+  {
+   "refused": {
+    "detail": "supersedes names 'rel-46d5b5ac690ef861', which is assigned to issue 'REL-1', not 'REL-FAR'; a successor replaces the assignment for its own issue",
+    "reason": "relationship_conflict"
+   }
+  },
+  {
+   "ok": "active"
+  },
+  {
+   "ok": {
+    "child": {
+     "_bindings": {
+      "cxcSession": "cxc-child"
+     },
+     "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/work",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "child",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01child-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "contention": [],
+    "issueKey": "REL-1",
+    "link": {
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "kind": "execution",
+     "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+     "lower": {
+      "scopeKey": "REL-1",
+      "scopeKind": "issue",
+      "taskId": "01child-task"
+     },
+     "revision": 1,
+     "status": "active",
+     "supersededBy": null,
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+     "upper": {
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project",
+      "taskId": "01parent-task"
+     }
+    },
+    "parent": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "projectKey": "PROJ-1",
+    "relationshipId": "rel-46d5b5ac690ef861"
+   }
+  }
+ ],
+ "lnk19_project_history_only": [
+  {
+   "ok": "rel-9b39a8261733087d"
+  },
+  {
+   "refused": {
+    "detail": "issue 'REL-1' is assigned under parent '01parent-two', but project 'PROJ-1' is executed by '01parent-task'; an issue belongs to its own project",
+    "reason": "foreign_scope"
+   }
+  }
+ ],
+ "lnk19_racer": [
+  {
+   "refused": {
+    "detail": "issue 'REL-1' is already owned by '01child-racer' under bnd-a9a09ac05c829d802cd905404a9f0cbb (active); hand it over deliberately instead of opening a second owner",
+    "reason": "duplicate_scope_owner"
+   }
+  },
+  {
+   "ok": [
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "01child-task",
+     "detail": "issue 'REL-1' is already owned by '01child-racer' under bnd-a9a09ac05c829d802cd905404a9f0cbb (active); hand it over deliberately instead of opening a second owner",
+     "incumbent": "01child-racer",
+     "reason": "duplicate_scope_owner",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue"
+    }
+   ]
+  },
+  {
+   "ok": []
+  }
+ ],
+ "lnk19_reclaimed_issue_successor": [
+  {
+   "refused": {
+    "detail": "issue 'REL-1' is already owned by '01child-task' under bnd-49d2b4e540ea04dbb7e42f651a32bad1 (active); hand it over deliberately instead of opening a second owner",
+    "reason": "duplicate_scope_owner"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": null
+    },
+    "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": null,
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  }
+ ],
+ "lnk19_same_child_second_parent": [
+  {
+   "refused": {
+    "detail": "issue 'REL-1' is already assigned to child '01child-task' under 'rel-46d5b5ac690ef861' (active, parent '01parent-task'); reuse that assignment, or pass supersedes to replace it deliberately",
+    "reason": "duplicate_assignment"
+   }
+  },
+  {
+   "ok": [
+    {
+     "relationship_id": "rel-46d5b5ac690ef861"
+    }
+   ]
+  }
+ ],
+ "lnk1_binding_identity": [
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01parent-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": "bnd-8f4ae5af2c9a92f33320f88bcb74f422"
+  }
+ ],
+ "lnk20_direct_rebind_survives": [
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": null
+    },
+    "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": null,
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": null
+    },
+    "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": null,
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  }
+ ],
+ "lnk20_replacement_inherits": [
+  {
+   "ok": "rel-3cd86f8e43cdb471"
+  },
+  {
+   "ok": {
+    "child": {
+     "_bindings": {
+      "cxcSession": null
+     },
+     "bindingId": "bnd-829fd4469f60387fc7d6cce5149772b3",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": null,
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "child",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01child-two",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "contention": [],
+    "issueKey": "REL-1",
+    "link": {
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "kind": "execution",
+     "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+     "lower": {
+      "scopeKey": "REL-1",
+      "scopeKind": "issue",
+      "taskId": "01child-two"
+     },
+     "revision": 2,
+     "status": "active",
+     "supersededBy": null,
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+     "upper": {
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project",
+      "taskId": "01parent-task"
+     }
+    },
+    "parent": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "projectKey": "PROJ-1",
+    "relationshipId": "rel-3cd86f8e43cdb471"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": null
+    },
+    "bindingId": "bnd-829fd4469f60387fc7d6cce5149772b3",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": null,
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-two",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "kind": "execution",
+    "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+    "lower": {
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "taskId": "01child-two"
+    },
+    "revision": 2,
+    "status": "active",
+    "supersededBy": null,
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+    "upper": {
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "taskId": "01parent-task"
+    }
+   }
+  }
+ ],
+ "lnk20_same_child_again": [
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-75aa9e634becf2eedee43515f8ec0963",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": "the archived assignment left nothing behind",
+    "hostId": "host-a",
+    "revision": 2,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "taskId": "01parent-two",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": "rel-b9d45dee8d2678a0"
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": null
+    },
+    "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": null,
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "child": {
+     "_bindings": {
+      "cxcSession": null
+     },
+     "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": null,
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "child",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01child-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "contention": [],
+    "issueKey": "REL-1",
+    "link": {
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "kind": "execution",
+     "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+     "lower": {
+      "scopeKey": "REL-1",
+      "scopeKind": "issue",
+      "taskId": "01child-task"
+     },
+     "revision": 2,
+     "status": "active",
+     "supersededBy": null,
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+     "upper": {
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project",
+      "taskId": "01parent-two"
+     }
+    },
+    "parent": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-75aa9e634becf2eedee43515f8ec0963",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": "the archived assignment left nothing behind",
+     "hostId": "host-a",
+     "revision": 2,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "taskId": "01parent-two",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "projectKey": "PROJ-1",
+    "relationshipId": "rel-b9d45dee8d2678a0"
+   }
+  }
+ ],
+ "lnk20_supersede_dead_leaves_reclaim": [
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": null
+    },
+    "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": null,
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  }
+ ],
+ "lnk21_earlier_dispatch": [
+  {
+   "ok": "rel-b9d45dee8d2678a0"
+  },
+  {
+   "refused": {
+    "detail": "dispatch request 'dispatch-1' already opened generation 1 of 'rel-46d5b5ac690ef861', so it cannot open a returning tenure as well; a new tenure is a new dispatch",
+    "reason": "relationship_conflict"
+   }
+  },
+  {
+   "ok": "archived"
+  }
+ ],
+ "lnk21_handback": [
+  {
+   "ok": "rel-b9d45dee8d2678a0"
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-75aa9e634becf2eedee43515f8ec0963",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": "the assignment moved first",
+    "hostId": "host-a",
+    "revision": 2,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "taskId": "01parent-two",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": "rel-46d5b5ac690ef861"
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": "the assignment moved first",
+    "hostId": "host-a",
+    "revision": 3,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": "bnd-75aa9e634becf2eedee43515f8ec0963",
+    "taskId": "01parent-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "childCxcSession": null,
+     "parentCxcSession": "cxc-parent",
+     "supersededBy": null
+    },
+    "authorizedScope": {
+     "allowedRecipients": [
+      "01parent-task"
+     ],
+     "artifactRoots": [
+      "/work"
+     ],
+     "scopeRef": null
+    },
+    "child": {
+     "cwd": "/work",
+     "hostId": "host-a",
+     "taskId": "01child-task"
+    },
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "executionGeneration": 2,
+    "generations": [
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-1",
+      "dispatchTurnId": "turn-dispatch-1",
+      "executionGeneration": 1,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "initial_assignment"
+     },
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-back",
+      "dispatchTurnId": "dispatch-back-turn",
+      "executionGeneration": 2,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": null
+     }
+    ],
+    "issueKey": "REL-1",
+    "parent": {
+     "cwd": "/parent",
+     "hostId": "host-a",
+     "taskId": "01parent-task"
+    },
+    "relationshipId": "rel-46d5b5ac690ef861",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": "rel-b9d45dee8d2678a0"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": "the assignment moved first",
+    "hostId": "host-a",
+    "revision": 3,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": "bnd-75aa9e634becf2eedee43515f8ec0963",
+    "taskId": "01parent-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": null
+    },
+    "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/work",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "child": {
+     "_bindings": {
+      "cxcSession": null
+     },
+     "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/work",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "child",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01child-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "contention": [],
+    "issueKey": "REL-1",
+    "link": {
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "kind": "execution",
+     "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+     "lower": {
+      "scopeKey": "REL-1",
+      "scopeKind": "issue",
+      "taskId": "01child-task"
+     },
+     "revision": 3,
+     "status": "active",
+     "supersededBy": null,
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+     "upper": {
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project",
+      "taskId": "01parent-task"
+     }
+    },
+    "parent": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": "the assignment moved first",
+     "hostId": "host-a",
+     "revision": 3,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": "bnd-75aa9e634becf2eedee43515f8ec0963",
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "projectKey": "PROJ-1",
+    "relationshipId": "rel-46d5b5ac690ef861"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "childCxcSession": null,
+     "parentCxcSession": "cxc-parent",
+     "supersededBy": "rel-46d5b5ac690ef861"
+    },
+    "authorizedScope": {
+     "allowedRecipients": [
+      "01parent-task"
+     ],
+     "artifactRoots": [
+      "/work"
+     ],
+     "scopeRef": null
+    },
+    "child": {
+     "cwd": "/work",
+     "hostId": "host-a",
+     "taskId": "01child-task"
+    },
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "executionGeneration": 1,
+    "generations": [
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-away",
+      "dispatchTurnId": "dispatch-away-turn",
+      "executionGeneration": 1,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "initial_assignment"
+     }
+    ],
+    "issueKey": "REL-1",
+    "parent": {
+     "cwd": "/parent",
+     "hostId": "host-a",
+     "taskId": "01parent-two"
+    },
+    "relationshipId": "rel-b9d45dee8d2678a0",
+    "status": "archived",
+    "supersededBy": "rel-46d5b5ac690ef861",
+    "supersedes": "rel-46d5b5ac690ef861"
+   }
+  },
+  {
+   "ok": [
+    {
+     "relationship_id": "rel-46d5b5ac690ef861",
+     "superseded_by": null,
+     "supersedes": "rel-b9d45dee8d2678a0"
+    },
+    {
+     "relationship_id": "rel-b9d45dee8d2678a0",
+     "superseded_by": "rel-46d5b5ac690ef861",
+     "supersedes": "rel-46d5b5ac690ef861"
+    }
+   ]
+  }
+ ],
+ "lnk21_handback_new_host": [
+  {
+   "ok": "rel-b9d45dee8d2678a0"
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-75aa9e634becf2eedee43515f8ec0963",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": "the assignment moved first",
+    "hostId": "host-a",
+    "revision": 2,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "taskId": "01parent-two",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": "rel-46d5b5ac690ef861"
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "childCxcSession": null,
+     "parentCxcSession": "cxc-moved",
+     "supersededBy": null
+    },
+    "authorizedScope": {
+     "allowedRecipients": [
+      "01parent-task"
+     ],
+     "artifactRoots": [
+      "/work"
+     ],
+     "scopeRef": null
+    },
+    "child": {
+     "cwd": "/work",
+     "hostId": "host-a",
+     "taskId": "01child-task"
+    },
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "executionGeneration": 2,
+    "generations": [
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-1",
+      "dispatchTurnId": "turn-dispatch-1",
+      "executionGeneration": 1,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "initial_assignment"
+     },
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-moved",
+      "dispatchTurnId": "dispatch-moved-turn",
+      "executionGeneration": 2,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": null
+     }
+    ],
+    "issueKey": "REL-1",
+    "parent": {
+     "cwd": "/moved",
+     "hostId": "host-two",
+     "taskId": "01parent-task"
+    },
+    "relationshipId": "rel-46d5b5ac690ef861",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": "rel-b9d45dee8d2678a0"
+   }
+  }
+ ],
+ "lnk21_live_replay_other_host": [
+  {
+   "refused": {
+    "detail": "'rel-46d5b5ac690ef861' already exists with a different scope or hosts",
+    "reason": "relationship_conflict"
+   }
+  }
+ ],
+ "lnk21_predecessor_released": [
+  {
+   "ok": "rel-b9d45dee8d2678a0"
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-75aa9e634becf2eedee43515f8ec0963",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": "the assignment moved first",
+    "hostId": "host-a",
+    "revision": 2,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "taskId": "01parent-two",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "refused": {
+    "detail": "supersedes names 'rel-b9d45dee8d2678a0', which is 'cancelled', so there is no tenure for 'rel-46d5b5ac690ef861' to take over; a returning tenure replaces the assignment that holds the issue now",
+    "reason": "relationship_conflict"
+   }
+  },
+  {
+   "ok": "archived"
+  }
+ ],
+ "lnk21_refusals": [
+  {
+   "refused": {
+    "detail": "'rel-46d5b5ac690ef861' is 'archived' and this registration names no predecessor; its issue is free, so the way back for this same parent, child and issue is relationship-resume, which restates the generation and the scope it re-authorizes",
+    "reason": "relationship_conflict"
+   }
+  },
+  {
+   "ok": "archived"
+  }
+ ],
+ "lnk21_refused_tenure_contest": [
+  {
+   "ok": "rel-64f004bec86a10be"
+  },
+  {
+   "refused": {
+    "detail": "task '01child-task' is already the child of issue 'REL-ELSEWHERE'; one task is bound to one Linear level, so a second issue needs its own child",
+    "reason": "role_already_bound"
+   }
+  },
+  {
+   "ok": [
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "01child-task",
+     "detail": "task '01child-task' is already the child of issue 'REL-ELSEWHERE'; one task is bound to one Linear level, so a second issue needs its own child",
+     "incumbent": "REL-ELSEWHERE",
+     "reason": "role_already_bound",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue"
+    }
+   ]
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "childCxcSession": null,
+     "parentCxcSession": "cxc-parent",
+     "supersededBy": null
+    },
+    "authorizedScope": {
+     "allowedRecipients": [
+      "01parent-task"
+     ],
+     "artifactRoots": [
+      "/work"
+     ],
+     "scopeRef": null
+    },
+    "child": {
+     "cwd": "/work",
+     "hostId": "host-a",
+     "taskId": "01child-two"
+    },
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "executionGeneration": 1,
+    "generations": [
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-away",
+      "dispatchTurnId": "dispatch-away-turn",
+      "executionGeneration": 1,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "initial_assignment"
+     }
+    ],
+    "issueKey": "REL-1",
+    "parent": {
+     "cwd": "/parent",
+     "hostId": "host-a",
+     "taskId": "01parent-two"
+    },
+    "relationshipId": "rel-64f004bec86a10be",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": "rel-46d5b5ac690ef861"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "childCxcSession": "cxc-child",
+     "parentCxcSession": "cxc-parent",
+     "supersededBy": "rel-64f004bec86a10be"
+    },
+    "authorizedScope": {
+     "allowedRecipients": [
+      "01parent-task"
+     ],
+     "artifactRoots": [
+      "/work"
+     ],
+     "scopeRef": null
+    },
+    "child": {
+     "cwd": "/work",
+     "hostId": "host-a",
+     "taskId": "01child-task"
+    },
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "executionGeneration": 1,
+    "generations": [
+     {
+      "anchorState": "bound",
+      "boundAt": "2023-11-14T22:13:20.000000+00:00",
+      "dispatchRequestId": "dispatch-1",
+      "dispatchTurnId": "turn-dispatch-1",
+      "executionGeneration": 1,
+      "openedAt": "2023-11-14T22:13:20.000000+00:00",
+      "reason": "initial_assignment"
+     }
+    ],
+    "issueKey": "REL-1",
+    "parent": {
+     "cwd": "/parent",
+     "hostId": "host-a",
+     "taskId": "01parent-task"
+    },
+    "relationshipId": "rel-46d5b5ac690ef861",
+    "status": "archived",
+    "supersededBy": "rel-64f004bec86a10be"
+   }
+  }
+ ],
+ "lnk21_restores_retained_project": [
+  {
+   "ok": "rel-64f004bec86a10be"
+  },
+  {
+   "ok": null
+  },
+  {
+   "ok": "rel-46d5b5ac690ef861"
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": null
+    },
+    "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/work",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "child": {
+     "_bindings": {
+      "cxcSession": null
+     },
+     "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/work",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "child",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01child-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "contention": [],
+    "issueKey": "REL-1",
+    "link": {
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "kind": "execution",
+     "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+     "lower": {
+      "scopeKey": "REL-1",
+      "scopeKind": "issue",
+      "taskId": "01child-task"
+     },
+     "revision": 2,
+     "status": "active",
+     "supersededBy": null,
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+     "upper": {
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project",
+      "taskId": "01parent-task"
+     }
+    },
+    "parent": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "projectKey": "PROJ-1",
+    "relationshipId": "rel-46d5b5ac690ef861"
+   }
+  },
+  {
+   "ok": {
+    "contention": [],
+    "gaps": [],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": null
+       },
+       "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/work",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "child",
+       "scopeKey": "REL-1",
+       "scopeKind": "issue",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01child-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "REL-1",
+      "scopeKind": "issue"
+     },
+     {
+      "depth": 1,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-1",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     },
+     {
+      "depth": 2,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-supervisor"
+       },
+       "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/supervisor",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "supervisor",
+       "scopeKey": "INIT-1",
+       "scopeKind": "initiative",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01supervisor-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "INIT-1",
+      "scopeKind": "initiative"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  }
+ ],
+ "lnk22_contested_writers": [
+  {
+   "refused": {
+    "detail": "project 'PROJ-1' has more than one live owner ('01parent-task', '01parent-two'), so there is no owner to write under. The reading paths report this and the writing paths refuse it; repair the store rather than letting one of them win",
+    "reason": "duplicate_scope_owner"
+   }
+  },
+  {
+   "ok": null
+  },
+  {
+   "refused": {
+    "detail": "project 'PROJ-1' has more than one live owner ('01parent-task', '01parent-two'), so there is no owner to write under. The reading paths report this and the writing paths refuse it; repair the store rather than letting one of them win",
+    "reason": "duplicate_scope_owner"
+   }
+  },
+  {
+   "refused": {
+    "detail": "project 'PROJ-1' has more than one live owner ('01parent-task', '01parent-two'), so there is no owner to write under. The reading paths report this and the writing paths refuse it; repair the store rather than letting one of them win",
+    "reason": "duplicate_scope_owner"
+   }
+  },
+  {
+   "ok": [
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "01parent-task",
+     "detail": "project 'PROJ-1' has more than one live owner ('01parent-task', '01parent-two'), so there is no owner to write under. The reading paths report this and the writing paths refuse it; repair the store rather than letting one of them win",
+     "incumbent": "01parent-task",
+     "reason": "duplicate_scope_owner",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project"
+    }
+   ]
+  }
+ ],
+ "lnk23_walk_states": [
+  {
+   "ok": {
+    "contention": [],
+    "gaps": [
+     {
+      "gap": "initiative_without_supervisor",
+      "scopeKey": "INIT-NEVER-SEEN",
+      "scopeKind": "initiative"
+     }
+    ],
+    "levels": [],
+    "readable": true,
+    "state": "unregistered"
+   }
+  },
+  {
+   "ok": {
+    "contention": [
+     {
+      "candidates": [
+       "PROJ-1",
+       "PROJ-2"
+      ],
+      "contention": "ambiguous_scope",
+      "taskId": "01parent-task"
+     }
+    ],
+    "gaps": [],
+    "levels": [],
+    "readable": true,
+    "state": "ambiguous"
+   }
+  },
+  {
+   "ok": {
+    "contention": [],
+    "gaps": [
+     {
+      "gap": "no_supervisor",
+      "scopeKey": "PROJ-2",
+      "scopeKind": "project"
+     }
+    ],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": null
+       },
+       "bindingId": "bnd-staged-second",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": null,
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-2",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-2",
+      "scopeKind": "project"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  },
+  {
+   "ok": {
+    "contention": [],
+    "gaps": [],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-child"
+       },
+       "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/work",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "child",
+       "scopeKey": "REL-1",
+       "scopeKind": "issue",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01child-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "REL-1",
+      "scopeKind": "issue"
+     },
+     {
+      "depth": 1,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-1",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     },
+     {
+      "depth": 2,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-supervisor"
+       },
+       "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/supervisor",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "supervisor",
+       "scopeKey": "INIT-1",
+       "scopeKind": "initiative",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01supervisor-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "INIT-1",
+      "scopeKind": "initiative"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  },
+  {
+   "ok": {
+    "contention": [],
+    "gaps": [],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-child"
+       },
+       "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/work",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "child",
+       "scopeKey": "REL-1",
+       "scopeKind": "issue",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01child-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "REL-1",
+      "scopeKind": "issue"
+     },
+     {
+      "depth": 1,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-1",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     },
+     {
+      "depth": 2,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-supervisor"
+       },
+       "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/supervisor",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "supervisor",
+       "scopeKey": "INIT-1",
+       "scopeKind": "initiative",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01supervisor-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "INIT-1",
+      "scopeKind": "initiative"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  },
+  {
+   "ok": {
+    "contention": [],
+    "detail": "ProgrammingError: Cannot operate on a closed database.",
+    "gaps": [],
+    "levels": [],
+    "readable": false,
+    "state": "unreadable"
+   }
+  },
+  {
+   "ok": {
+    "contention": [],
+    "detail": "ProgrammingError: Cannot operate on a closed database.",
+    "gaps": [],
+    "levels": [],
+    "readable": false,
+    "state": "unreadable"
+   }
+  },
+  {
+   "ok": {
+    "counterpart": null,
+    "currentOwner": null,
+    "detail": "ProgrammingError: Cannot operate on a closed database.",
+    "findings": [],
+    "from": null,
+    "link": null,
+    "readable": false,
+    "state": "unreadable"
+   }
+  }
+ ],
+ "lnk24_cycle": [
+  {
+   "ok": {
+    "contention": [
+     {
+      "contention": "scope_cycle",
+      "scopeKey": "INIT-1",
+      "scopeKind": "initiative"
+     }
+    ],
+    "gaps": [],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-supervisor"
+       },
+       "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/supervisor",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "supervisor",
+       "scopeKey": "INIT-1",
+       "scopeKind": "initiative",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01supervisor-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "INIT-1",
+      "scopeKind": "initiative"
+     },
+     {
+      "depth": 1,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-1",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  }
+ ],
+ "lnk24_handover_staging": [
+  {
+   "ok": "rel-64f004bec86a10be"
+  },
+  {
+   "ok": {
+    "contention": [
+     {
+      "contention": "owner_drift",
+      "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+      "live": "01parent-task",
+      "recorded": "01parent-two"
+     }
+    ],
+    "gaps": [],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-supervisor"
+       },
+       "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/supervisor",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "supervisor",
+       "scopeKey": "INIT-1",
+       "scopeKind": "initiative",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01supervisor-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "INIT-1",
+      "scopeKind": "initiative"
+     },
+     {
+      "depth": 1,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-1",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     },
+     {
+      "depth": 2,
+      "owner": {
+       "_bindings": {
+        "cxcSession": null
+       },
+       "bindingId": "bnd-829fd4469f60387fc7d6cce5149772b3",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/work",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "child",
+       "scopeKey": "REL-1",
+       "scopeKind": "issue",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01child-two",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "REL-1",
+      "scopeKind": "issue"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  },
+  {
+   "ok": {
+    "contention": [
+     {
+      "contention": "owner_drift",
+      "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+      "live": "01parent-task",
+      "recorded": "01parent-two"
+     }
+    ],
+    "gaps": [],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": null
+       },
+       "bindingId": "bnd-829fd4469f60387fc7d6cce5149772b3",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/work",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "child",
+       "scopeKey": "REL-1",
+       "scopeKind": "issue",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01child-two",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "REL-1",
+      "scopeKind": "issue"
+     },
+     {
+      "depth": 1,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-1",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     },
+     {
+      "depth": 2,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-supervisor"
+       },
+       "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/supervisor",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "supervisor",
+       "scopeKey": "INIT-1",
+       "scopeKind": "initiative",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01supervisor-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "INIT-1",
+      "scopeKind": "initiative"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  }
+ ],
+ "lnk24_instruction_conflict": [
+  {
+   "ok": {
+    "decidedAt": null,
+    "decidedBy": null,
+    "digest": "d-one",
+    "directiveId": "dir-41ebcf5acb2ad8d09063077a355b4267",
+    "disposition": null,
+    "fromScopeKey": "INIT-1",
+    "fromTaskId": "01supervisor-task",
+    "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+    "linkKind": "execution",
+    "recordedAt": "2023-11-14T22:13:20.000000+00:00",
+    "reference": null,
+    "revision": 1,
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project"
+   }
+  },
+  {
+   "ok": {
+    "decidedAt": null,
+    "decidedBy": null,
+    "digest": "d-two",
+    "directiveId": "dir-725d6f843fe7ca1f71d6fc41e37fc832",
+    "disposition": null,
+    "fromScopeKey": "INIT-1",
+    "fromTaskId": "01supervisor-task",
+    "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+    "linkKind": "execution",
+    "recordedAt": "2023-11-14T22:13:20.000000+00:00",
+    "reference": null,
+    "revision": 1,
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project"
+   }
+  },
+  {
+   "ok": {
+    "contention": [
+     {
+      "contention": "instruction_conflict",
+      "digest": "d-one",
+      "directiveId": "dir-41ebcf5acb2ad8d09063077a355b4267",
+      "fromScopeKey": "INIT-1",
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     },
+     {
+      "contention": "instruction_conflict",
+      "digest": "d-two",
+      "directiveId": "dir-725d6f843fe7ca1f71d6fc41e37fc832",
+      "fromScopeKey": "INIT-1",
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "gaps": [],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-1",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  },
+  {
+   "ok": {
+    "contention": [
+     {
+      "contention": "instruction_conflict",
+      "digest": "d-one",
+      "directiveId": "dir-41ebcf5acb2ad8d09063077a355b4267",
+      "fromScopeKey": "INIT-1",
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     },
+     {
+      "contention": "instruction_conflict",
+      "digest": "d-two",
+      "directiveId": "dir-725d6f843fe7ca1f71d6fc41e37fc832",
+      "fromScopeKey": "INIT-1",
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "gaps": [],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-1",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     },
+     {
+      "depth": 1,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-supervisor"
+       },
+       "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/supervisor",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "supervisor",
+       "scopeKey": "INIT-1",
+       "scopeKind": "initiative",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01supervisor-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "INIT-1",
+      "scopeKind": "initiative"
+     }
+    ],
+    "readable": true,
+    "state": "resolved"
+   }
+  }
+ ],
+ "lnk24_two_live_owners": [
+  {
+   "ok": {
+    "contention": [
+     {
+      "candidates": [
+       "01owner-one",
+       "01owner-two"
+      ],
+      "contention": "competing_owners",
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "gaps": [],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": null,
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "readable": true,
+    "state": "ambiguous"
+   }
+  },
+  {
+   "ok": {
+    "contention": [
+     {
+      "candidates": [
+       "01owner-one",
+       "01owner-two"
+      ],
+      "contention": "competing_owners",
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "gaps": [
+     {
+      "gap": "no_supervisor",
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": null,
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "readable": true,
+    "state": "ambiguous"
+   }
+  }
+ ],
+ "lnk24_two_parents_of_issue": [
+  {
+   "ok": {
+    "contention": [
+     {
+      "contention": "owner_drift",
+      "linkId": "lnk-450042d40f629b831e6577bfaca58303",
+      "live": "01parent-two",
+      "recorded": "01parent-task"
+     },
+     {
+      "candidates": [
+       "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+       "lnk-450042d40f629b831e6577bfaca58303"
+      ],
+      "contention": "competing_parents",
+      "scopeKey": "REL-1",
+      "scopeKind": "issue"
+     }
+    ],
+    "gaps": [
+     {
+      "gap": "issue_without_child",
+      "scopeKey": "REL-1",
+      "scopeKind": "issue"
+     }
+    ],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-supervisor"
+       },
+       "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/supervisor",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "supervisor",
+       "scopeKey": "INIT-1",
+       "scopeKind": "initiative",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01supervisor-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "INIT-1",
+      "scopeKind": "initiative"
+     },
+     {
+      "depth": 1,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-1",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     },
+     {
+      "depth": 2,
+      "owner": null,
+      "scopeKey": "REL-1",
+      "scopeKind": "issue"
+     },
+     {
+      "depth": 1,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-6debc9f540166f9ab2f89f1129e0ca28",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-2",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-two",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-2",
+      "scopeKind": "project"
+     }
+    ],
+    "readable": true,
+    "state": "ambiguous"
+   }
+  }
+ ],
+ "lnk24_two_supervisions": [
+  {
+   "ok": {
+    "contention": [
+     {
+      "candidates": [
+       "lnk-17fe34823302c1302c735eb1ffd28014",
+       "lnk-2ac3b40235124c9c3652fa072af24043"
+      ],
+      "contention": "competing_parents",
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "gaps": [],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": {
+       "_bindings": {
+        "cxcSession": "cxc-parent"
+       },
+       "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+       "createdAt": "2023-11-14T22:13:20.000000+00:00",
+       "cwd": "/parent",
+       "handoverNote": null,
+       "hostId": "host-a",
+       "revision": 1,
+       "role": "parent",
+       "scopeKey": "PROJ-1",
+       "scopeKind": "project",
+       "status": "active",
+       "supersededBy": null,
+       "supersedes": null,
+       "taskId": "01parent-task",
+       "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+      },
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "readable": true,
+    "state": "ambiguous"
+   }
+  }
+ ],
+ "lnk25_counterpart": [
+  {
+   "ok": {
+    "counterpart": {
+     "_bindings": {
+      "cxcSession": "cxc-child"
+     },
+     "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/work",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "child",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01child-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "currentOwner": null,
+    "findings": [],
+    "from": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "link": {
+     "kind": "execution",
+     "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+     "revision": 1,
+     "status": "active"
+    },
+    "readable": true,
+    "state": "linked"
+   }
+  },
+  {
+   "ok": {
+    "counterpart": {
+     "_bindings": {
+      "cxcSession": "cxc-child"
+     },
+     "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/work",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "child",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01child-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "currentOwner": null,
+    "findings": [
+     "stale_revision"
+    ],
+    "from": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "link": {
+     "kind": "execution",
+     "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+     "revision": 1,
+     "status": "active"
+    },
+    "readable": true,
+    "state": "linked"
+   }
+  },
+  {
+   "ok": {
+    "counterpart": {
+     "_bindings": {
+      "cxcSession": "cxc-child"
+     },
+     "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/work",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "child",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01child-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "currentOwner": null,
+    "findings": [
+     "foreign_sender_scope"
+    ],
+    "from": null,
+    "link": null,
+    "readable": true,
+    "state": "unlinked"
+   }
+  },
+  {
+   "ok": {
+    "counterpart": null,
+    "currentOwner": null,
+    "findings": [
+     "foreign_scope",
+     "unregistered_link"
+    ],
+    "from": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "link": null,
+    "readable": true,
+    "state": "unlinked"
+   }
+  },
+  {
+   "ok": {
+    "counterpart": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "currentOwner": null,
+    "findings": [],
+    "from": {
+     "_bindings": {
+      "cxcSession": "cxc-supervisor"
+     },
+     "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/supervisor",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "supervisor",
+     "scopeKey": "INIT-1",
+     "scopeKind": "initiative",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01supervisor-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "link": {
+     "kind": "execution",
+     "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+     "revision": 1,
+     "status": "active"
+    },
+    "readable": true,
+    "state": "linked"
+   }
+  }
+ ],
+ "lnk25_key_reused_at_another_level": [
+  {
+   "ok": {
+    "counterpart": {
+     "_bindings": {
+      "cxcSession": null
+     },
+     "bindingId": "bnd-ad3c6ff29f0ae1417866609157c6d3d6",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": null,
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "child",
+     "scopeKey": "SHARED-KEY",
+     "scopeKind": "issue",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01child-far",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "currentOwner": null,
+    "findings": [
+     "unregistered_link",
+     "wrong_role"
+    ],
+    "from": {
+     "_bindings": {
+      "cxcSession": "cxc-supervisor"
+     },
+     "bindingId": "bnd-2660758d71c739b07968e5d371279ff8",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/supervisor",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "supervisor",
+     "scopeKey": "SHARED-KEY",
+     "scopeKind": "initiative",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01supervisor-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "link": null,
+    "readable": true,
+    "state": "unlinked"
+   }
+  }
+ ],
+ "lnk25_two_edges": [
+  {
+   "ok": {
+    "candidates": [
+     {
+      "kind": "execution",
+      "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+      "scopeKey": "PROJ-1"
+     },
+     {
+      "kind": "reference",
+      "linkId": "lnk-a328ecbe3eaee406efea583ea0566d1c",
+      "scopeKey": "PROJ-1"
+     }
+    ],
+    "counterpart": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "currentOwner": null,
+    "findings": [
+     "link_contention"
+    ],
+    "from": {
+     "_bindings": {
+      "cxcSession": "cxc-supervisor"
+     },
+     "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/supervisor",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "supervisor",
+     "scopeKey": "INIT-1",
+     "scopeKind": "initiative",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01supervisor-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "link": null,
+    "readable": true,
+    "state": "ambiguous"
+   }
+  }
+ ],
+ "lnk25_two_historical_scopes": [
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-75aa9e634becf2eedee43515f8ec0963",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": "the first project moved on",
+    "hostId": "host-a",
+    "revision": 2,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "taskId": "01parent-two",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-cc503dfe3f97deee8f7cf30bee24608f",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": "and so did the second",
+    "hostId": "host-a",
+    "revision": 2,
+    "role": "parent",
+    "scopeKey": "PROJ-2",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": "bnd-026789537c6b2d7b3b0e8e1cf14c0837",
+    "taskId": "01parent-three",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "candidates": [
+     {
+      "kind": "execution",
+      "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+      "scopeKey": "PROJ-1"
+     },
+     {
+      "kind": "execution",
+      "linkId": "lnk-0a5110fd49dda6172d1dc0fed28ca52c",
+      "scopeKey": "PROJ-2"
+     }
+    ],
+    "counterpart": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "archived",
+     "supersededBy": "bnd-75aa9e634becf2eedee43515f8ec0963",
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "currentOwner": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-75aa9e634becf2eedee43515f8ec0963",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": "the first project moved on",
+     "hostId": "host-a",
+     "revision": 2,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "taskId": "01parent-two",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "findings": [
+     "link_contention",
+     "stale_owner"
+    ],
+    "from": {
+     "_bindings": {
+      "cxcSession": "cxc-supervisor"
+     },
+     "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/supervisor",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "supervisor",
+     "scopeKey": "INIT-1",
+     "scopeKind": "initiative",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01supervisor-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "link": null,
+    "readable": true,
+    "state": "ambiguous"
+   }
+  },
+  {
+   "ok": {
+    "counterpart": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-026789537c6b2d7b3b0e8e1cf14c0837",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-2",
+     "scopeKind": "project",
+     "status": "archived",
+     "supersededBy": "bnd-cc503dfe3f97deee8f7cf30bee24608f",
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "currentOwner": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-cc503dfe3f97deee8f7cf30bee24608f",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": "and so did the second",
+     "hostId": "host-a",
+     "revision": 2,
+     "role": "parent",
+     "scopeKey": "PROJ-2",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": "bnd-026789537c6b2d7b3b0e8e1cf14c0837",
+     "taskId": "01parent-three",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "findings": [
+     "stale_owner"
+    ],
+    "from": {
+     "_bindings": {
+      "cxcSession": "cxc-supervisor"
+     },
+     "bindingId": "bnd-2b3e7750d9c1cfc96942e2521be700ee",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/supervisor",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "supervisor",
+     "scopeKey": "INIT-1",
+     "scopeKind": "initiative",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01supervisor-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "link": {
+     "kind": "execution",
+     "linkId": "lnk-0a5110fd49dda6172d1dc0fed28ca52c",
+     "revision": 2,
+     "status": "active"
+    },
+    "readable": true,
+    "state": "linked"
+   }
+  }
+ ],
+ "lnk26_guard_index": [
+  {
+   "ok": "IntegrityError: UNIQUE constraint failed: scope_bindings.scope_kind, scope_bindings.scope_key, scope_bindings.role"
+  }
+ ],
+ "lnk26_unenforced": [
+  {
+   "ok": {
+    "contention": [],
+    "gaps": [
+     {
+      "gap": "project_without_parent",
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "levels": [],
+    "readable": true,
+    "state": "unregistered"
+   }
+  },
+  {
+   "ok": [
+    {
+     "detail": "UNIQUE constraint failed: scope_bindings.scope_kind, scope_bindings.scope_key, scope_bindings.role",
+     "index": "scope_bindings_one_live_owner"
+    }
+   ]
+  },
+  {
+   "ok": {
+    "contention": [
+     {
+      "candidates": [
+       "01owner-one",
+       "01owner-two"
+      ],
+      "contention": "competing_owners",
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "gaps": [
+     {
+      "gap": "no_supervisor",
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": null,
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "readable": true,
+    "state": "ambiguous"
+   }
+  },
+  {
+   "ok": {
+    "contention": [
+     {
+      "candidates": [
+       "01owner-one",
+       "01owner-two"
+      ],
+      "contention": "competing_owners",
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "gaps": [],
+    "levels": [
+     {
+      "depth": 0,
+      "owner": null,
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project"
+     }
+    ],
+    "readable": true,
+    "state": "ambiguous",
+    "unenforcedIndexes": [
+     {
+      "detail": "UNIQUE constraint failed: scope_bindings.scope_kind, scope_bindings.scope_key, scope_bindings.role",
+      "index": "scope_bindings_one_live_owner"
+     }
+    ]
+   }
+  }
+ ],
+ "lnk27_ids": [
+  {
+   "ok": "bnd-8f4ae5af2c9a92f33320f88bcb74f422"
+  },
+  {
+   "ok": "lnk-17fe34823302c1302c735eb1ffd28014"
+  },
+  {
+   "ok": "lnk-e983eba862108d9c6fb632aff03036f1"
+  },
+  {
+   "ok": "dir-41ebcf5acb2ad8d09063077a355b4267"
+  }
+ ],
+ "lnk29_contested_assignment_view": [
+  {
+   "ok": {
+    "parentOwnsProject": null,
+    "projectKey": "PROJ-1",
+    "projectParentCandidates": [
+     "01parent-task",
+     "01parent-two"
+    ],
+    "projectParentTaskId": null,
+    "scopeState": "ambiguous"
+   }
+  }
+ ],
+ "lnk2_replays_converge": [
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01parent-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01parent-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": [
+    {
+     "binding_id": "bnd-8f4ae5af2c9a92f33320f88bcb74f422"
+    }
+   ]
+  },
+  {
+   "ok": {
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "kind": "execution",
+    "linkId": "lnk-0a5110fd49dda6172d1dc0fed28ca52c",
+    "lower": {
+     "scopeKey": "PROJ-2",
+     "scopeKind": "project",
+     "taskId": "01parent-two"
+    },
+    "revision": 1,
+    "status": "active",
+    "supersededBy": null,
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+    "upper": {
+     "scopeKey": "INIT-1",
+     "scopeKind": "initiative",
+     "taskId": "01supervisor-task"
+    }
+   }
+  },
+  {
+   "ok": {
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "kind": "execution",
+    "linkId": "lnk-0a5110fd49dda6172d1dc0fed28ca52c",
+    "lower": {
+     "scopeKey": "PROJ-2",
+     "scopeKind": "project",
+     "taskId": "01parent-two"
+    },
+    "revision": 1,
+    "status": "active",
+    "supersededBy": null,
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+    "upper": {
+     "scopeKey": "INIT-1",
+     "scopeKind": "initiative",
+     "taskId": "01supervisor-task"
+    }
+   }
+  },
+  {
+   "ok": [
+    {
+     "link_id": "lnk-0a5110fd49dda6172d1dc0fed28ca52c"
+    }
+   ]
+  }
+ ],
+ "lnk3_link_id_stable_across_handover": [
+  {
+   "ok": "lnk-17fe34823302c1302c735eb1ffd28014"
+  },
+  {
+   "ok": {
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "kind": "execution",
+    "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+    "lower": {
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "taskId": "01parent-task"
+    },
+    "revision": 1,
+    "status": "active",
+    "supersededBy": null,
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+    "upper": {
+     "scopeKey": "INIT-1",
+     "scopeKind": "initiative",
+     "taskId": "01supervisor-task"
+    }
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-75aa9e634becf2eedee43515f8ec0963",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": "the outgoing parent handed over its project",
+    "hostId": "host-a",
+    "revision": 2,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "taskId": "01parent-two",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "kind": "execution",
+    "linkId": "lnk-17fe34823302c1302c735eb1ffd28014",
+    "lower": {
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "taskId": "01parent-two"
+    },
+    "revision": 2,
+    "status": "active",
+    "supersededBy": null,
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+    "upper": {
+     "scopeKey": "INIT-1",
+     "scopeKind": "initiative",
+     "taskId": "01supervisor-task"
+    }
+   }
+  }
+ ],
+ "lnk4_archived_is_revalidated": [
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01parent-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-75aa9e634becf2eedee43515f8ec0963",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01parent-two",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "refused": {
+    "detail": "project 'PROJ-1' is already owned by '01parent-two' under bnd-75aa9e634becf2eedee43515f8ec0963 (active); hand it over deliberately instead of opening a second owner",
+    "reason": "duplicate_scope_owner"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-75aa9e634becf2eedee43515f8ec0963",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01parent-two",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  }
+ ],
+ "lnk4_one_owner_per_scope": [
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01parent-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "refused": {
+    "detail": "project 'PROJ-1' is already owned by '01parent-task' under bnd-8f4ae5af2c9a92f33320f88bcb74f422 (active); hand it over deliberately instead of opening a second owner",
+    "reason": "duplicate_scope_owner"
+   }
+  },
+  {
+   "refused": {
+    "detail": "project 'PROJ-1' is already owned by '01parent-task' under bnd-8f4ae5af2c9a92f33320f88bcb74f422 (active); hand it over deliberately instead of opening a second owner",
+    "reason": "duplicate_scope_owner"
+   }
+  },
+  {
+   "refused": {
+    "detail": "project 'PROJ-1' is already owned by '01parent-task' under bnd-8f4ae5af2c9a92f33320f88bcb74f422 (active); hand it over deliberately instead of opening a second owner",
+    "reason": "duplicate_scope_owner"
+   }
+  },
+  {
+   "ok": [
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "01parent-two",
+     "detail": "project 'PROJ-1' is already owned by '01parent-task' under bnd-8f4ae5af2c9a92f33320f88bcb74f422 (active); hand it over deliberately instead of opening a second owner",
+     "id": 1,
+     "incumbent": "01parent-task",
+     "reason": "duplicate_scope_owner",
+     "scope_key": "PROJ-1",
+     "scope_kind": "project"
+    }
+   ]
+  },
+  {
+   "ok": [
+    {
+     "task_id": "01parent-task"
+    }
+   ]
+  }
+ ],
+ "lnk5_child_as_supervisor": [
+  {
+   "refused": {
+    "detail": "task '01child-task' is already the child of issue 'REL-1', so it cannot also be a supervisor",
+    "reason": "scope_role_mismatch"
+   }
+  }
+ ],
+ "lnk5_child_in_another_scope_resume": [
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": null
+    },
+    "bindingId": "bnd-db5d64d488aed9f8bd707cc347b80563",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": null,
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-ELSEWHERE",
+    "scopeKind": "issue",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "refused": {
+    "detail": "task '01child-task' has since become the child of issue 'REL-ELSEWHERE', so it cannot be restored as the child of issue 'REL-1' as well",
+    "reason": "role_already_bound"
+   }
+  },
+  {
+   "ok": "cancelled"
+  },
+  {
+   "ok": null
+  }
+ ],
+ "lnk5_child_second_issue": [
+  {
+   "refused": {
+    "detail": "task '01child-task' is already the child of issue 'REL-1'; one task is bound to one Linear level, so a second issue needs its own child",
+    "reason": "role_already_bound"
+   }
+  }
+ ],
+ "lnk5_cross_role_resume": [
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": null
+    },
+    "bindingId": "bnd-8f086e0e93318a29494e461476cd310d",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": null,
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "supervisor",
+    "scopeKey": "INIT-LATER",
+    "scopeKind": "initiative",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "refused": {
+    "detail": "task '01child-task' has since become the supervisor of initiative 'INIT-LATER', so it cannot be restored as the child of issue 'REL-1' as well",
+    "reason": "scope_role_mismatch"
+   }
+  },
+  {
+   "ok": [
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "01child-task",
+     "detail": "task '01child-task' has since become the supervisor of initiative 'INIT-LATER', so it cannot be restored as the child of issue 'REL-1' as well",
+     "id": 1,
+     "incumbent": "INIT-LATER",
+     "reason": "scope_role_mismatch",
+     "scope_key": "REL-1",
+     "scope_kind": "issue"
+    }
+   ]
+  }
+ ],
+ "lnk5_handover_to_supervisor": [
+  {
+   "refused": {
+    "detail": "task '01supervisor-task' is already the supervisor of initiative 'INIT-1', so it cannot also be a parent",
+    "reason": "scope_role_mismatch"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01parent-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  }
+ ],
+ "lnk5_parent_as_another_supervisor": [
+  {
+   "refused": {
+    "detail": "task '01parent-task' is already the parent of project 'PROJ-1', so it cannot also be a supervisor",
+    "reason": "scope_role_mismatch"
+   }
+  }
+ ],
+ "lnk5_parent_as_supervisor": [
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-parent"
+    },
+    "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/parent",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "parent",
+    "scopeKey": "PROJ-1",
+    "scopeKind": "project",
+    "status": "active",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01parent-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  },
+  {
+   "refused": {
+    "detail": "task '01parent-task' is already the parent of project 'PROJ-1', so it cannot also be a supervisor",
+    "reason": "scope_role_mismatch"
+   }
+  }
+ ],
+ "lnk5_parent_second_project": [
+  {
+   "refused": {
+    "detail": "task '01parent-task' is already the parent of project 'PROJ-1'; one task is bound to one Linear level, so a second project needs its own parent",
+    "reason": "role_already_bound"
+   }
+  },
+  {
+   "ok": null
+  }
+ ],
+ "lnk6_child_supervises_its_project": [
+  {
+   "refused": {
+    "detail": "task '01child-task' already owns a scope below project 'PROJ-1', so supervising it would close a loop",
+    "reason": "scope_cycle"
+   }
+  }
+ ],
+ "lnk6_issue_parent_is_its_child": [
+  {
+   "refused": {
+    "detail": "relationship 'rel-c3ddd4747037960b' has the same task as parent and child, which is a self-link rather than a level",
+    "reason": "scope_cycle"
+   }
+  }
+ ],
+ "lnk6_peer_kind": [
+  {
+   "refused": {
+    "detail": "a supervision is execution or reference, not 'peer'; a peer link is registered with register_peer",
+    "reason": "scope_role_mismatch"
+   }
+  }
+ ],
+ "lnk6_self_supervision": [
+  {
+   "refused": {
+    "detail": "task '01parent-task' cannot supervise itself",
+    "reason": "scope_cycle"
+   }
+  },
+  {
+   "ok": [
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "01parent-task",
+     "detail": "task '01parent-task' cannot supervise itself",
+     "id": 1,
+     "incumbent": "01parent-task",
+     "reason": "scope_cycle",
+     "scope_key": "PROJ-1",
+     "scope_kind": "project"
+    }
+   ]
+  }
+ ],
+ "lnk7_foreign_parent": [
+  {
+   "refused": {
+    "detail": "issue 'REL-1' is assigned under parent '01parent-task', but project 'PROJ-2' is executed by '01parent-two'; an issue belongs to its own project",
+    "reason": "foreign_scope"
+   }
+  },
+  {
+   "ok": [
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "01parent-task",
+     "detail": "issue 'REL-1' is assigned under parent '01parent-task', but project 'PROJ-2' is executed by '01parent-two'; an issue belongs to its own project",
+     "id": 1,
+     "incumbent": "01parent-two",
+     "reason": "foreign_scope",
+     "scope_key": "PROJ-2",
+     "scope_kind": "project"
+    }
+   ]
+  }
+ ],
+ "lnk7_inactive": [
+  {
+   "refused": {
+    "detail": "relationship 'rel-f0f5451468098e7d' is 'archived', so its issue cannot be attached to a project",
+    "reason": "relationship_not_active"
+   }
+  },
+  {
+   "refused": {
+    "detail": "relationship 'rel-e6622f7bcc26f525' is 'cancelled', so its issue cannot be attached to a project",
+    "reason": "relationship_not_active"
+   }
+  }
+ ],
+ "lnk7_scoped_elsewhere": [
+  {
+   "refused": {
+    "detail": "issue 'REL-1' is assigned under parent '01parent-task', but project 'PROJ-2' is executed by '01parent-two'; an issue belongs to its own project",
+    "reason": "foreign_scope"
+   }
+  }
+ ],
+ "lnk7_two_projects": [
+  {
+   "refused": {
+    "detail": "issue 'REL-1' is assigned under parent '01parent-task', but project 'PROJ-2' is executed by '01parent-two'; an issue belongs to its own project",
+    "reason": "foreign_scope"
+   }
+  },
+  {
+   "ok": [
+    {
+     "link_id": "lnk-043eb4c415b2e591d6e5e282a8682ef4"
+    }
+   ]
+  }
+ ],
+ "lnk7_unregistered_project": [
+  {
+   "refused": {
+    "detail": "project 'PROJ-1' has no registered parent, so an issue cannot be attached to it yet",
+    "reason": "unregistered_scope"
+   }
+  }
+ ],
+ "lnk8_attach_writes_and_converges": [
+  {
+   "ok": {
+    "child": {
+     "_bindings": {
+      "cxcSession": "cxc-child"
+     },
+     "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/work",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "child",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01child-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "contention": [],
+    "issueKey": "REL-1",
+    "link": {
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "kind": "execution",
+     "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+     "lower": {
+      "scopeKey": "REL-1",
+      "scopeKind": "issue",
+      "taskId": "01child-task"
+     },
+     "revision": 1,
+     "status": "active",
+     "supersededBy": null,
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+     "upper": {
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project",
+      "taskId": "01parent-task"
+     }
+    },
+    "parent": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "projectKey": "PROJ-1",
+    "relationshipId": "rel-46d5b5ac690ef861"
+   }
+  },
+  {
+   "ok": {
+    "child": {
+     "_bindings": {
+      "cxcSession": "cxc-child"
+     },
+     "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/work",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "child",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01child-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "contention": [],
+    "issueKey": "REL-1",
+    "link": {
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "kind": "execution",
+     "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+     "lower": {
+      "scopeKey": "REL-1",
+      "scopeKind": "issue",
+      "taskId": "01child-task"
+     },
+     "revision": 1,
+     "status": "active",
+     "supersededBy": null,
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+     "upper": {
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project",
+      "taskId": "01parent-task"
+     }
+    },
+    "parent": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "projectKey": "PROJ-1",
+    "relationshipId": "rel-46d5b5ac690ef861"
+   }
+  },
+  {
+   "ok": [
+    {
+     "project_key": "PROJ-1",
+     "recorded_at": "2023-11-14T22:13:20.000000+00:00",
+     "relationship_id": "rel-46d5b5ac690ef861"
+    }
+   ]
+  },
+  {
+   "ok": [
+    {
+     "link_id": "lnk-043eb4c415b2e591d6e5e282a8682ef4"
+    }
+   ]
+  }
+ ],
+ "lnk8_completes_partial": [
+  {
+   "ok": null
+  },
+  {
+   "ok": {
+    "child": {
+     "_bindings": {
+      "cxcSession": "cxc-child"
+     },
+     "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/work",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "child",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01child-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "contention": [],
+    "issueKey": "REL-1",
+    "link": {
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "kind": "execution",
+     "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+     "lower": {
+      "scopeKey": "REL-1",
+      "scopeKind": "issue",
+      "taskId": "01child-task"
+     },
+     "revision": 1,
+     "status": "active",
+     "supersededBy": null,
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+     "upper": {
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project",
+      "taskId": "01parent-task"
+     }
+    },
+    "parent": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "projectKey": "PROJ-1",
+    "relationshipId": "rel-46d5b5ac690ef861"
+   }
+  },
+  {
+   "ok": {
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "kind": "execution",
+    "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+    "lower": {
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "taskId": "01child-task"
+    },
+    "revision": 1,
+    "status": "active",
+    "supersededBy": null,
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+    "upper": {
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "taskId": "01parent-task"
+    }
+   }
+  }
+ ],
+ "lnk8_paused_stays_paused": [
+  {
+   "ok": {
+    "child": {
+     "_bindings": {
+      "cxcSession": "cxc-child"
+     },
+     "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/work",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "child",
+     "scopeKey": "REL-1",
+     "scopeKind": "issue",
+     "status": "paused",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01child-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "contention": [],
+    "issueKey": "REL-1",
+    "link": {
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "kind": "execution",
+     "linkId": "lnk-043eb4c415b2e591d6e5e282a8682ef4",
+     "lower": {
+      "scopeKey": "REL-1",
+      "scopeKind": "issue",
+      "taskId": "01child-task"
+     },
+     "revision": 1,
+     "status": "paused",
+     "supersededBy": null,
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+     "upper": {
+      "scopeKey": "PROJ-1",
+      "scopeKind": "project",
+      "taskId": "01parent-task"
+     }
+    },
+    "parent": {
+     "_bindings": {
+      "cxcSession": "cxc-parent"
+     },
+     "bindingId": "bnd-8f4ae5af2c9a92f33320f88bcb74f422",
+     "createdAt": "2023-11-14T22:13:20.000000+00:00",
+     "cwd": "/parent",
+     "handoverNote": null,
+     "hostId": "host-a",
+     "revision": 1,
+     "role": "parent",
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "status": "active",
+     "supersededBy": null,
+     "supersedes": null,
+     "taskId": "01parent-task",
+     "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+    },
+    "projectKey": "PROJ-1",
+    "relationshipId": "rel-46d5b5ac690ef861"
+   }
+  },
+  {
+   "ok": {
+    "_bindings": {
+     "cxcSession": "cxc-child"
+    },
+    "bindingId": "bnd-49d2b4e540ea04dbb7e42f651a32bad1",
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "cwd": "/work",
+    "handoverNote": null,
+    "hostId": "host-a",
+    "revision": 1,
+    "role": "child",
+    "scopeKey": "REL-1",
+    "scopeKind": "issue",
+    "status": "paused",
+    "supersededBy": null,
+    "supersedes": null,
+    "taskId": "01child-task",
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00"
+   }
+  }
+ ],
+ "lnk9_reference_naming_another_parent": [
+  {
+   "refused": {
+    "detail": "project 'PROJ-1' is executed by parent '01parent-task', so a reference naming '01parent-two' would clone its execution parent",
+    "reason": "duplicate_scope_owner"
+   }
+  },
+  {
+   "ok": [
+    {
+     "at": "2023-11-14T22:13:20.000000+00:00",
+     "challenger": "01parent-two",
+     "detail": "project 'PROJ-1' is executed by parent '01parent-task', so a reference naming '01parent-two' would clone its execution parent",
+     "id": 1,
+     "incumbent": "01parent-task",
+     "reason": "duplicate_scope_owner",
+     "scope_key": "PROJ-1",
+     "scope_kind": "project"
+    }
+   ]
+  }
+ ],
+ "lnk9_reference_not_first": [
+  {
+   "refused": {
+    "detail": "project 'PROJ-3' has no execution supervisor yet, so there is no outcome to reference. Register its execution supervision first",
+    "reason": "unregistered_scope"
+   }
+  },
+  {
+   "ok": null
+  }
+ ],
+ "lnk9_second_execution_edge": [
+  {
+   "refused": {
+    "detail": "project 'PROJ-1' already has its execution supervisor under lnk-17fe34823302c1302c735eb1ffd28014 from initiative 'INIT-1'; another initiative references it instead of supervising it again",
+    "reason": "duplicate_scope_owner"
+   }
+  },
+  {
+   "ok": [
+    {
+     "link_id": "lnk-17fe34823302c1302c735eb1ffd28014"
+    }
+   ]
+  }
+ ],
+ "lnk9_second_initiative_references": [
+  {
+   "ok": {
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "kind": "reference",
+    "linkId": "lnk-119b7cc12608dd24fcccbd6f0ae518fe",
+    "lower": {
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "taskId": "01parent-task"
+    },
+    "revision": 1,
+    "status": "active",
+    "supersededBy": null,
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+    "upper": {
+     "scopeKey": "INIT-2",
+     "scopeKind": "initiative",
+     "taskId": "01supervisor-two"
+    }
+   }
+  },
+  {
+   "ok": [
+    {
+     "task_id": "01parent-task"
+    }
+   ]
+  }
+ ],
+ "lnk9_supervisor_cannot_reference": [
+  {
+   "refused": {
+    "detail": "initiative 'INIT-1' already supervises project 'PROJ-1' under lnk-17fe34823302c1302c735eb1ffd28014, so it cannot also reference it; a reference is how a DIFFERENT initiative reads this outcome",
+    "reason": "link_conflict"
+   }
+  },
+  {
+   "ok": [
+    {
+     "link_id": "lnk-17fe34823302c1302c735eb1ffd28014"
+    }
+   ]
+  },
+  {
+   "ok": {
+    "createdAt": "2023-11-14T22:13:20.000000+00:00",
+    "kind": "reference",
+    "linkId": "lnk-119b7cc12608dd24fcccbd6f0ae518fe",
+    "lower": {
+     "scopeKey": "PROJ-1",
+     "scopeKind": "project",
+     "taskId": "01parent-task"
+    },
+    "revision": 1,
+    "status": "active",
+    "supersededBy": null,
+    "updatedAt": "2023-11-14T22:13:20.000000+00:00",
+    "upper": {
+     "scopeKey": "INIT-2",
+     "scopeKind": "initiative",
+     "taskId": "01supervisor-two"
+    }
+   }
+  }
+ ],
+ "lnk_literal_reasons": [
+  {
+   "refused": {
+    "detail": "bad status 'bogus'",
+    "reason": "link_not_active"
+   }
+  },
+  {
+   "refused": {
+    "detail": "a disposition is chosen or superseded, not 'bogus'",
+    "reason": "link_not_active"
+   }
+  },
+  {
+   "refused": {
+    "detail": "no directive 'dir-x'",
+    "reason": "unregistered_scope"
+   }
+  },
+  {
+   "refused": {
+    "detail": "a role is one of child, parent, supervisor, not 'bogus'",
+    "reason": "scope_role_mismatch"
+   }
+  },
+  {
+   "refused": {
+    "detail": "a scope key must not contain '|', which is the field separator",
+    "reason": "unregistered_scope"
+   }
+  },
+  {
+   "refused": {
+    "detail": "a handover carries its evidence",
+    "reason": "handover_unconfirmed"
+   }
+  },
+  {
+   "refused": {
+    "detail": "project 'PROJ-1' is not its own peer",
+    "reason": "scope_cycle"
+   }
+  },
+  {
+   "refused": {
+    "detail": "no relationship 'rel-missing'",
+    "reason": "unregistered_relationship"
+   }
+  }
+ ]
+}
