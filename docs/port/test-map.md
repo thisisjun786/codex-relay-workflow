@@ -65,6 +65,17 @@ Go tests in `internal/bridge`, each reviewed against its Python property:
 
 The remaining MCP case is deferred to todo 16's "Expose the bridge as an MCP stdio server and wire `crw bridge`" and "QA scenarios: happy = stdio round trip create_thread against fakehost via an MCP client in Go test". Property parity is recorded row by row in the todo-15 ledger below. The todo-15 bridge fakehost work is separate from the 36 execution and 23 settings package properties counted under todo 14 in the file rows below.
 
+## Todo 22 fault property progress (2026-09-26)
+
+Ported by property in `internal/relay/faults`. Tests named `Test22_FLT_*` and `Test22_FLF_*`
+cover the fault ledger, publications, sweep inputs, policy and budget settings, notification
+lifecycle, retry/reconciliation, and live findings. Stateful scenarios replay the same operations
+against the Go store and the real Python package and compare complete answers and persisted rows.
+All fault command argument surfaces are also compared byte for byte with live Python for help,
+missing required options, unknown options, option abbreviations, malformed observation JSON, and
+nested `--kind-module` import failures. `TestFaultsDependencyInventoryContainsNoNetworkClient`
+enforces the `test_faults.py` source-import property with `go list -deps ./internal/relay/faults/...`.
+
 ## Todo 21 part A delivery property progress (2026-09-26)
 
 Ported by property (Jun, 2026-09-26). Go tests in `internal/relay/delivery`, named

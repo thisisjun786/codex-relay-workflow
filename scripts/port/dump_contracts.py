@@ -31,7 +31,7 @@ if sys.prefix == sys.base_prefix:
     os.execvp("uv", ["uv", "run", "--no-sync", "python", *sys.argv])
 
 import anyio
-from codex_session_relay import cli, errors, service, stopadapter, store
+from codex_session_relay import cli, errors, faults, projects, service, stopadapter, store
 from codex_thread_bridge import bridge, rpc
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -420,6 +420,12 @@ def contracts(parser: dict[str, JSONValue], tools: dict[str, JSONValue],
     hook_keys = settings_keys()
     data = {
         "relay-cli.json": parser,
+        "fault-kinds.json": {
+            "classes": {name: policy for name, policy in sorted(faults.CLASS_POLICY.items())},
+            "kinds": {name: {key: value for key, value in declaration.items()
+                              if key in ("name", "creates", "requires_issue", "target", "evidence")}
+                      for name, declaration in sorted(faults.KINDS.items())},
+        },
         "relay-exit-codes.json": {
             "codes": {"ok": cli.EXIT_OK, "refused": cli.EXIT_REFUSED,
                       "host": cli.EXIT_HOST, "usage": cli.EXIT_USAGE,

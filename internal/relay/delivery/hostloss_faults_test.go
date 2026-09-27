@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"sort"
 
@@ -13,8 +14,10 @@ import (
 
 func (h *hl) sweeper() *faults.Sweeper {
 	return &faults.Sweeper{Store: h.store, MaxAttempts: h.delivery.Policy.MaxAttempts, Now: faults.WallClockISO,
+		HostRecordPath: filepath.Join(os.Getenv("XDG_STATE_HOME"), "codex-relay-workflow", "host-record.json"),
 		Installation: faults.Installation{Package: "codex-session-relay", Version: "0.1.0",
 			Location: filepath.Join(repoRoot(h.t), "packages", "codex-session-relay", "src", "codex_session_relay")},
+		SupersessionReason: h.delivery.SupersessionReason,
 		Current: func(ctx context.Context, event string) (bool, error) {
 			reason, err := h.delivery.SupersessionReason(ctx, event)
 			return reason == "", err
@@ -27,7 +30,8 @@ func (h *hl) faultStates() []any {
 	sw := h.sweeper()
 	batch, err := sw.Sweep(h.ctx, "crw")
 	mustDo(h.t, err)
-	mustDo(h.t, sw.RecordAll(h.ctx, &faults.Ledger{Store: h.store, Clock: h.clock}, batch))
+	_, err = sw.RecordAll(h.ctx, &faults.Ledger{Store: h.store, Clock: h.clock}, batch)
+	mustDo(h.t, err)
 	rows, err := all(h.ctx, h.store, "SELECT state, severity FROM fault_ledger WHERE fault_class = 'delivery_stalled'")
 	mustDo(h.t, err)
 	var pairs [][2]string

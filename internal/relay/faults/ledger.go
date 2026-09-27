@@ -3,7 +3,6 @@ package faults
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -33,6 +32,8 @@ const (
 	triggerEscalate   = "escalate"
 	triggerRecur      = "recur"
 	triggerReopen     = "reopen"
+	triggerFix        = "fix"
+	triggerResolve    = "resolve"
 	occurrence        = "occurrence"
 	clearedKind       = "cleared"
 	maxEvidence       = 8
@@ -49,11 +50,20 @@ type classPolicy struct{ component, clears string }
 
 // classes are the registered classes this subset can record (register_class).
 var classes = map[string]classPolicy{
-	"delivery_stalled": {"delivery", "a delivery to the same recipient reaching dispatched"},
+	"completion_mismatch":    {"completion", "the evidence the completion lacked being observed and reverified"},
+	"completion_unverified":  {"completion", "a later reading that establishes the check either way"},
+	"delivery_refused":       {"delivery", "the delivery being sent or settling, or its newest withholding naming another reason"},
+	"delivery_stalled":       {"delivery", "a delivery to the same recipient reaching dispatched"},
+	"managed_start_failed":   {"managed_start", "the request recording an accepted receipt or attaching, or its newest creation-stage answer saying something else"},
+	"observation_stalled":    {"observation", "a successful poll of the same anchor, or its turn settling"},
+	"observation_unmeasured": {"reporting", "a later reading of the same turn that establishes something"},
+	"product_defect":         {"product", "a later reading of the same product, component and symptom that finds it gone, or the fix and reverification loop"},
+	"product_expected":       {"product", "the expected state ending: the cancellation settled, the approval given, or the support added"},
+	"project_needed":         {"planning", "the project being created and bound; the record stays as that project's creation record"},
+	"record_sync_failed":     {"sync", "any synchronisation job on the same target confirming"},
+	"report_omitted":         {"reporting", "a reading of the same turn that no longer says unreported"},
+	"unclassified_incident":  {"triage", "classification into a registered product, which re-files every stored incident there"},
 }
-
-// ErrNotPorted marks a ledger path todo 22 ports; this subset refuses it rather than guessing.
-var ErrNotPorted = errors.New("faults: not ported in the todo 21 subset (todo 22 owns this)")
 
 // Observation is faults.observation.
 type Observation struct {
@@ -70,7 +80,16 @@ func canonicalSignature(signature map[string]any) string { return dumps(signatur
 
 // FaultID is fault_id without a workspace.
 func FaultID(product, class string, signature map[string]any) string {
-	return sha256Hex(product + "|" + class + "|" + canonicalSignature(signature))[:idWidth]
+	return FaultIDInWorkspace(product, class, signature, "")
+}
+
+// FaultIDInWorkspace preserves old identities when no workspace was given.
+func FaultIDInWorkspace(product, class string, signature map[string]any, workspace string) string {
+	text := product + "|" + class + "|" + canonicalSignature(signature)
+	if workspace != "" {
+		text += "|workspace=" + workspace
+	}
+	return sha256Hex(text)[:idWidth]
 }
 
 func occurrenceID(identifier, key string, episode int64, cleared bool) string {
@@ -91,17 +110,35 @@ func identityDigest(identifier, kind, trigger string, cycle int64) string {
 
 func evidenceDigest(evidence []any) string { return sha256Hex(dumps(evidence, true)) }
 
-// scopeKeyFor is scope_key_for without a workspace.
+func encodeScopePart(part string) string {
+	r := strings.NewReplacer("%", "%25", "|", "%7C", ":", "%3A", "@", "%40")
+	return r.Replace(part)
+}
 func scopeKeyFor(product string, scope map[string]any) string {
+	project := ""
 	if p := scope["projectKey"]; named(p) {
-		return product + ":" + p.(string)
+		project = p.(string)
+	}
+	if workspace, ok := scope["workspace"].(string); ok {
+		return "ws|" + encodeScopePart(product) + "|" + encodeScopePart(workspace) + "|" + encodeScopePart(project)
+	}
+	if project != "" {
+		return product + ":" + project
 	}
 	return product
 }
 
 func boundedEvidence(evidence []any) ([]any, bool) {
-	kept := evidence
+	filtered := make([]any, 0, len(evidence))
 	truncated := false
+	for _, entry := range evidence {
+		if _, ok := entry.(map[string]any); ok {
+			filtered = append(filtered, entry)
+		} else {
+			truncated = true
+		}
+	}
+	kept := filtered
 	if len(kept) > maxEvidence {
 		kept, truncated = kept[:maxEvidence], true
 	}
@@ -130,13 +167,14 @@ type fact struct {
 func readObservation(o Observation) (fact, error) {
 	policy, ok := classes[o.FaultClass]
 	if !ok {
-		return fact{}, fmt.Errorf("%w: fault class %q", ErrNotPorted, o.FaultClass)
+		return fact{}, fmt.Errorf("fault_class_unregistered: '%s' is not a registered fault class, so nothing declares what would clear it", o.FaultClass)
 	}
 	if _, ok := severityRank[o.Severity]; !ok || !productName.MatchString(o.Product) || !named(o.OccurrenceKey) || len(o.Signature) == 0 {
-		return fact{}, fmt.Errorf("faults: malformed observation")
+		return fact{}, fmt.Errorf("fault_observation_malformed: malformed observation")
 	}
-	if w, ok := o.Scope["workspace"]; ok && w != nil {
-		return fact{}, fmt.Errorf("%w: a workspace scope", ErrNotPorted)
+	workspace, _ := o.Scope["workspace"].(string)
+	if _, ok := o.Scope["workspace"]; ok && !named(o.Scope["workspace"]) {
+		return fact{}, fmt.Errorf("fault_observation_malformed: a workspace is a non-blank string")
 	}
 	scope := map[string]any{}
 	for k, v := range o.Scope {
@@ -147,7 +185,7 @@ func readObservation(o Observation) (fact, error) {
 	o.Scope = scope
 	evidence, truncated := boundedEvidence(o.Evidence)
 	threshold := map[string]any{Broken: int64(1), Degraded: int64(3), Notice: nil}[o.Severity]
-	return fact{Observation: o, id: FaultID(o.Product, o.FaultClass, o.Signature), component: policy.component,
+	return fact{Observation: o, id: FaultIDInWorkspace(o.Product, o.FaultClass, o.Signature, workspace), component: policy.component,
 		signature: canonicalSignature(o.Signature), scopeKey: scopeKeyFor(o.Product, scope), evidence: evidence,
 		evidenceDigest: evidenceDigest(evidence), truncated: truncated, threshold: threshold, window: defaultWindow, publish: threshold != nil}, nil
 }
@@ -213,7 +251,19 @@ func (l *Ledger) Record(ctx context.Context, o Observation) (bool, error) {
 			return err
 		}
 		if alias != nil {
-			return fmt.Errorf("%w: an aliased fault", ErrNotPorted)
+			f.id = text(alias, "fault_id")
+		} else if workspace, ok := f.Scope["workspace"].(string); ok {
+			legacy := FaultID(f.Product, f.FaultClass, f.Signature)
+			old, e := l.one(ctx, "SELECT scope FROM fault_ledger WHERE fault_id = ?", legacy)
+			if e != nil {
+				return e
+			}
+			if old != nil && loadsMap(text(old, "scope"))["workspace"] == workspace {
+				if _, e := l.exec(ctx, "INSERT INTO fault_aliases (alias_id, fault_id, created_at) VALUES (?,?,?)", f.id, legacy, nowISO); e != nil {
+					return e
+				}
+				f.id = legacy
+			}
 		}
 		existing, err := l.one(ctx, "SELECT * FROM fault_ledger WHERE fault_id = ?", f.id)
 		if err != nil {
@@ -232,14 +282,16 @@ func (l *Ledger) Record(ctx context.Context, o Observation) (bool, error) {
 				return err
 			}
 			if other != nil {
-				return fmt.Errorf("fault_scope_conflict: scope key %s is already carried by product %s", f.scopeKey, text(other, "product"))
+				return fmt.Errorf("fault_scope_conflict: scope key %s is already carried by product %s; one product's issues are never filed through another's key", f1Repr(f.scopeKey), f1Repr(text(other, "product")))
 			}
 			if _, err := l.exec(ctx, "INSERT INTO fault_ledger (fault_id, product, fault_class, component,  severity, signature, scope, scope_key, state, cycle, occurrence_count,  reopen_count, detail, suppression, first_seen_at, last_seen_at,  updated_at) VALUES (?,?,?,?,?,?,?,?,?,1,0,0,?,?,?,?,?)",
 				f.id, f.Product, f.FaultClass, f.component, f.Severity, f.signature, scopeText, f.scopeKey, Observed, f.Detail, nil, nowISO, nowISO, nowISO); err != nil {
 				return err
 			}
-		} else if f.scopeKey != text(existing, "scope_key") || scopeText != text(existing, "scope") {
-			return fmt.Errorf("%w: rescoping a fault", ErrNotPorted)
+		} else if f.scopeKey != text(existing, "scope_key") && f.Scope["workspace"] == loadsMap(text(existing, "scope"))["workspace"] {
+			if err := l.rescope(ctx, existing, f.Scope, nowISO); err != nil {
+				return err
+			}
 		}
 		r, err := l.one(ctx, "SELECT * FROM fault_ledger WHERE fault_id = ?", f.id)
 		if err != nil {
@@ -293,9 +345,15 @@ func (l *Ledger) Record(ctx context.Context, o Observation) (bool, error) {
 			return err
 		}
 		if override != nil {
-			return fmt.Errorf("%w: a policy override", ErrNotPorted)
+			if override.Get("threshold") != nil {
+				f.threshold = integer(override, "threshold")
+				f.publish = true
+			}
+			if override.Get("window_seconds") != nil {
+				f.window = override.Get("window_seconds").(float64)
+			}
 		}
-		suppression, publish, err := l.suppression(ctx, f.id, f, severity, now)
+		suppression, publish, err := l.suppression(ctx, f.id, f, severity, now, override)
 		if err != nil {
 			return err
 		}
@@ -308,8 +366,13 @@ func (l *Ledger) Record(ctx context.Context, o Observation) (bool, error) {
 			return err
 		}
 		next, cycle, reopened, trigger := transition(state, integer(r, "cycle"), f.Cleared, publish, escalated, severity, landed != nil, opened != "")
-		if next == Withdrawn || reopened || next == Resolved {
-			return fmt.Errorf("%w: a %s transition", ErrNotPorted, next)
+		if next == Withdrawn && state != Withdrawn {
+			if err := l.cancelUnissued(ctx, f.id, "the fault was withdrawn before anything landed", nowISO); err != nil {
+				return err
+			}
+			if _, err := l.exec(ctx, "UPDATE fault_notifications SET state = ?, updated_at = ? WHERE fault_id = ? AND state = ?", Withdrawn, nowISO, f.id, pending); err != nil {
+				return err
+			}
 		}
 		detail := f.Detail
 		if detail == "" {
@@ -324,7 +387,7 @@ func (l *Ledger) Record(ctx context.Context, o Observation) (bool, error) {
 			resolvedAt = r.Get("resolved_at")
 		}
 		if _, err := l.exec(ctx, "UPDATE fault_ledger SET state = ?, cycle = ?, severity = ?, episode = ?,  occurrence_count = ?, reopen_count = reopen_count + ?, detail = ?,  suppression = ?, last_seen_at = ?, cleared_at = ?, resolved_at = ?,  updated_at = ? WHERE fault_id = ?",
-			next, cycle, severity, episode, count, 0, detail, suppression, nowISO, clearedAt, resolvedAt, nowISO, f.id); err != nil {
+			next, cycle, severity, episode+boolInt(next == Withdrawn), count, boolInt(reopened), detail, suppression, nowISO, clearedAt, resolvedAt, nowISO, f.id); err != nil {
 			return err
 		}
 		if trigger != "" {
@@ -332,6 +395,15 @@ func (l *Ledger) Record(ctx context.Context, o Observation) (bool, error) {
 				return err
 			}
 			reason, _, _ := strings.Cut(trigger, ":")
+			if reason == triggerReopen {
+				fresh, err := l.one(ctx, "SELECT * FROM fault_ledger WHERE fault_id = ?", f.id)
+				if err != nil {
+					return err
+				}
+				if _, err = f2Update(ctx, l, fresh, triggerReopen, nil, nowISO); err != nil {
+					return err
+				}
+			}
 			if (reason == triggerOpen || reason == triggerReopen) && severity == Broken {
 				if err := l.notify(ctx, f.id, cycle, nowISO); err != nil {
 					return err
@@ -351,10 +423,29 @@ func boolInt(b bool) int64 {
 	return 0
 }
 
-func (l *Ledger) suppression(ctx context.Context, identifier string, f fact, severity string, now float64) (string, bool, error) {
+// cancelUnissued is Python's _cancel_where for every unissued publication of a fault.
+// A claimed publication gives back only its current attempt and budget use.
+func (l *Ledger) cancelUnissued(ctx context.Context, identifier, reason, now string) error {
+	claimed := "SELECT p.publication_id FROM fault_publications p WHERE p.fault_id = ? AND p.state = ?"
+	current := "SELECT MAX(a.attempt_id) FROM fault_publication_attempts a WHERE a.publication_id IN (" + claimed + ") GROUP BY a.publication_id"
+	if _, err := l.exec(ctx, "DELETE FROM fault_budget_uses WHERE product = (SELECT product FROM fault_ledger WHERE fault_id = ?) AND ref IN (SELECT a.publication_id || ':' || a.attempt_id FROM fault_publication_attempts a WHERE a.attempt_id IN ("+current+"))", identifier, identifier, "claimed"); err != nil {
+		return err
+	}
+	if _, err := l.exec(ctx, "UPDATE fault_publication_attempts SET outcome = 'cancelled', ended = 1, ended_at = ? WHERE attempt_id IN ("+current+")", now, identifier, "claimed"); err != nil {
+		return err
+	}
+	_, err := l.exec(ctx, "UPDATE fault_publications SET state = ?, claim_token = NULL, lease_owner = NULL, lease_until = NULL, last_error = ?, updated_at = ?, attempts = attempts - (CASE WHEN state = ? THEN 1 ELSE 0 END) WHERE fault_id = ? AND state IN (?,?,?)", cancelled, reason, now, "claimed", identifier, pending, "failed", "claimed")
+	return err
+}
+
+func (l *Ledger) suppression(ctx context.Context, identifier string, f fact, severity string, now float64, override row) (string, bool, error) {
+	source := ""
+	if override != nil {
+		source = " (product override: " + text(override, "reason") + ")"
+	}
 	if !f.publish {
 		return dumps(map[string]any{"publish": false, "threshold": nil, "window": f.window, "counted": nil,
-			"reason": fmt.Sprintf("a %s is recorded for an operator and never filed", severity)}, false), false, nil
+			"reason": fmt.Sprintf("a %s is recorded for an operator and never filed%s", severity, source)}, false), false, nil
 	}
 	r, err := l.one(ctx, "SELECT COUNT(*) AS n FROM fault_timeline WHERE fault_id = ? AND kind = ? AND recorded_ts >= ?", identifier, occurrence, now-f.window)
 	if err != nil {
@@ -367,7 +458,30 @@ func (l *Ledger) suppression(ctx context.Context, identifier string, f fact, sev
 	if publish {
 		reason = fmt.Sprintf("%d observation(s) inside %ds reached the threshold of %d", counted, int64(f.window), threshold)
 	}
-	return dumps(map[string]any{"publish": publish, "threshold": threshold, "window": f.window, "counted": counted, "reason": reason}, false), publish, nil
+	return dumps(map[string]any{"publish": publish, "threshold": threshold, "window": f.window, "counted": counted, "reason": reason + source}, false), publish, nil
+}
+
+// Prune removes old occurrence evidence without changing the timeline that decides
+// suppression and duplicate observations.
+func (l *Ledger) Prune(ctx context.Context, identifier string, keep int) (int64, error) {
+	if keep < 1 {
+		return 0, fmt.Errorf("fault_observation_malformed: keep at least one")
+	}
+	var removed int64
+	err := l.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
+		fault, err := cFault(ctx, l, identifier)
+		if err != nil {
+			return err
+		}
+		identifier = text(fault, "fault_id")
+		removed, err = l.exec(ctx, "DELETE FROM fault_occurrences WHERE fault_id = ? AND rowid NOT IN (SELECT rowid FROM fault_occurrences WHERE fault_id = ? ORDER BY rowid DESC LIMIT ?)", identifier, identifier, keep)
+		if err != nil {
+			return err
+		}
+		_, err = l.exec(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'fault_prune',?,?)", l.Clock.ISO(), identifier, dumps(map[string]any{"kept": keep, "removed": removed}, false))
+		return err
+	})
+	return removed, err
 }
 
 // issueSlot is _issue_slot: "issue", "create", or "" when free (then create may be a cancelled
@@ -438,11 +552,35 @@ func (l *Ledger) enqueue(ctx context.Context, identifier, trigger, now, holder s
 	}
 	reason, _, _ := strings.Cut(trigger, ":")
 	if reason == triggerOpen && adoption != nil {
-		return fmt.Errorf("%w: materializing an adoption", ErrNotPorted)
+		ref, err := l.one(ctx, "SELECT external_ref FROM fault_adoptions WHERE fault_id = ? AND state = ?", identifier, pending)
+		if err != nil {
+			return err
+		}
+		if _, err = l.exec(ctx, "UPDATE fault_ledger SET external_ref = ?, updated_at = ? WHERE fault_id = ? AND external_ref IS NULL", ref.Get("external_ref"), now, identifier); err != nil {
+			return err
+		}
+		if _, err = l.exec(ctx, "UPDATE fault_adoptions SET state = 'materialized', updated_at = ? WHERE fault_id = ?", now, identifier); err != nil {
+			return err
+		}
+		if err = l.insertPublication(ctx, identifier, appendComment, triggerOpen, now, ""); err != nil {
+			return err
+		}
+		fault, err := l.one(ctx, "SELECT product, scope_key FROM fault_ledger WHERE fault_id = ?", identifier)
+		if err != nil {
+			return err
+		}
+		target, err := l.one(ctx, "SELECT project_ref FROM fault_target_projects WHERE scope_key = ? AND product = ?", text(fault, "scope_key"), text(fault, "product"))
+		if err != nil {
+			return err
+		}
+		if target == nil || target.Get("project_ref") == nil {
+			return dUnlinkOne(ctx, l, identifier, now)
+		}
+		return dRelinkOne(ctx, l, identifier, text(target, "project_ref"), now)
 	}
 	switch {
 	case reason == triggerOpen && holder == "issue", reason != triggerOpen && holder == "issue":
-		return fmt.Errorf("%w: a comment on an owned issue", ErrNotPorted)
+		return l.insertPublication(ctx, identifier, appendComment, trigger, now, clears)
 	case reason == triggerOpen && holder == "create":
 		return nil
 	case reason == triggerOpen:
@@ -455,6 +593,28 @@ func (l *Ledger) enqueue(ctx context.Context, identifier, trigger, now, holder s
 	return l.insertPublication(ctx, identifier, appendComment, trigger, now, clears)
 }
 
+func (l *Ledger) enqueueWithRemediation(ctx context.Context, identifier, trigger, now, holder string, create row, remediationID string) error {
+	if err := l.enqueue(ctx, identifier, trigger, now, holder, create, ""); err != nil {
+		return err
+	}
+	publication := publicationID(identifier, appendComment, trigger)
+	fault, err := l.one(ctx, "SELECT * FROM fault_ledger WHERE fault_id=?", identifier)
+	if err != nil {
+		return err
+	}
+	remediation, err := l.one(ctx, "SELECT * FROM fault_remediations WHERE remediation_id=?", remediationID)
+	if err != nil {
+		return err
+	}
+	occurrences, err := l.Store.All(ctx, "SELECT * FROM fault_occurrences WHERE fault_id=? ORDER BY rowid DESC LIMIT ?", identifier, renderedOccur)
+	if err != nil {
+		return err
+	}
+	summary := renderSummaryWithRemediation(fault, trigger, occurrences, publication, remediation)
+	_, err = l.exec(ctx, "UPDATE fault_publications SET summary=? WHERE publication_id=?", summary, publication)
+	return err
+}
+
 func (l *Ledger) insertPublication(ctx context.Context, identifier, kind, trigger, now, clears string) error {
 	fault, err := l.one(ctx, "SELECT * FROM fault_ledger WHERE fault_id = ?", identifier)
 	if err != nil {
@@ -463,14 +623,18 @@ func (l *Ledger) insertPublication(ctx context.Context, identifier, kind, trigge
 	publication := publicationID(identifier, kind, trigger)
 	var team any
 	targetMode := "none"
-	if kind == openRecord {
-		targetMode = "team+project"
-		target, err := l.one(ctx, "SELECT t.tracker_ref, p.project_ref, p.product FROM fault_targets t LEFT JOIN fault_target_projects p ON p.scope_key = t.scope_key WHERE t.scope_key = ?", text(fault, "scope_key"))
+	var project any
+	if spec := kinds[kind]; spec.Target != "" {
+		targetMode = spec.Target
+		target, _, err := f1OwnedTarget(ctx, l, fault)
 		if err != nil {
 			return err
 		}
 		if target != nil {
-			return fmt.Errorf("%w: a configured fault target", ErrNotPorted)
+			team = target.Get("tracker_ref")
+			if spec.Target == "team+project" {
+				project = target.Get("project_ref")
+			}
 		}
 	}
 	occurrences, err := l.Store.All(ctx, "SELECT * FROM fault_occurrences WHERE fault_id = ? ORDER BY rowid DESC LIMIT ?", identifier, renderedOccur)
@@ -490,23 +654,29 @@ func (l *Ledger) insertPublication(ctx context.Context, identifier, kind, trigge
 			return err
 		}
 	case text(existing, "state") == cancelled:
-		return fmt.Errorf("%w: reviving a cancelled publication", ErrNotPorted)
+		if _, err := l.exec(ctx, "UPDATE fault_publications SET state = ?, cycle = ?, tracker_ref = ?, external_ref = ?, summary = ?, identity_digest = ?, attempts = 0, next_attempt_at = NULL, claim_token = NULL, lease_owner = NULL, lease_until = NULL, issued_at = NULL, last_error = NULL, updated_at = ? WHERE publication_id = ?", pending, integer(fault, "cycle"), team, fault.Get("external_ref"), summary, digest, now, publication); err != nil {
+			return err
+		}
 	default:
 		return nil
 	}
 	_, err = l.exec(ctx, "INSERT INTO fault_publication_payloads (publication_id, project_ref, payload,  hold_reason, updated_at, target_mode) VALUES (?,?,?,?,?,?) ON CONFLICT(publication_id) DO UPDATE SET project_ref = excluded.project_ref, payload = excluded.payload,   hold_reason = excluded.hold_reason, updated_at = excluded.updated_at,   target_mode = excluded.target_mode",
-		publication, nil, nil, nil, now, targetMode)
+		publication, project, nil, nil, now, targetMode)
 	return err
 }
 
 func (l *Ledger) notify(ctx context.Context, identifier string, cycle int64, now string) error {
+	return l.notifyKind(ctx, identifier, blocking, cycle, now)
+}
+
+func (l *Ledger) notifyKind(ctx context.Context, identifier, kind string, cycle int64, now string) error {
 	fault, err := l.one(ctx, "SELECT product FROM fault_ledger WHERE fault_id = ?", identifier)
 	if err != nil {
 		return err
 	}
-	notification := sha256Hex(fmt.Sprintf("%s|%s|%d", identifier, blocking, cycle))[:idWidth]
+	notification := sha256Hex(fmt.Sprintf("%s|%s|%d", identifier, kind, cycle))[:idWidth]
 	_, err = l.exec(ctx, "INSERT INTO fault_notifications (notification_id, fault_id, product,  kind, reason, cycle, ref, state, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(notification_id) DO UPDATE SET state = excluded.state,   last_error = NULL, updated_at = excluded.updated_at WHERE fault_notifications.state = ?",
-		notification, identifier, text(fault, "product"), blocking, nil, cycle, nil, pending, now, now, Withdrawn)
+		notification, identifier, text(fault, "product"), kind, nil, cycle, nil, pending, now, now, Withdrawn)
 	return err
 }
 
@@ -543,7 +713,20 @@ func pyStr(v any) string {
 	return fmt.Sprint(v)
 }
 
-// renderSummary is render_summary for the open and escalate triggers this subset queues.
+// renderSummary is render_summary for publication triggers.
+func renderSummaryWithRemediation(fault row, trigger string, occurrences []row, publication string, remediation row) string {
+	summary := renderSummary(fault, trigger, occurrences, "", publication)
+	needle := "\n\nevidence, as observed at the time:"
+	line := "\n\nfix: " + text(remediation, "ref")
+	if detail := text(remediation, "detail"); detail != "" {
+		line += "\n" + detail
+	}
+	if strings.Contains(summary, needle) {
+		return strings.Replace(summary, needle, line+needle, 1)
+	}
+	return strings.Replace(summary, "\n\nRecorded by codex-session-relay.", line+"\n\nRecorded by codex-session-relay.", 1)
+}
+
 func renderSummary(fault row, trigger string, occurrences []row, clears, publication string) string {
 	lines := []string{fmt.Sprintf("[%s] %s: %s", text(fault, "product"), text(fault, "fault_class"), domain(fault)), ""}
 	reason, _, _ := strings.Cut(trigger, ":")
@@ -552,6 +735,14 @@ func renderSummary(fault row, trigger string, occurrences []row, clears, publica
 		lines = append(lines, fmt.Sprintf("The relay recorded a %s fault in its %s path and is filing it once.", text(fault, "severity"), text(fault, "component")))
 	case triggerEscalate:
 		lines = append(lines, fmt.Sprintf("This fault escalated to %s.", text(fault, "severity")))
+	case "recur":
+		lines = append(lines, "This fault happened again after a fix was recorded, so the fix did not hold and the record is open again.")
+	case "reopen":
+		lines = append(lines, fmt.Sprintf("This fault happened again after it was resolved. It is the same record, reopened for cycle %d.", integer(fault, "cycle")))
+	case "fix":
+		lines = append(lines, "A fix was recorded. This does not resolve the fault: a reverification recorded after the fix, with no occurrence after it, does.")
+	case "resolve":
+		lines = append(lines, "Resolved. A fix was recorded, a reverification was recorded after it, and nothing has been observed since.")
 	}
 	lines = append(lines, "", "fault: "+text(fault, "fault_id"),
 		fmt.Sprintf("class: %s  component: %s  severity: %s", text(fault, "fault_class"), text(fault, "component"), text(fault, "severity")),

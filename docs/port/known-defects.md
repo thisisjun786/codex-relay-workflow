@@ -1,4 +1,10 @@
-# Python defects not carried over
+# Known defects and intentional port differences
+
+- CRW-238: the admitted-turn scan has an open performance defect. The Go fault sweep must not silently change its scan shape as part of this port; the owning issue tracks remediation.
+- Todo 22 replaces Python's dynamic `--kind-module` imports with a static fault-kind registry generated from the Python declarations in `contract/schema/fault-kinds.json`. The native binary accepts `codex_session_relay.projects`, `json`, and `os.path` as registered module names without importing Python. Arbitrary importable modules outside this registry are refused with exit 4, naming the first unregistered module. Empty and relative names retain Python's exit 3 host-error shape. This intentional compatibility difference removes dynamic publication-kind registration; it does not add a publication kind.
+- Python `FaultLedger.record` only calls `_rescope` when an observation changes `scope_key`. An observation that changes scope metadata such as `issueKey` while retaining the same workspace and `projectKey` therefore leaves the old serialized scope in `fault_ledger.scope`. Go preserves this observable behavior for parity; `TestRecordReviewFindingsWholeOutput/same_target_key_does_not_update_scope_text` compares the complete CLI replies and every SQLite table with live Python.
+
+## Python defects not carried over
 
 - **Python defect not carried over:** `daemon._gate` fingerprint omits the receipt turn id (`daemon.py:~993`), so an accepted receipt that gains a turn id later is never reconciled; Go includes it (`TestReconcilePass_receipt_gains_turn_id`).
 

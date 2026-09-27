@@ -11,6 +11,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -119,6 +120,21 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 	if len(remaining) == 0 {
 		return parseError(globalUsage, "the following arguments are required: command")
 	}
+	check := func(selection store.StateSelection, socket string) error {
+		services := Services{Selection: selection, SocketPath: socket, AdapterRequested: socket != "", Program: program(argv0)}
+		refusal, err := selectionRefusal(services)
+		if err != nil {
+			return err
+		}
+		if refusal != nil {
+			return &PayloadExit{Payload: refusal, Code: contract.ExitRefused}
+		}
+		return nil
+	}
+	if slices.Contains(faults.Names(), remaining[0]) {
+		code, _ := faults.ExecuteAs(ctx, prog, argv, stdout, stderr, check)
+		return code
+	}
 	if slices.Contains(registry.Names(), remaining[0]) {
 		return registry.ExecuteAs(ctx, prog, argv, stdout, stderr, func(selection store.StateSelection, socket string) error {
 			services := Services{Selection: selection, SocketPath: socket, AdapterRequested: socket != "", Program: program(argv0)}
@@ -213,24 +229,36 @@ func run(ctx context.Context, command *Command, argv0, state, socket string, kin
 	return command.Run(ctx, services, args)
 }
 
-// importKindModules is _import_kind_modules. A Go build has no Python modules to import, so
-// until kinds come from a static registry (todo 22) every named module is one this process
-// cannot import, answered with the exception importlib.import_module raises for it.
+// importKindModules checks the static module registry before entering a command.
 func importKindModules(names []string) error {
 	// The first name decides: Python imports them in order and stops at the first failure.
 	if len(names) > 0 {
-		name := names[0]
-		if name == "" {
-			return &HostError{Class: "ValueError", Detail: "Empty module name"}
+		for _, candidate := range names {
+			if candidate == "" {
+				return &HostError{Class: "ValueError", Detail: "Empty module name"}
+			}
+			if strings.HasPrefix(candidate, ".") {
+				return &HostError{Class: "TypeError", Detail: "the 'package' argument is required to perform a relative import for " + store.PythonRepr(candidate)}
+			}
+			if faults.RegisteredModule(candidate) {
+				continue
+			}
+			missing := candidate
+			parts := strings.Split(candidate, ".")
+			for i := 1; i < len(parts); i++ {
+				prefix := strings.Join(parts[:i], ".")
+				if prefix == "codex_session_relay" || faults.RegisteredModule(prefix) {
+					continue
+				}
+				missing = prefix
+				break
+			}
+			return &UsageError{
+				Detail: "--kind-module " + store.PythonRepr(candidate) + " could not be imported: No module named " + store.PythonRepr(missing),
+				Code:   contract.ExitUsage,
+			}
 		}
-		if strings.HasPrefix(name, ".") {
-			return &HostError{Class: "TypeError", Detail: "the 'package' argument is required to perform a relative import for " + store.PythonRepr(name)}
-		}
-		top, _, _ := strings.Cut(name, ".")
-		return &UsageError{
-			Detail: "--kind-module " + store.PythonRepr(name) + " could not be imported: No module named " + store.PythonRepr(top),
-			Code:   contract.ExitUsage,
-		}
+		return nil
 	}
 	return nil
 }
@@ -297,14 +325,14 @@ func argparseMessage(err error) string {
 	return text
 }
 
-// allNames is every relay command this build registers: this package's, registry's and delivery's.
+// allNames is every relay command this build registers: this package's, registry's, delivery's and faults'.
 func allNames() []string {
 	names := make([]string, 0, len(Commands))
 	for _, command := range Commands {
 		names = append(names, command.Name)
 	}
 	names = append(names, registry.Names()...)
-	return append(names, delivery.CommandNames()...)
+	return append(append(names, delivery.CommandNames()...), faults.Names()...)
 }
 
 func commandNames() string { return strings.Join(allNames(), ",") }
