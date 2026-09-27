@@ -163,7 +163,7 @@ func directiveContest(firstDigest string, firstReference any, secondDigest strin
 	if here == nil || there == nil {
 		return "purpose_unknown"
 	}
-	if *here != *there {
+	if !samePlace(here, there) {
 		return ""
 	}
 	return here.kind

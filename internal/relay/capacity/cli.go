@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -247,28 +248,20 @@ type globalFlags struct{ state, socket string }
 
 func globals(argv []string) (globalFlags, []string, error) {
 	var g globalFlags
-	for i := 0; i < len(argv); i++ {
-		name, value, inline := strings.Cut(argv[i], "=")
-		switch name {
-		case "--state", "--socket", "--kind-module":
-			if !inline {
-				if i+1 >= len(argv) {
-					return g, nil, fmt.Errorf("argument %s: expected one argument", name)
-				}
-				i++
-				value = argv[i]
-			}
-			if name == "--state" {
-				g.state = value
-			} else if name == "--socket" {
-				g.socket = value
-			}
-		case "--json":
-		default:
-			return g, argv[i:], nil
-		}
+	root := argparse.Parse("", argv)
+	if root.Message != "" {
+		return g, nil, errors.New(root.Message)
 	}
-	return g, nil, nil
+	if root.Help || len(root.Unknown) > 0 {
+		return g, nil, nil // cli.ExecuteAs owns root help and errors.
+	}
+	if values := root.Values["state"]; len(values) > 0 {
+		g.state = values[0]
+	}
+	if values := root.Values["socket"]; len(values) > 0 {
+		g.socket = values[0]
+	}
+	return g, root.Remaining, nil
 }
 
 type usageError struct{ usage, message string }

@@ -7,11 +7,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -960,38 +960,58 @@ func f1Root() string {
 	_, file, _, _ := runtime.Caller(0)
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
 }
+
+type sweepInput struct {
+	readings any
+	after    *big.Int
+}
+type sweepInputKey struct{}
+
+func validateSweep(ctx context.Context, a map[string]string) (sweepInput, error) {
+	input := sweepInput{after: big.NewInt(0)}
+	if a["--readings"] != "" {
+		raw, e := f1Argument(a["--readings"], "readings")
+		if e != nil {
+			return input, e
+		}
+		value, e := loads(raw)
+		if e != nil {
+			return input, fmt.Errorf("fault_observation_malformed: the readings is not readable JSON: %s", store.PythonJSONError(raw))
+		}
+		input.readings = value
+	}
+	if a["--readings-after"] != "" {
+		input.after = integerArg(ctx, "--readings-after", a["--readings-after"])
+	}
+	if input.after.Sign() < 0 {
+		return input, fmt.Errorf("fault_observation_malformed: --readings-after is a non-negative integer, not %s", input.after.String())
+	}
+	return input, nil
+}
+
 func f1Sweep(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
+	input, ok := ctx.Value(sweepInputKey{}).(sweepInput)
+	if !ok {
+		var err error
+		input, err = validateSweep(ctx, a)
+		if err != nil {
+			return nil, err
+		}
+	}
 	product := a["--product"]
 	if product == "" {
 		product = "crw"
 	}
 	readings := []any{}
-	if a["--readings"] != "" {
-		raw, e := f1Argument(a["--readings"], "readings")
-		if e != nil {
-			return nil, e
-		}
-		value, e := loads(raw)
-		if e != nil {
-			return nil, fmt.Errorf("fault_observation_malformed: the readings is not readable JSON: %s", store.PythonJSONError(raw))
-		}
-		if list, ok := value.([]any); ok {
-			readings = list
-		} else if value != nil {
-			return nil, fmt.Errorf("fault_observation_malformed: readings are a list of reporting-observation/1 objects")
-		}
+	if list, ok := input.readings.([]any); ok {
+		readings = list
+	} else if input.readings != nil {
+		return nil, fmt.Errorf("fault_observation_malformed: readings are a list of reporting-observation/1 objects")
 	}
-	after := 0
-	if a["--readings-after"] != "" {
-		n, e := strconv.Atoi(a["--readings-after"])
-		if e != nil {
-			return nil, e
-		}
-		after = n
+	if !input.after.IsInt64() {
+		return nil, fmt.Errorf("fault_observation_malformed: readings after is an integer from 0 to 1000, not %s", input.after.String())
 	}
-	if after < 0 {
-		return nil, fmt.Errorf("fault_observation_malformed: --readings-after is a non-negative integer, not %d", after)
-	}
+	after := int(input.after.Int64())
 	stateRoot := os.Getenv("XDG_STATE_HOME")
 	if stateRoot == "" {
 		stateRoot = filepath.Join(os.Getenv("HOME"), ".local", "state")

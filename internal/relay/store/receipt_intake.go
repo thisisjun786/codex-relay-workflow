@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 )
 
@@ -77,6 +78,16 @@ func (in ReceiptIntake) accept(ctx context.Context, payload []byte, observation 
 	if err != nil {
 		return StoredReceipt{}, err
 	}
+	if claim.bigGeneration != nil {
+		relationship, err := in.Store.CurrentRelationship(ctx, claim.RelationshipID)
+		if err != nil {
+			return StoredReceipt{}, err
+		}
+		if relationship.Status != StatusActive {
+			return StoredReceipt{}, refuse(ReasonRelationshipNotActive, "relationship %q is %q and is never auto-resumed", relationship.ID, relationship.Status)
+		}
+		return StoredReceipt{}, refuse(ReasonUnknownGeneration, "generation %s was never opened on this relationship", claim.bigGeneration.String())
+	}
 	relationship, generation, err := in.activeGeneration(ctx, claim.RelationshipID, claim.Generation)
 	if err != nil {
 		return StoredReceipt{}, err
@@ -111,12 +122,11 @@ func (in ReceiptIntake) accept(ctx context.Context, payload []byte, observation 
 	if err != nil {
 		return StoredReceipt{}, err
 	}
-	var attempt *int
-	if claim.Attempt != nil {
-		value := int(*claim.Attempt)
-		attempt = &value
+	attempt := claim.bigAttempt
+	if attempt == nil && claim.Attempt != nil {
+		attempt = big.NewInt(*claim.Attempt)
 	}
-	expected, err := EventID(claim.RelationshipID, int(claim.Generation), claim.RevisionHash, string(claim.Outcome), claim.Turn.TurnID, attempt)
+	expected, err := EventIDBig(claim.RelationshipID, big.NewInt(claim.Generation), claim.RevisionHash, string(claim.Outcome), claim.Turn.TurnID, attempt)
 	if err != nil {
 		return StoredReceipt{}, refuse(ReasonOutcomeInconsistent, "%v", err)
 	}
@@ -219,6 +229,9 @@ func (in ReceiptIntake) storeEvent(ctx context.Context, claim ReceiptClaim, bind
 		}
 		if !errors.Is(lookup, sql.ErrNoRows) {
 			return fmt.Errorf("lookup event: %w", lookup)
+		}
+		if claim.bigAttempt != nil {
+			return &IntegerOverflow{}
 		}
 		staged := sql.NullString{String: now, Valid: stage == StageStaged}
 		if _, err := conn.ExecContext(ctx, `INSERT INTO events (event_id,relationship_id,execution_generation,revision_hash,outcome,producer,attempt,turn_thread_id,turn_id,turn_status,receipt,manifest_ref,path_binding_mode,stage,staged_at,first_seen_at,last_seen_at,observation_count) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`,

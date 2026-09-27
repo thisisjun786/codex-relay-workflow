@@ -2,7 +2,7 @@
 // required_for_candidate, which the merge-turn grant notice proposes); todo 24 owns and
 // extends this.
 
-package supervisor
+package evidence
 
 import (
 	"context"

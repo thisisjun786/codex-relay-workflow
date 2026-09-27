@@ -2,7 +2,6 @@ package mergeturn
 
 import (
 	"context"
-	"database/sql"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
@@ -118,7 +117,7 @@ func init() {
 		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
 			options := ClaimOptions{Relationship: p.Optional("relationship")}
 			if p.Given("pr") {
-				options.PR = sql.NullInt64{Int64: p.Integer("pr"), Valid: true}
+				options.PRValue = p.Integer("pr")
 			}
 			return answer(service(r).Request(ctx, p.Text("repository"), p.Text("base-ref"), p.Text("project"), p.Text("task"), p.Text("host"), p.Text("head"), p.Given("ready"), options))
 		})

@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 	"reflect"
 	"regexp"
 	"sort"
@@ -499,7 +499,7 @@ func Test26_MTW_10_python_whole_output(t *testing.T) {
 func Test26_MTW_9_python_whole_output(t *testing.T) {
 	w := wakeFx(t)
 	reading := func() {
-		r, err := supervisor.RequiredForCandidate(w.ctx, w.s, "rel-a", fxRepo, fxBase, "head-a")
+		r, err := evidence.RequiredForCandidate(w.ctx, w.s, "rel-a", fxRepo, fxBase, "head-a")
 		if err != nil {
 			t.Fatal(err)
 		}

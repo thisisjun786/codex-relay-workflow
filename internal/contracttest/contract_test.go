@@ -7,9 +7,16 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func TestMain(m *testing.M) {
+	cleanup, err := testsupport.IsolateRelayState()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	dir, err := os.MkdirTemp("", "crw-contracttest-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -17,6 +24,10 @@ func TestMain(m *testing.M) {
 	}
 	buildDir = dir
 	code := m.Run()
+	if err := cleanup(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		code = 1
+	}
 	if err := os.RemoveAll(dir); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		code = 1

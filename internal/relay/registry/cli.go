@@ -3,15 +3,17 @@ package registry
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/pyerr"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -31,8 +33,9 @@ type option struct {
 }
 
 type parsed struct {
-	values map[string][]string
-	set    map[string]bool
+	values  map[string][]string
+	set     map[string]bool
+	numbers map[string]any
 	// writes are register's settings, parsed once before the store is opened.
 	writes []settingsWrite
 }
@@ -52,9 +55,8 @@ func (p parsed) optional(name string) sql.NullString {
 	return sql.NullString{}
 }
 
-func (p parsed) integer(name string) int64 {
-	n, _ := strconv.ParseInt(strings.TrimSpace(p.text(name)), 10, 64)
-	return n
+func (p parsed) integer(name string) *big.Int {
+	return p.numbers[name].(*big.Int)
 }
 
 type command struct {
@@ -190,129 +192,25 @@ type usageError struct{ usage, message string }
 
 func (e *usageError) Error() string { return e.message }
 
-func (c command) usage(prog string) string {
-	parts := []string{"usage: " + prog + " " + c.name + " [-h]"}
-	if c.exclusive != nil {
-		var group []string
-		for _, name := range c.exclusive {
-			group = append(group, "--"+name+" "+strings.ToUpper(strings.ReplaceAll(name, "-", "_")))
-		}
-		return strings.Join(append(parts, "("+strings.Join(group, " | ")+")"), " ")
-	}
-	for _, o := range c.options {
-		metavar := strings.ToUpper(strings.ReplaceAll(o.name, "-", "_"))
-		if o.choices != nil {
-			metavar = "{" + strings.Join(o.choices, ",") + "}"
-		}
-		piece := "--" + o.name
-		if !o.flag {
-			piece += " " + metavar
-		}
-		if !o.required {
-			piece = "[" + piece + "]"
-		}
-		parts = append(parts, piece)
-	}
-	return strings.Join(parts, " ")
-}
+func (c command) usage(prog string) string { return argparse.Usage(prog, c.name) }
 
 func (c command) parse(prog string, argv []string) (parsed, error) {
 	p := parsed{values: map[string][]string{}, set: map[string]bool{}}
-	find := func(name string) *option {
-		for i := range c.options {
-			if c.options[i].name == name {
-				return &c.options[i]
-			}
-		}
-		return nil
+	result := argparse.Parse(c.name, argv)
+	if result.Help {
+		return p, &usageError{usage: c.usage(prog), message: "help"}
 	}
-	var unrecognized []string
-	for i := 0; i < len(argv); i++ {
-		arg := argv[i]
-		if arg == "-h" || arg == "--help" {
-			return p, &usageError{usage: c.usage(prog), message: "help"}
+	if result.Message != "" {
+		if result.Global {
+			return p, &usageError{argparse.Usage(prog, ""), "global:" + result.Message}
 		}
-		name, value, inline := strings.Cut(strings.TrimPrefix(arg, "--"), "=")
-		o := (*option)(nil)
-		if strings.HasPrefix(arg, "--") {
-			o = find(name)
-		}
-		if o == nil {
-			unrecognized = append(unrecognized, arg)
-			continue
-		}
-		if o.flag {
-			if contains(c.exclusive, o.name) {
-				for _, other := range c.exclusive {
-					if other != o.name && p.set[other] {
-						return p, &usageError{c.usage(prog), "argument --" + o.name + ": not allowed with argument --" + other}
-					}
-				}
-			}
-			p.values[o.name] = []string{"true"}
-			p.set[o.name] = true
-			continue
-		}
-		if !inline {
-			if i+1 >= len(argv) || strings.HasPrefix(argv[i+1], "--") {
-				return p, &usageError{c.usage(prog), "argument --" + o.name + ": expected one argument"}
-			}
-			i++
-			value = argv[i]
-		}
-		if o.choices != nil && !contains(o.choices, value) {
-			quoted := make([]string, len(o.choices))
-			for i, c := range o.choices {
-				quoted[i] = pyStr(c)
-			}
-			return p, &usageError{c.usage(prog), "argument --" + o.name + ": invalid choice: " + pyStr(value) + " (choose from " + strings.Join(quoted, ", ") + ")"}
-		}
-		if o.integer {
-			if _, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err != nil {
-				return p, &usageError{c.usage(prog), "argument --" + o.name + ": invalid int value: " + pyStr(value)}
-			}
-		}
-		if contains(c.exclusive, o.name) {
-			for _, other := range c.exclusive {
-				if other != o.name && p.set[other] {
-					return p, &usageError{c.usage(prog), "argument --" + o.name + ": not allowed with argument --" + other}
-				}
-			}
-		}
-		if o.multi {
-			p.values[o.name] = append(p.values[o.name], value)
-		} else {
-			p.values[o.name] = []string{value}
-		}
-		p.set[o.name] = true
+		return p, &usageError{c.usage(prog), result.Message}
 	}
-	var missing []string
+	p.values, p.set, p.numbers = result.Values, result.Given, result.Numbers
 	for _, o := range c.options {
-		if o.required && !p.set[o.name] {
-			missing = append(missing, "--"+o.name)
-		}
 		if !p.set[o.name] && o.def != "" {
 			p.values[o.name] = []string{o.def}
 		}
-	}
-	if len(missing) > 0 {
-		return p, &usageError{c.usage(prog), "the following arguments are required: " + strings.Join(missing, ", ")}
-	}
-	if c.exclusive != nil {
-		given := false
-		for _, name := range c.exclusive {
-			given = given || p.set[name]
-		}
-		if !given {
-			flags := make([]string, len(c.exclusive))
-			for i, name := range c.exclusive {
-				flags[i] = "--" + name
-			}
-			return p, &usageError{c.usage(prog), "one of the arguments " + strings.Join(flags, " ") + " is required"}
-		}
-	}
-	if len(unrecognized) > 0 {
-		return p, &usageError{"usage: " + prog + " [-h] [--state STATE] [--socket SOCKET] ...", "unrecognized arguments: " + strings.Join(unrecognized, " ")}
 	}
 	return p, nil
 }
@@ -366,11 +264,16 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 	var bad *usageError
 	if errors.As(err, &bad) {
 		if bad.message == "help" {
-			fmt.Fprintln(stdout, bad.usage)
+			fmt.Fprint(stdout, argparse.Help(prog, chosen.name))
 			return 0
 		}
 		fmt.Fprintln(stderr, bad.usage)
-		fmt.Fprintln(stderr, prog+" "+chosen.name+": error: "+bad.message)
+		who := prog + " " + chosen.name
+		message := bad.message
+		if detail, global := strings.CutPrefix(message, "global:"); global {
+			message, who = detail, prog
+		}
+		fmt.Fprintln(stderr, who+": error: "+message)
 		return 2
 	}
 	result, err := run(ctx, g, *chosen, p, check)
@@ -419,6 +322,7 @@ func emit(stdout, stderr io.Writer, result any, err error) int {
 	var bad *usage
 	var host *HostError
 	var payload PayloadError
+	var overflow *argparse.IntegerOverflow
 	switch {
 	case err == nil:
 	case errors.As(err, &payload):
@@ -431,6 +335,8 @@ func emit(stdout, stderr io.Writer, result any, err error) int {
 		result, code = contract.OrderedObject{{Key: "error", Value: "refused"}, {Key: "reason", Value: reason}, {Key: "detail", Value: refused.Detail}}, contract.ExitRefused
 	case errors.As(err, &bad):
 		result, code = contract.OrderedObject{{Key: "error", Value: "usage"}, {Key: "detail", Value: bad.detail}}, bad.code
+	case errors.As(err, &overflow):
+		result, code = contract.OrderedObject{{Key: "error", Value: "host"}, {Key: "detail", Value: overflow.Error()}}, contract.ExitHost
 	case errors.As(err, &host):
 		result, code = contract.OrderedObject{{Key: "error", Value: "host"}, {Key: "detail", Value: host.Error()}}, contract.ExitHost
 	default:
@@ -611,12 +517,12 @@ func cmdAdmitTurn(ctx context.Context, r *Registry, p parsed) (any, error) {
 	if err := r.AdmitExplicitly(ctx, rid, generation, turn, actor, p.text("reason")); err != nil {
 		return nil, err
 	}
-	return contract.OrderedObject{{Key: "relationship", Value: rid}, {Key: "generation", Value: generation},
+	return contract.OrderedObject{{Key: "relationship", Value: rid}, {Key: "generation", Value: json.Number(generation.String())},
 		{Key: "turn", Value: turn}, {Key: "evidence", Value: "explicit_admission"}}, nil
 }
 
 // AdmitExplicitly is admission.admit_explicitly.
-func (r *Registry) AdmitExplicitly(ctx context.Context, rid string, generation int64, turn, actor, detail string) error {
+func (r *Registry) AdmitExplicitly(ctx context.Context, rid string, generation any, turn, actor, detail string) error {
 	if strings.TrimSpace(turn) == "" {
 		return &HostError{Class: "ValueError", Detail: "an admitted turn needs an exact turn id"}
 	}
@@ -626,8 +532,13 @@ func (r *Registry) AdmitExplicitly(ctx context.Context, rid string, generation i
 	now := r.now()
 	return r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
 		q := r.Store.Querier(ctx)
+		number, err := argparse.SQLiteInteger(argparse.IntegerValue(generation))
+		if err != nil {
+			return err
+		}
+		generation = number
 		var anchor sql.NullString
-		err := q.QueryRowContext(ctx, "SELECT dispatch_turn_id FROM generations WHERE relationship_id=? AND execution_generation=?", rid, generation).Scan(&anchor)
+		err = q.QueryRowContext(ctx, "SELECT dispatch_turn_id FROM generations WHERE relationship_id=? AND execution_generation=?", rid, generation).Scan(&anchor)
 		if errors.Is(err, sql.ErrNoRows) {
 			return refuse(contract.RefusalUnknownGeneration, "admission needs an existing generation")
 		}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -96,22 +97,34 @@ func (r Reservation) Arm(ctx context.Context, id, fp string, revision int64) (ou
 	})
 	return
 }
-func (r Reservation) Release(ctx context.Context, id, fp string, revision int64, reason string) (out store.ManagedStartRequestsRow, err error) {
+func (r Reservation) Release(ctx context.Context, id, fp string, revision any, reason string) (out store.ManagedStartRequestsRow, err error) {
+	for _, field := range []struct{ name, value string }{{"request_id", id}, {"request_fingerprint", fp}} {
+		if strings.TrimSpace(field.value) == "" {
+			return out, refusal("malformed_receipt", field.name+" must be a non-empty string, not "+store.PyRepr(field.value))
+		}
+	}
+	n := argparse.IntegerValue(revision)
+	if n.Sign() < 0 {
+		return out, refusal("malformed_receipt", "revision must be a non-negative integer, not "+n.String())
+	}
+	if strings.TrimSpace(reason) == "" {
+		return out, refusal("malformed_receipt", "reason must be a non-empty string, not "+store.PyRepr(reason))
+	}
 	err = r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
 		row, e := r.get(ctx, id)
+		if errors.Is(e, sql.ErrNoRows) {
+			return refusal("unregistered_relationship", "no managed request "+store.PythonRepr(id))
+		}
 		if e != nil {
 			return e
 		}
 		if row.RequestFingerprint != fp {
 			return refusal("relationship_conflict", "managed request fingerprint changed")
 		}
-		if strings.TrimSpace(reason) == "" {
-			return fmt.Errorf("reason must be nonblank text")
+		if row.State != "reserved" || !n.IsInt64() || row.Revision != n.Int64() {
+			return refusal("relationship_conflict", fmt.Sprintf("request %s is %s at revision %d; only a reserved row at revision %s can be released", store.PyRepr(id), store.PyRepr(row.State), row.Revision, n.String()))
 		}
-		if row.State != "reserved" || row.Revision != revision {
-			return refusal("relationship_conflict", fmt.Sprintf("request %s is %s at revision %d; only a reserved row at revision %d can be released", store.PyRepr(id), store.PyRepr(row.State), row.Revision, revision))
-		}
-		changed, e := r.Store.ReleaseManagedStart(ctx, id, revision, reason, r.now())
+		changed, e := r.Store.ReleaseManagedStart(ctx, id, n.Int64(), reason, r.now())
 		if e != nil {
 			return e
 		}

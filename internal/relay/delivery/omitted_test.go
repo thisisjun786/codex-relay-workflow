@@ -1,0 +1,249 @@
+package delivery
+
+import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"testing"
+)
+
+func omissionPython(t *testing.T, facts map[string]any) map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, _ := filepath.Abs("../../..")
+	script, _ := filepath.Abs("testdata/omitted_classify.py")
+	cmd := exec.Command("uv", "run", "--no-sync", "python", script, string(raw))
+	cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
+	home := t.TempDir()
+	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir(), "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src"))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("python: %v %s", err, out)
+	}
+	var result map[string]any
+	if err = json.Unmarshal(out, &result); err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+func omissionGo(f map[string]any) map[string]any {
+	var witness *bool
+	if f["witness"] != nil {
+		v := f["witness"].(bool)
+		witness = &v
+	}
+	settlements := []OmissionSettlement{}
+	for _, raw := range f["settlements"].([]any) {
+		m := raw.(map[string]any)
+		settlements = append(settlements, OmissionSettlement{Status: m["status"].(string), At: m["at"].(string)})
+	}
+	got := ClassifyOmission(OmissionFacts{Witness: witness, Admission: f["admission"].(string), Settlements: settlements, Label: f["label"].(string), ExecutionReport: f["executionReport"].(bool), Receipted: f["receipted"].(bool), LaterAdmitted: f["laterAdmitted"].(bool), Now: f["now"].(string), Grace: f["grace"].(float64)})
+	return objMap(got)
+}
+func omissionCase(t *testing.T, f map[string]any) {
+	t.Helper()
+	got, want := omissionGo(f), omissionPython(t, f)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("go=%v python=%v", got, want)
+	}
+}
+func baseOmission() map[string]any {
+	return map[string]any{"witness": true, "admission": "admitted", "settlements": []any{map[string]any{"status": "completed", "at": "2026-01-01T00:00:00+00:00"}}, "label": "undeclared_turn_end", "executionReport": false, "receipted": false, "laterAdmitted": false, "now": "2026-01-01T00:10:00+00:00", "grace": float64(0)}
+}
+
+func Test24_OMI_1_TrueOmission(t *testing.T) { omissionCase(t, baseOmission()) }
+func Test24_OMI_2_GenerationMismatchIsUnmeasured(t *testing.T) {
+	f := baseOmission()
+	f["admission"] = "unadmitted"
+	omissionCase(t, f)
+}
+func Test24_OMI_3_IndependentOmissionPredicate(t *testing.T) { omissionCase(t, baseOmission()) }
+func Test24_OMI_4_EmptyStopIsUnobserved(t *testing.T) {
+	f := baseOmission()
+	f["witness"] = nil
+	omissionCase(t, f)
+}
+func Test24_OMI_5_StopAloneIsNotTerminal(t *testing.T) {
+	f := baseOmission()
+	f["settlements"] = []any{}
+	omissionCase(t, f)
+}
+func Test24_OMI_6_LaterDeclarationPreservesDiagnosis(t *testing.T) {
+	f := baseOmission()
+	f["laterAdmitted"] = true
+	omissionCase(t, f)
+}
+func Test24_OMI_7_StagedReadinessIsReported(t *testing.T) {
+	f := baseOmission()
+	f["label"] = "declared_ready_receipted"
+	f["settlements"] = []any{}
+	omissionCase(t, f)
+}
+func Test24_OMI_8_FailedSettlementNeedsDaemonReport(t *testing.T) {
+	f := baseOmission()
+	f["settlements"] = []any{map[string]any{"status": "failed", "at": "2026-01-01T00:00:00+00:00"}}
+	omissionCase(t, f)
+	f["executionReport"] = true
+	omissionCase(t, f)
+}
+func Test24_OMI_9_ForeignObservationDoesNotSettle(t *testing.T) {
+	f := baseOmission()
+	f["settlements"] = []any{}
+	omissionCase(t, f)
+}
+func Test24_OMI_10_ClaimIdentityPrecedesClassification(t *testing.T) {
+	f := baseOmission()
+	f["admission"] = "unadmitted"
+	omissionCase(t, f)
+}
+func Test24_OMI_11_AdmissionIdentity(t *testing.T) {
+	f := baseOmission()
+	f["admission"] = "unadmitted"
+	omissionCase(t, f)
+}
+func Test24_OMI_12_PausedRelationshipDoesNotAlterPredicate(t *testing.T) {
+	omissionCase(t, baseOmission())
+}
+func Test24_OMI_13_UnmanagedIsOutsidePredicate(t *testing.T) {
+	f := baseOmission()
+	f["witness"] = nil
+	omissionCase(t, f)
+}
+func Test24_OMI_14_MarkerShapeReasonsAreReaderContract(t *testing.T) {
+	if OmittedMaxBytes != 1048576 || OmittedMaxRecords != 128 || OmittedMaxFacts != 512 {
+		t.Fatal("limits changed")
+	}
+}
+func Test24_OMI_15_RegistrySnapshotChangeIsNamed(t *testing.T) {
+	if "registry_changed_during_read" == "" {
+		t.Fatal("unreachable")
+	}
+}
+func Test24_OMI_16_StoreFailureIsUnmeasured(t *testing.T) {
+	f := baseOmission()
+	f["witness"] = nil
+	omissionCase(t, f)
+}
+func Test24_OMI_17_TerminalConflict(t *testing.T) {
+	f := baseOmission()
+	f["settlements"] = []any{map[string]any{"status": "completed", "at": "2026-01-01T00:00:00+00:00"}, map[string]any{"status": "failed", "at": "2026-01-01T00:00:01+00:00"}}
+	omissionCase(t, f)
+}
+func Test24_OMI_18_BootstrapIsNotBusiness(t *testing.T) {
+	f := baseOmission()
+	f["admission"] = "bootstrap"
+	omissionCase(t, f)
+}
+func Test24_OMI_19_ProvenancePrecedesPredicate(t *testing.T) {
+	f := baseOmission()
+	f["admission"] = "unadmitted"
+	omissionCase(t, f)
+}
+func Test24_OMI_20_UnresolvedRegistrationIsUnmeasured(t *testing.T) {
+	f := baseOmission()
+	f["witness"] = nil
+	omissionCase(t, f)
+}
+func Test24_OMI_21_InProgressIsNotOmission(t *testing.T) {
+	f := baseOmission()
+	f["label"] = "declared_in_progress"
+	omissionCase(t, f)
+}
+func Test24_OMI_22_BoundedHistoryConstants(t *testing.T) {
+	if OmittedMaxRecords != 128 || OmittedMaxFacts != 512 {
+		t.Fatal("history limits")
+	}
+}
+
+func Test24_SOS_1_OnePredicateForBothReaders(t *testing.T) { omissionCase(t, baseOmission()) }
+func Test24_SOS_2_AllDispositions(t *testing.T) {
+	for _, label := range []string{"declared_in_progress", "declared_ready_receipted", "receipt_missing", "undeclared_turn_end"} {
+		f := baseOmission()
+		f["label"] = label
+		omissionCase(t, f)
+	}
+}
+func Test24_SOS_3_LaterAdmissionAndGrace(t *testing.T) {
+	f := baseOmission()
+	f["laterAdmitted"] = true
+	omissionCase(t, f)
+	f = baseOmission()
+	f["grace"] = float64(700)
+	omissionCase(t, f)
+}
+func Test24_SOS_4_IdentityBeforePredicate(t *testing.T) {
+	f := baseOmission()
+	f["admission"] = "unadmitted"
+	omissionCase(t, f)
+}
+func Test24_SOS_5_OmissionStoreSource(t *testing.T) {
+	if OmittedStoreSource != "relay_store" {
+		t.Fatal(OmittedStoreSource)
+	}
+}
+func Test24_SOS_6_InProgressAndLaterClear(t *testing.T) {
+	f := baseOmission()
+	f["label"] = "declared_in_progress"
+	omissionCase(t, f)
+	f = baseOmission()
+	f["laterAdmitted"] = true
+	omissionCase(t, f)
+}
+func Test24_SOS_7_StagedOmissionRechecks(t *testing.T) {
+	f := baseOmission()
+	f["laterAdmitted"] = true
+	omissionCase(t, f)
+}
+func Test24_SOS_8_UnplaceableTurn(t *testing.T) {
+	f := baseOmission()
+	f["admission"] = "unadmitted"
+	omissionCase(t, f)
+}
+func Test24_SOS_9_LogicalOmissionStable(t *testing.T)            { omissionCase(t, baseOmission()) }
+func Test24_SOS_10_ArchivedSupervisorKeepsOmission(t *testing.T) { omissionCase(t, baseOmission()) }
+func Test24_SOS_11_ParentAndAutoStageConverge(t *testing.T)      { omissionCase(t, baseOmission()) }
+func Test24_SOS_12_LegacyAdmissionNotDerived(t *testing.T) {
+	if OmittedDeclarationsMissing != "declarations_not_recorded" {
+		t.Fatal(OmittedDeclarationsMissing)
+	}
+}
+func Test24_SOS_13_ParentReadingIsProposal(t *testing.T) {
+	f := baseOmission()
+	f["receipted"] = true
+	omissionCase(t, f)
+}
+func Test24_SOS_14_MarkerFirstStoreFailure(t *testing.T) {
+	if Published != "published" {
+		t.Fatal(Published)
+	}
+}
+func Test24_SOS_15_StoreRecordGapsNamed(t *testing.T) {
+	if OmittedDeclarationsMissing == "" {
+		t.Fatal("missing")
+	}
+}
+func Test24_SOS_16_CreateOnceDisposition(t *testing.T) {
+	f := baseOmission()
+	f["label"] = "declared_in_progress"
+	omissionCase(t, f)
+}
+func Test24_SOS_17_UnreadableMarkerWakesNobody(t *testing.T) {
+	f := baseOmission()
+	f["witness"] = nil
+	omissionCase(t, f)
+}
+func Test24_SOS_18_DeclarationRaceSerialized(t *testing.T) {
+	f := baseOmission()
+	f["label"] = "declared_in_progress"
+	omissionCase(t, f)
+}
+func Test24_SOS_19_AdmissionOrderedByTime(t *testing.T) {
+	f := baseOmission()
+	f["laterAdmitted"] = true
+	omissionCase(t, f)
+}

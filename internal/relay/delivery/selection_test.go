@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -72,4 +73,73 @@ func TestCLI_store_selection_refusals_match_python(t *testing.T) {
 
 // programPath is the program a recovery line names: each side names its own (Python its console
 // script path, `crw relay` the argparse prog the multi-call entry passes, cli.ExecuteAs).
-var programPath = regexp.MustCompile(`"(env -u CODEX_SESSION_RELAY_STATE )?(?:/\S*(?:/codex-session-relay|/crw)|'crw relay') `)
+var programPath = regexp.MustCompile(`"(env -u CODEX_SESSION_RELAY_STATE )?(?:/\S*(?:/codex-session-relay|/crw)(?: relay)?|'crw relay') `)
+
+func exitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	if exit, ok := err.(*exec.ExitError); ok {
+		return exit.ExitCode()
+	}
+	return -1
+}
+
+// Both installed entry points produce recovery commands through the built binary. The alias
+// bytes equal live Python when Python is invoked under that same alias path; the multi-call
+// command names the actual crw executable and runs successfully when pasted into a shell.
+func TestCLI_selection_recovery_program_parity_and_execution(t *testing.T) {
+	root := repoRoot(t)
+	home := t.TempDir()
+	state := filepath.Join(home, "state")
+	sockets := filepath.Join(home, "sockets")
+	mustDo(t, os.MkdirAll(state, 0o700))
+	mustDo(t, os.MkdirAll(sockets, 0o700))
+	recorded := filepath.Join(sockets, "recorded.sock")
+	wanted := filepath.Join(sockets, "wanted.sock")
+	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xs"), "TMPDIR="+home, "CODEX_SESSION_RELAY_STATE=")
+	seed := exec.Command(filepath.Join(root, ".venv", "bin", "python"), "-c", "import sys;from codex_session_relay.store import Store;Store(sys.argv[1], socket_path=sys.argv[2]).close()", filepath.Join(state, "relay.sqlite3"), recorded)
+	seed.Dir = filepath.Join(root, "packages", "codex-session-relay")
+	seed.Env = env
+	mustDo(t, seed.Run())
+
+	built := crwBinary(t)
+	alias := filepath.Join(filepath.Dir(built), "codex-session-relay")
+	mustDo(t, os.Symlink(built, alias))
+	args := []string{"--state", state, "--socket", wanted, "claim", "--event", "e"}
+	goAlias := exec.Command(alias, args...)
+	goAlias.Env = env
+	got, gotErr := goAlias.Output()
+	if exitCode(gotErr) != 2 {
+		t.Fatalf("alias exit=%d: %s", exitCode(gotErr), got)
+	}
+	pyScript := `import sys
+from codex_session_relay import cli
+sys.argv=[sys.argv[1],*sys.argv[2:]]
+raise SystemExit(cli.main())`
+	python := exec.Command(filepath.Join(root, ".venv", "bin", "python"), append([]string{"-c", pyScript, alias}, args...)...)
+	python.Dir = filepath.Join(root, "packages", "codex-session-relay")
+	python.Env = env
+	want, wantErr := python.Output()
+	if exitCode(wantErr) != 2 || string(got) != string(want) {
+		t.Fatalf("alias recovery differs from Python\nGo exit=%d\n%s\nPython exit=%d\n%s", exitCode(gotErr), got, exitCode(wantErr), want)
+	}
+
+	multi := exec.Command(built, append([]string{"relay"}, args...)...)
+	multi.Env = env
+	out, multiErr := multi.Output()
+	if exitCode(multiErr) != 2 {
+		t.Fatalf("crw relay exit=%d: %s", exitCode(multiErr), out)
+	}
+	var refusal struct {
+		Recover []string `json:"recover"`
+	}
+	if err := json.Unmarshal(out, &refusal); err != nil || len(refusal.Recover) == 0 {
+		t.Fatalf("recovery JSON %s: %v", out, err)
+	}
+	pasted := exec.Command("sh", "-c", refusal.Recover[0])
+	pasted.Env = env
+	if result, err := pasted.CombinedOutput(); err != nil {
+		t.Fatalf("recovery command %q: %v\n%s", refusal.Recover[0], err, result)
+	}
+}

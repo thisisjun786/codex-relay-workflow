@@ -15,10 +15,10 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 )
 
 type wakeHost struct {
@@ -474,7 +474,7 @@ func Test26_MTW_9_every_notice_row_matches_python(t *testing.T) {
 				entry("event-b", 1, "head-a", []string{"other-gate"})
 			}
 			turn, event := w.promote()
-			reading, err := supervisor.RequiredForCandidate(w.ctx, w.store, "rel-a", "owner/repo", "dev", "head-a")
+			reading, err := evidence.RequiredForCandidate(w.ctx, w.store, "rel-a", "owner/repo", "dev", "head-a")
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -6,13 +6,13 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 )
 
 // renderGrant is DeliveryService._render_grant (delivery.py:757): the merge target is this
 // parent's turn, and what it can actually do about it.
-func renderGrant(event string, record Obj, request string, reading supervisor.RequiredReading) string {
+func renderGrant(event string, record Obj, request string, reading evidence.RequiredReading) string {
 	turn, grant := pyStr(fieldOf(record, "turnId")), pyStr(fieldOf(record, "grantId"))
 	declared, flags, guidance := requiredForNotice(record, reading)
 	lines := []string{
@@ -55,7 +55,7 @@ func renderGrant(event string, record Obj, request string, reading supervisor.Re
 }
 
 // requiredForNotice is delivery._required_for_notice.
-func requiredForNotice(record Obj, reading supervisor.RequiredReading) (string, string, []string) {
+func requiredForNotice(record Obj, reading evidence.RequiredReading) (string, string, []string) {
 	if !reading.Known {
 		return "requiredDeclared: not recorded (" + reading.Reason + ")",
 			" --required=<each check the branch requires>",
@@ -81,7 +81,7 @@ func requiredForNotice(record Obj, reading supervisor.RequiredReading) (string, 
 	for _, name := range reading.Required {
 		flags.WriteString(" --required=" + shellQuote(name))
 	}
-	return "requiredDeclared: " + supervisor.Dumps(reading.Required, false, false, false) + " (" + source + ")", flags.String(),
+	return "requiredDeclared: " + evidence.Dumps(reading.Required, false, false, false) + " (" + source + ")", flags.String(),
 		[]string{
 			"--required restates what the candidate's merge-evidence reading found the branch",
 			"rules require. The names are yours to declare; read them again with merge-evidence",
@@ -97,6 +97,6 @@ func submission(v any) any {
 }
 
 // grantRequired is DeliveryService._grant_required for a grant row.
-func grantRequired(ctx context.Context, s *store.Store, row Row, record Obj) (supervisor.RequiredReading, error) {
-	return supervisor.RequiredForCandidate(ctx, s, row.S("relationship_id"), str(record, "repository"), str(record, "baseRef"), str(record, "candidateHead"))
+func grantRequired(ctx context.Context, s *store.Store, row Row, record Obj) (evidence.RequiredReading, error) {
+	return evidence.RequiredForCandidate(ctx, s, row.S("relationship_id"), str(record, "repository"), str(record, "baseRef"), str(record, "candidateHead"))
 }

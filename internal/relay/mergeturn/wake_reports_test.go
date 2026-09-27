@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
 func reportForGrant(t *testing.T, w *fx, relationship, event, head string, submission int, required *string) {
@@ -26,7 +26,7 @@ func Test26_MTW_10_gate_reads_every_current_event_not_global_submission(t *testi
 	reportForGrant(t, w, r, "event-a", "head-old", 1, nil)
 	reportForGrant(t, w, r, "event-a", "head-a", 2, nil)
 	reportForGrant(t, w, r, "event-b", "head-b", 1, nil)
-	heads, err := supervisor.CurrentReportHeads(w.ctx, w.s, r)
+	heads, err := evidence.CurrentReportHeads(w.ctx, w.s, r)
 	if err != nil || len(heads) != 2 || heads[0] != "head-a" || heads[1] != "head-b" {
 		t.Fatal(heads, err)
 	}
@@ -50,7 +50,7 @@ func Test26_MTW_10_gate_reads_every_current_event_not_global_submission(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	heads, err = supervisor.CurrentReportHeads(w.ctx, w.s, r)
+	heads, err = evidence.CurrentReportHeads(w.ctx, w.s, r)
 	if err != nil || len(heads) != 1 || heads[0] != "head-a" {
 		t.Fatal(heads, err)
 	}

@@ -156,8 +156,9 @@ func (t TaskSettings) Mismatches(response any, transmitted, loadedBefore bool) [
 		value := raw
 		if field == "sandbox" {
 			normalised := normalisePolicy(raw)
+			expectedPolicy, _ := sandbox.(Obj)
 			if normalised == nil || expected.(Obj) == nil {
-				found = append(found, settingsFinding(SettingsNotPreserved, field, expected, raw))
+				found = append(found, settingsFinding(SettingsNotPreserved, field, expectedPolicy, raw))
 				continue
 			}
 			if narrowable && sandboxWithin(normalised, expected.(Obj)) {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -276,11 +277,15 @@ func (r *Registry) RequireActive(ctx context.Context, rid string) (Relationship,
 }
 
 // GenerationOf is registry.generation; ok=false is None.
-func (r *Registry) GenerationOf(ctx context.Context, rid string, number int64) (Generation, bool, error) {
+func (r *Registry) GenerationOf(ctx context.Context, rid string, number any) (Generation, bool, error) {
 	if _, err := r.Get(ctx, rid); err != nil {
 		return Generation{}, false, err
 	}
-	g, err := scanGeneration(r.Store.Querier(ctx).QueryRowContext(ctx, "SELECT "+generationColumns+" FROM generations WHERE relationship_id = ? AND execution_generation = ?", rid, number).Scan)
+	n, err := argparse.SQLiteInteger(argparse.IntegerValue(number))
+	if err != nil {
+		return Generation{}, false, err
+	}
+	g, err := scanGeneration(r.Store.Querier(ctx).QueryRowContext(ctx, "SELECT "+generationColumns+" FROM generations WHERE relationship_id = ? AND execution_generation = ?", rid, n).Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Generation{}, false, nil
 	}
@@ -837,7 +842,7 @@ func (r *Registry) OpenGenerationIn(ctx context.Context, rid, dispatchRequest, r
 }
 
 // BindAnchor is registry.bind_anchor.
-func (r *Registry) BindAnchor(ctx context.Context, rid string, number int64, turn, source string) (Generation, error) {
+func (r *Registry) BindAnchor(ctx context.Context, rid string, number any, turn, source string) (Generation, error) {
 	if source != "dispatch_receipt" {
 		return Generation{}, refuse(contract.RefusalUnboundGeneration, "an anchor binds only from a dispatch receipt, not from %s", pyStr(source))
 	}
@@ -857,6 +862,7 @@ func (r *Registry) BindAnchor(ctx context.Context, rid string, number int64, tur
 		}
 		return Generation{}, refuse(contract.RefusalAnchorAlreadyBound, "generation %d is already bound to %s", number, pyRepr(nullable(current.DispatchTurnID)))
 	}
+	number = argparse.IntegerValue(number).Int64() // GenerationOf already bound this value to SQLite.
 	now := r.now()
 	err = r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
 		if _, err := r.Store.Querier(ctx).ExecContext(ctx, "UPDATE generations SET anchor_state = ?, dispatch_turn_id = ?, bound_at = ?"+
@@ -905,7 +911,7 @@ func (r *Registry) SetStatus(ctx context.Context, rid, status, actor string) (Re
 }
 
 // Resume is registry.resume: restate the generation and the whole scope.
-func (r *Registry) Resume(ctx context.Context, rid string, expectGeneration int64, roots, recipients []string, actor string) (Relationship, error) {
+func (r *Registry) Resume(ctx context.Context, rid string, expectGeneration any, roots, recipients []string, actor string) (Relationship, error) {
 	now := r.now()
 	err := r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
 		q := r.Store.Querier(ctx)
@@ -917,8 +923,9 @@ func (r *Registry) Resume(ctx context.Context, rid string, expectGeneration int6
 			return refuse(contract.RefusalUnregisteredRelationship, "no relationship %s", pyStr(rid))
 		}
 		var mismatches []string
-		if x.Generation != expectGeneration {
-			mismatches = append(mismatches, fmt.Sprintf("generation is %d, not %d", x.Generation, expectGeneration))
+		expected := argparse.IntegerValue(expectGeneration)
+		if !expected.IsInt64() || x.Generation != expected.Int64() {
+			mismatches = append(mismatches, fmt.Sprintf("generation is %d, not %s", x.Generation, expected.String()))
 		}
 		recordedRoots, err := decodeJSON([]byte(x.Roots))
 		if err != nil {

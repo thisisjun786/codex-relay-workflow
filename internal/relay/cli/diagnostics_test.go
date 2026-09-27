@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // scenario is one test_diagnostics.py scenario as the real Python relay left it: its store,
@@ -43,15 +44,54 @@ var (
 	scenarios     recorded
 	scenariosErr  error
 	scenariosDir  string
+	binaryOnce    sync.Once
+	binaryPath    string
+	binaryAlias   string
+	binaryDir     string
+	binaryErr     error
 )
+
+func packageBinary(t *testing.T) (string, string) {
+	t.Helper()
+	binaryOnce.Do(func() {
+		binaryDir, binaryErr = os.MkdirTemp("", "crw-cli-binary-")
+		if binaryErr != nil {
+			return
+		}
+		binaryPath = filepath.Join(binaryDir, "crw")
+		cmd := exec.Command("go", "build", "-o", binaryPath, "./cmd/crw")
+		cmd.Dir = repositoryRoot(t)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			binaryErr = fmt.Errorf("build: %w: %s", err, out)
+			return
+		}
+		binaryAlias = filepath.Join(binaryDir, "codex-session-relay")
+		binaryErr = os.Symlink(binaryPath, binaryAlias)
+	})
+	if binaryErr != nil {
+		t.Fatal(binaryErr)
+	}
+	return binaryPath, binaryAlias
+}
 
 // TestMain removes the directory the Python scenarios were built in, whatever the tests did.
 func TestMain(m *testing.M) {
+	cleanup, err := testsupport.IsolateRelayState()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	code := m.Run()
-	if scenariosDir != "" {
-		if err := os.RemoveAll(scenariosDir); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			code = 1
+	if err := cleanup(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		code = 1
+	}
+	for _, dir := range []string{scenariosDir, binaryDir} {
+		if dir != "" {
+			if err := os.RemoveAll(dir); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				code = 1
+			}
 		}
 	}
 	os.Exit(code)

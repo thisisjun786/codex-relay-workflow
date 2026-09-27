@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math/big"
 	"regexp"
 	"strconv"
 	"strings"
@@ -27,7 +28,16 @@ func RelationshipID(parent, child, issue string) (string, error) {
 }
 
 func EventID(relationship string, generation int, revision, outcome, turn string, attempt *int) (string, error) {
-	if generation < 1 {
+	var n *big.Int
+	if attempt != nil {
+		n = big.NewInt(int64(*attempt))
+	}
+	return EventIDBig(relationship, big.NewInt(int64(generation)), revision, outcome, turn, n)
+}
+
+// EventIDBig retains Python integer identity before any SQLite narrowing.
+func EventIDBig(relationship string, generation *big.Int, revision, outcome, turn string, attempt *big.Int) (string, error) {
+	if generation.Sign() < 1 {
 		return "", ErrInvalidIdentity
 	}
 	switch outcome {
@@ -40,10 +50,24 @@ func EventID(relationship string, generation int, revision, outcome, turn string
 		if strings.TrimSpace(turn) == "" {
 			return "", ErrInvalidIdentity
 		}
-		return digest(fmt.Sprintf("%s|%d|%s|%s|%s", relationship, generation, outcome, turn, RenderAttempt(attempt)), 32), nil
+		return digest(fmt.Sprintf("%s|%d|%s|%s|%s", relationship, generation, outcome, turn, renderBigAttempt(attempt)), 32), nil
 	default:
 		return "", ErrInvalidIdentity
 	}
+}
+
+func renderBigAttempt(n *big.Int) string {
+	if n == nil {
+		return "null"
+	}
+	return n.String()
+}
+
+// IntegerOverflow is sqlite3's Python integer binding failure.
+type IntegerOverflow struct{}
+
+func (*IntegerOverflow) Error() string {
+	return "OverflowError: Python int too large to convert to SQLite INTEGER"
 }
 
 // Outcomes are every outcome a completion receipt may carry (identity.OUTCOMES).

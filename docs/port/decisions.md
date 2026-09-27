@@ -172,6 +172,8 @@ relay ...`, `crw bridge`, `crw hook`, `crw install ...`). The installer creates 
 symlinks beside the binary. The `hook` code path must not trigger package-level
 initialisation of SQLite or the MCP SDK; heavy state is constructed inside `main` per
 subcommand.
+Consequence: embedded commands name the invoking form: one quoted `codex-session-relay` path,
+or the quoted `crw` executable followed by the separate word `relay`.
 
 Why: the host record, `crw-completion-hook.json` and `crw-bridge-mcp.json` all store
 absolute paths named after the console scripts (`relayExecutable`, `bridgeExecutable`,
@@ -384,6 +386,22 @@ registration); todo-16 checker comparison against mcp 1.30.0 / pydantic 2.13.5 r
 .omo/evidence/task-16-crw-go-port.txt; the question to Jun on 2026-09-25 went unanswered
 for 30 minutes and the recommended option was taken, reversible by changing
 internal/bridge/mcp/validate.go and server.go.
+
+## 21. Unrepresentable report manifest references
+
+Decision: Python `json.loads` can hold a native lone surrogate in a receipt's `manifestRef`.
+Go strings cannot represent that Unicode code point, and Go's JSON decoder does not retain
+it as a native surrogate. The Go comparison therefore uses the escaped `\\ud800` form at
+the report-rendering boundary. For that escaped form, Go renders
+`manifestRef: present but not renderable; read it in the record`, matching the Python
+recipient-visible message. This is a documented input-representation divergence, not a
+claim that Go can round-trip a native lone surrogate.
+
+Evidence: packages/codex-session-relay/src/codex_session_relay/report.py
+`_manifest_ref_lines` (the UnicodeEncodeError fallback);
+internal/relay/delivery/report_render.go (the escaped-reference renderer);
+`Test24_RC_10_LiveUnencodableManifest` in
+internal/relay/supervisor/partb_set1_test.go (live Python whole-message comparison).
 
 ## How this file is checked
 

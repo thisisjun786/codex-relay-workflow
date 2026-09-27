@@ -170,8 +170,15 @@ func contents(ctx context.Context, services Services, access store.ProbeAccess) 
 	}
 }
 
-// program is _program: argv[0] as typed when it carries a directory, else its base name.
+// program is the shell-rendered command prefix that invoked this relay.
 func program(argv0 string) string {
+	if argv0 == "crw relay" {
+		argv0 = os.Args[0]
+		if !strings.Contains(argv0, "/") {
+			argv0 = filepath.Base(argv0)
+		}
+		return shellQuote(argv0) + " relay"
+	}
 	if strings.Contains(argv0, "/") {
 		return shellQuote(argv0)
 	}

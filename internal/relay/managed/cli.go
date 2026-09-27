@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
-	"strconv"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
@@ -124,11 +123,7 @@ func runRelease(ctx context.Context, services cli.Services, args cli.Args) (any,
 	id, _ := args.String("request-id")
 	fp, _ := args.String("fingerprint")
 	reason, _ := args.String("reason")
-	revision, _ := args.String("revision")
-	n, err := strconv.ParseInt(revision, 10, 64)
-	if err != nil {
-		return nil, &cli.UsageError{Detail: "argument --revision: invalid int value: " + store.PythonRepr(revision), Code: 2}
-	}
+	n := args.Integer("revision")
 	row, err := (Reservation{Store: s, Now: registry.SystemISO}).Release(ctx, id, fp, n, reason)
 	if err != nil {
 		return nil, err
