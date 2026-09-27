@@ -62,8 +62,9 @@ func lifecycleWithholdJoin(alias, event, delivery string) string {
 		"                          AND other.occurred_at = {alias}.occurred_at)")
 }
 
-// settingsHoldColumns is delivery.SETTINGS_HOLD_COLUMNS for an event expression and delivery alias.
-func settingsHoldColumns(event, delivery string) string {
+// SettingsHoldColumns is delivery.SETTINGS_HOLD_COLUMNS for an event expression and delivery alias.
+// Other readers reuse the exact projection rather than maintaining a second SQL copy.
+func SettingsHoldColumns(event, delivery string) string {
 	latest := func(tag string) string {
 		return "(SELECT " + tag + ".request_id FROM attempts " + tag + " WHERE " + tag + ".event_id = " + event +
 			" AND " + tag + ".internal_state = 'settled' ORDER BY " + tag + ".attempt_no DESC LIMIT 1)"
@@ -91,6 +92,8 @@ func settingsHoldColumns(event, delivery string) string {
 		"   AND +shi.kind = 'delivery_withheld_inactive' ORDER BY shi.seq DESC LIMIT 1)" +
 		"   AS sh_inactive_at"
 }
+
+func settingsHoldColumns(event, delivery string) string { return SettingsHoldColumns(event, delivery) }
 
 // Delivery states the projection distinguishes (transport.py).
 var (

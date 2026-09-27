@@ -360,7 +360,8 @@ func Test21_USL20_a_hold_reaches_its_fault_whatever_the_sweep_saw_first(t *testi
 			}
 			h.eq(keys)
 			ledger := &faults.Ledger{Store: h.store, Clock: h.clock}
-			mustDo(t, sw.RecordAll(h.ctx, ledger, batch))
+			_, err = sw.RecordAll(h.ctx, ledger, batch)
+			mustDo(t, err)
 			for _, n := range []int{1, 2} {
 				o := seen[0]
 				o.OccurrenceKey = "delivery:earlier-" + string(rune('0'+n))

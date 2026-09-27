@@ -1,0 +1,112 @@
+{
+  "classes": {
+    "completion_mismatch": {
+      "component": "completion",
+      "clears": "the evidence the completion lacked being observed and reverified",
+      "threshold": 1,
+      "window": 21600.0
+    },
+    "completion_unverified": {
+      "component": "completion",
+      "clears": "a later reading that establishes the check either way",
+      "threshold": null,
+      "window": 21600.0
+    },
+    "delivery_refused": {
+      "component": "delivery",
+      "clears": "the delivery being sent or settling, or its newest withholding naming another reason",
+      "threshold": null,
+      "window": 21600.0
+    },
+    "delivery_stalled": {
+      "component": "delivery",
+      "clears": "a delivery to the same recipient reaching dispatched",
+      "threshold": null,
+      "window": 21600.0
+    },
+    "managed_start_failed": {
+      "component": "managed_start",
+      "clears": "the request recording an accepted receipt or attaching, or its newest creation-stage answer saying something else",
+      "threshold": null,
+      "window": 21600.0
+    },
+    "observation_stalled": {
+      "component": "observation",
+      "clears": "a successful poll of the same anchor, or its turn settling",
+      "threshold": null,
+      "window": 21600.0
+    },
+    "observation_unmeasured": {
+      "component": "reporting",
+      "clears": "a later reading of the same turn that establishes something",
+      "threshold": null,
+      "window": 21600.0
+    },
+    "product_defect": {
+      "component": "product",
+      "clears": "a later reading of the same product, component and symptom that finds it gone, or the fix and reverification loop",
+      "threshold": null,
+      "window": 21600.0
+    },
+    "product_expected": {
+      "component": "product",
+      "clears": "the expected state ending: the cancellation settled, the approval given, or the support added",
+      "threshold": null,
+      "window": 21600.0
+    },
+    "project_needed": {
+      "component": "planning",
+      "clears": "the project being created and bound; the record stays as that project's creation record",
+      "threshold": null,
+      "window": 21600.0
+    },
+    "record_sync_failed": {
+      "component": "sync",
+      "clears": "any synchronisation job on the same target confirming",
+      "threshold": null,
+      "window": 21600.0
+    },
+    "report_omitted": {
+      "component": "reporting",
+      "clears": "a reading of the same turn that no longer says unreported",
+      "threshold": null,
+      "window": 21600.0
+    },
+    "unclassified_incident": {
+      "component": "triage",
+      "clears": "classification into a registered product, which re-files every stored incident there",
+      "threshold": null,
+      "window": 21600.0
+    }
+  },
+  "kinds": {
+    "append_comment": {
+      "name": "append_comment",
+      "creates": false,
+      "requires_issue": true,
+      "target": null,
+      "evidence": "block"
+    },
+    "open_record": {
+      "name": "open_record",
+      "creates": true,
+      "requires_issue": false,
+      "target": "team+project",
+      "evidence": "block"
+    },
+    "project_create": {
+      "name": "project_create",
+      "creates": true,
+      "requires_issue": false,
+      "target": "team",
+      "evidence": "block"
+    },
+    "update_record": {
+      "name": "update_record",
+      "creates": false,
+      "requires_issue": true,
+      "target": null,
+      "evidence": "fields"
+    }
+  }
+}
