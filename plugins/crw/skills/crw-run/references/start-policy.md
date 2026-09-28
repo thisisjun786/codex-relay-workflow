@@ -111,8 +111,8 @@ none of them changed a reader's behaviour at the time. The rule above stays beca
 correct implementation does, and because the alternative of tolerant matching is worse: with no
 alias table two readers restore two different policies from one record.
 
-So the enumeration is also runnable. [`scripts/start_policy.py`](../scripts/start_policy.py)
-parses the pairing table in this file and answers from it:
+So the enumeration is also runnable. `crw skill start-policy` parses the pairing table in
+this file and answers from it:
 `vocabulary` prints the legal pairings as lines to copy into a record, and `check` reads a
 record and exits non-zero on a value outside the set or an illegal pairing. A producer writes the
 two lines by copying command output instead of recalling a literal, and a consumer that doubts a

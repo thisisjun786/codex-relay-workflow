@@ -115,8 +115,8 @@ part of the sentence, so the subject in `CRW를 설치형 …` and the issue cod
 family is neither overwritten nor stacked behind a second one; report it and take a
 decision on that exact bracket, keeping it as body or replacing it, because an
 obsolete family and a user's own words are indistinguishable from here.
-[parent_title.py](../../crw-run/scripts/parent_title.py) settles these cases offline
-and its `replay` holds it to recorded expectations; it proposes a title and writes
+`crw skill parent-title decide` settles these cases offline, and
+`crw skill parent-title replay` holds it to recorded expectations; it proposes a title and writes
 nothing. Any later surface that shows or edits this prefix reads the same label
 through the same rule and the same helper rather than keeping a mapping of its own.
 

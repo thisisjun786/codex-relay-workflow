@@ -22,6 +22,7 @@ type Observation struct {
 	Unreadable   []string
 	Malformed    string
 	Now          string
+	Reached      delivery.ReturnReacher
 }
 
 func ReceiptMatches(receipt, stop, marker Object) bool {
@@ -35,13 +36,17 @@ func ClassifyDeclaration(o Observation) string {
 	}
 	switch outcome {
 	case "in_progress", "blocked_needs_input", "interrupted", "failed":
+		delivery.MarkReturn(o.Reached, "classify_declaration", 1)
 		return "declared_" + text(outcome)
 	case "ready_for_review":
 		if ReceiptMatches(o.Receipt, o.Stop, o.Marker) {
+			delivery.MarkReturn(o.Reached, "classify_declaration", 2)
 			return "declared_ready_receipted"
 		}
+		delivery.MarkReturn(o.Reached, "classify_declaration", 3)
 		return "receipt_missing"
 	}
+	delivery.MarkReturn(o.Reached, "classify_declaration", 4)
 	return "undeclared_turn_end"
 }
 func ObserveState(o Observation) (string, string) {
@@ -49,6 +54,7 @@ func ObserveState(o Observation) (string, string) {
 		u := slices.Clone(o.Unreadable)
 		slices.Sort(u)
 		u = slices.Compact(u)
+		delivery.MarkReturn(o.Reached, "observe_state", 1)
 		return "state_unreadable", "Cannot read " + strings.Join(u, ", ") + "."
 	}
 	if o.Marker != nil || o.Malformed != "" {
@@ -57,57 +63,74 @@ func ObserveState(o Observation) (string, string) {
 			bad = delivery.Malformed(o.Marker)
 		}
 		if bad != "" {
+			delivery.MarkReturn(o.Reached, "observe_state", 2)
 			return "marker_malformed", "The published " + bad + " is not the shape a fact must be. Repair the marker; a record that cannot be read is reported, never guessed at."
 		}
 	}
 	if len(o.Marker) == 0 {
+		delivery.MarkReturn(o.Reached, "observe_state", 3)
 		return "unmanaged", "No assignment directory for this workspace."
 	}
 	session := get(o.Stop, "session_id")
 	bound := object(get(o.Marker, "bound"))
 	if len(bound) == 0 {
-		if !delivery.Correlated(o.Marker, session, o.Assignment) {
+		if !delivery.CorrelatedTrace(o.Marker, session, o.Assignment, o.Reached) {
+			delivery.MarkReturn(o.Reached, "observe_state", 4)
 			return "dispatch_uncorrelated", "This session presented no matching dispatch request id."
 		}
+		delivery.MarkReturn(o.Reached, "observe_state", 5)
 		return "correlated_unbound", "Correlated to the intent but not yet bound by the coordinator. Released; the turn's observation is recorded for the coordinator to fold once the bind lands."
 	}
 	if !delivery.Named(get(bound, "sessionId")) {
+		delivery.MarkReturn(o.Reached, "observe_state", 6)
 		return "bound_identity_unnamed", "The bind record names no session, so nothing can be shown to be the bound child. Repair the marker; a turn is never held against an identity nobody published."
 	}
 	if !delivery.SameIdentity(get(bound, "sessionId"), session) {
+		delivery.MarkReturn(o.Reached, "observe_state", 7)
 		return "marker_claimed_by_other_session", "This session is not the bound child."
 	}
 	declaration := ClassifyDeclaration(o)
 	if strings.HasPrefix(declaration, "declared_") {
+		delivery.MarkReturn(o.Reached, "observe_state", 8)
 		return declaration, "The child declared this turn."
 	}
-	problem := delivery.CorrelationProblem(o.Marker, session, o.Assignment)
+	problem := delivery.CorrelationProblemTrace(o.Marker, session, o.Assignment, o.Reached)
 	if problem == delivery.ClaimAbsent {
+		delivery.MarkReturn(o.Reached, "observe_state", 9)
 		return "marker_unclaimed", "The coordinator bound this session, but it has not claimed this assignment. Released and recorded; a hold needs the child's own claim, not only the coordinator's bind."
 	}
 	if problem != "" {
+		delivery.MarkReturn(o.Reached, "observe_state", 10)
 		return "claim_uncorrelated", "This session is bound but its claim does not correlate with this assignment (" + problem + "). Released and recorded; every fact this reads is create-once, so it does not clear itself and no resolution consumed here will: correlation reads the claim and the intent, never the adjudications. Recovery is a new assignment, declared for a fresh dispatch request id."
 	}
 	if !delivery.Named(get(object(get(o.Marker, "relationship")), "relationshipId")) {
+		delivery.MarkReturn(o.Reached, "observe_state", 11)
 		return "managed_unregistered", "This workspace is managed but its relationship is not registered. Register it, or record a disposition explaining why it cannot be."
 	}
 	ev := text(get(o.Receipt, "evidence"))
 	if declaration == "receipt_missing" && slices.Contains(generationEvidence, ev) {
 		detail := evidence.Text(get(o.Receipt, "detail"))
 		if ev == "generation_absent" {
+			delivery.MarkReturn(o.Reached, "observe_state", 12)
 			return "receipt_missing", "The relay's store holds no record of the generation it reports as current for this relationship: " + detail + ". Nothing can be attributed to this assignment while the store cannot say which dispatch opened the generation it is on, and no receipt this session emits changes that. The relay's store is what needs repair."
 		}
+		delivery.MarkReturn(o.Reached, "observe_state", 13)
 		return "receipt_missing", "This assignment's registration does not name the generation the relay is on: " + detail + ". No receipt this session emits can satisfy it, because the registration fact is create-once and cannot be republished onto the live generation, and a receipt earned there belongs to work this assignment never registered. Recovery is a new assignment, declared for a fresh dispatch request id."
 	}
 	if declaration == "receipt_missing" {
+		delivery.MarkReturn(o.Reached, "observe_state", 14)
 		return "receipt_missing", "Readiness is declared but no receipt stands at the current head revision for this session and turn. Emit the receipt over the actual artifacts."
 	}
+	delivery.MarkReturn(o.Reached, "observe_state", 15)
 	return "undeclared_turn_end", "No usable turn disposition was recorded for this turn. Record in_progress, blocked_needs_input, interrupted, failed, or ready_for_review with a receipt."
 }
 
 // Decide classifies first and applies terminal exhaustion before transient hold guards.
 func Decide(o Observation, counters Object, mode string) Object {
 	state, reason := ObserveState(o)
+	if !slices.Contains(omissions, state) {
+		delivery.MarkReturn(o.Reached, "decide", 1)
+	}
 	if slices.Contains(omissions, state) {
 		if bad := delivery.MalformedCounters(counters); bad != "" {
 			state = "marker_malformed"
@@ -119,15 +142,19 @@ func Decide(o Observation, counters Object, mode string) Object {
 	if slices.Contains(omissions, state) {
 		switch {
 		case count("holdsThisGeneration") >= 2 || count("holdsThisSessionWindow") >= 3:
+			delivery.MarkReturn(o.Reached, "decide", 2)
 			finalState = "unresolved_handoff"
 			finalReason = "Hold bound reached; recording an unresolved handoff instead of holding again."
 		case count("holdsThisTurn") >= 1:
+			delivery.MarkReturn(o.Reached, "decide", 3)
 			finalState = "hold_in_flight"
 			finalReason = "This turn already took its one hold."
 		case evidence.Truthy(get(o.Stop, "stop_hook_active")):
+			delivery.MarkReturn(o.Reached, "decide", 4)
 			finalState = "hold_in_flight"
 			finalReason = "A continuation is already running for this turn; the omission is recorded."
 		default:
+			delivery.MarkReturn(o.Reached, "decide", 5)
 			decision = "block"
 		}
 	}
@@ -151,8 +178,8 @@ func Decide(o Observation, counters Object, mode string) Object {
 		record = set(record, "pendingObservation", ClassifyDeclaration(o))
 	}
 	if len(marker) > 0 {
-		record = set(record, "assignmentState", delivery.DeriveAssignmentState(marker, o.Now))
-		record = set(record, "identityContested", delivery.IdentityContested(marker))
+		record = set(record, "assignmentState", delivery.DeriveAssignmentStateTrace(marker, o.Now, o.Reached))
+		record = set(record, "identityContested", delivery.IdentityContestedTrace(marker, o.Reached))
 	}
 	if evidence.Truthy(get(o.Receipt, "evidence")) {
 		record = set(record, "receiptEvidence", get(o.Receipt, "evidence"))

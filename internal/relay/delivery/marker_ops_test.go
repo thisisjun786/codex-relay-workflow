@@ -31,7 +31,7 @@ func runMarkerOps(t *testing.T, env map[string]any, ops []markerOp) (python, gol
 	cmd := exec.Command("uv", "run", "--no-sync", "python", script, tree)
 	cmd.Dir = filepath.Join(root, "packages", "codex-session-relay")
 	home := t.TempDir()
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xs"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home, "CODEX_SESSION_RELAY_MARKER_ROOT=")
+	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xs"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home, "CODEX_SESSION_RELAY_MARKER_ROOT=", "PYTHONDONTWRITEBYTECODE=1")
 	cmd.Stdin = strings.NewReader(string(spec))
 	output, err := cmd.Output()
 	if err != nil {
@@ -293,6 +293,17 @@ func (d *markerDriver) run(op markerOp) (any, error) {
 			}
 		}
 		d.t.Fatalf("no fact %v", op["fact"])
+	case "unencodable_correlation":
+		session := "session-unencodable"
+		marker := Obj{
+			{Key: "claims", Value: []any{Obj{{Key: "factId", Value: "claims/" + session + "/claim.json"}, {Key: "sessionId", Value: session}, {Key: "dispatchRequestId", Value: string([]byte{0xed, 0xa0, 0x80})}}}},
+			{Key: "intent", Value: Obj{{Key: "dispatchRequestIdHash", Value: strings.Repeat("0", 64)}}},
+		}
+		return CorrelationProblem(marker, session, nil), nil
+	case "unencodable_selection":
+		session := "session-unencodable"
+		marker := Obj{{Key: "claims", Value: []any{Obj{{Key: "factId", Value: "claims/" + session + "/claim.json"}, {Key: "sessionId", Value: session}, {Key: "dispatchRequestId", Value: string([]byte{0xed, 0xa0, 0x80})}}}}}
+		return selectingClaim(marker, session, op["assignment"].(string)) != nil, nil
 	case "correlated":
 		found, _ := ReadAssignment(d.adir(op))
 		return Correlated(found, op["session"], nil), nil

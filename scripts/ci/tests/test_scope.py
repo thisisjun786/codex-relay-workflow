@@ -69,7 +69,7 @@ class ScopeTests(unittest.TestCase):
 
     def test_go_product_paths_are_registered_and_select_full(self):
         paths = ("go.mod", "go.sum", "tools.go", "Makefile", ".goreleaser.yaml",
-                 "cmd/crw/main.go", "internal/contract/emit.go",
+                 "cmd/crw/main.go", "internal/contract/emit.go", "plugins/skill_assets.go",
                  "contract/schema/relay-cli.json", "docs/port/inventory.md",
                  "scripts/port/check_inventory.py")
         for path in paths:
