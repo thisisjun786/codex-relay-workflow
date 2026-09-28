@@ -46,9 +46,11 @@ func hookEnv(home string) []string {
 }
 func hookCommand(t *testing.T, home, payload string) *exec.Cmd {
 	t.Helper()
+	// The first caller builds the binary; the timeout is for the hook, not the build.
+	built := binary(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
-	cmd := exec.CommandContext(ctx, binary(t), "hook")
+	cmd := exec.CommandContext(ctx, built, "hook")
 	cmd.Env = hookEnv(home)
 	cmd.Stdin = strings.NewReader(payload)
 	return cmd
