@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .errors import RelayError
+
 SCHEMA_VERSION = 1
 
 DDL = """
@@ -1828,8 +1830,32 @@ def state_dir(socket_path: str | None = None) -> Path:
 
 
 class Store:
-    def __init__(self, path, socket_path=None):
-        path = Path(path)
+    def __init__(self, path, socket_path=None, *, read_only=False, candidate=None):
+        from .ownership import Admission
+
+        self.path = Path(path)
+        self._admission = None
+        self._composing = 0
+        self.fault_hook = None
+        self.unenforced_indexes = []
+        self.read_only = read_only
+        if read_only:
+            self.db = sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True,
+                                      timeout=5, isolation_level=None)
+            self.db.row_factory = sqlite3.Row
+            self.db.execute("PRAGMA query_only=ON")
+            return
+        self._admission = Admission(self.path, initialize=candidate is None, candidate=candidate)
+        try:
+            self._open(self.path, socket_path)
+            self._admission.initialize(self.db, socket_path)
+        except BaseException:
+            if hasattr(self, "db"):
+                self.db.close()
+            self._admission.close()
+            raise
+
+    def _open(self, path, socket_path):
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
         os.close(descriptor)
@@ -1964,7 +1990,9 @@ class Store:
 
     @contextmanager
     def transaction(self):
-        """BEGIN IMMEDIATE, then commit or roll back. Never a partial record.
+        """A read snapshot or BEGIN IMMEDIATE, then commit or roll back.
+
+        A read-only Store uses deferred BEGIN and query_only, never a writer lock.
 
         Inside a composing() scope this JOINS the transaction that scope opened instead of
         opening one of its own: it yields the same connection and leaves the commit, the
@@ -1975,10 +2003,12 @@ class Store:
         raises leaves its writes in somebody else's transaction, and a refusal raised through
         one takes any evidence it wrote down with it. See composing().
         """
+        if self._admission is not None:
+            self._admission.revalidate(self.db)
         if self._composing and self.db.in_transaction:
             yield self.db
             return
-        self.db.execute("BEGIN IMMEDIATE")
+        self.db.execute("BEGIN" if self.read_only else "BEGIN IMMEDIATE")
         try:
             yield self.db
             if self.fault_hook is not None:
@@ -2029,6 +2059,8 @@ class Store:
         return self.db.in_transaction
 
     def journal(self, kind: str, subject: str = "", detail="", *, at: str = "") -> None:
+        if self._admission is not None and not self.db.in_transaction:
+            self._admission.revalidate(self.db)
         self.db.execute(
             "INSERT INTO journal (at, kind, subject, detail) VALUES (?,?,?,?)",
             (at, kind, subject, detail if isinstance(detail, str) else json.dumps(detail)),
@@ -2041,7 +2073,11 @@ class Store:
         return self.db.execute(sql, params).fetchall()
 
     def close(self) -> None:
-        self.db.close()
+        try:
+            self.db.close()
+        finally:
+            if self._admission is not None:
+                self._admission.close()
 
 
 PROVEN, UNPROVEN, MISMATCH = "proven", "unproven", "mismatch"
@@ -2331,14 +2367,6 @@ def probe(selection: StateSelection) -> dict:
         notes.append(f"directory stat failed: {type(error).__name__}: {error}")
     if access["directoryExists"]:
         access["directoryReadable"] = os.access(directory, os.R_OK | os.X_OK)
-        # os.access answers for the REAL uid and can disagree with the kernel under a
-        # privileged runner or an unusual mount, so writability is measured by writing.
-        try:
-            with tempfile.NamedTemporaryFile(dir=directory, prefix=".probe-"):
-                pass
-            access["directoryWritable"] = True
-        except OSError as error:
-            notes.append(f"directory write failed: {type(error).__name__}: {error}")
 
     try:
         os.stat(db_path)
@@ -2352,6 +2380,41 @@ def probe(selection: StateSelection) -> dict:
     except OSError as error:
         if access["directoryExists"]:
             notes.append(f"database stat failed: {type(error).__name__}: {error}")
+
+    from .ownership import OwnershipRefused, check_start, metadata
+
+    try:
+        check_start(db_path)
+    except OwnershipRefused as error:
+        # Foreign/draining stores are diagnosed without a live SQLite open: even
+        # mode=ro can create WAL/SHM on a freshly copied WAL-mode database.
+        try:
+            meta = metadata(db_path)
+            info = db_path.resolve().stat()
+            location = _log_location_of(str(db_path.resolve())) or {}
+            store.update(storeId=meta.get("store_id"), createdAt=meta.get("store_created_at"),
+                         schemaVersion=meta.get("version"), device=info.st_dev,
+                         inode=info.st_ino, links=info.st_nlink, **location)
+            access["dbReadable"] = True
+        except (OSError, sqlite3.Error) as read_error:
+            notes.append(f"database read failed: {type(read_error).__name__}: {read_error}")
+        notes.append(str(error))
+        access["detail"] = "; ".join(notes)
+        return {"stateSelection": selection.to_record(), "store": store, "access": access}
+    except (OSError, sqlite3.Error):
+        # Existing probe diagnostics below retain their detailed unreadable-file
+        # report; a failed preflight cannot grant its write admission.
+        pass
+
+    if access["directoryExists"]:
+        # Only after admission preflight: a foreign-owned store is never probed
+        # by creating even a temporary file beside it.
+        try:
+            with tempfile.NamedTemporaryFile(dir=directory, prefix=".probe-"):
+                pass
+            access["directoryWritable"] = True
+        except OSError as error:
+            notes.append(f"directory write failed: {type(error).__name__}: {error}")
 
     if access["dbExists"]:
         # The stat above decides only that a file is HERE. It answers for a mode-000 database
@@ -2446,9 +2509,16 @@ def probe(selection: StateSelection) -> dict:
                         store["logDevice"] = store["logInode"] = store["logName"] = None
                     else:
                         try:
-                            connection = sqlite3.connect(
-                                _held_uri(fd, "rw"), uri=True, timeout=5, isolation_level=None
-                            )
+                            from .ownership import Admission
+
+                            admission = Admission(db_path)
+                            try:
+                                connection = sqlite3.connect(
+                                    _held_uri(fd, "rw"), uri=True, timeout=5, isolation_level=None
+                                )
+                            except BaseException:
+                                admission.close()
+                                raise
                             try:
                                 # Before the transaction, never after it. A move that lands
                                 # between the check above and this connect leaves SQLite on the
@@ -2461,6 +2531,7 @@ def probe(selection: StateSelection) -> dict:
                                 if elsewhere is not None:
                                     notes.append("database write probe failed: " + elsewhere)
                                 else:
+                                    admission.revalidate(connection)
                                     connection.execute("BEGIN IMMEDIATE")
                                     connection.execute("ROLLBACK")
                                     # Acquiring a write transaction is evidence that this
@@ -2469,7 +2540,8 @@ def probe(selection: StateSelection) -> dict:
                                     access["dbWritable"] = True
                             finally:
                                 connection.close()
-                        except (OSError, sqlite3.Error) as error:
+                                admission.close()
+                        except (OSError, sqlite3.Error, RelayError) as error:
                             notes.append(
                                 f"database write probe failed: {type(error).__name__}: {error}")
             finally:

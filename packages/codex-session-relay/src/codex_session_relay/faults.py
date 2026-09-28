@@ -3099,10 +3099,27 @@ class FaultLedger:
         limit = _bounded(limit, "limit")
         moment = self.clock.now()
         with self.store.transaction() as db:
-            self._lapse_notifications(db, moment, self.clock.iso())
-            rows = db.execute(
-                "SELECT rowid AS seq, * FROM fault_notifications WHERE state = ? AND rowid > ?"
-                " ORDER BY rowid LIMIT ?", (state or PENDING, after or 0, limit + 1)).fetchall()
+            if self.store.read_only:
+                # Project the same lease/withdrawal normalization the Python
+                # writer persists, without mutating another runtime's store.
+                effective = (
+                    "CASE WHEN n.state = ? AND n.lease_until <= ? THEN ?"
+                    " WHEN n.state = ? AND n.kind = ? AND EXISTS"
+                    " (SELECT 1 FROM fault_ledger f WHERE f.fault_id = n.fault_id"
+                    " AND f.state = ?) THEN ? ELSE n.state END")
+                rows = db.execute(
+                    "SELECT n.rowid AS seq, n.*, " + effective + " AS effective_state"
+                    " FROM fault_notifications n WHERE (" + effective + ") = ? AND n.rowid > ?"
+                    " ORDER BY n.rowid LIMIT ?",
+                    (RESERVED, moment, UNCERTAIN, PENDING, BLOCKING, WITHDRAWN, WITHDRAWN,
+                     RESERVED, moment, UNCERTAIN, PENDING, BLOCKING, WITHDRAWN, WITHDRAWN,
+                     state or PENDING, after or 0, limit + 1)).fetchall()
+                rows = [dict(row, state=row["effective_state"]) for row in rows]
+            else:
+                self._lapse_notifications(db, moment, self.clock.iso())
+                rows = db.execute(
+                    "SELECT rowid AS seq, * FROM fault_notifications WHERE state = ? AND rowid > ?"
+                    " ORDER BY rowid LIMIT ?", (state or PENDING, after or 0, limit + 1)).fetchall()
             listed = []
             for row in rows[:limit]:
                 entry = _notification(row)

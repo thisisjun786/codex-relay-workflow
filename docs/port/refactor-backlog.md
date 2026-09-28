@@ -244,3 +244,8 @@ This inventory is decision input only. It records use by CRW skills and wiring; 
 | `sync-target` | `sync-*` | yes | 1 - `plugins/crw/skills/crw-run/references/relay.md` |
 
 - [todo29] internal/relay/{service/worker.go,cli/policy.go,adapter/worker_observation.go} - worker policy identity checks have three entry-point-specific implementations; consolidate after the port with whole-receipt and process-race coverage rather than changing caller refusal precedence here - out-of-scope - evidence: task-29-crw-go-port.txt and Test29OrphanKeepsInheritedLocks.
+
+- [todo36] packages/codex-session-relay/src/codex_session_relay/ownership.py:metadata - no-sidecar admission reads a private DB/WAL snapshot, so admission cost scales with database size; a separately specified metadata-only SQLite snapshot reader could reduce that cost - out-of-scope - evidence: task-36-crw-go-port.txt, live-WAL refusal test.
+- [todo36] packages/codex-session-relay/src/codex_session_relay/cli.py:READ_ONLY_COMMANDS - lazy writable services historically serve read commands too; command metadata should eventually declare effects rather than maintaining a separate read-only classification - out-of-scope - evidence: task-36-crw-go-port.txt, exhaustive nonqueued writer refusal matrix.
+
+- [todo36-integration] packages/codex-session-relay/src/codex_session_relay/{cli.py:cmd_guard_evaluate,guard.py:_evaluate} - selection-before-owner routing reuses non-recording evaluation to preserve lazy receipt selection; extracting a shared selection-only phase could remove the duplicate marker/receipt read without duplicating its precedence rules - out-of-scope - evidence: unchanged Test33ReviewD6 and test_management_cli.py explicit/intent/marker-only selection cases.

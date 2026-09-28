@@ -559,6 +559,77 @@ stopadapter.py:1136-1162,1198-1200; marker.py:289-315; store.py:1833;
 `Test33PythonStateDirectoryMode`, `Test33LargeMarkerFactPython`, and
 `Test33LargeFactHookPython` (PR #181 threads 4120181139, 4120181488, 4120181269).
 
+## 25. Durable takeover inbox wire format
+
+Decision: Python fence release and Go share the canonical UTF-8 JSON envelope,
+operation-ID encoding, digest, immutable link publication, queue/refusal/host
+responses, and transactionally coupled `schema_meta` replay markers specified in
+[cutover Inbox / Wire format](cutover.md#wire-format-decision-25). Only `emit`,
+`ack`, and `fault-notification-ack` queue when admission refuses
+another runtime's ownership or draining. Other mutations still refuse. An inbox
+acceptance means durably queued, not yet applied. A crash after application commit
+and before unlink cannot repeat the handler. Python applies retained entries when
+it owns the store, including rollback; Go must consume the same golden bytes.
+The check36 correction excludes new `supervisor-read` requests: that command
+verifies a readback against the host rather than ingesting an authored receipt.
+Previously queued entries retain their wire format and receive a terminal usage
+marker when replay lacks required arguments; they cannot block unrelated writers.
+
+Why: neither runtime had an inbox format. The orchestrator supplied this contract
+on 2026-09-28 rather than allowing two implementations to invent incompatible
+persistent ingress records. Canonical argument bytes make retries identical;
+link-without-replacement detects conflicts; the domain result and dedup marker
+commit together, so rollback never restores a stale snapshot or loses a receipt.
+Decision number 25 leaves numbers 23 and 24 to todo 33.
+
+Evidence: orchestrator clarification for todo 36, 2026-09-28;
+`packages/codex-session-relay/src/codex_session_relay/inbox.py`;
+`packages/codex-session-relay/tests/test_fence.py`;
+`contract/golden/takeover-inbox/`; `docs/port/cutover.md` Inbox / Wire format.
+
+## 28. Takeover candidate designation and activation channel
+
+Decision: the controller launches exactly one direct child with an inherited,
+connected stream socket on fd 3 and `CRW_TAKEOVER_CHANNEL_FD=3`. No other client
+can discover that channel. Its first JSON line is `{"kind":"start","record":...}`.
+Within 20 seconds the candidate must validate `phase=starting`, its own runtime
+as owner, non-null transition and controller, and the controller's boot ID, PID
+and start ticks against its actual parent. A rejected candidate exits nonzero
+without writing. Python uses the same boot/start identity as its service holder.
+
+The admission permit contains the transition ID, epoch and controller identity.
+First writable admission and every transaction revalidation compare it with the
+durable record and DB stamp. Only that designated process may recover during
+`starting`; ordinary client mutations remain refused or durably queued under
+Decision 25. There is no environment-only starting bypass.
+
+After recovery the candidate sends `kind=ready`, its holder identity including
+build, store ID, epoch and transition ID. It waits for `kind=active` or EOF and
+then rereads both the durable record and DB stamp. It serves only when the phase
+is active and holder, epoch and takeover ID match. Otherwise it closes admission
+and exits without serving. Matching active publication survives controller EOF;
+an active reply is acknowledged with `{"kind":"activated"}`, as in the Go
+controller. The retained Python entry point is `service run --takeover-candidate`.
+It consumes the channel before any writable open and passes the permit explicitly
+to its Store and supervisor. Workers start only after activation and use ordinary
+active admission; they inherit neither the channel nor a discoverable permit.
+Candidate-less `check_start` calls keep their existing behavior.
+
+Why: the reverse transfer uses the same concrete protocol as todo 30 instead of
+inventing a second designation or permitting every Python client to enter starting.
+No controller socket or pending candidate authorizes serving by itself.
+
+Evidence: [cutover record](cutover.md#record) lines 85-104;
+[start candidate](cutover.md#step-6-start-go-on-the-original-store) lines 248-261;
+[rollback](cutover.md#rollback) lines 308-315;
+todo 30 worktree `internal/relay/service/takeover.go` (`Start`,
+`launchedCandidate.Activate/Close`, `ReceiveCandidate`, `CandidateChannel.Ready`)
+and `internal/relay/store/ownership/admission.go` (`Candidate`, `WithCandidate`);
+`packages/codex-session-relay/src/codex_session_relay/takeover.py`,
+`ownership.py`, and `tests/test_takeover_candidate.py`. The Go reference is
+uncommitted work in progress; this decision freezes its candidate wire contract,
+not a claim that the Go controller already launches the retained Python build.
+
 ## How this file is checked
 
 The acceptance check for this document is structural: every decision heading is followed

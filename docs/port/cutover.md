@@ -287,6 +287,18 @@ Go finding `owner=python`: normal daemon startup refuses to open the DB writable
 explicit transition controller may start the protocol; Go clients use the compatible endpoint or
 the inbox. There is no "lock looks stale, start another daemon" path.
 
+### Read-only clients under a foreign owner
+
+Read-only Store transactions use deferred `BEGIN` with `query_only=ON`, never
+`BEGIN IMMEDIATE`. Notification listings project expired leases and withdrawn
+faults without writing the housekeeping updates into a foreign-owned database.
+The connection remains `mode=ro`, not `immutable=1`: immutable reads ignore
+committed WAL frames and can report stale domain data or ownership. `mode=ro`
+may create empty WAL/SHM sidecars for a checkpointed WAL database; these are SQLite
+coordination files, not admitted domain writes, and are never removed by the
+client. Avoiding them by immutable reads would change behavior when the Go writer
+is live. The live-WAL regression test checks this distinction.
+
 ## Rollback
 
 Rollback is the same protocol run in reverse, Go to the retained fence Python release, on the
@@ -348,6 +360,73 @@ creation IDs are deterministic and an uncertain operation keeps its reservation 
 authorizing a replacement child (managed.py:1-5, 178-180, 357-383). The non-DB receiver ledger
 keeps its own answer-versus-applied distinction and its fsync-then-rename save
 (receiver.py:736-786, 788-850).
+
+### Wire format (decision 25)
+
+Both owners use canonical JSON: `json.dumps(value, sort_keys=True,
+separators=(",", ":"), ensure_ascii=False).encode("utf-8")`, without a trailing
+newline. An entry is the canonical encoding of:
+
+```json
+{"inboxVersion":1,"operationId":"<command>.<stable-key>","command":"<CLI subcommand>","arguments":{},"payloadDigest":"sha256:<hex>"}
+```
+
+`arguments` contains the subcommand's parsed option values keyed by argparse dest;
+values equal to their defaults are omitted. Values retain their parsed types
+(string, integer, boolean, or list of strings). Global routing options are not
+included: the entry is already addressed to S. The payload digest is lowercase
+SHA-256 hex over canonical `arguments`, prefixed with `sha256:`. There are no
+clock, process, or host fields in the envelope.
+
+The queueable ingress set is closed:
+
+| Command | Stable key | Receipt/ACK ingested |
+|---|---|---|
+| `emit` | First 32 hex digits of payload digest | Child completion receipt; event ID is derived only inside the handler, not supplied as a parsed option |
+| `ack` | `event` | Parent acknowledgment |
+| `fault-notification-ack` | `notification` | Notification delivery acknowledgment |
+
+Verification claims/verdicts, publication completion, reconciliation, receiver-local
+ledger writes, and operator state changes are not receipt/ACK ingress. They do not
+queue. `supervisor-read` is a host-verified readback operation, not an authored
+receipt: new calls refuse with `store_owned_by_other` rather than queue. Entries
+accepted by the preceding fence build remain readable using the `message` stable
+key; they replay through the existing handler, including its terminal usage result
+when no host socket is supplied. Queueing happens only on admission refusal for another runtime's ownership
+or `phase=draining`; malformed/mismatched/unsupported records still refuse.
+
+The operation ID is `<command>.<stable-key>`. Encode every UTF-8 byte outside
+`[A-Za-z0-9._-]` as uppercase `%XX`; the encoded filename is at most 200 characters.
+An overlength identifier is rejected, never truncated into another operation's ID.
+Publish via `.tmp-<operation-id>-<pid>-<random hex>` in the inbox directory:
+write, file fsync, `link(2)` to the final name without replacement, directory fsync.
+Readers ignore names beginning with `.`. Remove the temporary name after publication
+or failure. A failed publication receives no durable acknowledgment.
+
+CLI answers use the ordinary JSON stdout envelope:
+
+- New entry or byte-identical retry: exit 0,
+  `{"status":"durably_queued","operationId":"...","payloadDigest":"...","detail":"durably queued; not yet applied"}`.
+- Same ID with different bytes: exit 2,
+  `{"error":"refused","reason":"inbox_conflict","detail":"..."}`; preserve the existing file.
+- Write/fsync/link/directory-sync failure: exit 3,
+  `{"error":"host","reason":"inbox_unavailable","detail":"<Python exception class>: <message>"}`;
+  remove the temporary file and publish no new final entry.
+
+The applying owner's transaction checks `schema_meta['inbox:<operation-id>']`,
+executes the existing handler only if no matching marker exists, and records its
+domain result together with the canonical marker value
+`{"payloadDigest":"...","exit":0,"answer":{}}` (the actual integer exit and
+handler stdout object replace the example). A domain refusal rolls back handler
+writes and stores its exit-2 answer. A usage refusal (exit 4), including a replay
+whose required global arguments cannot be supplied, likewise rolls back handler
+writes, stores the exact usage answer in its marker, and retires the entry. Only
+host/storage failures retain the request for retry. Only after commit may the owner unlink the final entry and fsync its
+directory. A crash between commit and unlink replays the marker, not the handler.
+The Python owner drains entries before writable CLI work and daemon recovery,
+including after rollback. Golden entry bytes live in
+`contract/golden/takeover-inbox/`, one per queueable command plus the retained
+legacy `supervisor-read` format, for Go todo 31.
 
 ## Hook budget
 

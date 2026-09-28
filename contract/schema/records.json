@@ -79,6 +79,7 @@
   "daemon": {
     "file": "daemon.json",
     "keys": [
+      "python_compatibility_build",
       "pid",
       "startTicks",
       "bootId",

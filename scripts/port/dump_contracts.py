@@ -382,7 +382,9 @@ def sqlite_contract(source: Path) -> str:
         finally:
             instance.close()
     tree = source_tree(source)
-    initializer = function(tree, "__init__")
+    # The fence wrapper admits before connecting; the unchanged schema and seeds
+    # now execute in _open. Inspect that implementation, not only its wrapper.
+    initializer = function(tree, "_open")
     statements = []
     for call in calls_to(initializer, "execute"):
         if (call.args and isinstance(call.args[0], (ast.Constant, ast.BinOp))):

@@ -809,6 +809,18 @@ def registration_hold(db_path):
     except (OSError, ValueError, TypeError, AttributeError):
         yield None, "the relay store path " + repr(db_path) + " could not be read as a path"
         return
+    from .ownership import Admission, OwnershipRefused
+
+    try:
+        resolved.stat()
+    except OSError as fault:
+        yield None, "the relay store could not be opened for writing: " + str(fault)
+        return
+    try:
+        admission = Admission(resolved)
+    except OwnershipRefused as fault:
+        yield None, fault
+        return
     try:
         # isolation_level=None so the BEGIN IMMEDIATE below IS the transaction. Left at the
         # default, sqlite3 opens an implicit deferred one on the first statement, and the hold
@@ -817,16 +829,19 @@ def registration_hold(db_path):
             uri, uri=True, timeout=SQLITE_TIMEOUT, isolation_level=None
         )
     except (OSError, sqlite3.Error, ValueError, TypeError) as fault:
+        admission.close()
         yield None, "the relay store could not be opened for writing: " + str(fault)
         return
     connection.row_factory = sqlite3.Row
     try:
+        admission.revalidate(connection)
         connection.execute("BEGIN IMMEDIATE")
-    except (OSError, sqlite3.Error) as fault:
+    except (OSError, sqlite3.Error, OwnershipRefused) as fault:
         # A store somebody else is writing, or one this process may read but not write. Both are
         # answered the same way: the caller could not take the lock, so it cannot prove anything
         # it publishes is current.
         connection.close()
+        admission.close()
         yield None, "the relay store's write lock could not be taken: " + str(fault)
         return
     try:
@@ -839,6 +854,7 @@ def registration_hold(db_path):
         except sqlite3.Error:
             pass
         connection.close()
+        admission.close()
 
 
 # What the relay says about the generation a dispatch request id opened.
@@ -1187,6 +1203,10 @@ def register_relationship(
     directory = assignment_dir(root, workspace, _assignment(assignment))
     with registration_hold(db_path) as (held, unavailable):
         if held is None:
+            from .ownership import OwnershipRefused
+
+            if isinstance(unavailable, OwnershipRefused):
+                raise unavailable
             raise RegistrationError(
                 RefusalReason.UNREGISTERED_RELATIONSHIP,
                 "the relay store could not be held for this registration, so it cannot be "

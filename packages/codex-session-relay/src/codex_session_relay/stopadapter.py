@@ -47,6 +47,7 @@ import hashlib
 import json
 import os
 import re
+import socket
 import stat as stat_module
 import subprocess
 import sys
@@ -463,11 +464,94 @@ def _text(raw):
     return str(raw)
 
 
-def invoke_guard(config, payload):
-    """Run the guard and report how the process ended, without reading its output."""
-    argv = guard_argv(config)
-    budget = config.get("timeoutSeconds") or DEFAULT_TIMEOUT_SECONDS
+def socket_guard(config, payload, *, state=None):
+    """One bounded control request; None permits the retained Python CLI fallback.
+
+    No event arbitration happens here: the adapter already owns that claim.
+    The CLI independently verifies the durable owner before in-process evaluation.
+    """
+    if state is None:
+        if config.get("dbPath"):
+            state = Path(config["dbPath"]).expanduser().resolve().parent
+        elif os.environ.get("CODEX_SESSION_RELAY_STATE"):
+            state = Path(os.environ["CODEX_SESSION_RELAY_STATE"]).expanduser().resolve()
+        else:
+            base = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
+            socket_path = config.get("socketPath")
+            key = hashlib.sha256(str(Path(socket_path).expanduser().resolve()).encode()).hexdigest()[:16] if socket_path else "default"
+            state = base / "codex-session-relay" / key
+    state = Path(state)
+    record = None
+    try:
+        record = json.loads((state / "takeover.json").read_bytes())
+    except (FileNotFoundError, NotADirectoryError):
+        pass
+    except (OSError, ValueError):
+        record = {}
     started = time.monotonic()
+    budget = min(config.get("timeoutSeconds") or DEFAULT_TIMEOUT_SECONDS, DEFAULT_TIMEOUT_SECONDS)
+    argv = guard_argv(config)
+    try:
+        stop = json.loads(payload)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(min(0.05, budget))
+            address = str(state / "control.sock")
+            if len(os.fsencode(address)) >= 104 and Path("/proc/self/fd").is_dir():
+                directory = os.open(state, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    connection.connect(f"/proc/self/fd/{directory}/control.sock")
+                finally:
+                    os.close(directory)
+            else:
+                connection.connect(address)
+            remaining = budget - (time.monotonic() - started)
+            connection.settimeout(max(0.001, remaining))
+            deadline = datetime.fromtimestamp(time.time() + remaining, timezone.utc).isoformat()
+            request = {"protocol": 1, "method": "guard-evaluate", "params": {
+                "markerRoot": config["markerRoot"], "stopInput": stop,
+                "mode": config.get("mode") or OBSERVE, "dbPath": config.get("dbPath"),
+                "now": config.get("now"), "noRecord": config.get("noRecord", False),
+                "deadline": deadline}}
+            connection.sendall(json.dumps(request).encode("utf-8") + b"\n")
+            raw = bytearray()
+            while b"\n" not in raw:
+                remaining = budget - (time.monotonic() - started)
+                if remaining <= 0:
+                    raise TimeoutError("guard socket deadline exceeded")
+                connection.settimeout(remaining)
+                chunk = connection.recv(min(65536, 16777217 - len(raw)))
+                if not chunk:
+                    break
+                raw.extend(chunk)
+                if len(raw) > 16777216:
+                    raise ValueError("guard response exceeds 16 MiB")
+            text = bytes(raw).decode("utf-8")
+            value = json.loads(text)
+            code = GUARD_EXIT_REFUSED if isinstance(value, dict) and "error" in value else GUARD_EXIT_OK
+            return {"ending": EXITED, "argv": argv, "code": code, "signal": None,
+                    "elapsedMs": round((time.monotonic() - started) * 1000),
+                    "stdout": text, "stderr": "", "detail": None}
+    except (OSError, ValueError, TypeError) as error:
+        if record is None or isinstance(record, dict) and record.get("owner") == "python":
+            return None
+        answer = {"error": "refused", "reason": "store_owned_by_other",
+                  "detail": "the owner could not answer guard-evaluate: " + str(error)}
+        return {"ending": EXITED, "argv": argv, "code": GUARD_EXIT_REFUSED, "signal": None,
+                "elapsedMs": round((time.monotonic() - started) * 1000),
+                "stdout": json.dumps(answer), "stderr": "", "detail": None}
+
+
+def invoke_guard(config, payload):
+    """Try the owner socket before launching the retained Python CLI."""
+    started = time.monotonic()
+    # Without an explicit receipt store, the CLI must resolve intent/discovery
+    # before any owner dial; an environment pin does not settle that selection.
+    routed = socket_guard(config, payload) if config.get("dbPath") else None
+    if routed is not None:
+        return routed
+    argv = guard_argv(config)
+    budget = max(0.001, (config.get("timeoutSeconds") or DEFAULT_TIMEOUT_SECONDS)
+                 - (time.monotonic() - started))
     try:
         opened = subprocess.Popen(
             argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

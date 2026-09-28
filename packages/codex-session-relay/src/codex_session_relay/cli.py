@@ -157,6 +157,9 @@ class Services:
         self.socket_path = args.socket
         self.adapter_requested = bool(args.socket)
         self._pin_adapter_ledger = False
+        self.read_only = _read_only_command(args)
+        self.candidate = None
+        self.candidate_channel = None
         self._store = None
         self._adapter = None
         self._criteria = None
@@ -184,7 +187,21 @@ class Services:
         if self._store is None:
             # The socket travels with the store so a later invocation can find it by socket
             # rather than by the hash of the spelling that happened to create it.
-            self._store = Store(self.selection.db_path, socket_path=self.socket_path)
+            from .ownership import OwnershipRefused, check_start
+
+            read_only = False
+            if self.read_only:
+                try:
+                    check_start(self.selection.db_path)
+                except OwnershipRefused:
+                    read_only = True
+            try:
+                self._store = Store(self.selection.db_path, socket_path=self.socket_path,
+                                    read_only=read_only, candidate=self.candidate)
+            except OwnershipRefused:
+                if not self.read_only:
+                    raise
+                self._store = Store(self.selection.db_path, read_only=True)
         return self._store
 
     @property
@@ -2934,7 +2951,10 @@ def cmd_doctor(services, args) -> dict:
     """
     import os
 
+    from .ownership import report as ownership_report
+
     report = probe(services.selection)
+    report["ownership"] = ownership_report(services.selection.db_path)
     report["procAvailable"] = os.path.isdir("/proc/self/fd")
     report["adapter"] = (
         "bridge" if services.adapter_requested else "none (read-only, no --socket)"
@@ -2956,6 +2976,10 @@ def cmd_doctor(services, args) -> dict:
     report["rolePolicy"] = _role_policy_report(services)
     relay_service = _service_for(services)
     report["workerPolicy"] = relay_service.read_worker_policy()
+    report["ownership"]["processes"] = {
+        "supervisor": (relay_service.record() or {}).get("python_compatibility_build"),
+        "worker": (report["workerPolicy"].get("worker") or {}).get("python_compatibility_build"),
+    }
     # A third reading, and deliberately a different KIND of one. rolePolicy is what this
     # process resolved and workerPolicy is what the serving worker resolved; this is neither.
     # It is the input the NEXT daemon launched from this state directory would be given, so a
@@ -3145,16 +3169,26 @@ def _run_bounded(services, service, args, *, require_intent: bool, monotonic=Non
         deadline = services.clock.now() + remaining
         bound = instant
     allow_isolated = getattr(args, "allow_isolated_scope", False)
-    # Before the claim, for the same reason _supervise does it: the probe that built this
-    # service answers from a file that may not exist yet, and a scope registration recorded
-    # with a null store id can later be overwritten by a different store.
-    service.store_id = services.store.identity
     adopted = _adopt_supervised(service, args)
+    from contextlib import ExitStack
+
+    cleanup = ExitStack()
     try:
         with owned_service(
             service, allow_isolated=allow_isolated, require_intent=require_intent,
             adopt_lock_fd=adopted.get("lockFd"), adopt_scope_fd=adopted.get("scopeFd"),
-        ) as record:
+        ) as record, cleanup:
+            cleanup.callback(services.close)
+            service.store_id = services.store.identity
+            service.publish_store_identity()
+            if not adopted:
+                from .control import GuardServer
+
+                control_server = GuardServer(services.selection.path)
+                cleanup.callback(control_server.close)
+            from . import inbox
+
+            inbox.replay(services, build_parser())
             daemon = RelayDaemon(
                 services.store, services.registry, services.intake, services.delivery,
                 services.ack, services.reconciler, services.adapter, clock=services.clock,
@@ -3184,7 +3218,7 @@ def _run_bounded(services, service, args, *, require_intent: bool, monotonic=Non
                 # also gets `stop`, its own additional early exit, reading the monotonic bound
                 # this process was actually given. A tick cannot START past that however the
                 # wall clock behaves; a tick already under way still finishes.
-                stop=None if bound is None else (lambda: monotonic() >= bound),
+                stop=lambda: _store_draining(services) or (bound is not None and monotonic() >= bound),
             )
             if not reports and bound is not None and monotonic() >= bound \
                     and not _asked_for_no_ticks(args):
@@ -3205,6 +3239,13 @@ def _run_bounded(services, service, args, *, require_intent: bool, monotonic=Non
         ) from refusal
     return {"ok": True, "reason": None, "pid": record["pid"],
             "ticks": [report.as_dict() for report in reports]}
+
+
+def _store_draining(services):
+    from .ownership import mirror
+
+    record = mirror(services.selection.db_path)
+    return record is not None and record.get("phase") == "draining"
 
 
 def _adopt_supervised(service, args) -> dict:
@@ -3392,26 +3433,38 @@ def _supervise(services, service, args) -> dict:
     # This process is the one that claims the scope, so the flag has to be honoured here and
     # not only in the parent that decided to pass it.
     service.takeover = getattr(args, "takeover_scope", False)
-    # The probe that built this service answers from a file that may not exist yet, so on a
-    # fresh state directory it reports no store id at all. Opening the store HERE is not the
-    # side effect doctor and status refuse: a supervisor is about to use it either way. It
-    # matters because the scope registration is written next, and ScopeRegistry's mismatch
-    # guard needs both ids to be present - a registration recorded with a null id could be
-    # overwritten later by a different store, losing the evidence two stores served one socket.
-    service.store_id = services.store.identity
+    control_server = None
 
     def recover():
+        nonlocal control_server
+        from . import inbox
+
+        service.store_id = services.store.identity
+        service.publish_store_identity()
+        inbox.replay(services, build_parser())
         # Establish what happened to anything in flight BEFORE a worker can send. Recovery
         # itself sends nothing; it only decides what the evidence supports.
         services.reconciler.recover_on_start(services.adapter)
         _release_expired_leases(services)
+        if services.candidate_channel is not None:
+            services.candidate_channel.ready()
+        from .control import GuardServer
+
+        control_server = GuardServer(services.selection.path)
+
+    def close():
+        try:
+            if control_server is not None:
+                control_server.close()
+        finally:
+            services.close()
 
     try:
         duration, instant = _declared_bound(args)
         return service.supervise(
             allow_isolated=args.allow_isolated_scope, segment_seconds=_segment_seconds(args),
             max_segments=args.max_segments, deadline=duration, deadline_monotonic=instant,
-            on_start=recover,
+            on_start=recover, on_close=close, candidate=services.candidate,
         )
     except ServiceRefused as refusal:
         raise PayloadExit(
@@ -3882,6 +3935,38 @@ def cmd_guard_evaluate(services, args) -> dict:
             "cannot be released, counted against the bounds, or audited",
             EXIT_USAGE,
         )
+    from .ownership import check_start
+    from .stopadapter import socket_guard
+
+    # Apply the same lazy receipt-store selection before contacting its owner.
+    # A read-only preflight preserves explicit/intent pins and marker-only releases
+    # without publishing an observation or reserving a hold.
+    try:
+        guard.evaluate(
+            _marker_root(args), stop_input, now=args.now or services.clock.iso(),
+            db_path=args.db_path, default_db_path=_guard_fallback(services, args),
+            record=False,
+        )
+    except guard.StoreNotSelected as error:
+        raise PayloadExit(error.detail, EXIT_REFUSED) from error
+
+    selected = Path(args.db_path) if args.db_path else services.selection.db_path
+    if not args.db_path and stop_input.get("cwd"):
+        _directory, facts, _unreadable = intent.select_assignment(
+            _marker_root(args), stop_input["cwd"], stop_input.get("session_id"))
+        declared = facts.get("intent") if isinstance(facts, dict) else None
+        if isinstance(declared, dict) and isinstance(declared.get("dbPath"), str):
+            selected = Path(declared["dbPath"])
+    routed = socket_guard({"relayExecutable": sys.argv[0], "markerRoot": str(_marker_root(args)),
+                           "dbPath": args.db_path, "mode": args.mode,
+                           "now": args.now, "noRecord": args.no_record},
+                          text, state=selected.resolve().parent)
+    if routed is not None:
+        answer = json.loads(routed["stdout"])
+        if routed["code"] != EXIT_OK:
+            raise PayloadExit(answer, routed["code"])
+        return answer
+    check_start(selected)
     try:
         return guard.evaluate(
             _marker_root(args),
@@ -4917,6 +5002,7 @@ def build_parser() -> argparse.ArgumentParser:
         hosted.add_argument("--max-segments", type=int)
         hosted.add_argument("--deadline", type=float)
         if name == "run":
+            hosted.add_argument("--takeover-candidate", action="store_true", help=argparse.SUPPRESS)
             # Only the supervisor takes the instant form, because only the supervisor is ever
             # launched by another process that had already decided when it must stop. start
             # and restart are where a person says how long, and they convert it themselves.
@@ -5767,17 +5853,65 @@ def _refuse_ambiguous_state(services, args) -> None:
         raise PayloadExit(refusal, EXIT_REFUSED)
 
 
+READ_ONLY_COMMANDS = frozenset({
+    "managed-show", "reporting-show", "reporting-derive", "settings-show",
+    "linkage-outstanding", "linkage-completion", "linkage-down", "linkage-up", "linkage-counterpart",
+    "supervisor-select", "supervisor-standing", "supervisor-show", "ack-proof",
+    "criteria-show", "revision-head", "assignment-show", "assignment-find",
+    "dispositions-show", "sync-status", "sync-next", "sync-operation", "fault-show", "fault-next",
+    "fault-attention", "fault-notifications", "product-show", "route-show",
+    "show", "status", "doctor", "store-identity",
+    "intent-show", "guard-evaluate", "merge-turn-show", "capacity-show", "region-show",
+    "packet-check", "merge-evidence",
+})
+
+
+def _read_only_command(args):
+    command = getattr(args, "command", None)
+    return (command in READ_ONLY_COMMANDS
+            or command == "fault-policy" and getattr(args, "fault_class", None) is None
+            or command == "fault-limit" and getattr(args, "kind", None) is None
+            or command == "service" and getattr(args, "service_command", None) == "status"
+            or command == "store-challenge" and getattr(args, "read", None) is not None)
+
+
+def _ownership_preflight(services, args):
+    from .ownership import check_start
+
+    if services.read_only:
+        return
+    # Daemon/scope locks must precede connection admission. Service and marker
+    # paths open their own admitted connection, rather than one owned here.
+    if args.command in ("service", "daemon", "managed-start") or args.command.startswith("intent-"):
+        check_start(services.selection.db_path, candidate=services.candidate)
+        return
+    services.store
+
+
 def main(argv=None) -> int:
     import os
+    from contextlib import ExitStack
 
-    from . import rolepolicy
+    from . import inbox, rolepolicy
+    from .ownership import OwnershipRefused, check_start
 
     parser = build_parser()
     args = parser.parse_args(argv)
     services = None
+    candidate_run = getattr(args, "takeover_candidate", False)
+    channel_cleanup = ExitStack()
     try:
         services = Services(args)
+        if candidate_run:
+            from .takeover import receive_candidate
+
+            channel = channel_cleanup.enter_context(receive_candidate(services.selection.db_path))
+            services.candidate_channel = channel
+            services.candidate = channel.permit
+        if not services.read_only:
+            check_start(services.selection.db_path, candidate=services.candidate)
         _refuse_ambiguous_state(services, args)
+        _ownership_preflight(services, args)
         # A supervisor started HERE - in the foreground, or by a unit - is the same daemon
         # `service start` spawns, so it runs on the same declaration. Resolved before the
         # snapshot below, because that snapshot is what this whole process then enforces.
@@ -5810,10 +5944,29 @@ def main(argv=None) -> int:
         # withholds rather than raises.
         rolepolicy.declared()
         _import_kind_modules(args)
+        if services._store is not None and not services.read_only:
+            inbox.replay(services, parser)
         payload = args.handler(services, args)
         print(json.dumps(payload, indent=2, default=str))
         return EXIT_OK
     except RelayError as error:
+        if candidate_run:
+            return EXIT_REFUSED
+        if (isinstance(error, OwnershipRefused) and error.queueable
+                and args.command in inbox.COMMAND_KEYS and services is not None):
+            try:
+                payload = inbox.enqueue(services.selection.path, inbox.envelope(parser, args))
+                code = EXIT_OK
+            except RelayError as conflict:
+                payload = {"error": "refused", "reason": conflict.reason.value if conflict.reason else None,
+                           "detail": conflict.detail}
+                code = EXIT_REFUSED
+            except (OSError, ValueError) as fault:
+                payload = {"error": "host", "reason": "inbox_unavailable",
+                           "detail": f"{type(fault).__name__}: {fault}"}
+                code = EXIT_HOST
+            print(json.dumps(payload, indent=2))
+            return code
         print(json.dumps({
             "error": "refused",
             "reason": error.reason.value if error.reason else None,
@@ -5821,19 +5974,28 @@ def main(argv=None) -> int:
         }, indent=2))
         return EXIT_REFUSED
     except SystemExit2 as error:
+        if candidate_run:
+            return error.code
         print(json.dumps({"error": "usage", "detail": str(error)}, indent=2))
         return error.code
     except PayloadExit as error:
+        if candidate_run:
+            return error.code
         print(json.dumps(error.payload, indent=2, default=str))
         return error.code
     except Exception as error:
+        if candidate_run:
+            return EXIT_HOST
         print(json.dumps({
             "error": "host", "detail": f"{type(error).__name__}: {error}"
         }, indent=2))
         return EXIT_HOST
     finally:
-        if services is not None:
-            services.close()
+        try:
+            if services is not None:
+                services.close()
+        finally:
+            channel_cleanup.close()
 
 
 if __name__ == "__main__":

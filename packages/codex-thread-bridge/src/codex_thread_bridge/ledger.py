@@ -21,6 +21,23 @@ PRIOR_ATTEMPTS_KEPT = 5
 
 class Ledger:
     def __init__(self, path: Path):
+        self._admission = None
+        relay = path.parent / "relay.sqlite3"
+        if relay.exists() or (path.parent / "takeover.json").exists():
+            # A relay-pinned transport ledger shares its owner's admission for
+            # the whole external operation. Standalone bridge ledgers have no
+            # relay schema or ownership record and retain their existing format.
+            from codex_session_relay.ownership import Admission
+
+            self._admission = Admission(relay)
+        try:
+            self._open(path)
+        except BaseException:
+            if self._admission is not None:
+                self._admission.close()
+            raise
+
+    def _open(self, path: Path):
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
         os.close(descriptor)
@@ -126,7 +143,11 @@ class Ledger:
         return json.loads(row[0])
 
     def close(self):
-        self.db.close()
+        try:
+            self.db.close()
+        finally:
+            if self._admission is not None:
+                self._admission.close()
 
     def import_legacy(self, path: Path):
         """Copy an old alias ledger without losing or silently resolving conflicting receipts."""

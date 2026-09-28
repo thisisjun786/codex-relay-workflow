@@ -28,16 +28,20 @@ differ, when a line count differs from `wc -l`, when an owning issue is missing,
 
 ## Files
 
-Total non-test lines: 99526
+Total non-test lines: 100591
 
 | path | lines | invoked | runs | owner | disposition | consumer_search | removal_trigger |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| `packages/codex-session-relay/src/codex_session_relay/control.py` | 107 | imported by CLI supervisor | end user + relay host | CRW-156 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/inbox.py` | 172 | imported by CLI admission/recovery | end user + relay host | CRW-152 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/ownership.py` | 256 | imported by Store, registration, service, bridge ledger | end user + relay host | CRW-152 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/takeover.py` | 111 | imported by service run candidate entry point | relay host | CRW-152 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/ack.py` | 1094 | imported by cli, supervisorchannel | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/admission.py` | 205 | imported by cli, daemon, managed, omitted, receipts | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/assignment.py` | 1163 | imported by cli, delivery, dispositions, faultsweep, linkage, reconcile | relay host | CRW-154 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/bridge_adapter.py` | 1318 | imported by cli; imports the bridge in-process (:875-900) | relay host | CRW-154 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/capacity.py` | 594 | imported by cli | relay host | CRW-154 | port | - | - |
-| `packages/codex-session-relay/src/codex_session_relay/cli.py` | 5840 | console script `codex-session-relay` (cli:main); `python -m codex_session_relay.cli` re-exec target of service.py:1680/1779 and supervisorchannel.py:205; run by skills, stopadapter guard call, crw_runtime.scope | end user + relay host | CRW-150 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/cli.py` | 6002 | console script `codex-session-relay` (cli:main); `python -m codex_session_relay.cli` re-exec target of service.py:1680/1779 and supervisorchannel.py:205; run by skills, stopadapter guard call, crw_runtime.scope | end user + relay host | CRW-150 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/clock.py` | 34 | imported by cli | relay host | CRW-152 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/completion.py` | 518 | imported by routing | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/coordination.py` | 129 | imported by capacity, editregion, mergeturn | relay host | CRW-154 | port | - | - |
@@ -45,16 +49,16 @@ Total non-test lines: 99526
 | `packages/codex-session-relay/src/codex_session_relay/currency.py` | 247 | imported by ack, assignment, cli, delivery, guard, receipts, reconcile | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/cxc.py` | 432 | imported by packets, report, supervision | relay host | CRW-154 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/daemon.py` | 1333 | imported by cli, service; runs inside the spawned daemon worker | relay host | CRW-155 | port | - | - |
-| `packages/codex-session-relay/src/codex_session_relay/declarations.py` | 208 | imported by cli | relay host | CRW-153 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/declarations.py` | 210 | imported by cli | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/delivery.py` | 2746 | imported by ack, assignment, cli, daemon, faultsweep, hostloss, reconcile, supervisorchannel | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/digest.py` | 135 | imported by routing | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/dispositions.py` | 657 | imported by cli | relay host | CRW-154 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/editregion.py` | 1511 | imported by cli | relay host | CRW-154 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/envelope.py` | 670 | imported by cli, delivery, linkage, packets, receiver, report, supervision, supervisorchannel | relay host | CRW-153 | port | - | - |
-| `packages/codex-session-relay/src/codex_session_relay/errors.py` | 272 | imported by 33 relay modules (RefusalReason, exit-2 envelope) | relay host | CRW-150 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/errors.py` | 275 | imported by 33 relay modules (RefusalReason, exit-2 envelope) | relay host | CRW-150 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/fakehost.py` | 309 | imported by relay tests (support.py, test_bridge_adapter, test_daemon_cadence, ...); ships in src but no product module imports it | dev/CI | CRW-150 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/faultnotice.py` | 312 | imported by daemon | relay host | CRW-153 | port | - | - |
-| `packages/codex-session-relay/src/codex_session_relay/faults.py` | 3882 | imported by cli, daemon, faultnotice, faultsweep, ledger_port, supervisorchannel | relay host | CRW-153 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/faults.py` | 3899 | imported by cli, daemon, faultnotice, faultsweep, ledger_port, supervisorchannel | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/faultsweep.py` | 1656 | imported by cli, daemon, delivery | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/forge.py` | 1222 | imported by cli, mergetarget; spawns `gh` (:160) | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/guard.py` | 1123 | imported by cli (`guard`/`guard-evaluate`), omitted | end user + relay host | CRW-153 | port | - | - |
@@ -63,7 +67,7 @@ Total non-test lines: 99526
 | `packages/codex-session-relay/src/codex_session_relay/identity.py` | 184 | imported by 17 relay modules | relay host | CRW-152 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/__init__.py` | 11 | package init; `__version__`, `NO_DELIVERABLE` imported by 13 modules (faultsweep reads `__version__`) | relay host | CRW-150 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/intake.py` | 646 | imported by digest, routing | relay host | CRW-153 | port | - | - |
-| `packages/codex-session-relay/src/codex_session_relay/intent.py` | 1342 | imported by cli, faultnotice, guard, managed, omitted, supervision; `registration_hold()` opens the DB directly (:808) | relay host | CRW-153 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/intent.py` | 1362 | imported by cli, faultnotice, guard, managed, omitted, supervision; `registration_hold()` opens the DB directly (:808) | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/ledger_port.py` | 325 | imported by completion, digest, intake, projects, routes, routing | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/lifecycle.py` | 131 | imported by delivery, faultnotice, managed, supervisorchannel | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/linkage.py` | 2448 | imported by assignment, cli, receiver, registry, rolepolicy | relay host | CRW-154 | port | - | - |
@@ -90,10 +94,10 @@ Total non-test lines: 99526
 | `packages/codex-session-relay/src/codex_session_relay/routes.py` | 287 | imported by completion, digest, intake, projects, routing | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/routing.py` | 282 | imported by cli | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/scope.py` | 418 | imported by daemon, delivery, editregion, manifest, receipts; Linux F_SETLEASE (:194-216) | relay host | CRW-154 | port | - | - |
-| `packages/codex-session-relay/src/codex_session_relay/service.py` | 2143 | imported by cli (`daemon`, `service ...`); spawns the daemon worker | relay host | CRW-155 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/service.py` | 2179 | imported by cli (`daemon`, `service ...`); spawns the daemon worker | relay host | CRW-155 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/settings.py` | 866 | imported by assignment, bridge_adapter, cli, fakehost, faultsweep, managed, packets, receiver, registry | relay host | CRW-154 | port | - | - |
-| `packages/codex-session-relay/src/codex_session_relay/stopadapter.py` | 1209 | console script `crw-completion-hook` (stopadapter:main); started by the plugin launcher crw_stop_hook.py via `adapterEntryPoint` at every Stop | end user + relay host | CRW-156 | port | - | - |
-| `packages/codex-session-relay/src/codex_session_relay/store.py` | 2855 | imported by bridge_adapter, cli, declarations, dispositions, omitted, service, supervisorchannel | relay host | CRW-152 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/stopadapter.py` | 1293 | console script `crw-completion-hook` (stopadapter:main); started by the plugin launcher crw_stop_hook.py via `adapterEntryPoint` at every Stop | end user + relay host | CRW-156 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/store.py` | 2927 | imported by bridge_adapter, cli, declarations, dispositions, omitted, service, supervisorchannel | relay host | CRW-152 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/supervision.py` | 743 | imported by cli, delivery, faultnotice, faults, supervisorchannel | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/supervisorchannel.py` | 3257 | imported by assignment, cli, daemon, faultnotice, faults; renders the relay launcher tuple (:205) | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/sync.py` | 899 | imported by cli, faults, receiver, supervision | relay host | CRW-153 | port | - | - |
@@ -103,7 +107,7 @@ Total non-test lines: 99526
 | `packages/codex-thread-bridge/src/codex_thread_bridge/effects.py` | 78 | imported by bridge, rpc, worktrees | end user + relay host | CRW-151 | port | - | - |
 | `packages/codex-thread-bridge/src/codex_thread_bridge/execution.py` | 606 | imported by bridge, server, relay rolepolicy | end user + relay host | CRW-151 | port | - | - |
 | `packages/codex-thread-bridge/src/codex_thread_bridge/__init__.py` | 3 | package init; `__version__` read by rpc.py:302 (clientInfo) and server.py:397 | end user + relay host | CRW-151 | port | - | - |
-| `packages/codex-thread-bridge/src/codex_thread_bridge/ledger.py` | 177 | imported by bridge, server, relay bridge_adapter | end user + relay host | CRW-151 | port | - | - |
+| `packages/codex-thread-bridge/src/codex_thread_bridge/ledger.py` | 198 | imported by bridge, server, relay bridge_adapter | end user + relay host | CRW-151 | port | - | - |
 | `packages/codex-thread-bridge/src/codex_thread_bridge/roles.py` | 152 | imported by bridge, execution | end user + relay host | CRW-151 | port | - | - |
 | `packages/codex-thread-bridge/src/codex_thread_bridge/rpc.py` | 546 | imported by bridge, server, relay bridge_adapter | end user + relay host | CRW-151 | port | - | - |
 | `packages/codex-thread-bridge/src/codex_thread_bridge/server.py` | 424 | console script `codex-thread-bridge` (server:main); MCP stdio server exec'd by plugins/crw/wiring/crw_bridge_mcp.py (mcp.json) | end user + relay host | CRW-151 | port | - | - |
@@ -150,7 +154,7 @@ Total non-test lines: 99526
 | `scripts/port/check_corpus_count.py` | 208 | dev CLI `python3 scripts/port/check_corpus_count.py` (todo 6) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn check_corpus_count` over scripts/, docs/, .github/ (consumer: todo 6 corpus-coverage validation; no CI job runs it yet) | todo 48 retires the Python corpus checker after the Go tests assume its coverage obligation |
 | `scripts/port/check_cutover_doc.py` | 149 | dev CLI `python3 scripts/port/check_cutover_doc.py` (todo 5) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn check_cutover_doc` over scripts/, docs/, .github/ (consumer: todo 5 cutover-document validation; no CI job runs it yet) | todo 48 retires the Python cutover checker with the remaining dev Python |
 | `scripts/port/check_test_map.py` | 133 | dev CLI `python3 scripts/port/check_test_map.py` (todo 3) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn check_test_map` over scripts/, docs/, .github/ (consumer: todo 3 test-map validation; no CI job runs it yet) | todo 48 retires the Python test-map checker with the remaining dev Python |
-| `scripts/port/dump_contracts.py` | 493 | dev CLI `python3 scripts/port/dump_contracts.py` (todo 2) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn dump_contracts` over scripts/, docs/, .github/ (consumer: todo 2 contract-schema generation/check; no CI job runs it yet) | todo 48 retires the Python contract dumper with the remaining dev Python |
+| `scripts/port/dump_contracts.py` | 495 | dev CLI `python3 scripts/port/dump_contracts.py` (todo 2) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn dump_contracts` over scripts/, docs/, .github/ (consumer: todo 2 contract-schema generation/check; no CI job runs it yet) | todo 48 retires the Python contract dumper with the remaining dev Python |
 | `scripts/port/make_ledger_fixture.py` | 60 | dev CLI `uv run --no-sync python scripts/port/make_ledger_fixture.py` (todo 14) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn make_ledger_fixture` over scripts/, docs/, .github/ and contract/ (consumer: this inventory and todo-14 ledger fixture regeneration; no product invocation) | todo 48 retires Python fixture generation after the Go ledger test owns the committed Python reference fixture |
 | `scripts/port/make_sqlite_fixture.py` | 28 | dev CLI `uv run --no-sync python scripts/port/make_sqlite_fixture.py` (todo 17) | dev/CI | CRW-152 | keep-as-data | - | - |
 | `scripts/runtime_install.py` | 5810 | operator CLI `python3 scripts/runtime_install.py <cmd>` (docs/runtime-install.md:19); CI `verify-definition` via scripts/ci/contracts.py:15 | end user + relay host | CRW-158 | port | - | - |

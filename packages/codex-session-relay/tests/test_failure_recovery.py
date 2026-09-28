@@ -586,11 +586,17 @@ class TheWaitBoundIsDeclaredInOnePlace(unittest.TestCase):
             for site in self.connect_sites(self.tree(module))
         }
         self.assertEqual(
-            {module for module, _function in openers}, {"intent.py"},
+            {module for module, _function in openers}, {"intent.py", "ownership.py"},
             "the hook can now open a database outside the module that declares the bound, so"
             f" that place carries a lock wait of its own: {sorted(openers)}",
         )
         self.assertIn(("intent.py", "read_only_connection"), openers)
+        self.assertIn(("ownership.py", "metadata"), openers)
+        # Ownership reads only its private copied snapshot, never waits on the
+        # live store, and cannot extend the hook's SQLite contention budget.
+        for _function, _line, timeout in self.connect_sites(self.tree("ownership.py")):
+            self.assertIsInstance(timeout, ast.Constant)
+            self.assertEqual(timeout.value, 0)
 
     def test_every_opener_takes_its_bound_from_the_constant_rather_than_a_literal(self):
         sites = self.connect_sites(self.tree("intent.py"))

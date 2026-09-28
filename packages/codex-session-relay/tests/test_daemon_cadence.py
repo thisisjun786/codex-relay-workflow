@@ -5,6 +5,7 @@ RelayDaemon.run waits only when it is given something to wait with. The CLI gave
 deadline-only run busy-spun for its whole duration. These tests pin both halves.
 """
 
+import json
 import os
 import shutil
 import tempfile
@@ -392,7 +393,7 @@ class TheFormOfTheBound(unittest.TestCase):
         now[0] = 5_030.0
         self.assertTrue(captured["stop"]())
 
-    def test_an_unbounded_run_is_given_no_guard_to_trip_over(self):
+    def test_an_unbounded_run_keeps_only_the_ownership_stop_guard(self):
         services, args = build_services(self, max_ticks=2)
         captured = {}
 
@@ -404,7 +405,13 @@ class TheFormOfTheBound(unittest.TestCase):
             _run_bounded(services, _service_for(services), args, require_intent=False,
                          monotonic=lambda: 5_000.0)
 
-        self.assertIsNone(captured["stop"])
+        self.assertFalse(captured["stop"]())
+        from codex_session_relay import ownership
+
+        record = ownership.mirror(services.selection.db_path)
+        record["phase"] = "draining"
+        (services.selection.path / "takeover.json").write_text(json.dumps(record))
+        self.assertTrue(captured["stop"]())
 
     def test_the_two_forms_of_a_spent_bound_answer_a_zero_tick_run_alike(self):
         """An identical request must not depend on which form the bound arrived in.

@@ -45,10 +45,10 @@ read by `hook_probe.py` through `scripts/ci/contracts.py`, not by a test file; t
 
 ## Totals
 
-Files: 121
-Tests: 6053
-Class A: files=14 tests=557
-Class B: files=87 tests=3353
+Files: 124
+Tests: 6094
+Class A: files=16 tests=591
+Class B: files=88 tests=3360
 Class C: files=20 tests=2143
 
 ## Todo 15 bridge property progress (2026-09-25)
@@ -168,6 +168,9 @@ write admission against a symlink into a temporary live-state-shaped directory.
 
 | path | tests | class | family | fixtures | owner | destination | coupling |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| `packages/codex-session-relay/tests/test_fence_readonly.py` | 7 | B | foreign-owner read matrix and terminal inbox replay | takeover-inbox legacy golden; ChannelTestCase | todo 31/36 CRW-152 | go-test: internal/relay/store read-only and inbox | - |
+| `packages/codex-session-relay/tests/test_fence.py` | 23 | A | ownership fence and decision 25 ingress | contract/golden/takeover-inbox | todo 31/36 CRW-152 | go-test: internal/relay/store takeover protocol | - |
+| `packages/codex-session-relay/tests/test_takeover_candidate.py` | 11 | A | decision 28 private designation and durable activation | isolated SQLite and inherited socketpair | todo 30/36 CRW-152 | go-test: internal/relay/service candidate protocol | - |
 | `packages/codex-session-relay/tests/test_ack_disposition_race.py` | 5 | B | two processes acknowledging one event; which may win | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
 | `packages/codex-session-relay/tests/test_ack_reconcile.py` | 40 | B | ACK, verdicts, reconciliation and restart recovery | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
 | `packages/codex-session-relay/tests/test_anchor_binding.py` | 14 | B | an anchor binds on every route to dispatched | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
