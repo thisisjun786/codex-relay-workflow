@@ -24,20 +24,35 @@ func pythonErrorText(err error) string { return store.PythonSQLiteError(err) }
 
 // ProjectState is AssignmentView.project_state.
 func (r *Registry) ProjectState(ctx context.Context, project string) contract.OrderedObject {
+	return ProjectStateReading(ctx, project, r, NewAssignmentView(r).State)
+}
+
+// ProjectReader is the existing linkage read contract, injectable for offline readers.
+type ProjectReader interface {
+	Attached(context.Context, string, sql.NullString, sql.NullString) ([]string, error)
+	Outstanding(context.Context, string, sql.NullString) ([]string, error)
+	Owners(context.Context, string, string) ([]contract.OrderedObject, error)
+}
+
+// ProjectStateReading shares the production composition with readers that cannot open a Store.
+func ProjectStateReading(ctx context.Context, project string, reader ProjectReader, stateOf func(context.Context, string) (contract.OrderedObject, error)) contract.OrderedObject {
 	reading := func(state string, readable bool, attached, outstanding []string, extra ...contract.Field) contract.OrderedObject {
 		out := contract.OrderedObject{{Key: "state", Value: state}, {Key: "readable", Value: readable}, {Key: "projectKey", Value: project},
 			{Key: "attached", Value: strList(attached)}, {Key: "outstanding", Value: strList(outstanding)}}
 		out = append(out, extra...)
 		return append(out, contract.Field{Key: "limits", Value: projectReadingLimits})
 	}
-	attached, err := r.Attached(ctx, project, sql.NullString{}, sql.NullString{})
+	if reader == nil {
+		return reading("unreadable", false, []string{}, []string{}, contract.Field{Key: "basis", Value: "no linkage reader was supplied, so the project's assignments could not be enumerated"})
+	}
+	attached, err := reader.Attached(ctx, project, sql.NullString{}, sql.NullString{})
 	var outstanding []string
 	var owners []contract.OrderedObject
 	if err == nil {
-		outstanding, err = r.Outstanding(ctx, project, sql.NullString{})
+		outstanding, err = reader.Outstanding(ctx, project, sql.NullString{})
 	}
 	if err == nil {
-		owners, err = r.Owners(ctx, scopeProject, project)
+		owners, err = reader.Owners(ctx, scopeProject, project)
 	}
 	if err != nil {
 		return reading("unreadable", false, []string{}, []string{},
@@ -56,10 +71,9 @@ func (r *Registry) ProjectState(ctx context.Context, project string) contract.Or
 		return reading("unregistered", true, []string{}, []string{},
 			contract.Field{Key: "basis", Value: "no live assignment is attached to this project, which is not the same as every assignment being finished"})
 	}
-	view := NewAssignmentView(r)
 	unfinished := []any{}
 	for _, rid := range outstanding {
-		state, err := view.State(ctx, rid)
+		state, err := stateOf(ctx, rid)
 		if err != nil {
 			return reading("unreadable", false, attached, outstanding,
 				contract.Field{Key: "basis", Value: "the unfinished set could not be expanded: " + pythonErrorText(err)})

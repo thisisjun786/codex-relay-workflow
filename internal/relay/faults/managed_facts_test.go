@@ -24,7 +24,8 @@ func Test22_FLF_4_ManagedAnswerDoesNotInventAChild(t *testing.T) {
 	}
 }
 func Test22_FLF_5_ManagedRecordNamesItsClearConditions(t *testing.T) {
-	clears := classes["managed_start_failed"].clears
+	policy, _ := classLookup("managed_start_failed")
+	clears := policy.clears
 	for _, part := range []string{"accepted", "attach", "creation-stage answer"} {
 		if !strings.Contains(clears, part) {
 			t.Fatalf("missing clear condition %s in %q", part, clears)

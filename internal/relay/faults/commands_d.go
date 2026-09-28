@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"slices"
 	"sort"
 	"strings"
 
@@ -165,7 +166,7 @@ func dSetPolicy(ctx context.Context, l *Ledger, a map[string]string) (any, error
 	if e := dProduct(p); e != nil {
 		return nil, e
 	}
-	if _, ok := classes[c]; !ok || !dPythonClass(c) {
+	if _, ok := classLookup(c); !ok || !dPythonClass(c) {
 		return nil, fmt.Errorf("fault_class_unregistered: '%s' is not a registered fault class, so nothing declares what would clear it", c)
 	}
 	if s != Notice && s != Degraded && s != Broken {
@@ -218,7 +219,8 @@ func dSetPolicy(ctx context.Context, l *Ledger, a map[string]string) (any, error
 func dPythonClass(name string) bool {
 	switch name {
 	case "completion_mismatch", "completion_unverified", "product_defect", "product_expected", "project_needed", "unclassified_incident":
-		return false
+		_, installed := executableKind("project_create")
+		return installed
 	}
 	return true
 }
@@ -235,12 +237,8 @@ func dPolicies(ctx context.Context, l *Ledger, a map[string]string) (any, error)
 	if after != "" && strings.TrimSpace(after) == "" {
 		return nil, fmt.Errorf("fault_observation_malformed: after is the name the last page returned, not %q", after)
 	}
-	names := make([]string, 0, len(classes))
-	for c := range classes {
-		if c > after && dPythonClass(c) {
-			names = append(names, c)
-		}
-	}
+	names := classNames(after)
+	names = slices.DeleteFunc(names, func(c string) bool { return !dPythonClass(c) })
 	sort.Strings(names)
 	var next any
 	if len(names) > limit {
@@ -256,6 +254,9 @@ func dPolicies(ctx context.Context, l *Ledger, a map[string]string) (any, error)
 				threshold = int64(3)
 			case Broken:
 				threshold = int64(1)
+			}
+			if fixed, ok := classThreshold(c); ok {
+				threshold = fixed
 			}
 			window := any(defaultWindow)
 			source := "built-in"
@@ -274,7 +275,8 @@ func dPolicies(ctx context.Context, l *Ledger, a map[string]string) (any, error)
 				source = "override"
 				reason = r.Get("reason")
 			}
-			entry := map[string]any{"product": p, "faultClass": c, "severity": s, "threshold": threshold, "window": window, "publish": threshold != nil, "source": source, "clears": classes[c].clears}
+			policy, _ := classLookup(c)
+			entry := map[string]any{"product": p, "faultClass": c, "severity": s, "threshold": threshold, "window": window, "publish": threshold != nil, "source": source, "clears": policy.clears}
 			if source == "override" {
 				entry["overrideReason"] = reason
 			}

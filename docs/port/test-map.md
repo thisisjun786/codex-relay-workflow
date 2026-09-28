@@ -444,3 +444,116 @@ Each Python property was compared with its Go test assertion by assertion (parit
 | `test_execution.py::test_a_verified_role_pair_may_still_be_sent_to_a_thread_the_host_has_not_loaded` | `owned_execution_roles_test.go::Test_test_a_verified_role_pair_may_still_be_sent_to_a_thread_the_host_has_not_loaded` | equivalent | roles_policy() parent pair; unloaded; accepted; one turn |
 | `test_execution.py::test_a_host_that_declared_no_roles_keeps_exactly_its_previous_send_behaviour` | `owned_execution_roles_test.go::Test_test_a_host_that_declared_no_roles_keeps_exactly_its_previous_send_behaviour` | equivalent | same inputs, host effects and receipt/refusal fields as Python |
 | `test_execution.py::test_naming_no_role_produces_the_same_request_identity_as_before_roles_existed` | `owned_execution_roles_test.go::Test_test_naming_no_role_produces_the_same_request_identity_as_before_roles_existed` | equivalent | rows the bridge wrote: no-role row matches key-free params, role row includes role; role:nil hashes differently |
+
+## Todo 23A partial implementation (e5b10415 base)
+
+- `test_product_routing_decisions.py`: `internal/relay/routing/parity_test.go` replays the original Python scenarios for PRD-1, 3-9, 11-12, 19-20; `routes_test.go` replays PRD-18 and 22, including whole persisted table rows. PRD-2, 17 and 21 have partial library/storage tests only, not completed property claims. All 17 named tests have behavioral mutation proofs in `.omo/evidence/task-23-crw-go-port.txt` (part A). Placement and completion replies additionally compare Python insertion-order JSON bytes.
+- `test_product_routing.py`: PR-1 through PR-27 remain unimplemented/unmapped. Ledger-backed routing requires public context-aware ledger APIs and an accessible extension-kind declaration; no substitute ledger or CLI-through-second-Store adapter was written.
+- `test_project_completion.py`: PC-1 through PC-4 remain unmapped here. The existing implementation and CLI live in `internal/relay/registry/linkage_cli.go`; they were not duplicated.
+- Python-internal PRD-14, PRD-15 and PC-0 retain the skip rationale in the todo-23 property inventory. This partial result does not mark todo 23 complete.
+
+## Todo 23B sync and reception (e5b10415 base)
+
+| Python file | Property IDs | Go tests | Evidence |
+| --- | --- | --- | --- |
+| `test_sync_outbox.py` | SO-1..14 | `internal/relay/sync`: `Test23_SO_1_OutboxIdentity` through `Test23_SO_14_EnqueueJournal` | live Python replies and every written table, real Linear block bytes; verdict caller and rollback replay |
+| `test_child_packets.py` | CP-1..19 | `internal/relay/sync`: `Test23_CP_<n>_PythonScenario` | each original scenario replayed through independent Go packet entry points, complete JSON bytes |
+| `test_reception_findings.py` | RF-1..11 | `internal/relay/sync`: `Test23_RF_<n>_PythonScenario` | original scenario sweep including wrong shapes and unpaired surrogate refusal; CP-14/RF-8 share implementation, not scenario wrappers |
+| `test_store_reception.py` | SR-1..18 | `internal/relay/sync`: `Test23_SR_<n>_PythonScenario` | built `crw relay packet-check`, complete stdout and ledger bytes; direct receiver ladder callers replayed; SR-15 drives ambiguous selection through CLI |
+
+Implementation lives in `internal/relay/sync` and `internal/relay/reception`. Existing delivery verdict-sync integration, registry linkage/settings, and the single Python JSON dumper in `supervisor` are reused. The `evidence` package named by the task prompt is absent from this base; no parallel dumper was added.
+
+Additional checks: `Test23_CLI_ArgparseBytes` (COLUMNS 80, 120 and unset), `Test23_CLI_RegistryIntegration`, `Test23_SyncCommandsBuiltBinaryWholeBytes` (both executable names; injected clock/token in contract-only binary), `Test23_LedgerPythonGoInteropAndBlockingLock`. Behavioral mutation proofs for all 62 IDs and exact commands/results are recorded under part B in `.omo/evidence/task-23-crw-go-port.txt`. The production host-adapter socket round trip remains todo 28; no sync or packet-check command needs a transport.
+
+
+## Todo 23A completed coverage (supersedes the partial entry above)
+
+All 51 contract/behavior properties from `test_product_routing.py`,
+`test_product_routing_decisions.py`, and `test_project_completion.py` have independent
+live-Python replay tests in `internal/relay/routing`. Each test selects its own
+original scenarios; `testdata/properties.md` is the local scenario inventory.
+PRD-14/15 and PC-0 are the only omitted Python-internal properties (signature/AST
+introspection and duplicate constant identity); compile-time imports plus PR-25
+cover the Go equivalents. Project completion reuses registry/linkage, not a second
+implementation.
+
+| Property | Named Go test(s) |
+| --- | --- |
+| PR-1 | `Test23_PR_1_PlacementIntegration` |
+| PR-2 | `Test23_PR_2_ControlGroups` |
+| PR-3 | `Test23_PR_3_LostCreate` |
+| PR-4 | `Test23_PR_4_CompletionIntegration` |
+| PR-5 | `Test23_PR_5_UnplacedMismatch` |
+| PR-6 | `Test23_PR_6_RemediationHistory` |
+| PR-7 | `Test23_PR_7_ProjectProposals` |
+| PR-8 | `Test23_PR_8_ProjectPreIssue` |
+| PR-9 | `Test23_PR_9_ProjectMembers` |
+| PR-10 | `Test23_PR_10_ProposalPaging` |
+| PR-11 | `Test23_PR_11_ProjectLinkage` |
+| PR-12 | `Test23_PR_12_OriginIsolation` |
+| PR-13 | `Test23_PR_13_CompletionReplay` |
+| PR-14 | `Test23_PR_14_ExistingItems` |
+| PR-15 | `Test23_PR_15_SharedCause` |
+| PR-16 | `Test23_PR_16_Classification` |
+| PR-17 | `Test23_PR_17_Reporting` |
+| PR-18 | `Test23_PR_18_StaticKind`; `Test23_PR_18_BuiltProjectKind` |
+| PR-19 | `Test23_PR_19_LateOwner` |
+| PR-20 | `Test23_PR_20_RegistryChanges` |
+| PR-21 | `Test23_PR_21_TestTargets` |
+| PR-22 | `Test23_PR_22_TransactionBoundaries` |
+| PR-23 | `Test23_PR_23_LateBinding` |
+| PR-24 | `Test23_PR_24_OccurrenceReplay` |
+| PR-25 | `Test23_PR_25_StaticRegistry` |
+| PR-26 | `Test23_PR_26_FilingRollback` |
+| PR-27 | `Test23_PR_27_CurrentRun` |
+| PRD-1 | `Test23_PRD_1_Validation` |
+| PRD-2 | `Test23_PRD_2_PolicyCLI`; `Test23_PRD_2_PolicyLibrary` |
+| PRD-3 | `Test23_PRD_3_FollowUpChecks` |
+| PRD-4 | `Test23_PRD_4_Coverage` |
+| PRD-5 | `Test23_PRD_5_ProductResolution` |
+| PRD-6 | `Test23_PRD_6_Workspace` |
+| PRD-7 | `Test23_PRD_7_Placement` |
+| PRD-8 | `Test23_PRD_8_SimulatedIsolation` |
+| PRD-9 | `Test23_PRD_9_LabelsAndObligations` |
+| PRD-10 | `Test23_PRD_10_RegistryCLI`; `Test23_PRD_10_RegistryStore` |
+| PRD-11 | `Test23_PRD_11_CompletionChecks` |
+| PRD-12 | `Test23_PRD_12_CompletionClosure` |
+| PRD-13 | `Test23_PRD_13_LedgerGateCLI`; `Test23_PRD_13_LedgerGate` |
+| PRD-16 | `Test23_PRD_16_UnreadableJSON` |
+| PRD-17 | `Test23_PRD_17_SurfaceClassification`; `Test23_PRD_17_ClassificationLibrary` |
+| PRD-18 | `Test23_PRD_18_RouteRows` |
+| PRD-19 | `Test23_PRD_19_Attention` |
+| PRD-20 | `Test23_PRD_20_ProjectEligibility` |
+| PRD-21 | `Test23_PRD_21_ReplayStorage` |
+| PRD-22 | `Test23_PRD_22_ProposalRotation` |
+| PC-1 | `Test23_PC_1_NoAnswer` |
+| PC-2 | `Test23_PC_2_EveryChild` |
+| PC-3 | `Test23_PC_3_ReadFailures` |
+| PC-4 | `Test23_PC_4_ReachableConsumer` |
+
+Evidence: `.omo/evidence/task-23-crw-go-port.txt`, part A, records all mappings,
+51 killed behavioral mutations (file/line, before/after, observed diff), and
+byte-copy plus `cmp` restores. The final PR-22 proof moves the actual binding
+read outside Compose; PR-26 commits a failed filing instead of rolling it back.
+Those supersede the earlier observer-only mutation examples.
+
+Receipts/refusals compare whole live-Python values and routing CLI replies compare
+insertion-order JSON bytes. Store replays compare every table except store identity
+metadata (`schema_meta`), retaining serialized JSON text and numeric spelling.
+`Test23_ArgparseWidthsBuiltBinary` covers accepted and rejected arguments for all
+11 commands, both executable names, at COLUMNS=80, 120 and unset, including bare
+`--`, `-- x`, abbreviations, dash-leading values and boolean `=value` errors.
+`Test23_BuiltCommandRoundTrips` and `Test23_PR_18_BuiltProjectKind` exercise real
+SQLite state through the built dispatcher, including refusals, duplicate intake,
+classification replay, and queue/claim/operation/complete project publication.
+Clocks/tokens are injected through a test-only build overlay, never normalized.
+The shared `argparse` implementation/spec originated with todo 24; routing registers
+through `cli.Commands`, without an extra pre-dispatch path.
+
+Validation: full relay/contract race suite, lint, static binary build, routing-only
+strict parser contract and applicable strict cli-shape/linkage cases. Broad strict
+cli-shape/hook failures are other todos' unported host/daemon/reporting/guard/hook
+surfaces; exact fixture names and owners are listed in the evidence. No existing
+cli-shape/hook fixture names a routing command. Isolation traces found zero successful
+accesses under the live host state, Codex, or runtime roots. Production `--socket`
+round trip remains todo 28; the 11 routing commands are offline.

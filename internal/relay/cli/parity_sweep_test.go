@@ -49,8 +49,17 @@ func Test24BuiltBinaryArgparseSweep(t *testing.T) {
 }
 
 func Test24BuiltBinaryRuntimeSweep(t *testing.T) {
-	t.Parallel()
-	runBuiltBinarySweep(t, true, false)
+	if exhaustiveParity {
+		t.Parallel()
+		runBuiltBinarySweep(t, true, false)
+		return
+	}
+	for _, command := range []string{"supervisor-stage", "merge-evidence"} {
+		t.Run(command, func(t *testing.T) {
+			t.Setenv("CRW_SWEEP_COMMAND", command)
+			runBuiltBinarySweep(t, true, false)
+		})
+	}
 }
 
 func Test24BuiltBinaryRootParserParity(t *testing.T) {

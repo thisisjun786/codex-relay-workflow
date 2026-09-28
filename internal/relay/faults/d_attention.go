@@ -4,8 +4,8 @@ import "context"
 
 func dAttentionReason(ctx context.Context, l *Ledger, r row, moment float64) (string, error) {
 	kind := text(r, "kind")
-	spec, ok := kinds[kind]
-	if !ok || kind == "project_create" {
+	spec, ok := executableKind(kind)
+	if !ok {
 		return "kindUnregistered", nil
 	}
 	if n, ok := r.Get("next_attempt_at").(float64); ok && n > moment {

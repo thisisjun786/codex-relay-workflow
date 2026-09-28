@@ -182,8 +182,10 @@ func executeC(ctx context.Context, l *Ledger, name string, a map[string]string) 
 		return cShow(ctx, l, a)
 	case "fault-next":
 		return cNext(ctx, l, a)
-	case "fault-retry", "fault-cancel":
+	case "fault-retry":
 		return cRetryCancel(ctx, l, name, a)
+	case "fault-cancel":
+		return l.Cancel(ctx, a["--publication"], a["--reason"])
 	case "fault-stage":
 		return cStage(ctx, l, a)
 	case "fault-queue":

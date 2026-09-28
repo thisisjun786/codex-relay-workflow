@@ -64,7 +64,7 @@ func f2Ordered(value any) any {
 func executeF2(ctx context.Context, l *Ledger, name string, a map[string]string) (any, error) {
 	switch name {
 	case "fault-fail":
-		return f2Fail(ctx, l, a)
+		return l.Fail(ctx, a["--publication"], a["--claim-token"], a["--error"], a["--ended"] != "")
 	case "fault-adopt", "fault-move", "fault-update":
 		return f2Write(ctx, l, name, a)
 	}

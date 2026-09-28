@@ -410,3 +410,10 @@ by an `Evidence:` line, and the file contains no open marker. A reviewer resolve
 citation against the worktree revision named at the top. There is no failure scenario to
 run for a document; a citation that stops resolving is caught when the cited line moves,
 by the reviewer, not by a script.
+
+## 21. Routing uses the transaction-aware fault ledger library (todo 23A)
+
+Decision: expose `faults.KindPolicy` (PreIssue, Validate, Confirm), class-threshold registration, and `Ledger` methods for canonical identities, complete observation receipts with atomic adoption, current link reads, adoption/move/update, publication queue/read/claim/operation/complete/fail/reconcile/cancel, notifications, policies, remediation, and resolution. They reuse the existing helpers and the caller's context/Store; routing wraps composed writes in `Store.Compose`, never opens a second Store or invokes the CLI. Existing CLI claim/operation/fail/cancel dispatch shares these APIs. `WithInputs` supplies deterministic clocks and entropy to tests.
+
+Evidence: `internal/relay/faults/api.go`, `kinds.go`; `internal/relay/routing/integration_test.go` replays Python scenarios and compares every persisted table and whole receipts. The default built-in process remains unchanged until routing installs its project_create declaration.
+- [todo23] internal/relay/reception/depth.go fixes the console-script boundary at 9998 nested containers (stored settings first fail at 9998 because their object adds one level) because parity targets the installed `codex-session-relay` entry point on shipped CPython 3.13 with recursionlimit 1000, which relay code never changes; live console `packet-check` coverage detects runtime drift.

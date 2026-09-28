@@ -405,9 +405,10 @@ func Test22_FLT_2_PythonUnregisteredClassWholeRefusal(t *testing.T) {
 }
 func Test22_FLT_2_PythonOriginalClassClearAssertions(t *testing.T) {
 	want := captureOriginalAssertions(t, "test_faults", "TheFaultPathReachesNoNetwork", "test_every_registered_class_declares_what_clears_it")
-	got := []any{len(classes) > 0}
+	got := []any{len(classNames("")) > 0}
 	for _, name := range []string{"delivery_stalled", "record_sync_failed", "observation_stalled", "report_omitted", "observation_unmeasured", "delivery_refused", "managed_start_failed"} {
-		got = append(got, classes[name].clears != "")
+		policy, _ := classLookup(name)
+		got = append(got, policy.clears != "")
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("class declarations: Go=%v Python=%v", got, want)
