@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func seedIntake(t *testing.T, path, root string) *store.Store {
@@ -19,6 +20,7 @@ func seedIntake(t *testing.T, path, root string) *store.Store {
 	if err != nil {
 		t.Fatal(err)
 	}
+	testsupport.FencePythonFixture(t, s.DB, s.Path, "")
 	t.Cleanup(func() {
 		if err := s.Close(); err != nil {
 			t.Error(err)

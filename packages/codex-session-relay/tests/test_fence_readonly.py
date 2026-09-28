@@ -200,6 +200,37 @@ def test_notification_projection_matches_housekeeping_without_writing(populated_
         store.close()
 
 
+def test_fault_next_projects_expired_leases_without_writing(populated_store):
+    path, _ = populated_store
+    store = Store(path)
+    try:
+        ledger = faults.FaultLedger(store, FakeClock())
+        ledger.set_target(product="crw", project="CRW", team="team-relay", project_ref="proj-CRW")
+        ledger.record(faults.observation(
+            product="crw", fault_class="report_omitted", severity=faults.BROKEN,
+            signature={"relationship": "rel-1", "turn": "turn-1"}, occurrence_key="one",
+            scope={"projectKey": "CRW", "issueKey": "CRW-1"}, detail="missing",
+            evidence=[{"kind": "row", "ref": "events", "observed": {"rows": 0}}],
+        ))
+        publication = ledger.next()[0]["publication_id"]
+        ledger.claim(publication, owner="operator")
+        with store.transaction() as db:
+            db.execute("UPDATE fault_publications SET lease_until=0 WHERE publication_id=?",
+                       (publication,))
+        stamp(path, owner="go")
+        with sqlite3.connect(path) as db:
+            before_rows = list(db.execute("SELECT * FROM fault_publications ORDER BY rowid"))
+        before_entries = sorted(entry.name for entry in path.parent.iterdir())
+        code, answer = invoke(path, "fault-next", [])
+        assert code == 0, answer
+        assert [item["publication_id"] for item in answer["publications"]] == [publication]
+        with sqlite3.connect(path) as db:
+            assert list(db.execute("SELECT * FROM fault_publications ORDER BY rowid")) == before_rows
+        assert sorted(entry.name for entry in path.parent.iterdir()) == before_entries
+    finally:
+        store.close()
+
+
 def test_supervisor_read_refuses_queue_and_legacy_replay_does_not_block_writer(populated_store):
     path, _ = populated_store
     stamp(path, owner="go")

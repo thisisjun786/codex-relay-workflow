@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func Test28_EmitDeliverClaimAckRoundTrip(t *testing.T) {
@@ -25,6 +26,14 @@ func Test28_EmitDeliverClaimAckRoundTrip(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := os.Rename(filepath.Join(root, pair[0]), filepath.Join(pair[1], "relay.sqlite3")); err != nil {
+			t.Fatal(err)
+		}
+		s, err := store.Open(context.Background(), filepath.Join(pair[1], "relay.sqlite3"), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		testsupport.FencePythonFixture(t, s.DB, s.Path, "", pair[1] == pyState)
+		if err := s.Close(); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -67,23 +67,17 @@ def enqueue(state, request):
     identifier = request["operationId"]
     final = directory / identifier
     temporary = directory / f".tmp-{identifier}-{os.getpid()}-{uuid.uuid4().hex}"
-    linked = False
     try:
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "wb") as handle:
             write_request(handle, raw)
         try:
             os.link(temporary, final)
-            linked = True
         except FileExistsError:
             if final.read_bytes() != raw:
                 raise RelayError(RefusalReason.INBOX_CONFLICT,
                                  "the operation ID already names different inbox bytes") from None
         sync_directory(directory)
-    except OSError:
-        if linked:
-            final.unlink()
-        raise
     finally:
         temporary.unlink(missing_ok=True)
     return {"status": "durably_queued", "operationId": identifier,

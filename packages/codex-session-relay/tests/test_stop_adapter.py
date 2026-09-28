@@ -17,6 +17,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from codex_session_relay import stopadapter
 
@@ -66,6 +67,38 @@ class StopAdapterTests(unittest.TestCase):
         self.assertTrue(Path(stopadapter.__file__).is_file())
         self.assertTrue(callable(stopadapter.main))
         self.assertTrue(callable(stopadapter.run))
+
+    def test_fallback_drain_uses_the_one_absolute_deadline(self):
+        class Process:
+            pid = 99
+            returncode = None
+            stdin = stdout = stderr = None
+
+            def __init__(self):
+                self.timeouts = []
+
+            def poll(self):
+                return self.returncode
+
+            def communicate(self, input=None, *, timeout):
+                del input
+                self.timeouts.append(timeout)
+                if len(self.timeouts) == 1:
+                    raise subprocess.TimeoutExpired("guard", timeout, output=b"partial")
+                self.returncode = -9
+                return b"drained", b""
+
+        process = Process()
+        clock = iter((100.0, 100.1, 104.0, 104.25, 104.5))
+        config = {"relayExecutable": "guard", "markerRoot": "/markers", "timeoutSeconds": 5}
+        with (mock.patch.object(stopadapter, "socket_guard", return_value=None),
+              mock.patch.object(stopadapter.subprocess, "Popen", return_value=process),
+              mock.patch.object(stopadapter.time, "monotonic", side_effect=lambda: next(clock)),
+              mock.patch.object(stopadapter, "_end_group")):
+            result = stopadapter.invoke_guard(config, b"{}")
+        self.assertEqual(result["stdout"], "drained")
+        self.assertEqual(len(process.timeouts), 2)
+        self.assertAlmostEqual(process.timeouts[1], 1.0)
 
     def test_a_held_turn_prints_exactly_the_stop_json_the_host_accepts(self):
         from contract.runner import FIXTURES, run_scenario

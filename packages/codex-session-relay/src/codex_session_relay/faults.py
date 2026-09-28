@@ -34,10 +34,12 @@ actually observed can move it.
 import json
 import re
 import secrets
+import sqlite3
 
 from . import sync
 from .errors import RefusalReason, RelayError
 from .identity import sha256_hex
+from .store import Store
 
 SCHEMA = "fault-observation/1"
 LEDGER_SCHEMA = "fault-ledger/1"
@@ -2926,6 +2928,24 @@ class FaultLedger:
                 " AND lease_until IS NOT NULL AND lease_until <= ? LIMIT 1",
                 (CLAIMED, ISSUED, moment)).fetchone() is not None
         return {"released": released, "uncertain": uncertain, "more": more}
+
+    def readonly_queue_state(self, *, limit=SHOWN_PER_PAGE, now=None) -> dict:
+        """Project lease expiry on a private snapshot, never another runtime's store."""
+        projected = Store.__new__(Store)
+        projected.path = self.store.path
+        projected.read_only = False
+        projected._admission = None
+        projected._composing = 0
+        projected.fault_hook = None
+        projected.db = sqlite3.connect(":memory:", isolation_level=None)
+        projected.db.row_factory = sqlite3.Row
+        try:
+            self.store.db.backup(projected.db)
+            ledger = FaultLedger(projected, self.clock)
+            ledger.expire_leases(now=now)
+            return ledger.queue_state(limit=limit, now=now)
+        finally:
+            projected.close()
 
     def retry(self, publication) -> dict:
         """An operator's decision to offer a failed write again. Never reaches uncertain."""

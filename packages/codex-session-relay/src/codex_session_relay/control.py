@@ -5,11 +5,21 @@ import os
 import selectors
 import socket
 import stat
+import struct
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 from . import guard
+
+
+def peer_uid(connection):
+    """The kernel-observed Unix peer uid; no request bytes are trusted first."""
+    if not hasattr(socket, "SO_PEERCRED"):
+        raise OSError("guard peer credentials unavailable")
+    raw = connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+    _pid, uid, _gid = struct.unpack("3i", raw)
+    return uid
 
 
 class GuardServer:
@@ -55,6 +65,8 @@ class GuardServer:
                 connection, _ = self.listener.accept()
                 with connection:
                     connection.settimeout(5)
+                    if peer_uid(connection) != os.getuid():
+                        continue
                     try:
                         self._answer(connection)
                     except (OSError, ValueError, TypeError, KeyError) as error:

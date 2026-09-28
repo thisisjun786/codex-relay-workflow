@@ -162,6 +162,32 @@ def test_start_read_deadline_is_absolute(starting, monkeypatch):
         child.close()
 
 
+def test_candidate_message_has_the_same_bounded_frame_in_both_directions(starting, monkeypatch):
+    path, _ = starting
+    monkeypatch.setattr(takeover, "MAX_CANDIDATE_BYTES", 32)
+    parent, child = socket.socketpair()
+    try:
+        parent.sendall(b"x" * 33)
+        with pytest.raises(ownership.OwnershipRefused, match="size limit"):
+            takeover.CandidateChannel(child, path)
+    finally:
+        parent.close()
+        child.close()
+
+    left, right = socket.socketpair()
+    try:
+        channel = object.__new__(takeover.CandidateChannel)
+        channel.connection = left
+        with pytest.raises(ownership.OwnershipRefused, match="size limit"):
+            channel.send({"kind": "x", "payload": "y" * 64})
+        right.setblocking(False)
+        with pytest.raises(BlockingIOError):
+            right.recv(1)
+    finally:
+        left.close()
+        right.close()
+
+
 def test_starting_ordinary_writer_refused_and_ingress_queued(starting, capsys):
     path, _ = starting
     with pytest.raises(ownership.OwnershipRefused):

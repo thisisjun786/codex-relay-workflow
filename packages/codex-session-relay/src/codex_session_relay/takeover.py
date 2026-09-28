@@ -13,6 +13,7 @@ from .service import boot_id, start_ticks
 
 CHANNEL_ENV: Final = "CRW_TAKEOVER_CHANNEL_FD"
 CHANNEL_TIMEOUT: Final = 20.0
+MAX_CANDIDATE_BYTES: Final = 64 << 20
 
 
 def identity(pid: int, *, build: str | None = None):
@@ -73,9 +74,14 @@ class CandidateChannel:
                     raise ownership.OwnershipRefused("candidate message is not an object")
                 return value
             line.extend(byte)
+            if len(line) > MAX_CANDIDATE_BYTES:
+                raise ownership.OwnershipRefused("candidate message exceeds the size limit")
 
     def send(self, value) -> None:
-        self.connection.sendall(json.dumps(value, separators=(",", ":")).encode() + b"\n")
+        encoded = json.dumps(value, separators=(",", ":")).encode() + b"\n"
+        if len(encoded) > MAX_CANDIDATE_BYTES:
+            raise ownership.OwnershipRefused("candidate message exceeds the size limit")
+        self.connection.sendall(encoded)
 
     def ready(self) -> None:
         """Recovery finished; only the durable active holder may go on to serve."""

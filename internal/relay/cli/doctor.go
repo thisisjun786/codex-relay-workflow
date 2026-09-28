@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"syscall"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 const policyVariable = "CODEX_THREAD_BRIDGE_EXECUTION_POLICY"
@@ -44,6 +46,7 @@ func runDoctor(ctx context.Context, services Services, args Args) (any, error) {
 		{Key: "stateSelection", Value: selectionRecord(services.Selection)},
 		{Key: "store", Value: locationRecord(loc, probed.Access.DBExists)},
 		{Key: "access", Value: accessRecord(probed.Access)},
+		{Key: "ownership", Value: ownershipReport(ctx, services, probed.Access)},
 	}
 	add := func(key string, value any) { report = append(report, contract.Field{Key: key, Value: value}) }
 	info, err := os.Stat("/proc/self/fd")
@@ -73,6 +76,22 @@ func runDoctor(ctx context.Context, services Services, args Args) (any, error) {
 	add("rolePolicy", rolePolicyReport(caller))
 	worker := readWorkerPolicy(services, loc)
 	add("workerPolicy", worker)
+	ownership := get(report, "ownership").(contract.OrderedObject)
+	compatibility := func(value any) any {
+		if value == nil {
+			return nil
+		}
+		if text, ok := value.(string); ok && text != "" {
+			return text
+		}
+		return nil
+	}
+	processes := contract.OrderedObject{
+		{Key: "supervisor", Value: compatibility(get(readJSONFile(filepath.Join(services.Selection.Path, "daemon.json")), "python_compatibility_build"))},
+		{Key: "worker", Value: compatibility(get(get(worker, "worker"), "python_compatibility_build"))},
+	}
+	ownership = append(ownership, contract.Field{Key: "processes", Value: processes})
+	report[fieldIndex(report, "ownership")].Value = ownership
 	launch, err := resolveLaunchPolicy(services)
 	if err != nil {
 		return nil, err
@@ -130,6 +149,46 @@ func runDoctor(ctx context.Context, services Services, args Args) (any, error) {
 		return nil, &PayloadExit{Payload: report, Code: contract.ExitRefused}
 	}
 	return report, nil
+}
+
+func ownershipReport(ctx context.Context, services Services, access store.ProbeAccess) contract.OrderedObject {
+	keys := []string{"writer_protocol", "owner", "owner_epoch", "takeover_id", "rollback_allowed", "python_compatibility_build"}
+	values := map[string]string{}
+	detail := ""
+	if access.DBReadable {
+		read := store.ReadOnlyRows(ctx, services.Selection,
+			"SELECT key,value FROM schema_meta WHERE key IN ('writer_protocol','owner','owner_epoch','takeover_id','rollback_allowed','python_compatibility_build')",
+			nil, func(row store.RowScanner) error {
+				var key, value string
+				if err := row.Scan(&key, &value); err != nil {
+					return err
+				}
+				values[key] = value
+				return nil
+			})
+		if read.Detail != "" {
+			detail = read.Detail
+		}
+	}
+	phase := ""
+	if record := readJSONFile(filepath.Join(services.Selection.Path, "takeover.json")); record != nil {
+		phase, _ = get(record, "phase").(string)
+	}
+	report := contract.OrderedObject{}
+	for _, key := range keys {
+		value, found := values[key]
+		if found {
+			report = append(report, contract.Field{Key: key, Value: value})
+		} else {
+			report = append(report, contract.Field{Key: key, Value: nil})
+		}
+	}
+	report = append(report,
+		contract.Field{Key: "phase", Value: nullableText(phase)},
+		contract.Field{Key: "runtime_build", Value: testsupport.PythonCompatibilityBuild},
+		contract.Field{Key: "detail", Value: nullableText(detail)},
+	)
+	return report
 }
 
 func orEmpty(v any) any {

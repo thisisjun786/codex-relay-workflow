@@ -49,6 +49,7 @@ import os
 import re
 import socket
 import stat as stat_module
+import struct
 import subprocess
 import sys
 import time
@@ -464,6 +465,27 @@ def _text(raw):
     return str(raw)
 
 
+def _trusted_guard_peer(connection, path):
+    """Authenticate the local owner before sending a Stop or trusting its verdict."""
+    if not hasattr(socket, "SO_PEERCRED"):
+        raise OSError("guard peer credentials unavailable")
+    raw = connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+    _pid, peer_uid, _gid = struct.unpack("3i", raw)
+    ours = os.getuid()
+    endpoint = os.lstat(path)
+    parent = os.stat(Path(path).parent)
+    if stat_module.S_ISLNK(endpoint.st_mode) or not stat_module.S_ISSOCK(endpoint.st_mode):
+        raise OSError("guard control path is not a direct socket")
+    if peer_uid != ours:
+        raise OSError(f"guard peer uid {peer_uid} differs from our uid {ours}")
+    if endpoint.st_uid != ours:
+        raise OSError(f"guard socket uid {endpoint.st_uid} differs from our uid {ours}")
+    if parent.st_uid != ours:
+        raise OSError(f"guard socket directory uid {parent.st_uid} differs from our uid {ours}")
+    if stat_module.S_IMODE(parent.st_mode) & 0o022:
+        raise OSError("guard socket directory is group- or world-writable")
+
+
 def socket_guard(config, payload, *, state=None):
     """One bounded control request; None permits the retained Python CLI fallback.
 
@@ -504,6 +526,7 @@ def socket_guard(config, payload, *, state=None):
                     os.close(directory)
             else:
                 connection.connect(address)
+            _trusted_guard_peer(connection, state / "control.sock")
             remaining = budget - (time.monotonic() - started)
             connection.settimeout(max(0.001, remaining))
             deadline = datetime.fromtimestamp(time.time() + remaining, timezone.utc).isoformat()
@@ -527,7 +550,10 @@ def socket_guard(config, payload, *, state=None):
                     raise ValueError("guard response exceeds 16 MiB")
             text = bytes(raw).decode("utf-8")
             value = json.loads(text)
-            code = GUARD_EXIT_REFUSED if isinstance(value, dict) and "error" in value else GUARD_EXIT_OK
+            error = value.get("error") if isinstance(value, dict) else None
+            code = ({"refused": GUARD_EXIT_REFUSED, "host": GUARD_EXIT_HOST,
+                     "usage": GUARD_EXIT_USAGE}.get(error, GUARD_EXIT_REFUSED)
+                    if error is not None else GUARD_EXIT_OK)
             return {"ending": EXITED, "argv": argv, "code": code, "signal": None,
                     "elapsedMs": round((time.monotonic() - started) * 1000),
                     "stdout": text, "stderr": "", "detail": None}
@@ -544,14 +570,14 @@ def socket_guard(config, payload, *, state=None):
 def invoke_guard(config, payload):
     """Try the owner socket before launching the retained Python CLI."""
     started = time.monotonic()
+    deadline = started + (config.get("timeoutSeconds") or DEFAULT_TIMEOUT_SECONDS)
     # Without an explicit receipt store, the CLI must resolve intent/discovery
     # before any owner dial; an environment pin does not settle that selection.
     routed = socket_guard(config, payload) if config.get("dbPath") else None
     if routed is not None:
         return routed
     argv = guard_argv(config)
-    budget = max(0.001, (config.get("timeoutSeconds") or DEFAULT_TIMEOUT_SECONDS)
-                 - (time.monotonic() - started))
+    budget = max(0.001, deadline - time.monotonic())
     try:
         opened = subprocess.Popen(
             argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -574,7 +600,7 @@ def invoke_guard(config, payload):
         # Draining is bounded by what is LEFT of the budget, never by the budget again: a second
         # full wait would take this to nearly twice the budget, which is the window where the
         # host kills the adapter and the timeout goes unrecorded.
-        remaining = budget - (time.monotonic() - started)
+        remaining = deadline - time.monotonic()
         out, err = b"", b""
         if remaining > 0:
             try:

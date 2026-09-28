@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 type cancelledDelivery struct {
@@ -102,6 +103,14 @@ func Test28_BAD_14_ShutdownSettlesClaimedDelivery(t *testing.T) {
 		return out
 	}
 	seed := copyDeliverySeed(t, root)
+	python, err := store.Open(context.Background(), filepath.Join(root, "python.sqlite3"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	testsupport.FencePythonFixture(t, python.DB, python.Path, "")
+	if err := python.Close(); err != nil {
+		t.Fatal(err)
+	}
 	rpc := &heldRPC{make(chan struct{}), make(chan struct{})}
 	l, err := ledger.OpenWithOptions(filepath.Join(root, "cancel.sqlite3"), ledger.Options{Now: func() float64 { return 1700000000.125 }, Encode: encodeReceipt})
 	if err != nil {
@@ -136,6 +145,7 @@ func Test28_BAD_14_ShutdownSettlesClaimedDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	testsupport.FencePythonFixture(t, s.DB, s.Path, "", false)
 	defer s.Close()
 	service := delivery.NewService(s, delivery.NewFakeClock())
 	result, err := service.Attempt(context.Background(), seed.Event, cancelledDelivery{Adapter: a, err: cancellation}, nil, "")

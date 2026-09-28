@@ -1967,9 +1967,13 @@ def cmd_fault_resolve(services, args) -> dict:
 
 
 def cmd_fault_next(services, args) -> dict:
-    """What a writer may act on now, and why everything else pending waits."""
-    services.faults.expire_leases()
-    state = services.faults.queue_state(limit=_positive(args.limit, "--limit"))
+    """What a writer may act on now, projecting housekeeping for foreign owners."""
+    limit = _positive(args.limit, "--limit")
+    if services.read_only:
+        state = services.faults.readonly_queue_state(limit=limit)
+    else:
+        services.faults.expire_leases()
+        state = services.faults.queue_state(limit=limit)
     return {"publications": state["ready"], "held": state["held"],
             "budgets": state["budgets"], "budgetsTruncated": state["budgetsTruncated"]}
 
@@ -5878,7 +5882,7 @@ def _read_only_command(args):
 def _ownership_preflight(services, args):
     from .ownership import check_start
 
-    if services.read_only:
+    if services.read_only or _reads_no_selected_store(args):
         return
     # Daemon/scope locks must precede connection admission. Service and marker
     # paths open their own admitted connection, rather than one owned here.
@@ -5908,7 +5912,7 @@ def main(argv=None) -> int:
             channel = channel_cleanup.enter_context(receive_candidate(services.selection.db_path))
             services.candidate_channel = channel
             services.candidate = channel.permit
-        if not services.read_only:
+        if not services.read_only and not _reads_no_selected_store(args):
             check_start(services.selection.db_path, candidate=services.candidate)
         _refuse_ambiguous_state(services, args)
         _ownership_preflight(services, args)

@@ -209,6 +209,30 @@ def test_retry_conflict_and_failed_write(database):
     assert files(database.parent) == before
 
 
+def test_a_failed_directory_sync_never_removes_a_retry_another_sender_acknowledged(database):
+    parser = cli.build_parser()
+    request = inbox.envelope(parser, parser.parse_args(["ack", *CASES["ack"]]))
+    final = database.parent / "takeover-inbox" / request["operationId"]
+    real_sync = inbox.sync_directory
+    retry = None
+
+    def fail_after_retry(directory):
+        nonlocal retry
+        if Path(directory) == final.parent and final.exists():
+            # The second sender observes the immutable final name, syncs it, and receives the
+            # durable acknowledgment before the original sender learns its own fsync failed.
+            with mock.patch.object(inbox, "sync_directory", side_effect=real_sync):
+                retry = inbox.enqueue(database.parent, request)
+            raise OSError(errno.ENOSPC, "directory sync failed")
+        return real_sync(directory)
+
+    with (mock.patch.object(inbox, "sync_directory", side_effect=fail_after_retry),
+          pytest.raises(OSError, match="directory sync failed")):
+        inbox.enqueue(database.parent, request)
+    assert retry is not None and retry["status"] == "durably_queued"
+    assert final.read_bytes() == inbox.canonical(request)
+
+
 def test_enospc_is_host_error_not_acceptance(database, capsys):
     stamp(database, owner="go")
     with mock.patch.object(inbox, "write_request", side_effect=OSError(errno.ENOSPC, "disk full")):
@@ -324,6 +348,49 @@ def test_foreign_owner_read_only_command_and_doctor(database, capsys):
     assert report["access"]["dbWritable"] is False
 
 
+def test_intent_register_explicit_database_ignores_an_unrelated_foreign_selection(database, tmp_path,
+                                                                                   capsys):
+    from codex_session_relay import intent
+    from codex_session_relay.registry import Endpoint
+
+    selected = database
+    explicit = tmp_path / "explicit" / "relay.sqlite3"
+    store = Store(explicit)
+    try:
+        services = cli.Services(cli.build_parser().parse_args([
+            "--state", str(explicit.parent), "store-challenge", "--write", "--actor", "seed",
+        ]))
+        try:
+            registered = services.registry.register(
+                parent=Endpoint("parent", "host"), child=Endpoint("child", "host"),
+                issue_key="REL-1", artifact_roots=[str(tmp_path)],
+                allowed_recipients=["parent"], dispatch_request_id="dispatch-explicit",
+            )
+        finally:
+            services.close()
+        relationship = registered["relationshipId"]
+    finally:
+        store.close()
+    markers = tmp_path / "markers"
+    workspace = tmp_path / "work"
+    workspace.mkdir()
+    declared = intent.declare_intent(
+        markers, workspace=workspace, dispatch_request_id="dispatch-explicit", issue_key="REL-1",
+        declared_at="2026-09-29T00:00:00+00:00", db_path=explicit,
+    )
+    stamp(selected, owner="go")
+    before = files(selected.parent)
+    assert cli.main([
+        "--state", str(selected.parent), "intent-register", "--marker-root", str(markers),
+        "--workspace", str(workspace), "--assignment", declared["assignmentId"],
+        "--relationship", relationship, "--dispatch-request-id", "dispatch-explicit",
+        "--db-path", str(explicit),
+    ]) == 0
+    answer = json.loads(capsys.readouterr().out)
+    assert answer["relationshipId"] == relationship
+    assert files(selected.parent) == before
+
+
 def test_service_start_refuses_draining_without_launch(database):
     stamp(database, phase="draining")
     service = RelayService(resolve_state_dir(database.parent))
@@ -360,6 +427,40 @@ def test_guard_socket_first_never_spawns_python(database):
             future.result(timeout=10)
     assert result["code"] == 0
     assert json.loads(result["stdout"]) == verdict
+
+
+def test_untrusted_guard_socket_falls_back_without_sending_or_trusting(database):
+    stamp(database, owner="python")
+    verdict = {"decision": "release", "hook_output": {}}
+    state = database.parent
+    state.chmod(0o777)
+    received = []
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+        server.bind(str(state / "control.sock"))
+        server.listen(1)
+        server.settimeout(0.2)
+
+        def forged():
+            try:
+                connection, _ = server.accept()
+            except TimeoutError:
+                return
+            with connection:
+                received.append(connection.recv(1))
+                try:
+                    connection.sendall(json.dumps(verdict).encode() + b"\n")
+                except BrokenPipeError:
+                    pass
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(forged)
+            result = stopadapter.socket_guard({
+                "relayExecutable": "unused", "markerRoot": str(state / "markers"),
+                "dbPath": str(database), "mode": "observe",
+            }, b"{}")
+            future.result(timeout=5)
+    assert result is None
+    assert all(chunk == b"" for chunk in received)
 
 
 def test_go_owner_unreachable_never_falls_back(database):
@@ -431,6 +532,40 @@ def test_python_control_server_answers_full_verdict(database):
     finally:
         server.close()
     assert not (database.parent / "control.sock").exists()
+
+
+def test_python_control_server_maps_a_host_error_without_calling_it_a_refusal(database):
+    from codex_session_relay import control
+
+    server = control.GuardServer(database.parent)
+    try:
+        with mock.patch.object(control.guard, "evaluate", side_effect=ValueError("broken host")):
+            result = stopadapter.invoke_guard({
+                "relayExecutable": "must-not-execute", "markerRoot": str(database.parent / "markers"),
+                "dbPath": str(database), "mode": "observe",
+            }, b"{}")
+        said, value = stopadapter.read_guard_stdout(result["stdout"])
+        assert result["code"] == stopadapter.GUARD_EXIT_HOST
+        assert stopadapter.outcome_of(result, said, value) == stopadapter.GUARD_HOST_ERROR
+    finally:
+        server.close()
+
+
+def test_python_control_server_rejects_a_foreign_peer_before_evaluation(database):
+    from codex_session_relay import control
+
+    server = control.GuardServer(database.parent)
+    try:
+        with (mock.patch.object(control, "peer_uid", return_value=os.getuid() + 1),
+              mock.patch.object(control.guard, "evaluate", side_effect=AssertionError("evaluated")),
+              socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client):
+            client.settimeout(5)
+            client.connect(str(server.path))
+            client.sendall(b'{}\n')
+            with pytest.raises((ConnectionResetError, BrokenPipeError)):
+                client.recv(1)
+    finally:
+        server.close()
 
 
 def test_missing_mirror_and_owner_mismatch_refuse_without_reset(database):
