@@ -20,9 +20,10 @@ import (
 func reviewPython(t *testing.T, id string) {
 	t.Helper()
 	home := hookHome(t, 5)
+	built := binary(t) // built before the timeout starts, which is for the comparison
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, python(t), "testdata/review_parity.py", binary(t), testRoot, home, id)
+	cmd := exec.CommandContext(ctx, python(t), "testdata/review_parity.py", built, testRoot, home, id)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s %v\n%s", id, err, out)
