@@ -10,16 +10,16 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 )
 
 // pythonJSON is json.dumps(value) with Python's default separators and ensure_ascii.
-func pythonJSON(v any) string { return supervisor.Dumps(v, false, false, true) }
+func pythonJSON(v any) string { return evidence.Dumps(v, false, false, true) }
 
 // canonicalJSON is json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).
-func canonicalJSON(v any) string { return supervisor.Dumps(v, true, true, false) }
+func canonicalJSON(v any) string { return evidence.Dumps(v, true, true, false) }
 
 func sha256Hex(text string) string {
 	sum := sha256.Sum256([]byte(text))
@@ -30,15 +30,15 @@ func sha256Hex(text string) string {
 func checksDigest(required []string, checks []any) string {
 	lines := make([]string, 0, len(checks))
 	for _, entry := range checks {
-		o, _ := supervisor.Object(entry)
+		o, _ := evidence.Object(entry)
 		fields := make([]string, 0, 5)
 		for _, name := range []string{"runId", "name", "headSha", "conclusion", "attempt"} {
-			v, present := supervisor.Lookup(o, name)
+			v, present := evidence.Lookup(o, name)
 			if !present {
 				fields = append(fields, "")
 				continue
 			}
-			fields = append(fields, supervisor.Text(v))
+			fields = append(fields, evidence.Text(v))
 		}
 		lines = append(lines, strings.Join(fields, "|"))
 	}
@@ -57,14 +57,14 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 	if review == nil {
 		review = contract.OrderedObject{}
 	}
-	if problems := supervisor.ReviewShapeProblems(review); len(problems) > 0 {
-		return nil, &store.RefusedError{Reason: string(contract.RefusalMergeEvidenceMalformed), Detail: "the review restated for turn " + pyRepr(turn) + " is malformed, so the turn and its target were not read and nothing was recorded for this check: " + strings.Join(supervisor.Details(problems), "; ")}
+	if problems := evidence.ReviewShapeProblems(review); len(problems) > 0 {
+		return nil, &store.RefusedError{Reason: string(contract.RefusalMergeEvidenceMalformed), Detail: "the review restated for turn " + pyRepr(turn) + " is malformed, so the turn and its target were not read and nothing was recorded for this check: " + strings.Join(evidence.Details(problems), "; ")}
 	}
 	required = slices.Compact(slices.Sorted(slices.Values(required)))
 	if required == nil {
 		required = []string{}
 	}
-	checks, _ := supervisor.List(checkList)
+	checks, _ := evidence.List(checkList)
 	if checks == nil {
 		checks = []any{}
 	}
@@ -151,13 +151,13 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 			}
 		}
 		if refusal == nil {
-			if problems := supervisor.ChecksProblems(head, required, checks); len(problems) > 0 {
+			if problems := evidence.ChecksProblems(head, required, checks); len(problems) > 0 {
 				refuse(contract.RefusalMergeCurrencyStale, problems[0].Detail, problems[0].Incumbent, actor)
 			}
 		}
 		if refusal == nil {
-			if problems := supervisor.ReviewProblems(review); len(problems) > 0 {
-				refuse(contract.RefusalMergeReviewIncomplete, strings.Join(supervisor.Details(problems), "; "), "", actor)
+			if problems := evidence.ReviewProblems(review); len(problems) > 0 {
+				refuse(contract.RefusalMergeReviewIncomplete, strings.Join(evidence.Details(problems), "; "), "", actor)
 			}
 		}
 		if refusal == nil && row.RelationshipID.Valid && row.RelationshipID.String != "" {
@@ -209,10 +209,10 @@ func (s *Service) relationshipRefusal(ctx context.Context, row store.MergeTurnsR
 	}
 	if o, ok := attachment.(contract.OrderedObject); ok {
 		if project := field(o, "projectKey"); project != nil && project != row.ProjectKey {
-			return nil, &registry.CoordinationRefusal{Reason: contract.RefusalForeignScope, Detail: "relationship " + pyRepr(rid) + " belongs to project " + supervisor.Repr(project) + ", not " + pyRepr(row.ProjectKey), Domain: registry.DomainMergeTarget, Subject: row.TargetKey, Challenger: actor}, nil
+			return nil, &registry.CoordinationRefusal{Reason: contract.RefusalForeignScope, Detail: "relationship " + pyRepr(rid) + " belongs to project " + evidence.Repr(project) + ", not " + pyRepr(row.ProjectKey), Domain: registry.DomainMergeTarget, Subject: row.TargetKey, Challenger: actor}, nil
 		}
 	}
-	current, err := supervisor.CurrentReportHeads(ctx, s.Store, rid)
+	current, err := evidence.CurrentReportHeads(ctx, s.Store, rid)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -221,7 +221,7 @@ func (s *Service) relationshipRefusal(ctx context.Context, row store.MergeTurnsR
 		return nil, nil, nil
 	}
 	if len(heads) > 1 {
-		return nil, &registry.CoordinationRefusal{Reason: contract.RefusalRevisionAmbiguous, Detail: "relationship " + pyRepr(rid) + " has work reports naming " + supervisor.Repr(heads) + "; which one this candidate is cannot be read off them", Domain: registry.DomainMergeTarget, Subject: row.TargetKey, Incumbent: heads[0], Challenger: head}, nil
+		return nil, &registry.CoordinationRefusal{Reason: contract.RefusalRevisionAmbiguous, Detail: "relationship " + pyRepr(rid) + " has work reports naming " + evidence.Repr(heads) + "; which one this candidate is cannot be read off them", Domain: registry.DomainMergeTarget, Subject: row.TargetKey, Incumbent: heads[0], Challenger: head}, nil
 	}
 	if heads[0] != head {
 		return nil, &registry.CoordinationRefusal{Reason: contract.RefusalMergeCandidateMoved, Detail: "the work report for " + pyRepr(rid) + " names head " + pyRepr(heads[0]) + " and this restates " + pyRepr(head), Domain: registry.DomainMergeTarget, Subject: row.TargetKey, Incumbent: heads[0], Challenger: head}, nil

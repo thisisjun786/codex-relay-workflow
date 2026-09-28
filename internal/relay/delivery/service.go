@@ -534,8 +534,7 @@ func (d *Service) suppressIfSuperseded(ctx context.Context, eventID string) (str
 	return reason, err
 }
 
-// ReadWorkReport reports whether a work report exists; the composed renderer is report.py's,
-// ported by todo 24. Until then an event with a work report refuses to render.
+// ReadWorkReport reports whether a work report exists.
 func (d *Service) hasWorkReport(ctx context.Context, eventID string) (bool, error) {
 	row, err := one(ctx, d.Store, "SELECT 1 FROM work_reports WHERE event_id = ? LIMIT 1", eventID)
 	return row != nil, err
@@ -554,7 +553,7 @@ func (d *Service) render(ctx context.Context, row Row, record Obj, request strin
 		return renderGrant(row.S("event_id"), record, request, reading), nil
 	}
 	if report {
-		return "", fmt.Errorf("%w: the composed report rendering (report.py) is owned by todo 24", ErrRendererNotPorted)
+		return d.renderWorkReport(ctx, row, record, request)
 	}
 	switch row.S("kind") {
 	case Revision:
@@ -652,6 +651,15 @@ func (d *Service) claim(ctx context.Context, eventID string, now float64, owner,
 		}
 		if _, err := execSQL(ctx, d.Store, "INSERT INTO attempt_messages (request_id, event_id, attempt_no, kind, message, rendered_at) VALUES (?,?,?,?,?,?)", out.requestID, eventID, out.attemptNo, row.S("kind"), out.message, d.Clock.ISO()); err != nil {
 			return err
+		}
+		report, err := one(ctx, d.Store, "SELECT submission_no FROM work_reports WHERE event_id=? ORDER BY submission_no DESC LIMIT 1", eventID)
+		if err != nil {
+			return err
+		}
+		if report != nil {
+			if _, err = execSQL(ctx, d.Store, "INSERT OR REPLACE INTO attempt_report_submissions (request_id,event_id,submission_no,frozen_at) VALUES (?,?,?,?)", out.requestID, eventID, report.I("submission_no"), d.Clock.ISO()); err != nil {
+				return err
+			}
 		}
 		if row.S("kind") == Revision {
 			if err := d.journalRestorationAttempted(ctx, eventID, record, out.attemptNo); err != nil {

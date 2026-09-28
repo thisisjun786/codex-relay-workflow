@@ -18,9 +18,13 @@ import (
 // their key order (a repeated key keeps its first position and last value), integers stay
 // exact as json.Number and every other number becomes a float64.
 func decodeJSON(data []byte) (any, error) {
+	if message := store.PythonJSONError(string(data)); message != "" {
+		return nil, errors.New(message)
+	}
+	data, constants := jsonConstants(data)
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
-	value, err := decodeJSONValue(decoder)
+	value, err := decodeJSONValue(decoder, constants)
 	if err != nil {
 		return nil, err
 	}
@@ -31,7 +35,50 @@ func decodeJSON(data []byte) (any, error) {
 	return value, nil
 }
 
-func decodeJSONValue(decoder *json.Decoder) (any, error) {
+// jsonConstants replaces only unquoted non-finite tokens. Offsets identify the
+// numeric tokens, so strings and ordinary zero values cannot collide with them.
+func jsonConstants(data []byte) ([]byte, map[int64]float64) {
+	out := make([]byte, 0, len(data))
+	constants := map[int64]float64{}
+	quoted, escaped := false, false
+	for i := 0; i < len(data); {
+		c := data[i]
+		if !quoted {
+			matched := false
+			for _, one := range []struct {
+				text  string
+				value float64
+			}{{"NaN", math.NaN()}, {"Infinity", math.Inf(1)}, {"-Infinity", math.Inf(-1)}} {
+				if bytes.HasPrefix(data[i:], []byte(one.text)) {
+					out = append(out, '0')
+					constants[int64(len(out))] = one.value
+					i += len(one.text)
+					matched = true
+					break
+				}
+			}
+			if matched {
+				continue
+			}
+		}
+		out = append(out, c)
+		i++
+		if escaped {
+			escaped = false
+			continue
+		}
+		if quoted && c == '\\' {
+			escaped = true
+			continue
+		}
+		if c == '"' {
+			quoted = !quoted
+		}
+	}
+	return out, constants
+}
+
+func decodeJSONValue(decoder *json.Decoder, constants map[int64]float64) (any, error) {
 	token, err := decoder.Token()
 	if err != nil {
 		return nil, err
@@ -41,7 +88,7 @@ func decodeJSONValue(decoder *json.Decoder) (any, error) {
 		if v == '[' {
 			array := []any{}
 			for decoder.More() {
-				item, err := decodeJSONValue(decoder)
+				item, err := decodeJSONValue(decoder, constants)
 				if err != nil {
 					return nil, err
 				}
@@ -56,7 +103,7 @@ func decodeJSONValue(decoder *json.Decoder) (any, error) {
 			if err != nil {
 				return nil, err
 			}
-			item, err := decodeJSONValue(decoder)
+			item, err := decodeJSONValue(decoder, constants)
 			if err != nil {
 				return nil, err
 			}
@@ -70,6 +117,9 @@ func decodeJSONValue(decoder *json.Decoder) (any, error) {
 		_, err := decoder.Token()
 		return object, err
 	case json.Number:
+		if f, ok := constants[decoder.InputOffset()]; ok {
+			return f, nil
+		}
 		if strings.ContainsAny(string(v), ".eE") {
 			f, _ := strconv.ParseFloat(string(v), 64)
 			return f, nil

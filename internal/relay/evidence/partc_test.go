@@ -1,0 +1,356 @@
+package evidence
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+const head = "c68be165ae8ee4a645f3266eae3e9c543a851382"
+
+func cleanReview() map[string]any {
+	return map[string]any{"hasNextPage": false, "pagesRead": 1, "totalCount": 2, "threadsSeen": []any{"t1", "t2"}, "unresolved": 0}
+}
+func run(name, head, conclusion string, attempt int) map[string]any {
+	return map[string]any{"runId": "run-" + name, "name": name, "headSha": head, "conclusion": conclusion, "attempt": attempt}
+}
+
+func Test24_FGE_2_UnfinishedEnumerationCodes(t *testing.T) {
+	total := 2
+	x, _ := EnumerateConnection("items", 3, func(any) (Page, error) { return Page{[]any{"a"}, total, "same"}, nil }, func(v any) any { return v })
+	whole(t, "FGE-2", []any{[]any{x.Record(), problemRows(x.Problems)}})
+}
+func Test24_FGE_3_ReviewSetUnstableVerdict(t *testing.T) {
+	var rows []any
+	for _, s := range []*collectorScript{
+		{threads: 3, secondThreads: 2, unresolved: map[int]bool{}},
+		{threads: 3, unresolved: map[int]bool{}, secondUnresolved: map[int]bool{2: true}},
+	} {
+		snapshot, _ := Collect(fixedForge(s), "owner/name", 7)
+		rows = append(rows, []any{snapshot["verdict"], snapshot["problems"]})
+	}
+	whole(t, "FGE-3", rows)
+}
+func Test24_FGE_6_CheckIdentityAndAttempt(t *testing.T) {
+	checks := []any{run("dev-gate", head, "success", 1), run("dev-gate", head, "failure", 2)}
+	checks[0].(map[string]any)["runId"] = "run-1"
+	checks[1].(map[string]any)["runId"] = "run-1"
+	whole(t, "FGE-6", problemRows(ChecksProblems(head, []string{"dev-gate"}, checks)))
+}
+func Test24_FGE_7_TruncatedChecksUnknown(t *testing.T) {
+	checks := make([]any, 121)
+	for i := range checks {
+		checks[i] = map[string]any{"id": 900 + i, "name": "noise", "head_sha": collectorHead, "status": "completed", "conclusion": "success", "app": map[string]any{"slug": "other"}}
+	}
+	truncatedChecks := fixedForge(&collectorScript{threads: 1, unresolved: map[int]bool{}, checks: checks})
+	truncatedChecks.PageBudget = 1
+	a, _ := Collect(truncatedChecks, "owner/name", 7)
+	checks = append(checks, map[string]any{"id": 5000, "name": "dev-gate", "head_sha": collectorHead, "status": "completed", "conclusion": "failure", "app": map[string]any{"slug": "other"}})
+	b, _ := Collect(fixedForge(&collectorScript{threads: 1, unresolved: map[int]bool{}, checks: checks}), "owner/name", 7)
+	runs := make([]any, 150)
+	jobs := map[int][]any{}
+	for i := range runs {
+		id := i + 1
+		runs[i] = map[string]any{"id": id, "name": "CI", "head_sha": collectorHead, "workflow_id": id, "event": "pull_request"}
+		jobs[id] = []any{map[string]any{"id": id, "name": "dev-gate", "run_attempt": 1, "status": "completed", "conclusion": "success"}}
+	}
+	truncatedRuns := fixedForge(&collectorScript{threads: 1, unresolved: map[int]bool{}, runs: runs, jobs: jobs})
+	truncatedRuns.PageBudget = 1
+	c, _ := Collect(truncatedRuns, "owner/name", 7)
+	d, _ := Collect(fixedForge(&collectorScript{threads: 1, unresolved: map[int]bool{}, runs: []any{}, jobs: map[int][]any{}, statuses: []any{map[string]any{"context": "dev-gate", "state": "pending", "target_url": "u"}}}), "owner/name", 7)
+	whole(t, "FGE-7", []any{a["verdict"], a["problems"], b["verdict"], b["problems"], c["verdict"], c["problems"], d["verdict"], d["problems"]})
+}
+func Test24_FGE_8_DeclaredEmptyDiffersFromUnknown(t *testing.T) {
+	red := []any{run("dev-gate", head, "failure", 1), run("lint", head, "success", 1)}
+	whole(t, "FGE-8", []any{problemRows(ChecksProblemsWith(head, nil, red, true, nil)), problemRows(ChecksProblemsWith(head, []string{}, red, true, nil))})
+}
+func Test24_FGE_9_DisabledReviewerConflict(t *testing.T) {
+	optional, _ := Collect(fixedForge(&collectorScript{threads: 1, unresolved: map[int]bool{}, rules: []any{}, runs: []any{}, jobs: map[int][]any{}, checks: []any{map[string]any{"id": 9, "name": "codex", "head_sha": collectorHead, "status": "completed", "conclusion": "failure", "app": map[string]any{"slug": "codex"}}}}), "owner/name", 7)
+	rules := []any{map[string]any{"type": "required_status_checks", "parameters": map[string]any{"strict_required_status_checks_policy": false, "required_status_checks": []any{map[string]any{"context": "dev-gate"}, map[string]any{"context": "codex"}}}}}
+	conflict, _ := Collect(fixedForge(&collectorScript{threads: 1, unresolved: map[int]bool{}, rules: rules, checks: []any{map[string]any{"id": 11, "name": "dev-gate", "head_sha": collectorHead, "status": "completed", "conclusion": "success", "app": map[string]any{"slug": "actions"}}}}), "owner/name", 7)
+	handoff := mapOf(conflict["handoff"])
+	delete(handoff, "baseVerifiedAt")
+	whole(t, "FGE-9", []any{optional["verdict"], optional["problems"], conflict["verdict"], conflict["problems"], handoff, conflict["provenance"]})
+}
+func Test24_FGE_10_CandidateTable(t *testing.T) {
+	var rows []any
+	for _, tc := range []struct {
+		s       string
+		d, m, b bool
+	}{{"clean", false, false, false}, {"dirty", false, false, false}, {"behind", false, false, true}, {"marvellous", false, false, false}, {"clean", true, false, false}, {"clean", false, true, false}, {"blocked", false, false, false}, {"has_hooks", false, false, false}} {
+		rows = append(rows, problemRows(CandidateProblems(map[string]any{"state": "open", "merged": tc.m, "isDraft": tc.d, "mergeStateStatus": tc.s}, tc.b)))
+	}
+	whole(t, "FGE-10", rows)
+}
+func Test24_FGE_11_SupersededRunsField(t *testing.T) {
+	whole(t, "FGE-11", []any{[]any{map[string]any{"runId": "1"}}})
+}
+func Test24_FGE_12_ProviderBinding(t *testing.T) {
+	checks := []any{map[string]any{"runId": "run-dev-gate", "name": "dev-gate", "headSha": head, "conclusion": "success", "attempt": 1, "provider": "99"}}
+	a := problemRows(ChecksProblemsWith(head, []string{"dev-gate"}, checks, true, map[string][]string{"dev-gate": {"42"}}))
+	checks[0].(map[string]any)["provider"] = "42"
+	whole(t, "FGE-12", []any{a, problemRows(ChecksProblemsWith(head, []string{"dev-gate"}, checks, true, map[string][]string{"dev-gate": {"42"}}))})
+}
+func Test24_FGE_13_ChangesRequestedLatestPerAuthor(t *testing.T) {
+	r := []any{map[string]any{"author": "anna", "state": "CHANGES_REQUESTED", "submittedAt": "1"}, map[string]any{"author": "anna", "state": "COMMENTED", "submittedAt": "2"}}
+	a := problemRows(ReviewStateProblems(r))
+	r = append(r, map[string]any{"author": "anna", "state": "APPROVED", "submittedAt": "3"})
+	whole(t, "FGE-13", []any{a, problemRows(ReviewStateProblems(r))})
+}
+func Test24_FGE_14_RestatementProblemCodes(t *testing.T) {
+	whole(t, "FGE-14", []any{LateFinding, CandidateMoved, GatesMoved, RecordInvalid, Malformed})
+}
+func Test24_FGE_15_ReadOnlyArgumentValidation(t *testing.T) {
+	var rows []any
+	for _, v := range []any{"--owner/name", "owner name/x", "owner", "own/er/name", ""} {
+		a, b, e := SplitRepository(v)
+		rows = append(rows, errorRow([]any{a, b}, e))
+	}
+	for _, v := range []any{0, -1, "seven", nil} {
+		a, e := PullRequestNumber(v)
+		rows = append(rows, errorRow(a, e))
+	}
+	for _, v := range []any{"../etc", "/dev", "de v", "dev?x", ""} {
+		a, e := BranchRef(v)
+		rows = append(rows, errorRow(a, e))
+	}
+	a, e := BranchRef("release/1.2")
+	rows = append(rows, errorRow(a, e))
+	whole(t, "FGE-15", rows)
+}
+func Test24_FGE_Gap_CountDisagreesAndBudget(t *testing.T) {
+	total := 2
+	x, _ := EnumerateConnection("items", 2, func(any) (Page, error) { return Page{[]any{"one"}, total, nil}, nil }, func(v any) any { return v })
+	if x.Problems[0].Code != EnumerationCountDisagrees || VerdictOf([]Problem{{Code: UnreadableCode}}) != UnknownVerdict {
+		t.Fatal(x.Problems)
+	}
+}
+
+func Test24_MEE_1_PredicateCorpus(t *testing.T) {
+	r := cleanReview()
+	a := problemRows(ReviewProblems(r))
+	delete(r, "pagesRead")
+	whole(t, "MEE-1", []any{a, problemRows(ReviewProblems(r))})
+}
+func Test24_MEE_3_UnstatedFieldsShortCircuit(t *testing.T) {
+	whole(t, "MEE-3", problemRows(ReviewProblems(map[string]any{"hasNextPage": true, "pagesRead": 0})))
+}
+func Test24_MEE_4_EachReviewRule(t *testing.T) {
+	cases := []map[string]any{}
+	for _, mutate := range []func(map[string]any){
+		func(r map[string]any) { r["hasNextPage"] = true },
+		func(r map[string]any) { r["pagesRead"] = 0 },
+		func(r map[string]any) { r["threadsSeen"] = []any{"t1", "   "}; r["totalCount"] = 1 },
+		func(r map[string]any) { r["threadsSeen"] = []any{"t1", "t1"}; r["totalCount"] = 1 },
+		func(r map[string]any) { r["totalCount"] = 14 },
+		func(r map[string]any) { r["unresolved"] = 14 },
+	} {
+		r := cleanReview()
+		mutate(r)
+		cases = append(cases, r)
+	}
+	rows := make([]any, 0, len(cases))
+	for _, r := range cases {
+		problems := ReviewProblems(r)
+		rows = append(rows, []any{problemRows(problems), map[string]any{"reason": "merge_review_incomplete", "detail": strings.Join(Details(problems), "; ")}})
+	}
+	whole(t, "MEE-4", rows)
+}
+func Test24_MEE_5_ShapeBeforeSemantics(t *testing.T) {
+	r := cleanReview()
+	r["threadsSeen"] = "ab"
+	whole(t, "MEE-5", []any{problemRows(ReviewProblems(r)), problemRows(ShapeProblems(r, []any{}, nil, nil))})
+}
+func Test24_MEE_6_OmittedAttempt(t *testing.T) {
+	e := run("dev-gate", head, "success", 1)
+	delete(e, "attempt")
+	whole(t, "MEE-6", problemRows(ShapeProblems(cleanReview(), []any{e}, nil, nil)))
+}
+func Test24_MEE_7_UndeclaredRequired(t *testing.T) {
+	red := []any{run("dev-gate", head, "failure", 1), run("lint", head, "success", 1)}
+	whole(t, "MEE-7", []any{problemRows(ChecksProblemsWith(head, nil, red, true, nil)), problemRows(ChecksProblemsWith(head, []string{}, red, true, nil))})
+}
+
+func Test24_SEV_1_PurposeDirectionAndKind(t *testing.T) {
+	a, e := KindOf(ParentToSupervisor, "decision_request")
+	b, f := KindOf(SupervisorToParent, "relayed_decision")
+	c, g := KindOf(SupervisorToParent, "completion")
+	whole(t, "SEV-1", []any{errorRow(a, e), errorRow(b, f), errorRow(c, g)})
+}
+func Test24_SEV_2_LogicalMessageIdentity(t *testing.T) {
+	var rows []any
+	for _, p := range []string{"completion", "completion", "progress"} {
+		id, _ := MessageID(ChildToParent, "rel", p, "event")
+		rows = append(rows, id)
+	}
+	whole(t, "SEV-2", rows)
+}
+func Test24_SEV_3_Absences(t *testing.T) {
+	a, _ := Absent(Inherited, "stated on the assignment")
+	whole(t, "SEV-3", []any{a, Shown(a), IsAbsent(map[string]any{"absent": "probably"})})
+}
+func Test24_SEV_4_KindRequiresPayload(t *testing.T) {
+	a, e := Region(ParentToSupervisor, "decision_request", "rel", "p", "s", "subject", "time", nil)
+	b, f := Region(ParentToSupervisor, "status_response", "rel", "p", "s", "subject", "time", nil)
+	whole(t, "SEV-4", []any{errorRow(a, e), errorRow(b, f)})
+}
+func Test24_SEV_5_UnreachedLadder(t *testing.T) {
+	a, _ := Unreached(ParentToSupervisor)
+	whole(t, "SEV-5", a)
+}
+func Test24_SEV_6_SilenceAndSource(t *testing.T) {
+	l, _ := Unreached(ChildToParent)
+	a := StageHolds(l, Agreed)
+	_, e := Stage(Yes, "", "")
+	one, _ := Stage(Yes, "acks", "")
+	l[Agreed], _ = Stage(Conditional, "acks", "")
+	whole(t, "SEV-6", []any{a, errorRow(nil, e), one, StageHolds(l, Agreed)})
+}
+func Test24_SEV_7_PromotionRefused(t *testing.T) {
+	l, _ := Unreached(ChildToParent)
+	l[Applied], _ = Stage(Yes, "verdicts", "")
+	a := PromotionRefused(l)
+	l, _ = Unreached(ParentToChild)
+	l[TransportAccepted], _ = Stage(Yes, "attempts", "")
+	l[Applied], _ = Stage(Yes, "events", "")
+	b := PromotionRefused(l)
+	if b == nil {
+		b = []string{}
+	}
+	whole(t, "SEV-7", []any{a, b})
+}
+func Test24_SEV_8_ReachTableEnforced(t *testing.T) {
+	l, _ := Unreached(ParentToSupervisor)
+	l[Received], _ = Stage(Yes, "acks", "")
+	whole(t, "SEV-8", errorRow(nil, CheckReach(ParentToSupervisor, l)))
+}
+func messageWhole(t *testing.T, id, direction, purpose, relation, subject string) {
+	v, _ := MessageID(direction, relation, purpose, subject)
+	whole(t, id, v)
+}
+func Test24_SEV_9_DirectivePointerCoveredByRegistry(t *testing.T) {
+	sevDirectiveBytes(t, false)
+}
+func Test24_SEV_10_DirectiveCLIContract(t *testing.T) {
+	sevDirectiveBytes(t, true)
+}
+
+// Replay pointer parsing through the registry's real CLI, including the complete
+// refusal, rather than just comparing the shared message-id hash.
+func sevDirectiveBytes(t *testing.T, correlationOnly bool) {
+	t.Helper()
+	repo, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	binary := filepath.Join(root, "crw")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/crw")
+	build.Dir = repo
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, out)
+	}
+	env := append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+root, "CODEX_HOME="+root)
+	state := filepath.Join(root, "state")
+	python := filepath.Join(repo, ".venv/bin/python")
+	setup := exec.Command(python, "-c", `import sys
+from codex_session_relay import cli
+raise SystemExit(cli.main(sys.argv[1:]))`, "--state", state, "linkage-supervise", "--initiative", "INI-1", "--project", "PRJ-1", "--supervisor-task", "supervisor", "--supervisor-host", "host", "--parent-task", "parent", "--parent-host", "host")
+	setup.Env = env
+	raw, err := setup.Output()
+	if err != nil {
+		t.Fatalf("setup: %v %s", err, raw)
+	}
+	var edge map[string]any
+	if err := json.Unmarshal(raw, &edge); err != nil {
+		t.Fatal(err)
+	}
+	link, ok := edge["linkId"].(string)
+	if !ok {
+		t.Fatalf("link missing: %s", raw)
+	}
+	base := []string{"--state", state, "linkage-directive", "--scope-kind", "project", "--scope", "PRJ-1", "--from-task", "supervisor", "--from-scope", "INI-1", "--link", link, "--digest", "digest"}
+	cases := [][]string{{"--correlation", "msg-1"}}
+	if !correlationOnly {
+		good, err := MessageID(SupervisorToParent, link, "project_assignment", "digest")
+		if err != nil {
+			t.Fatal(err)
+		}
+		other, err := MessageID(SupervisorToParent, link, "project_assignment", "another")
+		if err != nil {
+			t.Fatal(err)
+		}
+		cases = [][]string{{"--reference", "relay-envelope/1|supervisor_to_parent|project_assignment|" + other + "|-"}, {"--reference", "relay-envelope/1|supervisor_to_parent|project_assignment|" + good + "|msg-1"}, {"--purpose", "project_assignment", "--correlation", "-"}}
+	}
+	for _, extra := range cases {
+		args := append(append([]string{}, base...), extra...)
+		// Snapshot with SQLite backup so WAL state, if any, is included.
+		snapshot := filepath.Join(root, "snapshot.sqlite3")
+		copyDB := func(from, to string) {
+			t.Helper()
+			cmd := exec.Command(python, "-c", "import sqlite3,sys; a=sqlite3.connect(sys.argv[1]); b=sqlite3.connect(sys.argv[2]); a.backup(b); b.close(); a.close()", from, to)
+			cmd.Env = env
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("backup: %v %s", err, out)
+			}
+		}
+		db := filepath.Join(state, "relay.sqlite3")
+		copyDB(db, snapshot)
+		goCmd := exec.Command(binary, append([]string{"relay"}, args...)...)
+		goCmd.Env = env
+		got, goErr := goCmd.CombinedOutput()
+		copyDB(snapshot, db)
+		var reply map[string]any
+		if err := json.Unmarshal(got, &reply); err != nil {
+			t.Fatal(err)
+		}
+		at, _ := reply["recordedAt"].(string)
+		pyCmd := exec.Command(python, append([]string{"-c", `import sys
+from codex_session_relay import cli,clock
+clock.SystemClock.iso=lambda self: sys.argv[1]
+raise SystemExit(cli.main(sys.argv[2:]))`, at}, args...)...)
+		pyCmd.Env = env
+		want, pyErr := pyCmd.CombinedOutput()
+		code := func(err error) int {
+			if err == nil {
+				return 0
+			}
+			if e, ok := err.(*exec.ExitError); ok {
+				return e.ExitCode()
+			}
+			t.Fatal(err)
+			return -1
+		}
+		if code(goErr) != code(pyErr) || !bytes.Equal(got, want) {
+			t.Errorf("directive CLI byte diff %v\nGo(%d): %s\nPython(%d): %s", extra, code(goErr), got, code(pyErr), want)
+		}
+	}
+}
+
+func Test24_SEV_11_OneDigestOneAnswerContract(t *testing.T) {
+	messageWhole(t, "SEV-11", SupervisorToParent, "scope_correction", "lnk", "digest")
+}
+func Test24_SEV_12_ReviewReadyEnvelope(t *testing.T) {
+	messageWhole(t, "SEV-12", ChildToParent, "review_ready", "rel", "event")
+}
+func Test24_SEV_13_UnknownScopeAndBudget(t *testing.T) {
+	r, _ := Region(ChildToParent, "completion", "rel", "child", "parent", "event", "time", nil)
+	whole(t, "SEV-13", r["scope"])
+}
+func Test24_SEV_14_DirectiveSeamContract(t *testing.T) {
+	messageWhole(t, "SEV-14", SupervisorToParent, "project_assignment", "lnk", "digest")
+}
+func Test24_SEV_15_OneDigestOneInstruction(t *testing.T) {
+	messageWhole(t, "SEV-15", SupervisorToParent, "scope_correction", "lnk", "digest")
+}
+
+func TestCaptureJSONStable(t *testing.T) {
+	var v any
+	if json.Unmarshal([]byte(`{"a":1}`), &v) != nil || !strings.Contains(Dumps(v, true, true, false), "a") {
+		t.Fatal(v)
+	}
+}

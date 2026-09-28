@@ -363,6 +363,7 @@ func rolePairIsWrong(sender, recipient contract.OrderedObject) bool {
 // CounterpartQuery is counterpart()'s keyword arguments; invalid is None.
 type CounterpartQuery struct {
 	QuotedRevision         sql.NullInt64
+	RevisionOutOfRange     bool // an arbitrary-precision quoted revision cannot equal a stored revision
 	QuotedScope, FromScope sql.NullString
 }
 
@@ -507,7 +508,7 @@ func (r *Registry) counterpart(ctx context.Context, from, to string, q Counterpa
 	if rolePairIsWrong(sender, recipient) {
 		findings = append(findings, "wrong_role")
 	}
-	if q.QuotedRevision.Valid && q.QuotedRevision.Int64 != revisionOf(edge) {
+	if q.QuotedRevision.Valid && (q.RevisionOutOfRange || q.QuotedRevision.Int64 != revisionOf(edge)) {
 		findings = append(findings, "stale_revision")
 	}
 	for _, side := range []string{"upper", "lower"} {

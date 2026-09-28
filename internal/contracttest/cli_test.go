@@ -30,7 +30,7 @@ func TestCLIRunner_observes_exit_stderr_and_step_results_of_the_built_crw(t *tes
 		{"id":"second","argv":["store-challenge","--actor",{"$step":"first","path":["stderr"]}]}]},
 		"expect":{"exit":4,"checks":[
 			{"kind":"eq","path":["steps","first","exit"],"value":2},
-			{"kind":"contains","path":["steps","first","stderr"],"value":"usage: crw relay store-challenge"},
+			{"kind":"contains","path":["steps","first","stderr"],"value":"crw relay: error: unrecognized arguments: --bogus"},
 			{"kind":"eq","path":["steps","first","stdout_json"],"value":null},
 			{"kind":"eq","path":["stdout_json","error"],"value":"usage"}]}}`)
 	// When

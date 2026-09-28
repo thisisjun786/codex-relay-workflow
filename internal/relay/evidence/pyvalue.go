@@ -1,11 +1,12 @@
 // Subset ported for todo 26; todo 24 owns and extends this.
 
-package supervisor
+package evidence
 
 import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/big"
 	"slices"
 	"strconv"
 	"strings"
@@ -148,6 +149,15 @@ func (d dumper) str(s string) {
 
 // Float is float.__repr__.
 func Float(v float64) string {
+	if math.IsNaN(v) {
+		return "nan"
+	}
+	if math.IsInf(v, 1) {
+		return "inf"
+	}
+	if math.IsInf(v, -1) {
+		return "-inf"
+	}
 	magnitude := math.Abs(v)
 	if magnitude == 0 || magnitude >= 1e-4 && magnitude < 1e16 {
 		text := strconv.FormatFloat(v, 'f', -1, 64)
@@ -171,6 +181,12 @@ func Object(v any) (contract.OrderedObject, bool) {
 	switch o := v.(type) {
 	case contract.OrderedObject:
 		return o, true
+	case map[string][]string:
+		values := make(map[string]any, len(o))
+		for k, v := range o {
+			values[k] = v
+		}
+		return Object(values)
 	case map[string]any:
 		keys := make([]string, 0, len(o))
 		for k := range o {
@@ -246,7 +262,7 @@ func TypeName(v any) string {
 		return "bool"
 	case string:
 		return "str"
-	case json.Number, int, int64:
+	case json.Number, int, int64, *big.Int:
 		return "int"
 	case float64:
 		return "float"
@@ -263,6 +279,11 @@ func Text(v any) string {
 	switch x := v.(type) {
 	case string:
 		return x
+	case *int64:
+		if x == nil {
+			return "None"
+		}
+		return Text(*x)
 	case nil:
 		return "None"
 	case bool:
@@ -272,7 +293,7 @@ func Text(v any) string {
 		return "False"
 	case float64:
 		return Float(x)
-	case json.Number, int, int64:
+	case json.Number, int, int64, *big.Int:
 		return fmt.Sprint(x)
 	}
 	return Repr(v)
@@ -283,7 +304,7 @@ func Repr(v any) string {
 	switch x := v.(type) {
 	case string:
 		return StrRepr(x)
-	case nil, bool, float64, json.Number, int, int64:
+	case nil, bool, float64, json.Number, int, int64, *big.Int:
 		return Text(x)
 	case []string:
 		parts := make([]string, len(x))

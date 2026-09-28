@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"math/big"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -37,7 +38,7 @@ func (p Parsed) Given(name string) bool { return p.p.set[name] }
 func (p Parsed) Values(name string) []string { return append([]string{}, p.p.values[name]...) }
 
 // Integer is a type=int argument's value.
-func (p Parsed) Integer(name string) int64 { return p.p.integer(name) }
+func (p Parsed) Integer(name string) *big.Int { return p.p.integer(name) }
 
 // AddCommand registers an external relay command. exclusive names a required mutually
 // exclusive group of flag options.

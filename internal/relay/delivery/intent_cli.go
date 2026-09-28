@@ -82,7 +82,7 @@ func cmdIntentDeclare(c *cliRun) (any, error) {
 	var settings any
 	if raw := c.s("--settings"); raw != "" {
 		if settings, err = loads(raw); err != nil {
-			return nil, &hostError{"JSONDecodeError", err.Error()}
+			return nil, &hostError{"JSONDecodeError", store.PythonJSONError(raw)}
 		}
 	}
 	var db any

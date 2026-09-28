@@ -7,8 +7,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 )
 
 func dAttention(ctx context.Context, l *Ledger) (any, error) {
@@ -89,7 +90,7 @@ func dAttention(ctx context.Context, l *Ledger) (any, error) {
 	return map[string]any{"unsent": unsent, "unlinked": unlinked, "notifications": notices, "warning": warning}, nil
 }
 func dRelink(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
-	limit, e := dBound(a["--limit"], "--limit", 100, 1000)
+	limit, e := dBound(ctx, a["--limit"], "--limit", 100, 1000)
 	if e != nil {
 		return nil, e
 	}
@@ -182,15 +183,19 @@ func dLapse(ctx context.Context, l *Ledger) error {
 	return e
 }
 func dNotifications(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
-	limit, e := dBound(a["--limit"], "--limit", 20, 1000)
+	limit, e := dBound(ctx, a["--limit"], "--limit", 20, 1000)
 	if e != nil {
 		return nil, e
 	}
 	after := int64(0)
 	if a["--after"] != "" {
-		after, e = strconv.ParseInt(a["--after"], 10, 64)
-		if e != nil {
+		n := integerArg(ctx, "--after", a["--after"])
+		if n == nil {
 			return nil, fmt.Errorf("usage: invalid after cursor")
+		}
+		after, e = argparse.SQLiteInteger(n)
+		if e != nil {
+			return nil, e
 		}
 	}
 	if e = dLapse(ctx, l); e != nil {
@@ -277,7 +282,7 @@ func dReserveRows(ctx context.Context, l *Ledger, a map[string]string, deliverab
 	if owner == "relay-daemon" && deliverable == nil {
 		return nil, fmt.Errorf("fault_observation_malformed: owner 'relay-daemon' is the relay daemon's notification deliverer's: its reservations are settled from the supervisor channel's records, so a reserver with a transport of its own names itself")
 	}
-	limit, e := dBound(a["--limit"], "--limit", 20, 1000)
+	limit, e := dBound(ctx, a["--limit"], "--limit", 20, 1000)
 	if e != nil {
 		return nil, e
 	}

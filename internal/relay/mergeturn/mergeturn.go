@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"slices"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -172,6 +174,7 @@ func (s *Service) ownership(ctx context.Context, project, subject, actor string)
 
 type ClaimOptions struct {
 	PR           sql.NullInt64
+	PRValue      *big.Int
 	Relationship sql.NullString
 }
 
@@ -246,6 +249,13 @@ func (s *Service) Request(ctx context.Context, repository, base, project, holder
 		rrow := store.MergeTurnsRow{TurnID: id, TargetKey: target, Repository: repository, BaseRef: base, ProjectKey: project, HolderTaskID: holder, HolderHostID: host, CandidateHead: head, DeclaredReady: flag, State: state, Tenure: tenure, RequestedAt: at, HeldAt: held, UpdatedAt: at}
 		if len(options) > 0 {
 			rrow.PRNumber = options[0].PR
+			if options[0].PRValue != nil {
+				n, err := argparse.SQLiteInteger(options[0].PRValue)
+				if err != nil {
+					return err
+				}
+				rrow.PRNumber = sql.NullInt64{Int64: n, Valid: true}
+			}
 			rrow.RelationshipID = options[0].Relationship
 		}
 		if e = s.Store.InsertMergeTurn(tx, rrow); e != nil {

@@ -25,6 +25,8 @@ func ISOOf(now float64) string {
 // SystemClock reads the wall clock.
 type SystemClock struct{}
 
+var cliClock Clock = SystemClock{}
+
 func (SystemClock) Now() float64 { return float64(time.Now().UnixMicro()) / 1e6 }
 func (SystemClock) ISO() string  { return time.Now().UTC().Format("2006-01-02T15:04:05.000000+00:00") }
 

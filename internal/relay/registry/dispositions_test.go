@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -261,10 +262,18 @@ func Test25_DSP11_the_selectors(t *testing.T) {
 	}
 	var stderr bytes.Buffer
 	ExecuteAs(ctx(), "codex-session-relay", []string{"--state", dir, "dispositions-show"}, &bytes.Buffer{}, &stderr, nil)
-	want := "usage: codex-session-relay dispositions-show [-h] (--project PROJECT | --relationship RELATIONSHIP)\n" +
-		"codex-session-relay dispositions-show: error: one of the arguments --project --relationship is required\n"
-	if stderr.String() != want {
-		t.Fatalf("%q", stderr.String())
+	root, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oracle := exec.Command(filepath.Join(root, ".venv/bin/python"), "-m", "codex_session_relay.cli", "dispositions-show")
+	var want bytes.Buffer
+	oracle.Stderr = &want
+	if err := oracle.Run(); err == nil {
+		t.Fatal("Python accepted missing selector")
+	}
+	if stderr.String() != want.String() {
+		t.Fatalf("selector byte diff\nGo=%q\nPython=%q", stderr.String(), want.String())
 	}
 }
 

@@ -121,6 +121,42 @@ func NewTree(t *testing.T) *Tree {
 	}
 }
 
+// IsolateRelayState points every relay-owned home and state root at one temporary tree.
+// TestMain callers must invoke the returned cleanup after m.Run.
+func IsolateRelayState() (func() error, error) {
+	originalHome, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	root, err := os.MkdirTemp("", "crw-relay-test-")
+	if err != nil {
+		return nil, err
+	}
+	for key, path := range map[string]string{
+		"HOME":                            filepath.Join(root, "home"),
+		"XDG_STATE_HOME":                  filepath.Join(root, "xdg-state"),
+		"XDG_DATA_HOME":                   filepath.Join(root, "xdg-data"),
+		"XDG_CONFIG_HOME":                 filepath.Join(root, "xdg-config"),
+		"CODEX_HOME":                      filepath.Join(root, "codex-home"),
+		"CODEX_SESSION_RELAY_STATE":       filepath.Join(root, "relay-state"),
+		"CODEX_SESSION_RELAY_SCOPE_DIR":   filepath.Join(root, "scopes"),
+		"CODEX_SESSION_RELAY_MARKER_ROOT": filepath.Join(root, "markers"),
+		"GOPATH":                          filepath.Join(originalHome, "go"),
+		"GOMODCACHE":                      filepath.Join(originalHome, "go", "pkg", "mod"),
+		"GOCACHE":                         filepath.Join(originalHome, ".cache", "go-build"),
+	} {
+		if err := os.Setenv(key, path); err != nil {
+			_ = os.RemoveAll(root)
+			return nil, err
+		}
+	}
+	if err := os.Unsetenv("CRW_ALLOW_LIVE_STATE"); err != nil {
+		_ = os.RemoveAll(root)
+		return nil, err
+	}
+	return func() error { return os.RemoveAll(root) }, nil
+}
+
 // Artifact writes text to name under Root, creating parent directories, and returns its path.
 func (tr *Tree) Artifact(name, text string) string {
 	tr.t.Helper()

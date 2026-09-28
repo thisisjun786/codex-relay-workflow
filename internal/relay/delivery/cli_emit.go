@@ -1,6 +1,8 @@
 package delivery
 
 import (
+	"encoding/json"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -15,8 +17,8 @@ func cmdEmit(c *cliRun) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	generation := c.opt("--generation").(int64)
-	attempt := int(c.opt("--attempt").(int64))
+	generation := argparse.IntegerValue(c.opt("--generation"))
+	attempt := argparse.IntegerValue(c.opt("--attempt"))
 	outcome := c.s("--outcome")
 	var manifest any
 	digest := store.NoDeliverable
@@ -52,12 +54,18 @@ func cmdEmit(c *cliRun) (any, error) {
 	if outcome == "ready_for_review" && status != "inProgress" {
 		status, proof = "inProgress", "unverified_staged"
 	}
-	event, err := store.EventID(rid, int(generation), digest, outcome, c.s("--turn-id"), &attempt)
+	if generation.Sign() < 1 {
+		return nil, &hostError{"ValueError", "generation must be a positive integer"}
+	}
+	if outcome == "ready_for_review" && digest == store.NoDeliverable {
+		return nil, &hostError{"ValueError", "a reviewable receipt cannot carry the no-deliverable sentinel"}
+	}
+	event, err := store.EventIDBig(rid, generation, digest, outcome, c.s("--turn-id"), attempt)
 	if err != nil {
 		return nil, &hostError{"ValueError", "event identity: " + err.Error()}
 	}
 	thread, turn := c.s("--turn-thread"), c.s("--turn-id")
-	payload := Obj{{Key: "eventId", Value: event}, {Key: "relationshipId", Value: rid}, {Key: "executionGeneration", Value: generation}, {Key: "attempt", Value: int64(attempt)},
+	payload := Obj{{Key: "eventId", Value: event}, {Key: "relationshipId", Value: rid}, {Key: "executionGeneration", Value: json.Number(generation.String())}, {Key: "attempt", Value: json.Number(attempt.String())},
 		{Key: "revisionHash", Value: digest}, {Key: "outcome", Value: outcome}, {Key: "producer", Value: "child"},
 		{Key: "turnRef", Value: Obj{{Key: "threadId", Value: thread}, {Key: "turnId", Value: turn}, {Key: "turnStatus", Value: status}}},
 		{Key: "manifest", Value: manifest}, {Key: "emittedAt", Value: c.clock.ISO()}}

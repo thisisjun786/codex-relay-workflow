@@ -1,6 +1,8 @@
 package store
 
 import (
+	"encoding/json"
+	"math/big"
 	"regexp"
 	"slices"
 	"strconv"
@@ -32,6 +34,8 @@ type ReceiptClaim struct {
 	RelationshipID string
 	Generation     int64
 	Attempt        *int64
+	bigGeneration  *big.Int
+	bigAttempt     *big.Int
 	RevisionHash   string
 	Outcome        ObservationOutcome
 	Producer       string
@@ -95,8 +99,14 @@ func ParseReceipt(data []byte) (ReceiptClaim, error) {
 	if claim.RelationshipID, ok = get("relationshipId").text(); !ok || claim.RelationshipID == "" {
 		return ReceiptClaim{}, refuse(ReasonMalformedReceipt, "relationshipId must be a string")
 	}
-	if claim.Generation, ok = get("executionGeneration").integer(); !ok || claim.Generation < 1 {
+	generation := receiptInteger(get("executionGeneration"))
+	if generation == nil || generation.Sign() < 1 {
 		return ReceiptClaim{}, refuse(ReasonMalformedReceipt, "executionGeneration must be a positive integer")
+	}
+	if generation.IsInt64() {
+		claim.Generation = generation.Int64()
+	} else {
+		claim.bigGeneration = generation
 	}
 	if claim.RevisionHash = pythonStr(get("revisionHash")); !lowerDigest.MatchString(claim.RevisionHash) {
 		return ReceiptClaim{}, refuse(ReasonMalformedReceipt, "revisionHash must be 64 lowercase hex characters")
@@ -112,11 +122,15 @@ func ParseReceipt(data []byte) (ReceiptClaim, error) {
 		return ReceiptClaim{}, refuse(ReasonMalformedReceipt, "emittedAt must be a timestamp")
 	}
 	if attempt, present := document.field("attempt"); present && !attempt.isNull() {
-		number, ok := attempt.integer()
-		if !ok || number < 1 {
+		n := receiptInteger(attempt)
+		if n == nil || n.Sign() < 1 {
 			return ReceiptClaim{}, refuse(ReasonMalformedReceipt, "attempt must be a positive integer or null")
 		}
+		number := n.Int64()
 		claim.Attempt = &number
+		if !n.IsInt64() {
+			claim.bigAttempt = n
+		}
 	}
 	if reference, present := document.field("manifestRef"); present && !reference.isNull() {
 		text, ok := nonBlank(reference)
@@ -131,6 +145,15 @@ func ParseReceipt(data []byte) (ReceiptClaim, error) {
 	}
 	claim.Turn = turn
 	return claim, nil
+}
+
+func receiptInteger(v jsonValue) *big.Int {
+	n, ok := v.scalar.(json.Number)
+	if !ok || strings.ContainsAny(string(n), ".eE") {
+		return nil
+	}
+	value, _ := new(big.Int).SetString(string(n), 10)
+	return value
 }
 
 func parseTurnRef(turn jsonValue) (TurnReference, error) {

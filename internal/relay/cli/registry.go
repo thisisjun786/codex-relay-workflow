@@ -10,7 +10,9 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -30,6 +32,13 @@ func (a Args) String(name string) (string, bool) {
 	return value, a.Set[name]
 }
 
+// TruthyString is Python's `if args.name` for an argparse string: both an omitted
+// option (None) and an explicitly empty value ("") are false.
+func (a Args) TruthyString(name string) (string, bool) {
+	value, _ := a.String(name)
+	return value, value != ""
+}
+
 func (a Args) Bool(name string) bool { return a.Flags.Lookup(name).Value.String() == "true" }
 
 type Command struct {
@@ -44,7 +53,7 @@ type Command struct {
 }
 
 // Commands lists only implemented operations; later domain ports append theirs.
-var Commands = []Command{doctorCommand, storeIdentityCommand, storeChallengeCommand, showCommand, statusCommand}
+var Commands = []Command{doctorCommand, storeIdentityCommand, storeChallengeCommand, showCommand, statusCommand, reportingShowCommand, reportingDeriveCommand, supervisorStandingCommand, supervisorSelectCommand, supervisorReportRecordedCommand, supervisorStageCommand, supervisorShowCommand, supervisorSendCommand, supervisorReadCommand, mergeEvidenceCommand}
 
 // Registered reports whether this build implements the relay command name.
 func Registered(name string) bool { return slices.Contains(allNames(), name) }
@@ -88,38 +97,62 @@ func Execute(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 
 // ExecuteAs is cli.main: argparse first (exit 2, usage on stderr), then Services, the
 // selection refusal, the handler, and one JSON document on stdout for every other ending.
-func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr io.Writer) int {
+func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr io.Writer) (code int) {
+	defer func() {
+		if value := recover(); value != nil {
+			if failure, ok := value.(*evidence.PythonError); ok {
+				code = emit(stdout, stderr, nil, failure)
+			} else {
+				panic(value)
+			}
+		}
+	}()
 	prog := argv0
 	if i := strings.LastIndex(prog, "/"); i >= 0 {
 		prog = prog[i+1:]
 	}
-	globalUsage := "usage: " + prog + " [-h] [--state STATE] [--socket SOCKET]\n" +
-		strings.Repeat(" ", len("usage: "+prog)) + " [--kind-module KIND_MODULE] [--json]\n" +
-		strings.Repeat(" ", len("usage: "+prog)) + " {" + commandNames() + "} ..."
+	globalUsage := argparse.Usage(prog, "")
 	parseErrorAs := func(who, usage, message string) int {
 		fmt.Fprintln(stderr, usage)
 		fmt.Fprintf(stderr, "%s: error: %s\n", who, message)
 		return parserExit
 	}
 	parseError := func(usage, message string) int { return parseErrorAs(prog, usage, message) }
-	globals := flag.NewFlagSet("relay", flag.ContinueOnError)
-	globals.SetOutput(io.Discard)
-	state := globals.String("state", "", "state directory")
-	socket := globals.String("socket", "", "App Server socket")
-	globals.Bool("json", true, "JSON output")
-	kindModules := &stringsFlag{}
-	globals.Var(kindModules, "kind-module", "register a fault kind (repeatable)")
-	if err := globals.Parse(argv); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			fmt.Fprintln(stdout, globalUsage)
+	root := argparse.Parse("", argv)
+	if root.Help {
+		fmt.Fprint(stdout, argparse.Help(prog, ""))
+		return contract.ExitOk
+	}
+	if root.Message != "" {
+		fmt.Fprint(stderr, root.Error(prog, ""))
+		return parserExit
+	}
+	remaining := root.Remaining
+	if len(root.Unknown) > 0 {
+		child := argparse.Parse(remaining[0], remaining[1:])
+		if child.Help {
+			fmt.Fprint(stdout, argparse.Help(prog, remaining[0]))
 			return contract.ExitOk
 		}
-		return parseError(globalUsage, argparseMessage(err))
+		if child.Message != "" && !child.Global {
+			fmt.Fprint(stderr, child.Error(prog, remaining[0]))
+			return parserExit
+		}
+		message := "unrecognized arguments: " + strings.Join(root.Unknown, " ")
+		if child.Message != "" {
+			message += " " + strings.TrimPrefix(child.Message, "unrecognized arguments: ")
+		}
+		return parseError(globalUsage, message)
 	}
-	remaining := globals.Args()
-	if len(remaining) == 0 {
-		return parseError(globalUsage, "the following arguments are required: command")
+	state, socket := "", ""
+	if values := root.Values["state"]; len(values) > 0 {
+		state = values[0]
 	}
+	if values := root.Values["socket"]; len(values) > 0 {
+		socket = values[0]
+	}
+	kindModules := root.Values["kind-module"]
+	argv = root.RootArgs()
 	check := func(selection store.StateSelection, socket string) error {
 		services := Services{Selection: selection, SocketPath: socket, AdapterRequested: socket != "", Program: program(argv0)}
 		refusal, err := selectionRefusal(services)
@@ -145,7 +178,7 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 			if refusal != nil {
 				return &PayloadExit{Payload: refusal, Code: contract.ExitRefused}
 			}
-			return kindModuleRefusal(*kindModules)
+			return kindModuleRefusal(kindModules)
 		})
 	}
 	if slices.Contains(delivery.CommandNames(), remaining[0]) {
@@ -160,7 +193,7 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 					return &PayloadExit{Payload: refusal, Code: contract.ExitRefused}
 				}
 			}
-			return kindModuleRefusal(*kindModules)
+			return kindModuleRefusal(kindModules)
 		})
 		return code
 	}
@@ -177,6 +210,14 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 	flags.SetOutput(io.Discard)
 	if command.Flags != nil {
 		command.Flags(flags)
+	}
+	if _, ok := argparse.Specs[command.Name]; ok {
+		given, code, done := parseRelayArgs(prog, flags, remaining[1:], stdout, stderr)
+		if done {
+			return code
+		}
+		result, err := run(ctx, command, argv0, state, socket, kindModules, Args{Flags: flags, Set: given})
+		return emit(stdout, stderr, result, err)
 	}
 	commandUsage := "usage: " + prog + " " + command.Name + commandSynopsis(flags)
 	if err := flags.Parse(remaining[1:]); err != nil {
@@ -200,20 +241,21 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 	if len(missing) > 0 {
 		return parseErrorAs(prog+" "+command.Name, commandUsage, "the following arguments are required: "+strings.Join(missing, ", "))
 	}
-	result, err := run(ctx, command, argv0, *state, *socket, *kindModules, Args{Flags: flags, Set: given})
+	result, err := run(ctx, command, argv0, state, socket, kindModules, Args{Flags: flags, Set: given})
 	return emit(stdout, stderr, result, err)
 }
 
 func run(ctx context.Context, command *Command, argv0, state, socket string, kindModules []string, args Args) (any, error) {
-	selection, err := store.ResolveStateDir(state, socket)
-	if err != nil {
-		if errors.Is(err, store.ErrNoHome) {
-			return nil, &HostError{Class: "RuntimeError", Detail: "Could not determine home directory."}
-		}
-		return nil, err
-	}
-	services := Services{Selection: selection, SocketPath: socket, AdapterRequested: socket != "", Program: program(argv0)}
+	services := Services{SocketPath: socket, AdapterRequested: socket != "", Program: program(argv0)}
 	if !command.Exempt {
+		selection, err := store.ResolveStateDir(state, socket)
+		if err != nil {
+			if errors.Is(err, store.ErrNoHome) {
+				return nil, &HostError{Class: "RuntimeError", Detail: "Could not determine home directory."}
+			}
+			return nil, err
+		}
+		services.Selection = selection
 		refusal, err := selectionRefusal(services)
 		if err != nil {
 			return nil, err
@@ -221,6 +263,15 @@ func run(ctx context.Context, command *Command, argv0, state, socket string, kin
 		if refusal != nil {
 			return nil, &PayloadExit{Payload: refusal, Code: contract.ExitRefused}
 		}
+	} else if command.Name != "merge-evidence" {
+		selection, err := store.ResolveStateDir(state, socket)
+		if err != nil {
+			if errors.Is(err, store.ErrNoHome) {
+				return nil, &HostError{Class: "RuntimeError", Detail: "Could not determine home directory."}
+			}
+			return nil, err
+		}
+		services.Selection = selection
 	}
 	// _import_kind_modules runs after the selection refusal and before the handler.
 	if err := importKindModules(kindModules); err != nil {
@@ -334,8 +385,6 @@ func allNames() []string {
 	names = append(names, registry.Names()...)
 	return append(append(names, delivery.CommandNames()...), faults.Names()...)
 }
-
-func commandNames() string { return strings.Join(allNames(), ",") }
 
 func choices() string {
 	names := allNames()

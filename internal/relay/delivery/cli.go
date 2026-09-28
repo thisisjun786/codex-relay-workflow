@@ -8,10 +8,10 @@ import (
 	"os"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -97,73 +97,29 @@ func (c *cliRun) services() (*Service, *Ack, error) {
 	return d, NewAck(d), nil
 }
 
-// ParseDeliveryArgs is argparse for one command: the parsed values, or its error message.
-func parseArgs(spec commandSpec, argv []string) (map[string]any, string) {
+// parseArgs adapts the shared argparse result to the existing handler values.
+func parseArgs(command string, spec commandSpec, argv []string) (map[string]any, argparse.Result) {
+	result := argparse.Parse(command, argv)
 	out := map[string]any{}
 	for _, f := range spec.flags {
 		out[f.name] = f.def
-	}
-	seen := map[string]bool{}
-	var unknown []string
-	for i := 0; i < len(argv); i++ {
-		arg := argv[i]
-		name, value, hasValue := strings.Cut(arg, "=")
-		var f *flagSpec
-		for j := range spec.flags {
-			if spec.flags[j].name == name {
-				f = &spec.flags[j]
-			}
-		}
-		if f == nil {
-			unknown = append(unknown, arg)
+		values := result.Values[strings.TrimPrefix(f.name, "--")]
+		if len(values) == 0 {
 			continue
 		}
-		seen[f.name] = true
-		if f.kind == "true" {
-			out[f.name] = true
-			continue
-		}
-		if !hasValue {
-			if i+1 >= len(argv) || strings.HasPrefix(argv[i+1], "--") {
-				return nil, fmt.Sprintf("argument %s: expected one argument", f.name)
-			}
-			i++
-			value = argv[i]
-		}
-		if f.choices != nil && !slices.Contains(f.choices, value) {
-			quoted := make([]string, len(f.choices))
-			for k, c := range f.choices {
-				quoted[k] = "'" + c + "'"
-			}
-			return nil, fmt.Sprintf("argument %s: invalid choice: '%s' (choose from %s)", f.name, value, strings.Join(quoted, ", "))
-		}
+		value := values[len(values)-1]
 		switch f.kind {
 		case "int":
-			n, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
-			if err != nil {
-				return nil, fmt.Sprintf("argument %s: invalid int value: '%s'", f.name, value)
-			}
-			out[f.name] = n
+			out[f.name] = result.Numbers[strings.TrimPrefix(f.name, "--")]
+		case "true":
+			out[f.name] = value == "true"
 		case "append":
-			list, _ := out[f.name].([]string)
-			out[f.name] = append(list, value)
+			out[f.name] = values
 		default:
 			out[f.name] = value
 		}
 	}
-	var missing []string
-	for _, f := range spec.flags {
-		if f.required && !seen[f.name] {
-			missing = append(missing, f.name)
-		}
-	}
-	if len(missing) > 0 {
-		return nil, "the following arguments are required: " + strings.Join(missing, ", ")
-	}
-	if len(unknown) > 0 {
-		return nil, "unrecognized arguments: " + strings.Join(unknown, " ")
-	}
-	return out, ""
+	return out, result
 }
 
 // SelectionCheck is cli._refuse_ambiguous_state for the resolved selection: nil, or an error
@@ -219,12 +175,16 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 	if !ok {
 		return 0, false
 	}
-	parsed, problem := parseArgs(spec, argv[i+1:])
-	if problem != "" {
-		fmt.Fprintf(stderr, "usage: %s %s [-h] ...\n%s %s: error: %s\n", prog, command, prog, command, problem)
+	parsed, parsing := parseArgs(command, spec, argv[i+1:])
+	if parsing.Help {
+		fmt.Fprint(stdout, argparse.Help(prog, command))
+		return 0, true
+	}
+	if parsing.Message != "" {
+		fmt.Fprint(stderr, parsing.Error(prog, command))
 		return 2, true
 	}
-	run := &cliRun{ctx: ctx, args: parsed, socket: socket, clock: SystemClock{}}
+	run := &cliRun{ctx: ctx, args: parsed, socket: socket, clock: cliClock}
 	if command == "ack-proof" && check != nil {
 		if err := check(store.StateSelection{}, socket); err != nil {
 			var payload PayloadError
@@ -240,10 +200,13 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 		if err != nil {
 			return reply(stdout, Obj{{Key: "error", Value: "host"}, {Key: "detail", Value: "OSError: " + err.Error()}}, contract.ExitHost), true
 		}
-		if spec.exempt != nil && spec.exempt(parsed) {
-			// Marker-only: no selection refusal (cli._refuse_ambiguous_state's exemption).
-		} else if check != nil {
-			if err := check(selection, socket); err != nil {
+		exempt := spec.exempt != nil && spec.exempt(parsed)
+		if check != nil {
+			checked := selection
+			if exempt {
+				checked = store.StateSelection{}
+			}
+			if err := check(checked, socket); err != nil {
 				var payload PayloadError
 				if errors.As(err, &payload) {
 					body, code := payload.ExitPayload()
@@ -251,7 +214,7 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 				}
 				return reply(stdout, Obj{{Key: "error", Value: "host"}, {Key: "detail", Value: hostDetail(err)}}, contract.ExitHost), true
 			}
-		} else if refusal := selectionRefusal(selection, socket); refusal != nil {
+		} else if refusal := selectionRefusal(selection, socket); !exempt && refusal != nil {
 			return reply(stdout, refusal, contract.ExitRefused), true
 		}
 		run.state = selection.Path
@@ -285,6 +248,10 @@ type hostError struct{ kind, message string }
 func (h *hostError) Error() string { return h.kind + ": " + h.message }
 
 func hostDetail(err error) string {
+	var overflow *argparse.IntegerOverflow
+	if errors.As(err, &overflow) {
+		return overflow.Error()
+	}
 	var h *hostError
 	if errors.As(err, &h) {
 		return h.Error()
@@ -463,8 +430,14 @@ func cmdRevisionHead(c *cliRun) (any, error) {
 		return nil, err
 	}
 	generation := r.Generation
-	if g, ok := c.opt("--generation").(int64); ok && g != 0 {
-		generation = g
+	if v := c.opt("--generation"); v != nil {
+		g := argparse.IntegerValue(v)
+		if g.Sign() != 0 {
+			generation, err = argparse.SQLiteInteger(g)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	head, err := HeadRevision(c.ctx, d.Store, rid, generation)
 	return Obj{{Key: "relationshipId", Value: rid}, {Key: "executionGeneration", Value: generation}, {Key: "head", Value: head}}, err

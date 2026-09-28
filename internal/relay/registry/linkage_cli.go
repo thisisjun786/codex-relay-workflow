@@ -164,7 +164,9 @@ var linkageCommands = []command{
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			q := CounterpartQuery{QuotedScope: p.optional("quoted-scope"), FromScope: p.optional("from-scope")}
 			if p.set["quoted-revision"] {
-				q.QuotedRevision = sql.NullInt64{Int64: p.integer("quoted-revision"), Valid: true}
+				n := p.integer("quoted-revision")
+				q.QuotedRevision = sql.NullInt64{Int64: n.Int64(), Valid: true}
+				q.RevisionOutOfRange = !n.IsInt64()
 			}
 			return r.Counterpart(ctx, p.text("from-task"), p.text("to-task"), q), nil
 		}},

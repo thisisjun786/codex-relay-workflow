@@ -10,20 +10,41 @@ import (
 // Python would accept it. It walks the document the way CPython's scanner does, so the message
 // and its "line L column C (char N)" position match (N counts characters, not bytes).
 func PythonJSONError(doc string) string {
+	message, _ := PythonJSONErrorWithLimit(doc, 0)
+	return message
+}
+
+// PythonJSONErrorWithLimit also models the C JSON scanner's container recursion
+// budget. A zero limit leaves the caller's existing unbounded syntax check intact.
+// Recursion errors are host failures rather than JSONDecodeError/ValueError.
+func PythonJSONErrorWithLimit(doc string, maxDepth int) (message string, recursion bool) {
 	s := []rune(doc)
-	p := &pyScan{s: s}
+	p := &pyScan{s: s, maxDepth: maxDepth}
+	if strings.HasPrefix(doc, "\ufeff") {
+		return p.format("Unexpected UTF-8 BOM (decode using utf-8-sig)", 0), false
+	}
 	end, msg, at := p.value(p.ws(0))
+	if p.recursionError != "" {
+		return p.recursionError, true
+	}
+	if p.integerError != "" {
+		return p.integerError, false
+	}
 	if msg != "" {
-		return p.format(msg, at)
+		return p.format(msg, at), false
 	}
 	end = p.ws(end)
 	if end != len(s) {
-		return p.format("Extra data", end)
+		return p.format("Extra data", end), false
 	}
-	return ""
+	return "", false
 }
 
-type pyScan struct{ s []rune }
+type pyScan struct {
+	s                            []rune
+	integerError, recursionError string
+	depth, maxDepth              int
+}
 
 func (p *pyScan) format(msg string, pos int) string {
 	line := 1
@@ -70,6 +91,18 @@ func (p *pyScan) value(i int) (int, string, int) {
 	if i >= len(p.s) {
 		return 0, "Expecting value", i
 	}
+	if p.s[i] == '{' || p.s[i] == '[' {
+		p.depth++
+		defer func() { p.depth-- }()
+		if p.maxDepth > 0 && p.depth > p.maxDepth {
+			kind := "object"
+			if p.s[i] == '[' {
+				kind = "array"
+			}
+			p.recursionError = "maximum recursion depth exceeded while decoding a JSON " + kind + " from a unicode string"
+			return 0, p.recursionError, i
+		}
+	}
 	switch c := p.s[i]; {
 	case c == '"':
 		return p.str(i + 1)
@@ -91,6 +124,14 @@ func (p *pyScan) value(i int) (int, string, int) {
 		return i + 9, "", 0
 	}
 	if end, ok := p.number(i); ok {
+		text := string(p.s[i:end])
+		if !strings.ContainsAny(text, ".eE") {
+			digits := len(strings.TrimPrefix(text, "-"))
+			if digits > 4300 {
+				p.integerError = fmt.Sprintf("Exceeds the limit (4300 digits) for integer string conversion: value has %d digits; use sys.set_int_max_str_digits() to increase the limit", digits)
+				return 0, p.integerError, i
+			}
+		}
 		return end, "", 0
 	}
 	return 0, "Expecting value", i

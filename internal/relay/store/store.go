@@ -43,8 +43,12 @@ type Store struct {
 const guardMarker = "-- GUARD_INDEXES executed separately after the DDL"
 const seedMarker = "-- schema_meta seeds and assignment_settlements backfill"
 
-// OpenOptions changes the busy timeout for controlled contention tests only.
-type OpenOptions struct{ BusyTimeout time.Duration }
+// OpenOptions changes connection setup for controlled contention tests only.
+type OpenOptions struct {
+	BusyTimeout   time.Duration
+	OnConnect     func()
+	BusyRetryHook func()
+}
 
 func Open(ctx context.Context, path, socketPath string) (*Store, error) {
 	return open(ctx, path, socketPath, OpenOptions{BusyTimeout: 30 * time.Second})
@@ -69,9 +73,43 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	}
 	d := &sqlite.Driver{}
 	d.RegisterConnectionHook(func(conn sqlite.ExecQuerierContext, _ string) error {
-		for _, pragma := range []string{"PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL", "PRAGMA foreign_keys=ON", fmt.Sprintf("PRAGMA busy_timeout=%d", options.BusyTimeout.Milliseconds())} {
-			if _, err := conn.ExecContext(context.Background(), pragma, []driver.NamedValue{}); err != nil {
-				return fmt.Errorf("%s: %w", pragma, err)
+		if options.OnConnect != nil {
+			options.OnConnect()
+		}
+		// Python's sqlite3.connect installs its timeout before executing journal_mode.
+		// Do the same: journal_mode may need a lock even before the schema is read.
+		pragmas := []string{fmt.Sprintf("PRAGMA busy_timeout=%d", options.BusyTimeout.Milliseconds()), "PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL", "PRAGMA foreign_keys=ON"}
+		busyConfigured := false
+		for _, pragma := range pragmas {
+			deadline := time.Now().Add(options.BusyTimeout)
+			for {
+				_, pragmaErr := conn.ExecContext(ctx, pragma, []driver.NamedValue{})
+				if pragmaErr == nil {
+					break
+				}
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return fmt.Errorf("%s: %w", pragma, ctxErr)
+				}
+				// modernc does not apply SQLite's busy handler while a connection hook
+				// changes journal mode. Retry only after busy_timeout was installed.
+				if !busyConfigured || !strings.Contains(pragmaErr.Error(), "SQLITE_BUSY") || !time.Now().Before(deadline) {
+					return fmt.Errorf("%s: %w", pragma, pragmaErr)
+				}
+				if options.BusyRetryHook != nil {
+					options.BusyRetryHook()
+				}
+				timer := time.NewTimer(time.Millisecond)
+				select {
+				case <-ctx.Done():
+					if !timer.Stop() {
+						<-timer.C
+					}
+					return fmt.Errorf("%s: %w", pragma, ctx.Err())
+				case <-timer.C:
+				}
+			}
+			if strings.HasPrefix(pragma, "PRAGMA busy_timeout=") {
+				busyConfigured = true
 			}
 		}
 		return nil
@@ -85,6 +123,10 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	u := url.URL{Scheme: "file", Path: resolved}
 	q := u.Query()
 	q.Set("mode", "rw")
+	// modernc applies DSN pragmas before invoking connection hooks. Installing the
+	// handler here gives journal_mode the same pre-first-statement wait Python gets
+	// from sqlite3.connect(timeout=30); the hook repeats it for explicit parity.
+	q.Set("_busy_timeout", fmt.Sprint(options.BusyTimeout.Milliseconds()))
 	u.RawQuery = q.Encode()
 	db, err := sql.Open(name, u.String())
 	if err != nil {

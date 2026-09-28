@@ -5,11 +5,12 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"math/big"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 )
 
 var dNames = []string{"fault-policy", "fault-limit", "fault-attention", "fault-relink", "fault-notifications", "fault-notification-raise", "fault-notification-reserve", "fault-notification-ack", "fault-notification-fail", "fault-notification-reconcile"}
@@ -69,21 +70,22 @@ func dOrdered(value any, parent string) any {
 	}
 	return value
 }
-func dBound(raw, field string, fallback, max int) (int, error) {
+func dBound(ctx context.Context, raw, field string, fallback, max int) (int, error) {
 	if raw == "" {
 		return fallback, nil
 	}
-	n, e := strconv.Atoi(raw)
-	if e != nil {
+	name := "--" + strings.TrimPrefix(strings.ReplaceAll(field, "_", "-"), "--")
+	n := integerArg(ctx, name, raw)
+	if n == nil {
 		return 0, fmt.Errorf("fault_observation_malformed: %s is a positive integer, not %s", field, raw)
 	}
-	if n < 1 {
-		return 0, fmt.Errorf("fault_observation_malformed: %s is a positive integer, not %d", field, n)
+	if n.Sign() < 1 {
+		return 0, fmt.Errorf("fault_observation_malformed: %s is a positive integer, not %s", field, n.String())
 	}
-	if n > max {
-		n = max
+	if n.Cmp(big.NewInt(int64(max))) > 0 {
+		return max, nil
 	}
-	return n, nil
+	return int(n.Int64()), nil
 }
 func dProduct(p string) error {
 	if !productName.MatchString(p) {
@@ -91,12 +93,18 @@ func dProduct(p string) error {
 	}
 	return nil
 }
-func dFloat(raw string) (float64, error) {
-	v, e := strconv.ParseFloat(raw, 64)
-	if e != nil {
+func dFloat(ctx context.Context, raw string) (float64, error) {
+	var v float64
+	var ok bool
+	if numbers, present := ctx.Value(numberArgsKey{}).(map[string]any); present {
+		v, ok = numbers["window"].(float64)
+	} else {
+		v, ok = argparse.ParseFloat(raw)
+	}
+	if !ok {
 		return 0, fmt.Errorf("fault_observation_malformed: window is 60..2592000s")
 	}
-	if v < 60 || v > 2592000 {
+	if !(v >= 60 && v <= 2592000) {
 		return 0, fmt.Errorf("fault_observation_malformed: window is 60..2592000s")
 	}
 	return v, nil
@@ -168,14 +176,14 @@ func dSetPolicy(ctx context.Context, l *Ledger, a map[string]string) (any, error
 	}
 	var threshold, window any
 	if a["--threshold"] != "" {
-		v, e := dBound(a["--threshold"], "threshold", 0, 100)
+		v, e := dBound(ctx, a["--threshold"], "threshold", 0, 100)
 		if e != nil {
 			return nil, e
 		}
 		threshold = v
 	}
 	if a["--window"] != "" {
-		v, e := dFloat(a["--window"])
+		v, e := dFloat(ctx, a["--window"])
 		if e != nil {
 			return nil, e
 		}
@@ -219,7 +227,7 @@ func dPolicies(ctx context.Context, l *Ledger, a map[string]string) (any, error)
 	if e := dProduct(p); e != nil {
 		return nil, e
 	}
-	limit, e := dBound(a["--limit"], "--limit", 20, 1000)
+	limit, e := dBound(ctx, a["--limit"], "--limit", 20, 1000)
 	if e != nil {
 		return nil, e
 	}
@@ -283,11 +291,11 @@ func dSetLimit(ctx context.Context, l *Ledger, a map[string]string) (any, error)
 	if strings.TrimSpace(k) == "" {
 		return nil, fmt.Errorf("fault_observation_malformed: kind is a name")
 	}
-	n, e := dBound(a["--max-count"], "max_count", 0, 10000)
+	n, e := dBound(ctx, a["--max-count"], "max_count", 0, 10000)
 	if e != nil {
 		return nil, e
 	}
-	v, e := dFloat(a["--window"])
+	v, e := dFloat(ctx, a["--window"])
 	if e != nil {
 		return nil, e
 	}
@@ -307,7 +315,7 @@ func dLimits(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 	if e := dProduct(p); e != nil {
 		return nil, e
 	}
-	limit, e := dBound(a["--limit"], "--limit", 20, 1000)
+	limit, e := dBound(ctx, a["--limit"], "--limit", 20, 1000)
 	if e != nil {
 		return nil, e
 	}

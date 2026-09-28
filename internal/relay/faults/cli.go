@@ -8,11 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -63,10 +63,12 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 		return 0, false
 	}
 	name := argv[i]
-	args, code, handled := faultParse(prog, name, argv[i+1:], stdout, stderr)
+	parsed, code, handled := faultParse(prog, name, argv[i+1:], stdout, stderr)
 	if handled {
 		return code, true
 	}
+	args := parsed.text
+	ctx = context.WithValue(ctx, numberArgsKey{}, parsed.numbers)
 	selection, err := store.ResolveStateDir(state, socket)
 	if err != nil {
 		return response(stdout, map[string]any{"error": "host", "detail": err.Error()}, 3), true
@@ -103,6 +105,23 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 			}
 			return response(stdout, map[string]any{"error": "usage", "detail": fmt.Sprintf("--kind-module '%s' could not be imported: No module named '%s'", module, missing)}, 4), true
 		}
+	}
+	// These two Python handlers validate before their first lazy services.store
+	// access. Other fault commands deliberately retain their existing precedence.
+	switch name {
+	case "fault-show":
+		err = validateShow(ctx, args)
+	case "fault-sweep":
+		var input sweepInput
+		input, err = validateSweep(ctx, args)
+		ctx = context.WithValue(ctx, sweepInputKey{}, input)
+	}
+	if err != nil {
+		reason, detail, refused := strings.Cut(err.Error(), ": ")
+		if refused && strings.HasPrefix(reason, "fault_") {
+			return response(stdout, map[string]any{"error": "refused", "reason": reason, "detail": detail}, 2), true
+		}
+		return response(stdout, map[string]any{"error": "host", "detail": err.Error()}, 3), true
 	}
 	s, err := store.Open(ctx, selection.DBPath(), socket)
 	if err != nil {
@@ -235,12 +254,20 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 		}
 	case "fault-prune":
 		keep := 20
-		if args["--keep"] != "" {
-			keep, err = strconv.Atoi(args["--keep"])
-			if err != nil {
+		if raw := args["--keep"]; raw != "" {
+			n := integerArg(ctx, "--keep", raw)
+			if n.Sign() < 1 {
 				err = fmt.Errorf("fault_observation_malformed: keep at least one")
 				break
 			}
+			if !n.IsInt64() {
+				if _, err = cFault(ctx, l, args["--fault"]); err != nil {
+					break
+				}
+				_, err = argparse.SQLiteInteger(n)
+				break
+			}
+			keep = int(n.Int64())
 		}
 		var removed int64
 		removed, err = l.Prune(ctx, args["--fault"], keep)

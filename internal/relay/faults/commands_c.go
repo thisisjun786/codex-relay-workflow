@@ -5,12 +5,13 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"math/big"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 )
 
 var cNames = []string{"fault-show", "fault-next", "fault-retry", "fault-queue", "fault-cancel", "fault-stage"}
@@ -92,18 +93,18 @@ func cOrdered(v any, parent string) any {
 	}
 	return v
 }
-func cLimit(raw, name string, fallback int) (int, error) {
+func cLimit(ctx context.Context, raw, name string, fallback int) (int, error) {
 	if raw == "" {
 		return fallback, nil
 	}
-	n, e := strconv.Atoi(raw)
-	if e != nil || n < 1 {
+	n := integerArg(ctx, name, raw)
+	if n == nil || n.Sign() < 1 {
 		return 0, fmt.Errorf("fault_observation_malformed: %s is a positive integer, not %s", name, raw)
 	}
-	if n > 1000 {
-		n = 1000
+	if n.Cmp(big.NewInt(1000)) > 0 {
+		return 1000, nil
 	}
-	return n, nil
+	return int(n.Int64()), nil
 }
 func cView(r row) map[string]any {
 	out := map[string]any{}
@@ -194,14 +195,18 @@ func executeC(ctx context.Context, l *Ledger, name string, a map[string]string) 
 type cMissingFault struct{ id string }
 
 func (e *cMissingFault) Error() string { return "fault not found: " + e.id }
-func cShow(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
-	limit, e := cLimit(a["--limit"], "--limit", 20)
-	if e != nil {
-		return nil, e
+
+// Only these checks precede services.faults (and its lazy store) in Python.
+func validateShow(ctx context.Context, a map[string]string) error {
+	if raw := a["--limit"]; raw != "" {
+		n := integerArg(ctx, "--limit", raw)
+		if n.Sign() < 1 {
+			return fmt.Errorf("fault_observation_malformed: --limit is a positive integer, not %s", n.String())
+		}
 	}
 	id, pub := a["--fault"], a["--publication"]
 	if id != "" && pub != "" {
-		return nil, fmt.Errorf("usage: argument --publication: not allowed with argument --fault")
+		return fmt.Errorf("usage: argument --publication: not allowed with argument --fault")
 	}
 	if id != "" || pub != "" {
 		var ignored []string
@@ -215,9 +220,21 @@ func cShow(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 			if pub != "" {
 				single = "--publication"
 			}
-			return nil, fmt.Errorf("fault_observation_malformed: %s filter a listing and would be ignored beside %s", strings.Join(ignored, ", "), single)
+			return fmt.Errorf("fault_observation_malformed: %s filter a listing and would be ignored beside %s", strings.Join(ignored, ", "), single)
 		}
 	}
+	return nil
+}
+
+func cShow(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
+	if e := validateShow(ctx, a); e != nil {
+		return nil, e
+	}
+	limit, e := cLimit(ctx, a["--limit"], "--limit", 20)
+	if e != nil {
+		return nil, e
+	}
+	id, pub := a["--fault"], a["--publication"]
 	if pub != "" {
 		view, e := cPublication(ctx, l, pub)
 		if e != nil {
@@ -267,11 +284,15 @@ func cShow(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 		out["progress"] = map[string]any{}
 		return out, nil
 	}
-	var after int
+	var after int64
 	if raw := a["--after"]; raw != "" {
-		after, e = strconv.Atoi(raw)
-		if e != nil || after < 0 {
+		n := integerArg(ctx, "--after", raw)
+		if n == nil || n.Sign() < 0 {
 			return nil, fmt.Errorf("fault_observation_malformed: after is a non-negative integer, not %s", raw)
+		}
+		after, e = argparse.SQLiteInteger(n)
+		if e != nil {
+			return nil, e
 		}
 	}
 	clauses := []string{"rowid > ?"}
@@ -326,7 +347,7 @@ func cNext(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 	if e := l.expireLeases(ctx); e != nil {
 		return nil, e
 	}
-	limit, e := cLimit(a["--limit"], "--limit", 4)
+	limit, e := cLimit(ctx, a["--limit"], "--limit", 4)
 	if e != nil {
 		return nil, e
 	}

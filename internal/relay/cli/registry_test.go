@@ -3,6 +3,8 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -34,8 +36,12 @@ func TestExecute_returnsUsageOnlyOnStderr_whenGlobalFlagMalformed(t *testing.T) 
 	// When
 	code := cli.Execute(context.Background(), []string{"--bogus"}, &stdout, &stderr)
 
-	// Then
-	if code != argparseExit || stdout.Len() != 0 || !strings.Contains(stderr.String(), "unrecognized arguments: --bogus") {
-		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	// argparse requires the command before reporting an unknown root option.
+	// Compare the live parser so this test cannot preserve the old Go-only order.
+	want := runParityProcess(t, os.Environ(), filepath.Join(repositoryRoot(t), ".venv/bin/python"),
+		"-c", `from codex_session_relay.cli import build_parser; build_parser().parse_args(['--bogus'])`)
+	got := processResult{code, stdout.String(), stderr.String()}
+	if got != want {
+		t.Fatalf("global parser byte diff\nGo=%+v\nPython=%+v", got, want)
 	}
 }
