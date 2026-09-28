@@ -169,7 +169,8 @@ class WorkflowTests(unittest.TestCase):
         body = workflow_jobs()["go-product"]
         self.assertNotRegex(body, r"(?m)^    if:")
         self.assertIn("go-version-file: go.mod", body)
-        self.assertIn("make lint test contract", body)
+        self.assertIn("run: make lint", body)
+        self.assertIn("run: make test-part TEST_PART=", body)
         self.assertIn("CGO_ENABLED=0", body)
         for target in ("linux/amd64", "linux/arm64", "darwin/arm64"):
             self.assertIn(target, body)
@@ -177,6 +178,35 @@ class WorkflowTests(unittest.TestCase):
             self.assertRegex(body, rf"(?m)^          name: {artifact}$")
         for action in re.findall(r"uses: (\S+)", body):
             self.assertRegex(action, r"@[0-9a-f]{40}$")
+
+    def matrix(self, job, key):
+        found = re.search(rf"(?m)^        {key}: \[([^\]]+)\]$", workflow_jobs()[job])
+        self.assertIsNotNone(found, f"{job} has no {key} matrix")
+        return [part.strip().strip("'") for part in found[1].split(",")]
+
+    def test_go_product_legs_are_lint_dist_and_every_makefile_test_part(self):
+        """A Makefile part without a leg would never run in CI; a leg without a part fails."""
+        makefile = (WORKFLOW.parents[2] / "Makefile").read_text(encoding="utf-8")
+        numbered = re.findall(r"(?m)^TEST_PART_(\d+) :=", makefile)
+        filtered = re.search(r"\$\(filter \$\(TEST_PART\),([^)]*)\)", makefile)
+        self.assertIsNotNone(filtered)
+        self.assertEqual(filtered[1].split(), numbered)
+        legs = self.matrix("go-product", "part")
+        self.assertEqual(len(legs), len(set(legs)))
+        self.assertEqual(sorted(legs), sorted(["lint", "dist", "test-rest"]
+                                              + [f"test-{n}" for n in numbered]))
+
+    def test_package_shards_are_every_slice_of_one_total(self):
+        shards = self.matrix("packages", "shard")
+        total = len(shards)
+        self.assertEqual(shards, [f"{index}/{total}" for index in range(1, total + 1)])
+        self.assertIn('packages.py --shard "$SHARD"', workflow_jobs()["packages"])
+
+    def test_installer_tests_split_into_the_transition_module_and_the_rest(self):
+        self.assertEqual(self.matrix("tests", "part"), ["transition", "rest"])
+        body = workflow_jobs()["tests"]
+        self.assertIn("ls test*.py", body)
+        self.assertIn("grep -vx test_plugin_transition", body)
 
 
 if __name__ == "__main__":

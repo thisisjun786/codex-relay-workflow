@@ -10,13 +10,13 @@ the steps needed to activate GitHub enforcement.
 | `crw-dev ci scope` | Select checks from Git evidence (the `selection` job) |
 | `crw-dev ci validate` | Skill metadata, local links and Python syntax |
 | `crw-dev ci plugin` | Plugin package shape, payload hygiene and the release digest |
-| `python3 -m unittest discover -s scripts/ci/tests -v` | Installer behavior and CI-control tests |
+| `python3 -m unittest discover -s scripts/ci/tests -v` | Installer behavior and CI-control tests (CI runs `test_plugin_transition` and the other modules as two legs per Python version) |
 | `crw-dev ci contracts` | Run the owning hook replay and operations shape check when present; reject incomplete script/contract pairs |
 | `crw-dev ci operations` | The operations fixtures against their contract (the Go port of `scripts/check_operations_contract.py`, also run by `contracts`) |
-| `python3 scripts/ci/packages.py` | Install, test, run and build the two packages under `packages/` from the root lock file |
+| `python3 scripts/ci/packages.py [--shard K/N]` | Install, test, run and build the two packages under `packages/` from the root lock file; CI runs each Python version as `--shard` legs that partition the collected tests |
 | `bash scripts/ci/secrets.sh` | Checksum-pinned Gitleaks scan of all fetched history |
 | `crw-dev ci gate` | Aggregate prerequisite results supplied by the workflow |
-| `make lint test contract` then `CGO_ENABLED=0 make dist` per target | `go-product` job: vet, staticcheck, gofmt, Go tests and the contract corpus, then static `crw` binaries for linux/amd64, linux/arm64 and darwin/arm64 uploaded with `SHA256SUMS` |
+| `make lint`, `make test-part TEST_PART=<1-4, rest>`, `CGO_ENABLED=0 make dist` per target | `go-product` job, one leg each: vet, staticcheck and gofmt; the Go tests and contract corpus as parts that together are `make test`; static `crw` binaries for linux/amd64, linux/arm64 and darwin/arm64 uploaded with `SHA256SUMS` |
 
 `crw-dev` is the development binary: `go build -tags dev -o dist/crw-dev ./cmd/crw-dev`
 (or `make crw-dev`). It builds only with the `dev` tag, so `make dist` and the release
@@ -62,7 +62,11 @@ selection explicitly did not request them. Missing, malformed, failed, cancelled
 and unexpected-skipped results fail. It rejects PRs targeting `main`.
 
 `go-product` always runs, like `validate`: it needs no uv or Python packages, and
-the darwin/arm64 binary it builds is not validated on a macOS host. Its plugin
+the darwin/arm64 binary it builds is not validated on a macOS host. Its legs run on
+separate runners; the Makefile names the slowest packages as parts 1-4 and `rest` takes
+every other package, so a new package is always tested. `test_gate.py` and
+`internal/dev/ci` refuse a Makefile part without a workflow leg, and a package-shard
+list that is not every slice of one total. Its plugin
 payload step runs only once the native wiring launcher
 `plugins/crw/wiring/crw-bridge.sh` exists; until then `validate` covers the
 payload.

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -320,4 +321,55 @@ func Test47_GATE_9_DownloadedToolingIsPinned(t *testing.T) {
 			t.Errorf("packages job lacks %s", pattern)
 		}
 	}
+}
+
+// matrixValues reads a one-line `key: [a, b]` matrix entry from a job body.
+func matrixValues(t *testing.T, body, key string) []string {
+	t.Helper()
+	m := regexp.MustCompile(`(?m)^        ` + key + `: \[([^\]]+)\]$`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("no %s matrix", key)
+	}
+	var values []string
+	for _, part := range strings.Split(m[1], ",") {
+		values = append(values, strings.Trim(strings.TrimSpace(part), "'"))
+	}
+	return values
+}
+
+// The Go suite runs in CI as `make test-part` legs. A Makefile part without a leg would
+// never run; test_gate.py pins the same shape.
+func Test47_GATE_10_ParallelLegsCoverTheWholeRun(t *testing.T) {
+	jobs, _ := workflowJobs(t)
+	data, err := os.ReadFile(filepath.Join(repoRoot(), "Makefile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var numbered []string
+	for _, m := range regexp.MustCompile(`(?m)^TEST_PART_(\d+) :=`).FindAllStringSubmatch(string(data), -1) {
+		numbered = append(numbered, m[1])
+	}
+	filtered := regexp.MustCompile(`\$\(filter \$\(TEST_PART\),([^)]*)\)`).FindStringSubmatch(string(data))
+	if filtered == nil {
+		t.Fatal("Makefile does not validate TEST_PART")
+	}
+	expectEqual(t, "validated parts", strings.Fields(filtered[1]), numbered)
+	want := []string{"lint", "dist", "test-rest"}
+	for _, n := range numbered {
+		want = append(want, "test-"+n)
+	}
+	legs := matrixValues(t, jobs["go-product"], "part")
+	expectEqual(t, "go-product legs", sortedCopy(legs), sortedCopy(want))
+	for _, step := range []string{"run: make lint", "run: make test-part TEST_PART="} {
+		if !strings.Contains(jobs["go-product"], step) {
+			t.Errorf("go-product lacks %q", step)
+		}
+	}
+	shards := matrixValues(t, jobs["packages"], "shard")
+	var expected []string
+	for i := range shards {
+		expected = append(expected, strconv.Itoa(i+1)+"/"+strconv.Itoa(len(shards)))
+	}
+	expectEqual(t, "package shards", shards, expected)
+	expectEqual(t, "installer test parts", matrixValues(t, jobs["tests"], "part"), []string{"transition", "rest"})
 }

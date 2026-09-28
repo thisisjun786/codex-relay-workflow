@@ -43,8 +43,36 @@ PACKAGES = (
 )
 
 
+# Loaded into pytest with `-p` when a CI leg runs one shard. It keeps every item whose
+# position in the collected order falls in this shard, so shards 1..N of one checkout are
+# disjoint and together hold every collected test. Deselected items are reported as such,
+# never as skips, and each leg still refuses an empty or skipped run.
+SHARD_PLUGIN = """\
+import os
+
+
+def pytest_collection_modifyitems(config, items):
+    index, total = (int(part) for part in os.environ["CRW_PACKAGES_SHARD"].split("/"))
+    keep, drop = [], []
+    for position, item in enumerate(items):
+        (keep if position % total == index - 1 else drop).append(item)
+    if drop:
+        config.hook.pytest_deselected(items=drop)
+    items[:] = keep
+"""
+SHARD_MODULE = "crw_packages_shard"
+
+
 class Failure(Exception):
     """A check that did not hold. The message is the report."""
+
+
+def parse_shard(value):
+    """`K/N` with 1 <= K <= N, as (K, N). The whole run is 1/1."""
+    index, slash, total = value.partition("/")
+    if slash and index.isdecimal() and total.isdecimal() and 1 <= int(index) <= int(total):
+        return int(index), int(total)
+    raise Failure(f"--shard must be K/N with 1 <= K <= N, not {value!r}")
 
 
 def run(command, *, cwd=ROOT, env=None, capture=False):
@@ -155,31 +183,43 @@ def read_report(path, directory):
     return tests
 
 
-def run_suite(directory, scratch, env):
+def run_suite(directory, scratch, env, shard=(1, 1)):
     report = scratch / f"{directory}.xml"
-    run(
-        [
-            "uv", "run", "--no-sync", "python", "-m", "pytest", "-q", "-rs",
-            f"--basetemp={scratch / directory}",
-            f"--junit-xml={report}",
-        ],
-        cwd=ROOT / "packages" / directory,
-        env=env,
-    )
+    command = [
+        "uv", "run", "--no-sync", "python", "-m", "pytest", "-q", "-rs",
+        f"--basetemp={scratch / directory}",
+        f"--junit-xml={report}",
+    ]
+    if shard != (1, 1):
+        plugins = scratch / "plugins"
+        plugins.mkdir(exist_ok=True)
+        (plugins / f"{SHARD_MODULE}.py").write_text(SHARD_PLUGIN)
+        env = dict(env)
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(plugins), env.get("PYTHONPATH")]))
+        env["CRW_PACKAGES_SHARD"] = f"{shard[0]}/{shard[1]}"
+        command += ["-p", SHARD_MODULE]
+    run(command, cwd=ROOT / "packages" / directory, env=env)
     return read_report(report, directory)
 
 
-def main():
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
     env = dict(os.environ)
     # The relay's own conformance gate skips itself unless this is set, and a skip is
     # not a result. The run stays offline: it validates packaged schemas and fixtures.
     env.setdefault("RELAY_CONFORMANCE_REQUIRED", "1")
     scratch = None
     try:
+        if argv[:1] == ["--shard"] and len(argv) == 2:
+            shard = parse_shard(argv[1])
+        elif not argv:
+            shard = (1, 1)
+        else:
+            raise Failure("usage: packages.py [--shard K/N]")
         run(["uv", "sync", "--locked", "--all-packages"], env=env)
         import_locations(env)
         scratch = temporary_root()
-        counts = {name: run_suite(name, scratch, env) for name, _, _ in PACKAGES}
+        counts = {name: run_suite(name, scratch, env, shard) for name, _, _ in PACKAGES}
         for _, _, script in PACKAGES:
             run(["uv", "run", "--no-sync", script, "--help"], env=env)
         for directory, _, _ in PACKAGES:
@@ -193,8 +233,9 @@ def main():
     finally:
         if scratch is not None:
             shutil.rmtree(str(scratch), ignore_errors=True)
+    part = "" if shard == (1, 1) else f" (shard {shard[0]}/{shard[1]})"
     print(
-        "Packages check passed: "
+        f"Packages check passed{part}: "
         + ", ".join(f"{name} {count} tests" for name, count in counts.items())
         + ". Both CLIs responded and both wheels built. This says nothing about an installed"
         " runtime or a live host."
