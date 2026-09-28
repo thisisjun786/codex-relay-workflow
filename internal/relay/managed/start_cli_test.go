@@ -45,15 +45,11 @@ func Test27_MST_9_MissingWorkerRefusesBeforeStoreCreation(t *testing.T) {
 	if code != 2 || answer["state"] != "refused" || answer["stage"] != "preflight" || answer["reason"] != "worker_policy_unreadable" {
 		t.Fatalf("missing worker: %d %s %s", code, &out, &stderr)
 	}
-	home, err := os.MkdirTemp("/dev/shm", "crw-managed-cli-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(home)
+	home := t.TempDir()
 	argv := []string{"--state", state, "--socket", filepath.Join(dir, "socket"), "managed-start", "--request", string(raw), "--marker-root", filepath.Join(dir, "markers")}
 	cmd := exec.Command("uv", append([]string{"run", "--no-sync", "python", "-m", "codex_session_relay.cli"}, argv...)...)
 	cmd.Dir = filepath.Clean(filepath.Join("../../.."))
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_CONFIG_HOME="+home, "XDG_DATA_HOME="+home, "CODEX_HOME="+home, "TMPDIR=/dev/shm")
+	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_CONFIG_HOME="+home, "XDG_DATA_HOME="+home, "CODEX_HOME="+home)
 	py, pyErr := cmd.Output()
 	if exit, ok := pyErr.(*exec.ExitError); !ok || exit.ExitCode() != code || !bytes.Equal(py, out.Bytes()) {
 		t.Fatalf("Go exit=%d stdout=%q; Python err=%v stdout=%q", code, out.Bytes(), pyErr, py)
@@ -79,15 +75,11 @@ func Test27_MST_9_MissingStateOrSocketUsage(t *testing.T) {
 			args := append(append([]string{}, tc.selectors...), "managed-start", "--request", "{}", "--marker-root", filepath.Join(root, "markers"))
 			var output, errors bytes.Buffer
 			code := cli.ExecuteAs(context.Background(), "codex-session-relay", args, &output, &errors)
-			home, err := os.MkdirTemp("/dev/shm", "crw-managed-cli-")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer os.RemoveAll(home)
+			home := t.TempDir()
 			cmd := exec.Command("uv", append([]string{"run", "--no-sync", "python", "-m", "codex_session_relay.cli"}, args...)...)
 			_, file, _, _ := runtime.Caller(0)
 			cmd.Dir = filepath.Clean(filepath.Join(filepath.Dir(file), "../../.."))
-			cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_CONFIG_HOME="+home, "XDG_DATA_HOME="+home, "CODEX_HOME="+home, "TMPDIR=/dev/shm")
+			cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_CONFIG_HOME="+home, "XDG_DATA_HOME="+home, "CODEX_HOME="+home)
 			py, pyErr := cmd.CombinedOutput()
 			pyCode := 0
 			if pyErr != nil {

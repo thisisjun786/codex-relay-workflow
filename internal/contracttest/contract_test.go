@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -13,41 +12,31 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	cleanup, err := testsupport.IsolateRelayState()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
 	dir, err := os.MkdirTemp("", "crw-contracttest-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 	buildDir = dir
-	cache, err := os.UserCacheDir()
-	if err != nil {
+	// Build once before HOME isolation, inheriting the invoking toolchain caches.
+	if _, err := crwBinary(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		if cleanupErr := testsupport.RemoveTempTree(dir); cleanupErr != nil {
+			fmt.Fprintln(os.Stderr, cleanupErr)
+		}
 		os.Exit(1)
 	}
-	env := map[string]string{"HOME": filepath.Join(dir, "home"), "XDG_STATE_HOME": filepath.Join(dir, "state"), "XDG_CONFIG_HOME": filepath.Join(dir, "config"), "CODEX_HOME": filepath.Join(dir, "codex"), "CODEX_SESSION_RELAY_STATE": filepath.Join(dir, "relay"), "CODEX_SESSION_RELAY_SCOPE_DIR": filepath.Join(dir, "scope")}
-	if os.Getenv("GOPATH") == "" {
-		env["GOPATH"] = filepath.Join(os.Getenv("HOME"), "go")
-	}
-	if os.Getenv("GOCACHE") == "" {
-		env["GOCACHE"] = filepath.Join(cache, "go-build")
-	}
-	for key, value := range env {
+	for _, key := range []string{"HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "CODEX_HOME", "CODEX_SESSION_RELAY_STATE", "CODEX_SESSION_RELAY_SCOPE_DIR"} {
+		value := dir + "/" + key
+		if err := os.MkdirAll(value, 0700); err != nil {
+			panic(err)
+		}
 		if err := os.Setenv(key, value); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			panic(err)
 		}
 	}
 	code := m.Run()
-	if err := cleanup(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		code = 1
-	}
-	if err := os.RemoveAll(dir); err != nil {
+	if err := testsupport.RemoveTempTree(dir); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		code = 1
 	}

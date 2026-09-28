@@ -89,7 +89,7 @@ func ReadRecipientTurn(adapter Adapter, clock Clock, attempt, delivery Row, turn
 	listed := presence.Finding == TurnPresent
 	where := "does not list this turn"
 	if listed {
-		status := presence.Turn.Status
+		status := TurnStatus(presence.Turn)
 		if !slices.Contains(terminalTurn, status) {
 			return set(set(set(r, "finding", Present), "status", status), "detail", fmt.Sprintf("the recipient lists this turn (%s)", status))
 		}
@@ -229,7 +229,7 @@ func SettleLoss(ctx context.Context, s *store.Store, clock Clock, requestID stri
 func foldCandidates(p TurnPresence, sentAt float64) []TurnInfo {
 	var out []TurnInfo
 	for _, t := range p.SeenTurns {
-		if t.StartedAt != nil && *t.StartedAt <= sentAt+TurnStartPrecisionSeconds {
+		if TurnStartedAt(&t) != nil && *TurnStartedAt(&t) <= sentAt+TurnStartPrecisionSeconds {
 			out = append(out, t)
 		}
 	}
@@ -268,11 +268,11 @@ func ReadUnknownSend(adapter Adapter, clock Clock, attempt, delivery Row, receip
 	folded := foldCandidates(presence, sentAt)
 	var running []string
 	for _, t := range presence.SeenTurns {
-		if !slices.Contains(terminalTurn, t.Status) {
+		if !slices.Contains(terminalTurn, TurnStatus(&t)) {
 			running = append(running, t.TurnID)
 		}
 	}
-	if presence.StopTurn != nil && !slices.Contains(terminalTurn, presence.StopTurn.Status) {
+	if presence.StopTurn != nil && !slices.Contains(terminalTurn, TurnStatus(presence.StopTurn)) {
 		running = append(running, presence.StopTurn.TurnID)
 	}
 	if len(running) > 0 {

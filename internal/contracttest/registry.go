@@ -63,8 +63,12 @@ func buildCRW() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	goBinary, err := exec.LookPath("go")
+	if err != nil {
+		return "", err
+	}
 	out := filepath.Join(buildDir, "crw")
-	build := exec.Command("go", "build", "-buildvcs=false", "-o", out, "./cmd/crw")
+	build := exec.Command(goBinary, "build", "-buildvcs=false", "-o", out, "./cmd/crw")
 	build.Dir = root
 	if output, err := build.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("contracttest: go build ./cmd/crw: %w\n%s", err, output)

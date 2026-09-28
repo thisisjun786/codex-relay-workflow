@@ -61,7 +61,7 @@ type ItemPage struct {
 func olderTurns(turns []TurnInfo, cutoff float64) []string {
 	var out []string
 	for _, t := range turns {
-		if t.StartedAt != nil && *t.StartedAt <= cutoff {
+		if TurnStartedAt(&t) != nil && *TurnStartedAt(&t) <= cutoff {
 			out = append(out, t.TurnID)
 		}
 	}
@@ -97,7 +97,7 @@ func FindInListingPaged(read func() (ListingPage, error), bound int, turnID stri
 				match := turn
 				return TurnPresence{TurnPresent, &match, scanned, "matched", seen, olderAfterMatch(page.Turns[i+1:], page.Follows, read, bound-p-1, cutoff), seenTurns, nil}, nil
 			}
-			if turn.StartedAt != nil && *turn.StartedAt <= cutoff {
+			if TurnStartedAt(&turn) != nil && *TurnStartedAt(&turn) <= cutoff {
 				stop := turn
 				return TurnPresence{TurnAbsent, nil, scanned, "older_than_send", seen, olderTurns(page.Turns[i:], cutoff), seenTurns, &stop}, nil
 			}
@@ -131,7 +131,7 @@ func idOf(turn TurnInfo) any {
 func olderAfterMatch(rest []TurnInfo, follows bool, read func() (ListingPage, error), left int, cutoff float64) []string {
 	for {
 		for i, turn := range rest {
-			if turn.StartedAt != nil && *turn.StartedAt <= cutoff {
+			if TurnStartedAt(&turn) != nil && *TurnStartedAt(&turn) <= cutoff {
 				return olderTurns(rest[i:], cutoff)
 			}
 		}

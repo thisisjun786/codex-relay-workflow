@@ -138,7 +138,7 @@ func Test_SteerThread_refuses_inactive_thread_without_sending(t *testing.T) {
 func Test_CreateWorktreeThread_creates_locked_detached_checkout_when_host_accepts(t *testing.T) {
 	// Given
 	b, host := testBridge(t)
-	root, err := os.MkdirTemp("/dev/shm", "crw-bridge-worktree-")
+	root, err := os.MkdirTemp("", "crw-bridge-worktree-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func Test_CreateWorktreeThread_creates_locked_detached_checkout_when_host_accept
 func Test_CreateWorktreeThread_refuses_nested_destination_before_git_effect(t *testing.T) {
 	// Given
 	b, host := testBridge(t)
-	source, err := os.MkdirTemp("/dev/shm", "crw-bridge-source-")
+	source, err := os.MkdirTemp("", "crw-bridge-source-")
 	if err != nil {
 		t.Fatal(err)
 	}

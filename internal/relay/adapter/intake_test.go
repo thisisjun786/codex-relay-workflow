@@ -1,0 +1,153 @@
+package adapter
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+)
+
+func seedIntake(t *testing.T, path, root string) *store.Store {
+	t.Helper()
+	s, err := store.Open(context.Background(), path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	roots, _ := json.Marshal([]string{root})
+	relationship := store.Relationship{ID: "rel-1", IssueKey: "REL-1", Status: store.StatusActive, ParentTaskID: "01parent-task", ChildTaskID: "01child-task", Generation: 1, ArtifactRoots: string(roots), AllowedRecipients: `["01parent-task"]`, CreatedAt: "2023-11-14T22:13:20.000000+00:00", UpdatedAt: "2023-11-14T22:13:20.000000+00:00"}
+	generation := store.Generation{RelationshipID: "rel-1", Number: 1, DispatchRequestID: "dispatch-1", AnchorState: store.AnchorBound, DispatchTurnID: sql.NullString{String: "turn-dispatch-1", Valid: true}, OpenedAt: relationship.CreatedAt, BoundAt: sql.NullString{String: relationship.CreatedAt, Valid: true}}
+	if err := s.RecordRelationship(context.Background(), relationship, generation, "host-a", "host-a"); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
+	for _, kind := range []string{"frozen-good", "frozen-unreachable", "frozen-tampered", "frozen-absent", "live-good", "live-changed", "live-unreadable"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			work := filepath.Join(root, "work")
+			if err := os.Mkdir(work, 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := os.Chmod(work, 0700); err != nil {
+					t.Error(err)
+				}
+			})
+			file := filepath.Join(work, "deliver.txt")
+			if err := os.WriteFile(file, []byte("the delivered bytes"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			entries, _, err := BuildManifest([]string{file}, []string{work}, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			revision, err := RevisionHash(entries)
+			if err != nil {
+				t.Fatal(err)
+			}
+			attempt := 1
+			event, err := store.EventID("rel-1", 1, revision, "ready_for_review", "turn-dispatch-1", &attempt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload := map[string]any{"eventId": event, "relationshipId": "rel-1", "executionGeneration": 1, "attempt": 1, "revisionHash": revision, "outcome": "ready_for_review", "producer": "child", "turnRef": map[string]any{"threadId": "01child-task", "turnId": "turn-dispatch-1", "turnStatus": "completed"}, "manifest": entriesRecord(entries), "emittedAt": "2023-11-14T22:13:20.000000+00:00"}
+			ref := filepath.Join(root, "frozen")
+			switch kind {
+			case "frozen-good", "frozen-unreachable", "frozen-tampered", "frozen-absent":
+				if _, err := Freeze(entries, ref); err != nil {
+					t.Fatal(err)
+				}
+				payload["manifestRef"] = ref
+				if err := os.WriteFile(file, []byte("a later revision"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if kind == "frozen-unreachable" {
+					if err := os.RemoveAll(filepath.Join(ref, "files")); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(ref, "files"), []byte("not a directory"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if kind == "frozen-tampered" {
+					if err := os.WriteFile(filepath.Join(ref, "files", entries[0].SHA256), []byte("tampered"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if kind == "frozen-absent" {
+					if err := os.RemoveAll(ref); err != nil {
+						t.Fatal(err)
+					}
+				}
+			case "live-changed":
+				if err := os.WriteFile(file, []byte("a later revision"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "live-unreadable":
+				if err := os.Chmod(work, 0); err != nil {
+					t.Fatal(err)
+				}
+			}
+			goStore := seedIntake(t, filepath.Join(root, "go.sqlite3"), work)
+			pyStore := seedIntake(t, filepath.Join(root, "python.sqlite3"), work)
+			raw, _ := json.Marshal(payload)
+			intake := store.ReceiptIntake{Store: goStore, Now: func() string { return "2023-11-14T22:13:20.000000+00:00" }, Minimum: store.BestEffortDetection}
+			_, err = intake.AcceptChildReceipt(context.Background(), raw, store.TurnReference{ThreadID: "01child-task", TurnID: "turn-dispatch-1", Status: "completed"})
+			got := map[string]any{"accepted": err == nil}
+			if err == nil {
+				got["event"] = event
+			} else {
+				got["reason"] = store.RefusalReason(err)
+			}
+			rows, err := goStore.Querier(context.Background()).QueryContext(context.Background(), "SELECT event_id,path_binding_mode FROM events ORDER BY event_id")
+			if err != nil {
+				t.Fatal(err)
+			}
+			all := []any{}
+			for rows.Next() {
+				var event, binding string
+				if err := rows.Scan(&event, &binding); err != nil {
+					t.Fatal(err)
+				}
+				all = append(all, []any{event, binding})
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatal(err)
+			}
+			if err := rows.Close(); err != nil {
+				t.Fatal(err)
+			}
+			got["rows"] = all
+			spec, _ := json.Marshal(map[string]any{"store": pyStore.Path, "payload": payload})
+			repo, _ := filepath.Abs("../../..")
+			cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/intake_capture.py"))
+			cmd.Dir = repo
+			cmd.Stdin = bytes.NewReader(spec)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("oracle %v %s", err, out)
+			}
+			var want any
+			if err := json.Unmarshal(out, &want); err != nil {
+				t.Fatal(err)
+			}
+			expected, _ := json.Marshal(want)
+			actual, _ := json.Marshal(got)
+			if !bytes.Equal(actual, expected) {
+				t.Fatalf("Go %s Python %s", actual, expected)
+			}
+		})
+	}
+}

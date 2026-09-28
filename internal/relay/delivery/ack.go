@@ -347,7 +347,7 @@ func (a *Ack) verifyAckTurn(ctx context.Context, row Row, ackTurn string, adapte
 		return "", err
 	}
 	turn, err := adapter.ReadTurn(row.S("recipient_thread_id"), ackTurn)
-	if err != nil || turn == nil || turn.StartedAt == nil {
+	if err != nil || turn == nil || TurnStartedAt(turn) == nil {
 		return "unverified_turn", nil
 	}
 	if attempt != nil {
@@ -362,7 +362,7 @@ func (a *Ack) verifyAckTurn(ctx context.Context, row Row, ackTurn string, adapte
 		if !truthy(dispatched) && attempt.S("affirmative_evidence") == TurnFound {
 			dispatched = row.Opt("dispatch_turn_id")
 		}
-		if ackTurn != dispatched && certainlyBefore(*turn.StartedAt, sentAt) {
+		if ackTurn != dispatched && certainlyBefore(*TurnStartedAt(turn), sentAt) {
 			return "", refuse(AckTurnUnverified, "turn %s started before the delivery, so it cannot be its acknowledgement", store.PyRepr(ackTurn))
 		}
 	}

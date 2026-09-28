@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -126,8 +125,8 @@ func TestAcceptReceipt_refuses_artifact_mutated_when_metadata_changes_during_the
 		if err := os.Chtimes(path, later, later); err != nil {
 			t.Fatal(err)
 		}
-		var info syscall.Stat_t
-		if err := syscall.Fstat(fd, &info); err != nil || info.Mtim.Nano() == before.mtime {
+		info, _, err := snapshotOf(fd)
+		if err != nil || info.mtime == before.mtime {
 			t.Fatalf("mtime did not move: %v", err)
 		}
 	})

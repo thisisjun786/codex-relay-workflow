@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -58,14 +57,7 @@ func Test27_MST_9_UnknownInputBeforeRPC(t *testing.T) {
 
 func Test27_MST_10_ManagedShowAbsentDoesNotCreateStore(t *testing.T) {
 	root := t.TempDir()
-	_, file, _, _ := runtime.Caller(0)
-	repo := filepath.Clean(filepath.Join(filepath.Dir(file), "../../.."))
-	bin := filepath.Join(root, "crw")
-	build := exec.Command("go", "build", "-o", bin, "./cmd/crw")
-	build.Dir = repo
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %s: %v", output, err)
-	}
+	bin := sharedCRW
 	state := filepath.Join(root, "absent")
 	command := exec.Command(bin, "relay", "--state", state, "managed-show", "--request-id", "missing")
 	command.Env = append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+root, "XDG_CONFIG_HOME="+root, "XDG_DATA_HOME="+root, "CODEX_HOME="+root)

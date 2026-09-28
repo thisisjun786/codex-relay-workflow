@@ -33,9 +33,9 @@ func captureStaged21(t *testing.T, c *Channel, s *store.Store) (Obligation, stri
 // same eight bytes per attempt, without changing the production random source.
 func captureTokens21(t *testing.T) {
 	t.Helper()
-	previous := tokenSource
-	tokenSource = &captureTokenReader21{}
-	t.Cleanup(func() { tokenSource = previous })
+	previous := TokenSource
+	TokenSource = &captureTokenReader21{}
+	t.Cleanup(func() { TokenSource = previous })
 }
 
 type captureTokenReader21 struct{ next uint64 }
@@ -106,13 +106,13 @@ func Test24_SCH_21_LiveRecoveredClaim(t *testing.T) {
 func Test24_SCH_21_TokenSource(t *testing.T) {
 	captureTokens21(t)
 	b := make([]byte, 8)
-	if _, err := tokenSource.Read(b); err != nil {
+	if _, err := TokenSource.Read(b); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(b, make([]byte, 8)) {
 		t.Fatalf("first token: %x", b)
 	}
-	if _, err := tokenSource.Read(b); err != nil {
+	if _, err := TokenSource.Read(b); err != nil {
 		t.Fatal(err)
 	}
 	if b[7] != 1 {

@@ -41,16 +41,12 @@ type managedCapture struct {
 func capturePythonManaged(t *testing.T, scenario string) (string, managedCapture) {
 	t.Helper()
 	root := t.TempDir()
-	home, err := os.MkdirTemp("/dev/shm", "crw-managed-home-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	home := t.TempDir()
 	_, file, _, _ := runtime.Caller(0)
 	repo := filepath.Clean(filepath.Join(filepath.Dir(file), "../../.."))
 	cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/managed/testdata/capture.py"), root, scenario)
 	cmd.Dir = repo
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_CONFIG_HOME="+home, "XDG_DATA_HOME="+home, "CODEX_HOME="+home, "TMPDIR=/dev/shm", "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src")+":"+filepath.Join(repo, "packages/codex-thread-bridge/src")+":"+filepath.Join(repo, "packages/codex-session-relay"))
+	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_CONFIG_HOME="+home, "XDG_DATA_HOME="+home, "CODEX_HOME="+home, "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src")+":"+filepath.Join(repo, "packages/codex-thread-bridge/src")+":"+filepath.Join(repo, "packages/codex-session-relay"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Python fake %s: %v\n%s", scenario, err, output)
 	}

@@ -23,7 +23,7 @@ import (
 type SendAdapter = delivery.Adapter
 
 // tokenSource permits deterministic capture replay; production uses crypto/rand.
-var tokenSource io.Reader = rand.Reader
+var TokenSource io.Reader = rand.Reader
 
 func (c *Channel) render(p Packet, requestID, token string) string {
 	region := evidence.Item(map[string]any(p), "envelope")
@@ -224,7 +224,7 @@ func (c *Channel) claim(ctx context.Context, id string, r Resolution, now float6
 		// Draw after eligibility and collision checks but before transactional pacing,
 		// as Python does: an obsolete claim consumes nothing, a paced claim does.
 		tokenBytes := make([]byte, 8)
-		if _, err = io.ReadFull(tokenSource, tokenBytes); err != nil {
+		if _, err = io.ReadFull(TokenSource, tokenBytes); err != nil {
 			return err
 		}
 		token = requestID + "." + hex.EncodeToString(tokenBytes)

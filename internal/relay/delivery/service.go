@@ -835,7 +835,7 @@ func (d *Service) Attempt(ctx context.Context, eventID string, adapter Adapter, 
 		}
 	}
 	previously := false
-	if t, ok := facts.TurnID.(string); ok && slices.Contains(known, t) {
+	if t, ok := facts.TurnID.(string); ok && slices.Contains(known, any(t)) {
 		previously = true
 	}
 	record, err := AttemptRecord(facts, c.requestID, eventID, c.attemptNo, recipient, statusForRecord(observation), d.Clock.ISO(), nil)

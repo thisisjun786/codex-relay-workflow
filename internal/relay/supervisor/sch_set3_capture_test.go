@@ -376,7 +376,7 @@ func Test24_SCH_51_Capture(t *testing.T) {
 		}
 		values = append(values, moved["readdressed"])
 		c.beforeTransport = nil
-		tokenSource = bytes.NewReader([]byte{0, 0, 0, 0, 0, 0, 0, 1})
+		TokenSource = bytes.NewReader([]byte{0, 0, 0, 0, 0, 0, 0, 1})
 		successorHost := &captureSuccessorSet3{captureHost4: h}
 		record, err := c.Attempt(ctx, id, successorHost, 1700000000)
 		if err != nil {

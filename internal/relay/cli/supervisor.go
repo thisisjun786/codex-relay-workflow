@@ -99,6 +99,8 @@ func supervisorObjectKeys(v map[string]any) string {
 		return "schema projectKey staged refused gaps limits"
 	case present("staged"):
 		return "schema staged readdressed restated messageId from to fromEvent toEvent reason message recipient sender"
+	case present("recorded") && present("readTurnId"):
+		return "schema messageId recorded raced verified readTurnId turnOrigin detail delivered readAt assertedBy reconciled establishes limits"
 	case present("recorded"):
 		return "recorded seq obligation"
 	case present("relations"):
@@ -119,6 +121,8 @@ func supervisorObjectKeys(v map[string]any) string {
 		return "seq at detail"
 	case present("table"):
 		return "table eventId outcome cxcStatus schema reason turn"
+	case present("attempted"):
+		return "attempted sent schema requestId messageId attemptNo recipientTaskId deliveryState sendAttempted retrySafe transportReceiptStatus failedOperation turnId observedAt messageState"
 	case present("attemptNo"):
 		return "requestId attemptNo state sendAttempted retrySafe turnId sentAt transportStartedAt observedAt message"
 	case present("readTurnId"):
@@ -551,11 +555,25 @@ func requireSupervisorHost(services Services, name, why string) error {
 	return nil
 }
 
+// SupervisorHostCommand is installed by the executable's adapter composition.
+// Keeping the seam here avoids coupling the CLI package back to its host implementation.
+var SupervisorHostCommand func(context.Context, string, string, string, string, map[string]string, float64) (any, error)
+
+// SupervisorClock is the host-command clock. Production follows the process clock;
+// the built-binary parity harness installs the same fixed clock as Python.
+var SupervisorClock = clockNow
+
+func runSupervisorHost(ctx context.Context, command string, services Services, args map[string]string) (any, error) {
+	result, err := SupervisorHostCommand(ctx, command, services.Selection.Path, services.SocketPath, services.Program, args, SupervisorClock())
+	return supervisorOrdered(result), supervisorResult(err)
+}
+
 var supervisorSendCommand = Command{Name: "supervisor-send", Required: []string{"message"}, Flags: func(f *flag.FlagSet) { f.String("message", "", "") }, Run: func(ctx context.Context, services Services, args Args) (any, error) {
 	if err := requireSupervisorHost(services, "supervisor-send", "a send observes the recipient's lifecycle and resumes its thread. Without a host every read fails, which reads as an unmeasured recipient and would record a withholding that describes this process rather than the task"); err != nil {
 		return nil, err
 	}
-	return nil, &HostError{Class: "HostUnavailable", Detail: "the relay host adapter (bridge_adapter.py) is not ported to Go yet (todo 28)"}
+	message, _ := args.String("message")
+	return runSupervisorHost(ctx, "supervisor-send", services, map[string]string{"message": message})
 }}
 var supervisorReadCommand = Command{Name: "supervisor-read", Required: []string{"message", "turn", "proof", "as"}, Flags: func(f *flag.FlagSet) {
 	f.String("message", "", "")
@@ -566,5 +584,9 @@ var supervisorReadCommand = Command{Name: "supervisor-read", Required: []string{
 	if err := requireSupervisorHost(services, "supervisor-read", "a readback is checked against the host's own turn list and the recipient's transcript. Without a host it would record an unverified readback, which is a statement about this process and reads as one about the recipient"); err != nil {
 		return nil, err
 	}
-	return nil, &HostError{Class: "HostUnavailable", Detail: "the relay host adapter (bridge_adapter.py) is not ported to Go yet (todo 28)"}
+	values := map[string]string{}
+	for _, name := range []string{"message", "turn", "proof", "as"} {
+		values[name], _ = args.String(name)
+	}
+	return runSupervisorHost(ctx, "supervisor-read", services, values)
 }}

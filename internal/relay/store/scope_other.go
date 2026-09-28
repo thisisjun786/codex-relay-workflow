@@ -20,7 +20,7 @@ func leaseStillHeld(int) bool { return false }
 
 func releaseLease(int) {}
 
-type statSnapshot struct{}
+type statSnapshot struct{ dev, ino, size, mtime, ctime int64 }
 
 func snapshotOf(int) (statSnapshot, uint32, error) {
 	return statSnapshot{}, 0, errors.New("fstat is not used on this platform")

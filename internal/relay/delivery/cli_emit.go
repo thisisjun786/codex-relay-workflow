@@ -1,10 +1,16 @@
 package delivery
 
 import (
+	"context"
 	"encoding/json"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
+
+// ObserveTurn is installed by the production adapter; nil keeps the existing
+// host-unavailable path. The offline receipt path remains unchanged.
+var ObserveTurn func(context.Context, string, string, string, string) (string, error)
 
 // cmdEmit is cmd_emit: the child's receipt, accepted, and queued when final.
 func cmdEmit(c *cliRun) (any, error) {
@@ -49,9 +55,16 @@ func cmdEmit(c *cliRun) (any, error) {
 	// No host in this process (the adapter is todo 28's): a readiness claim may only stage.
 	status, proof := c.s("--turn-status"), "claimed"
 	if c.socket != "" {
-		return nil, &hostError{"HostUnavailable", "the relay host adapter (bridge_adapter.py) is not ported to Go yet (todo 28)"}
+		if ObserveTurn == nil {
+			return nil, &hostError{"HostUnavailable", "the relay host adapter (bridge_adapter.py) is not ported to Go yet (todo 28)"}
+		}
+		status, err = ObserveTurn(c.ctx, c.state, c.socket, c.s("--turn-thread"), c.s("--turn-id"))
+		if err != nil {
+			return nil, err
+		}
+		proof = "host_observed"
 	}
-	if outcome == "ready_for_review" && status != "inProgress" {
+	if c.socket == "" && outcome == "ready_for_review" && status != "inProgress" {
 		status, proof = "inProgress", "unverified_staged"
 	}
 	if generation.Sign() < 1 {

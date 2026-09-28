@@ -468,7 +468,7 @@ type reportScriptHost struct {
 	script string
 }
 
-func (h *reportScriptHost) ListTurnIDs(string, int) ([]string, error) { return []string{}, nil }
+func (h *reportScriptHost) ListTurnIDs(string, int) ([]any, error) { return []any{}, nil }
 
 func (h *reportScriptHost) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
 	if h.script == "busy" {

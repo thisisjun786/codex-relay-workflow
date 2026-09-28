@@ -16,7 +16,10 @@ func (l *Ledger) Save(ctx context.Context, receipt Receipt) (Receipt, error) {
 		saved[k] = v
 	}
 	saved["updatedAt"] = float64(time.Now().UnixNano()) / 1e9
-	raw, err := json.Marshal(saved)
+	if l.options.Now != nil {
+		saved["updatedAt"] = l.options.Now()
+	}
+	raw, err := l.encode(saved)
 	if err != nil {
 		return nil, err
 	}

@@ -27,9 +27,9 @@ func (h *bHost) ReadThread(string) (delivery.ThreadFacts, error) {
 	yes := true
 	return delivery.ThreadFacts{RuntimeStatus: h.status, CanAcceptInput: &yes}, nil
 }
-func (h *bHost) IsArchived(string, any) (*bool, error)     { f := false; return &f, nil }
-func (h *bHost) ReadGoalStatus(string) (any, error)        { return nil, nil }
-func (h *bHost) ListTurnIDs(string, int) ([]string, error) { return nil, nil }
+func (h *bHost) IsArchived(string, any) (*bool, error)  { f := false; return &f, nil }
+func (h *bHost) ReadGoalStatus(string) (any, error)     { return nil, nil }
+func (h *bHost) ListTurnIDs(string, int) ([]any, error) { return nil, nil }
 func (h *bHost) ReadTurn(thread, id string) (*delivery.TurnInfo, error) {
 	if at, ok := h.turns[thread+"|"+id]; ok {
 		return &delivery.TurnInfo{TurnID: id, Status: "completed", StartedAt: &at}, nil
@@ -142,9 +142,9 @@ func newBRun(t *testing.T, f *stageFixture) *bRun {
 	r.h = &bHost{status: "idle", turns: map[string]float64{}, now: &r.now}
 	f.c.Settings = &delivery.TaskSettings{}
 	f.c.clockISO = func() string { return delivery.ISOOf(r.now) }
-	prev := tokenSource
-	tokenSource = bytes.NewReader(make([]byte, 4096))
-	t.Cleanup(func() { tokenSource = prev })
+	prev := TokenSource
+	TokenSource = bytes.NewReader(make([]byte, 4096))
+	t.Cleanup(func() { TokenSource = prev })
 	return r
 }
 func (r *bRun) att(t *testing.T, id string, now float64) {

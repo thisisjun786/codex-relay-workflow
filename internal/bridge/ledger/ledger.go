@@ -22,10 +22,17 @@ const PriorAttemptsKept = 5
 var ErrUnknown = errors.New("Unknown request_id")
 var ErrConflict = errors.New("request_id already belongs to different arguments; no action taken")
 
-type Ledger struct{ db *sql.DB }
+type Ledger struct {
+	db      *sql.DB
+	options Options
+}
 type Receipt map[string]any
 
 func Open(path string) (*Ledger, error) {
+	return OpenWithOptions(path, Options{})
+}
+
+func OpenWithOptions(path string, options Options) (*Ledger, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, fmt.Errorf("ledger directory: %w", err)
 	}
@@ -45,11 +52,15 @@ func Open(path string) (*Ledger, error) {
 		db.Close()
 		return nil, fmt.Errorf("create ledger: %w", err)
 	}
-	return &Ledger{db}, nil
+	return &Ledger{db: db, options: options}, nil
 }
 func (l *Ledger) Close() error { return l.db.Close() }
 
 func Endpoint(socket, state string) (string, *Ledger, error) {
+	return EndpointWithOptions(socket, state, Options{})
+}
+
+func EndpointWithOptions(socket, state string, options Options) (string, *Ledger, error) {
 	supplied, err := filepath.Abs(socket)
 	if err != nil {
 		return "", nil, fmt.Errorf("absolute socket: %w", err)
@@ -93,7 +104,7 @@ func Endpoint(socket, state string) (string, *Ledger, error) {
 		hash := sha256.Sum256([]byte(path))
 		return filepath.Join(state, "operations-"+hex.EncodeToString(hash[:])[:16]+".sqlite3")
 	}
-	l, err := Open(name(canonical))
+	l, err := OpenWithOptions(name(canonical), options)
 	if err != nil {
 		return "", nil, err
 	}
@@ -167,7 +178,10 @@ func (l *Ledger) Begin(ctx context.Context, id, method string, params map[string
 		return false, nil, err
 	}
 	receipt := Receipt{"requestId": id, "operation": method, "status": "in_progress_or_unknown", "startedAt": float64(time.Now().UnixNano()) / 1e9, "retrySafe": false, "fingerprintVersion": 2}
-	raw, err := json.Marshal(receipt)
+	if l.options.Now != nil {
+		receipt["startedAt"] = l.options.Now()
+	}
+	raw, err := l.encode(receipt)
 	if err != nil {
 		return false, nil, err
 	}
@@ -224,7 +238,7 @@ func (l *Ledger) Begin(ctx context.Context, id, method string, params map[string
 		}
 		receipt["attempt"] = attempt + 1
 		receipt["priorAttempts"] = history
-		raw, err = json.Marshal(receipt)
+		raw, err = l.encode(receipt)
 		if err != nil {
 			return false, nil, err
 		}

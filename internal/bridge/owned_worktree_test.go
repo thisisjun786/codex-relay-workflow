@@ -23,7 +23,7 @@ func gitAt(t *testing.T, dir string, args ...string) string {
 
 func worktreeInput(t *testing.T) CreateWorktree {
 	t.Helper()
-	root, err := os.MkdirTemp("/dev/shm", "crw-bridge-owned-")
+	root, err := os.MkdirTemp("", "crw-bridge-owned-")
 	if err != nil {
 		t.Fatal(err)
 	}

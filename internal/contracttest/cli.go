@@ -30,11 +30,6 @@ func runCLI(t *testing.T, scenario Scenario) (map[string]any, error) {
 	if scenario.Domain == "sqlite-ddl" {
 		return runSQLite(t, scenario)
 	}
-	// given.host goes through the relay's App Server socket, which the Go build does not serve
-	// yet (todo 21/28).
-	if _, present := scenario.Given["host"]; present {
-		return nil, fmt.Errorf("%w: %s/cli given.host", ErrNotPorted, scenario.Domain)
-	}
 	binary, err := crwBinary()
 	if err != nil {
 		return nil, err
@@ -71,9 +66,21 @@ func runCLI(t *testing.T, scenario Scenario) (map[string]any, error) {
 			}
 		}
 	}
+	var socket string
+	if config, ok := scenario.Given["host"].(map[string]any); ok {
+		socket = relayHost(t, config).SocketPath
+	}
 	results := map[string]any{}
 	var last map[string]any
 	for index, step := range steps {
+		if socket != "" {
+			copyStep := make(map[string]any, len(step)+1)
+			for k, v := range step {
+				copyStep[k] = v
+			}
+			copyStep["socket"] = socket
+			step = copyStep
+		}
 		last, err = runStep(binary, home, step, results)
 		if err != nil {
 			return nil, fmt.Errorf("step %d: %w", index, err)
@@ -141,7 +148,11 @@ func runStep(binary, home string, step, results map[string]any) (map[string]any,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	command := exec.CommandContext(ctx, binary, append([]string{"relay", "--state", filepath.Join(home, "state")}, argv...)...)
+	prefix := []string{"relay", "--state", filepath.Join(home, "state")}
+	if socket, ok := step["socket"].(string); ok {
+		prefix = append(prefix, "--socket", socket)
+	}
+	command := exec.CommandContext(ctx, binary, append(prefix, argv...)...)
 	command.Dir = home
 	if cwd, ok := step["cwd"].(string); ok {
 		command.Dir = cwd

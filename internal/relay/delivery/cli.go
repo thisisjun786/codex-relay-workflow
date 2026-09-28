@@ -64,7 +64,12 @@ type usageError struct {
 
 func (u *usageError) Error() string { return u.detail }
 
+// CommandClock is an optional composition/test seam; nil keeps SystemClock.
+var CommandClock Clock
+
 type cliRun struct {
+	command string
+
 	ctx    context.Context
 	args   map[string]any
 	state  string
@@ -185,6 +190,10 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 		return 2, true
 	}
 	run := &cliRun{ctx: ctx, args: parsed, socket: socket, clock: cliClock}
+	run.command = command
+	if CommandClock != nil {
+		run.clock = CommandClock
+	}
 	if command == "ack-proof" && check != nil {
 		if err := check(store.StateSelection{}, socket); err != nil {
 			var payload PayloadError
@@ -267,23 +276,31 @@ func reply(w io.Writer, value any, code int) int {
 	return code
 }
 
+// HostCommand is installed by the production adapter at executable composition time.
+// Nil preserves the offline port's existing host-unavailable answer.
+var HostCommand func(context.Context, string, string, string, map[string]any, Clock) (any, error)
+
 // needsHost is the four commands that reach the App Server. Without --socket they are a usage
 // error, as in Python; with it, the host adapter they drive is the bridge adapter port (todo 28).
 func needsHost(c *cliRun) (any, error) {
 	if c.socket == "" {
 		return nil, &usageError{"this command needs --socket to reach the host", contract.ExitUsage}
 	}
+	if HostCommand != nil {
+		return HostCommand(c.ctx, c.command, c.state, c.socket, c.args, c.clock)
+	}
 	return nil, &hostError{"HostUnavailable", "the relay host adapter (bridge_adapter.py) is not ported to Go yet (todo 28)"}
 }
 
-var eventIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
+// Python re.match's $ also matches immediately before one final LF.
+var eventIDPattern = regexp.MustCompile(`^[0-9a-f]{32}\n?$`)
 
 func cmdAckProof(c *cliRun) (any, error) {
 	event, turn := c.s("--event"), c.s("--turn")
 	if !eventIDPattern.MatchString(event) {
 		return nil, &hostError{"ValueError", "event id must be 32 lowercase hex characters"}
 	}
-	if strings.TrimSpace(turn) == "" {
+	if pyStrip(turn) == "" {
 		return nil, &hostError{"ValueError", "ack_turn_id must be a non-empty string"}
 	}
 	return Obj{{Key: "eventId", Value: event}, {Key: "turnId", Value: turn}, {Key: "ackProof", Value: AckProof(event, turn)}}, nil
@@ -299,6 +316,9 @@ func cmdClaim(c *cliRun) (any, error) {
 }
 
 func cmdAck(c *cliRun) (any, error) {
+	if c.socket != "" && HostCommand != nil {
+		return HostCommand(c.ctx, "ack", c.state, c.socket, c.args, c.clock)
+	}
 	_, ack, err := c.services()
 	if err != nil {
 		return nil, err
@@ -310,6 +330,15 @@ func cmdAck(c *cliRun) (any, error) {
 // confirmed is reconciled first through the acknowledging turn (the proof is checked first,
 // locally, so a wrong one makes no host read).
 func AckCommand(ctx context.Context, ack *Ack, rc *Reconciler, adapter Adapter, event, ackTurn, proof string, reject any) (Obj, error) {
+	if adapter != nil && rc != nil {
+		// Python derives the proof before looking up the event or reading the host.
+		if !eventIDPattern.MatchString(event) {
+			return nil, &hostError{"ValueError", "event id must be 32 lowercase hex characters"}
+		}
+		if pyStrip(ackTurn) == "" {
+			return nil, &hostError{"ValueError", "ack_turn_id must be a non-empty string"}
+		}
+	}
 	if adapter != nil && rc != nil && proof == AckProof(event, ackTurn) {
 		if _, err := rc.ConfirmDelivery(ctx, event, adapter, ackTurn); err != nil {
 			return nil, err

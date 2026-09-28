@@ -38,8 +38,8 @@ func (*wakeHost) ReadThread(string) (delivery.ThreadFacts, error) {
 }
 func (*wakeHost) IsArchived(string, any) (*bool, error) { no := false; return &no, nil }
 func (*wakeHost) ReadGoalStatus(string) (any, error)    { return nil, nil }
-func (h *wakeHost) ListTurnIDs(thread string, _ int) ([]string, error) {
-	ids := []string{}
+func (h *wakeHost) ListTurnIDs(thread string, _ int) ([]any, error) {
+	ids := []any{}
 	for _, v := range h.turns[thread] {
 		ids = append(ids, v.TurnID)
 	}
