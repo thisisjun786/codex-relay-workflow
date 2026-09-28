@@ -18,6 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 type sweepCase struct {
@@ -132,6 +133,9 @@ func runBuiltBinarySweep(t *testing.T, runtimeSweep, rootOnly bool) {
 			if err = json.Unmarshal(raw, &cases); err != nil {
 				t.Fatalf("oracle decode: %v %s", err, raw)
 			}
+			// The oracle has created the root cases' stores. Explicitly fence those
+			// stopped fixtures before running the new writer-admission implementation.
+			fenceTree(t, home)
 			type job struct {
 				c    sweepCase
 				mode int
@@ -147,7 +151,7 @@ func runBuiltBinarySweep(t *testing.T, runtimeSweep, rootOnly bool) {
 			}
 			equal := 0
 			focused := 0
-			for worker := 0; worker < 8; worker++ {
+			for worker := 0; worker < 4; worker++ {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
@@ -169,6 +173,12 @@ func runBuiltBinarySweep(t *testing.T, runtimeSweep, rootOnly bool) {
 							}
 							cmd.Dir = c.Home
 							cmd.Env = append(append([]string{}, runEnv...), "HOME="+c.Home, "XDG_STATE_HOME="+c.Home+"/state", "XDG_CONFIG_HOME="+c.Home+"/config", "XDG_DATA_HOME="+c.Home+"/data", "XDG_CACHE_HOME="+c.Home+"/cache", "CODEX_HOME="+c.Home+"/codex")
+						}
+						if c.Home != "" {
+							if e := testsupport.SeedOwnership(t.Context(), filepath.Join(c.Home, "state/codex-session-relay/default/relay.sqlite3"), "", "go"); e != nil {
+								t.Error(e)
+								continue
+							}
 						}
 						var out, stderr bytes.Buffer
 						cmd.Stdout = &out

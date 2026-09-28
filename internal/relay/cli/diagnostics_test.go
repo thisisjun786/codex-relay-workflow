@@ -138,6 +138,14 @@ func pythonRecorded(t *testing.T) recorded {
 			return
 		}
 		scenariosErr = json.Unmarshal(output, &scenarios)
+		if scenariosErr == nil {
+			for _, s := range scenarios.Status {
+				fenceExisting(t, filepath.Join(s.State, "relay.sqlite3"))
+			}
+			for _, s := range scenarios.Show {
+				fenceExisting(t, filepath.Join(s.State, "relay.sqlite3"))
+			}
+		}
 	})
 	if scenariosErr != nil {
 		t.Fatalf("Python scenarios: %v", scenariosErr)

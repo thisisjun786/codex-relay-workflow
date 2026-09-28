@@ -211,7 +211,16 @@ func Test25_CLI17_doctor_never_creates_or_adopts_a_store(t *testing.T) {
 	if err := os.WriteFile(target, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	report = both(t, home, "--state", borrowed, "doctor")
+	// Todo 30 deliberately refuses the write probe on an unfenced foreign DB;
+	// compare the read-only invariants, not pre-fence writable=true.
+	goReport := golang(t, home, "--state", borrowed, "doctor")
+	if goReport.code != 0 {
+		t.Fatal(goReport)
+	}
+	report = decode(t, goReport.stdout)
+	if obj(report["access"])["dbWritable"] != false {
+		t.Fatal("foreign database admitted a write probe")
+	}
 	info, err := os.Stat(target)
 	if err != nil || info.Size() != 0 {
 		t.Fatal("doctor wrote into the unrelated file")

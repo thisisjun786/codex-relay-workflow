@@ -50,6 +50,8 @@ type run struct {
 // python runs the real Python relay CLI with this process's (isolated) environment.
 func python(t *testing.T, dir string, argv ...string) run {
 	t.Helper()
+	fenceTree(t, dir)
+	fenceArgs(t, argv)
 	command := exec.Command("uv", append([]string{"run", "--no-sync", "--project", repositoryRoot(t), "codex-session-relay"}, argv...)...)
 	command.Dir = dir
 	var stdout, stderr bytes.Buffer
@@ -62,6 +64,8 @@ func python(t *testing.T, dir string, argv ...string) run {
 		}
 		code = exitErr.ExitCode()
 	}
+	fenceTree(t, dir)
+	fenceArgs(t, argv)
 	return run{code, stdout.String(), stderr.String()}
 }
 
@@ -76,6 +80,8 @@ func golang(t *testing.T, dir string, argv ...string) run {
 		t.Fatal(err)
 	}
 	defer func() { _ = os.Chdir(previous) }()
+	fenceTree(t, dir)
+	fenceArgs(t, argv)
 	var stdout, stderr bytes.Buffer
 	code := cli.ExecuteAs(context.Background(), "codex-session-relay", argv, &stdout, &stderr)
 	return run{code, stdout.String(), stderr.String()}

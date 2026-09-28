@@ -101,6 +101,9 @@ func Execute(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 // ExecuteAs is cli.main: argparse first (exit 2, usage on stderr), then Services, the
 // selection refusal, the handler, and one JSON document on stdout for every other ending.
 func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr io.Writer) (code int) {
+	if code, handled := ExecuteTakeover(ctx, argv, stdout, stderr); handled {
+		return code
+	}
 	defer func() {
 		if value := recover(); value != nil {
 			if failure, ok := value.(*evidence.PythonError); ok {

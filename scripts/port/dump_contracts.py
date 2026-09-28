@@ -448,6 +448,12 @@ def contracts(parser: dict[str, JSONValue], tools: dict[str, JSONValue],
                              "keys": list(staging.claim_payload(staging.STAGING, issue="", run="")),
                              "version": staging.CLAIM_VERSION, "states": list(staging.CLAIM_STATES)},
             "daemon": {"file": service.DAEMON_RECORD, "keys": daemon_keys()},
+            # Native-only protocol surface: the retained Python parser has no
+            # takeover command. Freeze its machine-consumed status keys here.
+            "takeoverStatus": {"command": "crw relay takeover status --json", "protocol": 1,
+                               "keys": ["protocol", "storeId", "database", "owner", "epoch",
+                                        "takeoverId", "phase", "jsonStale", "rollbackAllowed",
+                                        "pythonCompatibilityBuild", "transition", "holder"]},
         },
     }
     rendered = {name: json.dumps(value, indent=2, ensure_ascii=False) + "\n"

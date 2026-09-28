@@ -78,13 +78,32 @@ def main():
         initialized = subprocess.run([str(oracle), '--state', str(state), 'status'], env=env, capture_output=True, timeout=30)
         if initialized.returncode != 0:
             raise RuntimeError(initialized.stdout, initialized.stderr)
-        seed = (state/'relay.sqlite3').read_bytes()
+        # Explicit stopped-fixture admission for the Go port. This harness is
+        # not a product initializer; the retained pre-fence oracle ignores it.
+        database = state/'relay.sqlite3'
+        with closing(sqlite3.connect(database)) as db:
+            with db:
+                db.executemany('INSERT OR REPLACE INTO schema_meta VALUES (?,?)', [
+                    ('writer_protocol','1'), ('owner','go'), ('owner_epoch','1'),
+                    ('takeover_id',''), ('rollback_allowed','1'),
+                    ('python_compatibility_build','codex-session-relay/0.2.0')])
+            store_id = db.execute("SELECT value FROM schema_meta WHERE key='store_id'").fetchone()[0]
+        for lock in ('write-gate.lock','takeover.lock'):
+            fd=os.open(state/lock, os.O_CREAT|os.O_RDWR, 0o600); os.close(fd)
+        f,d=database.stat(),state.stat()
+        record = dict(protocol=1,storeId=store_id,database=dict(realPath=str(database),device=f.st_dev,inode=f.st_ino,
+            walDirectoryDevice=d.st_dev,walDirectoryInode=d.st_ino,walBasename=database.name),appServerSocket=None,
+            scopeKey=None,epoch=1,owner='go',phase='active',transition=None,holder=None,controller=None,
+            rollbackAllowed=True,pythonCompatibilityBuild='codex-session-relay/0.2.0',relayRPCSocket=str(state/'control.sock'),updatedAt='fixture')
+        (state/'takeover.json').write_text(json.dumps(record))
+        seed = database.read_bytes()
         def tables():
             with closing(sqlite3.connect(state/'relay.sqlite3')) as db:
                 return {name: db.execute('select * from "'+name+'"').fetchall() for (name,) in db.execute("select name from sqlite_master where type='table' order by name")}
         def restore(sql):
-            for path in state.iterdir(): path.unlink()
-            (state/'relay.sqlite3').write_bytes(seed)
+            for suffix in ('-wal','-shm'):
+                database.with_name(database.name+suffix).unlink(missing_ok=True)
+            database.write_bytes(seed)
             with closing(sqlite3.connect(state/'relay.sqlite3')) as db:
                 with db:
                     for statement, values in sql: db.execute(statement, values)

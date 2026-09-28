@@ -41,7 +41,7 @@ func TestOpen_preserves_shipped_schema(t *testing.T) {
 	if len(snapshot.Objects) <= 50 {
 		t.Fatalf("snapshot has %d objects", len(snapshot.Objects))
 	}
-	s, err := Open(context.Background(), filepath.Join(t.TempDir(), "relay.sqlite3"), "")
+	s, err := fixtureOpen(context.Background(), filepath.Join(t.TempDir(), "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestSQLiteOpen_uses_bounded_pool(t *testing.T) {
 }
 func TestStoreSocket_uses_five_second_timeout(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relay.sqlite3")
-	s, err := Open(context.Background(), path, "socket")
+	s, err := fixtureOpen(context.Background(), path, "socket")
 	if err != nil {
 		t.Fatal(err)
 	}

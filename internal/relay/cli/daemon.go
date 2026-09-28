@@ -94,6 +94,10 @@ func integerOption(args Args, name string) *int {
 	return &i
 }
 func serviceError(err error) error {
+	var ownershipRefusal *store.RefusedError
+	if errors.As(err, &ownershipRefusal) {
+		return ownershipRefusal
+	}
 	var refusal *service.Refused
 	if errors.As(err, &refusal) {
 		return &PayloadExit{Code: 2, Payload: contract.OrderedObject{{Key: "ok", Value: false}, {Key: "reason", Value: refusal.Reason}, {Key: "detail", Value: nullableText(refusal.Detail)}}}
@@ -191,6 +195,7 @@ func runService(ctx context.Context, services Services, args Args) (out any, err
 					return e
 				}
 				defer func() { recoveryErr = errors.Join(recoveryErr, d.Host.Close()) }()
+				defer func() { recoveryErr = errors.Join(recoveryErr, db.Close()); db = nil }()
 				if _, e = d.Reconciler.RecoverOnStart(ctx, d.Host, nil); e != nil {
 					return e
 				}
@@ -266,12 +271,8 @@ func runDaemon(ctx context.Context, services Services, args Args) (out any, err 
 		}
 		return e
 	}
-	// cli.py:_run_bounded opens services.store before _adopt_supervised and
-	// owned_service's authority refusal. Even a refused invocation initializes it.
-	if err = s.Prepare(); err != nil {
-		return nil, err
-	}
-	s.Prepare = nil
+	// Ownership supersedes the pre-fence initializer: Own calls Prepare only
+	// after both permanent service locks are held, including inherited workers.
 	var token *string
 	if args.Set["supervised-token"] {
 		v, _ := args.String("supervised-token")
@@ -285,7 +286,14 @@ func runDaemon(ctx context.Context, services Services, args Args) (out any, err 
 	if err != nil {
 		return nil, serviceError(err)
 	}
-	defer func() { err = errors.Join(err, owned.Close()) }()
+	defer func() {
+		// Connection, admission, scope, daemon: reverse acquisition order.
+		if db != nil {
+			err = errors.Join(err, db.Close())
+			db = nil
+		}
+		err = errors.Join(err, owned.Close())
+	}()
 	d, err := DaemonFactory(ctx, services, db)
 	if err != nil {
 		return nil, err
@@ -296,9 +304,27 @@ func runDaemon(ctx context.Context, services Services, args Args) (out any, err 
 			return nil, err
 		}
 	}
-	var stop func() bool
-	if bound != nil {
-		stop = func() bool { return service.Monotonic() >= *bound }
+	control, e := service.ListenControl(ctx, services.Selection.Path)
+	if e != nil {
+		return nil, e
+	}
+	defer func() { err = errors.Join(err, control.Close()) }()
+	if _, candidate := ctx.Value(activationKey{}).(*service.CandidateChannel); candidate {
+		if _, e = d.Reconciler.RecoverOnStart(ctx, d.Host, nil); e != nil {
+			return nil, e
+		}
+		if e = db.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
+			_, e := db.Q(tx).ExecContext(tx, "UPDATE deliveries SET state='held_uncertain',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE state='sending' AND lease_until IS NOT NULL AND lease_until<=?", d.Clock.ISO(), d.Clock.Now())
+			return e
+		}); e != nil {
+			return nil, e
+		}
+		if e = activateCandidate(ctx); e != nil {
+			return nil, e
+		}
+	}
+	stop := func() bool {
+		return ctx.Err() != nil || s.StopRequested() || s.Draining() || (bound != nil && service.Monotonic() >= *bound)
 	}
 	reports, err := daemon.Run(ctx, d.Tick, clock, d.Policy.PollInterval, maxTicks, deadline, stop, func(seconds float64) error { return daemon.SchedulerWait(ctx, clock, deadline, seconds) })
 	if err != nil {

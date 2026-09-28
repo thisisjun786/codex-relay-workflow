@@ -10,6 +10,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"golang.org/x/sys/unix"
 )
 
@@ -95,9 +96,15 @@ func Test29CadenceBounds(t *testing.T) {
 		t.Fatal(reports, err)
 	}
 }
+func fixtureStore(ctx context.Context, path, socket string) (*store.Store, error) {
+	if err := testsupport.SeedOwnership(ctx, path, socket, "go"); err != nil {
+		return nil, err
+	}
+	return store.Open(ctx, path, socket)
+}
 func Test29QuietConcurrentTicks(t *testing.T) {
 	ctx := context.Background()
-	s, err := store.Open(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
+	s, err := fixtureStore(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +162,7 @@ func seed(t *testing.T, s *store.Store, rid, parent, child, turn string) {
 }
 func Test29ObservationIsPerAssignment(t *testing.T) {
 	ctx := context.Background()
-	s, err := store.Open(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
+	s, err := fixtureStore(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +186,7 @@ func Test29ObservationIsPerAssignment(t *testing.T) {
 }
 func Test29AbsentAnchorDoesNotClaimHealthyPoll(t *testing.T) {
 	ctx := context.Background()
-	s, err := store.Open(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
+	s, err := fixtureStore(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +203,7 @@ func Test29AbsentAnchorDoesNotClaimHealthyPoll(t *testing.T) {
 }
 func Test29AdmissionRotationDoesNotSkipUnservedTurns(t *testing.T) {
 	ctx := context.Background()
-	s, err := store.Open(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
+	s, err := fixtureStore(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
 	}

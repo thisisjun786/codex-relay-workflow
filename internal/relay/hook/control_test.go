@@ -46,7 +46,7 @@ func Test33ControlHandler(t *testing.T) {
 func Test33OwnedGuardRunsInProcess(t *testing.T) {
 	home := hookHome(t, 5)
 	ctx := context.Background()
-	db, err := store.Open(ctx, filepath.Join(home, "state/relay.sqlite3"), "")
+	db, err := fixtureStore(ctx, filepath.Join(home, "state/relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,6 @@ func Test33OwnedGuardRunsInProcess(t *testing.T) {
 	if err = db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	writeTest(t, filepath.Join(home, "state/takeover.json"), []byte(`{"owner":"go","phase":"active"}`))
 	done, _ := fakeControl(t, home, func(conn net.Conn) error {
 		raw, err := io.ReadAll(conn)
 		if err != nil {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"modernc.org/sqlite"
 )
 
@@ -15,8 +16,9 @@ import (
 // held across a check and the publication that depends on it. It opens with mode=rw, never rwc,
 // so an absent store stays absent. Release rolls back: the hold writes nothing itself.
 type WriteHold struct {
-	db   *sql.DB
-	Conn *sql.Conn
+	db        *sql.DB
+	Conn      *sql.Conn
+	admission *ownership.Admission
 }
 
 // HoldForWrite takes the hold within timeout, or returns why it could not, in
@@ -26,6 +28,16 @@ func HoldForWrite(ctx context.Context, path string, timeout time.Duration) (*Wri
 	if err != nil {
 		return nil, "the relay store path " + quoteRepr(path) + " could not be read as a path"
 	}
+	admission, err := admitWrite(ctx, resolved)
+	if err != nil {
+		return nil, "the relay store could not be opened for writing: " + err.Error()
+	}
+	success := false
+	defer func() {
+		if !success {
+			_ = admission.Close()
+		}
+	}()
 	db, err := boundedDB(resolved, "rw", timeout)
 	if err != nil {
 		return nil, "the relay store could not be opened for writing: " + err.Error()
@@ -35,18 +47,22 @@ func HoldForWrite(ctx context.Context, path string, timeout time.Duration) (*Wri
 		_ = db.Close()
 		return nil, "the relay store could not be opened for writing: " + err.Error()
 	}
+	if err = admission.Revalidate(ctx, conn); err != nil {
+		return nil, "the relay store could not be opened for writing: " + errors.Join(err, conn.Close(), db.Close()).Error()
+	}
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		_ = conn.Close()
 		_ = db.Close()
 		return nil, "the relay store's write lock could not be taken: " + sqliteMessage(err)
 	}
-	return &WriteHold{db: db, Conn: conn}, ""
+	success = true
+	return &WriteHold{db: db, Conn: conn, admission: admission}, ""
 }
 
 // Release rolls back and closes the hold.
 func (h *WriteHold) Release() error {
 	_, rollback := h.Conn.ExecContext(context.Background(), "ROLLBACK")
-	return firstErr(rollback, h.Conn.Close(), h.db.Close())
+	return firstErr(rollback, h.Conn.Close(), h.db.Close(), h.admission.Close())
 }
 
 func firstErr(errs ...error) error {

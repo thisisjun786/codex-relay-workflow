@@ -32,7 +32,7 @@ func TestLock_go_write_is_busy_when_python_holds_immediate(t *testing.T) {
 	// Given: Python has acquired the real database's POSIX lock.
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "relay.sqlite3")
-	store, err := open(ctx, path, "", OpenOptions{BusyTimeout: 200 * time.Millisecond})
+	store, err := fixtureOpenWith(ctx, path, "", OpenOptions{BusyTimeout: 200 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestLock_python_write_is_busy_when_go_holds_immediate(t *testing.T) {
 	// Given: Go has acquired a real WAL writer lock.
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "relay.sqlite3")
-	store, err := Open(ctx, path, "")
+	store, err := fixtureOpen(ctx, path, "")
 	if err != nil {
 		t.Fatal(err)
 	}

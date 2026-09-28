@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"modernc.org/sqlite"
 )
 
@@ -39,7 +40,12 @@ func boundedDB(path, mode string, timeout time.Duration) (*sql.DB, error) {
 	return db, nil
 }
 func storeSocket(path string) string {
-	db, err := boundedDB(path, "ro", 5*time.Second)
+	snapshot, cleanup, err := ownership.CopySnapshot(path)
+	if err != nil {
+		return ""
+	}
+	defer cleanup()
+	db, err := boundedDB(snapshot, "ro", 5*time.Second)
 	if err != nil {
 		return ""
 	}

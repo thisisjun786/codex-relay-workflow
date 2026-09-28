@@ -19,6 +19,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // The fixture of test_capacity.py's CapacityTestCase: two parents, each under one supervisor
@@ -49,6 +50,9 @@ func ns(v string) sql.NullString { return sql.NullString{String: v, Valid: true}
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "relay.sqlite3")
+	if err := testsupport.SeedOwnership(t.Context(), path, "", "go"); err != nil {
+		t.Fatal(err)
+	}
 	s, err := store.Open(context.Background(), path, "")
 	if err != nil {
 		t.Fatal(err)

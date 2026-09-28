@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func TestD11SupervisorReportRecordedRefusalMatchesPythonCLI(t *testing.T) {
@@ -50,6 +51,9 @@ raise SystemExit(cli.main(sys.argv[1:]))
 	pyCode := 0
 	if err := cmd.Run(); err != nil {
 		pyCode = err.(*exec.ExitError).ExitCode()
+	}
+	if err := testsupport.SeedOwnership(context.Background(), filepath.Join(home, "state/relay.sqlite3"), "", "go"); err != nil {
+		t.Fatal(err)
 	}
 	rawArgs, _ := json.Marshal(args)
 	for _, invocation := range []struct{ name, argv0 string }{{"codex-session-relay", "codex-session-relay"}, {"crw relay", "crw relay"}} {

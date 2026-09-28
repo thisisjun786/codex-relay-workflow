@@ -12,6 +12,9 @@ var testRoot, testBinary, testPython string
 var buildEnvironment []string
 
 func TestMain(m *testing.M) {
+	if os.Getenv("CRW30_CONTROLLER_CRASH_HOME") != "" {
+		os.Exit(m.Run())
+	}
 	buildEnvironment = os.Environ()
 	root, err := filepath.Abs("../../..")
 	if err != nil {

@@ -19,6 +19,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
 type Object = contract.OrderedObject
@@ -245,9 +246,19 @@ func New(ctx context.Context, selection store.StateSelection, socket string) (*S
 		return nil, err
 	}
 	s := &Service{Selection: selection, Socket: socket, Scope: scope, InstallationID: InstallationID(selection.Path)}
-	p := store.Probe(ctx, selection)
-	s.StoreID = p.Store.StoreID
-	s.StoreUnidentified = p.Access.DBExists && s.StoreID == ""
+	// Service discovery is read-only. In particular, no diagnostic BEGIN
+	// IMMEDIATE is allowed before daemon/scope lock acquisition.
+	stamp, readErr := ownership.SnapshotMeta(ctx, selection.DBPath())
+	if readErr == nil {
+		s.StoreID = stamp.StoreID
+	} else {
+		reading := store.ReadOnlyRows(ctx, selection, "SELECT value FROM schema_meta WHERE key='store_id'", nil, func(row store.RowScanner) error { return row.Scan(&s.StoreID) })
+		if !reading.Readable || reading.Detail != "" {
+			s.StoreID = ""
+		}
+	}
+	_, statErr := os.Stat(selection.DBPath())
+	s.StoreUnidentified = statErr == nil && s.StoreID == ""
 	return s, nil
 }
 func (s *Service) path(name string) string    { return filepath.Join(s.Selection.Path, name) }

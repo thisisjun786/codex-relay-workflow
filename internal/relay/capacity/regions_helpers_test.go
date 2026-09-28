@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // The fixture of test_edit_regions.py's EditRegionTestCase: PRJ-A/B/Z bound to alpha, beta and
@@ -37,6 +38,9 @@ type regionEnv struct {
 func newRegionEnv(t *testing.T) *regionEnv {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "relay.sqlite3")
+	if err := testsupport.SeedOwnership(t.Context(), path, "", "go"); err != nil {
+		t.Fatal(err)
+	}
 	s, err := store.Open(context.Background(), path, "")
 	if err != nil {
 		t.Fatal(err)

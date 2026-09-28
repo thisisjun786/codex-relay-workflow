@@ -2,8 +2,13 @@ package service
 
 import (
 	"bytes"
+	"context"
+	"errors"
+
 	"encoding/json"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,6 +31,7 @@ func environment(home string) []string {
 }
 func invoke(t *testing.T, home string, python bool, args ...string) capture {
 	t.Helper()
+	prepareParityOwnership(t, home, args)
 	program := filepath.Join(filepath.Dir(testBinary), "codex-session-relay")
 	argv := append([]string{"--state", home + "/state"}, args...)
 	if python {
@@ -45,6 +51,63 @@ func invoke(t *testing.T, home string, python bool, args ...string) capture {
 		}
 	}
 	return capture{out.String(), stderr.String(), cmd.ProcessState.ExitCode()}
+}
+
+// Both parity runtimes start from the same explicit Go-owned synthetic schema.
+// The pre-fence Python oracle ignores ownership; the new refusal behavior has
+// separate real-surface tests instead of weakening admission for old fixtures.
+func prepareParityOwnership(t *testing.T, home string, args []string) {
+	t.Helper()
+	socket := ""
+	for i, a := range args {
+		if a == "--socket" && i+1 < len(args) {
+			socket = args[i+1]
+		}
+	}
+	path := filepath.Join(home, "state/relay.sqlite3")
+	if _, err := os.Stat(filepath.Join(home, "state/takeover.json")); err == nil {
+		r, e := ownership.ReadRecord(path)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if socket == "" || r.AppServerSocket != nil {
+			return
+		}
+		r.AppServerSocket = &socket
+		scope := ScopeRegistry{Root: home + "/scopes", Authority: "isolated"}
+		key := scope.Key(socket)
+		r.ScopeKey = &key
+		db, e := ownership.OpenExisting(t.Context(), path, "rw")
+		if e != nil {
+			t.Fatal(e)
+		}
+		_, e = db.Exec("INSERT OR IGNORE INTO schema_meta VALUES('socket_path',?)", socket)
+		e = errors.Join(e, db.Close())
+		if e != nil {
+			t.Fatal(e)
+		}
+		if e = ownership.Publish(path, r, nil); e != nil {
+			t.Fatal(e)
+		}
+		return
+	} else if !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	if err := testsupport.SeedOwnership(context.Background(), path, socket, "go"); err != nil {
+		t.Fatal(err)
+	}
+	r, err := ownership.ReadRecord(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if socket != "" {
+		s := ScopeRegistry{Root: home + "/scopes", Authority: "isolated"}
+		key := s.Key(socket)
+		r.ScopeKey = &key
+		if err = ownership.Publish(path, r, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 func errorsAs(err error, target **exec.ExitError) bool {
 	e, ok := err.(*exec.ExitError)

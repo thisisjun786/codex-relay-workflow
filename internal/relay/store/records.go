@@ -62,6 +62,9 @@ func (s *Store) Transaction(ctx context.Context, run func(context.Context, *sql.
 		return fmt.Errorf("transaction connection: %w", err)
 	}
 	defer func() { err = errors.Join(err, conn.Close()) }()
+	if err = s.admission.Revalidate(ctx, conn); err != nil {
+		return err
+	}
 	if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return fmt.Errorf("begin immediate: %w", err)
 	}

@@ -150,7 +150,7 @@ func (s *Service) Supervise(ctx context.Context, o Options, onStart func() error
 		if o.MaxSegments != nil && len(segments) >= *o.MaxSegments {
 			break
 		}
-		if expired() || s.StopRequested() || !truth(get(s.Intent(), "enabled")) {
+		if expired() || s.StopRequested() || s.Draining() || !truth(get(s.Intent(), "enabled")) {
 			break
 		}
 		if err = ctx.Err(); err != nil {
@@ -204,7 +204,7 @@ func (s *Service) Supervise(ctx context.Context, o Options, onStart func() error
 		if err = s.note("consecutiveFailures", failures, "degraded", degraded); err != nil {
 			return nil, err
 		}
-		if s.StopRequested() || !truth(get(s.Intent(), "enabled")) || (o.MaxSegments != nil && len(segments) >= *o.MaxSegments) || expired() {
+		if s.StopRequested() || s.Draining() || !truth(get(s.Intent(), "enabled")) || (o.MaxSegments != nil && len(segments) >= *o.MaxSegments) || expired() {
 			break
 		}
 		delay := RestartDelay(failures)

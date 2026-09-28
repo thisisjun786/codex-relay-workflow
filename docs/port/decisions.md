@@ -625,3 +625,49 @@ Evidence: `packages/codex-session-relay/src/codex_session_relay/service.py:1304-
 `.omo/evidence/check29-fixes/` (`python-sigterm-proof.log`, `packages.log`,
 `packages-serial.log`), and `.omo/evidence/check29-flake/`
 (`reproduce_leader_exit.py`, `leader-exit.log`, `run-3.log`).
+
+## 30. Ownership transfer and the Go takeover controller
+
+This implements decision 28's candidate wire contract (fd 3, start/ready/active) on the Go side.
+
+Decision: the Go controller calls modernc v1.59.0's `NewBackup`, `Step`, and
+`Finish` through `sql.Conn.Raw` while daemon, scope, and write-gate exclusion
+are held. The backup and inventory are synced before the ownership CAS. It is
+not a main-file copy and does not require a WAL checkpoint. `VACUUM INTO` was
+rejected because the driver exposes the actual SQLite backup API. Reverse
+transfer always uses the live database and never restores this snapshot.
+
+Admission/status preflight uses a disposable main-plus-WAL copy solely to avoid
+creating source SQLite sidecars before admission. A racing inconsistent copy
+refuses rather than repairing the source; it is not the transfer backup.
+The durable owner/epoch and exact transition ID recover the DB-commit/JSON-publish
+gap. Lock contention bounded-fails immediately; explicit command resumption,
+not a timestamp or PID age, decides the next attempt.
+
+Both runtimes use the same inherited activation channel: a Unix socket on fd 3,
+selected only by `CRW_TAKEOVER_CHANNEL_FD=3`. JSON lines carry `start` with the
+record, `ready` with identity/storeId/epoch/transitionId, `active` with the durable
+record, and the candidate's `activated` acknowledgement. The controller identity
+must equal the direct parent; a starting permit binds the transition ID, epoch,
+and controller identity. Ordinary starting writers are refused. Readiness follows
+recovery and control-socket binding, before scheduled work. EOF quiesces the
+candidate unless its exact holder identity and epoch are already active in both
+the durable stamp and mirror. Holder identity includes the exact runtime build.
+The candidate channel is bounded to 20 seconds within the CLI's 30-second bound.
+Python reverse activation remains explicitly unavailable in Go until the retained
+Python candidate implementation lands; reverse CAS never fabricates readiness.
+
+The native status envelope is frozen in `contract/schema/records.json`.
+Go does not initialize an absent or unfenced store. Existing parity harnesses
+explicitly stamp stopped synthetic fixtures; no test flag bypasses admission.
+The `inbox-submit` handler returns `inbox_unavailable` until todo 31 provides
+decision 25's ingress/application implementation. It never claims acceptance.
+
+Evidence: `internal/relay/store/ownership/{backup.go,controller.go,record.go}`;
+`Test30BackupIncludesWALAndInventory`, `Test30HappyRollbackSameLiveStore`,
+`Test30CrashMatrix`, `Test30TwoProcessWriterBlocksTransfer`,
+`internal/relay/service/takeover_test.go` (`Test30StatusSchema`,
+`Test30TakeoverBuiltCLI`, `Test30RealCandidateControllerEOF`,
+`Test30ActivationEOFRequiresMatchingPublishedHolder`),
+`Test30StartingRequiresExactCandidatePermit`;
+`.omo/evidence/task-30-crw-go-port.txt`.

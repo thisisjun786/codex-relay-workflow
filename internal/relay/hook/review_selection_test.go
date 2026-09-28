@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 type reviewSelectionFixture struct {
@@ -193,7 +192,7 @@ func Test33ReviewD8(t *testing.T) {
 func Test33ReviewD11(t *testing.T) {
 	home, f := prepareSelection(t, "clock")
 	ctx := context.Background()
-	db, err := store.Open(ctx, filepath.Join(home, "clock.sqlite3"), "")
+	db, err := fixtureStore(ctx, filepath.Join(home, "clock.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
 	}

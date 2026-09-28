@@ -81,7 +81,7 @@ func pythonDeliveryRecords(t *testing.T) []deliveryRecordStore {
 
 func openRecorded(t *testing.T, path string) *Store {
 	t.Helper()
-	s, err := Open(context.Background(), path, "")
+	s, err := fixtureOpen(context.Background(), path, "")
 	if err != nil {
 		t.Fatal(err)
 	}

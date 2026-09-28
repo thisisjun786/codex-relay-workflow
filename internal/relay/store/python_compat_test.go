@@ -97,7 +97,7 @@ func TestResolveStateDir_matches_python_absolute_with_symlink_parent(t *testing.
 				t.Fatalf("physical=%q: %v", physical, err)
 			}
 			dbPath := selected.DBPath()
-			opened, err := Open(context.Background(), dbPath, "")
+			opened, err := fixtureOpen(context.Background(), dbPath, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -149,7 +149,7 @@ func TestOpen_does_not_expand_tilde_like_python_store(t *testing.T) {
 	want := pythonStoreValue(t, "import os, sys; from codex_session_relay.store import Store; os.chdir(sys.argv[1]); s=Store(sys.argv[2]); print(s.locate()['realPath'])", cwd, input)
 	// When: Go opens the same relative spelling from the same directory.
 	t.Chdir(cwd)
-	s, err := Open(context.Background(), input, "")
+	s, err := fixtureOpen(context.Background(), input, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestLocate_normalizes_db_path_and_absolutizes_real_path_like_python(t *test
 			if err := json.Unmarshal([]byte(want), &expected); err != nil {
 				t.Fatal(err)
 			}
-			s, err := Open(context.Background(), spelling, "")
+			s, err := fixtureOpen(context.Background(), spelling, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -192,7 +192,7 @@ func TestLocate_relative_db_path_matches_python(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(root)
-	s, err := Open(context.Background(), input, "")
+	s, err := fixtureOpen(context.Background(), input, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestLocate_log_name_matches_python(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "relay.sqlite3")
 	want := pythonStoreValue(t, "import sys; from codex_session_relay.store import Store; s=Store(sys.argv[1]); print(s.locate()['logName'])", path)
-	s, err := Open(context.Background(), path, "")
+	s, err := fixtureOpen(context.Background(), path, "")
 	if err != nil {
 		t.Fatal(err)
 	}

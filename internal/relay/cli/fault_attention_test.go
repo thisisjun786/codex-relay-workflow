@@ -10,6 +10,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // FaultLedger.attention reads inside `with self.store.transaction()`, so it is one BEGIN
@@ -18,7 +19,11 @@ import (
 // sees that scope's uncommitted writes. A reading taken outside a transaction does neither.
 func TestFaultAttention_reads_inside_a_write_transaction_like_python(t *testing.T) {
 	ctx := context.Background()
-	opened, err := store.Open(ctx, filepath.Join(t.TempDir(), "state", "relay.sqlite3"), "")
+	path := filepath.Join(t.TempDir(), "state", "relay.sqlite3")
+	if err := testsupport.SeedOwnership(ctx, path, "", "go"); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := store.Open(ctx, path, "")
 	if err != nil {
 		t.Fatal(err)
 	}

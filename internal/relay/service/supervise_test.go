@@ -10,11 +10,15 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func testService(t *testing.T) *Service {
 	t.Helper()
 	home := t.TempDir()
+	if err := testsupport.SeedOwnership(t.Context(), filepath.Join(home, "state/relay.sqlite3"), "", "go"); err != nil {
+		t.Fatal(err)
+	}
 	s := &Service{Selection: store.StateSelection{Path: home + "/state"}, Scope: &ScopeRegistry{Root: home + "/scopes", Authority: "isolated"}, InstallationID: "test-installation"}
 	if _, err := s.Enable("test"); err != nil {
 		t.Fatal(err)

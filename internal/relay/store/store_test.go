@@ -28,7 +28,7 @@ func TestOpen_matches_python_schema_when_fresh(t *testing.T) {
 		t.Fatalf("python Store: %v: %s", err, output)
 	}
 	// When: Go initializes its own database.
-	store, err := Open(ctx, goDB, "")
+	store, err := fixtureOpen(ctx, goDB, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestOpen_preserves_python_database_when_reopened(t *testing.T) {
 	}
 	before := master(t, path)
 	// When: it is reopened.
-	reopened, err := Open(ctx, path, "")
+	reopened, err := fixtureOpen(ctx, path, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestOpen_enforces_foreign_keys_on_every_connection(t *testing.T) {
 	// Given: a store whose pool holds one connection (decisions.md section 4), and that
 	// connection discarded so the pool must dial a fresh one each round.
 	ctx := context.Background()
-	store, err := Open(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
+	store, err := fixtureOpen(ctx, filepath.Join(t.TempDir(), "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestOpen_refuses_live_state_without_override(t *testing.T) {
 	t.Setenv("CRW_ALLOW_LIVE_STATE", "")
 	path := filepath.Join(root, "codex-session-relay", "default", "relay.sqlite3")
 	// When: opening the protected location.
-	_, err := Open(context.Background(), path, "")
+	_, err := fixtureOpen(context.Background(), path, "")
 	// Then: it refuses before creating the database.
 	if err != ErrLiveState {
 		t.Fatalf("got %v", err)
@@ -210,7 +210,7 @@ func TestOpen_refuses_both_live_state_locations_when_xdg_state_home_is_set(t *te
 			t.Setenv("CRW_ALLOW_LIVE_STATE", "")
 			path := location.path(home, xdg)
 			// When: a store is opened at that live-state location.
-			_, err := Open(context.Background(), path, "")
+			_, err := fixtureOpen(context.Background(), path, "")
 			// Then: it is refused before the database exists.
 			if !errors.Is(err, ErrLiveState) {
 				t.Fatalf("got %v", err)

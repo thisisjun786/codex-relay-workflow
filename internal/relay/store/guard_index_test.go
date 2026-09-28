@@ -164,7 +164,7 @@ func runGuard(t *testing.T, index string) {
 	}
 	// When: Go opens that Python-written store and writes the same row through the typed insert,
 	// bare and inside Transaction.
-	s, err := Open(context.Background(), python.DB, "")
+	s, err := fixtureOpen(context.Background(), python.DB, "")
 	must(t, err)
 	defer func() { must(t, s.Close()) }()
 	ctx := context.Background()

@@ -29,6 +29,7 @@ func Test24NumericDownstreamBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	db := filepath.Join(home, "state", "relay.sqlite3")
+	fenceExisting(t, db)
 	baseline, err := os.ReadFile(db)
 	if err != nil {
 		t.Fatal(err)

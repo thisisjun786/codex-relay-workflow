@@ -27,6 +27,11 @@ func RegistrationHold(ctx context.Context, dbPath string, run func(conn *sql.Con
 	if absolute, err = refuseLiveState(absolute); err != nil {
 		return run(nil, "the relay store could not be opened for writing: "+err.Error())
 	}
+	admission, err := admitWrite(ctx, absolute)
+	if err != nil {
+		return run(nil, "the relay store could not be opened for writing: "+err.Error())
+	}
+	defer admission.Close()
 	u := url.URL{Scheme: "file", Path: absolute}
 	db, err := boundedDB(u.Path, "rw", RegistrationTimeout)
 	if err != nil {
@@ -38,6 +43,9 @@ func RegistrationHold(ctx context.Context, dbPath string, run func(conn *sql.Con
 		return run(nil, "the relay store could not be opened for writing: "+PythonSQLiteMessage(err))
 	}
 	defer conn.Close()
+	if err = admission.Revalidate(ctx, conn); err != nil {
+		return run(nil, "the relay store could not be opened for writing: "+err.Error())
+	}
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return run(nil, "the relay store's write lock could not be taken: "+PythonSQLiteMessage(err))
 	}

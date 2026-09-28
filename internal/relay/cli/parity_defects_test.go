@@ -26,6 +26,9 @@ func runParityProcess(t *testing.T, env []string, path string, args ...string) p
 
 func runParityProcessInput(t *testing.T, env []string, input, path string, args ...string) processResult {
 	t.Helper()
+	if filepath.Base(path) == "crw" || filepath.Base(path) == "codex-session-relay" {
+		fenceArgs(t, args)
+	}
 	cmd := exec.Command(path, args...)
 	cmd.Env = env
 	cmd.Stdin = strings.NewReader(input)

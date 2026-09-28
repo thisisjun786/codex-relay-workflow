@@ -404,7 +404,7 @@ func runParity(t *testing.T, tables []string, cases ...string) []parityStore {
 	stores := pythonParityStores(t, tables, cases...)
 	compared := map[string]int{}
 	for _, python := range stores {
-		s, err := Open(context.Background(), python.DB, "")
+		s, err := fixtureOpen(context.Background(), python.DB, "")
 		if err != nil {
 			t.Fatalf("%s: Go cannot open the Python store: %v", python.Case, err)
 		}

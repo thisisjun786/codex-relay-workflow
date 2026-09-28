@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"encoding/json"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"os"
 	"path/filepath"
 	"testing"
@@ -40,6 +41,9 @@ func Test23FaultClassFreshProcessParity(t *testing.T) {
 				t.Run(program.name, func(t *testing.T) {
 					pyState := filepath.Join(t.TempDir(), "python")
 					goState := filepath.Join(t.TempDir(), "go")
+					if err := testsupport.SeedOwnership(t.Context(), filepath.Join(goState, "relay.sqlite3"), "", "go"); err != nil {
+						t.Fatal(err)
+					}
 					env := append(os.Environ(), "HOME="+t.TempDir(), "XDG_STATE_HOME="+t.TempDir())
 					wantArgs := append([]string{"-m", "codex_session_relay.cli", "--state", pyState}, tc.args...)
 					want := runParityProcess(t, env, python, wantArgs...)

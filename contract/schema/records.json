@@ -103,5 +103,23 @@
       "stoppedAt",
       "stoppedBy"
     ]
+  },
+  "takeoverStatus": {
+    "command": "crw relay takeover status --json",
+    "protocol": 1,
+    "keys": [
+      "protocol",
+      "storeId",
+      "database",
+      "owner",
+      "epoch",
+      "takeoverId",
+      "phase",
+      "jsonStale",
+      "rollbackAllowed",
+      "pythonCompatibilityBuild",
+      "transition",
+      "holder"
+    ]
   }
 }

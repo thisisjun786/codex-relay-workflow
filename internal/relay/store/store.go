@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"modernc.org/sqlite"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
 //go:embed relay-sqlite.sql
@@ -38,6 +40,7 @@ type Store struct {
 	// faultHook runs inside every opened transaction after its body and before COMMIT
 	// (store.py fault_hook). Tests use it to die at that point; nil in production.
 	faultHook func()
+	admission *ownership.Admission
 }
 
 // The frozen contract contains DDL, then guard indexes, then illustrative seed SQL.
@@ -49,33 +52,30 @@ type OpenOptions struct {
 	BusyTimeout   time.Duration
 	OnConnect     func()
 	BusyRetryHook func()
+	// admission is installed only by the fenced opener, before connection hooks.
+	admission *ownership.Admission
 }
 
 func Open(ctx context.Context, path, socketPath string) (*Store, error) {
-	return open(ctx, path, socketPath, OpenOptions{BusyTimeout: 30 * time.Second})
+	return openFenced(ctx, path, socketPath, OpenOptions{BusyTimeout: 30 * time.Second})
 }
 
-// Open creates a new database, or opens an existing one without changing its schema.
-// The connection hook runs for every connection, not just the first one.
+// open configures an existing database after admission. The connection hook
+// runs for every connection, not just the first one; it never creates a file.
 func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ *Store, err error) {
 	resolved, err := refuseLiveState(path)
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(resolved), 0700); err != nil {
-		return nil, fmt.Errorf("create state directory: %w", err)
-	}
-	file, err := os.OpenFile(resolved, os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		return nil, fmt.Errorf("create database: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		return nil, fmt.Errorf("close database file: %w", err)
-	}
 	d := &sqlite.Driver{}
 	d.RegisterConnectionHook(func(conn sqlite.ExecQuerierContext, _ string) error {
 		if options.OnConnect != nil {
 			options.OnConnect()
+		}
+		if options.admission != nil {
+			if err := options.admission.Check(ctx); err != nil {
+				return err
+			}
 		}
 		// Python's sqlite3.connect installs its timeout before executing journal_mode.
 		// Do the same: journal_mode may need a lock even before the schema is read.
@@ -250,7 +250,7 @@ func randomBytes(size int) ([]byte, error) {
 }
 func homeDir() string { home, _ := os.UserHomeDir(); return home }
 
-func (s *Store) Close() error { return s.DB.Close() }
+func (s *Store) Close() error { return errors.Join(s.DB.Close(), s.admission.Close()) }
 
 // Location distinguishes the database inode from the directory entry containing its WAL.
 type Location struct {

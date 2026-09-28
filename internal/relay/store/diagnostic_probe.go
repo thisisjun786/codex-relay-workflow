@@ -117,6 +117,12 @@ func probeRead(ctx context.Context, file *os.File, expected string, result *Prob
 }
 
 func probeWrite(ctx context.Context, file *os.File, expected string, result *ProbeResult, notes *[]string) {
+	admission, err := admitWrite(ctx, expected)
+	if err != nil {
+		*notes = append(*notes, "database write probe failed: "+err.Error())
+		return
+	}
+	defer admission.Close()
 	conn, err := openHeld(ctx, file, "rw")
 	if err != nil {
 		*notes = append(*notes, "database write probe failed: "+PythonSQLiteError(err))
@@ -126,6 +132,10 @@ func probeWrite(ctx context.Context, file *os.File, expected string, result *Pro
 	// Before the transaction, never after it: BEGIN IMMEDIATE on a moved name creates its -wal.
 	if elsewhere := conn.elsewhere(ctx, file, expected); elsewhere != "" {
 		*notes = append(*notes, "database write probe failed: "+elsewhere)
+		return
+	}
+	if err = admission.Revalidate(ctx, conn.conn); err != nil {
+		*notes = append(*notes, "database write probe failed: "+err.Error())
 		return
 	}
 	if err := conn.exec(ctx, "BEGIN IMMEDIATE"); err != nil {

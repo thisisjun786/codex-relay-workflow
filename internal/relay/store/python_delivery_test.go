@@ -87,7 +87,7 @@ func pythonDeliveryStore(t *testing.T, scenario string) (pythonDelivery, *Store)
 	if err := json.Unmarshal([]byte(out[strings.LastIndex(out, "\n")+1:]), &got); err != nil {
 		t.Fatalf("python output %q: %v", out, err)
 	}
-	s, err := Open(context.Background(), got.DB, "")
+	s, err := fixtureOpen(context.Background(), got.DB, "")
 	if err != nil {
 		t.Fatal(err)
 	}
