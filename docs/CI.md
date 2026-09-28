@@ -16,7 +16,7 @@ the steps needed to activate GitHub enforcement.
 | `python3 scripts/ci/packages.py [--shard K/N]` | Install, test, run and build the two packages under `packages/` from the root lock file; CI runs each Python version as `--shard` legs that partition the collected tests |
 | `bash scripts/ci/secrets.sh` | Checksum-pinned Gitleaks scan of all fetched history |
 | `crw-dev ci gate` | Aggregate prerequisite results supplied by the workflow |
-| `make lint`, `make test-part TEST_PART=<1-4, rest>`, `CGO_ENABLED=0 make dist` per target | `go-product` job, one leg each: vet, staticcheck and gofmt; the Go tests and contract corpus as parts that together are `make test`; static `crw` binaries for linux/amd64, linux/arm64 and darwin/arm64 uploaded with `SHA256SUMS` |
+| `make lint`, `make test-part TEST_PART=<1-5, rest>`, `CGO_ENABLED=0 make dist` per target | `go-product` job, one leg each: vet, staticcheck and gofmt; the Go tests and contract corpus as parts that together are `make test`; static `crw` binaries for linux/amd64, linux/arm64 and darwin/arm64 uploaded with `SHA256SUMS` |
 
 `crw-dev` is the development binary: `go build -tags dev -o dist/crw-dev ./cmd/crw-dev`
 (or `make crw-dev`). It builds only with the `dev` tag, so `make dist` and the release
@@ -63,7 +63,7 @@ and unexpected-skipped results fail. It rejects PRs targeting `main`.
 
 `go-product` always runs, like `validate`: it needs no uv or Python packages, and
 the darwin/arm64 binary it builds is not validated on a macOS host. Its legs run on
-separate runners; the Makefile names the slowest packages as parts 1-4 and `rest` takes
+separate runners; the Makefile names the slowest packages as parts 1-5 and `rest` takes
 every other package, so a new package is always tested. `test_gate.py` and
 `internal/dev/ci` refuse a Makefile part without a workflow leg, and a package-shard
 list that is not every slice of one total. Its plugin
