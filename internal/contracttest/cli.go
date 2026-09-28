@@ -12,6 +12,7 @@ import (
 	// Registers the merge-turn-* commands, as cmd/crw does, so Registered agrees with the binary.
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/routing"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"os"
 	"os/exec"

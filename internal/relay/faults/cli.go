@@ -86,6 +86,9 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 		}
 	}
 	for _, module := range modules {
+		if module == "codex_session_relay.projects" {
+			InstallProductDeclarations()
+		}
 		if module == "" {
 			return response(stdout, map[string]any{"error": "host", "detail": "ValueError: Empty module name"}, 3), true
 		}

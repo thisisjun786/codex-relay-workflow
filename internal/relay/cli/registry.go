@@ -46,6 +46,9 @@ type Command struct {
 	// Required lists flags argparse declares required=True.
 	Required []string
 	Flags    func(*flag.FlagSet)
+	// Parse optionally supplies a domain's argparse-compatible parser until shared argparse lands.
+	// It returns normalized command arguments, or a completed help/error response.
+	Parse func(string, []string, io.Writer, io.Writer) ([]string, int, bool)
 	// Exempt commands answer without the store default discovery would pick
 	// (_refuse_ambiguous_state's exemption list).
 	Exempt bool
@@ -206,6 +209,15 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 	if command == nil {
 		return parseError(globalUsage, fmt.Sprintf("argument command: invalid choice: %s (choose from %s)", store.PythonRepr(remaining[0]), choices()))
 	}
+	commandArgs := remaining[1:]
+	if command.Parse != nil {
+		var code int
+		var handled bool
+		commandArgs, code, handled = command.Parse(prog, commandArgs, stdout, stderr)
+		if handled {
+			return code
+		}
+	}
 	flags := flag.NewFlagSet(command.Name, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	if command.Flags != nil {
@@ -220,7 +232,7 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 		return emit(stdout, stderr, result, err)
 	}
 	commandUsage := "usage: " + prog + " " + command.Name + commandSynopsis(flags)
-	if err := flags.Parse(remaining[1:]); err != nil {
+	if err := flags.Parse(commandArgs); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprintln(stdout, commandUsage)
 			return contract.ExitOk
@@ -285,6 +297,9 @@ func importKindModules(names []string) error {
 	// The first name decides: Python imports them in order and stops at the first failure.
 	if len(names) > 0 {
 		for _, candidate := range names {
+			if candidate == "codex_session_relay.projects" {
+				faults.InstallProductDeclarations()
+			}
 			if candidate == "" {
 				return &HostError{Class: "ValueError", Detail: "Empty module name"}
 			}

@@ -14,7 +14,9 @@ import (
 	// The merge-turn-* relay commands register themselves on the relay CLI.
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/routing"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/sync"
 )
 
 var version = "dev"

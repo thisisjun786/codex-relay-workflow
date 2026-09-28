@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -23,6 +24,24 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	buildDir = dir
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	env := map[string]string{"HOME": filepath.Join(dir, "home"), "XDG_STATE_HOME": filepath.Join(dir, "state"), "XDG_CONFIG_HOME": filepath.Join(dir, "config"), "CODEX_HOME": filepath.Join(dir, "codex"), "CODEX_SESSION_RELAY_STATE": filepath.Join(dir, "relay"), "CODEX_SESSION_RELAY_SCOPE_DIR": filepath.Join(dir, "scope")}
+	if os.Getenv("GOPATH") == "" {
+		env["GOPATH"] = filepath.Join(os.Getenv("HOME"), "go")
+	}
+	if os.Getenv("GOCACHE") == "" {
+		env["GOCACHE"] = filepath.Join(cache, "go-build")
+	}
+	for key, value := range env {
+		if err := os.Setenv(key, value); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
 	code := m.Run()
 	if err := cleanup(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

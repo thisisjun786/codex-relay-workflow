@@ -106,11 +106,11 @@ func Test22_FLT_2_Registry(t *testing.T) {
 	if e = json.Unmarshal(raw, &manifest); e != nil {
 		t.Fatal(e)
 	}
-	if len(classes) != len(manifest.Classes) {
-		t.Fatalf("registered %d of %d classes", len(classes), len(manifest.Classes))
+	if len(declaredClasses) != len(manifest.Classes) {
+		t.Fatalf("declared %d of %d classes", len(declaredClasses), len(manifest.Classes))
 	}
 	for name, policy := range manifest.Classes {
-		got, ok := classes[name]
+		got, ok := declaredClasses[name]
 		if !ok || got.component != policy.Component || got.clears != policy.Clears || got.clears == "" {
 			t.Fatalf("class %s: %+v", name, got)
 		}

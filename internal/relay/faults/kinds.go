@@ -10,13 +10,18 @@ import (
 
 // Static kinds replace Python's dynamic --kind-module registration. The project_create
 // declaration is sourced from projects.py; todo 23 owns its publication implementation.
-type kindPolicy struct {
+type KindPolicy struct {
 	Creates, RequiresIssue bool
 	Target, Evidence       string
 	// PreIssue is a read-only hook, run under a rolled-back savepoint before issue.
 	// Todo 23 supplies project_create's hook and publication implementation.
 	PreIssue func(map[string]any) any
+	Validate func(any) []string
+	Confirm  func(expected, observed any) []string
 }
+
+// kindPolicy keeps the built-in declarations and existing callers source-compatible.
+type kindPolicy = KindPolicy
 
 // RegisteredModule is the finite replacement for Python's importlib.import_module.
 // json and os.path are importable standard-library probes; projects is the
@@ -32,7 +37,7 @@ func RegisteredModule(name string) bool {
 
 // RegisterKind installs an implementation for a declared extension kind. The manifest
 // describes project_create, but without its todo 23 implementation it is not executable.
-func RegisterKind(name string, policy kindPolicy) error {
+func RegisterKind(name string, policy KindPolicy) error {
 	if policy.Creates && policy.Evidence != "block" {
 		return fmt.Errorf("a kind that creates is confirmed by its block, never by fields")
 	}
@@ -58,6 +63,11 @@ func queueKind(ctx context.Context, l *Ledger, a map[string]string, spec kindPol
 		payload, err = loads(a["--payload"])
 		if err != nil {
 			return nil, err
+		}
+	}
+	if spec.Validate != nil {
+		if problems := spec.Validate(payload); len(problems) > 0 {
+			return nil, fmt.Errorf("fault_observation_malformed: %s", strings.Join(problems, "; "))
 		}
 	}
 	kind := a["--kind"]
@@ -166,7 +176,7 @@ func preIssue(ctx context.Context, l *Ledger, spec kindPolicy, r, fault row, mom
 		if err = db.QueryRowContext(ctx, "SELECT total_changes()").Scan(&before); err != nil {
 			return
 		}
-		answer = spec.PreIssue(map[string]any{"publication": publication, "fault": view, "db": db, "context": ctx, "now": moment})
+		answer = spec.PreIssue(map[string]any{"publication": publication, "fault": view, "db": db, "store": l.Store, "context": ctx, "now": moment})
 	}()
 	if err != nil {
 		return nil, err

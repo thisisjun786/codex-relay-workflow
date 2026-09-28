@@ -48,22 +48,31 @@ var productName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 type classPolicy struct{ component, clears string }
 
-// classes are the registered classes this subset can record (register_class).
-var classes = map[string]classPolicy{
+var declaredClasses = map[string]classPolicy{
 	"completion_mismatch":    {"completion", "the evidence the completion lacked being observed and reverified"},
 	"completion_unverified":  {"completion", "a later reading that establishes the check either way"},
+	"product_defect":         {"product", "a later reading of the same product, component and symptom that finds it gone, or the fix and reverification loop"},
+	"product_expected":       {"product", "the expected state ending: the cancellation settled, the approval given, or the support added"},
+	"project_needed":         {"planning", "the project being created and bound; the record stays as that project's creation record"},
+	"unclassified_incident":  {"triage", "classification into a registered product, which re-files every stored incident there"},
 	"delivery_refused":       {"delivery", "the delivery being sent or settling, or its newest withholding naming another reason"},
 	"delivery_stalled":       {"delivery", "a delivery to the same recipient reaching dispatched"},
 	"managed_start_failed":   {"managed_start", "the request recording an accepted receipt or attaching, or its newest creation-stage answer saying something else"},
 	"observation_stalled":    {"observation", "a successful poll of the same anchor, or its turn settling"},
 	"observation_unmeasured": {"reporting", "a later reading of the same turn that establishes something"},
-	"product_defect":         {"product", "a later reading of the same product, component and symptom that finds it gone, or the fix and reverification loop"},
-	"product_expected":       {"product", "the expected state ending: the cancellation settled, the approval given, or the support added"},
-	"project_needed":         {"planning", "the project being created and bound; the record stays as that project's creation record"},
 	"record_sync_failed":     {"sync", "any synchronisation job on the same target confirming"},
 	"report_omitted":         {"reporting", "a reading of the same turn that no longer says unreported"},
-	"unclassified_incident":  {"triage", "classification into a registered product, which re-files every stored incident there"},
 }
+
+// classes are declarations imported in this process. Python starts with the seven
+// fault-ledger classes and adds product classes only when routing imports projects.
+var classes = func() map[string]classPolicy {
+	out := map[string]classPolicy{}
+	for _, name := range []string{"delivery_refused", "delivery_stalled", "managed_start_failed", "observation_stalled", "observation_unmeasured", "record_sync_failed", "report_omitted"} {
+		out[name] = declaredClasses[name]
+	}
+	return out
+}()
 
 // Observation is faults.observation.
 type Observation struct {
@@ -74,6 +83,7 @@ type Observation struct {
 	Detail                        string
 	Evidence                      []any
 	Cleared                       bool
+	ObservedAt                    any
 }
 
 func canonicalSignature(signature map[string]any) string { return dumps(signature, true) }
@@ -165,7 +175,7 @@ type fact struct {
 }
 
 func readObservation(o Observation) (fact, error) {
-	policy, ok := classes[o.FaultClass]
+	policy, ok := classLookup(o.FaultClass)
 	if !ok {
 		return fact{}, fmt.Errorf("fault_class_unregistered: '%s' is not a registered fault class, so nothing declares what would clear it", o.FaultClass)
 	}
@@ -239,6 +249,10 @@ func (l *Ledger) exec(ctx context.Context, query string, args ...any) (int64, er
 // Record is FaultLedger.record without adoption: one observation converged on its fault, at
 // most one write queued. The answer carries recorded and state; the rest is todo 22's surface.
 func (l *Ledger) Record(ctx context.Context, o Observation) (bool, error) {
+	return l.record(ctx, o, nil)
+}
+
+func (l *Ledger) record(ctx context.Context, o Observation, adoption *Adoption) (bool, error) {
 	f, err := readObservation(o)
 	if err != nil {
 		return false, err
@@ -297,6 +311,15 @@ func (l *Ledger) Record(ctx context.Context, o Observation) (bool, error) {
 		if err != nil {
 			return err
 		}
+		if adoption != nil {
+			if _, err := f2Adopt(ctx, l, r, adoption.ExternalRef, adoption.Scope, nowISO); err != nil {
+				return err
+			}
+			r, err = l.one(ctx, "SELECT * FROM fault_ledger WHERE fault_id = ?", f.id)
+			if err != nil {
+				return err
+			}
+		}
 		state := text(r, "state")
 		if f.Cleared && (state == Withdrawn || state == Resolved) {
 			return nil
@@ -316,7 +339,7 @@ func (l *Ledger) Record(ctx context.Context, o Observation) (bool, error) {
 			storedKey += "#cleared"
 		}
 		if _, err := l.exec(ctx, "INSERT OR IGNORE INTO fault_occurrences (occurrence_id, fault_id, episode,  occurrence_key, severity, cleared, detail, evidence, evidence_digest,  truncated, observed_at, recorded_at, recorded_ts) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-			oid, f.id, episode, storedKey, f.Severity, boolInt(f.Cleared), f.Detail, dumps(f.evidence, false), f.evidenceDigest, boolInt(f.truncated), nil, nowISO, now); err != nil {
+			oid, f.id, episode, storedKey, f.Severity, boolInt(f.Cleared), f.Detail, dumps(f.evidence, false), f.evidenceDigest, boolInt(f.truncated), f.ObservedAt, nowISO, now); err != nil {
 			return err
 		}
 		if seen != nil {
@@ -339,6 +362,9 @@ func (l *Ledger) Record(ctx context.Context, o Observation) (bool, error) {
 		}
 		escalated := severity != text(r, "severity")
 		f.threshold = map[string]any{Broken: int64(1), Degraded: int64(3), Notice: nil}[severity]
+		if threshold, ok := classThreshold(f.FaultClass); ok && severity == Degraded {
+			f.threshold = threshold
+		}
 		f.publish = f.threshold != nil
 		override, err := l.one(ctx, "SELECT threshold, window_seconds, reason, updated_at FROM fault_policies WHERE product = ? AND fault_class = ? AND severity = ?", f.Product, f.FaultClass, severity)
 		if err != nil {
@@ -370,7 +396,7 @@ func (l *Ledger) Record(ctx context.Context, o Observation) (bool, error) {
 			if err := l.cancelUnissued(ctx, f.id, "the fault was withdrawn before anything landed", nowISO); err != nil {
 				return err
 			}
-			if _, err := l.exec(ctx, "UPDATE fault_notifications SET state = ?, updated_at = ? WHERE fault_id = ? AND state = ?", Withdrawn, nowISO, f.id, pending); err != nil {
+			if _, err := l.exec(ctx, "UPDATE fault_notifications SET state = ?, updated_at = ? WHERE fault_id = ? AND state = ? AND kind = ?", Withdrawn, nowISO, f.id, pending, blocking); err != nil {
 				return err
 			}
 		}
@@ -391,7 +417,8 @@ func (l *Ledger) Record(ctx context.Context, o Observation) (bool, error) {
 			return err
 		}
 		if trigger != "" {
-			if err := l.enqueue(ctx, f.id, trigger, nowISO, opened, create, classes[f.FaultClass].clears); err != nil {
+			policy, _ := classLookup(f.FaultClass)
+			if err := l.enqueue(ctx, f.id, trigger, nowISO, opened, create, policy.clears); err != nil {
 				return err
 			}
 			reason, _, _ := strings.Cut(trigger, ":")
@@ -719,7 +746,7 @@ func renderSummaryWithRemediation(fault row, trigger string, occurrences []row, 
 	needle := "\n\nevidence, as observed at the time:"
 	line := "\n\nfix: " + text(remediation, "ref")
 	if detail := text(remediation, "detail"); detail != "" {
-		line += "\n" + detail
+		line += "\n  detail: " + detail
 	}
 	if strings.Contains(summary, needle) {
 		return strings.Replace(summary, needle, line+needle, 1)

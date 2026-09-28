@@ -98,9 +98,9 @@ func f1Ordered(value any) any {
 func executeF1(ctx context.Context, l *Ledger, name string, a map[string]string) (any, error) {
 	switch name {
 	case "fault-claim":
-		return f1Claim(ctx, l, a)
+		return l.Claim(ctx, a["--publication"], a["--owner"], a["--takeover"] != "")
 	case "fault-operation":
-		return f1Operation(ctx, l, a)
+		return l.Operation(ctx, a["--publication"], a["--claim-token"])
 	case "fault-reconcile":
 		return f1Reconcile(ctx, l, a)
 	case "fault-complete":
@@ -742,7 +742,7 @@ func f1ConfirmFields(extra row, observed map[string]any) []string {
 		}
 		values, _ := observed[key].([]any)
 		for _, v := range values {
-			if v == value {
+			if dumps(v, true) == dumps(value, true) {
 				return nil
 			}
 		}
@@ -843,6 +843,15 @@ func f1Complete(ctx context.Context, l *Ledger, a map[string]string) (any, error
 			return e
 		}
 		var reference any
+		if spec.Confirm != nil {
+			expected, e := cPublication(ctx, l, id)
+			if e != nil {
+				return e
+			}
+			if problems := spec.Confirm(expected, observed); len(problems) > 0 {
+				return fmt.Errorf("fault_readback_mismatch: %s", strings.Join(problems, "; "))
+			}
+		}
 		if spec.Evidence == "block" {
 			problems := f1Mismatch(r, fault, f1ReadBlock(readback, id))
 			if len(problems) > 0 {
