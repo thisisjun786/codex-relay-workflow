@@ -671,7 +671,7 @@ Evidence: `oracleEnv` in `internal/skill/process_parity_test.go`;
 `TestSkillUnreadableInputsLivePython` passes under outer `LC_ALL=C`, `LC_ALL=C.UTF-8`
 and `LANG=en_US.UTF-8`, and fails under outer `LC_ALL=C` without the pin.
 
-## 30. Native hook allocations bound waiting, not scheduling
+## 32. Native hook allocations bound waiting, not scheduling
 
 Decision: the native Stop hook enforces its entry-anchored allocations only where it
 waits for something outside itself. No number changes: the absolute 5 s deadline

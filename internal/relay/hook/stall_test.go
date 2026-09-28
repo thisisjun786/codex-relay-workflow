@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// Decision 30. A loaded host can leave a runnable hook unscheduled for longer than
+// Decision 32. A loaded host can leave a runnable hook unscheduled for longer than
 // its 100 ms startup/input allocation. Passing a process entry time 300 ms in the
 // past reproduces that stall exactly: every allocation anchored at entry has
 // already elapsed before the hook does any work, while the host's settings and
@@ -75,7 +75,7 @@ func prescanRow(t *testing.T, home string) Object {
 	return row
 }
 
-// Before decision 30 the settings read was cut at entry+100 ms (no row at all),
+// Before decision 32 the settings read was cut at entry+100 ms (no row at all),
 // the payload was released as stdin_unreadable at entry+100 ms, and the pre-scan
 // row was skipped at entry+125 ms. Test33NativeJournalReaderPythonLive and the
 // Domain/hook corpus observed exactly these missing rows on loaded CI runners.

@@ -115,7 +115,7 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 	if err != nil {
 		return 0
 	}
-	// Decision 30: the settings are a local, 1 MiB-bounded regular-file read that
+	// Decision 32: the settings are a local, 1 MiB-bounded regular-file read that
 	// waits on nothing the host supplies, so only the absolute deadline bounds it.
 	// Cutting it at the startup allocation lost the whole invocation record whenever
 	// this process was simply not scheduled for 100 ms after entry.
@@ -235,7 +235,7 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 	if pause, ok := ctx.Value(beforeDialKey{}).(func()); ok {
 		pause()
 	}
-	// Decision 30: a Unix-socket connect completes or fails at once (a full Linux
+	// Decision 32: a Unix-socket connect completes or fails at once (a full Linux
 	// backlog is EAGAIN); it never waits. A dial timer could only expire on time
 	// this process spent unscheduled, turning a healthy socket into ETIMEDOUT.
 	conn, err := (&net.Dialer{}).DialContext(work, "unix", socket)
@@ -243,7 +243,7 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 	if err != nil && prescanErrno(err) {
 		// Decision 22: retain the single Python failure row, without fsync. Identity
 		// remains unobserved: no transcript scan, claim or DB access precedes it.
-		// Decision 30: the small create-once write is bounded by the absolute
+		// Decision 32: the small create-once write is bounded by the absolute
 		// deadline, so a late-scheduled invocation still leaves its row.
 		record = unreachableRecord(record, err, time.Since(dialStarted))
 		record = set(record, "adapterOutcome", "guard_unreachable")

@@ -15,7 +15,7 @@ import (
 var errInputLate = errors.New("the Stop payload did not arrive within the input allocation")
 
 // readInput takes the Stop payload under the startup/input allocation (decision
-// 24). Decision 30: the allocation bounds how long the hook WAITS for its host to
+// 24). Decision 32: the allocation bounds how long the hook WAITS for its host to
 // supply bytes, and is judged only where it would otherwise wait. A descriptor is
 // polled, so bytes that are already readable when the hook looks, including a
 // complete payload written while this process was not scheduled, are taken rather
