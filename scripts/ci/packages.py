@@ -43,19 +43,30 @@ PACKAGES = (
 )
 
 
-# Loaded into pytest with `-p` when a CI leg runs one shard. It keeps every item whose
-# position in the collected order falls in this shard, so shards 1..N of one checkout are
-# disjoint and together hold every collected test. Deselected items are reported as such,
-# never as skips, and each leg still refuses an empty or skipped run.
+# Loaded into pytest with `-p` when a CI leg runs one shard. Whole test modules are
+# assigned to shards, largest first onto the lightest shard, so a module's tests (and
+# any module-level test that checks what its siblings recorded) stay together. Every
+# leg computes the same assignment from the same collection, so shards 1..N are
+# disjoint and together hold every collected test. Deselected items are reported as
+# such, never as skips, and each leg still refuses an empty or skipped run.
 SHARD_PLUGIN = """\
 import os
 
 
 def pytest_collection_modifyitems(config, items):
     index, total = (int(part) for part in os.environ["CRW_PACKAGES_SHARD"].split("/"))
+    counts = {}
+    for item in items:
+        module = item.nodeid.split("::", 1)[0]
+        counts[module] = counts.get(module, 0) + 1
+    loads, owner = [0] * total, {}
+    for module in sorted(counts, key=lambda name: (-counts[name], name)):
+        shard = loads.index(min(loads))
+        owner[module] = shard
+        loads[shard] += counts[module]
     keep, drop = [], []
-    for position, item in enumerate(items):
-        (keep if position % total == index - 1 else drop).append(item)
+    for item in items:
+        (keep if owner[item.nodeid.split("::", 1)[0]] == index - 1 else drop).append(item)
     if drop:
         config.hook.pytest_deselected(items=drop)
     items[:] = keep

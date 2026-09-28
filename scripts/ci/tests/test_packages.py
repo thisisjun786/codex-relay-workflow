@@ -155,21 +155,39 @@ class ShardTests(unittest.TestCase):
                 os.environ["CRW_PACKAGES_SHARD"] = old
         return kept, deselected
 
-    def test_shards_are_disjoint_ordered_and_complete(self):
-        items = [f"test_{n}" for n in range(11)]
-        for total in (1, 2, 3, 11, 12):
+    def items(self, sizes):
+        class Item:
+            def __init__(self, nodeid):
+                self.nodeid = nodeid
+
+            def __repr__(self):
+                return self.nodeid
+
+        return [Item(f"tests/test_{module}.py::test_{n}")
+                for module, size in sizes for n in range(size)]
+
+    def test_shards_are_disjoint_ordered_complete_and_keep_modules_whole(self):
+        items = self.items([("a", 7), ("b", 1), ("c", 4), ("d", 4), ("e", 2)])
+        for total in (1, 2, 3, 5):
             with self.subTest(total=total):
-                seen = []
+                seen, modules = [], {}
                 for index in range(1, total + 1):
                     kept, dropped = self.partition(items, index, total)
-                    self.assertEqual(sorted(kept + dropped), sorted(items))
+                    self.assertEqual(sorted(map(id, kept + dropped)), sorted(map(id, items)))
                     self.assertEqual(kept, [item for item in items if item in kept])
+                    for item in kept:
+                        module = item.nodeid.split("::")[0]
+                        self.assertEqual(modules.setdefault(module, index), index)
                     seen += kept
-                self.assertEqual(sorted(seen), sorted(items))
-                self.assertEqual(len(seen), len(items))
+                self.assertEqual(sorted(map(id, seen)), sorted(map(id, items)))
+
+    def test_largest_modules_are_spread_across_shards(self):
+        items = self.items([("a", 7), ("b", 1), ("c", 4), ("d", 4), ("e", 2)])
+        sizes = [len(self.partition(items, index, 2)[0]) for index in (1, 2)]
+        self.assertEqual(sorted(sizes), [9, 9])
 
     def test_the_whole_run_deselects_nothing(self):
-        items = ["a", "b", "c"]
+        items = self.items([("a", 2), ("b", 1)])
         self.assertEqual(self.partition(items, 1, 1), (items, []))
 
     def test_shard_arguments_are_validated(self):
