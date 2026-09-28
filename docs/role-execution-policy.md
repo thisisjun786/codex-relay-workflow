@@ -1,8 +1,8 @@
 # Role execution policy
 
 CRW runs at three levels and each level runs on the model and reasoning effort decided for its
-role. Two roles may be decided onto the same pair, as the parent and the child were on 2026-09-23,
-and the check is per role either way. Until now nothing in the code knew any of that. The bridge
+role. Two roles may be decided onto the same pair, as the parent and the child were from 2026-09-23
+to 2026-09-29, and the check is per role either way. Until now nothing in the code knew any of that. The bridge
 asked whether a pair was stated and whether this host approved it, and neither question is whether
 the pair belongs to the ROLE the task is being created for. So a project parent created on the
 wrong model passed every check that existed, and a child verifying a send against a pair frozen at
@@ -25,19 +25,21 @@ relay records it in `scope_bindings` and the role ids here are the same three st
 | --- | --- | --- | --- |
 | `supervisor` | Astra | as selected | Jun, directly |
 | `parent` | `anthropic/claude-opus-5-5` | `xhigh` | this policy |
-| `child` | `anthropic/claude-opus-5-5` | `xhigh` | this policy |
+| `child` | `anthropic/claude-sonnet-5-5` | `xhigh` | this policy |
 
 **This table is a record of the product decision, not a default the code applies.** The decision
-itself is Linear CRW-127, the child row's move to Opus 5.5 is CRW-217, and the parent row's move
-to the same pair is CRW-219; the values that are actually enforced are the ones in the host's
-policy file. If the two disagree, the file is what runs and the disagreement is the bug.
+itself is Linear CRW-127, the child row's move to Opus 5.5 is CRW-217, the parent row's move
+to the same pair is CRW-219, and the child row's move to Sonnet 5.5 is Jun's 2026-09-29 decision;
+the values that are actually enforced are the ones in the host's policy file. If the two disagree, the file is what runs and the disagreement is the bug.
 
 That separation is what a change of pair costs, and the parent row has now paid it three times.
 It ran on `devin/swe-2` at `max`, moved to `xai/grok-4.6` at `xhigh` on 2026-09-21, was restored
 to `devin/swe-2` at `max` later that same day, and moved to `anthropic/claude-opus-5-5` at `xhigh`
-on 2026-09-23, the pair the child already ran. The child row has paid it once: it ran on
+on 2026-09-23, the pair the child already ran. The child row has paid it twice: it ran on
 `anthropic/claude-opus-5` at `xhigh` until 2026-09-23, when it moved to
-`anthropic/claude-opus-5-5` and kept `xhigh`. Each move was an edit to the policy file and a
+`anthropic/claude-opus-5-5` and kept `xhigh`, and on 2026-09-29 Jun moved it to
+`anthropic/claude-sonnet-5-5`, again keeping `xhigh`, while the parent stayed on
+`anthropic/claude-opus-5-5`. Each move was an edit to the policy file and a
 restart, with no line of code changed, because no pair is written in code to go stale. A
 superseded pair is not a second valid answer: once the file declares the current one, every other
 pair is refused for that role like any other wrong pair, and a superseded pair is kept as a
@@ -57,20 +59,24 @@ step, and every comparison in both packages is exact string equality.
 
 The clearest case is the pair the parent row just left. The host's catalog reports SWE-2 at
 medium, high, max and ultra, and the parent ran on it at exactly `max` until 2026-09-23; Opus 5.5,
-which the parent and the child now share, runs at `xhigh`. A parent request stating `max` under
+which the parent now runs, runs at `xhigh`. A parent request stating `max` under
 Opus 5.5 has the right model and is refused on its effort. One stating `xhigh` under SWE-2 has
 the right effort name and is refused on its model, which is compared first. So is the old pair
 whole: this host still lists `devin/swe-2` at `max` under `allowed`, and a request naming
 `parent` on it is refused by the role question, which is asked before the allowlist, even though
 the allowlist would approve it. The allowlist says what the host may run; the role row says what
 that role runs. The interim grok pair shared `xhigh` with the child under a different model, and
-the current parent pair shares the child's whole pair; neither changed the rule. The pair the
+the current parent pair shares only the effort name with the child's pair; neither changed the rule. The pair the
 parent left differs from the current one in model and in effort, which is why the single-axis
 regression cases take one half of it at a time.
 
-The child's move is the other case. It kept `xhigh`, so the pair it left differs from the
-current one by model alone, and that superseded pair is the fixture proving a check cannot pass a
-record by comparing efforts only.
+The child's moves are the other case. Both kept `xhigh`, so each pair it left differs from the
+current one by model alone, and those superseded pairs are the fixtures proving a check cannot pass
+a record by comparing efforts only. Since 2026-09-29 the child's superseded Opus 5.5 pair is also
+the parent's current pair: a child request stating it is refused on its role, even though the
+allowlist and the parent row both carry it
+(`TestTheChildsSupersededPairIsTheParentsPairAndStillRefusedForTheChild` in
+`internal/bridge/execution/roles_test.go`).
 
 This is worth stating because the failure it prevents already happened in prose rather than in
 code: a coordinator retrying a withheld send changed the model and kept the old effort, and the
@@ -90,7 +96,7 @@ show the shape. Do not copy it as a default.
       "roles": {
         "supervisor": {"expectation": "record"},
         "parent": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"},
-        "child":  {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}
+        "child":  {"model": "anthropic/claude-sonnet-5-5", "reasoningEffort": "xhigh"}
       }
     }
 

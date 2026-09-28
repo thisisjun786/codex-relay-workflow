@@ -174,3 +174,31 @@ func TestRoles_whenExpectationGuardIsTheOnlyRefusal(t *testing.T) {
 
 // second returns the error of a two-value call so a refusal can be asserted inline.
 func second[T any](_ T, err error) error { return err }
+
+// The 2026-09-29 decision moved the child to Sonnet 5.5 while the parent stayed on Opus 5.5
+// (docs/role-execution-policy.md). The child's superseded pair is now the parent's current
+// pair: a child request stating it is refused on its role, on the model, even though the
+// allowlist and the parent row both carry it, and each role accepts only its own pair.
+func TestTheChildsSupersededPairIsTheParentsPairAndStillRefusedForTheChild(t *testing.T) {
+	const sonnet = "anthropic/claude-sonnet-5-5"
+	p := mustLoad(t, doc{
+		"allowed": []any{doc{"model": parentModel, "efforts": []any{parentEffort}}, doc{"model": sonnet, "efforts": []any{"xhigh"}}},
+		"roles": doc{
+			"supervisor": doc{"expectation": "record"},
+			"parent":     doc{"model": parentModel, "reasoningEffort": parentEffort},
+			"child":      doc{"model": sonnet, "reasoningEffort": "xhigh"},
+		},
+	})
+	r := refused(t, second(p.Authorize(Input{Model: parentModel, Effort: parentEffort, Role: "child"})))
+	if r.Code != RoleMismatch || r.Field != "model" || !sameStrings(r.Allowed, sonnet) {
+		t.Fatal(r)
+	}
+	if authorize(t, p, Input{Model: parentModel, Effort: parentEffort}).Model != parentModel {
+		t.Fatal("allowlist refused the unnamed request")
+	}
+	authorize(t, p, Input{Model: parentModel, Effort: parentEffort, Role: "parent"})
+	authorize(t, p, Input{Model: sonnet, Effort: "xhigh", Role: "child"})
+	if r = refused(t, second(p.Authorize(Input{Model: sonnet, Effort: "xhigh", Role: "parent"}))); r.Code != RoleMismatch {
+		t.Fatal(r)
+	}
+}
