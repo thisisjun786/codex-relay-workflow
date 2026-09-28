@@ -74,7 +74,9 @@ The child's moves are the other case. Both kept `xhigh`, so each pair it left di
 current one by model alone, and those superseded pairs are the fixtures proving a check cannot pass
 a record by comparing efforts only. Since 2026-09-29 the child's superseded Opus 5.5 pair is also
 the parent's current pair: a child request stating it is refused on its role, even though the
-allowlist and the parent row both carry it.
+allowlist and the parent row both carry it
+(`TestTheChildsSupersededPairIsTheParentsPairAndStillRefusedForTheChild` in
+`internal/bridge/execution/roles_test.go`).
 
 This is worth stating because the failure it prevents already happened in prose rather than in
 code: a coordinator retrying a withheld send changed the model and kept the old effort, and the
