@@ -34,9 +34,9 @@ func Test24_SCH_53_ReportCorrectionGateSentFrozen(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := &Channel{Store: s, Linkage: StoreLinkage{s}, Program: filepath.Join(repo, ".venv/bin/codex-session-relay")}
-	previous := tokenSource
-	tokenSource = bytes.NewReader(make([]byte, 128))
-	defer func() { tokenSource = previous }()
+	previous := TokenSource
+	TokenSource = bytes.NewReader(make([]byte, 128))
+	defer func() { TokenSource = previous }()
 	_, id := stageSet3(t, c, s)
 	c.Settings = &delivery.TaskSettings{}
 	h := &captureHost4{sendHost: sendHost{status: "idle"}}

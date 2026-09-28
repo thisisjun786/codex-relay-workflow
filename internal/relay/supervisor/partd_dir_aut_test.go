@@ -441,7 +441,7 @@ func partDAutoReplay(t *testing.T, id string, kind, projects, sends int) {
 	s, c, _ := partDOpen(t, root, "pretick")
 	captureTokens21(t)
 	if id == "parity_expired_lease" {
-		tokenSource = &captureTokenReader21{next: 1}
+		TokenSource = &captureTokenReader21{next: 1}
 	}
 	h := &partDRecipientHost{partDHost: partDHost{sendHost{status: "idle"}}}
 	if kind == 8 || kind == 10 || kind == 12 {

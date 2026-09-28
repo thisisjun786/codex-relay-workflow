@@ -277,8 +277,8 @@ func (c *Channel) reopenProposal(ctx context.Context, row store.SupervisorMessag
 }
 
 func (c *Channel) loadSettings(ctx context.Context, task string) (*delivery.TaskSettings, error) {
-	if c.settingsLoader != nil {
-		return c.settingsLoader(ctx, task)
+	if c.SettingsLoader != nil {
+		return c.SettingsLoader(ctx, task)
 	}
 	return delivery.AuthorizedSettings(ctx, c.Store, task, nil)
 }

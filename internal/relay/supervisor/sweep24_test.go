@@ -278,7 +278,7 @@ func TestSweep24_DeclarationAfterStagedStillSent(t *testing.T) {
 	}
 	var recipient string
 	_ = f.s.DB.QueryRow("SELECT recipient_task_id FROM supervisor_messages").Scan(&recipient)
-	f.c.settingsLoader = func(context.Context, string) (*delivery.TaskSettings, error) { return &delivery.TaskSettings{}, nil }
+	f.c.SettingsLoader = func(context.Context, string) (*delivery.TaskSettings, error) { return &delivery.TaskSettings{}, nil }
 	h := &sendHost{status: "idle"}
 	record, err := f.c.Attempt(f.ctx, id, h, 1_700_010_000)
 	row, _ := f.s.SupervisorMessage(f.ctx, id)

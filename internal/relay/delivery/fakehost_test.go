@@ -117,7 +117,7 @@ func (h *fakeHost) ReadGoalStatus(thread string) (any, error) {
 	return h.threads[thread].goalStatus, nil
 }
 
-func (h *fakeHost) ListTurnIDs(thread string, limit int) ([]string, error) {
+func (h *fakeHost) ListTurnIDs(thread string, limit int) ([]any, error) {
 	if err := h.guard("list_turn_ids"); err != nil {
 		return nil, err
 	}
@@ -125,7 +125,7 @@ func (h *fakeHost) ListTurnIDs(thread string, limit int) ([]string, error) {
 	if len(turns) > limit {
 		turns = turns[len(turns)-limit:]
 	}
-	var ids []string
+	var ids []any
 	for _, t := range turns {
 		ids = append(ids, t.TurnID)
 	}

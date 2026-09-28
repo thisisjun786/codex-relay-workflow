@@ -85,9 +85,9 @@ func replayORDChannel(t *testing.T, mode string) {
 		now += 600
 	}
 	c.clockISO = func() string { return delivery.ISOOf(now) }
-	previous := tokenSource
-	tokenSource = bytes.NewReader(make([]byte, 32))
-	defer func() { tokenSource = previous }()
+	previous := TokenSource
+	TokenSource = bytes.NewReader(make([]byte, 32))
+	defer func() { TokenSource = previous }()
 
 	id := want.MessageID
 	turnID := "turn-01supervisor-task-1"
@@ -143,7 +143,7 @@ type ordSendHost struct {
 	startedAt float64
 }
 
-func (h *ordSendHost) ListTurnIDs(string, int) ([]string, error) { return []string{h.turnID}, nil }
+func (h *ordSendHost) ListTurnIDs(string, int) ([]any, error) { return []any{h.turnID}, nil }
 func (h *ordSendHost) ReadTurn(_ string, id string) (*delivery.TurnInfo, error) {
 	if id != h.turnID {
 		return nil, nil

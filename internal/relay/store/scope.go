@@ -20,11 +20,11 @@ func NormalizeDeclaredPath(declared string) (string, error) {
 	case strings.ContainsRune(declared, 0):
 		return "", refuse(ReasonScopeEscape, "path must not contain NUL")
 	case !strings.HasPrefix(declared, "/"):
-		return "", refuse(ReasonScopeEscape, "path must be absolute: %q", declared)
+		return "", refuse(ReasonScopeEscape, "path must be absolute: %s", PythonRepr(declared))
 	case strings.Contains(declared, "~"):
-		return "", refuse(ReasonScopeEscape, "path must not contain '~': %q", declared)
+		return "", refuse(ReasonScopeEscape, "path must not contain '~': %s", PythonRepr(declared))
 	case declared != pythonNormpath(declared):
-		return "", refuse(ReasonScopeEscape, "path must already be normalized; %q normalizes to %q", declared, pythonNormpath(declared))
+		return "", refuse(ReasonScopeEscape, "path must already be normalized; %s normalizes to %s", PythonRepr(declared), PythonRepr(pythonNormpath(declared)))
 	}
 	return declared, nil
 }
@@ -54,13 +54,18 @@ func assertWithin(candidate string, roots []string) (string, error) {
 			return root, nil
 		}
 	}
-	return "", refuse(ReasonScopeEscape, "%q lies outside every authorized root %q", candidate, roots)
+	quoted := make([]string, len(roots))
+	for i, root := range roots {
+		quoted[i] = PythonRepr(root)
+	}
+	return "", refuse(ReasonScopeEscape, "%s lies outside every authorized root [%s]", PythonRepr(candidate), strings.Join(quoted, ", "))
 }
 
 // ArtifactBinding records how strongly one artifact read was bound to its declared path.
 type ArtifactBinding struct {
-	Mode   PathBinding
-	Detail string
+	Mode           PathBinding
+	Detail         string
+	Declared, Root string
 }
 
 // betweenPasses is manifest.hash_authorized's between_passes seam: tests mutate, move or
@@ -97,7 +102,7 @@ func HashArtifactContext(ctx context.Context, declared string, roots []string, a
 		return "", 0, ArtifactBinding{}, err
 	}
 	if actual != declared {
-		return "", 0, ArtifactBinding{}, refuse(ReasonPathRelocated, "descriptor for %q actually resolves to %q", declared, actual)
+		return "", 0, ArtifactBinding{}, refuse(ReasonPathRelocated, "descriptor for %s actually resolves to %s", PythonRepr(declared), PythonRepr(actual))
 	}
 	if _, err := assertWithin(actual, []string{root}); err != nil {
 		return "", 0, ArtifactBinding{}, err
@@ -107,9 +112,9 @@ func HashArtifactContext(ctx context.Context, declared string, roots []string, a
 		return "", 0, ArtifactBinding{}, &RefusedError{Reason: ReasonScopeEscape, Detail: declared, cause: err}
 	}
 	if mode&syscall.S_IFMT != syscall.S_IFREG {
-		return "", 0, ArtifactBinding{}, refuse(ReasonNotARegularFile, "%q is not a regular file", declared)
+		return "", 0, ArtifactBinding{}, refuse(ReasonNotARegularFile, "%s is not a regular file", PythonRepr(declared))
 	}
-	binding := ArtifactBinding{Mode: BestEffortDetection, Detail: "lease not attempted"}
+	binding := ArtifactBinding{Mode: BestEffortDetection, Detail: "lease not attempted", Declared: declared, Root: root}
 	if allowLease {
 		held, detail := acquireReadLease(fd)
 		binding.Detail = detail
@@ -130,7 +135,7 @@ func HashArtifactContext(ctx context.Context, declared string, roots []string, a
 		return "", 0, ArtifactBinding{}, err
 	}
 	if first != second || size != sizeAgain {
-		return "", 0, ArtifactBinding{}, refuse(ReasonArtifactMutated, "%q produced different bytes on two consecutive reads", declared)
+		return "", 0, ArtifactBinding{}, refuse(ReasonArtifactMutated, "%s produced different bytes on two consecutive reads", PythonRepr(declared))
 	}
 	if err := verifyStable(fd, declared, before, binding.Mode); err != nil {
 		return "", 0, ArtifactBinding{}, err
@@ -144,16 +149,21 @@ func verifyStable(fd int, declared string, before statSnapshot, mode PathBinding
 		return err
 	}
 	if actual != declared {
-		return refuse(ReasonPathRelocated, "%q moved to %q during the read", declared, actual)
+		return refuse(ReasonPathRelocated, "%s moved to %s during the read", PythonRepr(declared), PythonRepr(actual))
 	}
 	after, _, err := snapshotOf(fd)
 	if err != nil || after != before {
-		return refuse(ReasonArtifactMutated, "%q changed size or timestamps during the read", declared)
+		return refuse(ReasonArtifactMutated, "%s changed size or timestamps during the read", PythonRepr(declared))
 	}
 	if mode == LeaseEnforced && !leaseStillHeld(fd) {
-		return refuse(ReasonArtifactLeaseBroken, "the read lease on %q was broken during the read", declared)
+		return refuse(ReasonArtifactLeaseBroken, "the read lease on %s was broken during the read", PythonRepr(declared))
 	}
 	return nil
+}
+
+// hashDescriptor is the uncancellable form used by authorized reads.
+func hashDescriptor(fd int) (string, int64, error) {
+	return hashDescriptorContext(context.Background(), fd)
 }
 
 func hashDescriptorContext(ctx context.Context, fd int) (string, int64, error) {

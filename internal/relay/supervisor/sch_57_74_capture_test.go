@@ -54,9 +54,9 @@ func (h *captureHost57) SendMessage(id, thread, message string, settings *delive
 func captureSend57(t *testing.T, c *Channel, id string, h SendAdapter, at float64) map[string]any {
 	t.Helper()
 	c.Settings = &delivery.TaskSettings{}
-	previous := tokenSource
-	tokenSource = bytes.NewReader(make([]byte, 8))
-	t.Cleanup(func() { tokenSource = previous })
+	previous := TokenSource
+	TokenSource = bytes.NewReader(make([]byte, 8))
+	t.Cleanup(func() { TokenSource = previous })
 	result, err := c.Attempt(context.Background(), id, h, at)
 	if err != nil {
 		t.Fatal(err)

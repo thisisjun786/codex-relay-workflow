@@ -9,6 +9,7 @@ import (
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // Test_mcp_isolated_launch_and_followup_are_durable is test_worktree.py's
@@ -22,13 +23,16 @@ func Test_mcp_isolated_launch_and_followup_are_durable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Under /dev/shm like the other worktree tests: the destination must be outside every
-	// repository, and a shared /tmp may itself sit inside one.
-	root, err := os.MkdirTemp("/dev/shm", "crw-mcp-worktree-")
+	// The destination must be outside every repository and follows TMPDIR.
+	root, err := os.MkdirTemp("", "crw-mcp-worktree-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	t.Cleanup(func() {
+		if err := testsupport.RemoveTempTree(root); err != nil {
+			t.Error(err)
+		}
+	})
 	if root, err = filepath.EvalSymlinks(root); err != nil {
 		t.Fatal(err)
 	}

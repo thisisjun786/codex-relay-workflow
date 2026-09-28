@@ -374,7 +374,7 @@ func Test24_SCH_72_SettingsChangedBeforeTransportCancelsClaim(t *testing.T) {
 	_, stage := f.staged(t)
 	id := stage["messageId"].(string)
 	current := &delivery.TaskSettings{Data: delivery.Obj{{Key: "cwd", Value: "/before"}}}
-	f.c.settingsLoader = func(context.Context, string) (*delivery.TaskSettings, error) { return current, nil }
+	f.c.SettingsLoader = func(context.Context, string) (*delivery.TaskSettings, error) { return current, nil }
 	f.c.beforeTransport = func() {
 		current = &delivery.TaskSettings{Data: delivery.Obj{{Key: "cwd", Value: "/changed-after-gate"}}}
 	}

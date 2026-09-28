@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/worktrees"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func gitCommand(ctx context.Context, dir string, args ...string) (string, error) {
@@ -86,7 +87,11 @@ func runGit(t *testing.T, scenario Scenario) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	t.Cleanup(func() {
+		if err := testsupport.RemoveTempTree(root); err != nil {
+			t.Error(err)
+		}
+	})
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_AUTHOR_NAME", "Fixture")

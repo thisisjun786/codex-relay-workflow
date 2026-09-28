@@ -64,7 +64,7 @@ func TestR24C_SettingsStopStanding(t *testing.T) {
 	r := newBRun(t, f)
 	f.c.Settings = nil
 	calls := 0
-	f.c.settingsLoader = func(context.Context, string) (*delivery.TaskSettings, error) {
+	f.c.SettingsLoader = func(context.Context, string) (*delivery.TaskSettings, error) {
 		calls++
 		if calls > 1 {
 			return nil, Refusal{"settings_unavailable", "gone"}

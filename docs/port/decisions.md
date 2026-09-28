@@ -567,6 +567,8 @@ citation against the worktree revision named at the top. There is no failure sce
 run for a document; a citation that stops resolving is caught when the cited line moves,
 by the reviewer, not by a script.
 
+todo 28 adds test seams to delivery/managed/bridge ledger, additive, default unchanged
+
 ## 21. Routing uses the transaction-aware fault ledger library (todo 23A)
 
 Decision: expose `faults.KindPolicy` (PreIssue, Validate, Confirm), class-threshold registration, and `Ledger` methods for canonical identities, complete observation receipts with atomic adoption, current link reads, adoption/move/update, publication queue/read/claim/operation/complete/fail/reconcile/cancel, notifications, policies, remediation, and resolution. They reuse the existing helpers and the caller's context/Store; routing wraps composed writes in `Store.Compose`, never opens a second Store or invokes the CLI. Existing CLI claim/operation/fail/cancel dispatch shares these APIs. `WithInputs` supplies deterministic clocks and entropy to tests.

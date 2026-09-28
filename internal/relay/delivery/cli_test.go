@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -18,31 +17,11 @@ import (
 // compared whole, byte for byte, after the wall-clock stamps (the only nondeterministic bytes)
 // are replaced by one token; exit codes are compared exactly.
 
-var (
-	crwOnce sync.Once
-	crwPath string
-	crwErr  error
-)
+// TestMain builds this once before isolating HOME.
+var crwPath string
 
 func crwBinary(t *testing.T) string {
 	t.Helper()
-	crwOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "crw-delivery-cli-")
-		if err != nil {
-			crwErr = err
-			return
-		}
-		crwPath = filepath.Join(dir, "crw")
-		build := exec.Command("go", "build", "-buildvcs=false", "-o", crwPath, "./cmd/crw")
-		build.Dir = repoRoot(t)
-		if out, err := build.CombinedOutput(); err != nil {
-			crwErr = err
-			t.Log(string(out))
-		}
-	})
-	if crwErr != nil {
-		t.Fatal(crwErr)
-	}
 	return crwPath
 }
 
@@ -70,14 +49,7 @@ func newSide(t *testing.T, python bool, work string) *cliSide {
 		s.argv0 = []string{crwBinary(t), "relay"}
 		s.dir = root
 	}
-	seed := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/delivery/testdata/cliseed.py"), s.state, s.work)
-	seed.Dir = filepath.Join(root, "packages", "codex-session-relay")
-	seed.Env = s.env
-	out, err := seed.Output()
-	mustDo(t, err)
-	if strings.TrimSpace(string(out)) != "rel-4675b3fb54d7b85d" && !strings.HasPrefix(string(out), "rel-") {
-		t.Fatalf("seed %s", out)
-	}
+	copyCLISeed(t, s.state, s.work)
 	return s
 }
 

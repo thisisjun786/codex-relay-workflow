@@ -18,7 +18,7 @@ contract:
 # Exhaustive live-Python CLI matrices. The default suite keeps mutation-backed
 # representatives so ordinary CI remains bounded on four-core runners.
 parity:
-	$(GO) test -tags parity -count=1 ./internal/relay/cli/... ./internal/relay/hook/...
+	$(GO) test -tags parity -count=1 ./internal/relay/cli/... ./internal/relay/adapter/... ./internal/relay/hook/...
 
 # The development tooling (cmd/crw-dev, internal/dev) builds only with -tags dev, so lint and
 # test cover it in a second pass; dist and goreleaser never pass the tag.

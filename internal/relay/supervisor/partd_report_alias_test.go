@@ -346,9 +346,9 @@ func (*rrHost) ReadThread(string) (delivery.ThreadFacts, error) {
 	yes := true
 	return delivery.ThreadFacts{RuntimeStatus: "idle", CanAcceptInput: &yes}, nil
 }
-func (*rrHost) IsArchived(string, any) (*bool, error)     { v := false; return &v, nil }
-func (*rrHost) ReadGoalStatus(string) (any, error)        { return nil, nil }
-func (*rrHost) ListTurnIDs(string, int) ([]string, error) { return []string{}, nil }
+func (*rrHost) IsArchived(string, any) (*bool, error)  { v := false; return &v, nil }
+func (*rrHost) ReadGoalStatus(string) (any, error)     { return nil, nil }
+func (*rrHost) ListTurnIDs(string, int) ([]any, error) { return []any{}, nil }
 func (*rrHost) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
 	return delivery.Obj{{Key: "requestId", Value: id}, {Key: "operation", Value: "send_message_to_thread"}, {Key: "status", Value: "accepted"}, {Key: "threadId", Value: thread}, {Key: "turnId", Value: "turn-" + thread + "-3"}, {Key: "resumed", Value: delivery.Obj{{Key: "approvalPolicy", Value: "never"}}}, {Key: "retrySafe", Value: false}}, nil
 }

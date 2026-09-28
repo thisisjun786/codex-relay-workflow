@@ -16,6 +16,10 @@ func init() {
 	cli.Commands = append(cli.Commands, cli.Command{Name: "managed-start", Required: []string{"request", "marker-root"}, Flags: func(f *flag.FlagSet) { f.String("request", "", ""); f.String("marker-root", "", "") }, Exempt: true, Run: runStart})
 }
 
+// HostStart is installed by the production adapter; nil preserves the existing
+// host-unavailable path after the exact same input and selector checks.
+var HostStart func(cli.Services, cli.Args, []byte) (any, error)
+
 // runStart performs input validation before acquiring the store. The production
 // host adapter is todo 28: never authorize a host effect without its ledger.
 func runStart(_ context.Context, services cli.Services, args cli.Args) (any, error) {
@@ -54,6 +58,9 @@ func runStart(_ context.Context, services cli.Services, args cli.Args) (any, err
 	// open (or create) a relay store before that boundary can be authenticated.
 	if _, err := store.CanonicalSocket(services.SocketPath); err != nil {
 		return nil, &cli.HostError{Class: "HostUnavailable", Detail: err.Error()}
+	}
+	if HostStart != nil {
+		return HostStart(services, args, raw)
 	}
 	return nil, &cli.HostError{Class: "HostUnavailable", Detail: "the relay host adapter (bridge_adapter.py) is not ported to Go yet (todo 28)"}
 }

@@ -1,5 +1,10 @@
 package delivery
 
+import (
+	"encoding/json"
+	"errors"
+)
+
 // HostError is a host read or send that could not complete. Kind is the Python exception class
 // name a message about it carries (ConnectionError for the fake host's failed reads).
 type HostError struct {
@@ -7,26 +12,58 @@ type HostError struct {
 	Message string
 }
 
-func (e *HostError) Error() string { return e.Message }
+func (e *HostError) Error() string               { return e.Message }
+func (e *HostError) PythonExceptionKind() string { return e.Kind }
+
+type pythonException interface {
+	error
+	PythonExceptionKind() string
+}
 
 func errorLabel(err error) string {
-	if h, ok := err.(*HostError); ok {
-		return h.Kind + ": " + h.Message
+	var python pythonException
+	if errors.As(err, &python) {
+		return python.PythonExceptionKind() + ": " + err.Error()
 	}
 	return "Exception: " + err.Error()
 }
 
 // ThreadFacts is hostadapter.ThreadFacts.
 type ThreadFacts struct {
-	RuntimeStatus  string
-	CanAcceptInput *bool
+	RuntimeStatus  any
+	CanAcceptInput any
 }
 
 // TurnInfo is hostadapter.TurnInfo.
 type TurnInfo struct {
 	TurnID    string
-	Status    string
-	StartedAt *float64
+	Status    any
+	StartedAt any
+}
+
+func TurnStartedAt(turn *TurnInfo) *float64 {
+	if turn == nil || turn.StartedAt == nil {
+		return nil
+	}
+	switch value := turn.StartedAt.(type) {
+	case *float64:
+		return value
+	case float64:
+		return &value
+	case json.Number:
+		if number, err := value.Float64(); err == nil {
+			return &number
+		}
+	}
+	return nil
+}
+
+func TurnStatus(turn *TurnInfo) string {
+	if turn == nil {
+		return ""
+	}
+	status, _ := turn.Status.(string)
+	return status
 }
 
 // TokenScan is hostadapter.TokenScan.
@@ -44,7 +81,7 @@ type Adapter interface {
 	ReadThread(thread string) (ThreadFacts, error)
 	IsArchived(thread string, cwd any) (*bool, error)
 	ReadGoalStatus(thread string) (any, error)
-	ListTurnIDs(thread string, limit int) ([]string, error)
+	ListTurnIDs(thread string, limit int) ([]any, error)
 	ReadTurn(thread, turn string) (*TurnInfo, error)
 	SendMessage(requestID, thread, message string, settings *TaskSettings) (Obj, error)
 	GetOperation(requestID string) (Obj, error)

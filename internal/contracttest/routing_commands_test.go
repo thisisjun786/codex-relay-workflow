@@ -24,7 +24,7 @@ func TestRoutingCommandsPythonArgparseBytes(t *testing.T) {
 	home := t.TempDir()
 	script := filepath.Join(root, "internal/relay/routing/testdata/cli_capture.py")
 	cmd := exec.Command("uv", "run", "--no-sync", "--no-project", "python3", script, "argv", home)
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/state", "XDG_CONFIG_HOME="+home+"/config", "CODEX_HOME="+home+"/codex", "TMPDIR=/dev/shm", "UV_PYTHON_DOWNLOADS=never")
+	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/state", "XDG_CONFIG_HOME="+home+"/config", "CODEX_HOME="+home+"/codex", "UV_PYTHON_DOWNLOADS=never")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	raw, err := cmd.Output()

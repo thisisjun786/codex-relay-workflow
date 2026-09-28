@@ -23,7 +23,7 @@ type Channel struct {
 	Program           string
 	Socket            string
 	Settings          *delivery.TaskSettings
-	settingsLoader    func(context.Context, string) (*delivery.TaskSettings, error)
+	SettingsLoader    func(context.Context, string) (*delivery.TaskSettings, error)
 	beforeTransport   func()
 	beforeClaimRead   func(context.Context)
 	skipPreflightRate bool

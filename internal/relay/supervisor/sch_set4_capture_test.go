@@ -15,11 +15,11 @@ import (
 
 func captureAttemptSet4(t *testing.T, c *Channel, id string, h SendAdapter, at float64, token int) map[string]any {
 	t.Helper()
-	previous := tokenSource
+	previous := TokenSource
 	b := make([]byte, 8)
 	b[7] = byte(token)
-	tokenSource = bytes.NewReader(b)
-	t.Cleanup(func() { tokenSource = previous })
+	TokenSource = bytes.NewReader(b)
+	t.Cleanup(func() { TokenSource = previous })
 	c.Settings = &delivery.TaskSettings{}
 	answer, err := c.Attempt(context.Background(), id, h, at)
 	if err != nil {
@@ -69,9 +69,9 @@ func Test24_SCH_56_LiveArchivedAtTransport(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		previous := tokenSource
-		tokenSource = bytes.NewReader(make([]byte, 8))
-		t.Cleanup(func() { tokenSource = previous })
+		previous := TokenSource
+		TokenSource = bytes.NewReader(make([]byte, 8))
+		t.Cleanup(func() { TokenSource = previous })
 		c.Settings = &delivery.TaskSettings{}
 		h := &captureHost57{&sendHost{status: "idle"}}
 		_, err := c.Attempt(ctx, id, h, 1700000000)
@@ -94,9 +94,9 @@ func Test24_SCH_66_LiveCancelledBudget(t *testing.T) {
 	supervisorMirror(t, "WhatTheSeventhIndependentReviewFound.test_a_send_the_hierarchy_cancelled_gives_its_budget_back", "event", func(c *Channel, s *store.Store) []any {
 		_, id := captureStage57(t, c, s)
 		c.beforeTransport = func() { captureHandoverSet4(t, c, s) }
-		previous := tokenSource
-		tokenSource = bytes.NewReader(make([]byte, 8))
-		t.Cleanup(func() { tokenSource = previous })
+		previous := TokenSource
+		TokenSource = bytes.NewReader(make([]byte, 8))
+		t.Cleanup(func() { TokenSource = previous })
 		c.Settings = &delivery.TaskSettings{}
 		_, err := c.Attempt(context.Background(), id, &captureHost57{&sendHost{status: "idle"}}, 1700000000)
 		var refusal Refusal
@@ -249,7 +249,7 @@ func Test24_SCH_72_LiveSettingsAtTransport(t *testing.T) {
 			t.Fatal(err)
 		}
 		current := &delivery.TaskSettings{Data: delivery.Obj{{Key: "cwd", Value: "/supervisor"}}}
-		c.settingsLoader = func(context.Context, string) (*delivery.TaskSettings, error) { return current, nil }
+		c.SettingsLoader = func(context.Context, string) (*delivery.TaskSettings, error) { return current, nil }
 		c.beforeTransport = func() {
 			current = &delivery.TaskSettings{Data: delivery.Obj{{Key: "cwd", Value: "/changed-after-gate"}}}
 			replacement := strings.ReplaceAll(old, "/supervisor", "/changed-after-gate")
@@ -260,9 +260,9 @@ func Test24_SCH_72_LiveSettingsAtTransport(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		previous := tokenSource
-		tokenSource = bytes.NewReader(make([]byte, 8))
-		t.Cleanup(func() { tokenSource = previous })
+		previous := TokenSource
+		TokenSource = bytes.NewReader(make([]byte, 8))
+		t.Cleanup(func() { TokenSource = previous })
 		h := &captureHost57{&sendHost{status: "idle"}}
 		first, err := c.Attempt(ctx, id, h, 1700000000)
 		if err != nil {
@@ -277,7 +277,7 @@ func Test24_SCH_72_LiveSettingsAtTransport(t *testing.T) {
 			t.Fatal(err)
 		}
 		c.beforeTransport = nil
-		tokenSource = bytes.NewReader([]byte{0, 0, 0, 0, 0, 0, 0, 1})
+		TokenSource = bytes.NewReader([]byte{0, 0, 0, 0, 0, 0, 0, 1})
 		second, err := c.Attempt(ctx, id, h, 1700000000)
 		if err != nil {
 			t.Fatal(err)

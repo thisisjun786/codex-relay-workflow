@@ -20,7 +20,7 @@ func runGit(t *testing.T, dir string, args ...string) string {
 }
 func repository(t *testing.T) (string, string, string) {
 	t.Helper()
-	root, err := os.MkdirTemp("/dev/shm", "crw-worktree-")
+	root, err := os.MkdirTemp("", "crw-worktree-")
 	if err != nil {
 		t.Fatal(err)
 	}

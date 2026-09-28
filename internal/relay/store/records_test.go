@@ -2,16 +2,18 @@ package store
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func recordStore(t *testing.T) *Store {
@@ -45,13 +47,21 @@ func dieInsideTransaction(t *testing.T, store *Store, write func(context.Context
 			t.Fatal(err)
 		}
 		child.faultHook = func() {
-			fmt.Println("written")
+			// Report actual allocations, not just the requested TMPDIR: the parent
+			// must detect a child that allocated outside its owned cleanup tree.
+			if err := json.NewEncoder(os.Stdout).Encode(map[string]string{"state": "written", "fixtureRoot": filepath.Dir(filepath.Dir(filepath.Dir(store.Path))), "isolationRoot": isolationRoot}); err != nil {
+				t.Fatal(err)
+			}
 			_, _ = io.Copy(io.Discard, os.Stdin)
 		}
 		t.Fatalf("the transaction reached COMMIT: %v", write(context.Background(), child))
 	}
-	cmd := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$")
-	cmd.Env = append(os.Environ(), "CRW_CRASH_DB="+store.Path)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^"+t.Name()+"$")
+	// The parent owns every temporary directory made by the killed child.
+	childTemps := t.TempDir()
+	cmd.Env = append(os.Environ(), "CRW_CRASH_DB="+store.Path, "TMPDIR="+childTemps)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -71,13 +81,36 @@ func dieInsideTransaction(t *testing.T, store *Store, write func(context.Context
 		}
 	})
 	line := bufio.NewScanner(out)
-	if !line.Scan() || line.Text() != "written" {
-		t.Fatalf("child did not reach the fault hook: %q: %v", line.Text(), line.Err())
+	var observed map[string]string
+	if !line.Scan() {
+		t.Fatalf("child did not reach the fault hook: %v", line.Err())
+	}
+	if err := json.Unmarshal(line.Bytes(), &observed); err != nil || observed["state"] != "written" {
+		t.Fatalf("child did not reach the fault hook: %q: %v", line.Text(), err)
 	}
 	if err := cmd.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
 	_ = cmd.Wait() // a killed process exits unsuccessfully by design.
+	if observed["isolationRoot"] != "" {
+		t.Error("crash child created its own isolation root")
+	}
+	if err := os.RemoveAll(childTemps); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"fixtureRoot", "isolationRoot"} {
+		path := observed[key]
+		if path == "" {
+			continue
+		}
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("crash child temp root left behind: %s (%v)", path, err)
+			// A failing mutation test must not itself leak the reported child root.
+			if err := os.RemoveAll(path); err != nil {
+				t.Error(err)
+			}
+		}
+	}
 }
 
 func TestTransaction_rolls_back_when_process_dies_before_commit(t *testing.T) {
@@ -91,6 +124,33 @@ func TestTransaction_rolls_back_when_process_dies_before_commit(t *testing.T) {
 	entries, err := store.Journal(context.Background(), "crash", "s")
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("partial journal: %+v: %v", entries, err)
+	}
+	repo, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/store/testdata/crash_capture.py"), filepath.Join(t.TempDir(), "python.sqlite3"))
+	cmd.Dir = repo
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Python %v\n%s", err, out)
+	}
+	var want any
+	if err := json.Unmarshal(out, &want); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := json.Marshal(map[string]any{"journal": append([]JournalEntry{}, entries...)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(actual, expected) {
+		t.Fatalf("Go %s\nPython %s", actual, expected)
 	}
 }
 

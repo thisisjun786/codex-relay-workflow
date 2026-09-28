@@ -303,7 +303,7 @@ func replaySOS(t *testing.T, binary, root string, op sosOperation) {
 	}
 }
 
-//go:linkname sosTokenSource github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor.tokenSource
+//go:linkname sosTokenSource github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor.TokenSource
 var sosTokenSource io.Reader
 
 type sosHost struct {

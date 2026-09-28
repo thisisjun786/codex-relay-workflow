@@ -44,9 +44,9 @@ func captureRefusal4(t *testing.T, err error) Refusal {
 
 func captureTokens4(t *testing.T) {
 	t.Helper()
-	previous := tokenSource
-	tokenSource = bytes.NewReader(make([]byte, 128))
-	t.Cleanup(func() { tokenSource = previous })
+	previous := TokenSource
+	TokenSource = bytes.NewReader(make([]byte, 128))
+	t.Cleanup(func() { TokenSource = previous })
 }
 
 type captureHost4 struct {

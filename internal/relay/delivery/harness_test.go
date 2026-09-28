@@ -463,7 +463,7 @@ func (c *counted) ReadGoalStatus(t string) (any, error) {
 	c.calls = append(c.calls, "read_goal_status")
 	return c.fakeHost.ReadGoalStatus(t)
 }
-func (c *counted) ListTurnIDs(t string, limit int) ([]string, error) {
+func (c *counted) ListTurnIDs(t string, limit int) ([]any, error) {
 	c.calls = append(c.calls, "list_turn_ids")
 	return c.fakeHost.ListTurnIDs(t, limit)
 }

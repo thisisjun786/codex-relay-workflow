@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,6 +16,15 @@ import (
 // ManifestRevision is MANIFEST-CANON-01: sorted byte-wise by path, "<path>:<sha256>" per entry,
 // joined with LF, sha256 of the UTF-8 string.
 func ManifestRevision(entries []ManifestEntry) (string, error) {
+	payload, err := CanonicalPayload(entries)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(payload))
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func CanonicalPayload(entries []ManifestEntry) (string, error) {
 	ordered := append([]ManifestEntry(nil), entries...)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Path < ordered[j].Path })
 	lines := make([]string, 0, len(ordered))
@@ -24,12 +34,11 @@ func ManifestRevision(entries []ManifestEntry) (string, error) {
 			return "", err
 		}
 		if !lowerDigest.MatchString(entry.SHA256) {
-			return "", refuse(ReasonManifestUnverified, "entry %q has a digest that is not 64 lowercase hex characters: %q", declared, entry.SHA256)
+			return "", refuse(ReasonManifestUnverified, "entry %s has a digest that is not 64 lowercase hex characters: %s", PythonRepr(declared), PythonRepr(entry.SHA256))
 		}
 		lines = append(lines, declared+":"+entry.SHA256)
 	}
-	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
-	return hex.EncodeToString(sum[:]), nil
+	return strings.Join(lines, "\n"), nil
 }
 
 // BuildManifest reads each authorized artifact into a manifest entry (manifest.build).
@@ -108,7 +117,7 @@ func FreezeManifest(entries []ManifestEntry, destination string) error {
 	if err != nil {
 		return err
 	}
-	document, err := json.Marshal(frozenManifest{Serialization: "MANIFEST-CANON-01", RevisionHash: revision, Entries: entries})
+	document, err := frozenDocument(entries, revision)
 	if err != nil {
 		return fmt.Errorf("frozen manifest: %w", err)
 	}
@@ -118,15 +127,20 @@ func FreezeManifest(entries []ManifestEntry, destination string) error {
 	return nil
 }
 
-func copyAuthorized(source, blob string) error {
-	data, err := os.ReadFile(source)
+func copyAuthorized(source, blob string) (err error) {
+	handle, err := OpenAuthorized(source, []string{"/"}, false)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, handle.Close()) }()
+	data, err := io.ReadAll(handle.File)
 	if err != nil {
 		return refuse(ReasonManifestUnverified, "cannot freeze %q: %v", source, err)
 	}
 	if err := os.WriteFile(blob, data, 0o600); err != nil {
 		return fmt.Errorf("frozen blob: %w", err)
 	}
-	return nil
+	return handle.VerifyStable()
 }
 
 // VerifyFrozen checks entries against a frozen copy instead of files that may have moved on,

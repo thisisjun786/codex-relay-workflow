@@ -49,7 +49,7 @@ func (h *set1Host17) FindToken(_ string, token string, _ int, _ bool) (delivery.
 }
 func Test24_SCH_17_Capture(t *testing.T) {
 	captureTokens21(t)
-	tokenSource.(*captureTokenReader21).next = 1
+	TokenSource.(*captureTokenReader21).next = 1
 	supervisorMirror(t, "TheRoundtrip.test_which_turn_answered_is_recorded_rather_than_averaged_into_one_word", "event", func(c *Channel, s *store.Store) []any {
 		// The event snapshot is taken after the first readback and before the second stage.
 		prior, err := s.SupervisorReadback(context.Background(), capturePriorMessage(t, s))
@@ -244,7 +244,7 @@ func Test24_SCH_22_Capture(t *testing.T) {
 		if n != 0 {
 			t.Fatalf("unexpected attempts: %d", n)
 		}
-		tokenSource.(*captureTokenReader21).next = 0
+		TokenSource.(*captureTokenReader21).next = 0
 		c.clockISO = func() string { return delivery.ISOOf(1700000005) }
 		a, err := c.Attempt(ctx, first, h, 1700000005)
 		if err != nil {
@@ -333,7 +333,7 @@ func Test24_SCH_23_StrandedCapture(t *testing.T) {
 			t.Fatal(err)
 		}
 		set1ClaimWithoutTransport(t, c, s, first, "a worker that died", 1700000005)
-		tokenSource.(*captureTokenReader21).next = 1
+		TokenSource.(*captureTokenReader21).next = 1
 		c.Settings = &delivery.TaskSettings{}
 		c.clockISO = func() string { return delivery.ISOOf(1700000005) }
 		answer, err := c.Attempt(context.Background(), second["messageId"].(string), &captureHost4{sendHost: sendHost{status: "idle"}}, 1700000306)
@@ -521,10 +521,13 @@ func Test24_SCH_26_StageShapeCapture(t *testing.T) {
 			return []any{[]any{"a.json"}, nil, nil}
 		}},
 		{"socket", "TheHostRequiredCommandsRefuseWithoutOne.test_the_socket_is_global_and_belongs_before_the_subcommand", func(t *testing.T, b string) []any {
-			before, _, _ := set1Command(t, b, "--socket", "/tmp/s", "supervisor-send", "--message", "m")
-			after, _, _ := set1Command(t, b, "supervisor-send", "--message", "m", "--socket", "/tmp/s")
-			if before == 2 || after != 2 {
-				t.Fatalf("socket placement: before %d after %d", before, after)
+			// Parsing is the property: before the subcommand, --socket parses and the command runs
+			// (here it refuses: nothing is staged); after it, argparse rejects the call with usage.
+			// Both exit 2, so the exit code alone cannot tell them apart.
+			_, parsed, _ := set1Command(t, b, "--socket", "/tmp/s", "supervisor-send", "--message", "m")
+			after, _, text := set1Command(t, b, "supervisor-send", "--message", "m", "--socket", "/tmp/s")
+			if parsed["error"] != "refused" || after != 2 || !strings.Contains(text, "usage:") {
+				t.Fatalf("socket placement: before %v; after %d %q", parsed, after, text)
 			}
 			return []any{"/tmp/s"}
 		}},

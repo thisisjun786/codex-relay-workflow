@@ -5,9 +5,13 @@ package store
 import (
 	"errors"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 // pinnedOpen opens every component from "/" with O_NOFOLLOW so no symlink can redirect the
@@ -43,11 +47,11 @@ func walkError(err error, component, declared string) error {
 	errors.As(err, &errno)
 	switch errno {
 	case syscall.ELOOP, syscall.ENOTDIR:
-		return &RefusedError{Reason: ReasonSymlinkComponent, Detail: "component " + strconv.Quote(component) + " of " + strconv.Quote(declared) + " is a symlink or not a directory", cause: err}
+		return &RefusedError{Reason: ReasonSymlinkComponent, Detail: "component " + PythonRepr(component) + " of " + PythonRepr(declared) + " is a symlink or not a directory", cause: err}
 	case syscall.ENOENT, syscall.ESTALE:
-		return &RefusedError{Reason: ReasonPathChanged, Detail: "component " + strconv.Quote(component) + " of " + strconv.Quote(declared) + " disappeared during resolution", cause: err}
+		return &RefusedError{Reason: ReasonPathChanged, Detail: "component " + PythonRepr(component) + " of " + PythonRepr(declared) + " disappeared during resolution", cause: err}
 	default:
-		return &RefusedError{Reason: ReasonScopeEscape, Detail: "cannot open component " + strconv.Quote(component) + " of " + strconv.Quote(declared), cause: err}
+		return &RefusedError{Reason: ReasonScopeEscape, Detail: "cannot open component " + PythonRepr(component) + " of " + PythonRepr(declared) + ": " + unix.ErrnoName(errno), cause: err}
 	}
 }
 
@@ -59,14 +63,26 @@ func descriptorPath(fd int) (string, error) {
 	return actual, nil
 }
 
-// acquireReadLease is scope.py _LeaseGuard.acquire: a pre-existing writable open answers
-// EAGAIN, and the read degrades to best-effort detection instead of pretending.
+// acquireReadLease is per descriptor. F_GETLEASE identifies which held descriptor the kernel
+// actually broke, so an unrelated SIGIO cannot invalidate another artifact read.
+var leaseSignalOnce sync.Once
+
 func acquireReadLease(fd int) (bool, string) {
-	if _, err := fcntl(fd, syscall.F_SETLEASE, syscall.F_RDLCK); err != nil {
+	leaseSignalOnce.Do(func() {
+		signals := make(chan os.Signal, 16)
+		signal.Notify(signals, syscall.SIGIO)
+		go func() {
+			for range signals {
+			}
+		}()
+	})
+	if _, err := unix.FcntlInt(uintptr(fd), unix.F_SETLEASE, unix.F_RDLCK); err != nil {
 		if errors.Is(err, syscall.EAGAIN) {
 			return false, "a writable open already exists, so no lease could be taken"
 		}
-		return false, "lease refused: " + err.Error()
+		var errno syscall.Errno
+		errors.As(err, &errno)
+		return false, "lease refused: " + unix.ErrnoName(errno)
 	}
 	return true, "read lease held for the whole read"
 }

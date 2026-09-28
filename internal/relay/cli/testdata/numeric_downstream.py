@@ -1,6 +1,6 @@
 # Construct identical isolated baseline stores for the two real CLI processes.
 import contextlib, io, json, pathlib, sys
-from codex_session_relay import cli
+from codex_session_relay import cli, projects
 from codex_session_relay.store import Store
 from codex_session_relay.registry import Registry
 

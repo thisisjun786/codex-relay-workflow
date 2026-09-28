@@ -110,13 +110,13 @@ func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy st
 			verified, detail = "unverified_turn", "the turn could not be read: "+err.Error()
 		} else if readTurn == nil {
 			verified, detail = "turn_not_found", "the host has no such turn on this thread"
-		} else if readTurn.StartedAt == nil || math.IsNaN(*readTurn.StartedAt) || math.IsInf(*readTurn.StartedAt, 0) {
+		} else if delivery.TurnStartedAt(readTurn) == nil || math.IsNaN(*delivery.TurnStartedAt(readTurn)) || math.IsInf(*delivery.TurnStartedAt(readTurn), 0) {
 			verified, detail = "unverified_turn", "the host gave no start time for this turn that is a time, and an unknown chronology is not a verification"
 		} else if attempt == nil || !attempt.TransportStartedAt.Valid {
 			verified, detail = "unverified_turn", "this attempt has no recorded transport start, so there is no send to measure the turn against"
 		} else if stamp, parseErr := time.Parse("2006-01-02T15:04:05.000000+00:00", attempt.TransportStartedAt.String); parseErr != nil {
 			verified, detail = "unverified_turn", "this attempt has no recorded transport start, so there is no send to measure the turn against"
-		} else if *readTurn.StartedAt+1.0 <= float64(stamp.UnixMicro())/1e6 {
+		} else if *delivery.TurnStartedAt(readTurn)+1.0 <= float64(stamp.UnixMicro())/1e6 {
 			verified, detail = "turn_predates_send", "this turn began before the send, so it cannot be the turn that read it"
 		}
 	}
@@ -156,9 +156,9 @@ func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy st
 	if verified == "host_read" && delivered["turnId"] != nil && delivered["turnId"] != turnID && origin != "relay_opened" && readTurn != nil && readTurn.StartedAt != nil {
 		landed := fmt.Sprint(delivered["turnId"])
 		turn, readErr := adapter.ReadTurn(row.RecipientTaskID, landed)
-		if readErr != nil || turn == nil || turn.StartedAt == nil || math.IsNaN(*turn.StartedAt) || math.IsInf(*turn.StartedAt, 0) {
+		if readErr != nil || turn == nil || delivery.TurnStartedAt(turn) == nil || math.IsNaN(*delivery.TurnStartedAt(turn)) || math.IsInf(*delivery.TurnStartedAt(turn), 0) {
 			verified, detail = "unverified_turn", "the turn this message landed in, "+landed+", has no start time the host would give, so whether "+turnID+" followed it is not established"
-		} else if *readTurn.StartedAt+1.0 <= *turn.StartedAt {
+		} else if *delivery.TurnStartedAt(readTurn)+1.0 <= *delivery.TurnStartedAt(turn) {
 			verified, detail = "turn_predates_send", turnID+" began before "+landed+", the turn this message landed in, so it cannot be the turn that read it"
 		}
 	}
@@ -172,9 +172,9 @@ func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy st
 		} else {
 			started, parseErr = time.Parse("2006-01-02T15:04:05.000000+00:00", attempt.TransportStartedAt.String)
 		}
-		if readErr != nil || turn == nil || turn.StartedAt == nil || math.IsNaN(*turn.StartedAt) || math.IsInf(*turn.StartedAt, 0) || parseErr != nil {
+		if readErr != nil || turn == nil || delivery.TurnStartedAt(turn) == nil || math.IsNaN(*delivery.TurnStartedAt(turn)) || math.IsInf(*delivery.TurnStartedAt(turn), 0) || parseErr != nil {
 			verified, detail = "unverified_turn", "the turn this attempt's delivery token is in, "+landed+", has no start time the host would give, so whether it came after this send is not established"
-		} else if *turn.StartedAt+1.0 <= float64(started.UnixMicro())/1e6 {
+		} else if *delivery.TurnStartedAt(turn)+1.0 <= float64(started.UnixMicro())/1e6 {
 			verified, detail = "turn_predates_send", "this attempt's delivery token is in "+landed+", a turn that began before this attempt's transport started, so it was there before the send and is not evidence the send arrived"
 		}
 	}
@@ -188,9 +188,9 @@ func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy st
 			holderTurn, holderErr = adapter.ReadTurn(row.RecipientTaskID, holder)
 		}
 		started, parseErr := time.Parse("2006-01-02T15:04:05.000000+00:00", attempt.TransportStartedAt.String)
-		if holderErr != nil || holderTurn == nil || holderTurn.StartedAt == nil || parseErr != nil || math.IsNaN(*holderTurn.StartedAt) || math.IsInf(*holderTurn.StartedAt, 0) {
+		if holderErr != nil || holderTurn == nil || delivery.TurnStartedAt(holderTurn) == nil || parseErr != nil || math.IsNaN(*delivery.TurnStartedAt(holderTurn)) || math.IsInf(*delivery.TurnStartedAt(holderTurn), 0) {
 			verified, detail = "unverified_turn", "the turn this attempt's delivery token is in, "+holder+", has no start time the host would give, so whether it followed this send is not established, and an uncertain send is settled only when it is"
-		} else if *holderTurn.StartedAt < float64(started.UnixMicro())/1e6 {
+		} else if *delivery.TurnStartedAt(holderTurn) < float64(started.UnixMicro())/1e6 {
 			verified, detail = "turn_predates_send", "this attempt's delivery token is in "+holder+", which began before this attempt's transport started. A send nobody heard back from is settled only on a token in a turn that began at or after that instant, without the allowance a turn's start is otherwise given"
 		}
 	}

@@ -27,8 +27,8 @@ func (h *sendHost) ReadThread(string) (delivery.ThreadFacts, error) {
 }
 func (h *sendHost) IsArchived(string, any) (*bool, error) { return &h.archived, nil }
 func (h *sendHost) ReadGoalStatus(string) (any, error)    { return "", nil }
-func (h *sendHost) ListTurnIDs(string, int) ([]string, error) {
-	return []string{"turn-supervisor-1"}, nil
+func (h *sendHost) ListTurnIDs(string, int) ([]any, error) {
+	return []any{"turn-supervisor-1"}, nil
 }
 func (h *sendHost) ReadTurn(_ string, id string) (*delivery.TurnInfo, error) {
 	if h.turns != nil {

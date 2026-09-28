@@ -1,0 +1,344 @@
+package adapter
+
+import (
+	"context"
+	"errors"
+	"sort"
+	"sync"
+	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+)
+
+func slicesSort(values []string) { sort.Strings(values) }
+func field(o contract.OrderedObject, key string) any {
+	for _, f := range o {
+		if f.Key == key {
+			return f.Value
+		}
+	}
+	return nil
+}
+func plain(value any) any {
+	switch x := value.(type) {
+	case contract.OrderedObject:
+		m := make(map[string]any, len(x))
+		for _, f := range x {
+			m[f.Key] = plain(f.Value)
+		}
+		return m
+	case []any:
+		v := make([]any, len(x))
+		for i, e := range x {
+			v[i] = plain(e)
+		}
+		return v
+	default:
+		return value
+	}
+}
+
+type transport struct {
+	adapter    *Adapter
+	mu         sync.Mutex
+	accepting  bool
+	recipients map[string]bool
+	pending    sync.WaitGroup
+	ctx        context.Context
+	cancel     context.CancelFunc
+	done       chan struct{}
+}
+
+func newTransport(a *Adapter) *transport {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &transport{adapter: a, accepting: true, recipients: map[string]bool{}, ctx: ctx, cancel: cancel, done: make(chan struct{})}
+}
+
+// Close ends admission before draining, cancels unfinished work while the ledger is open,
+// and only then closes the connection and ledger. Every admitted caller receives an answer.
+func (a *Adapter) Close() error {
+	t := a.transport
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	if !t.accepting {
+		t.mu.Unlock()
+		<-t.done
+		return nil
+	}
+	t.accepting = false
+	t.mu.Unlock()
+	drained := make(chan struct{})
+	go func() { t.pending.Wait(); close(drained) }()
+	timer := time.NewTimer(a.drain)
+	select {
+	case <-drained:
+	case <-timer.C:
+		t.cancel()
+		<-drained
+	}
+	timer.Stop()
+	t.cancel()
+	var rpcErr error
+	if closer, ok := a.rpc.(interface{ Close() error }); ok {
+		rpcErr = closer.Close()
+	}
+	ledgerErr := a.ledger.Close()
+	close(t.done)
+	return errors.Join(rpcErr, ledgerErr)
+}
+
+func (a *Adapter) SendMessage(requestID, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
+	return a.Send(context.Background(), requestID, thread, message, settings, nil, 0)
+}
+
+type Guard func(context.Context) (map[string]any, error)
+
+// Budgets preserves the historical shorter caller deadline for ordinary sends.
+// A declared guard buys every transfer phase plus the same caller slack.
+func (a *Adapter) Budgets(guardRequests int) (execution, caller time.Duration) {
+	execution = a.timeout * 3 * time.Duration(3+guardRequests)
+	caller = a.timeout + a.callerSlack
+	if guardRequests > 0 {
+		caller = execution + a.callerSlack
+	}
+	return
+}
+
+func (a *Adapter) Send(ctx context.Context, requestID, thread, message string, settings *delivery.TaskSettings, guard Guard, guardBudget any) (delivery.Obj, error) {
+	if a.transport == nil {
+		return nil, &HostUnavailable{"this adapter was built read-only, with no transport to send on"}
+	}
+	if settings == nil {
+		return nil, &HostUnavailable{"a send requires the authorized task settings; refusing to resume with host defaults"}
+	}
+	guardRequests, validBudget := guardBudget.(int)
+	if !validBudget || guardRequests < 0 || guardRequests > 10 {
+		return nil, &HostUnavailable{"guard_rpc_requests must be an integer from 0 through 10; refusing before any send"}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	t := a.transport
+	// Admission, replay and recipient ownership are one ordered critical section. Replaying a
+	// retained request never waits for an unrelated in-flight send to the same recipient.
+	t.mu.Lock()
+	if !t.accepting {
+		t.mu.Unlock()
+		return nil, errors.New("the relay transport is shutting down; nothing was sent")
+	}
+	params := map[string]any{"threadId": thread, "message": message}
+	retained, err := a.ledger.Lookup(ctx, requestID, "send_message_to_thread", params, nil)
+	if err != nil {
+		t.mu.Unlock()
+		return nil, err
+	}
+	if retained != nil && text(retained["status"]) != "not_attempted" {
+		r, err := a.receipt(ctx, requestID, true)
+		t.mu.Unlock()
+		return r, err
+	}
+	if t.recipients[thread] {
+		t.mu.Unlock()
+		return contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "status", Value: "failed"}, {Key: "error", Value: "this relay already has a turn in flight for the recipient; message withheld without being sent"}, {Key: "rpcError", Value: contract.OrderedObject{{Key: "code", Value: "thread_busy"}, {Key: "message", Value: "another send to this thread is still in flight in this process"}}}}, nil
+	}
+	t.recipients[thread] = true
+	t.pending.Add(1)
+	t.mu.Unlock()
+	executionBudget, callerBudget := a.Budgets(guardRequests)
+	type answer struct {
+		receipt delivery.Obj
+		err     error
+	}
+	answerCh := make(chan answer, 1)
+	go func() {
+		work, stopWork := context.WithCancel(t.ctx)
+		defer stopWork()
+		var dispatchGate sync.Mutex
+		stopCaller := context.AfterFunc(ctx, func() {
+			dispatchGate.Lock()
+			stopWork()
+			dispatchGate.Unlock()
+		})
+		defer stopCaller()
+		run, cancel := context.WithTimeout(work, executionBudget)
+		defer cancel()
+		beforeDispatch := func() error {
+			dispatchGate.Lock()
+			defer dispatchGate.Unlock()
+			return ctx.Err()
+		}
+		receipt, err := a.guardedSend(run, requestID, thread, message, settings, guard, beforeDispatch, stopCaller)
+		t.mu.Lock()
+		delete(t.recipients, thread)
+		t.mu.Unlock()
+		answerCh <- answer{receipt, err}
+		t.pending.Done()
+	}()
+	timer := time.NewTimer(callerBudget)
+	defer timer.Stop()
+	select {
+	case answer := <-answerCh:
+		return answer.receipt, answer.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-timer.C:
+		return nil, &HostUnavailable{""}
+	}
+}
+
+func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message string, settings *delivery.TaskSettings, guard Guard, beforeDispatch func() error, afterDispatch func() bool) (delivery.Obj, error) {
+	fresh, receipt, err := a.ledger.Begin(ctx, requestID, "send_message_to_thread", map[string]any{"threadId": thread, "message": message}, nil)
+	if err != nil {
+		return nil, err
+	}
+	if !fresh {
+		return a.receipt(ctx, requestID, true)
+	}
+	receipt["threadId"] = thread
+	save := func() error { _, err := a.ledger.Save(context.WithoutCancel(ctx), receipt); return err }
+	if err = save(); err != nil {
+		return nil, err
+	}
+	refuse := func(method string, rpc contract.OrderedObject, retry bool) {
+		receipt["status"] = "failed"
+		if retry {
+			receipt["status"] = "not_attempted"
+			receipt["retrySafe"] = true
+			receipt["attemptedEffects"] = []string{}
+		}
+		receipt["error"] = method + ": " + text(field(rpc, "message"))
+		receipt["rpcError"] = rpc
+	}
+	action := func() error {
+		state, err := a.HostCall(ctx, "thread/read", map[string]any{"threadId": thread})
+		if err != nil {
+			return err
+		}
+		th, err := object(state["thread"])
+		if err != nil {
+			return err
+		}
+		var statusObject map[string]any
+		if value, exists := th["status"]; exists {
+			var ok bool
+			statusObject, ok = value.(map[string]any)
+			if !ok {
+				return attributeError(value, "get")
+			}
+		}
+		status := statusObject["type"]
+		receipt["statusBeforeResume"] = status
+		if text(status) == "active" {
+			refuse("thread/read", contract.OrderedObject{{Key: "code", Value: "thread_busy"}, {Key: "message", Value: "Thread is active; message withheld. Wait for completion."}}, false)
+			return nil
+		}
+		params := plain(settings.ResumeParams(thread)).(map[string]any)
+		if settings.SettingsFreeResume {
+			params = map[string]any{"threadId": thread, "excludeTurns": true}
+		}
+		resumed, err := a.callValue(ctx, "thread/resume", params)
+		if err != nil {
+			return err
+		}
+		receipt["resumed"] = resumed
+		if settings.SettingsFreeResume {
+			receipt["settingsFreeResume"] = true
+		}
+		if err = save(); err != nil {
+			return err
+		}
+		response := resumed
+		rpc, findings, notes := verifyResume(*settings, response, status)
+		if len(findings) > 0 {
+			receipt["settingsFindings"] = findings
+			refuse("thread/resume", rpc, false)
+			return nil
+		}
+		if len(notes) > 0 {
+			receipt["settingsNotes"] = notes
+			if err = save(); err != nil {
+				return err
+			}
+		}
+		if guard != nil {
+			decision, err := guard(ctx)
+			if err != nil {
+				return err
+			}
+			if decision != nil {
+				code, hasCode := decision["code"]
+				msg, hasMessage := decision["message"]
+				if !hasCode || !hasMessage {
+					code = "managed_guard_invalid"
+					msg = "the pre-start guard returned neither None nor a refusal"
+				}
+				refuse("turn/start", contract.OrderedObject{{Key: "code", Value: code}, {Key: "message", Value: msg}}, true)
+				return nil
+			}
+		}
+		if err := beforeDispatch(); err != nil {
+			return err
+		}
+		turn, err := a.callValue(ctx, "turn/start", map[string]any{"threadId": thread, "input": []any{map[string]any{"type": "text", "text": message}}})
+		if err != nil {
+			return err
+		}
+		if !afterDispatch() {
+			return ctx.Err()
+		}
+		value, err := subscript(turn, "turn")
+		if err != nil {
+			return err
+		}
+		id, err := subscript(value, "id")
+		if err != nil {
+			return err
+		}
+		receipt["turnId"] = id
+		receipt["status"] = "accepted"
+		return nil
+	}
+	err = action()
+	if err != nil {
+		var rpc *appserver.RPCError
+		var phase *appserver.PhaseTimeout
+		switch {
+		case errors.As(err, &rpc):
+			receipt["status"] = "failed"
+			receipt["error"] = rpc.Error()
+			if rpc.Object != nil {
+				receipt["rpcError"] = rpc.Object
+			} else {
+				receipt["rpcError"] = map[string]any{"code": rpc.Code, "message": rpc.Message}
+			}
+		case errors.As(err, &phase) && phase.Phase == "establish":
+			receipt["status"] = "failed"
+			receipt["error"] = phaseText(phase)
+			receipt["rpcError"] = contract.OrderedObject{{Key: "code", Value: "connection_unavailable"}, {Key: "message", Value: phaseText(phase)}}
+		case errors.As(err, &phase):
+			receipt["status"] = "outcome_unknown"
+			receipt["error"] = "PhaseTimeout: " + phaseText(phase)
+		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+			receipt["status"] = "outcome_unknown"
+		default:
+			receipt["status"] = "outcome_unknown"
+			receipt["error"] = errorText(err)
+		}
+	}
+	_, saveErr := a.ledger.Save(context.WithoutCancel(ctx), ledger.Receipt(receipt))
+	if saveErr != nil {
+		return nil, saveErr
+	}
+	if errors.Is(err, context.Canceled) {
+		return nil, errors.New("the relay transport was shut down while this send was in flight; outcome unknown, do not resend under a new request id")
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return nil, &delivery.HostError{Kind: "TimeoutError", Message: ""}
+	}
+	return a.receipt(context.WithoutCancel(ctx), requestID, false)
+}

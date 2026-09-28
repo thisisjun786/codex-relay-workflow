@@ -14,7 +14,7 @@ type interleavedHost struct {
 	fired  bool
 }
 
-func (h *interleavedHost) ListTurnIDs(thread string, limit int) ([]string, error) {
+func (h *interleavedHost) ListTurnIDs(thread string, limit int) ([]any, error) {
 	ids, err := h.Adapter.ListTurnIDs(thread, limit)
 	if !h.fired {
 		h.fired = true
