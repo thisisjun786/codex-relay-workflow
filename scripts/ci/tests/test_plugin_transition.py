@@ -3151,12 +3151,12 @@ class TheFindingsFromReview(TransitionCase):
                     / "wiring" / "hooks" / "stop-recording-completion.json")
         document = json.loads(declared.read_text(encoding="utf-8"))
         entry = document["hooks"]["Stop"][0]["hooks"][0]
-        entry["command"] = entry["command"].replace("python3 ", "python3-does-not-exist ", 1)
+        entry["command"] = entry["command"].replace("/bin/crw\"", "/bin/crw-does-not-exist\"", 1)
         declared.write_text(json.dumps(document), encoding="utf-8")
         before = host.hooks_document()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
-        self.assertIn("python3-does-not-exist", answer["results"][0]["detail"])
+        self.assertIn("crw-does-not-exist", answer["results"][0]["detail"])
         self.assertIn("this checkout declares", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 
@@ -3187,12 +3187,12 @@ class TheFindingsFromReview(TransitionCase):
                     / "wiring" / "hooks" / "stop-recording-completion.json")
         document = json.loads(declared.read_text(encoding="utf-8"))
         entry = document["hooks"]["Stop"][0]["hooks"][0]
-        entry["command"] = entry["command"].replace("python3 ", "python3.999999 ", 1)
+        entry["command"] = entry["command"].replace("/bin/crw\"", "/bin/crw.999999\"", 1)
         declared.write_text(json.dumps(document), encoding="utf-8")
         before = host.hooks_document()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
-        self.assertIn("python3.999999", answer["results"][0]["detail"])
+        self.assertIn("crw.999999", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 
     def test_a_trailing_newline_is_not_the_name_of_an_executable(self):
@@ -3363,12 +3363,12 @@ class TheFindingsFromReview(TransitionCase):
                     / "wiring" / "hooks" / "stop-recording-completion.json")
         document = json.loads(declared.read_text(encoding="utf-8"))
         entry = document["hooks"]["Stop"][0]["hooks"][0]
-        entry["command"] = entry["command"].replace("python3 ", "/definitely/missing/python3 ", 1)
+        entry["command"] = entry["command"].replace("$HOME/.local/share/crw-runtime", "/definitely/missing", 1)
         declared.write_text(json.dumps(document), encoding="utf-8")
         before = host.hooks_document()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
-        self.assertIn("/definitely/missing/python3", answer["results"][0]["detail"])
+        self.assertIn("/definitely/missing/current/bin/crw", answer["results"][0]["detail"])
         self.assertIn("this checkout declares", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 

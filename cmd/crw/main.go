@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
@@ -57,6 +58,9 @@ func runAt(ctx context.Context, program string, args []string, stdout, stderr io
 	case "relay":
 		return relay(ctx, "crw relay", rest, stdout, stderr)
 	case "bridge":
+		if len(rest) > 0 && rest[0] == pluginwiring.Flag {
+			return pluginwiring.Bridge(ctx, rest[1:])
+		}
 		return mcp.Run(ctx, rest)
 	case "hook":
 		return hook.Run(ctx, rest, os.Stdin, stdout, started)

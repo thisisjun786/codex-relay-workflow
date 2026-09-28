@@ -63,6 +63,52 @@ V1_LAUNCHER = (
 )
 
 
+# What the package declared before the native wiring (todo 34 of the Go port), byte for byte.
+# Cached turns and sessions may still run these until the Python path is removed (todo 44).
+LEGACY_STOP_COMMAND = (
+    "python3 -c \"\n"
+    "import os, sys\n"
+    "named = os.environ.get('CODEX_HOME')\n"
+    "home = named if named else os.path.join(os.path.expanduser('~'), '.codex')\n"
+    "for candidate in (sys.argv[1] if len(sys.argv) > 1 else '',\n"
+    "                  os.path.join(home, 'crw-stop-hook.py')):\n"
+    "    if not candidate:\n"
+    "        continue\n"
+    "    try:\n"
+    "        with open(candidate, 'rb') as handle:\n"
+    "            source = handle.read()\n"
+    "    except OSError:\n"
+    "        continue\n"
+    "    try:\n"
+    "        exec(compile(source, candidate, 'exec'),\n"
+    "             {'__name__': '__main__', '__file__': candidate})\n"
+    "    except SystemExit as ending:\n"
+    "        code = ending.code\n"
+    "        if not (code is None or (isinstance(code, int)\n"
+    "                                 and int.__int__(code) == 0)):\n"
+    "            raise SystemExit(1)\n"
+    "    break\n"
+    "raise SystemExit(0)\n"
+    "\" \"${PLUGIN_ROOT}/wiring/crw_stop_hook.py\"")
+LEGACY_MCP_DECLARATION = (
+    "{\n"
+    "  \"mcpServers\": {\n"
+    "    \"codex-thread-bridge\": {\n"
+    "      \"command\": \"python3\",\n"
+    "      \"args\": [\n"
+    "        \"./wiring/crw_bridge_mcp.py\"\n"
+    "      ],\n"
+    "      \"cwd\": \".\",\n"
+    "      \"required\": false,\n"
+    "      \"tools\": {\n"
+    "        \"create_thread\": { \"approval_mode\": \"approve\" },\n"
+    "        \"send_message_to_thread\": { \"approval_mode\": \"approve\" }\n"
+    "      }\n"
+    "    }\n"
+    "  }\n"
+    "}\n")
+
+
 def write_policy(path, mapping=POLICY):
     data = json.dumps(mapping, indent=2).encode("utf-8")
     Path(path).write_bytes(data)
@@ -674,8 +720,11 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         """A cached package; the shipped crw one unless a launcher is given."""
         root = self.home.codex_home / "plugins" / "cache" / marketplace / plugin / version
         shutil.copytree(ROOT / "plugins" / "crw", root)
-        if launcher_text is not None:
-            (root / "wiring" / "crw_bridge_mcp.py").write_text(launcher_text, encoding="utf-8")
+        if launcher_text is None:
+            return root / "wiring" / "crw-bridge.sh"
+        # An older package: the Python launcher, and the declaration that started it.
+        (root / "wiring" / "crw_bridge_mcp.py").write_text(launcher_text, encoding="utf-8")
+        (root / "wiring" / "mcp.json").write_text(LEGACY_MCP_DECLARATION, encoding="utf-8")
         return root / "wiring" / "crw_bridge_mcp.py"
 
     def enable(self, *keys, enabled=True):
@@ -1345,7 +1394,8 @@ class BridgeRecordPolicyTest(unittest.TestCase):
     def test_the_launcher_is_probed_with_the_command_the_package_declares(self):
         """Run with another interpreter, a declaration Codex could not start would pass."""
         cases = {
-            "a command that cannot run it": ("sh", "launcher_predates_policy",
+            # The launcher is a shell script, so the interpreter that cannot run it is Python.
+            "a command that cannot run it": ("python3", "launcher_predates_policy",
                                              "did not start a bridge"),
             "a command that does not resolve": ("crw218-no-such-interpreter",
                                                 "launcher_not_established", "does not resolve"),
@@ -2338,7 +2388,9 @@ class DeclaredStopCommandTest(unittest.TestCase):
         self.root = Path(self.stack.enter_context(tempfile.TemporaryDirectory(prefix="crw178-")))
         document = json.loads(self.DECLARATION.read_text(encoding="utf-8"))
         entry = document["hooks"]["Stop"][0]["hooks"][0]
-        self.command = entry["command"]
+        # The package now declares the native command (internal/pluginwiring tests it). A turn
+        # whose command was fixed before that change still runs this bootstrap until todo 44.
+        self.command = LEGACY_STOP_COMMAND
         self.timeout = entry["timeout"]
         self.witness = self.root / "witness.txt"
 

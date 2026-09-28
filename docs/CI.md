@@ -63,9 +63,8 @@ and unexpected-skipped results fail. It rejects PRs targeting `main`.
 
 `go-product` always runs, like `validate`: it needs no uv or Python packages, and
 the darwin/arm64 binary it builds is not validated on a macOS host. Its plugin
-payload step runs only once the native wiring launcher
-`plugins/crw/wiring/crw-bridge.sh` exists; until then `validate` covers the
-payload.
+payload step runs once the native wiring launcher `plugins/crw/wiring/crw-bridge.sh`
+exists, which it now does.
 
 `test_gate.py` and the Go tests in `internal/dev/ci` compare the gate's prerequisite
 inventory with the real workflow and refuse omitted/extra jobs or `continue-on-error`. Selector tests use real Git

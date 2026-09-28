@@ -1167,7 +1167,9 @@ start a bridge.
 `plugin` writes no configuration entry at all; it writes `crw-bridge-mcp.json` beside the
 completion hook's settings, which is the one fact the package cannot carry: the pointer that
 names the installed runtime. The packaged launcher reads that record, and the declaration is
-what registers the server.
+what registers the server. The native launcher, `wiring/crw-bridge.sh`, runs
+`crw bridge --plugin-launch`, and the runtime reads the record with the Python launcher's checks
+([the native wiring](plugin-packaging.md#the-native-wiring)).
 
 Either owner can be installed first, so the refusal runs both ways. The user path is refused by
 a record naming the plugin; the plugin path is refused by an entry already in the configuration.
@@ -1543,6 +1545,11 @@ installation shares a machine.
 
 
 ### The fallback launcher, and why this command places it
+
+The package now declares the native Stop command, `"$HOME/.local/share/crw-runtime/current/bin/crw"
+hook --plugin-launch; exit 0`. It needs no fallback: it names nothing in the version cache and exits 0 when the
+pointer names nothing ([the native wiring](plugin-packaging.md#the-native-wiring)). The fallback
+below serves turns whose command was fixed while the package still declared the Python bootstrap.
 
 With `--owner plugin` this command also writes `crw-stop-hook.py` beside those settings, and it
 writes it **before** them. That file is the second candidate the package’s Stop declaration

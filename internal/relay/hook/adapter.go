@@ -92,6 +92,20 @@ func Run(parent context.Context, args []string, input io.Reader, output io.Write
 	return runAdapter(parent, args, input, output, started, nil)
 }
 
+// PluginLaunch is the first argument the plugin's declared Stop command passes (decision 26).
+const PluginLaunch = "--plugin-launch"
+
+// pluginStandsDown is crw_stop_hook.py adapter_call's stand-down rule without its interpreter
+// and entry-point checks, which named the Python adapter this binary replaces: settings the
+// plugin does not own, or whose configVersion is present and not 1, are not this registration's.
+func pluginStandsDown(config Object) bool {
+	if get(config, "owner") != "plugin" {
+		return true
+	}
+	version, present := evidence.Lookup(config, "configVersion")
+	return present && version != nil && !(version == true || version == int64(1) || version == float64(1))
+}
+
 // The evaluator seam substitutes only the guard call; routing, identity, claims,
 // deadline enforcement, validation and journalling still run in fault tests.
 func runAdapter(parent context.Context, args []string, input io.Reader, output io.Writer, started time.Time, evaluator func(context.Context, Object, GuardOptions) (Object, error)) (code int) {
@@ -103,6 +117,10 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 	absolute := started.Add(5 * time.Second)
 	ctx, cancel := context.WithDeadline(parent, absolute)
 	defer cancel()
+	pluginLaunch := len(args) > 0 && args[0] == PluginLaunch
+	if pluginLaunch {
+		args = args[1:]
+	}
 	named := ""
 	if len(args) > 0 {
 		named = args[0]
@@ -129,6 +147,9 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 	if settings.failure != "" {
 		return 0
 	} // Python has no usable journal configuration on these paths.
+	if pluginLaunch && pluginStandsDown(settings.config) {
+		return 0
+	} // Another registration owns this Stop: no journal row, no claim, no guard request.
 	// Keep final bookkeeping inside the caller's absolute deadline. No nested operation
 	// may buy a new end-to-end budget by starting late.
 	workDeadline := absolute.Add(-min(100*time.Millisecond, max(0, time.Until(absolute)/5)))

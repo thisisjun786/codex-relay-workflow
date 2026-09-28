@@ -573,3 +573,55 @@ Decision: expose `faults.KindPolicy` (PreIssue, Validate, Confirm), class-thresh
 
 Evidence: `internal/relay/faults/api.go`, `kinds.go`; `internal/relay/routing/integration_test.go` replays Python scenarios and compares every persisted table and whole receipts. The default built-in process remains unchanged until routing installs its project_create declaration.
 - [todo23] internal/relay/reception/depth.go fixes the console-script boundary at 9998 nested containers (stored settings first fail at 9998 because their object adds one level) because parity targets the installed `codex-session-relay` entry point on shipped CPython 3.13 with recursionlimit 1000, which relay code never changes; live console `packet-check` coverage detects runtime drift.
+
+## 26. The plugin launchers' record contract moves into Go behind `--plugin-launch` (todo 34)
+
+Decision: the plugin's declared commands name an explicit plugin-launch mode, and the record
+contract the Python launchers carried is enforced by the runtime in that mode.
+
+- MCP: `wiring/crw-bridge.sh` stays a three-line POSIX sh launcher,
+  `exec "$HOME/.local/share/crw-runtime/current/bin/crw" bridge --plugin-launch "$@"`. In that
+  mode `crw bridge` reads `<CODEX_HOME>/crw-bridge-mcp.json`. It resolves CODEX_HOME the way
+  `crw_bridge_mcp.py codex_home()` did: the variable, then six directories above the launcher
+  (the declared cwd plus `wiring/crw-bridge.sh`), then `~/.codex`. It then applies that launcher's checks in the
+  same order with the same stderr text and exit 2: record missing, unreadable, not an object,
+  version not 1 or 2, owner not `plugin` (the stand-down), serverName mismatch,
+  bridgeExecutable not absolute, args not a list of strings (false, 0, "" and {} are not
+  defaulted), a version-1 record carrying `executionPolicy`, and for version 2 every
+  `policy_environment` check. The record's args are the bridge's command line, and the
+  launcher's own `"$@"` follows them. A version-2 record's policy path and digest are set in the
+  process environment before the bridge starts, so the bridge loads and re-checks the policy as
+  before.
+- `bridgeExecutable` is required to be present and absolute, exactly as Python required it, and
+  is not executed: the runtime behind the pointer is the bridge. The Go installer (todo 38)
+  writes the pointer there.
+- Stop: the command is `"$HOME/.local/share/crw-runtime/current/bin/crw" hook --plugin-launch;
+  exit 0`, still without `exec`. In that mode `crw hook` reads its settings first and stands
+  down, with exit 0, empty stdout, no journal row, no event claim and no guard request, unless
+  the settings name `owner: plugin` and carry `configVersion` absent or 1. These are the stand-down
+  rules of `crw_stop_hook.py adapter_call`. Its adapterInterpreter and adapterEntryPoint checks
+  are not carried, because Go does not run the Python adapter. Settings that cannot be read
+  already release in silence. Without the flag (a user-owned hook-file registration) nothing
+  changes, so a host carrying both registrations evaluates each Stop once.
+- `runtime_install.py register-mcp`'s launcher probe stages a stand-in runtime at the probe
+  HOME's pointer. The stand-in accepts only `bridge --plugin-launch` and hands off to this
+  checkout's `crw_bridge_mcp.py`, the reference the Go contract is compared with. The probe still
+  judges the package's declared command, arguments and working directory under the App Server's
+  environment.
+
+Why: the plan's launcher (`exec ... crw bridge "$@"`) read no record, so on a plugin host the
+bridge checked no role pair, lost the recorded `--socket`, and started even where the user owned
+the server. A native `crw hook` did not check the owner either. Measured before this change, a
+host with both Stop registrations asked the guard twice for a Stop whose identity could not be
+established, and wrote two journal rows for one whose identity could (guard once, plus a
+`duplicate_invocation` row). The Python launcher's behaviour is the parity target, so it moves
+with the runtime rather than being dropped.
+
+Evidence: plugins/crw/wiring/crw_bridge_mcp.py (`codex_home`, `policy_environment`, `main`);
+plugins/crw/wiring/crw_stop_hook.py (`adapter_call`); `internal/pluginwiring/launch.go`,
+`launch_test.go` (36 record cases, stderr and exit equal to the Python launcher run from the same
+cache layout; args pass-through; the policy reaching the bridge);
+`internal/relay/hook/pluginlaunch_test.go` (owner stand-down, double registration evaluated once,
+failing before the flag); scripts/ci/tests/test_plugin_wiring.py `BridgeRecordPolicyTest` and
+test_plugin_transition.py `ARecordedPolicySurvivesTheTransition` (13 tests that failed with
+`launcher_predates_policy` and pass again); .omo/evidence/task-34-crw-go-port.txt.

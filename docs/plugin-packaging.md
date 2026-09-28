@@ -1,10 +1,11 @@
 # Plugin packaging
 
 This repository publishes its skills as a versioned Codex plugin. The package also
-declares the task-bridge MCP server and the completion Stop hook, and ships the two
-small launchers that start them. It carries no runtime: the bridge, the session
-relay, the Python environment and the completion adapter keep their own installer,
-and the launchers only point at what that installer left behind.
+declares the task-bridge MCP server and the completion Stop hook. Both reach the Go runtime
+through the installer's pointer, `$HOME/.local/share/crw-runtime/current/bin/crw`: the hook
+command names it directly and the server starts a three-line `sh` launcher that execs it
+([the native wiring](#the-native-wiring)). It carries no runtime: the runtime keeps its own
+installer, and the package only points at what that installer left behind.
 
 ## What the package is
 
@@ -14,7 +15,7 @@ and the launchers only point at what that installer left behind.
 | `plugins/crw/` | The plugin root, copied into the version cache as it stands |
 | `plugins/crw/.codex-plugin/plugin.json` | Manifest: plugin name, the version that names the payload, and the declared skills path |
 | `plugins/crw/skills/` | The registered skills, one of the two declared components |
-| `plugins/crw/wiring/` | The declared Stop hook and MCP server, and the two launchers they start |
+| `plugins/crw/wiring/` | The declared Stop hook and MCP server, the `crw-bridge.sh` launcher the server starts, and the two legacy Python launchers kept for cached commands until the Python path is removed |
 | `plugins/crw/LICENSE` | The repository license, shipped with the package |
 | `skills` | A link to `plugins/crw/skills`, kept for installations made before the move |
 
@@ -119,9 +120,49 @@ kept with the task record, outside this repository.
 Those two environments are opposites, and the wiring is built around the difference. A
 hook command can name the plugin root and the Codex home through shell variables because
 a shell expands them. An MCP command can do neither, so it sets `cwd` to `.` with a
-`./` relative argument, and the program it starts derives the Codex home from its own
-location: the cache layout is
-`$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>`.
+`./` relative argument. `HOME` is the one variable both environments carry, which is why
+the native wiring anchors the runtime pointer under it.
+
+## The native wiring
+
+| Surface | Declared as | What it runs |
+| --- | --- | --- |
+| Stop hook | `"$HOME/.local/share/crw-runtime/current/bin/crw" hook --plugin-launch; exit 0`, `timeout: 10` | `crw hook --plugin-launch` through the pointer, reading the host's payload on stdin |
+| MCP server | `command: "sh"`, `args: ["./wiring/crw-bridge.sh"]`, `cwd: "."` | `exec "$HOME/.local/share/crw-runtime/current/bin/crw" bridge --plugin-launch "$@"` |
+
+`--plugin-launch` is where the record contract the Python launchers carried now lives
+([decision 26](port/decisions.md)). `crw bridge --plugin-launch` reads
+`<CODEX_HOME>/crw-bridge-mcp.json`, finding the Codex home as the Python launcher did, and refuses
+on stderr with exit 2 exactly where that launcher did. That includes standing down for a
+user-owned record. It then starts the bridge with the record's arguments and, for a version-2
+record, under the recorded execution policy. `crw hook --plugin-launch` stands down in silence
+unless the completion settings name the plugin as owner, so a host that holds both Stop
+registrations evaluates each Stop once.
+
+The hook command does not `exec` and ends in `; exit 0`. When the pointer names nothing, as
+mid-rollback or with `HOME` unset, the shell reports the missing program on stderr and the
+command still exits 0, so the turn is released rather than held. Exit 2 is the host's blocking
+code, and no status `crw hook` returns reaches the host. Neither command lives in the version
+cache that is replaced on install. The hook's own file is the runtime, which sits under the
+pointer. The server's launcher is in the cache, but `exec` replaces it with the runtime at
+start, so after that the running bridge holds nothing in the cache.
+
+The launcher is different on purpose. A server that cannot start should say why, so it `exec`s
+the runtime, and a missing pointer shows up as a nonzero exit with the missing path on stderr.
+The declaration keeps `required: false`, so the session continues regardless.
+
+Known limits of this wiring:
+
+- `XDG_DATA_HOME` is not honoured. Both commands name `$HOME/.local/share`, as the Python
+  installer always has.
+- The record's `bridgeExecutable` is checked (present and absolute) and not executed: the
+  runtime behind the pointer is the bridge.
+
+`wiring/crw_stop_hook.py` and `wiring/crw_bridge_mcp.py` still ship. The package no longer
+declares them. A turn whose Stop command was fixed before this change, or a session that loaded
+the older server declaration, can still name them. They leave with the rest of the Python
+execution path once the retention scan finds no such reference
+([cutover](port/cutover.md#retention)).
 
 Hooks ship as an array with one event per file. A single file carrying several events
 works too, but a hook's identity is positional, so adding an event to a shared file
@@ -268,7 +309,8 @@ each declared surface is whether its reference outlives the directory it names.
 
 | Reference | Bound to the cache | What a replacement does to it | Owner |
 | --- | --- | --- | --- |
-| Stop launcher, first candidate | Yes | Falls through to the second candidate | This package |
+| Native Stop command | No, it names the runtime pointer under `$HOME` | Nothing | `runtime_install.py install` |
+| Stop launcher, first candidate (legacy bootstrap a cached turn may still hold) | Yes | Falls through to the second candidate | This package |
 | Stop launcher, second candidate at `<CODEX_HOME>/crw-stop-hook.py` | No | Nothing | `runtime_install.py hook --owner plugin` |
 | Stop settings at `<CODEX_HOME>/crw-completion-hook.json` | No | Nothing | The same command |
 | Adapter, relay and bridge executables | No, they sit under the installer pointer | Nothing | `runtime_install.py install` |
@@ -357,7 +399,10 @@ the old directory as history, so the row speaks of the root a turn is given, not
 None of the six tried to read the removed directory in the forty minutes that followed, so what such
 a read does was not observed.
 
-### Why the Stop hook is declared as a bootstrap
+### Why the Stop hook was declared as a bootstrap
+
+The package no longer declares this bootstrap ([the native wiring](#the-native-wiring)). This
+section describes the command a turn cached before that change may still run.
 
 A hook command is fixed when a turn starts, with the plugin root already resolved into it, and
 the whole turn reuses that string — including every Stop re-fire. Replace the package while a

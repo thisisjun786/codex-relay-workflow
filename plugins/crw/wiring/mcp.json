@@ -1,9 +1,9 @@
 {
   "mcpServers": {
     "codex-thread-bridge": {
-      "command": "python3",
+      "command": "sh",
       "args": [
-        "./wiring/crw_bridge_mcp.py"
+        "./wiring/crw-bridge.sh"
       ],
       "cwd": ".",
       "required": false,
