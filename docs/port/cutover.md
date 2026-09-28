@@ -379,6 +379,10 @@ remaining deadline; nothing starts a fresh timer.
 | reserved margin | 500 ms |
 
 These are design limits, not measured Go numbers; todo 34's QA replaces them with measurements.
+Decision 30 sets where they are enforced: an allocation bounds time spent waiting on the host
+or a peer (stdin readiness, the guard's answer), never time the process spent unscheduled.
+The settings read, the Unix connect (which never waits) and the decision-22 row are bounded by
+the absolute deadline.
 
 Unreachable fast path (target under 150 ms including startup): read only the small routing
 configuration needed to find the socket; attempt one non-blocking Unix-socket connection; on

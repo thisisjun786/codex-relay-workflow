@@ -68,6 +68,7 @@ Entry format:
 - [todo35][PR184 4124878069] Readback replay panics on composite values: `replayTitles` compares two JSON arrays/objects with Go interface equality - Python: plugins/crw/skills/crw-run/scripts/parent_title.py compares them structurally and continues - Go: internal/skill/parent_title.go:449-453; add a composite-value replay fixture
 - [todo35][PR184 4124878229] A trailing `--` on a no-positional `crw skill` command is counted as an extra argument (exit 2) where argparse accepts it - Go: internal/skill/argparse.go:123-127
 - [todo35][PR184 4124878424] Equal nested-array Stop field lists abort host replay with an unhashable-list error before the equality check; Python sorts and compares first and builds sets only when they differ - Go: internal/skill/hook_host.go:99-106 (hostFieldProblems/hostSorted)
+- [orchestrator][CI run 36445722770] resolves the todo33 status.go:497 entry above: the `recorded_elsewhere` failure was not the interpreter probe. An unanswered probe leaves startable() nil, which reads `cause_unreadable`; the observed `nothing_recorded` needs both named journals read empty, so the hook itself wrote no row. Reproduced under CPU throttling, where an instrumented binary showed the settings read cut at entry + 100 ms after a scheduling stall. Fixed as a contract defect under decisions.md section 30. The 5 s probe matches Python's INTERPRETER_PROBE_SECONDS and stays
 
 ## Relay CLI reference table (input for the post-cutover CLI reduction)
 

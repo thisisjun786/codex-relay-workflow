@@ -81,6 +81,10 @@ func faultText(value any) string {
 // beforeEmitKey is a test seam at the accepted-verdict/output boundary.
 type beforeEmitKey struct{}
 
+// beforeDialKey is a test seam between the dial's start time and its connect, where
+// a scheduling stall is simulated.
+type beforeDialKey struct{}
+
 type settingsResult struct {
 	config          Object
 	failure, detail string
@@ -111,12 +115,14 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 	if err != nil {
 		return 0
 	}
-	startup, startupCancel := context.WithDeadline(ctx, started.Add(100*time.Millisecond))
-	settings, err := bounded(startup, func() (settingsResult, error) {
-		c, f, d := ReadSettings(startup, path)
+	// Decision 30: the settings are a local, 1 MiB-bounded regular-file read that
+	// waits on nothing the host supplies, so only the absolute deadline bounds it.
+	// Cutting it at the startup allocation lost the whole invocation record whenever
+	// this process was simply not scheduled for 100 ms after entry.
+	settings, err := bounded(ctx, func() (settingsResult, error) {
+		c, f, d := ReadSettings(ctx, path)
 		return settingsResult{c, f, d}, nil
 	})
-	startupCancel()
 	if err != nil {
 		return 0
 	}
@@ -197,11 +203,7 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 			code = 0
 		}
 	}()
-	inputCtx, inputCancel := context.WithDeadline(work, started.Add(100*time.Millisecond))
-	raw, err := bounded(inputCtx, func() ([]byte, error) {
-		return io.ReadAll(input)
-	})
-	inputCancel()
+	raw, err := readInput(work, input, started.Add(100*time.Millisecond))
 	if err != nil {
 		finish("stdin_unreadable", "the Stop payload could not be read from stdin", "")
 		return 0
@@ -229,21 +231,25 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 		return 0
 	}
 	dialStarted := time.Now()
-	dialCtx, dialCancel := context.WithDeadline(work, dialStarted.Add(50*time.Millisecond))
 	socket := filepath.Join(state, "control.sock")
-	conn, err := (&net.Dialer{}).DialContext(dialCtx, "unix", socket)
-	dialCancel()
+	if pause, ok := ctx.Value(beforeDialKey{}).(func()); ok {
+		pause()
+	}
+	// Decision 30: a Unix-socket connect completes or fails at once (a full Linux
+	// backlog is EAGAIN); it never waits. A dial timer could only expire on time
+	// this process spent unscheduled, turning a healthy socket into ETIMEDOUT.
+	conn, err := (&net.Dialer{}).DialContext(work, "unix", socket)
 	dialErr := err
 	if err != nil && prescanErrno(err) {
 		// Decision 22: retain the single Python failure row, without fsync. Identity
 		// remains unobserved: no transcript scan, claim or DB access precedes it.
+		// Decision 30: the small create-once write is bounded by the absolute
+		// deadline, so a late-scheduled invocation still leaves its row.
 		record = unreachableRecord(record, err, time.Since(dialStarted))
-		journalCtx, journalCancel := context.WithDeadline(ctx, started.Add(125*time.Millisecond))
-		defer journalCancel()
 		record = set(record, "adapterOutcome", "guard_unreachable")
 		record = set(record, "detail", "the configured runtime could not be run: "+store.PythonOSErrorText(&os.PathError{Op: "connect", Path: socket, Err: err}))
 		record = set(record, "elapsedMs", time.Since(started).Milliseconds())
-		_, _ = bounded(journalCtx, func() (string, error) { return Journal(journalCtx, settings.config, record, slot) })
+		_, _ = bounded(ctx, func() (string, error) { return Journal(ctx, settings.config, record, slot) })
 		return 0
 	} // No retry, daemon start, writer lock or synchronous diagnostic fsync.
 	if conn != nil {

@@ -670,3 +670,58 @@ no Python output for valid input.
 Evidence: `oracleEnv` in `internal/skill/process_parity_test.go`;
 `TestSkillUnreadableInputsLivePython` passes under outer `LC_ALL=C`, `LC_ALL=C.UTF-8`
 and `LANG=en_US.UTF-8`, and fails under outer `LC_ALL=C` without the pin.
+
+## 30. Native hook allocations bound waiting, not scheduling
+
+Decision: the native Stop hook enforces its entry-anchored allocations only where it
+waits for something outside itself. No number changes: the absolute 5 s deadline
+(shortened by `timeoutSeconds`), the 100 ms startup/input allocation from process
+entry, the 750 ms identity scan, the 3,500 ms guard allocation and the bookkeeping
+reserve stay as they are. What changes is where they apply:
+
+- Settings: the local, 1 MiB-bounded regular-file read is bounded by the absolute
+  deadline instead of being cut at entry + 100 ms.
+- Input: a descriptor on stdin is polled. The 100 ms allocation bounds how long the
+  hook waits for the host's bytes to become readable; bytes that are already readable
+  when the hook looks, including a complete payload written while the hook was
+  unscheduled and a prefilled regular file, are taken. A payload that has not arrived
+  by the deadline is still released as `stdin_unreadable` (decision 24). A reader that
+  is not a descriptor, or a descriptor that cannot be polled, keeps the plain
+  deadline. The work deadline bounds the whole read.
+- Dial: a Unix-socket connect completes or fails at once (a full Linux backlog is
+  `EAGAIN`), so it is bounded by the work deadline, not by a 50 ms timer.
+- The decision-22 pre-scan row: the small create-once, unsynced write is bounded by
+  the absolute deadline instead of entry + 125 ms.
+
+Why: a loaded host can leave a runnable process unscheduled for hundreds of
+milliseconds. The entry-anchored timers then expired before the hook did any work,
+although its settings and the host's payload were ready. The settings read was cut
+and the hook exited 0 with no journal row (in hold mode it also released a turn the
+guard would hold); a ready payload was released as `stdin_unreadable`; a healthy socket
+became a post-claim `ETIMEDOUT`; and the decision-22 row was skipped. Python has only
+its configured budget, and under the same budget it journals and holds in every one of
+these cases. Time the process spent unscheduled says nothing about the host or the
+peer, so while the configured budget has room it must not change the outcome. The
+fast-path latency target remains a property measured on an idle host
+(`Test33LatencyAcceptance`), not a reason to drop the record. This supersedes the
+125 ms clause of decision 22 and the startup cut on configuration in decision 24;
+decision 24's release of late input is kept.
+
+Cost: settings or a journal on a hung filesystem now hold the hook until the absolute
+deadline (at most 5 s, inside the host's 10 s) instead of 100 or 125 ms. It still exits
+0, and with unreadable settings there is no journal to write, as in Python. Input that
+is already readable is not limited by the 100 ms allocation; the work deadline bounds
+reading it.
+
+Evidence: internal/relay/hook/adapter.go (settings read, dial, pre-scan journal) and
+input.go (`readInput`, `pollDescriptor`); `Test33StalledEntryKeepsThePrescanRow`,
+`Test33StalledDialStillConnects`, `Test33StalledEntryStillHolds` and
+`Test33LateInputOnADescriptorIsReleased`, where each of the four changes, reverted
+alone, fails at least one test. The flaky CI failures of
+`Test33NativeJournalReaderPythonLive` (no journal row), `Test33ReviewD3` and
+`Test33ReviewD9Large` (Python's claim files missing from Go's snapshot),
+`Test33ControlDefaultStorePython/default_receipted` ("fake host did not finish": the
+hook exited without connecting) and `TestDomain/hook/...recorded_elsewhere` (CI run
+36445722770, observed `nothing_recorded`) were reproduced under CPU throttling. An
+instrumented binary showed the settings cut, the input release and the skipped pre-scan
+row firing 316-381 ms after entry.
