@@ -1,0 +1,26 @@
+{
+  "given": {
+    "host": {}
+  },
+  "run": {
+    "kind": "cli",
+    "argv": [
+      "service",
+      "run",
+      "--allow-isolated-scope"
+    ]
+  },
+  "expect": {
+    "exit": 2,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "stdout_json",
+          "reason"
+        ],
+        "value": "service_disabled"
+      }
+    ]
+  }
+}

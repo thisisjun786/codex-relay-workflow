@@ -1,0 +1,23 @@
+{
+  "given": {},
+  "run": {
+    "kind": "cli",
+    "argv": [
+      "service",
+      "stop"
+    ]
+  },
+  "expect": {
+    "exit": 2,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "stdout_json",
+          "reason"
+        ],
+        "value": "not_running"
+      }
+    ]
+  }
+}

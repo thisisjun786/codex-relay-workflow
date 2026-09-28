@@ -47,6 +47,9 @@ type Refusal struct {
 func (r Refusal) Error() string { return r.Detail }
 
 func (c *Channel) Resolve(ctx context.Context, relationshipID string) (Resolution, error) {
+	if key, ok := strings.CutPrefix(relationshipID, "project:"); ok {
+		return c.resolveNoticeProject(ctx, key)
+	}
 	reading, err := c.Linkage.Up(ctx, relationshipID)
 	if err != nil {
 		return Resolution{}, err

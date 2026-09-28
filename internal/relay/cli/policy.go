@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -68,14 +70,13 @@ func declaredPolicy(configured string) (rolePolicy, error) {
 		return rolePolicy{detail: "this host's execution policy declares no roles", publicDetail: "execution policy declares no roles"}, nil
 	}
 	digest, _ := summary["digest"].(string)
-	return rolePolicy{digest: digest, roles: orderedRoles(declaredRoles)}, nil
+	return rolePolicy{digest: digest, roles: orderedRoles(declaredRoles, policy.RoleOrder())}, nil
 }
 
-// orderedRoles is the summary's roles as an object in roles.ROLES order. Only equality with a
-// worker's published summary is asked of it, which ignores key order, as dict == does.
-func orderedRoles(declared map[string]any) contract.OrderedObject {
+// orderedRoles retains the file order used by Python's role-policy summary.
+func orderedRoles(declared map[string]any, names []string) contract.OrderedObject {
 	out := contract.OrderedObject{}
-	for _, name := range []string{execution.Supervisor, execution.Parent, execution.Child} {
+	for _, name := range names {
 		receipt, ok := declared[name].(map[string]any)
 		if !ok {
 			continue
@@ -372,9 +373,10 @@ func readWorkerPolicy(services Services, loc store.Location) contract.OrderedObj
 		!pyEqual(get(recordObject, "scopeAuthority"), authority) {
 		return absent("worker_policy_service_mismatch")
 	}
-	// A receipt that matches THIS installation's identity was published by a Go worker, and the
-	// Go daemon is todo 29. Until it exists no such receipt can be current.
-	return absent("worker_policy_process_unavailable")
+	owner := &service.Service{Selection: services.Selection, Socket: services.SocketPath,
+		StoreID: loc.StoreID, InstallationID: installationID(services.Selection.Path),
+		Scope: &service.ScopeRegistry{Root: root, Authority: authority}}
+	return owner.ReadWorkerPolicy(context.Background())
 }
 
 func readJSONFile(path string) any {

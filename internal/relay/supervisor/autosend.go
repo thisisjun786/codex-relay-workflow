@@ -25,6 +25,7 @@ type AutoSendResult struct {
 	AfterProject     string   `json:"-"`
 	AfterStagedAt    string   `json:"-"`
 	AfterMessageID   string   `json:"-"`
+	Attempts         int      `json:"-"`
 }
 
 // AutoSend performs only the supervisor pass invoked by a daemon tick. Todo 29 owns
@@ -93,6 +94,7 @@ func (c *Channel) AutoSend(ctx context.Context, host SendAdapter, now float64, p
 			struggling[row.RecipientTaskID] = true
 		}
 	}
+	answer.Attempts = attempted
 	return answer, nil
 }
 

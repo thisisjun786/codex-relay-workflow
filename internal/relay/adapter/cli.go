@@ -27,6 +27,7 @@ func Register() {
 	delivery.HostCommand = hostCommand
 	delivery.ObserveTurn = observeTurn
 	cli.SupervisorHostCommand = supervisorHostCommand
+	cli.DaemonFactory = daemonFactory
 	managed.HostStart = managedStart
 	if testClock != "" {
 		now, err := strconv.ParseFloat(testClock, 64)

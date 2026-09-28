@@ -56,7 +56,7 @@ type Command struct {
 }
 
 // Commands lists only implemented operations; later domain ports append theirs.
-var Commands = []Command{guardEvaluateCommand, doctorCommand, storeIdentityCommand, storeChallengeCommand, showCommand, statusCommand, reportingShowCommand, reportingDeriveCommand, supervisorStandingCommand, supervisorSelectCommand, supervisorReportRecordedCommand, supervisorStageCommand, supervisorShowCommand, supervisorSendCommand, supervisorReadCommand, mergeEvidenceCommand}
+var Commands = []Command{daemonCommand, serviceCommand, guardEvaluateCommand, doctorCommand, storeIdentityCommand, storeChallengeCommand, showCommand, statusCommand, reportingShowCommand, reportingDeriveCommand, supervisorStandingCommand, supervisorSelectCommand, supervisorReportRecordedCommand, supervisorStageCommand, supervisorShowCommand, supervisorSendCommand, supervisorReadCommand, mergeEvidenceCommand}
 
 // Registered reports whether this build implements the relay command name.
 func Registered(name string) bool { return slices.Contains(allNames(), name) }
@@ -132,13 +132,18 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 	}
 	remaining := root.Remaining
 	if len(root.Unknown) > 0 {
-		child := argparse.Parse(remaining[0], remaining[1:])
+		childName := remaining[0]
+		child := argparse.Parse(childName, remaining[1:])
+		if childName == "service" && child.Message == "" && !child.Help {
+			childName += " " + child.Remaining[0]
+			child = argparse.Parse(childName, append(append([]string{}, child.Unknown...), child.Remaining[1:]...))
+		}
 		if child.Help {
-			fmt.Fprint(stdout, argparse.Help(prog, remaining[0]))
+			fmt.Fprint(stdout, argparse.Help(prog, childName))
 			return contract.ExitOk
 		}
 		if child.Message != "" && !child.Global {
-			fmt.Fprint(stderr, child.Error(prog, remaining[0]))
+			fmt.Fprint(stderr, child.Error(prog, childName))
 			return parserExit
 		}
 		message := "unrecognized arguments: " + strings.Join(root.Unknown, " ")
@@ -218,17 +223,33 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 			return code
 		}
 	}
-	flags := flag.NewFlagSet(command.Name, flag.ContinueOnError)
+	parserName := command.Name
+	var positionals []string
+	if command.Name == "service" {
+		parent := argparse.Parse("service", commandArgs)
+		if parent.Help {
+			fmt.Fprint(stdout, argparse.Help(prog, "service"))
+			return contract.ExitOk
+		}
+		if parent.Message != "" {
+			fmt.Fprint(stderr, parent.Error(prog, "service"))
+			return parserExit
+		}
+		positionals = []string{parent.Remaining[0]}
+		parserName += " " + parent.Remaining[0]
+		commandArgs = append(append([]string{}, parent.Unknown...), parent.Remaining[1:]...)
+	}
+	flags := flag.NewFlagSet(parserName, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	if command.Flags != nil {
 		command.Flags(flags)
 	}
 	if _, ok := argparse.Specs[command.Name]; ok {
-		given, code, done := parseRelayArgs(prog, flags, remaining[1:], stdout, stderr)
+		given, code, done := parseRelayArgs(prog, flags, commandArgs, stdout, stderr)
 		if done {
 			return code
 		}
-		result, err := run(ctx, command, argv0, state, socket, kindModules, Args{Flags: flags, Set: given})
+		result, err := run(ctx, command, argv0, state, socket, kindModules, Args{Flags: flags, Set: given, Positionals: positionals})
 		return emit(stdout, stderr, result, err)
 	}
 	commandUsage := "usage: " + prog + " " + command.Name + commandSynopsis(flags)

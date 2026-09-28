@@ -48,6 +48,9 @@ func (c *Channel) omissionWithdrawn(ctx context.Context, o Obligation, reading m
 
 func (c *Channel) refreshProposal(ctx context.Context, row store.SupervisorMessagesRow, r Resolution, at string, currentAttempt int64) (changed bool, err error) {
 	defer evidence.RecoverPython(&err)
+	if row.ObligationKind == "fault_notification" {
+		return c.refreshNotice(ctx, row, r, at, currentAttempt)
+	}
 	if !row.EventID.Valid {
 		if row.Reading.Valid && row.ObligationKind == "unreported" {
 			reading := map[string]any{}

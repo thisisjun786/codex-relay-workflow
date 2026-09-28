@@ -1,0 +1,57 @@
+package service
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+)
+
+var testRoot, testBinary, testPython string
+var buildEnvironment []string
+
+func TestMain(m *testing.M) {
+	buildEnvironment = os.Environ()
+	root, err := filepath.Abs("../../..")
+	if err != nil {
+		panic(err)
+	}
+	testRoot = root
+	testPython = filepath.Join(root, ".venv/bin/codex-session-relay")
+	home, err := os.MkdirTemp("", "crw-service-test-")
+	if err != nil {
+		panic(err)
+	}
+	// Put the executable beside an unchanged copy of Python's package so both
+	// runtimes derive installationId from precisely the same physical directory.
+	installation := filepath.Join(home, "installation", "codex_session_relay")
+	if err = os.CopyFS(filepath.Join(home, "installation"), os.DirFS(filepath.Join(root, "packages/codex-session-relay/src"))); err != nil {
+		panic(err)
+	}
+	testBinary = filepath.Join(installation, "crw")
+	cmd := exec.Command("go", "build", "-o", testBinary, "./cmd/crw")
+	cmd.Dir = root
+	if raw, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "build: %v\n%s", err, raw)
+		_ = os.RemoveAll(home)
+		os.Exit(1)
+	}
+	if err = os.Symlink(testBinary, filepath.Join(installation, "codex-session-relay")); err != nil {
+		panic(err)
+	}
+	for _, key := range []string{"HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "CODEX_HOME", "CODEX_SESSION_RELAY_STATE", "CODEX_SESSION_RELAY_SCOPE_DIR"} {
+		if err = os.Setenv(key, filepath.Join(home, key)); err != nil {
+			panic(err)
+		}
+	}
+	if err = os.Setenv("PYTHONPATH", filepath.Join(home, "installation")); err != nil {
+		panic(err)
+	}
+	code := m.Run()
+	if err = os.RemoveAll(home); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		code = 1
+	}
+	os.Exit(code)
+}

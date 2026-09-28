@@ -62,7 +62,11 @@ func fromMapping(value any, digest string) (Policy, error) {
 	if err != nil {
 		return Policy{}, err
 	}
-	return Policy{allowed: allowed, roles: roles, exceptions: exceptions, digest: digest}, nil
+	var roleOrder []string
+	if section, ok := data.values["roles"].(*object); ok {
+		roleOrder = append(roleOrder, section.keys...)
+	}
+	return Policy{allowed: allowed, roles: roles, roleOrder: roleOrder, exceptions: exceptions, digest: digest}, nil
 }
 
 func parseAllowed(entries any, rolesDeclared bool) (map[string][]string, error) {

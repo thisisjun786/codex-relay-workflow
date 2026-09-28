@@ -242,3 +242,5 @@ This inventory is decision input only. It records use by CRW skills and wiring; 
 | `sync-retry` | `sync-*` | no | 0 |
 | `sync-status` | `sync-*` | no | 0 |
 | `sync-target` | `sync-*` | yes | 1 - `plugins/crw/skills/crw-run/references/relay.md` |
+
+- [todo29] internal/relay/{service/worker.go,cli/policy.go,adapter/worker_observation.go} - worker policy identity checks have three entry-point-specific implementations; consolidate after the port with whole-receipt and process-race coverage rather than changing caller refusal precedence here - out-of-scope - evidence: task-29-crw-go-port.txt and Test29OrphanKeepsInheritedLocks.
