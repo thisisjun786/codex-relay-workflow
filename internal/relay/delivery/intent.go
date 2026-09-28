@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -20,6 +21,19 @@ import (
 
 // BindingWindowMinutes is BINDING_WINDOW_MINUTES.
 const BindingWindowMinutes = 30
+
+// ReturnReacher records one semantic Python-oracle return ordinal during replay.
+// Normal callers pass nil; replay owns one instance per invocation.
+type ReturnReacher interface{ Reach(string, int) }
+
+func reach(r ReturnReacher, function string, ordinal int) {
+	if r != nil {
+		r.Reach(function, ordinal)
+	}
+}
+
+// MarkReturn lets sibling packages record a return without nil checks or global state.
+func MarkReturn(r ReturnReacher, function string, ordinal int) { reach(r, function, ordinal) }
 
 // Derived assignment states and create-once outcomes (intent.py).
 const (
@@ -214,8 +228,13 @@ func resolutionsOf(marker Obj) []Obj { return objects(markerFactList(marker, "re
 
 // FactCovered is covered: this exact fact, by identity AND digest, adjudicated by a resolution.
 func FactCovered(fact Obj, resolutions []Obj) bool {
+	return factCovered(fact, resolutions, nil)
+}
+
+func factCovered(fact Obj, resolutions []Obj, reached ReturnReacher) bool {
 	factID := fieldOf(fact, "factId")
 	if !Named(factID) {
+		reach(reached, "_covered", 1)
 		return false
 	}
 	digest := FactDigest(fact)
@@ -227,28 +246,38 @@ func FactCovered(fact Obj, resolutions []Obj) bool {
 				continue
 			}
 			if fieldOf(entry, "factId") == factID && fieldOf(entry, "digest") == digest {
+				reach(reached, "_covered", 2)
 				return true
 			}
 		}
 	}
+	reach(reached, "_covered", 3)
 	return false
 }
 
 // Claimant is claimant: the session a claim belongs to, from the path that authorised the write,
 // and only when the body names that same session. nil when it owns nothing.
 func Claimant(claim Obj) any {
+	return claimant(claim, nil)
+}
+
+func claimant(claim Obj, reached ReturnReacher) any {
 	parts := strings.Split(pyStrOr(fieldOf(claim, "factId")), "/")
 	if len(parts) != 3 || parts[0] != "claims" || parts[2] != claimFile {
+		reach(reached, "_claimant", 1)
 		return nil
 	}
 	owner := parts[1]
-	if owner == "." || owner == ".." || !Named(owner) {
+	if owner == "." || owner == ".." {
+		reach(reached, "_claimant", 2)
 		return nil
 	}
 	body := fieldOf(claim, "sessionId")
-	if !Named(body) || body != owner {
+	if !Named(owner) || !Named(body) || body != owner {
+		reach(reached, "_claimant", 3)
 		return nil
 	}
+	reach(reached, "_claimant", 4)
 	return owner
 }
 
@@ -270,7 +299,7 @@ func acceptedTasks(marker Obj) map[any]bool {
 	return tasks
 }
 
-func competingFacts(marker Obj) []Obj {
+func competingFactsTrace(marker Obj, reached ReturnReacher) []Obj {
 	bound := markerFact(marker, "bound")
 	var facts []Obj
 	for _, attempt := range objects(markerFactList(marker, "attempts")) {
@@ -279,14 +308,14 @@ func competingFacts(marker Obj) []Obj {
 		}
 	}
 	for _, claim := range objects(markerFactList(marker, "claims")) {
-		if !SameIdentity(Claimant(claim), fieldOf(bound, "sessionId")) {
+		if !SameIdentity(claimant(claim, reached), fieldOf(bound, "sessionId")) {
 			facts = append(facts, claim)
 		}
 	}
 	return append(facts, objects(markerFactList(marker, "conflicts"))...)
 }
 
-func ambiguityResolved(marker Obj) bool {
+func ambiguityResolved(marker Obj, reached ReturnReacher) bool {
 	var resolutions []Obj
 	for _, r := range resolutionsOf(marker) {
 		if Named(fieldOf(r, "chosenTaskId")) && Named(fieldOf(r, "chosenSessionId")) {
@@ -294,6 +323,7 @@ func ambiguityResolved(marker Obj) bool {
 		}
 	}
 	if len(resolutions) == 0 {
+		reach(reached, "_ambiguity_resolved", 1)
 		return false
 	}
 	pairs := map[[2]any]bool{}
@@ -301,6 +331,7 @@ func ambiguityResolved(marker Obj) bool {
 		pairs[[2]any{fieldOf(r, "chosenTaskId"), fieldOf(r, "chosenSessionId")}] = true
 	}
 	if len(pairs) != 1 {
+		reach(reached, "_ambiguity_resolved", 2)
 		return false
 	}
 	var chosen [2]any
@@ -309,11 +340,12 @@ func ambiguityResolved(marker Obj) bool {
 	}
 	sessions := map[any]bool{}
 	for _, claim := range objects(markerFactList(marker, "claims")) {
-		if owner := Claimant(claim); owner != nil {
+		if owner := claimant(claim, reached); owner != nil {
 			sessions[owner] = true
 		}
 	}
 	if !acceptedTasks(marker)[chosen[0]] || !sessions[chosen[1]] {
+		reach(reached, "_ambiguity_resolved", 3)
 		return false
 	}
 	var facts []Obj
@@ -324,18 +356,25 @@ func ambiguityResolved(marker Obj) bool {
 	}
 	facts = append(facts, objects(markerFactList(marker, "claims"))...)
 	for _, fact := range facts {
-		if !FactCovered(fact, resolutions) {
+		if !factCovered(fact, resolutions, reached) {
+			reach(reached, "_ambiguity_resolved", 4)
 			return false
 		}
 	}
+	reach(reached, "_ambiguity_resolved", 4)
 	return true
 }
 
 // IdentityContested is identity_contested: a competing fact after a bind that no resolution
 // naming the BOUND identity has adjudicated.
 func IdentityContested(marker Obj) bool {
+	return IdentityContestedTrace(marker, nil)
+}
+
+func IdentityContestedTrace(marker Obj, reached ReturnReacher) bool {
 	bound := markerFact(marker, "bound")
 	if len(bound) == 0 {
+		reach(reached, "identity_contested", 1)
 		return false
 	}
 	var applicable []Obj
@@ -344,11 +383,13 @@ func IdentityContested(marker Obj) bool {
 			applicable = append(applicable, r)
 		}
 	}
-	for _, fact := range competingFacts(marker) {
-		if !FactCovered(fact, applicable) {
+	for _, fact := range competingFactsTrace(marker, reached) {
+		if !factCovered(fact, applicable, reached) {
+			reach(reached, "identity_contested", 2)
 			return true
 		}
 	}
+	reach(reached, "identity_contested", 2)
 	return false
 }
 
@@ -356,16 +397,22 @@ func IdentityContested(marker Obj) bool {
 
 // DeriveAssignmentState is derive_assignment_state: the contract's precedence table, in order.
 func DeriveAssignmentState(marker Obj, now any) string {
+	return DeriveAssignmentStateTrace(marker, now, nil)
+}
+
+func DeriveAssignmentStateTrace(marker Obj, now any, reached ReturnReacher) string {
 	intent := markerFact(marker, "intent")
 	attempts := objects(markerFactList(marker, "attempts"))
 	claims := markerFactList(marker, "claims")
 	if len(markerFact(marker, "bound")) > 0 {
 		if Named(fieldOf(markerFact(marker, "relationship"), "relationshipId")) {
+			reach(reached, "derive_assignment_state", 1)
 			return RelationshipRegistered
 		}
+		reach(reached, "derive_assignment_state", 1)
 		return IdentityBound
 	}
-	resolvedAmbiguity := ambiguityResolved(marker)
+	resolvedAmbiguity := ambiguityResolved(marker, reached)
 	accepted, unknown := false, false
 	for _, a := range attempts {
 		switch fieldOf(a, "outcome") {
@@ -376,15 +423,19 @@ func DeriveAssignmentState(marker Obj, now any) string {
 		}
 	}
 	if !resolvedAmbiguity && (len(acceptedTasks(marker)) > 1 || len(claims) > 1) {
+		reach(reached, "derive_assignment_state", 2)
 		return AmbiguousIdentity
 	}
 	anchor, seen := Moment(fieldOf(intent, "declaredAt")), Moment(now)
 	if anchor != nil && seen != nil && seen.After(anchor.Add(BindingWindowMinutes*time.Minute)) {
+		reach(reached, "derive_assignment_state", 3)
 		return IntentExpired
 	}
 	if !resolvedAmbiguity && !accepted && unknown {
+		reach(reached, "derive_assignment_state", 4)
 		return CreationUnknown
 	}
+	reach(reached, "derive_assignment_state", 5)
 	if accepted {
 		return CreationAccepted
 	}
@@ -400,9 +451,10 @@ const (
 	IntentAssignmentMismatch = "intent_assignment_mismatch"
 )
 
-func ownClaim(marker Obj, sessionID any) Obj {
+func ownClaim(marker Obj, sessionID any) Obj { return ownClaimTrace(marker, sessionID, nil) }
+func ownClaimTrace(marker Obj, sessionID any, reached ReturnReacher) Obj {
 	for _, claim := range objects(markerFactList(marker, "claims")) {
-		if SameIdentity(Claimant(claim), sessionID) {
+		if SameIdentity(claimant(claim, reached), sessionID) {
 			return claim
 		}
 	}
@@ -411,30 +463,54 @@ func ownClaim(marker Obj, sessionID any) Obj {
 
 // CorrelationProblem is correlation_problem: which condition this session's claim fails, or "".
 func CorrelationProblem(marker Obj, sessionID, assignment any) string {
-	claim := ownClaim(marker, sessionID)
+	return CorrelationProblemTrace(marker, sessionID, assignment, nil)
+}
+
+func CorrelationProblemTrace(marker Obj, sessionID, assignment any, reached ReturnReacher) string {
+	claim := ownClaimTrace(marker, sessionID, reached)
 	if len(claim) == 0 {
+		reach(reached, "_correlation_problem", 1)
 		return ClaimAbsent
 	}
 	presented := fieldOf(claim, "dispatchRequestId")
 	if !Named(presented) {
+		reach(reached, "_correlation_problem", 2)
 		return ClaimDispatchUnnamed
 	}
 	declared := fieldOf(markerFact(marker, "intent"), "dispatchRequestIdHash")
 	if !Named(declared) {
+		reach(reached, "_correlation_problem", 3)
 		return IntentDispatchUnnamed
 	}
 	if Named(assignment) && !SameIdentity(declared, assignment) {
+		reach(reached, "_correlation_problem", 4)
 		return IntentAssignmentMismatch
 	}
+	if !utf8.ValidString(presented.(string)) {
+		reach(reached, "_correlation_problem", 5)
+		return ClaimDispatchUnnamed
+	}
 	if SameIdentity(AssignmentID(presented.(string)), declared) {
+		reach(reached, "_correlation_problem", 6)
 		return ""
 	}
+	reach(reached, "_correlation_problem", 6)
 	return ClaimDispatchMismatch
 }
 
 // Correlated is correlated: correlation_problem read as a yes or no.
 func Correlated(marker Obj, sessionID, assignment any) bool {
-	return CorrelationProblem(marker, sessionID, assignment) == ""
+	return CorrelatedTrace(marker, sessionID, assignment, nil)
+}
+
+func CorrelatedTrace(marker Obj, sessionID, assignment any, reached ReturnReacher) bool {
+	correlated := CorrelationProblemTrace(marker, sessionID, assignment, reached) == ""
+	if correlated {
+		reach(reached, "_correlated", 2)
+	} else {
+		reach(reached, "_correlated", 1)
+	}
+	return correlated
 }
 
 // ClaimedDispatch is claimed_dispatch: the dispatch this session claimed, where that correlates.
@@ -473,7 +549,7 @@ func selectingClaim(marker Obj, sessionID any, assignment string) Obj {
 			continue
 		}
 		presented := fieldOf(claim, "dispatchRequestId")
-		if !Named(presented) || !SameIdentity(AssignmentID(presented.(string)), assignment) {
+		if !Named(presented) || !utf8.ValidString(presented.(string)) || !SameIdentity(AssignmentID(presented.(string)), assignment) {
 			continue
 		}
 		intentValue, _ := get(marker, "intent")

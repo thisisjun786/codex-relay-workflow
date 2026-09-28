@@ -106,7 +106,7 @@ func Test47_SCOPE_1_SelectionFollowsPathClass(t *testing.T) {
 	t.Run("go product paths", func(t *testing.T) {
 		r, base := scopeRepo(t)
 		paths := []string{".goreleaser.yaml", "Makefile", "cmd/crw/main.go", "contract/schema/relay-cli.json",
-			"docs/port/inventory.md", "go.mod", "go.sum", "internal/contract/emit.go",
+			"docs/port/inventory.md", "go.mod", "go.sum", "internal/contract/emit.go", "plugins/skill_assets.go",
 			"scripts/port/check_inventory.py", "tools.go"}
 		for _, path := range paths {
 			r.write(path, "x\n")

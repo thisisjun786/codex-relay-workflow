@@ -625,3 +625,48 @@ Evidence: `packages/codex-session-relay/src/codex_session_relay/service.py:1304-
 `.omo/evidence/check29-fixes/` (`python-sigterm-proof.log`, `packages.log`,
 `packages-serial.log`), and `.omo/evidence/check29-flake/`
 (`reproduce_leader_exit.py`, `leader-exit.log`, `run-3.log`).
+
+## 29a. Uncaught Python exceptions: final line is contract, frames are not
+
+Decision: when a Python skill script dies with an uncaught exception, the parity
+contract is the exit code, byte-identical stdout, and the final stderr exception
+line (`ExceptionType: detail`). The leading "Traceback (most recent call last):"
+block of frames (file paths, line numbers, source lines, caret markers) is an
+interpreter implementation detail and is not reproduced; Go prints no fake frames.
+The live-Python test helper applies one narrow comparator: it strips only that
+leading traceback block from the Python stderr and compares the rest byte for
+byte. Go stderr is never stripped, so extra Go frames, a different exit code,
+different stdout or a different final line still fail.
+
+Why: the port follows properties, not interpreter internals. Frames name
+checkout paths and Python line numbers that change with any edit and with the
+installation location, so they cannot be a stable contract.
+
+Evidence: 148 of the 2061 cases in `TestSkillJSONShapeLivePython`
+(`internal/skill/shape_matrix_test.go`) end in an uncaught Python exception and
+differ from Go only in traceback frames;
+`.omo/evidence/task-35-devin2-exception-matrix.json` lists them with matching
+exit, stdout and final error. The comparator is `skillProcessParity` in
+`internal/skill/process_parity_test.go`, pinned by
+`TestSkillProcessParityComparator`.
+
+## 29b. Live-Python oracles run with the supported host's stdio decoding
+
+Decision: every live-Python skill oracle runs with `PYTHONIOENCODING=utf-8:strict`
+and `LC_ALL=C.UTF-8` (inherited locale and Python I/O variables removed). The Go
+`crw skill` commands read bytes and never consult the locale; invalid UTF-8 on stdin
+is refused exactly as Python refuses it on a host with a UTF-8 locale such as
+`en_US.UTF-8`.
+
+Why: Python chooses the stdin error handler from the locale. Under `C`, `POSIX` and
+the coercion targets `C.UTF-8`/`UTF-8` (the default on the hosted CI runner) it
+decodes stdin with `surrogateescape` and continues; under `en_US.UTF-8` it raises
+`UnicodeDecodeError`. The same test therefore passed locally and failed in CI
+(run 36454431117, `TestSkillUnreadableInputsLivePython`, three `<bad-utf8.json`
+stdin cases). That switch is interpreter behaviour, not a skill property; the port
+keeps one deterministic behaviour and the oracle is pinned to it. The pin changes
+no Python output for valid input.
+
+Evidence: `oracleEnv` in `internal/skill/process_parity_test.go`;
+`TestSkillUnreadableInputsLivePython` passes under outer `LC_ALL=C`, `LC_ALL=C.UTF-8`
+and `LANG=en_US.UTF-8`, and fails under outer `LC_ALL=C` without the pin.

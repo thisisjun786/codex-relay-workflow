@@ -165,6 +165,17 @@ def run(op):
     if kind == "claimant":
         found = facts(op)[0]
         return intent.claimant(next(f for f in found.get("claims", []) if f["factId"] == op["fact"]))
+    if kind == "unencodable_correlation":
+        session = "session-unencodable"
+        claim = {"factId": f"claims/{session}/claim.json", "sessionId": session,
+                 "dispatchRequestId": "\ud800"}
+        payload = {"claims": [claim], "intent": {"dispatchRequestIdHash": "0" * 64}}
+        return intent.correlation_problem(payload, session)
+    if kind == "unencodable_selection":
+        session = "session-unencodable"
+        claim = {"factId": f"claims/{session}/claim.json", "sessionId": session,
+                 "dispatchRequestId": "\ud800"}
+        return intent.selecting_claim({"claims": [claim]}, session, op["assignment"]) is not None
     if kind == "correlated":
         return intent.correlated(facts(op)[0], op["session"])
     if kind == "select":

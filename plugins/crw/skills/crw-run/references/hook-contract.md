@@ -517,8 +517,7 @@ two agree, say which one a claim rests on; where a claim needs the run, the stat
 does not supply it.
 
 Extracted from codex-cli 0.154.0 by reading the JSON Schemas the installed binary embeds for each
-event, titled `<event>.command.input` and `<event>.command.output`. `hook_probe.py observe` in
-`../scripts` extracts them, and `--sanitize` writes the shareable capability record kept under
+event, titled `<event>.command.input` and `<event>.command.output`. `crw skill hook-probe observe` extracts them, and `--sanitize` writes the shareable capability record kept under
 `../scripts/fixtures/host`, beside the observation record the packet run produced. The two are
 separate readings of the same host and are named separately for that reason. Re-run both on any
 other host or version before relying on either; nothing below is assumed to hold elsewhere.
@@ -552,7 +551,7 @@ behaviour it describes: a block carrying a reason continues the turn, and a bloc
 reported as a failed run and continues nothing.
 `session-end` has an input schema and no output schema, so session end cannot influence anything and
 is unusable as an enforcement point. Which events a host actually registers varies, and two signals
-disagree by construction: `hook_probe.py observe` reports the distinct event names that declaration
+disagree by construction: `crw skill hook-probe observe` reports the distinct event names that declaration
 files ask for and, separately, the event names the host recorded in its own hook trust state. On the
 host measured here those were seven and nine. Neither is proof that a handler ran for a given
 session, which only an observed invocation gives, so a count from either source is a floor.
@@ -600,8 +599,7 @@ behaving that way rather than as a host-side suppression switch.
 Criterion 3 is settled. Every row below was watched on a running host rather than read out of the
 binary, under a throwaway `CODEX_HOME` created for the run and removed after it. The user's own
 Codex home was read and never written; its `hooks.json` hashed identically before and after. The
-redacted record is `../scripts/fixtures/host/host-observation-codex-0.154.0.json`. `hook_probe.py
-replay` reads the row ids out of the table below, requires a record to carry every one of them,
+redacted record is `../scripts/fixtures/host/host-observation-codex-0.154.0.json`. `crw skill hook-probe replay` reads the row ids out of the table below, requires a record to carry every one of them,
 and holds the record to the capability record it names, so dropping a row here is a failed check
 rather than a quieter packet.
 
@@ -717,7 +715,7 @@ A count of tests, the presence of a registration, or a green hook run is not one
 
 The allow and hold table above is executable. Every row, plus the binding race, the release-precedence
 combinations and the bound-reached cases, is a fixture under `../scripts/fixtures/decisions`, and
-`hook_probe.py replay` checks each against its recorded expectation.
+`crw skill hook-probe replay` checks each against its recorded expectation.
 
 Replay also measures return-site coverage: it reads its own decision functions' return statements
 from the module AST, traces which ones the fixtures actually execute, and exits non-zero naming any

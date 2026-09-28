@@ -329,6 +329,24 @@ func TestINT16_a_claim_must_correlate_with_the_intents_dispatch(t *testing.T) {
 	}
 }
 
+// Python intent.py:415-429 catches a dispatch preimage that cannot be UTF-8 encoded and
+// classifies it as unnamed. markerops.py constructs the native lone surrogate in Python;
+// the Go side uses its WTF-8 byte spelling so both real implementations receive the value
+// their string model can represent. Removing CorrelationProblem's utf8.ValidString guard
+// compiles and changes only the Go result to claim_dispatch_mismatch.
+func TestINT16_unencodable_dispatch_is_unnamed_live_python(t *testing.T) {
+	answers := sameOps(t, nil,
+		markerOp{"op": "unencodable_correlation"},
+		markerOp{"op": "unencodable_selection", "assignment": AssignmentID(string([]byte{0xed, 0xa0, 0x80}))},
+	)
+	if got := ok(t, answers[0]); got != ClaimDispatchUnnamed {
+		t.Fatalf("classification %v", got)
+	}
+	if got := ok(t, answers[1]); got != false {
+		t.Fatalf("selection %v", got)
+	}
+}
+
 func TestINT17_a_contest_clears_only_by_the_bound_identity_and_a_matching_digest(t *testing.T) {
 	second := "claims/second/claim.json"
 	answers := sameOps(t, nil,
