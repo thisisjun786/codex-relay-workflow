@@ -56,6 +56,7 @@ type exception struct {
 type Policy struct {
 	allowed    map[string][]string
 	roles      map[string]Role
+	roleOrder  []string
 	exceptions map[string]exception
 	digest     string
 }
@@ -87,6 +88,9 @@ func (p Policy) Mode() string {
 	}
 	return "allowlist"
 }
+
+// RoleOrder preserves the declaration's insertion order without exposing mutable state.
+func (p Policy) RoleOrder() []string { return append([]string(nil), p.roleOrder...) }
 
 func (p Policy) Summary() map[string]any {
 	roles := map[string]any{}

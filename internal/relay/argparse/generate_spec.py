@@ -30,8 +30,14 @@ def spec(parser):
 
 p = build_parser()
 result = {'': spec(p)}
-for a in p._actions:
-    if isinstance(a, argparse._SubParsersAction):
-        result.update({n: spec(c) for n, c in a.choices.items()})
+def children(parser, prefix=''):
+    for a in parser._actions:
+        if isinstance(a, argparse._SubParsersAction):
+            for name, child in a.choices.items():
+                path = f'{prefix} {name}'.strip()
+                result[path] = spec(child)
+                children(child, path)
+
+children(p)
 output = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(__file__).with_name('specs.json')
 output.write_text(json.dumps(result, ensure_ascii=True, indent=2) + '\n')

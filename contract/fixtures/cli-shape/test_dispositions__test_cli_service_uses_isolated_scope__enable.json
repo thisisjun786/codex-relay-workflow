@@ -1,0 +1,32 @@
+{
+  "given": {},
+  "run": {
+    "kind": "cli",
+    "argv": [
+      "service",
+      "enable"
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "stdout_json",
+          "ok"
+        ],
+        "value": true
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "stdout_json",
+          "intent",
+          "enabled"
+        ],
+        "value": true
+      }
+    ]
+  }
+}

@@ -86,13 +86,8 @@ func (p RolePolicy) Summary() contract.OrderedObject {
 			{Key: "roles", Value: contract.OrderedObject{}}, {Key: "detail", Value: p.PublicDetail}}
 	}
 	roles, _ := p.policy.Summary()["roles"].(map[string]any)
-	names := make([]string, 0, len(roles))
-	for name := range roles {
-		names = append(names, name)
-	}
-	sort.Strings(names)
 	ordered := contract.OrderedObject{}
-	for _, name := range names {
+	for _, name := range p.policy.RoleOrder() {
 		entry, _ := roles[name].(map[string]any)
 		ordered = append(ordered, contract.Field{Key: name, Value: contract.OrderedObject{{Key: "role", Value: entry["role"]},
 			{Key: "expectation", Value: entry["expectation"]}, {Key: "model", Value: entry["model"]}, {Key: "reasoningEffort", Value: entry["reasoningEffort"]}}})

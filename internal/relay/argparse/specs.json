@@ -14662,6 +14662,1010 @@
     ],
     "groups": []
   },
+  "service status": {
+    "parts": [
+      "[-h]",
+      "[--actor ACTOR]"
+    ],
+    "split": 2,
+    "description": [],
+    "epilog": [],
+    "actions": [
+      {
+        "flags": [
+          "-h",
+          "--help"
+        ],
+        "dest": "help",
+        "kind": "_HelpAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "-h, --help",
+        "help": [
+          "show",
+          " ",
+          "this",
+          " ",
+          "help",
+          " ",
+          "message",
+          " ",
+          "and",
+          " ",
+          "exit"
+        ],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--actor"
+        ],
+        "dest": "actor",
+        "kind": "_StoreAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "--actor ACTOR",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      }
+    ],
+    "sections": [
+      {
+        "title": "positional arguments",
+        "actions": []
+      },
+      {
+        "title": "options",
+        "actions": [
+          0,
+          1
+        ]
+      }
+    ],
+    "groups": []
+  },
+  "service enable": {
+    "parts": [
+      "[-h]",
+      "[--actor ACTOR]"
+    ],
+    "split": 2,
+    "description": [],
+    "epilog": [],
+    "actions": [
+      {
+        "flags": [
+          "-h",
+          "--help"
+        ],
+        "dest": "help",
+        "kind": "_HelpAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "-h, --help",
+        "help": [
+          "show",
+          " ",
+          "this",
+          " ",
+          "help",
+          " ",
+          "message",
+          " ",
+          "and",
+          " ",
+          "exit"
+        ],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--actor"
+        ],
+        "dest": "actor",
+        "kind": "_StoreAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "--actor ACTOR",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      }
+    ],
+    "sections": [
+      {
+        "title": "positional arguments",
+        "actions": []
+      },
+      {
+        "title": "options",
+        "actions": [
+          0,
+          1
+        ]
+      }
+    ],
+    "groups": []
+  },
+  "service disable": {
+    "parts": [
+      "[-h]",
+      "[--actor ACTOR]"
+    ],
+    "split": 2,
+    "description": [],
+    "epilog": [],
+    "actions": [
+      {
+        "flags": [
+          "-h",
+          "--help"
+        ],
+        "dest": "help",
+        "kind": "_HelpAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "-h, --help",
+        "help": [
+          "show",
+          " ",
+          "this",
+          " ",
+          "help",
+          " ",
+          "message",
+          " ",
+          "and",
+          " ",
+          "exit"
+        ],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--actor"
+        ],
+        "dest": "actor",
+        "kind": "_StoreAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "--actor ACTOR",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      }
+    ],
+    "sections": [
+      {
+        "title": "positional arguments",
+        "actions": []
+      },
+      {
+        "title": "options",
+        "actions": [
+          0,
+          1
+        ]
+      }
+    ],
+    "groups": []
+  },
+  "service stop": {
+    "parts": [
+      "[-h]",
+      "[--actor ACTOR]"
+    ],
+    "split": 2,
+    "description": [],
+    "epilog": [],
+    "actions": [
+      {
+        "flags": [
+          "-h",
+          "--help"
+        ],
+        "dest": "help",
+        "kind": "_HelpAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "-h, --help",
+        "help": [
+          "show",
+          " ",
+          "this",
+          " ",
+          "help",
+          " ",
+          "message",
+          " ",
+          "and",
+          " ",
+          "exit"
+        ],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--actor"
+        ],
+        "dest": "actor",
+        "kind": "_StoreAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "--actor ACTOR",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      }
+    ],
+    "sections": [
+      {
+        "title": "positional arguments",
+        "actions": []
+      },
+      {
+        "title": "options",
+        "actions": [
+          0,
+          1
+        ]
+      }
+    ],
+    "groups": []
+  },
+  "service declare": {
+    "parts": [
+      "[-h]",
+      "[--actor ACTOR]",
+      "(--execution-policy EXECUTION_POLICY |",
+      "--forget-execution-policy)"
+    ],
+    "split": 4,
+    "description": [],
+    "epilog": [],
+    "actions": [
+      {
+        "flags": [
+          "-h",
+          "--help"
+        ],
+        "dest": "help",
+        "kind": "_HelpAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "-h, --help",
+        "help": [
+          "show",
+          " ",
+          "this",
+          " ",
+          "help",
+          " ",
+          "message",
+          " ",
+          "and",
+          " ",
+          "exit"
+        ],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--actor"
+        ],
+        "dest": "actor",
+        "kind": "_StoreAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "--actor ACTOR",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--execution-policy"
+        ],
+        "dest": "execution_policy",
+        "kind": "_StoreAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "--execution-policy EXECUTION_POLICY",
+        "help": [
+          "the",
+          " ",
+          "execution",
+          " ",
+          "policy",
+          " ",
+          "file",
+          " ",
+          "this",
+          " ",
+          "service's",
+          " ",
+          "daemon",
+          " ",
+          "is",
+          " ",
+          "launched",
+          " ",
+          "with;",
+          " ",
+          "it",
+          " ",
+          "is",
+          " ",
+          "read",
+          " ",
+          "back",
+          " ",
+          "and",
+          " ",
+          "refused",
+          " ",
+          "unless",
+          " ",
+          "it",
+          " ",
+          "resolves"
+        ],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--forget-execution-policy"
+        ],
+        "dest": "forget_execution_policy",
+        "kind": "_StoreTrueAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "--forget-execution-policy",
+        "help": [
+          "drop",
+          " ",
+          "the",
+          " ",
+          "declaration;",
+          " ",
+          "later",
+          " ",
+          "launches",
+          " ",
+          "fall",
+          " ",
+          "back",
+          " ",
+          "to",
+          " ",
+          "their",
+          " ",
+          "own",
+          " ",
+          "environment"
+        ],
+        "suppressed": false,
+        "children": []
+      }
+    ],
+    "sections": [
+      {
+        "title": "positional arguments",
+        "actions": []
+      },
+      {
+        "title": "options",
+        "actions": [
+          0,
+          1,
+          2,
+          3
+        ]
+      }
+    ],
+    "groups": [
+      {
+        "required": true,
+        "actions": [
+          2,
+          3
+        ]
+      }
+    ]
+  },
+  "service start": {
+    "parts": [
+      "[-h]",
+      "[--actor ACTOR]",
+      "[--allow-isolated-scope]",
+      "[--segment-seconds SEGMENT_SECONDS]",
+      "[--max-segments MAX_SEGMENTS]",
+      "[--deadline DEADLINE]",
+      "[--launch-id LAUNCH_ID]",
+      "[--takeover-scope]"
+    ],
+    "split": 8,
+    "description": [],
+    "epilog": [],
+    "actions": [
+      {
+        "flags": [
+          "-h",
+          "--help"
+        ],
+        "dest": "help",
+        "kind": "_HelpAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "-h, --help",
+        "help": [
+          "show",
+          " ",
+          "this",
+          " ",
+          "help",
+          " ",
+          "message",
+          " ",
+          "and",
+          " ",
+          "exit"
+        ],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--actor"
+        ],
+        "dest": "actor",
+        "kind": "_StoreAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "--actor ACTOR",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--allow-isolated-scope"
+        ],
+        "dest": "allow_isolated_scope",
+        "kind": "_StoreTrueAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "--allow-isolated-scope",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--segment-seconds"
+        ],
+        "dest": "segment_seconds",
+        "kind": "_StoreAction",
+        "required": false,
+        "choices": null,
+        "type": "float",
+        "header": "--segment-seconds SEGMENT_SECONDS",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--max-segments"
+        ],
+        "dest": "max_segments",
+        "kind": "_StoreAction",
+        "required": false,
+        "choices": null,
+        "type": "int",
+        "header": "--max-segments MAX_SEGMENTS",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--deadline"
+        ],
+        "dest": "deadline",
+        "kind": "_StoreAction",
+        "required": false,
+        "choices": null,
+        "type": "float",
+        "header": "--deadline DEADLINE",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--launch-id"
+        ],
+        "dest": "launch_id",
+        "kind": "_StoreAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "--launch-id LAUNCH_ID",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--takeover-scope"
+        ],
+        "dest": "takeover_scope",
+        "kind": "_StoreTrueAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "--takeover-scope",
+        "help": [
+          "replace",
+          " ",
+          "a",
+          " ",
+          "stopped",
+          " ",
+          "registration",
+          " ",
+          "that",
+          " ",
+          "names",
+          " ",
+          "a",
+          " ",
+          "store",
+          " ",
+          "this",
+          " ",
+          "one",
+          " ",
+          "is",
+          " ",
+          "not"
+        ],
+        "suppressed": false,
+        "children": []
+      }
+    ],
+    "sections": [
+      {
+        "title": "positional arguments",
+        "actions": []
+      },
+      {
+        "title": "options",
+        "actions": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      }
+    ],
+    "groups": []
+  },
+  "service restart": {
+    "parts": [
+      "[-h]",
+      "[--actor ACTOR]",
+      "[--allow-isolated-scope]",
+      "[--segment-seconds SEGMENT_SECONDS]",
+      "[--max-segments MAX_SEGMENTS]",
+      "[--deadline DEADLINE]",
+      "[--launch-id LAUNCH_ID]",
+      "[--takeover-scope]"
+    ],
+    "split": 8,
+    "description": [],
+    "epilog": [],
+    "actions": [
+      {
+        "flags": [
+          "-h",
+          "--help"
+        ],
+        "dest": "help",
+        "kind": "_HelpAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "-h, --help",
+        "help": [
+          "show",
+          " ",
+          "this",
+          " ",
+          "help",
+          " ",
+          "message",
+          " ",
+          "and",
+          " ",
+          "exit"
+        ],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--actor"
+        ],
+        "dest": "actor",
+        "kind": "_StoreAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "--actor ACTOR",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--allow-isolated-scope"
+        ],
+        "dest": "allow_isolated_scope",
+        "kind": "_StoreTrueAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "--allow-isolated-scope",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--segment-seconds"
+        ],
+        "dest": "segment_seconds",
+        "kind": "_StoreAction",
+        "required": false,
+        "choices": null,
+        "type": "float",
+        "header": "--segment-seconds SEGMENT_SECONDS",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--max-segments"
+        ],
+        "dest": "max_segments",
+        "kind": "_StoreAction",
+        "required": false,
+        "choices": null,
+        "type": "int",
+        "header": "--max-segments MAX_SEGMENTS",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--deadline"
+        ],
+        "dest": "deadline",
+        "kind": "_StoreAction",
+        "required": false,
+        "choices": null,
+        "type": "float",
+        "header": "--deadline DEADLINE",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--launch-id"
+        ],
+        "dest": "launch_id",
+        "kind": "_StoreAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "--launch-id LAUNCH_ID",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--takeover-scope"
+        ],
+        "dest": "takeover_scope",
+        "kind": "_StoreTrueAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "--takeover-scope",
+        "help": [
+          "replace",
+          " ",
+          "a",
+          " ",
+          "stopped",
+          " ",
+          "registration",
+          " ",
+          "that",
+          " ",
+          "names",
+          " ",
+          "a",
+          " ",
+          "store",
+          " ",
+          "this",
+          " ",
+          "one",
+          " ",
+          "is",
+          " ",
+          "not"
+        ],
+        "suppressed": false,
+        "children": []
+      }
+    ],
+    "sections": [
+      {
+        "title": "positional arguments",
+        "actions": []
+      },
+      {
+        "title": "options",
+        "actions": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      }
+    ],
+    "groups": []
+  },
+  "service run": {
+    "parts": [
+      "[-h]",
+      "[--actor ACTOR]",
+      "[--allow-isolated-scope]",
+      "[--segment-seconds SEGMENT_SECONDS]",
+      "[--max-segments MAX_SEGMENTS]",
+      "[--deadline DEADLINE]",
+      "[--deadline-monotonic DEADLINE_MONOTONIC]",
+      "[--launch-id LAUNCH_ID]",
+      "[--takeover-scope]"
+    ],
+    "split": 9,
+    "description": [],
+    "epilog": [],
+    "actions": [
+      {
+        "flags": [
+          "-h",
+          "--help"
+        ],
+        "dest": "help",
+        "kind": "_HelpAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "-h, --help",
+        "help": [
+          "show",
+          " ",
+          "this",
+          " ",
+          "help",
+          " ",
+          "message",
+          " ",
+          "and",
+          " ",
+          "exit"
+        ],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--actor"
+        ],
+        "dest": "actor",
+        "kind": "_StoreAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "--actor ACTOR",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--allow-isolated-scope"
+        ],
+        "dest": "allow_isolated_scope",
+        "kind": "_StoreTrueAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "--allow-isolated-scope",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--segment-seconds"
+        ],
+        "dest": "segment_seconds",
+        "kind": "_StoreAction",
+        "required": false,
+        "choices": null,
+        "type": "float",
+        "header": "--segment-seconds SEGMENT_SECONDS",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--max-segments"
+        ],
+        "dest": "max_segments",
+        "kind": "_StoreAction",
+        "required": false,
+        "choices": null,
+        "type": "int",
+        "header": "--max-segments MAX_SEGMENTS",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--deadline"
+        ],
+        "dest": "deadline",
+        "kind": "_StoreAction",
+        "required": false,
+        "choices": null,
+        "type": "float",
+        "header": "--deadline DEADLINE",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--deadline-monotonic"
+        ],
+        "dest": "deadline_monotonic",
+        "kind": "_StoreAction",
+        "required": false,
+        "choices": null,
+        "type": "float",
+        "header": "--deadline-monotonic DEADLINE_MONOTONIC",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--launch-id"
+        ],
+        "dest": "launch_id",
+        "kind": "_StoreAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "--launch-id LAUNCH_ID",
+        "help": [],
+        "suppressed": false,
+        "children": []
+      },
+      {
+        "flags": [
+          "--takeover-scope"
+        ],
+        "dest": "takeover_scope",
+        "kind": "_StoreTrueAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "--takeover-scope",
+        "help": [
+          "replace",
+          " ",
+          "a",
+          " ",
+          "stopped",
+          " ",
+          "registration",
+          " ",
+          "that",
+          " ",
+          "names",
+          " ",
+          "a",
+          " ",
+          "store",
+          " ",
+          "this",
+          " ",
+          "one",
+          " ",
+          "is",
+          " ",
+          "not"
+        ],
+        "suppressed": false,
+        "children": []
+      }
+    ],
+    "sections": [
+      {
+        "title": "positional arguments",
+        "actions": []
+      },
+      {
+        "title": "options",
+        "actions": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ]
+      }
+    ],
+    "groups": []
+  },
   "doctor": {
     "parts": [
       "[-h]",

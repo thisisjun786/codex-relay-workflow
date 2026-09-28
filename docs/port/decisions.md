@@ -575,3 +575,53 @@ Decision: expose `faults.KindPolicy` (PreIssue, Validate, Confirm), class-thresh
 
 Evidence: `internal/relay/faults/api.go`, `kinds.go`; `internal/relay/routing/integration_test.go` replays Python scenarios and compares every persisted table and whole receipts. The default built-in process remains unchanged until routing installs its project_create declaration.
 - [todo23] internal/relay/reception/depth.go fixes the console-script boundary at 9998 nested containers (stored settings first fail at 9998 because their object adds one level) because parity targets the installed `codex-session-relay` entry point on shipped CPython 3.13 with recursionlimit 1000, which relay code never changes; live console `packet-check` coverage detects runtime drift.
+
+## 27. Stop parity follows process state, not round-trip distributions
+
+Decision: a successful ordinary stop may report its worker as `gone` or `exited`,
+exactly as Python does. An already-reaped worker gives `gone`; an exited worker
+held unreaped gives `exited`. For either controlled state, compare the complete
+answer, exit code, and persisted files with Python. Twenty plain round trips
+record each runtime's observed distribution, but do not assert equal frequencies
+or pairwise outcomes across independently scheduled executions. The repeated
+start/restart snapshot loop follows the same evidence-only rule: log Python
+non-ok answers and omit that iteration's Go comparisons, including when a Python
+start refusal leaves no restart observation. Compare Go readiness snapshot
+shapes against all Python observations for that action in the run, not an
+outcome-sized list indexed by action position. A Go non-ok answer when Python
+was ok, or a Go shape outside those observations, still fails. Plain-stop Go
+workers must remain in `{gone, exited}`. Controlled refusal and unconfirmed-exit
+tests retain their existing contracts.
+
+Why: Python's supervisor does not install a SIGTERM handler. Its worker receives
+PR_SET_PDEATHSIG=SIGTERM, and stop observes supervisor exit at 100 ms grace
+boundaries before re-reading the worker. Whether the orphan has been reaped by
+then decides `gone` versus `exited`; a fabricated signal handler or normalized
+worker field would not be a faithful port. Go keeps the same observation cadence.
+The orphan-lock criterion is that the inherited flock survives while the worker
+lives; freezing the worker makes that interval deterministic in both runtimes.
+
+Python can also report `replaced_by_new_launch` without any replacement launch.
+`ProcessHandle.alive()` in
+`packages/codex-session-relay/src/codex_session_relay/service.py:358-366`
+uses the leader's `/proc` state and treats `Z` as exited. In a multithreaded
+worker the leader can reach `Z` while another thread still holds the inherited
+`daemon.lock` descriptor. `_terminate()` then reports `exited` (`:1480-1494`),
+and stop's final nonblocking lock acquisition interprets the occupied lock as a
+replacement (`:1393-1402`). Restart propagates that refusal (`:1534-1536`).
+A pipe-controlled two-thread reproduction observed a zombie leader, Python
+`alive() == False`, an unreadable exit pidfd, and a held flock at the same time;
+after the remaining thread exited the pidfd became readable and the lock free.
+A plain Python stop also reproduced the refusal with runtime-specific state and
+scope directories. Isolating directories prevents cross-iteration interference,
+but cannot remove this leader-exit race. Do not turn Python's scheduling into a
+Go test failure, add sleeps, or alter either runtime's stop contract to hide it.
+
+Evidence: `packages/codex-session-relay/src/codex_session_relay/service.py:1304-1421`
+(stop and worker re-read), `:1480-1516` (grace and process-state outcomes),
+`:299-322` (parent-death signal); `internal/relay/service/reap_test.go`
+(`Test29D1DeterministicReapStates`), `check29_test.go`
+(`Test29D1PlainRoundTripTwenty`, `Test29D3LaunchSnapshotTwenty`),
+`.omo/evidence/check29-fixes/` (`python-sigterm-proof.log`, `packages.log`,
+`packages-serial.log`), and `.omo/evidence/check29-flake/`
+(`reproduce_leader_exit.py`, `leader-exit.log`, `run-3.log`).
