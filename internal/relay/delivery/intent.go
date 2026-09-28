@@ -531,6 +531,14 @@ func fieldOfAny(o Obj, key string) any { v, _ := get(o, key); return v }
 // ["workspace"]) when the workspace could not be listed and ("", nil, []) when nothing is
 // selectable.
 func SelectAssignment(root, workspace string, sessionID any) (string, Obj, []string, error) {
+	return SelectAssignmentContext(context.Background(), root, workspace, sessionID)
+}
+
+// SelectAssignmentContext uses the same selection rules with a caller-owned deadline.
+func SelectAssignmentContext(ctx context.Context, root, workspace string, sessionID any) (string, Obj, []string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", nil, nil, err
+	}
 	listed, readable, err := ListAssignments(root, workspace)
 	if err != nil {
 		return "", nil, nil, err
@@ -540,7 +548,10 @@ func SelectAssignment(root, workspace string, sessionID any) (string, Obj, []str
 	}
 	var candidates []candidate
 	for _, directory := range listed {
-		facts, problems := ReadAssignment(directory)
+		if err := ctx.Err(); err != nil {
+			return "", nil, nil, err
+		}
+		facts, problems := ReadAssignmentContext(ctx, directory)
 		_, hasIntent := get(facts, "intent")
 		unreadableIntent := false
 		for _, p := range problems {

@@ -403,6 +403,162 @@ internal/relay/delivery/report_render.go (the escaped-reference renderer);
 `Test24_RC_10_LiveUnencodableManifest` in
 internal/relay/supervisor/partb_set1_test.go (live Python whole-message comparison).
 
+## 22. Unreachable native Stop calls retain the unsynced failure journal
+
+Decision: preserve the Python adapter's single `guard_unreachable` invocation row when
+one native control-socket dial fails. The row records the dial's errno (`ENOENT`,
+`ECONNREFUSED`, `EACCES`, or the dial deadline), `held = false`, and no guard decision.
+Stdout remains empty and the hook exits 0. Journal policy still applies. The write is
+best effort, create-once, at most one small file, without file or directory fsync, and
+is bounded by the earlier of the absolute hook deadline and 125 ms from process entry.
+No transcript scan, event claim, DB open, writer lock, daemon start or retry is permitted
+on this path. Identity and acceptance remain null because no identity scan took place.
+
+Why: todo 33's corpus requires the Python failure row, while the Hook budget design
+was being implemented as no diagnostic writes at all. The binding clarification keeps
+the observable failure and the latency bound, rejecting the silent-row-loss option.
+The cutover prohibition on synchronous diagnostic fsync still holds. Twenty built-binary
+invocations, each with its row read back, measured 17.916 ms p95 on the development Linux
+host; this is local evidence, not a hosted-runner latency guarantee.
+
+A young row remains live evidence for retention, just as a Python invocation row does;
+it is not exempted from the retention window. This native row records no spawned Python
+command and cannot create an orphan event claim. Settings and cached commands retain
+their separate retention obligations. The retention scanner is not yet implemented in
+this checkout, so its eventual interpretation is not claimed as runtime-verified here.
+Jun chose the reader-contract extension on 2026-09-28, rather than moving the scan
+and claim ahead of the failed dial. The relaxed invariant is narrowly this: payload
+fields may be present while acceptance, acceptedAs, identityScanMs, eventKey and
+eventIdentity are null, only for a `guard_unreachable` / `not_started` row with
+`ENOENT`, `ECONNREFUSED`, `EACCES`, `EAGAIN` or `ENOTDIR`, empty stderr, no exit code or signal, no verdict,
+and `held = false`. Every required field and its existing timestamp/count/path checks
+remain enforced. The diagnostic must carry the matching OS errno text and the canonical
+Python repr of an absolute normalized path ending in `control.sock`. A dial-deadline row
+is not part of this reader exception. Missing fields, extra fields and neighbouring
+shapes remain rejected; in particular a non-null identityScanMs, timed-out outcome or
+missing errno does not qualify. The D3 correction adds `EAGAIN` (a full Unix listen
+backlog) and `ENOTDIR` (a routing component is a file): both are observed failures to
+start a guard, just like the original three. Errnos use Python's symbolic names,
+including alias choices, rather than numeric substitutes. Every other row constraint
+is unchanged; unsupported errno/detail pairs still do not qualify.
+
+The readable pre-scan row remains counted in `unjudgedInvocations` under
+`no_event:guard_unreachable`, and in the session/turn and journal counts. It creates no
+event or acceptance. This exact known non-evaluation does not by itself make a window
+UNREADABLE: an otherwise sound window containing it reads TRUE, matching a Python
+unreachable invocation whose scan established an event. Other unjudged invocations,
+legacy rows, corruption and duplicate acceptances retain their previous verdict rules.
+Reading never rewrites or removes the row. Tests preserve the before-change journal
+count and exercise the existing retention age predicate at 0, 9, 10 and 11 seconds for
+a five-second timeout, with the boundary still strictly younger than ten seconds.
+No scan result or acceptance is fabricated to satisfy the reader.
+
+Evidence: packages/codex-session-relay/src/codex_session_relay/stopadapter.py
+`run()` (1080-1180), `journal()` (1030-1070), and `invoke_guard()` (466-478);
+docs/port/cutover.md "Hook budget" and "Retention scan surface", row 2;
+internal/relay/hook/adapter.go unreachable dial branch; `Test33HookNoSocketJournalOnly`,
+`Test33LatencyAcceptance`, and the four unchanged Domain/hook unreachable fixtures;
+.omo/evidence/task-33-crw-go-port.txt (orchestrator clarification, 2026-09-28), and
+.omo/evidence/task-33-reader-conflict.json (original blocker);
+`completion._native_prescan_unreachable`, `hook.NativePrescanUnreachable`, and
+`test_journal_reader.py` (native/Python live comparison, before-change neighbours,
+read-only journal counting and retention boundary); .omo/evidence/task-33-reader.json.
+
+## 23. Hook status recognizes the shipped native registration
+
+Decision: keep Python registration parsing unchanged and additionally recognize a direct
+`crw hook` command, including the shipped quoted `$HOME` runtime path and optional
+`; exit 0` suffix. Expand quoted or unquoted `$HOME/`, `${HOME}/`, and unquoted
+`~/` prefixes for this direct native command, never quoted tildes or escaped dollars;
+resolve a bare
+`crw` with the status process's PATH and report a failed lookup explicitly. Do not
+execute a shell or infer a wrapper's target. Native startability checks the native executable,
+not whether it answers a Python `-c` probe. Neighbouring names, `crw relay`, and an
+`echo` or other wrapper containing the words are not native hook registrations.
+
+Why: Python `completion.names_this_adapter` deliberately recognizes only a complete
+argument named `completion_hook.py`. Exact parity for that shape remains required,
+but copying its exclusion of the replacement executable would make todo 34's shipped
+registration invisible. This is a necessary native-surface extension, not a change to
+what existing Python registrations mean.
+
+Evidence: scripts/crw_runtime/completion.py `registered_argv`, `names_this_adapter`,
+`adapter_entries`; docs/port/decisions.md decision 12 (native wiring);
+internal/relay/hook/status_native.go and `Test33PR181NativeAndPythonRegistration`;
+PR #181 thread 4119152521 and .omo/evidence/task-33-pr181.json (2026-09-28);
+`Test33NativeRegistrationPATH`, `Test33PythonBareLauncherUnchanged`, and PR #181
+thread 4119373492 (bare-command lookup).
+
+## 24. Native hook review boundaries and checkout settings authority
+
+Decision: native settings resolution and complaints follow the checkout adapter
+(`crw_runtime.completion`): nonempty argv, nonempty CRW_COMPLETION_HOOK_CONFIG,
+then Codex home; expanduser followed by lexical abspath, never realpath. Plugin
+budgets must not exceed 7 seconds. The retained packaged stopadapter intentionally
+ignores the environment override and still uses the older under-9 limit; it is not
+the authority for these native settings paths. Guard-evaluate reads no hook settings.
+
+Keep the 100 ms startup/input deadline required by cutover.md's Hook budget table.
+This deliberately releases a 300 ms-late input that Python's unbounded stdin read
+accepts. Remove the separate 4 MiB stdin cap: input size is bounded by that deadline,
+while the socket frame has a separate 64 MiB transport limit. The existing 1 MiB
+settings bound is unchanged. This is bounded native execution, not unbounded stdin
+parity. The five-second end-to-end deadline remains in force.
+
+Use the relay's state discovery for routing, including absolute expanded XDG paths
+and legacy socket hashes. This supersedes the old no-DB-before-dial requirement
+for unpinned discovery: sibling provenance may require read-only DB inspection.
+Pinned routing still needs no discovery, and neither path starts a daemon or writes
+relay evidence. Selection refusals are shared with the CLI, never bypassed because
+the local owner is Go or the request arrived on control.sock.
+
+Keep decision 22's five-errno pre-scan reader exception narrow. Other dial failures
+use Python's ordinary post-identity, post-claim guard-unreachable shape, with the
+actual socket failure detail. They may scan/claim; they do not invent identity or
+claim an evaluation happened. EINVAL and ELOOP remain outside the pre-scan exception.
+
+Native timeout detail names the actual remaining guard allocation and cancellation,
+not the configured outer budget or a nonexistent process group. Neither Python's
+row reader nor stop_events parses this prose; they consume outcome/processEnding
+and the presence of detail. Comparison tests retain every machine-consumed field
+but exclude only timeout detail when comparing native and subprocess transports.
+No new prose-pinning test is used for this diagnostic-only difference.
+
+PR #181 round-4 note: an already validated block is written synchronously even if
+its context expired after evaluation. A pipe write cannot meaningfully be undone
+by cancellation; letting the main goroutine return before the write completes can
+lose a reserved hold's answer at process exit. Bookkeeping stays bounded, and guard
+calls that never return an answer still fail open. A blocked output pipe may therefore
+outlive the self-deadline, just as Python's final stdout write can; the host's outer
+timeout remains the last bound.
+
+Authenticate native control peers before sending a guard request or trusting its
+verdict: Linux SO_PEERCRED (Darwin LOCAL_PEERCRED), socket-file uid, and parent-directory
+uid must equal the caller's uid; the parent must not be group/world writable. Reject
+symlinks at the socket pathname. New Python Store directories are 0700, but an existing
+writable directory is not chmodded by Python, so its safety cannot be assumed. This
+is uid isolation, not proof against another process running as the same user or an
+ownership-epoch protocol; daemon serving/fencing remains its owning task.
+
+An authentication failure uses the existing ordinary post-identity
+`guard_unreachable` / `not_started` / `said_nothing` row, with `errno=EACCES` and an
+explicit native trust-failure detail. No request or verdict is accepted. The reader's
+pre-scan exception is unchanged; the normal row can already describe this failure.
+This is a native transport policy, not a Python socket oracle (Python spawns its CLI).
+
+Published marker facts have no Python byte-size ceiling. Native context-aware reads
+retain deadline and regular-file checks but no longer impose a separate 4 MiB limit.
+
+Evidence: scripts/crw_runtime/completion.py:529-547,624-635,2728-2737,1870-1902;
+packages/codex-session-relay/src/codex_session_relay/stopadapter.py:241-254,318-323;
+docs/port/cutover.md "Hook budget" (startup/input 100 ms, guard 3500 ms);
+`Test33ReviewD1` through `Test33ReviewD12`, `Test33ReviewD9Late`,
+`internal/relay/selection`, and .omo/evidence/rev33/result.json;
+stopadapter.py:1136-1162,1198-1200; marker.py:289-315; store.py:1833;
+`Test33AnsweredDeadlinePython`, `Test33PeerCredentials`, `Test33UntrustedPeerReleases`,
+`Test33PythonStateDirectoryMode`, `Test33LargeMarkerFactPython`, and
+`Test33LargeFactHookPython` (PR #181 threads 4120181139, 4120181488, 4120181269).
+
 ## How this file is checked
 
 The acceptance check for this document is structural: every decision heading is followed

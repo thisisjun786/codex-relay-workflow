@@ -56,7 +56,7 @@ type Command struct {
 }
 
 // Commands lists only implemented operations; later domain ports append theirs.
-var Commands = []Command{doctorCommand, storeIdentityCommand, storeChallengeCommand, showCommand, statusCommand, reportingShowCommand, reportingDeriveCommand, supervisorStandingCommand, supervisorSelectCommand, supervisorReportRecordedCommand, supervisorStageCommand, supervisorShowCommand, supervisorSendCommand, supervisorReadCommand, mergeEvidenceCommand}
+var Commands = []Command{guardEvaluateCommand, doctorCommand, storeIdentityCommand, storeChallengeCommand, showCommand, statusCommand, reportingShowCommand, reportingDeriveCommand, supervisorStandingCommand, supervisorSelectCommand, supervisorReportRecordedCommand, supervisorStageCommand, supervisorShowCommand, supervisorSendCommand, supervisorReadCommand, mergeEvidenceCommand}
 
 // Registered reports whether this build implements the relay command name.
 func Registered(name string) bool { return slices.Contains(allNames(), name) }

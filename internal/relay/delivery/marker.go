@@ -1,10 +1,12 @@
 package delivery
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -257,6 +259,15 @@ func fsyncDirectory(directory string) {
 // "exists" when it lost. root, when not empty, confines the write under it before and after the
 // directory is made.
 func Publish(target string, payload any, root string) (string, error) {
+	return PublishContext(context.Background(), target, payload, root)
+}
+
+// PublishContext preserves create-once publication, but never links a fact after
+// its caller's deadline. A blocked fsync cannot spend a hold after the hook exits.
+func PublishContext(ctx context.Context, target string, payload any, root string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	directory := filepath.Dir(target)
 	if root != "" {
 		if _, err := confined(directory, root); err != nil {
@@ -295,6 +306,10 @@ func Publish(target string, payload any, root string) (string, error) {
 		_ = os.Remove(temp)
 		return "", err
 	}
+	if err := ctx.Err(); err != nil {
+		_ = os.Remove(temp)
+		return "", err
+	}
 	outcome := Published
 	linkErr := os.Link(temp, target)
 	_ = os.Remove(temp)
@@ -317,7 +332,32 @@ const (
 
 // readFact is _read_fact: "it is not there" and "I could not look" are different answers.
 func readFact(path string) (any, int) {
-	data, err := os.ReadFile(path)
+	return readFactContext(context.Background(), path)
+}
+
+func readFactContext(ctx context.Context, path string) (any, int) {
+	var data []byte
+	var err error
+	if _, bounded := ctx.Deadline(); bounded {
+		if ctx.Err() != nil {
+			return nil, factUnreadable
+		}
+		file, openErr := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0)
+		err = openErr
+		if err == nil {
+			defer file.Close()
+			info, statErr := file.Stat()
+			if statErr != nil || !info.Mode().IsRegular() {
+				return nil, factUnreadable
+			}
+			data, err = io.ReadAll(file)
+			if ctx.Err() != nil {
+				return nil, factUnreadable
+			}
+		}
+	} else {
+		data, err = os.ReadFile(path)
+	}
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, factAbsent
 	}
@@ -399,9 +439,17 @@ func stem(name string) string { return strings.TrimSuffix(name, filepath.Ext(nam
 // ReadAssignment is read_assignment: every published fact, plus the labels of anything that could
 // not be read. Nothing here fails; every outside-world step answers with a label instead.
 func ReadAssignment(directory string) (Obj, []string) {
+	return ReadAssignmentContext(context.Background(), directory)
+}
+
+// ReadAssignmentContext threads the hook's deadline through the fact walk.
+func ReadAssignmentContext(ctx context.Context, directory string) (Obj, []string) {
 	marker, unreadable := Obj{}, []string{}
 	for _, fact := range singleFacts {
-		value, status := readFact(filepath.Join(directory, fact.name))
+		if ctx.Err() != nil {
+			return marker, append(unreadable, fact.key)
+		}
+		value, status := readFactContext(ctx, filepath.Join(directory, fact.name))
 		switch status {
 		case factAbsent:
 			continue
@@ -412,6 +460,9 @@ func ReadAssignment(directory string) (Obj, []string) {
 		marker = append(marker, F{Key: fact.key, Value: identified(value, fact.key)})
 	}
 	for _, key := range numberedFacts {
+		if ctx.Err() != nil {
+			return marker, append(unreadable, key)
+		}
 		entries, readable := listing(filepath.Join(directory, key), "*.json", "")
 		if !readable {
 			unreadable = append(unreadable, key)
@@ -419,11 +470,14 @@ func ReadAssignment(directory string) (Obj, []string) {
 		}
 		items := []any{}
 		for _, entry := range entries {
+			if ctx.Err() != nil {
+				return marker, append(unreadable, key)
+			}
 			name := filepath.Base(entry)
 			if strings.HasPrefix(name, ".") {
 				continue
 			}
-			value, status := readFact(entry)
+			value, status := readFactContext(ctx, entry)
 			switch status {
 			case factAbsent:
 				continue
@@ -441,8 +495,11 @@ func ReadAssignment(directory string) (Obj, []string) {
 	}
 	claims := []any{}
 	for _, session := range sessions {
+		if ctx.Err() != nil {
+			return marker, append(unreadable, "claims")
+		}
 		factID := "claims/" + filepath.Base(session) + "/" + claimFile
-		value, status := readFact(filepath.Join(session, claimFile))
+		value, status := readFactContext(ctx, filepath.Join(session, claimFile))
 		switch status {
 		case factAbsent:
 			continue
@@ -459,11 +516,16 @@ func ReadAssignment(directory string) (Obj, []string) {
 // at the path the Stop identity derives. (nil, true) when absent or when the identity names no
 // path; (nil, false) when it could not be read.
 func ReadDisposition(directory string, sessionID, turnID any) (any, bool) {
+	return ReadDispositionContext(context.Background(), directory, sessionID, turnID)
+}
+
+// ReadDispositionContext bounds the delivered identity's fact read.
+func ReadDispositionContext(ctx context.Context, directory string, sessionID, turnID any) (any, bool) {
 	if !ValidSegment(sessionID) || !ValidSegment(turnID) {
 		return nil, true
 	}
 	session, turn := sessionID.(string), turnID.(string)
-	value, status := readFact(filepath.Join(directory, "dispositions", session, turn+".json"))
+	value, status := readFactContext(ctx, filepath.Join(directory, "dispositions", session, turn+".json"))
 	switch status {
 	case factAbsent:
 		return nil, true

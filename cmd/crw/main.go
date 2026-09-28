@@ -7,10 +7,12 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	// The merge-turn-* relay commands register themselves on the relay CLI.
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
@@ -26,12 +28,17 @@ var version = "dev"
 const parserExit = 2
 
 func main() {
+	started := time.Now()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	os.Exit(run(ctx, os.Args[0], os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(runAt(ctx, os.Args[0], os.Args[1:], os.Stdout, os.Stderr, started))
 }
 
 func run(ctx context.Context, program string, args []string, stdout, stderr io.Writer) int {
+	return runAt(ctx, program, args, stdout, stderr, time.Now())
+}
+
+func runAt(ctx context.Context, program string, args []string, stdout, stderr io.Writer, started time.Time) int {
 	cli.Version = version
 	switch filepath.Base(program) {
 	case "codex-session-relay":
@@ -39,9 +46,7 @@ func run(ctx context.Context, program string, args []string, stdout, stderr io.W
 	case "codex-thread-bridge":
 		return mcp.Run(ctx, args)
 	case "crw-completion-hook":
-		// The hook domain owns this entry point; nothing is dispatched until it is ported.
-		usage(stderr)
-		return parserExit
+		return hook.Run(ctx, args, os.Stdin, stdout, started)
 	}
 	if len(args) == 0 {
 		usage(stderr)
@@ -53,6 +58,8 @@ func run(ctx context.Context, program string, args []string, stdout, stderr io.W
 		return relay(ctx, "crw relay", rest, stdout, stderr)
 	case "bridge":
 		return mcp.Run(ctx, rest)
+	case "hook":
+		return hook.Run(ctx, rest, os.Stdin, stdout, started)
 	case "help", "-h", "--help":
 		usage(stdout)
 		return 0
@@ -61,7 +68,7 @@ func run(ctx context.Context, program string, args []string, stdout, stderr io.W
 		return 0
 	default:
 		usage(stderr)
-		fmt.Fprintf(stderr, "crw: error: argument command: invalid choice: %s (choose from 'relay', 'bridge', 'help', 'version')\n", store.PythonRepr(mode))
+		fmt.Fprintf(stderr, "crw: error: argument command: invalid choice: %s (choose from 'relay', 'bridge', 'hook', 'help', 'version')\n", store.PythonRepr(mode))
 		return parserExit
 	}
 }
@@ -80,5 +87,5 @@ func relay(ctx context.Context, program string, args []string, stdout, stderr io
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: crw [-h] [--version] {relay,bridge,help,version} ...")
+	fmt.Fprintln(w, "usage: crw [-h] [--version] {relay,bridge,hook,help,version} ...")
 }

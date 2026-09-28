@@ -202,8 +202,3 @@ func shellQuote(value string) string {
 	}
 	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
