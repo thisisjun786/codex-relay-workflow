@@ -11,7 +11,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: workflow-skills-ci-${{ github.event.pull_request.number || github.ref }}
+  # A title or body edit that keeps the base gets its own group, so it never cancels the
+  # run a push started. A retarget stays in the main group and replaces obsolete runs.
+  group: workflow-skills-ci-${{ github.event.pull_request.number || github.ref }}${{ github.event.action == 'edited' && !github.event.changes.base && '-edit' || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -78,6 +80,9 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ['3.10', '3.13']
+        # test_plugin_transition.py alone takes as long as every other module together, so
+        # it gets its own runner. `rest` is every other module that discovery would load.
+        part: [transition, rest]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -85,7 +90,18 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: python3 -m unittest discover -s scripts/ci/tests -v
+      - name: Installer and CI-control tests (${{ matrix.part }})
+        env:
+          PART: ${{ matrix.part }}
+        run: |
+          modules=$(cd scripts/ci/tests && ls test*.py | sed 's/\.py$//')
+          if [ "$PART" = transition ]; then
+            modules=test_plugin_transition
+          else
+            modules=$(printf '%s\n' $modules | grep -vx test_plugin_transition)
+          fi
+          # discover -s puts the test directory on sys.path; so does this.
+          PYTHONPATH=scripts/ci/tests python3 -m unittest -v $modules
 
   secrets:
     runs-on: ubuntu-24.04
@@ -101,6 +117,12 @@ jobs:
     needs: selection
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # One runner each: lint; the Go suite as `make test-part` parts, which together are
+        # `make test` (the contract corpus included); the static release binaries.
+        part: [lint, test-1, test-2, test-3, test-4, test-5, test-rest, dist]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -110,16 +132,25 @@ jobs:
           go-version-file: go.mod
       # Go tests compare against the Python implementation (schema validation, contract records),
       # so the Python workspace is synced before they run.
-      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      - if: startsWith(matrix.part, 'test-')
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           version: '0.11.32'
           checksum: 'aab924fd522efd06f1c5f3b93a243864fc453132c94b2dc49f1371b528a4b967'
           python-version: '3.13'
           enable-cache: false
-      - run: uv sync --locked
-      - name: Lint, test and replay the contract corpus
-        run: make lint test contract
+      - if: startsWith(matrix.part, 'test-')
+        run: uv sync --locked
+      - name: Lint
+        if: matrix.part == 'lint'
+        run: make lint
+      - name: Test and replay the contract corpus (${{ matrix.part }})
+        if: startsWith(matrix.part, 'test-')
+        env:
+          PART: ${{ matrix.part }}
+        run: make test-part TEST_PART="${PART#test-}"
       - name: Build the static binaries for every published target
+        if: matrix.part == 'dist'
         run: |
           for target in linux/amd64 linux/arm64 darwin/arm64; do
             os=${target%/*}
@@ -127,28 +158,32 @@ jobs:
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" make dist BINARY="dist/crw_${os}_${arch}/crw"
           done
           (cd dist && sha256sum crw_*/crw > SHA256SUMS && cat SHA256SUMS)
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - if: matrix.part == 'dist'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: crw_linux_amd64
           path: dist/crw_linux_amd64/crw
           if-no-files-found: error
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - if: matrix.part == 'dist'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: crw_linux_arm64
           path: dist/crw_linux_arm64/crw
           if-no-files-found: error
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - if: matrix.part == 'dist'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: crw_darwin_arm64
           path: dist/crw_darwin_arm64/crw
           if-no-files-found: error
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - if: matrix.part == 'dist'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: SHA256SUMS
           path: dist/SHA256SUMS
           if-no-files-found: error
       - name: Check the plugin payload with the native wiring
-        if: hashFiles('plugins/crw/wiring/crw-bridge.sh') != ''
+        if: matrix.part == 'dist' && hashFiles('plugins/crw/wiring/crw-bridge.sh') != ''
         run: go run -tags dev ./cmd/crw-dev ci plugin
 
   packages:
@@ -160,6 +195,9 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ['3.11', '3.13']
+        # Each leg runs its slice of every suite (packages.py --shard); the slices partition
+        # the collected tests, so together they are the whole run.
+        shard: ['1/2', '2/2']
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -170,7 +208,9 @@ jobs:
           checksum: 'aab924fd522efd06f1c5f3b93a243864fc453132c94b2dc49f1371b528a4b967'
           python-version: ${{ matrix.python-version }}
           enable-cache: false
-      - run: python3 scripts/ci/packages.py
+      - env:
+          SHARD: ${{ matrix.shard }}
+        run: python3 scripts/ci/packages.py --shard "$SHARD"
 
   dev-gate:
     if: always()

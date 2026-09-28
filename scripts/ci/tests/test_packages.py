@@ -127,5 +127,87 @@ class TemporaryRootTests(unittest.TestCase):
             packages.temporary_root()
         self.assertIn("CRW_PACKAGES_TMPDIR", str(raised.exception))
 
+
+class ShardTests(unittest.TestCase):
+    """A CI leg runs one shard; the legs together must be exactly the whole run."""
+
+    def partition(self, items, index, total):
+        namespace = {}
+        exec(packages.SHARD_PLUGIN, namespace)
+        deselected = []
+
+        class Hook:
+            def pytest_deselected(self, items):
+                deselected.extend(items)
+
+        class Config:
+            hook = Hook()
+
+        kept = list(items)
+        old = os.environ.get("CRW_PACKAGES_SHARD")
+        os.environ["CRW_PACKAGES_SHARD"] = f"{index}/{total}"
+        try:
+            namespace["pytest_collection_modifyitems"](Config(), kept)
+        finally:
+            if old is None:
+                del os.environ["CRW_PACKAGES_SHARD"]
+            else:
+                os.environ["CRW_PACKAGES_SHARD"] = old
+        return kept, deselected
+
+    def items(self, sizes):
+        class Item:
+            def __init__(self, nodeid):
+                self.nodeid = nodeid
+
+            def __repr__(self):
+                return self.nodeid
+
+        return [Item(f"tests/test_{module}.py::test_{n}")
+                for module, size in sizes for n in range(size)]
+
+    def test_shards_are_disjoint_ordered_complete_and_keep_modules_whole(self):
+        items = self.items([("a", 7), ("b", 1), ("c", 4), ("d", 4), ("e", 2)])
+        for total in (1, 2, 3, 5):
+            with self.subTest(total=total):
+                seen, modules = [], {}
+                for index in range(1, total + 1):
+                    kept, dropped = self.partition(items, index, total)
+                    self.assertEqual(sorted(map(id, kept + dropped)), sorted(map(id, items)))
+                    self.assertEqual(kept, [item for item in items if item in kept])
+                    for item in kept:
+                        module = item.nodeid.split("::")[0]
+                        self.assertEqual(modules.setdefault(module, index), index)
+                    seen += kept
+                self.assertEqual(sorted(map(id, seen)), sorted(map(id, items)))
+
+    def test_largest_modules_are_spread_across_shards(self):
+        items = self.items([("a", 7), ("b", 1), ("c", 4), ("d", 4), ("e", 2)])
+        sizes = [len(self.partition(items, index, 2)[0]) for index in (1, 2)]
+        self.assertEqual(sorted(sizes), [9, 9])
+
+    def test_the_whole_run_deselects_nothing(self):
+        items = self.items([("a", 2), ("b", 1)])
+        self.assertEqual(self.partition(items, 1, 1), (items, []))
+
+    def test_shard_arguments_are_validated(self):
+        self.assertEqual(packages.parse_shard("2/3"), (2, 3))
+        self.assertEqual(packages.parse_shard("1/1"), (1, 1))
+        for value in ("0/2", "3/2", "1/0", "1", "a/b", "-1/2", "1/2/3", "", " 1/2"):
+            with self.subTest(value=value), self.assertRaises(packages.Failure):
+                packages.parse_shard(value)
+
+    def test_bad_arguments_fail_before_anything_runs(self):
+        calls = []
+        original = packages.run
+        packages.run = lambda *args, **kwargs: calls.append(args)
+        try:
+            for argv in (["--shard"], ["--shard", "0/2"], ["--other"], ["--shard", "1/2", "x"]):
+                with self.subTest(argv=argv):
+                    self.assertEqual(packages.main(argv), 1)
+        finally:
+            packages.run = original
+        self.assertEqual(calls, [])
+
 if __name__ == "__main__":
     unittest.main()
