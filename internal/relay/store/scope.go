@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -70,6 +71,14 @@ var betweenPasses func(fd int, before *statSnapshot)
 // re-checking the binding afterwards (manifest.hash_path). The lease is requested only when
 // allowLease is set, because holding one stalls unrelated writers for the lease-break timeout.
 func HashArtifact(declared string, roots []string, allowLease bool) (string, int64, ArtifactBinding, error) {
+	return HashArtifactContext(context.Background(), declared, roots, allowLease)
+}
+
+// HashArtifactContext uses the caller's deadline for both hashing passes.
+func HashArtifactContext(ctx context.Context, declared string, roots []string, allowLease bool) (string, int64, ArtifactBinding, error) {
+	if err := ctx.Err(); err != nil {
+		return "", 0, ArtifactBinding{}, err
+	}
 	declared, err := NormalizeDeclaredPath(declared)
 	if err != nil {
 		return "", 0, ArtifactBinding{}, err
@@ -109,14 +118,14 @@ func HashArtifact(declared string, roots []string, allowLease bool) (string, int
 			defer releaseLease(fd)
 		}
 	}
-	first, size, err := hashDescriptor(fd)
+	first, size, err := hashDescriptorContext(ctx, fd)
 	if err != nil {
 		return "", 0, ArtifactBinding{}, err
 	}
 	if betweenPasses != nil {
 		betweenPasses(fd, &before)
 	}
-	second, sizeAgain, err := hashDescriptor(fd)
+	second, sizeAgain, err := hashDescriptorContext(ctx, fd)
 	if err != nil {
 		return "", 0, ArtifactBinding{}, err
 	}
@@ -147,13 +156,25 @@ func verifyStable(fd int, declared string, before statSnapshot, mode PathBinding
 	return nil
 }
 
-func hashDescriptor(fd int) (string, int64, error) {
+func hashDescriptorContext(ctx context.Context, fd int) (string, int64, error) {
 	hash := sha256.New()
-	size, err := io.Copy(hash, io.NewSectionReader(descriptorReader(fd), 0, 1<<62))
+	size, err := io.Copy(hash, io.NewSectionReader(contextDescriptorReader{ctx, descriptorReader(fd)}, 0, 1<<62))
 	if err != nil {
 		return "", 0, fmt.Errorf("read artifact: %w", err)
 	}
 	return hex.EncodeToString(hash.Sum(nil)), size, nil
+}
+
+type contextDescriptorReader struct {
+	ctx context.Context
+	fd  descriptorReader
+}
+
+func (r contextDescriptorReader) ReadAt(p []byte, offset int64) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.fd.ReadAt(p, offset)
 }
 
 type descriptorReader int

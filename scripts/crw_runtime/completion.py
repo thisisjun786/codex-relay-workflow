@@ -26,6 +26,7 @@ the runtime actually offering the subcommand, and this hook having fired are lik
 separate questions, answered separately by status().
 """
 
+import ast
 import errno
 import hashlib
 import json
@@ -42,6 +43,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import firing, hooks, hostrecord, pointer, reading
+from .text import text_prefix
 
 # The event whose contract this adapter implements. Stop is the host's response-turn boundary,
 # and it is the only event whose output schema carries a blocking decision at all.
@@ -1798,6 +1800,55 @@ ROW_KEYS = ROW_FIELDS + PAYLOAD_FIELDS + GUARD_CALL_FIELDS + ANSWER_FIELDS + SET
 FAULT_KEYS = ("fault", "journalledAs")
 
 
+def _native_prescan_unreachable(row):
+    """Decision 22 (Jun, 2026-09-28): one failed native dial, before identity or claim.
+
+    Only this exact row relaxes the old invariant that reading the payload implies an
+    identity scan. It records non-evaluation, not an accepted event or a guard verdict.
+    """
+    fields = ROW_FIELDS + PAYLOAD_FIELDS + GUARD_CALL_FIELDS + SETTLED_FIELDS
+    if not _fields_exactly(row, fields):
+        return False
+    if (not _exact(row["recordVersion"], RECORD_VERSION) or row["event"] != EVENT
+            or not _stamp(row["at"]) or row["guardMode"] not in MODES
+            or row["adapterOutcome"] != GUARD_UNREACHABLE
+            or row["processEnding"] != NOT_STARTED or row["stdoutReading"] != SAID_NOTHING
+            or row["guardInvoked"] is not True or row["held"] is not False
+            or row["guardStderr"] != ""
+            or any(row[field] is not None for field in (
+                "acceptance", "acceptedAs", "identityScanMs", "eventKey", "eventIdentity",
+                "guardState", "guardDecision", "assignmentId", "guardRecordedAs", "exitCode",
+                "signal"))
+            or not all(_is_count(row[field], zero=True)
+                       for field in ("elapsedMs", "guardElapsedMs"))):
+        return False
+    configuration = row["configuration"]
+    if (not isinstance(configuration, str) or not os.path.isabs(configuration)
+            or configuration != os.path.normpath(configuration)
+            or not _path_the_system_takes(configuration)):
+        return False
+    # The nonblocking dial also establishes EAGAIN (full backlog) and ENOTDIR.
+    # Like the original three, these are known not-started calls, not verdicts.
+    number = {"ENOENT": errno.ENOENT, "ECONNREFUSED": errno.ECONNREFUSED,
+              "EACCES": errno.EACCES, "EAGAIN": errno.EAGAIN,
+              "ENOTDIR": errno.ENOTDIR}.get(row["errno"]) if isinstance(row["errno"], str) else None
+    detail = row["detail"]
+    if number is None or not isinstance(detail, str):
+        return False
+    prefix = "the configured runtime could not be run: [Errno %d] %s: " % (
+        number, os.strerror(number))
+    if not text_prefix(detail, prefix):
+        return False
+    spelled = detail[len(prefix):]
+    try:
+        socket = ast.literal_eval(spelled)
+    except (ValueError, SyntaxError):
+        return False
+    return (isinstance(socket, str) and repr(socket) == spelled and os.path.isabs(socket)
+            and socket == os.path.normpath(socket) and Path(socket).name == "control.sock"
+            and _path_the_system_takes(socket))
+
+
 def _row_fields_written(row):
     """Whether a row carries every field run() writes on the path its outcome names.
 
@@ -1835,8 +1886,8 @@ def _row_fields_written(row):
         return False
     if read != (row.get("guardMode") in MODES) or (row.get("guardMode") is not None and not read):
         return False
-    if acceptance is None and (read and outcome != ADAPTER_FAULTED
-                               or row.get("identityScanMs") is not None):
+    if acceptance is None and not _native_prescan_unreachable(row) and (
+            read and outcome != ADAPTER_FAULTED or row.get("identityScanMs") is not None):
         return False
     # A release always says why; a guard call's detail is invoke_guard()'s, which has none for a
     # process that exited or was signalled and always has one otherwise.
@@ -2077,6 +2128,8 @@ def _row_shape(row):
     """
     if not _stamp(row.get("at")) or not _row_fields_written(row):
         return False
+    if _native_prescan_unreachable(row):
+        return True
     acceptance, key, identity = row.get("acceptance"), row.get("eventKey"), row.get("eventIdentity")
     outcome, asked = row.get("adapterOutcome"), row.get("guardInvoked")
     if (acceptance not in OUTCOMES_OF or not isinstance(asked, bool)
@@ -2278,7 +2331,10 @@ def stop_events(roots, since=None, until=None, session=None, turn=None, hosts=No
     established, no owner, no root for the claim, no event reached, or a row from before event
     identity; or nothing to judge. An invocation it cannot judge was answered without
     deduplication, or not answered, so whether its Stop was answered once is not known;
-    unjudgedInvocations and legacyRows count them by reason.
+    unjudgedInvocations and legacyRows count them by reason. Decision 22 exempts only the
+    exact native pre-scan unreachable row from the UNREADABLE verdict: its failed dial
+    establishes non-evaluation. It remains counted as no_event:guard_unreachable without
+    inventing an accepted event; all other unjudged rows retain the rule above.
 
     The old per-(session, turn) reading is reported too, labelled as superseded. Roots and host
     ledgers are deduplicated by the (device, inode) they reach.
@@ -2489,6 +2545,7 @@ def _read_stop_events(answer, roots, since, until, session, turn, hosts):
             selected.add(row["eventKey"])
 
     counts = answer["unjudgedInvocations"]
+    prescan_unreachable = 0
     pairs, accepted_rows, duplicate_rows, accepted_at = {}, {}, [], {}
     for root, where, row in rows:
         chosen = in_window(row.get("at"), row.get("sessionId"), row.get("turnId"))
@@ -2509,6 +2566,8 @@ def _read_stop_events(answer, roots, since, until, session, turn, hosts):
                 # The settings or the payload failed before any event was reached.
                 label = "no_event:" + str(row.get("adapterOutcome"))
             counts[label] = counts.get(label, 0) + 1
+            if _native_prescan_unreachable(row):
+                prescan_unreachable += 1
             continue
         if key not in selected:
             continue
@@ -2614,6 +2673,11 @@ def _read_stop_events(answer, roots, since, until, session, turn, hosts):
                   "ledgerUnreadable", "duplicatesWithoutClaim", "foreignLedgerEntries",
                   "foreignJournalEntries", "hostFilesWithoutClaim", "claimsWithoutHostFile", "recordsThatDisagree"):
         answer[field] = sorted(set(answer[field]))
+    # Decision 22: these readable rows prove the guard was unreachable, not that an
+    # event was accepted. Keep their unjudged count and physical row for retention,
+    # but do not call a known non-evaluation unreadable. Every other unjudged row
+    # retains the original UNREADABLE rule, including mixtures in the same window.
+    other_unjudged = sum(counts.values()) - prescan_unreachable
     if (answer["eventsWithMoreThanOneAcceptance"] or answer["acceptedRowsWithoutLedger"]
             or answer["guardAskedOnDuplicate"]):
         answer["verdict"] = FALSE
@@ -2624,7 +2688,7 @@ def _read_stop_events(answer, roots, since, until, session, turn, hosts):
           or answer["duplicatesWithoutClaim"]
           or answer["hostFilesWithoutClaim"] or answer["claimsWithoutHostFile"]
           or answer["recordsThatDisagree"]
-          or answer["unjudgedInvocations"] or answer["legacyRows"] or not events):
+          or other_unjudged or answer["legacyRows"] or not (events or prescan_unreachable)):
         answer["verdict"] = UNREADABLE_VERDICT
     else:
         answer["verdict"] = TRUE

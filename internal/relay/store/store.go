@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"modernc.org/sqlite"
@@ -221,6 +222,11 @@ func refuseLiveState(path string) (string, error) {
 			return "", fmt.Errorf("absolute live state: %w", err)
 		}
 		live, err = resolvePath(live)
+		if errors.Is(err, syscall.ENOTDIR) {
+			// A live-state root below a regular file cannot contain any DB.
+			// Do not let that unrelated environment path deny an explicit store.
+			continue
+		}
 		if err != nil {
 			return "", fmt.Errorf("resolve live state: %w", err)
 		}

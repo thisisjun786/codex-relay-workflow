@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 )
 
 type StateSelection struct {
@@ -183,12 +184,20 @@ func DiscoverStateDir(socket string) (StateSelection, error) {
 	}
 	root := base + "/codex-session-relay"
 	chosen := StateSelection{Path: root + "/" + canonical, Source: source, Detail: detail, SocketScope: canonical}
-	if exists(chosen.DBPath()) {
+	found, err := discoveryExists(chosen.DBPath())
+	if err != nil {
+		return chosen, err
+	}
+	if found {
 		return chosen, nil
 	}
 	if legacy != canonical {
 		previous := filepath.Join(root, legacy)
-		if exists(filepath.Join(previous, "relay.sqlite3")) {
+		found, err := discoveryExists(filepath.Join(previous, "relay.sqlite3"))
+		if err != nil {
+			return chosen, err
+		}
+		if found {
 			chosen.Path = previous
 			chosen.SocketScope = legacy
 			chosen.Detail += "; kept the directory this socket was already using"
@@ -196,11 +205,11 @@ func DiscoverStateDir(socket string) (StateSelection, error) {
 		}
 	}
 	dirs, err := os.ReadDir(root)
-	if os.IsNotExist(err) {
-		return chosen, nil
-	}
 	if err != nil {
-		return chosen, fmt.Errorf("scan state directories: %w", err)
+		// Python stores_claiming_socket and stores_without_provenance treat
+		// every listing OSError as no candidates. Resolution remains eager;
+		// explicit --db-path does not bypass malformed override errors.
+		return chosen, nil
 	}
 	wanted := ""
 	if socket != "" {
@@ -244,5 +253,18 @@ func DiscoverStateDir(socket string) (StateSelection, error) {
 		chosen.Detail += fmt.Sprintf("; %d stores here record no socket", len(chosen.Unidentified))
 	}
 	return chosen, nil
+}
+
+// pathlib.Path.exists suppresses absence/non-directory, but propagates access
+// errors at the canonical/legacy DB probes before sibling listing begins.
+func discoveryExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) || errors.Is(err, syscall.ELOOP) {
+		return false, nil
+	}
+	return false, errors.New(PythonOSError(err))
 }
 func exists(path string) bool { _, err := os.Stat(path); return err == nil }

@@ -28,7 +28,7 @@ differ, when a line count differs from `wc -l`, when an owning issue is missing,
 
 ## Files
 
-Total non-test lines: 99462
+Total non-test lines: 99526
 
 | path | lines | invoked | runs | owner | disposition | consumer_search | removal_trigger |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -125,7 +125,7 @@ Total non-test lines: 99462
 | `scripts/crw_runtime/bridgerecord.py` | 455 | imported by runtime_install, crw_transition.inventory, crw_transition.steps | relay host | CRW-157 | port | - | - |
 | `scripts/crw_runtime/check.py` | 69 | imported by runtime_install, trial_startup | relay host | CRW-157 | port | - | - |
 | `scripts/crw_runtime/codexconfig.py` | 267 | imported by runtime_install, crw_transition.inventory, crw_transition.steps | relay host | CRW-157 | port | - | - |
-| `scripts/crw_runtime/completion.py` | 4494 | imported by completion_hook, hook_comparison, plugin_transition, runtime_install, stop_events, crw_transition.*; spawns the guard (:767) and interpreter probes (:1031, :3458) | relay host | CRW-157 | port | - | - |
+| `scripts/crw_runtime/completion.py` | 4558 | imported by completion_hook, hook_comparison, plugin_transition, runtime_install, stop_events, crw_transition.*; spawns the guard (:767) and interpreter probes (:1031, :3458) | relay host | CRW-157 | port | - | - |
 | `scripts/crw_runtime/definition.py` | 206 | imported by runtime_install, trial_startup; spawns `git` (:100) | relay host | CRW-157 | port | - | - |
 | `scripts/crw_runtime/firing.py` | 761 | imported by crw_runtime.completion | relay host | CRW-157 | port | - | - |
 | `scripts/crw_runtime/hooks.py` | 229 | imported by hook_comparison, runtime_install, crw_runtime.completion, crw_transition.* | relay host | CRW-157 | port | - | - |

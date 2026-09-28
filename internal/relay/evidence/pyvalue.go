@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -117,7 +118,18 @@ func (d dumper) write(value any) {
 
 func (d dumper) str(s string) {
 	d.b.WriteByte('"')
-	for _, r := range s {
+	for i := 0; i < len(s); {
+		// The bridge ledger and hook preserve Python's lone surrogate code points
+		// as WTF-8. They must round-trip as escapes, not U+FFFD, even when ascii
+		// is false: a surrogate has no valid UTF-8 representation on the wire.
+		if i+3 <= len(s) && s[i] == 0xed && s[i+1] >= 0xa0 && s[i+1] <= 0xbf && s[i+2] >= 0x80 && s[i+2] <= 0xbf {
+			r := rune(s[i]&0x0f)<<12 | rune(s[i+1]&0x3f)<<6 | rune(s[i+2]&0x3f)
+			fmt.Fprintf(d.b, `\u%04x`, r)
+			i += 3
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		i += size
 		switch {
 		case r == '"':
 			d.b.WriteString(`\"`)

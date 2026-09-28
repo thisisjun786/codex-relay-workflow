@@ -38,8 +38,8 @@ func ambiguous(evidence string, nodes []string, detail string) Obj {
 
 // requestedPredecessors is currency._requested_predecessors: only the result whose ruling opened
 // this correction is an external root.
-func requestedPredecessors(ctx context.Context, s *store.Store, rid string, generation int64) (map[string][]string, error) {
-	rows, err := all(ctx, s, "SELECT p.event_id, p.revision_hash, v.verdict_turn_id, r.event_id AS request_id, g.dispatch_request_id FROM generations g JOIN verdicts v ON v.next_generation = g.execution_generation JOIN events p ON p.event_id = v.event_id AND p.relationship_id = g.relationship_id JOIN events r ON r.relationship_id = g.relationship_id AND r.execution_generation = g.execution_generation WHERE g.relationship_id = ? AND g.execution_generation = ? AND g.reason = 'needs_changes_revision' AND v.verdict = 'needs_changes' AND p.execution_generation = g.execution_generation - 1 AND p.outcome = ? AND p.stage = 'final' AND p.suppressed_reason IS NULL AND r.outcome = 'revision_request' AND r.producer = 'relay' AND r.stage = 'final' AND r.suppressed_reason IS NULL", rid, generation, "ready_for_review")
+func requestedPredecessors(ctx context.Context, q store.Querier, rid string, generation int64) (map[string][]string, error) {
+	rows, err := allFrom(ctx, q, "SELECT p.event_id, p.revision_hash, v.verdict_turn_id, r.event_id AS request_id, g.dispatch_request_id FROM generations g JOIN verdicts v ON v.next_generation = g.execution_generation JOIN events p ON p.event_id = v.event_id AND p.relationship_id = g.relationship_id JOIN events r ON r.relationship_id = g.relationship_id AND r.execution_generation = g.execution_generation WHERE g.relationship_id = ? AND g.execution_generation = ? AND g.reason = 'needs_changes_revision' AND v.verdict = 'needs_changes' AND p.execution_generation = g.execution_generation - 1 AND p.outcome = ? AND p.stage = 'final' AND p.suppressed_reason IS NULL AND r.outcome = 'revision_request' AND r.producer = 'relay' AND r.stage = 'final' AND r.suppressed_reason IS NULL", rid, generation, "ready_for_review")
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +58,12 @@ func requestedPredecessors(ctx context.Context, s *store.Store, rid string, gene
 
 // HeadRevision is currency.head_revision: the one revision this generation stands on, or why not.
 func HeadRevision(ctx context.Context, s *store.Store, rid string, generation int64) (Obj, error) {
-	rows, err := all(ctx, s, "SELECT e.event_id, e.revision_hash, l.supersedes_hash FROM events e LEFT JOIN revision_lineage l ON l.event_id = e.event_id WHERE e.relationship_id = ? AND e.execution_generation = ? AND e.outcome = ? AND e.suppressed_reason IS NULL ORDER BY e.event_id", rid, generation, "ready_for_review")
+	return HeadRevisionFrom(ctx, s.Q(ctx), rid, generation)
+}
+
+// HeadRevisionFrom reads through the caller's snapshot, including a read-only guard connection.
+func HeadRevisionFrom(ctx context.Context, q store.Querier, rid string, generation int64) (Obj, error) {
+	rows, err := allFrom(ctx, q, "SELECT e.event_id, e.revision_hash, l.supersedes_hash FROM events e LEFT JOIN revision_lineage l ON l.event_id = e.event_id WHERE e.relationship_id = ? AND e.execution_generation = ? AND e.outcome = ? AND e.suppressed_reason IS NULL ORDER BY e.event_id", rid, generation, "ready_for_review")
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +85,7 @@ func HeadRevision(ctx context.Context, s *store.Store, rid string, generation in
 	for _, id := range nodes {
 		byHash[hashOf[id]] = append(byHash[hashOf[id]], id)
 	}
-	anchors, err := requestedPredecessors(ctx, s, rid, generation)
+	anchors, err := requestedPredecessors(ctx, q, rid, generation)
 	if err != nil {
 		return nil, err
 	}

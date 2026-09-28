@@ -54,7 +54,11 @@ func (r Row) Opt(column string) any {
 
 // all reads every row through the ctx-aware querier and closes the cursor before returning.
 func all(ctx context.Context, s *store.Store, query string, args ...any) (_ []Row, err error) {
-	rows, err := s.Q(ctx).QueryContext(ctx, query, args...)
+	return allFrom(ctx, s.Q(ctx), query, args...)
+}
+
+func allFrom(ctx context.Context, q store.Querier, query string, args ...any) (_ []Row, err error) {
+	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
