@@ -803,8 +803,43 @@ def report_payload(payload, manifest, found, extra):
         "skills": sorted(found),
         "expectedSkillNames": sorted(manifest.get("name", "") + ":" + skill for skill in found),
     }
+    result.update(hook_report(payload, manifest))
     result.update(extra)
     return result
+
+
+def hook_report(payload, manifest):
+    """What the files the manifest names under hooks declare, read as the host loads them.
+
+    stopHooks counts the hooks those files list under hooks.Stop, which is what a Stop runs: a
+    Stop list anywhere else in a file, or in a file the manifest does not name, never loads.
+    hooksDigest frames each named file, in the order the manifest names it, as digest() frames a
+    shipped file, so two payloads share it exactly when they name the same files in the same
+    order with the same bytes.
+    """
+    try:
+        declared = declared_hooks(manifest)
+    except ValueError:
+        declared = []
+    stop, blocks = 0, []
+    for value in declared:
+        relative = inside(value)
+        if relative is None or relative not in payload:
+            continue
+        mode, data = payload[relative]
+        encoded = relative.encode()
+        blocks.append(b"%d:%s %s %s" % (len(encoded), encoded, mode.encode(),
+                                        hashlib.sha256(data).hexdigest().encode()))
+        try:
+            document = json.loads(data.decode())
+        except (UnicodeDecodeError, ValueError):
+            continue
+        events = document.get("hooks") if isinstance(document, dict) else None
+        groups = events.get("Stop") if isinstance(events, dict) else None
+        for group in groups if isinstance(groups, list) else []:
+            entries = group.get("hooks") if isinstance(group, dict) else None
+            stop += len(entries) if isinstance(entries, list) else 0
+    return {"stopHooks": stop, "hooksDigest": hashlib.sha256(b"\n".join(blocks)).hexdigest()}
 
 
 def check_installed(path):

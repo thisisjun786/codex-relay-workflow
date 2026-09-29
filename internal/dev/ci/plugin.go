@@ -1121,10 +1121,56 @@ func reportPayload(p payload, m *pyDict, found map[string]map[string]bool, extra
 	sort.Strings(expected)
 	r := report{"digest": payloadDigest(p), "files": len(p), "version": m.get("version"),
 		"skills": nonNil(skills), "expectedSkillNames": nonNil(expected)}
+	for key, value := range hookReport(p, m) {
+		r[key] = value
+	}
 	for key, value := range extra {
 		r[key] = value
 	}
 	return r
+}
+
+// hookReport is what the files the manifest names under hooks declare, read as the host loads
+// them. stopHooks counts the hooks those files list under hooks.Stop, which is what a Stop runs:
+// a Stop list anywhere else in a file, or in a file the manifest does not name, never loads.
+// hooksDigest frames each named file, in the order the manifest names it, as payloadDigest
+// frames a shipped file, so two payloads share it exactly when they name the same files in the
+// same order with the same bytes.
+func hookReport(p payload, m *pyDict) report {
+	declared, _ := declaredHooks(m)
+	stop := 0
+	var blocks [][]byte
+	for _, value := range declared {
+		relative, inside := insidePath(value)
+		file, shipped := p[relative]
+		if !inside || !shipped {
+			continue
+		}
+		sum := sha256.Sum256(file.data)
+		blocks = append(blocks, fmt.Appendf(nil, "%d:%s %s %s", len(relative), relative, file.mode, hex.EncodeToString(sum[:])))
+		text, err := decodeUTF8(file.data)
+		if err != nil {
+			continue
+		}
+		document, err := pyJSONLoadsOrdered(text)
+		if err != nil {
+			continue
+		}
+		var groups []any
+		if d, ok := asDict(document); ok {
+			if events, ok := asDict(d.get("hooks")); ok {
+				groups, _ = events.get("Stop").([]any)
+			}
+		}
+		for _, group := range groups {
+			if g, ok := asDict(group); ok {
+				entries, _ := g.get("hooks").([]any)
+				stop += len(entries)
+			}
+		}
+	}
+	sum := sha256.Sum256(bytes.Join(blocks, []byte("\n")))
+	return report{"stopHooks": stop, "hooksDigest": hex.EncodeToString(sum[:])}
 }
 
 func (r report) json() string {

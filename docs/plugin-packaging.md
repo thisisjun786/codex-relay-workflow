@@ -582,52 +582,43 @@ making its first policy registration as well, and step 8 says what that changes.
    The same directory tells whether this update will need the hook trusted again. Trust belongs to
    the hook declaration rather than to the version, so compare the declaration files the two
    manifests name under `hooks`, and only those: a hook file the manifest does not name never loads
-   ([how hooks and MCP servers load](#how-hooks-and-mcp-servers-load)). `<installed-dir>` is the one
-   installed now, `$CODEX_HOME/plugins/cache/<marketplace>/crw/<version>`:
+   ([how hooks and MCP servers load](#how-hooks-and-mcp-servers-load)). The package check's report
+   reads them as the host does, from the checkout: `stopHooks` counts the hooks those files list
+   under `hooks.Stop`, and `hooksDigest` covers which files the manifest names, in its order, with
+   their modes and bytes. `<installed-dir>` is the one installed now,
+   `$CODEX_HOME/plugins/cache/<marketplace>/crw/<version>`:
 
    ```sh
    candidate=<candidate-dir> installed=<installed-dir>
-   # The files a manifest names under "hooks" (one path or a list of them), one per line.
-   hook_files() {
-       tr -d '\n\r' < "$1/.codex-plugin/plugin.json" |
-           sed -nE 's/.*"hooks"[[:space:]]*:[[:space:]]*(\[[^]]*\]|"[^"]*").*/\1/p' |
-           grep -o '"[^"]*"' | tr -d '"'
-   }
-   # Whether one of those files declares a nonempty Stop list.
-   declares_stop() {
-       hook_files "$1" | while IFS= read -r name; do
-           tr -d '\n\r' < "$1/$name" | grep -q '"Stop"[[:space:]]*:[[:space:]]*\[[[:space:]]*[{]' && echo yes
-       done | grep -q yes
-   }
-   # Whether both manifests name the same files, each holding the same bytes in both.
-   same_hook_files() {
-       [ "$(hook_files "$1")" = "$(hook_files "$2")" ] || return 1
-       ! hook_files "$1" | while IFS= read -r name; do
-           cmp -s "$1/$name" "$2/$name" || echo differs
-       done | grep -q differs
-   }
-   if ! declares_stop "$candidate"; then
-       echo "no Stop hook declared"
-   elif same_hook_files "$candidate" "$installed"; then
-       echo unchanged
-   else
-       echo changed
-   fi
+   # The package check's report on a payload; empty when the check refuses the payload.
+   report() { go run -tags dev ./cmd/crw-dev ci plugin --payload "$1" --json; }
+   # One top-level field of such a report, which prints each on its own line, two spaces in.
+   field() { printf '%s\n' "$1" | sed -nE "s/^  \"$2\": (.*[^,]),?\$/\1/p"; }
+   new=$(report "$candidate") old=$(report "$installed")
+   case $(field "$new" stopHooks) in
+       '' | 0) echo "no Stop hook declared" ;;
+       *) if [ "$(field "$new" hooksDigest)" = "$(field "$old" hooksDigest)" ]; then
+              echo unchanged
+          else
+              echo changed
+          fi ;;
+   esac
    ```
 
-   `no Stop hook declared` means no file the candidate's manifest names under `hooks` holds a
-   nonempty Stop list, so after the add the completion hook would stop firing; that is not an
-   update this procedure covers, so do not add it. The package check does not catch every such
-   candidate: it passes one whose manifest has no `hooks`, or whose Stop entry sits in a file the
-   manifest does not name.
-   `unchanged` means both manifests name the same files and each holds the same bytes, so the
-   stored trust carries over, as it did at the second measured replacement.
+   `no Stop hook declared` means the files the candidate's manifest names under `hooks` list no
+   hook under `hooks.Stop`, so after the add the completion hook would stop firing; that is not an
+   update this procedure covers, so do not add it. The package check does not refuse every such
+   candidate: it passes one whose manifest has no `hooks`, one whose Stop entry sits in a file the
+   manifest does not name, and one whose Stop list sits in a declared file outside its `hooks`
+   object, and the host runs none of those entries.
+   `unchanged` means both manifests name the same files in the same order and each holds the same
+   bytes under the same mode, so the stored trust carries over, as it did at the second measured
+   replacement.
    `changed` means expect to trust the hook again in Codex after step 5, as at the first; that was
    measured for a change to the command text, what a change elsewhere in the file does was not, and
-   step 6's firing check settles it either way. The snippet reads the manifest with `sed` rather
-   than a JSON parser, so run it on a candidate the check passed; a declared path it cannot open as
-   spelled, such as one written with a JSON escape, counts as declaring no Stop, the side that stops
-   the add.
+   step 6's firing check settles it either way. The check prints no report for a payload it refuses,
+   so a refused candidate reads as declaring no Stop, the side that stops the add, and a refused
+   installed directory reads as `changed`.
    The trust entry also names the marketplace, so adding the package from a marketplace of another
    name is inferred to need a trust of its own whatever this prints. The trust entry in the Codex
    configuration cannot decide any of this: its value stays the same after the add in both cases

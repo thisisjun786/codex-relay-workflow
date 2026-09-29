@@ -778,6 +778,61 @@ func Test47_PLG_18_JSONReport(t *testing.T) {
 	}
 }
 
+// The report counts the Stop hooks a host runs: those listed under hooks.Stop in the files the
+// manifest names under hooks. The check passes a payload whose Stop list sits outside a declared
+// file's hooks object or in a file the manifest does not name, and the report counts neither.
+// hooksDigest follows the declared files, their order and their bytes. Both languages agree.
+func Test47_PLG_19_ReportCountsTheStopHooksAHostRuns(t *testing.T) {
+	stop := `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "crw hook", "timeout": 10}]}]}}`
+	start := `{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "true", "timeout": 10}]}]}}`
+	outside := `{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "true", "timeout": 10}]}]},` +
+		` "notes": {"Stop": [{"hooks": [{"type": "command", "command": "crw hook", "timeout": 10}]}]}}`
+	report := func(label string, hooks any, shipped files) map[string]any {
+		t.Helper()
+		m := testManifest()
+		if hooks != nil {
+			m = m.set("hooks", hooks)
+		}
+		f := files{"skills/crw-run/SKILL.md": testSkill, "skills/crw-run/agents/openai.yaml": testInterface("crw-run"), "LICENSE": "MIT"}
+		for name, text := range shipped {
+			f = f.with(name, text)
+		}
+		dir := writePayload(t, recordedFiles(t, f, m))
+		py := python(t, t.TempDir(), nil, "scripts/ci/plugin.py", "--payload", dir, "--json")
+		got := goCheck(t, t.TempDir(), nil, "plugin", "--payload", dir, "--json")
+		sameResult(t, label, py, got)
+		var r map[string]any
+		if err := json.Unmarshal([]byte(got.stdout), &r); err != nil {
+			t.Fatalf("%s: %v: %+v", label, err, got)
+		}
+		return r
+	}
+	one := report("declared", "./hooks/stop.json", files{"hooks/stop.json": stop})
+	expectEqual(t, "declared Stop", one["stopHooks"], float64(1))
+	listed := report("listed", []string{"./hooks/stop.json"}, files{"hooks/stop.json": stop})
+	expectEqual(t, "one path or a list of it", listed["hooksDigest"], one["hooksDigest"])
+	outsideHooks := report("outside the hooks object", "./hooks/stop.json", files{"hooks/stop.json": outside})
+	expectEqual(t, "Stop outside the hooks object", outsideHooks["stopHooks"], float64(0))
+	undeclared := report("undeclared", "./hooks/start.json", files{"hooks/start.json": start, "hooks/stop.json": stop})
+	expectEqual(t, "Stop in a file the manifest does not name", undeclared["stopHooks"], float64(0))
+	none := report("no hooks", nil, nil)
+	expectEqual(t, "no hooks key", none["stopHooks"], float64(0))
+	empty := sha256.Sum256(nil)
+	expectEqual(t, "no declared file", none["hooksDigest"], hex.EncodeToString(empty[:]))
+	edited := report("command changed", "./hooks/stop.json", files{"hooks/stop.json": strings.Replace(stop, "crw hook", "crw hook -v", 1)})
+	expectEqual(t, "changed Stop", edited["stopHooks"], float64(1))
+	if edited["hooksDigest"] == one["hooksDigest"] {
+		t.Errorf("a changed command kept hooksDigest %v", one["hooksDigest"])
+	}
+	both := files{"hooks/start.json": start, "hooks/stop.json": stop}
+	forward := report("forward", []string{"./hooks/start.json", "./hooks/stop.json"}, both)
+	backward := report("backward", []string{"./hooks/stop.json", "./hooks/start.json"}, both)
+	expectEqual(t, "two files", backward["stopHooks"], float64(1))
+	if forward["hooksDigest"] == backward["hooksDigest"] {
+		t.Errorf("reordering the declared files kept hooksDigest %v", forward["hooksDigest"])
+	}
+}
+
 // pluginRepo is test_plugin.py's SyntheticRepositoryTests.build: plugin.py copied to
 // scripts/ci (its root is its own checkout), the package, LICENSE, marketplace and link.
 func pluginRepo(t *testing.T, f files, link string) *fixtureRepo {
