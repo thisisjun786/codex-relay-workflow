@@ -244,8 +244,8 @@ func Test29D1StopWaitsForEveryThreadOfTheWorker(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if !existingLockHeld(lock) {
-		t.Fatal("the fixture needs the remaining thread to hold the lock")
+	if held, err := existingLockHeld(lock); err != nil || !held {
+		t.Fatalf("the fixture needs the remaining thread to hold the lock: held=%v err=%v", held, err)
 	}
 	record := set(s.NewRecord(os.Getpid(), "controlled-run"), "pid", nil, "workerPid", worker.PID, "workerStartTicks", StartTicks(worker.PID))
 	if err = s.WriteRecord(record); err != nil {
@@ -259,8 +259,9 @@ func Test29D1StopWaitsForEveryThreadOfTheWorker(t *testing.T) {
 	if !sameObject(stopped, want) {
 		t.Fatalf("stop of a worker whose leader has exited: %v", stopped)
 	}
-	if !worker.Wait(0) || get(s.Record(), "workerPid") != nil || existingLockHeld(lock) {
-		t.Fatalf("stopped worker: exited=%v record=%v lockHeld=%v", worker.Wait(0), s.Record(), existingLockHeld(lock))
+	held, err := existingLockHeld(lock)
+	if !worker.Wait(0) || get(s.Record(), "workerPid") != nil || err != nil || held {
+		t.Fatalf("stopped worker: exited=%v record=%v lockHeld=%v err=%v", worker.Wait(0), s.Record(), held, err)
 	}
 }
 
