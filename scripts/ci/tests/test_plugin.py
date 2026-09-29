@@ -632,6 +632,27 @@ class CommandTests(unittest.TestCase):
             self.assertEqual(good.returncode, 0, good.stderr)
             self.assertEqual(json.loads(good.stdout)["expectedSkillNames"], ["crw:crw-run"])
 
+    def test_the_report_counts_only_the_stop_hooks_a_host_runs(self):
+        # A host runs what a declared file lists under hooks.Stop. The check passes a Stop list
+        # beside the hooks object, so the report must not count it.
+        hook = {"type": "command", "command": "crw hook", "timeout": 10}
+        start = {"SessionStart": [{"hooks": [dict(hook, command="true")]}]}
+        documents = {"inside": {"hooks": dict(start, Stop=[{"hooks": [hook]}])},
+                     "outside": {"hooks": start, "notes": {"Stop": [{"hooks": [hook]}]}}}
+        reports = {}
+        for label, document in documents.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder) / "crw"
+                self.write_payload(root, recorded(dict(GOOD, **{
+                    plugin.MANIFEST: json.dumps(manifest(hooks="./hooks/hooks.json")),
+                    "hooks/hooks.json": json.dumps(document)})))
+                result = self.run_script("--payload", str(root), "--json")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                reports[label] = json.loads(result.stdout)
+        self.assertEqual(reports["inside"]["stopHooks"], 1)
+        self.assertEqual(reports["outside"]["stopHooks"], 0)
+        self.assertNotEqual(reports["inside"]["hooksDigest"], reports["outside"]["hooksDigest"])
+
     def test_installed_payload_missing_a_required_file_is_refused(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder) / "crw"

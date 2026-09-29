@@ -25,7 +25,11 @@ var (
 	opsParts       = []string{"Observed:", "Clauses:", "Action:", "Preserved:"}
 	opsMinimum     = map[string]int{"Observed:": 40, "Clauses:": 7, "Action:": 80, "Preserved:": 40}
 	opsFieldValues = []string{"verified", "not_verified", "unknown", "not_applicable"}
-	opsPointKeys   = []string{"interpreter", "codexCli", "appServer", "host", "date", "measuredBy", "method"}
+	// OPS-1.3: a point names the install it covers and the bytes that ran; a Python-era point
+	// (the fence installer's, until the Python execution path is removed) names its interpreter
+	// instead, because there the interpreter is part of the combination.
+	opsGoPointKeys     = []string{"install", "installDigest", "codexCli", "appServer", "host", "date", "measuredBy", "method"}
+	opsPythonPointKeys = []string{"interpreter", "codexCli", "appServer", "host", "date", "measuredBy", "method"}
 )
 
 // init makes the ASCII-only patterns above match any Unicode decimal digit, as Python's \d
@@ -219,10 +223,23 @@ func compatibilityRecord(record *pyDict, problems []string) ([]string, error) {
 			}
 			name = value
 		}
-		for _, key := range []string{"source", "revision", "tree", "version", "requiresPython", "installs"} {
+		for _, key := range []string{"source", "revision", "tree", "version", "installs"} {
 			if !pyTruthy(component.get(key)) {
 				problems = append(problems, name+" is missing a non-empty "+key)
 			}
+		}
+		// OPS-1.1: requires-python belongs to a Python-era install, which records an install
+		// mode; a Go install is a release binary and declares no interpreter at all.
+		pythonEra := false
+		if list, ok := component.get("installs").([]any); ok {
+			for _, item := range list {
+				if install, ok := dictItems(item); ok && install.has("installMode") {
+					pythonEra = true
+				}
+			}
+		}
+		if pythonEra && !pyTruthy(component.get("requiresPython")) {
+			problems = append(problems, name+" is missing a non-empty requiresPython, which a Python-era install needs")
 		}
 		if !component.has("measuredPoints") {
 			problems = append(problems, name+" does not state measuredPoints, not even as an empty list")
@@ -264,13 +281,29 @@ func compatibilityRecord(record *pyDict, problems []string) ([]string, error) {
 			}
 			installs = list
 		}
+		var goInstalls []*pyDict
 		for _, item := range installs {
 			install, ok := dictItems(item)
 			if !ok {
 				return nil, fmt.Errorf("%s has an install that is not an object", name)
 			}
-			if mode, _ := install.get("installMode").(string); mode != "editable" && mode != "copied" {
-				problems = append(problems, name+" has an install with an undeclared installMode")
+			if install.has("installMode") {
+				if mode, _ := install.get("installMode").(string); mode != "editable" && mode != "copied" {
+					problems = append(problems, name+" has an install with an undeclared installMode")
+				}
+			} else {
+				goInstalls = append(goInstalls, install)
+				// A Go install: the binary's own digest and the target it was built for.
+				digest := ""
+				if install.has("binaryDigest") {
+					digest = pyStr(install.get("binaryDigest"))
+				}
+				if len([]rune(digest)) != 64 {
+					problems = append(problems, name+" has a Go install without a 64 character binaryDigest")
+				}
+				if !pyTruthy(install.get("target")) {
+					problems = append(problems, name+" has a Go install that does not name its target")
+				}
 			}
 			integrity := ""
 			if install.has("integrity") {
@@ -292,10 +325,41 @@ func compatibilityRecord(record *pyDict, problems []string) ([]string, error) {
 				problems = append(problems, name+" has a measured point that is not an object")
 				continue
 			}
-			for _, key := range opsPointKeys {
+			pythonPoint := point.has("interpreter")
+			keys := opsGoPointKeys
+			if pythonPoint {
+				keys = opsPythonPointKeys
+			}
+			for _, key := range keys {
 				if !point.has(key) {
 					problems = append(problems, name+" has a measured point missing "+key)
 				}
+			}
+			// OPS-1.3: a point takes the kind of the install it covers, so its shape alone proves
+			// nothing. A Python-era point needs a Python-era install beside it; a Go point names one
+			// of this component's Go installs by location and the digest of that binary's bytes.
+			if pythonPoint {
+				if !pythonEra {
+					problems = append(problems, name+" has a Python-era measured point but no Python-era install for it to cover")
+				}
+				continue
+			}
+			var covered *pyDict
+			if want, ok := point.get("install").(string); ok {
+				for _, install := range goInstalls {
+					if location, ok := install.get("location").(string); ok && location == want {
+						covered = install
+						break
+					}
+				}
+			}
+			if covered == nil {
+				problems = append(problems, name+" has a measured point that names no Go install of this component")
+				continue
+			}
+			digest, digestOK := point.get("installDigest").(string)
+			if binary, ok := covered.get("binaryDigest").(string); !digestOK || !ok || binary != digest {
+				problems = append(problems, name+" has a measured point whose installDigest is not its install's binaryDigest")
 			}
 		}
 	}

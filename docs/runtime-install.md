@@ -2,868 +2,312 @@
 
 [POLICY.md](../POLICY.md) owns repository rules and
 [the operations contract](../plugins/crw/skills/crw-run/references/operations.md) owns the operational ones.
-This page describes the runtime entry point that installs, updates and diagnoses the MCP bridge
-and the session relay, and it is written against that contract's clause numbers so a reader can
-check a claim against the rule it came from.
+This page describes how the runtime behind the MCP bridge, the session relay and the completion
+hook is installed, updated, rolled back and diagnosed, and it is written against that contract's
+clause numbers so a reader can check a claim against the rule it came from.
+
+The runtime is one Go binary, `crw`, shipped in a release archive. The plugin package declares the
+server and the Stop hook and reaches the binary through the installer's pointer
+([plugin packaging](plugin-packaging.md)); the package carries no runtime of its own.
 
 Updating is the half that can lose something. A first install has nothing to destroy; a second one
 is standing on a runtime somebody is using and a database nobody can rebuild, so most of what
 follows is about what is read before anything moves and what is put back when it does not.
 [Updating an installation](#updating-an-installation) is where that lives.
 
-Two entry points exist and they are deliberately not one:
-
-| Command | Installs | Contract |
+| Command | What it does | Contract |
 | --- | --- | --- |
-| `python3 scripts/install.py --check` or `--apply` | Skill links into Codex | OPS-2.3 |
-| `python3 scripts/runtime_install.py` | The bridge, the relay, the MCP registration and the Linear hook | OPS-2.4, OPS-6.3 |
+| `crw install install`, `crw install update` | Verify a release archive, install it as a new runtime directory, exercise it and move the owned pointer to it | OPS-2.4 |
+| `crw install rollback [<dir>]` | Point the owned pointer back at the runtime the last promotion replaced, or at a runtime directory the host record lists | OPS-2.4 |
+| `crw install remove <dir>` | Delete one runtime directory nothing selects, points at or runs out of | OPS-2.4 |
+| `crw install register-mcp --owner plugin` | Write the bridge record the plugin's declared server reads | OPS-2.2 |
+| `crw install hook --owner plugin` | Write the Stop settings the plugin's declared hook reads | OPS-6.3 |
+| `crw install status`, `crw doctor`, `crw doctor retention-scan` | Read the installation, classify it and report the six check results; write nothing | OPS-2.1, OPS-2.2, OPS-6.1 |
+| `crw-dev skills link --check` or `--apply` | Skill links into Codex, from a checkout | OPS-2.3 |
 
-The first is unchanged by this page. It stays standard-library-only and idempotent, it refuses to
-replace an existing directory or a foreign link, and runtime installation is never folded into it.
-The runtime entry point reuses its `LINKED`, `MISSING` and `CONFLICT` vocabulary so one word means
-one thing across both layers, and it reads the skill-link layer by running `scripts/install.py
---check` rather than by reimplementing it.
+Every `crw install` and `crw doctor` command prints one JSON document. Runtime installation is never
+folded into the skill links: `crw-dev skills link` belongs to the repository's development binary
+because it links a checkout, and a release archive has none. It stays idempotent, it refuses to
+replace an existing directory or a foreign link, and its `LINKED`, `MISSING` and `CONFLICT` words
+mean the same thing wherever this page uses them. A plugin installation has no skill links at all.
 
-## The one definition
+The Python installer, `scripts/runtime_install.py`, still exists. It installs the Python fence
+release and it is the development and rollback path until the Python execution path is removed;
+[the Python fence installer](#the-python-fence-installer) is the one section of this page about it.
+Moving a host from the Python runtime to this one is [the cutover](port/cutover.md), not an install
+alone. The cutover moves the store's ownership. Where `crw install install`, which moves the pointer
+(and on the relay host's first Go install replaces its Python-era Stop settings, once), falls among
+its steps is not written yet; that order is an open item todo 42 settles
+([the backlog](port/refactor-backlog.md#deferred-review-findings-fix-before-todo-42)).
 
-`scripts/crw_runtime/components.json` is the single compatibility definition OPS-1.1 requires.
-Both installation and diagnosis read it; neither carries a second copy of a revision, a version or
-a digest.
+## What an installation is
 
-It carries only what this checkout can prove about itself. Every field is either re-derived from
-the checkout at check time or marked with the OPS-0 status word that says it was not:
+A release archive is `crw_<version>_<os>_<arch>.tar.gz`, published with a `SHA256SUMS` beside it
+([releases](releases.md#binary-assets)). It holds `crw`, the three compatibility names
+`codex-session-relay`, `codex-thread-bridge` and `crw-completion-hook` as links to it, and the
+licences. `crw` dispatches on the name it was started under, so each name is the component it
+names.
 
-| Field | How it is established |
+An installation of it is two things under the destination:
+
+| Path | What it is |
 | --- | --- |
-| `subdirectory`, `packageLocation` | Paths in this repository |
-| `subdirectoryTree`, `packageTree` | `git rev-parse HEAD:<path>` |
-| `sourceDigest` | The OPS-1.2 walk over the package directory |
-| `version`, `requiresPython` | Read from the component's `pyproject.toml` |
-| `upstream` remote, revision, tree and licence | `recorded`: carried from the import, not re-derivable here |
-| `measuredPoints` | Empty, and `unmeasured`: this repository has exercised no combination |
-
-`python3 scripts/runtime_install.py verify-definition` re-derives every derivable field and fails on
-any disagreement, so the definition cannot drift from the source it describes. It runs in CI through
-[scripts/ci/contracts.py](../scripts/ci/contracts.py). The upstream revision is not derivable from
-this checkout, because the import brought source rather than history, so it is instead required to
-appear in [packages/README.md](../packages/README.md), which is the provenance narrative OPS-1.5
-says is retained rather than replaced. That keeps one machine-readable owner without letting the
-prose and the definition disagree.
-
-The repository commit is deliberately absent from the file. A commit SHA recorded inside the commit
-it names is self-referential, so it is measured at run time and reported, never committed.
-
-What the definition does **not** carry is as important. Installed locations, entry points,
-interpreters, host names and measured points are host facts. OPS-3.2 makes a real record a private
-receipt, so the runtime entry point writes those to a host record outside this repository and this
-repository never commits one.
-
-## The host record
-
-The host record at `${XDG_STATE_HOME:-~/.local/state}/codex-relay-workflow/host-record.json` is the
-other half of the definition and is never committed. It holds the repository commit and tree
-measured at run time, checkout cleanliness, one entry per install location
-(`location`, `installMode`, `entryPoint`, `environment`, `interpreter`,
-`interpreterPath`, `integrity`, `reachedVia`) and the measured points.
-
-This is what makes reuse reachable. Under OPS-1.3 a point means the combination was exercised, so
-no amount of reading bytes produces one, and a component whose bytes match but whose combination
-nobody has run classifies `unmeasured` and is preserved rather than reused.
-
-`runtime_install.py measure` is the operation that produces a point, and it has to run something
-real. Starting a process is not exercising a combination: the bridge's entry point starts a stdio
-server and never contacts the App Server, so a recipe built on startup would record success against
-an unreachable host. `measure` therefore runs two actual operations under the resolved interpreter:
-
-| Component | Operation | What makes it an exercise |
-| --- | --- | --- |
-| Relay | `codex-session-relay --socket <sock> --state <dir> doctor` | `actorReachability.socketConnect` is a real connect and must equal `ok` |
-| Bridge | `packages/codex-thread-bridge/scripts/check_connection.py --socket <sock>` | The package's own read-only check starts the MCP server, lists its tools and calls `get_capabilities`, which is an App Server round trip |
-
-That check is invoked, never modified or reimplemented. A connection, protocol or tool-call failure
-records **no** qualifying point and the run reports why. The point records
-`{interpreter, codexCli, appServer, host, date, measuredBy, method}` bound to one install location,
-one combination and the `sourceDigest` it was measured against, so it is evidence tied to the bytes
-it covers rather than an independently editable expectation. A point recorded against another
-interpreter is a different combination and does not satisfy this one. Points are appended, never
-replaced.
-
-The `appServer` dimension is the bridge check's whole `get_capabilities` payload, serialized and
-compared by exact string equality. That is deliberate: the identity of the server a combination was
-exercised against is everything the round trip reported, not a version string someone chose to trust.
-It also means any change to that payload's shape changes the dimension, so a point measured before
-such a change does not cover a bridge built after it and the installation reads `unmeasured` until
-it is measured again. The old point is not wrong and is not discarded; it remains evidence about the
-build it was taken against, which is the behaviour a dimension is for. CRW-21 changed that payload,
-so any point recorded before it needs one `measure` run to cover the current bridge. The same
-property is why the payload carries no timestamp and no probe result: a dimension that varied
-between two calls to the same build would never match itself.
-
-### An interpreter's identity is not one line of a script
-
-`interpreterPath` is recorded because a console script has more than one written shape. pip emits a
-direct `#!<python>` shebang when the destination allows it, and a `#!/bin/sh` trampoline that execs
-the interpreter on a following line when it does not, which is what a path containing a space
-produces. Reading the first line answered `/bin/sh` for the second shape, so nothing could be
-asked of the interpreter: it reported no version and located no module, the component classified
-`unreadable`, the install never promoted, and recovery deleted the environment the run had just
-built as though it belonged to somebody else.
-
-So the interpreter for a script this command created comes from the install record, written by the
-run that used it, and is confirmed by running it. Records written before `interpreterPath` existed
-still name the `environment`, whose interpreter is the one that environment was built with. Reading
-the shebang stays the answer only for a script this command did not create, where there is no
-recorded environment to ask, and the classification reports which of the three it used.
-
-## Reading a record, and what happens when it cannot be read
-
-Every record this command reads — the definition, the host record, the Codex configuration, the
-hook file — is read at a narrow boundary that turns a failure into an answer rather than a
-traceback. The answer is one of four states, decided by an ordered observation rather than by a
-convenience test:
-
-| State | What was observed |
-| --- | --- |
-| `ABSENT` | nothing exists at the path. The only state that may be read as a host with no history. |
-| `PRESENT` | it was read. An existing record with nothing in it is `PRESENT`, not `ABSENT`. |
-| `UNREADABLE` | something is there and its shape cannot be read: a directory or other non-regular file, a symlink whose target is established missing or looping, invalid UTF-8, unparseable JSON, or containers of the wrong type. |
-| `ACCESS_ERROR` | nothing could be established: a permission or I/O failure reaching the path, a symlink whose target could not be resolved, or a parent directory that cannot be traversed. |
-
-The distinction that matters most is the last row. Being unable to ask is not being told no, so a
-failure to establish existence is never reported as absence, and a permission problem is never
-reported as a malformed record.
-
-The service reading is classified the same way, and the invocation wins: a `service status` command
-that did not run yields `ACCESS_ERROR`, an answer with no boolean `running` yields `UNREADABLE`, and
-only an answer that arrived yields `RUNNING` or `STOPPED`. A daemon is never reported stopped
-because nobody could ask it.
-
-A refusal names what failed: the exception type, the source path, and the file and line that raised.
-That is deliberate. Swallowing everything into a generic "unreadable" would file a defect in this
-command as a problem with the user's data, and the defect would then disappear from the record.
-
-### What this guarantees, and what it does not
-
-The guarantee is bounded and stated rather than implied. **What it guarantees:** the worst case for
-a record this command reads is a named refusal, not a crash. **What it does not guarantee:** that a
-record which could have been read is never refused. Validation is per known consumed field where the
-shape is known, and a class guarantee at the boundary everywhere else, so the residue is a record
-refused conservatively. That direction is the safe one and the refusal carries its reason, so it is
-reportable rather than silent.
-
-Two further limits, for the same reason:
-
-- **"Nothing was written" is scoped to what can be guaranteed.** Malformed input detected *before*
-  the first mutating step refuses and the target file's bytes are unchanged. A read failure *after*
-  a mutation reports the mutation instead of denying it: the outcome is `APPLIED_UNVERIFIED` with
-  `applied`, `wrote` and `readBack: false`, and the command exits non-zero. Reporting a landed write
-  as a refusal that wrote nothing would invite a retry that appends a second registration, which is
-  the outcome this command exists to prevent. The unchanged-bytes claim is about the target file; a
-  lock file is created and removed beside it.
-- **A read-only diagnosis reports rather than refuses.** `diagnose` names the failed reading in
-  `hostRecordState` and `hostRecordReading` and continues with what it could still observe, because
-  refusing the whole diagnosis would discard the readings that did answer. It never reads an
-  unreadable record as a clean host: the affected components classify `unreadable`. Commands that
-  would write — `install`, `measure`, `register-mcp`, `hook` — refuse outright.
-
-### One writer for the host record
-
-Every change to the host record goes through one helper that takes the lock, loads the record
-*inside* it, applies the caller's narrow delta and saves. The helper never accepts a record. A
-caller that loads a record, spends minutes installing and exercising a runtime, and then hands the
-record back to be saved would overwrite whatever another run committed in between, and holding a
-lock over that save does not help, because the staleness is already inside the value being written.
-So a caller says what it learned — this install, these points, this selection — and the merge
-happens against the record as it then stands.
-
-Recovery follows from the same rule. A failed install removes the directory it created and drops
-only the install records keyed to that directory. It leaves the selection **exactly as found**,
-because another run's successful promotion is not this run's to undo.
-
-### Reading the configuration
-
-**Registering an MCP server needs a controller on Python 3.11 or newer.** `tomllib` arrived in
-3.11 and it is the reader; without it every non-empty configuration is refused, and registration
-refuses even into an empty one because it reads back the content it proposes to write. The refusal
-names the interpreter that is running and says what to do about it.
-
-The controller's interpreter is not the runtime's. This command installs 3.11+ runtimes whatever
-interpreter started it, so an old controller does not mean an old installation - it means the
-process reading your configuration cannot parse TOML, and rerunning `runtime_install.py` on a
-newer interpreter is the whole fix. Diagnosis still reports everything that does not need the
-parser and marks the configuration unreadable rather than guessing at it.
-
-
-`tomllib` reads the configuration wherever it exists, which is Python 3.11 and newer: the host
-interpreter and every runtime this command installs. A hand-written TOML reader is an open
-correctness problem, and this one cost eight review rounds - delimiter counting, escape decoding,
-dotted names, quoted keys, the three-quote sequence, brackets inside quoted names, Unicode line
-boundaries, quoted member assignments - so it stopped being the reader.
-
-No fallback remains. The narrow subset written to replace the hand-written reader produced two
-more defects of its own - a quoted name read as a list of its characters, and a duplicate key
-silently taking the last value - and it existed only to give one CI job something to run. So the
-`validate` and `tests` jobs on Python 3.10 exercise the refusal rather than a second reader, and the
-checks simulate the absence of `tomllib` on an interpreter that has it, so the refusal is verified on
-both jobs rather than only where it bites.
-
-Parsing is not reading a registration. A file where `args` is the string `"ab"` parses cleanly and
-`list()` turns it into `["a", "b"]`, so the shape is validated before anything is compared:
-`mcp_servers` a table, each entry a table, `command` a string, `args` a list of strings. Other
-fields such as `env` are left alone rather than refused, and the comparison is a symmetric
-projection onto the two fields registration actually decides on.
-
-Appending gets the same treatment. Reading a file correctly does not make a trailing table mean
-what it says: a root `mcp_servers = {}` is a closed inline table that `[mcp_servers.x]` cannot
-extend, and under `[[mcp_servers]]` an appended table attaches to the last array element. So the
-proposed content is read back **before** it is written, and it must carry the intended registration
-and leave every other one unchanged, or nothing is written.
-
-### A judgment cell is filled only by its own reading
-
-Every signal classification decides on carries the value its own question's reading produced,
-and nothing else. A reading that did not answer leaves its cell empty and names itself
-unreadable.
-
-The failure this replaces was quiet. `definition.git` answers nothing when it cannot read,
-nothing compared with a recorded tree hash is *false*, and false is what classification reads as
-a disagreement: an installation this command owns was reported as somebody's fork, from a read
-nobody performed. The sibling three lines above, the repository commit, was already correct.
-Writing the comparison out at each site is what let one of them be right and the next one wrong.
-
-`ownership.Judgement` is where the comparison lives now. `compare` returns nothing when the
-observation was not made and records why; `answer` does the same for a reading that IS the
-signal. The interpreter version, the host name, the Codex CLI, the App Server, the component
-tree and the checkout status all go through it, and a repository commit nobody could read is
-reported as unknown drift rather than as drift.
-
-Four outcomes are declared per cell, because one rule would be wrong about most of them: a
-reading that answers nothing has to stop the classification, a reading that raises is a named
-refusal at the boundary, absence is sometimes a real *no*, and some cells are answered by no
-observation this command makes. The cells come from `ownership.Signals` itself, so a signal
-added without saying which reading answers it fails the inventory.
-
-### A cell that says no reading answers it is checked, not believed
-
-The cells come from `ownership.Signals` and each names the observation that answers it. That
-catches a cell whose reading is wrong; it cannot catch a cell whose declaration is a lie. A cell
-declared to have no reading is simply skipped, and that is the path the next defect took:
-`link_conflict` sat empty while this command's own `skill_links()` was answering the very
-question, because the declaration read "the skill installer's reading, not this command's" and
-nothing tested that sentence.
-
-So the claim is verified. A cell's subject comes off its own name by stripping the suffixes the
-declaration lists, and for a cell that names no observation no function of this command may
-carry that subject. `link_conflict` against `skill_links` is the case that would have failed.
-
-The reading itself moved ahead of classification, where it should have been: `scripts/install.py --check` reports `CONFLICT` for a path this command does not own, and that is an
-OPS-2.1 conflict exactly as a differing MCP registration is. A caller that makes no such reading
-says so - `linkConflictRead` - because no conflict found and nobody looked are different
-answers, and `install` has no Codex home in scope to read.
-
-### The inventory for a conflict cell is the caller set
-
-Every cell is declared, every declaration is verified, and `install` still promoted over a
-conflict, because that defect lives one dimension up: the command that moves the selection
-passed neither conflict reading. `CONFLICT_READINGS` names them, every call of
-`classify_component` in this command has to pass each one, and the classification reports
-`conflictsRead` so a caller that made no reading is distinguishable from one that found no
-conflict. A cell may legitimately be `None` for a caller - the MCP registration is the bridge's
-and says nothing about the relay - but the caller says so by passing the keyword.
-
-`install` takes a `--codex-home` for this, defaulting the way `diagnose` does, and compares the
-command alone. It knows which entry point it installed and knows nothing about the arguments a
-host chose, and an empty argument list is not the absence of an expectation: it is the
-expectation that there are none, which reports a conflict for a registration that is correct and
-merely carries supported bridge arguments.
-
-### The inventory for a store on disk is the place set
-
-The filesystem listing is the whole inventory when the relay cannot answer, which is exactly
-when hiding a store matters. The state root had its own branch for `relay.sqlite3` and
-everything else was looked for in child directories, so an operations ledger beside the root
-database was in neither and was never listed. A third branch would reopen at the next place, so
-the places are a rule - the state home, then each scope directory under it - and every store
-pattern is looked for in every one of them. The root comes first and unconditionally, so a
-directory listing that cannot be read loses the scopes and not the root.
-
-### A lock that could not be taken established nothing
-
-`release_candidate` takes the host-record lock, and a `TimeoutError` used to leave it. That meant
-the cleanup path of an already-failing install raised, and the run reported an internal error
-instead of whether its destination is retriable - the two things criterion 2 and criterion 4 ask
-of a failed run. A lock another run holds establishes nothing about the selection, which is the
-answer the same function already gives for a record it cannot read, so it takes that branch: the
-candidate is kept and the refusal says why.
-
-That was one sibling. `install` and `register-mcp` answered the same event properly and the hook
-path did not: with the hook file locked, `hook --apply` reported
-`internalError: TimeoutError` naming `hostrecord.py:292` - a claim that this command has a
-defect, which is about the code rather than about the host and sends whoever reads it somewhere
-that has nothing wrong with it. Answering it at the hook and stopping would be the repair that
-reopens at the next sibling, so `main()` answers a busy lock as well, ahead of the arm that files
-anything unmodelled as a defect. `cmd_hook` still answers for itself, because it is the one that
-knows the settings are written before the hook and a lock taken between them leaves them on disk.
-The check reads the lock reachers as a call graph rather than a list, and requires the busy arm to
-precede the catch-all, because an arm after it is unreachable.
-
-Review then found the other half of it. `TimeoutError` is an `OSError`, and a destination on a
-network mount raises it with `ETIMEDOUT` for an ordinary filesystem call, so answering the
-built-in would claim another run holds a lock that was never involved - the same defect, inside
-the contract that exists to prevent it. The lock raises `hostrecord.Busy`, its own type, which
-subclasses `TimeoutError` so a caller that already answered the broader question keeps working.
-The check requires the narrow type and forbids the broad one.
-
-### One cell, one question
-
-Two readings that answer different questions are never joined into one value. `summarise`
-made three doctor invocations and then read `selected or discovery`, so a selected store that
-did not answer borrowed the discovered store's path, store id and socketConnect while the
-service status, the assignment lookup and the trial all kept acting on the selected one. That is
-the conflict OPS-3.4 asks this reading to surface, reported as agreement.
-
-The summary now says which question answered, in `scopeAnsweredBy`, and hands the caller the
-invocation it came from in `scopeCommand` so a field derived from that scope names the same
-reading instead of deciding the provenance a second time. An explicit selection that could not
-be read reports no scope at all; the discovered store is a different store.
-
-The same distinction reaches the registration. `LINKED` means the file registers exactly the
-command this run asked about; `PRESENT` means a registration is there and nothing was compared,
-because no expected command was supplied. Collapsed into one set, `mcpExposed` reported
-*verified* with evidence reading "the configuration registers this exact command" for a host
-registering something else entirely.
-
-### One word, one declaration
-
-A partition belongs to the module that declares it, and a consumer asks that module rather than
-testing one of its members. `== UNREADABLE` answers for one of the four reading states and
-silently says yes to another, which is how a configuration that could not be reached at all
-reached classification as one that had been read. The same shape produced a bridge classified
-against whatever PATH resolved, a point recorded with a dimension nobody observed, and a replay
-decided on one of the seven values the relay actually compares.
-
-A check reads every UPPER_CASE module-level binding out of the source, resolves the strings it
-names - including names, cross-module references and concatenations - and reports any comparison
-against one of those strings from a module that can see the declaration. Scoped to importers,
-because unrelated modules share short words: a destination kind spelled `host` has nothing to do
-with the hostname dimension whose key is spelled the same.
-
-Its limit is stated rather than papered over. It reads comparisons; literal key *access* is not
-covered, because payload keys are data and forbidding them would forbid reading a payload at all.
-The one map where that distinction decides something is guarded separately, by an access contract
-over the comparison loop itself.
-
-### A member carries its predicate and its provenance
-
-Declaring a set fixes what belongs to it and nothing else. The gate over that set still applies
-whatever predicate it wrote and the probe over it still asks whatever runtime was nearest, which
-is how one defect reopened a dimension up four separate times: a whitespace-only turn id read as
-supplied here and as blank by the relay, an empty server table read as an absent registration, an
-artifact rule asked of this checkout while a different installed relay acts on the answer, and a
-smoke check whose bytes decided a point that named only the installed package.
-
-So a member is a pair. `TRIAL_REQUIRED_INPUTS` maps each input to its flag *and* to the predicate
-its consumer applies - `NON_BLANK` for this command's own minimum, the relay's own
-`validated_turn_id` for the anchors the relay refuses blank. `PREFLIGHT_PROBES` names the
-read-only probes, and each runs the interpreter it was handed rather than this controller.
-`PRESENCE_READINGS` pairs a presence question with the reader whose sentinel answers it, because
-an empty mapping is falsey and is not an absent one. And `exerciseDigest` is a dimension of a
-point, because the bridge's smoke check lives outside the installed package and its bytes decide
-the claim the point records.
-
-Two consequences are worth stating rather than discovering. `--trial` needs the selected relay's
-interpreter to be resolvable before it writes anything, and says so instead of falling back to
-this checkout's copy of a rule the installation owns. And a point recorded before `exerciseDigest`
-existed no longer qualifies: it cannot name the instrument that produced its claim, so a host that
-reached `own` on such a point measures again.
-
-### A pair fixes that there is a predicate, not which one
-
-Declaring a member as a pair closed the layer above and opened this one. A pair says a member HAS
-a predicate and a cell HAS a reading. It says nothing about whether that predicate is the
-strongest one the consumer applies, or whether the cell has more than one place that writes it.
-Both gaps produced a working, well-formed, wrong answer.
-
-`NON_BLANK` is this command's own minimum and nothing more, so a member left on it has every
-further question about its value answered here. The artifact root was that member: its real
-question is containment, and containment was decided by `base in path.parents`, a second copy of
-a rule the relay owns. The copy was not the safe approximation it looked like. It disagreed with
-the relay in **both** directions - it refused `<root>/../<root>`, which the relay accepts end to
-end, and where the relay does refuse a root it named the deliverable as the thing at fault. Driven
-directly, a relative root registers - the relationship row is written - and is refused at `emit`
-with `scope_escape`.
-
-So a member carries the predicate its consumer applies, and where that predicate is relational it
-names the member supplying the other operand. `--artifact-root` is asked of `scope.assert_within`
-after `normalize_declared_path`, which is the pair `AuthorizedFile` itself asks, in that order.
-`--recipient` is asked of `scope.check_recipient`. `--turn-thread` cannot be asked of anything:
-the relay holds that rule inside a method that needs a store. It is restated here and **declared**
-as restated, naming where the original lives, and a check reads that place back - which is how the
-commit introducing it was caught naming a class the relay does not have.
-
-A cell has the same shape one level down. `entry_point_recorded` declared one reading and had two
-assignments. The second filled the ownership cell from the interpreter a console script's first
-line names, which `interpreter_of` already calls the fallback rather than the answer. A wrapper
-this command never created, sitting outside every recorded root, whose author wrote a shebang
-naming an interpreter inside a recorded environment, classified as this installation. The second
-site now answers only from an interpreter the record names, and the cell declares both readings.
-
-Two scans hold these instead of the instances, and neither names a member, a rule or a cell. One
-follows a declared member's value through the preflight and reports any comparison this command
-makes about it that is neither its own minimum nor the consumer's answer; the count comes off the
-declared restatements, so a rule restated without being declared fails. The other reads which
-local feeds each judgment cell, out of the `Signals` call itself, and requires every assignment to
-it to name a reading that cell declares. Both carry a negative control.
-
-### A walk that skips is not a walk that failed
-
-The same class reached from underneath. A reading can also fill a cell wrongly because it never
-reported a failure at all. `ops12_digest` walked with `rglob`, which answers a subtree it cannot
-read by leaving it out. For a package with one unreadable subdirectory the digest that came back
-was not merely wrong: it was byte for byte the digest that smaller tree really has. Nothing raised,
-so the reading region around the call saw a value, the comparison saw a mismatch, and the component
-was reported a **fork** - a claim that somebody had modified an installation nobody could read.
-
-An incomplete reading is not a value. The walk is now explicit and fails on a directory it cannot
-open, so the boundary reports `ACCESS_ERROR` and the cell goes unread. The file set is unchanged:
-both committed package digests re-derive exactly, and `verify-definition` still reports no
-findings. `OMITTING_READERS` names the readers whose answer to an unreadable subtree is omission -
-`rglob`, `glob`, `iterdir` and `os.walk`, whose default `onerror` discards the error - and
-`OMISSION_DECLARED` names each place one is used with what omission means there. `os.scandir` is
-deliberately absent from that list: it raises, which is the behaviour the list exists to require.
-
-Pruning is not omission, and review found where the difference bites. The walk opened every
-directory, including the `__pycache__` the definition excludes, so a cache directory nobody can
-read turned a perfectly readable package into an unreadable one at every boundary that asks for
-its digest. An excluded directory cannot change the answer, so it must not be able to withhold
-it: it is pruned before it is opened, and every subtree that can affect the answer still raises.
-
-### What each of these answered before the fix
-
-Four instances of one class, each driven against the commit before the fix and against the commit
-after it, by the same probe. None of them asks whether a fix is present; each one exercises the
-defect and reports what the code answered.
-
-| Instance | Criterion it reopened | Before | After |
-| --- | --- | --- | --- |
-| a foreign wrapper's first line decides ownership | 3 | `entryPointInRecordedPath=True`, `interpreterFrom="the script's first line"`, class `fork` | `False`, class `foreign` |
-| an incomplete walk comes back as a value | 1, 3 | raised nothing and returned the smaller tree's own digest | raises `PermissionError`; classification refuses with `ACCESS_ERROR` |
-| a busy hook lock is reported as an internal defect | 6 | `internalError: TimeoutError` at `hostrecord.py:292` | `outcome: BUSY`, `internalError: null` |
-| the artifact-root question is answered by a rule written here | 5 | the relay holds `<root>/../<root>` and the preflight refuses it | the two verdicts agree on every form of the root |
-
-So the four criteria hold for the reasons they were written, rather than by assertion. Criterion 1
-and criterion 3 required a reading that cannot answer to stop the classification; a walk that
-omitted a subtree was answering, and it no longer is. Criterion 5 required the trial to write
-nothing it cannot complete; the root is now judged by the rule that will actually be applied to
-it. Criterion 6 required a failed run to report whether its destination is retriable rather than
-an internal error; the hook path was the sibling still doing the latter.
-
-### An answer about a state that was found has to be able to say there was nothing there
-
-Three review rounds in a row produced what read as three separate defects, and they were one
-thing missing in three places. It was never a check nobody had written. It was a **value an
-answer set could not express**.
-
-| Where | The answer it could not give | What that cost |
-| --- | --- | --- |
-| the in-flight cell | established absent | a clean host could never promote, while the schema cell answered `NO_STORE` about the same store |
-| the pointer rollback | restore to absence | a failed first install left a link naming a candidate nothing selected, and the candidate was then kept BECAUSE the pointer named it |
-| the selection rollback | remove a selection that had none | the same install left its own candidate selected, and a selected candidate is never released |
-
-All three end in the permanent refusal the update path exists to remove, reached from three
-directions. So the rule is stated at the layer the instances came from rather than patched a
-fourth time: **where absence is a normal state, the answer set is incomplete until it can say
-so.** A rollback that can only restore a value cannot restore "there was nothing"; a cell that
-can only report a reading or a failure cannot report a question whose true answer is zero.
-
-`ABSENCE_ANSWERS` declares each place and the operation it answers absence with, and the check
-**derives** the places from the source instead of reading that list: a function that is handed
-the state it found — a parameter named `previous`, `before` or `presence` — is answering about
-something that may not have been there. A derived place with no declaration fails, and so does a
-declared operation that either does not exist or is never used where the answer is given, because
-a capability nothing calls is the same silence as no capability at all. The scan carries injected
-violations of each form, so an empty finding list is not mute.
-
-The two absence deltas are compare-and-remove rather than remove. `deselect` takes away only an
-entry that still names what this run wrote, and `drop_pointer` only the ownership record for the
-path this run recorded. Undoing a promotion this run never made is a worse outcome than the
-failure being rolled back.
-
-`restore_pointer` is the third rollback delta and the only one that puts a value **back**, for
-the half of that question absence cannot answer. The pointer ownership entry answers two things
-at once: `path` is which path this host's pointer **is**, and the placement keys
-(`hostrecord.POINTER_PLACEMENT`) are the evidence that a link this command **placed** is there.
-Absence is the right rollback only for a run that INTRODUCED the entry. A run that inherited one
-and failed must not erase it, because the path goes with it and the registration names that
-path — a retry with a different `--dest` then derives another path and reads a registration
-nobody changed as a conflict. So an inherited entry goes back: whole where the link was put
-back, and with its placement **withdrawn** where the rollback established the link is absent,
-which keeps the path and still refuses a link that turns up there afterwards. It compares
-against the path **this run wrote** and carries the entry it **found** as two separate values,
-because a caller handed its path before the lock can have written over an entry naming
-somewhere else. What the rollback actually did is read back from the record rather than inferred
-from the delta having been sent, so it can answer `moved on` truthfully. It reports the state
-the record was left IN, which is not the same claim as "this call wrote it": a compare that
-matched what was already there reports the same answer, and that is the honest one, because the
-question is what a later run will read.
-
-### The failure contract
-
-The reading boundary answers questions about records. Underneath it, `main()` converts anything
-that escapes a handler into a controlled result and exits non-zero. The two are deliberately
-separate:
-
-| | Reading refusal | `internalError` |
-| --- | --- | --- |
-| means | this record could not be read | a defect in this command reached the top |
-| carries | a `state` from the four-state partition | the exception type and the line that raised it |
-| about | the record | the code |
-
-A defect is never filed as a statement about somebody's data, which is what would make it
-disappear. What this guarantees is narrow and worth stating plainly: the worst case is a named
-result rather than a traceback. It does not guarantee that every input was anticipated.
-`diagnose` still reports unreadability and exits zero; the contract is about tracebacks, not about
-forcing every command to refuse.
-
-### Recovery has two outcomes
-
-Reporting a refusal does not delete a directory. After a failed installation the result says which
-of these happened:
-
-- **retriable** - removal was verified on the filesystem, so the same destination can be used again.
-- **not retriable** - removal could not finish. The result names the residual path and what
-  recovery needs, and the original failure is reported alongside the cleanup failure rather than
-  replaced by it.
-
-Whether the candidate may be removed at all is read, never remembered. `hostrecord.update` saves
-inside the lock and releasing the lock can still raise afterwards, so a run can commit its
-promotion and raise anyway; a flag set from "the call returned" would then delete a runtime that is
-now selected. Recovery reads the selection back under its own lock and keeps the candidate when the
-environment is selected **and** when the selection cannot be established, because an unreadable
-record says nothing about what is selected. A raised failure releases exactly like a returned one.
-
-### The trial preflight matches what the relay requires
-
-Everything the trial needs is checked before its first command, and "needs" means what the relay
-itself enforces rather than what is merely present. `--turn-status` is one of the four the relay
-declares; `--turn-thread` equals `--child-task`, because a receipt's thread has to be the
-relationship's child task; and every `--artifact` is an absolute, already-normalised path to a
-regular file with no symbolic link at any component, readable, and inside `--artifact-root`, which
-is what the relay checks while building the manifest. The relay revalidates afterwards, because a
-path can change in between.
-
-The recipient's settings are checked for **usability**, not presence. `settings-record` now runs
-after `register`, so a value that is there but cannot be used - a malformed object, an `@path`
-that is not readable, a settings object missing a required field - would be discovered after a
-relationship row exists. The preflight therefore asks the relay's own reader and the relay's own
-predicate, run read-only in the relay's interpreter: neither opens a store and neither writes. A
-second copy of those rules here would be a restatement of something that lives in the relay, and
-the next change would move only one of them. When the relay's interpreter cannot be resolved the
-answer is *unknown* and the trial refuses, because a check that could not be made is not a check
-that passed.
-
-
+| `<destination>/bin-<version>-<digest12>/bin/` | The runtime: `crw` and the three links, where `<digest12>` is the start of the archive's SHA-256 |
+| `<destination>/current` | The owned pointer: a directory symlink naming the selected runtime directory |
+
+The destination is `~/.local/share/crw-runtime` and nothing else. Both of the plugin's declared
+commands name `$HOME/.local/share/crw-runtime/current/bin/` and nothing else, because `HOME` is the
+one variable a hook and an MCP server both receive
+([how hooks and MCP servers load](plugin-packaging.md#how-hooks-and-mcp-servers-load)). So
+`crw install` has no `--dest`, and neither it nor the wiring honours `XDG_DATA_HOME`: every
+`crw install` command acts on `<home>/.local/share/crw-runtime`, where `<home>` is `HOME`, or this
+user's passwd entry when `HOME` is not set. A host record whose pointer names another link is
+refused by every command before it acts, naming the repair, and `crw install status` reports that
+reading as `destinationAgrees` ([decisions 11 and 38](port/decisions.md)). For a temporary or
+isolated installation, run the commands under another `HOME`, and move with it everything `HOME`
+does not decide, as the isolated-home integration test (`internal/runtime/integration`) does:
+`CODEX_HOME` and `XDG_STATE_HOME` inside the same tree, `CODEX_SESSION_RELAY_SCOPE_DIR` set to a
+directory there, and `CODEX_SESSION_RELAY_STATE` and `CODEX_SESSION_RELAY_MARKER_ROOT` unset or
+pointed there too. Each is read on its own. A `CODEX_HOME` left naming another Codex home has the
+install replace that home's Python-era Stop settings by a document whose adapter is under the
+temporary pointer, so once the temporary tree is gone the Python bootstrap, which runs the adapter
+the settings name, releases every Stop there without a record; an `XDG_STATE_HOME` left naming
+another state home puts the temporary host record there, or is refused where the record there names
+another pointer; and without `CODEX_SESSION_RELAY_SCOPE_DIR` the relay finds its scope registry from
+this user's passwd entry, never from `HOME`. `crw doctor` and `crw doctor retention-scan` still take
+`--dest`, to read another destination, never to install into one.
+
+A path the commands cannot use as given is refused rather than guessed at. `HOME` has to be
+absolute, hold no `..` and not start with exactly two slashes (`//home/...`, which pathlib keeps as
+spelled and a lexical join folds to one; three or more fold to one in both). A relative
+`XDG_STATE_HOME` is a usage error (exit 2) to every `crw install` command not given `--record`: read
+against the working directory it would put the host record where nothing else looks. The doctor does
+not read against the working directory either, but it reports rather than refuses: `crw doctor`
+answers `hostRecordState` `ACCESS_ERROR` and exits 0, and `crw doctor retention-scan` lists the
+relay state root under that state home as unreadable, leaves rows 3 and 6 unscanned and exits 0,
+never clear. A path from `HOME`, `CODEX_HOME`, `XDG_STATE_HOME` or a path flag that holds a byte
+that is not UTF-8 is a usage error naming where it came from, because a record or settings document
+written with a replacement character names a file that does not exist. The execution policy path is
+the one exception, recorded as `os.fsdecode` spells it
+([the execution policy](#the-execution-policy-the-plugin-bridge-runs-under)).
+
+The host record, `${XDG_STATE_HOME:-~/.local/state}/codex-relay-workflow/host-record.json`, says
+which runtime is selected and records every install, its measured points and who placed the
+pointer ([the host record](#the-host-record)). The two settings records the plugin's commands read
+sit in the Codex home: `crw-bridge-mcp.json` for the server and `crw-completion-hook.json` for the
+Stop hook.
+
+Nothing here manages `PATH`. The declared server and hook name the pointer by absolute path, but a
+skill command that runs `codex-session-relay` finds whatever `PATH` finds
+([how skill commands reach the relay](#how-skill-commands-reach-the-relay)).
 
 ## Installing the runtime
-`runtime_install.py install` refuses unless `verify-definition` passes, then resolves an
-interpreter that satisfies both components' `requires-python`. The controller itself runs on
-Python 3.10 for CI and never selects itself for a runtime that requires 3.11 or newer; when no
-suitable interpreter exists it refuses and names the requirement.
 
-The environment is created as a new directory, so an existing one is never overwritten. Each
-module's imported location is then read back from the interpreter rather than assumed, because an
-editable install leaves nothing under site-packages and a copied install does, and its OPS-1.2
-digest is computed from whatever the interpreter actually resolved.
+`crw install` needs a `crw` to run it. The archive carries one, so unpack it anywhere temporary and
+run that copy against the archive itself:
 
-The candidate is then exercised, and the recorded pointer moves only after a qualifying point
-exists for it. OPS-2.4 sequences an update as measure, install, measure again, and the second
-measurement is the one that produces the point; promoting before it would select a runtime that
-imports cleanly and fails the moment it is used. A candidate whose exercise fails stays unselected
-and the previously selected runtime remains selected. A failure at any step **up to the
-promotion** leaves the previous runtime in place, and nothing here removes, moves or recreates
-the store: update failure and store loss are different accidents and the recovery for one must
-not cause the other. Past the promotion there is one exception, and it carries its own exit
-status.
+```sh
+tar -xzf crw_<version>_<os>_<arch>.tar.gz -C <scratch>
+<scratch>/crw install install --from crw_<version>_<os>_<arch>.tar.gz \
+    --socket <app-server-socket>   # SHA256SUMS beside the archive, or --sums <file>
+```
+
+`--release <tag>` fetches the archive for this host's target and its `SHA256SUMS` from that GitHub
+release instead of `--from`. Either way the archive has to be named for this host's operating system
+and architecture, be listed exactly once in `SHA256SUMS` and hash to the listed digest, and nothing
+under the destination or in the host record is created before all three hold.
+
+What follows is one run, in this order, and the result lists the steps it took:
+
+1. Claim the runtime directory with an exclusive `mkdir` and a claim file
+   ([the claim a run leaves behind](#the-claim-a-run-leaves-behind)).
+2. Unpack the archive into it and read the binary's digest.
+3. Record the install entries.
+4. Exercise the candidate through its own concrete executables, never through `current`, which
+   still names the predecessor: the relay's `doctor` must report `actorReachability.socketConnect`
+   as `ok`, and the bridge must answer an MCP session that lists its tools and calls
+   `get_capabilities`. Both run against the App Server socket `--socket` names. The bridge falls
+   back to `<CODEX_HOME>/app-server-control/app-server-control.sock` without it, but the relay has
+   no default socket: its `doctor` answers `socketConnect` as `not configured`, so a run without
+   `--socket` fails at `exercise the candidate` (exit 1) even with an App Server listening at that
+   path. A run that cannot exercise the candidate records no point and promotes nothing.
+5. Under the host-wide promotion lock: [read whether it is safe to swap](#reading-whether-it-is-safe-to-swap),
+   establish that the pointer is this command's, refuse a second owner of the bridge or the Stop
+   hook, and, where the Stop settings still name the Python adapter, replace them once by their Go
+   variant ([one Stop settings document](#one-stop-settings-document)).
+6. [Commit the selection, then replace the pointer](#the-order-a-swap-commits-in), and read the
+   pointer back.
+7. Settle the claim.
+
+OPS-2.4 sequences an update as measure, install, measure again, and step 4 is the measurement that
+produces the point; promoting before it would select a runtime that unpacks cleanly and fails the
+moment it is used. A failure at any step up to the promotion leaves the previous runtime selected
+and the pointer where it was ([what a failed update restores](#what-a-failed-update-restores)).
+Nothing here removes, moves or recreates the store: update failure and store loss are different
+accidents and the recovery for one must not cause the other.
+
+Until todo 43 removes it, the Go build refuses to open a store in the relay's default state
+directory unless `CRW_ALLOW_LIVE_STATE=1` is set
+([the live-state guard](port/cutover.md#the-live-state-guard-until-todo-43)). This run is not
+refused by it: the exercise and the swap gate read the store without opening it, through the
+relay's `doctor` and `service status` and a catalog read that takes no lock. What the guard does
+refuse is the runtime's use of that store afterwards: the relay commands the skills run, and the
+Stop hook's guard whenever it has to read the store. So on a host whose store is the live one, an
+install before todo 43 leaves a runtime that cannot serve it, and that host moves through
+[the cutover](port/cutover.md) instead.
 
 ### The record is not the replacement
 
 The staging claim is written last. It says this staging finished, and until the selection is
-committed and the owned pointer names the environment there is nothing finished to say -- so by
-the time writing it can fail, the registered command already resolves into the new runtime. The
-replacement has happened and only its record has not, and those are reported as two outcomes
-rather than folded into one.
+committed and the owned pointer names the runtime there is nothing finished to say, so by the time
+writing it can fail the declared commands already reach the new runtime. The replacement has
+happened and only its record has not, and those are reported as two outcomes rather than folded
+into one.
 
 | Field | Answers |
 | --- | --- |
-| `promoted` | whether THIS run replaced a runtime. A resumed promotion did; adopting bookkeeping for an installation the record already selected did not |
-| `inService` | whether this destination must be kept. True while the record selects this environment or the owned pointer names it, true once its claim has settled -- a runtime promoted once may still have a process running out of it, which is why `staging.decide()` never reclaims a settled claim either -- and true when none of that could be read, because an environment nobody could establish as free is not one that is free. False only when the readings say so |
+| `promoted` | whether this run replaced a runtime |
+| `inService` | whether this runtime directory must be kept: true while the record selects it or the pointer names it, true once its claim has settled, and true when none of that could be read. False only when the readings say so |
 | `claimSettled` | whether the claim recording it was written |
-| `claim` | the claim's own two outcomes -- `settled` for the record landing, `released` for the call finishing -- with the readback and the selection snapshot that decided them, any residual path, and what raised |
+| `claim` | the claim's own outcomes (`settled`, `released`), its read-back and the selection snapshot that decided them |
 | `recoveryRequires` | what has to be done next, under the same key a refusal reports it |
 
-So `install` has three exit statuses rather than two:
+So `crw install install` has four exit statuses:
 
 | Status | What this run changed | The record | What it means |
 | --- | --- | --- | --- |
-| `0` | it landed | written | the run finished |
-| `3` | it landed | not written | what this run changed on the host landed and the record of it did not |
-| `1` | nothing | not written | this run changed nothing and recorded nothing; whatever the host selected and reached before it, it still does |
+| `0` | it landed, or there was nothing to change | written | the run finished; `alreadyInstalled` says when this archive was already the selected runtime |
+| `3` | it landed | not written | the pointer names the new runtime and the claim that records it did not settle |
+| `1` | nothing | not written | refused, or failed and put back what it had changed; whatever the host selected and reached before, it still does |
+| `2` | nothing | not written | a usage error, found before anything was read |
 
-"What this run changed" is not always a replacement. Promoting a candidate replaces the
-selected runtime; finishing an interrupted promotion places the pointer a dead run never
-wrote; adopting an installation older than claims changes only its bookkeeping and replaces
-nothing at all. All three reach `0` or `3` on the same rule -- whether the claim settled --
-and `promoted` is what distinguishes them.
+**Exit 3 is not a refusal and must not be read as one.** Non-zero here means the opposite of what it
+means everywhere else in this command: the change landed, and a process may be running out of the
+runtime it changed. A wrapper that reads every non-zero status as "nothing changed" would report the
+old runtime as selected, or clean up a runtime that is in service. Key a cleanup decision on
+`inService` and never on the status alone: a competing install can supersede this runtime between
+the promotion and the result, and then status 3 is still correct about this run while `inService`
+is false.
 
-Exit 1 says what this run did, not that the host is consistent. A resume refuses with it when
-the owned pointer is unreadable or names something this record does not account for, and in
-that case a previous run had already committed the new selection before it died -- so the
-record names the new environment while the pointer still names the old one. The run changed
-nothing; the disagreement it found was already there, and the result names it.
+Which accident happened, and what to do about it, is in `recoveryRequires`, derived from the claim
+as it reads back and from a selection snapshot taken under the promotion lock:
 
-**Exit 3 is not a refusal and must not be read as one.** Non-zero here means the opposite of
-what it means everywhere else in this command: what the run changed on the host landed, and a
-process may be running out of the environment it changed. A wrapper that reads every non-zero
-install status as "nothing changed" would report the old runtime as selected, or clean up an
-environment that is still in service. This command releases a candidate only on exit 1.
+| What the result says | What to do |
+| --- | --- |
+| another run held the claim's lock | wait for that run; this call wrote nothing |
+| the claim could not be read back | make it readable or remove it, then run the install again; the runtime is in service and must not be deleted |
+| what this host selects could not be established | read the host record before acting |
+| the record selects this runtime and the pointer does not name it | read the pointer before rerunning, because a rerun replaces that link first |
+| the record selects this runtime | clear what stopped the write and run the same install again: it finishes an interrupted promotion and rebuilds nothing |
+| the record no longer selects it, and something may still reach it | leave the directory alone |
+| nothing selects it or points at it | nothing; another run moved the selection on, so do not rerun to settle it |
 
-It does not follow that an exit-3 environment is still the one the host reaches. A competing
-install can supersede it during the claim write, and then the same result carries
-`selection.selects: false`, `selection.pointerNames: false` and `inService: false`. The status
-says the run's change landed; `inService` says whether the destination must be kept. Read the
-second for any cleanup decision.
-
-The status says what this run did; it does not promise what is true when you read it. A
-competing install can supersede this environment between the promotion and the result, and
-then status 3 is still correct about this run while `inService` is `false`. Key a cleanup
-decision on `inService` and never on the status alone, and read `promoted` for the narrower
-question of whether this run replaced anything: an adoption reports neither.
-
-Which accident happened, and what to do about it, is in `recoveryRequires` -- derived from the
-claim as it reads back and from a selection snapshot taken under the promotion lock, never from
-the exception alone:
-
-| What the result says | What happened | What to do |
-| --- | --- | --- |
-| `settled` true, `released` false | the claim landed and the call failed on its way out | nothing about the record; any lock file left behind is named, and the next claim write clears one older than `STALE_LOCK_SECONDS` |
-| the record still selects this environment | the write failed and the promotion stands | clear what stopped the write, then rerun: the next run reads an interrupted promotion and records it, rebuilding nothing. Rerunning before the write can succeed returns this same result and changes nothing |
-| the record selects only part of this environment | the selection is split across two environments | read the record before rerunning; a resume requires every configured component in the same place and refuses otherwise, so there is no single promotion here to finish |
-| the record selects elsewhere but something still reaches this environment | a promotion moved on, or died before its pointer | leave the directory alone; the next run keeps and reports it rather than repairing it |
-| the record selects elsewhere and nothing reaches it | a later promotion superseded this staging | nothing; do not rerun here to settle it, because the next run reads an abandoned staging and would remove and rebuild it |
-| the claim could not be read, and the record still selects this environment | the claim at that path is unreadable | make it readable or remove it first; an unreadable claim is not one this command may act on, so a rerun reports the directory and leaves it |
-| the claim could not be read, and the record selects elsewhere | the claim is unreadable for a staging that has been superseded | leave it alone. Repairing it as `STAGING` has the next run read an abandoned staging and rebuild the directory, and removing it leaves one populated and claimless that every later install refuses as somebody else's |
-| the claim could not be read, and the selection could not be either | both readings failed | read the host record first; which of the two rows above applies depends on it, and nothing is at risk meanwhile because a claim this command cannot read is one it leaves alone |
-| the host record is gone | the authority for what this host selected was lost | restore the record before rerunning, and do not remove the environment: the owned pointer may still reach it |
-| the selection could not be established | the snapshot could not be taken | read the host record before acting; it decides whether a rerun records, keeps or rebuilds |
-
-The snapshot is consistent, not durable. Nothing holds the promotion lock until an operator
-reads the result, so what is reported is what the record said at that moment; re-read it before
-acting if time has passed.
+The snapshot is consistent, not durable. Nothing holds the promotion lock until an operator reads
+the result, so re-read it before acting if time has passed.
 
 ## Updating an installation
 
-The first install is the easy half. The second one is where the previous runtime and the store can
-be lost, and until this section existed it could not happen at all.
-
-The environment is named from the definition version and the combined source digests, so a new
-combination always gets a new directory. The entry point recorded for it is that concrete path,
-and the promotion gate compared the Codex registration against it. So once an installation had
-registered `env-A/bin/codex-thread-bridge`, every later update registered nothing, compared the
-new entry point against the old registration, read `CONFLICT`, classified the candidate
-`conflict`, refused to promote, and then deleted the environment it had just built and
-exercised. The registration was pinned to the first install for ever, and `register-mcp` could
-not move it either: it writes only on `CREATED` and reports `CONFLICT` for a name already
-registered with a different command.
-
-The fix is an indirection this command owns rather than a rewrite of somebody's configuration.
+`crw install update` is the same run as `crw install install`; the name says which one you meant.
+A new archive is a new runtime directory, because the directory is named for the archive's version
+and digest, and the predecessor is never removed by an update. It becomes the host record's
+`outgoing` selection, which [`crw install rollback`](#rolling-back) returns to.
 
 ### The pointer is what moves
 
-`<destination>/current` is a directory symlink. The registration and any user-facing command
-name `<destination>/current/bin/<console script>`, which is stable across every update, so
-`config.toml` is written once and never rewritten. That matters more than it looks: this
-repository refuses to approximate TOML, and the byte-preservation proof the registration rests on
-is that the prior content is an exact prefix of the new file. An in-place edit cannot satisfy
-that, so a registration that had to change on every update would have to give up the one property
-that makes appending safe.
+`<destination>/current` is a directory symlink, and everything that starts the runtime names a path
+through it: the plugin's Stop command, its server launcher, and the three executables the settings
+records name. Those strings are stable across every update, so an update rewrites none of them and
+changes nothing Codex has trusted. It moves the link.
 
-A console script keeps the absolute shebang pip wrote, so a process started through the pointer
-reports the concrete environment as its `sys.prefix` and its `sys.executable`. The pointer is a
-way to reach a runtime and never an identity. A bridge Codex has already spawned goes on running
-its own environment after the pointer moves, which is how criterion 4's process liveness survives
-an update, and it survives only because nothing here removes a predecessor.
+The pointer is a way to reach a runtime and never an identity. A process already started keeps the
+runtime it started in after the pointer moves: a running bridge or daemon goes on running its own
+directory's binary, which is why no update removes a predecessor. The next process started through
+the pointer is the new runtime.
 
-Two strings answer two questions, and they are not interchangeable. The candidate is classified
-through its **concrete** entry point, because before the swap `current` still resolves to the
-predecessor: classifying through it would read the previous interpreter, digest the previous
-bytes, and report the new candidate as a fork of itself. Only the registration expectation uses
-the pointer, and the pointer path is read from the host record rather than rebuilt from the
-destination argument, because the registration comparison is string equality and `--dest`
-spelled differently on a later run is a different string for the same directory. The Go
-installer that replaces this command, `crw install`, has no `--dest` at all: its destination is
-fixed at `<home>/.local/share/crw-runtime`, the directory whose `current/bin` the plugin wiring
-runs, and it refuses a host record whose pointer names another link, with the repair
-([decisions 11 and 38](port/decisions.md)).
+A registered command and the runtime it reaches are separate claims, and `crw doctor` reports them
+separately: the pointer's state and target, which kind of runtime the target is (`go-binary`,
+`python-venv`), and whether the record selects what the pointer names (`runtime.agrees`). A
+`current` repointed by hand at another directory is caught by that comparison rather than passing
+because the command strings are unchanged.
 
-Registering the pointer widens what a registration means, and the evidence that widening would
-cost is taken back rather than lost. `LINKED` against the pointer says the configuration names
-the pointer; it no longer says which runtime that is. So the link target is its own judgment cell,
-read with `readlink` and compared against the recorded selection, and diagnosis reports the
-registered command, the link target and where the entry point resolves as three fields. A
-`current` repointed by hand at a fork is caught by the cell whose question that is, instead of
-passing because a neighbouring cell was still satisfied.
+### One Stop settings document
 
-### A registration written before the pointer existed
+`crw install` writes one plugin-owned Stop settings document, and it serves both runtime kinds
+through the pointer. `adapterInterpreter` `/usr/bin/env` and `adapterEntryPoint`
+`<destination>/current/bin/crw-completion-hook` run the Go hook on a Go runtime and the fence
+release's `crw-completion-hook` console script on a Python `env-*` runtime, and `relayExecutable`
+`<destination>/current/bin/codex-session-relay` is the Go link or the venv's console script. No
+promotion and no rollback rewrites that document ([decision 18](port/decisions.md)).
 
-The pointer only helps a host that has one. A host installed by an earlier version of this
-command registered a concrete entry point, and comparing that with the pointer reads as a
-conflict — which refuses the update and then deletes the candidate it has just built. That
-made the installed base whose pinned registration the pointer exists to unpin the one base
-that could never receive it.
+The one rewrite is of a Python-era document, and only when the pointer moves onto a Go runtime. The
+relay host's Python-era document names `.../current/bin/python3` as `adapterInterpreter`, a path
+that is gone once the pointer leaves the virtual environment. So a move of the pointer onto a Go
+runtime that finds one (an install, an update or a `crw install rollback`; on the relay host, its
+first Go install) archives it, inside its promotion and before the pointer moves, beside the file
+as `crw-completion-hook.json.superseded-<time>` (a hard link to the same file, or a copy where the
+filesystem refuses one, and never deleted) and replaces it, in one rename,
+by its Go variant: the same relay, marker root, database, journal, socket, mode and budget, with only
+the two adapter keys moved. Both documents work while the pointer still names the venv, so a Stop
+always finds settings it can run. Settings a user owns, or that name an adapter this command did not
+write, are left as they are. A write lands only on the document it was decided from: one that
+changed after it was read is never written over, and a replacement never destroys another writer's
+bytes.
 
-So a conflict is checked against the host record before it is believed. A registered command
-that the record names as an entry point of an install this command made is this command's own
-earlier registration, not somebody else's, and it does not refuse the update. Ownership is
-established positively from the record: a path that merely looks familiar proves nothing, and a
-registration nobody recorded stays the conflict it is.
+A run that fails after this step puts the Python-era document back, and says so under
+`settings.undone`, only while the path still holds exactly the bytes this run wrote, and then by an
+atomic exchange of the two names (`renameat2` `RENAME_EXCHANGE` on Linux, `renamex_np`
+`RENAME_SWAP` on darwin). Where no atomic exchange exists, nothing is renamed over the active path:
+both files stay, and the answer gives the `mv` that puts the found settings back by hand.
 
-Recognising it is not migrating it, and the difference is worth stating plainly. After the
-update the configuration still names the predecessor. That is not a broken host — the
-predecessor is preserved and still works — but Codex goes on spawning the previous bridge until
-`register-mcp` is aimed at the pointer. Moving an existing registration would need this
-repository to rewrite a table it did not write, and the append-only writer proves it preserved
-everything by requiring the prior content to be an exact prefix of the new file, which an
-in-place edit cannot satisfy. That is a different contract, so it is named here rather than
-improvised.
+A rollback to a Python runtime never puts the archive back; it requires the venv to serve the one
+document instead ([rolling back](#rolling-back)). To return to the Python-era document itself, do it
+by hand and only while the pointer names the venv, after `crw install rollback <venv>`: take the
+newest `<CODEX_HOME>/crw-completion-hook.json.superseded-*` whose `adapterInterpreter` ends in
+`/current/bin/python3` and `mv` it over `crw-completion-hook.json`, one rename, so a Stop never
+finds the path empty. The next move of the pointer onto a Go runtime, whether `crw install install`,
+`update` or a `crw install rollback` onto one, archives it again and writes its Go variant.
 
 ### The claim a run leaves behind
 
-The environment name is deterministic and the directory is created with an exclusive `mkdir`,
-which is what proves a run owns it. That proof used to expire badly: a run killed outright left
-the directory behind, and every retry of the same destination refused at the existence check for
-ever.
+The runtime directory's name is deterministic and it is created with an exclusive `mkdir`, which is
+what proves a run owns it. A run killed outright would otherwise leave the directory behind and
+every retry of the same archive would refuse at the existence check for ever.
 
-A run now leaves two files in the directory, and they are two because they answer two questions.
-The **lock** answers whether anybody is still building, and it is created once and never
-replaced. The **claim** answers what that run said it was doing, and it is rewritten when the
-staging settles. Collapsing them is not a tidiness question: an advisory lock belongs to an inode
-rather than to a name, so locking the file that is later replaced by rename leaves the lock on an
-unlinked inode while the next reader opens the new one and finds it free. That reported a live
-build as abandoned, and the next run deleted a directory somebody was still building. It is two
-files because of that.
-
-Removing anything needs positive proof of ownership, so the claim has to carry this command's own
-marker, its claim version, and a state from the declared set. Readable JSON at that path is not
-proof; a file somebody else left is left alone.
+A run leaves two files in the directory, because they answer two questions. The lock,
+`.crw-staging-lock`, answers whether anybody is still building, and it is created once and never
+replaced: an advisory lock belongs to an inode rather than to a name, so a lock on a file later
+replaced by rename would sit on an unlinked inode while the next reader found the new one free. The
+claim, `.crw-staging-claim.json`, answers what that run said it was doing, and it is rewritten when
+the staging settles. Removing anything needs positive proof of ownership, so the claim has to carry
+this command's marker (`crw install`, or `runtime_install.py` for a Python runtime directory), its
+claim version and a state from the declared set. Readable JSON at that path is not proof.
 
 | Observed | Answer |
 | --- | --- |
-| No claim, and the directory holds files | Somebody else's. Refused, nothing touched |
-| No claim, and the directory is empty | Taken over as it stands with `rmdir`, which succeeds only on an empty directory, so the operation is its own proof that nothing was destroyed |
+| No claim, and the directory holds files | Somebody else's. Refused, nothing touched, even when the host record selects something inside it |
+| No claim, and the directory is empty | Taken over as it stands |
 | A claim of this command's, the lock held | Another run is building it. Refused, nothing touched |
-| A claim of this command's, the lock free, nothing using it | An abandoned staging. Reclaimed |
-| A claim, and whether anyone holds it could not be established | Kept, and reported as a residual path with what recovery needs |
-| A settled claim, and the environment is in use | Already installed. Reported, nothing rebuilt |
+| A claim of this command's, the lock free, nothing selecting or naming it | An abandoned staging. Removed (through a tombstone, as [remove](#removing-a-runtime) removes) and built again, but only under remove's rules, read again under the promotion lock: kept, and the run refused, while a process may run out of it, a relay daemon record cannot be read, or a registration names it or cannot be read. One the record's `outgoing` names was in service, so it is kept and its claim settled. Where there is no process table (darwin) it is kept too, and the answer gives the recovery for a staging that was never promoted |
+| A claim, and whether anyone holds it could not be established | Kept, and reported with what recovery needs |
+| A settled claim, every component selects it and the pointer names it | Already installed. Reported, nothing rebuilt |
+| A settled claim the record selects for one component and not another | Refused, naming each component's selection; `crw install rollback <dir>` selects every component and swaps nothing |
+| A selected runtime the host cannot launch as it stands (`bin/crw` not a regular file this user may execute, or a link that does not resolve to it) | Refused, with `repair`: the commands that restore it in place (`crw` extracted from the archive the directory is named for, `chmod 755`, `ln -sfn crw` for each link), after which the same install answers already installed. Its directory is named for the archive, so it cannot be built again beside itself |
 | A settled claim, and nothing selects it any more | Kept. It is a runtime that was promoted once, and a process may still be running out of it |
-| An unsettled claim for an environment that IS selected | An interrupted promotion. Finished rather than rebuilt |
+| An unsettled claim for a runtime that IS selected | An interrupted promotion. Finished rather than rebuilt |
 | A lock held with no claim written | A run between taking the lock and writing its claim. Refused, nothing touched |
 
-The first row hid the installed base. Claims are newer than the installations they describe, so
-every installation made before them is populated and carries nothing saying who made it — which
-is exactly how the table read somebody else's directory. The environment name is derived from the
-sources, so that refusal is permanent for that combination: there was no installed host this
-updater could move forward, which makes it not an updater.
+Finishing an interrupted promotion asks a narrower question about the link than a promotion does:
+not whether it agrees with the selection, which it cannot while the promotion is unfinished, but
+whether it still names a runtime this host record accounts for. It asks OPS-4.4 again as well,
+because the interrupted run recorded no gate verdict and every cell of the gate reads state that
+moves while nobody is looking.
 
-| Observed | Answer |
-| --- | --- |
-| No claim, the directory holds files, and the host record selects a runtime inside it | This host's own installation, older than claims. Brought under this command's bookkeeping; nothing rebuilt, nothing removed |
-
-The branch order is deliberately unchanged. Asking the conservative protection reading earlier
-would let a reading that FAILED authorise reuse, which is the one substitution this whole path
-exists to prevent. Ownership is established positively instead, from the narrow reading: the host
-record was read, and it says the runtime it selects lives in this very directory. Nothing else
-qualifies — a populated directory the record does not select is still somebody else's, and a
-selection reading that failed authorises nothing.
-
-What that writes is the bookkeeping the installation never had: a settled claim, and a pointer
-aimed at the environment the record already selects, recorded as this command's. The record
-matters as much as the link, because the promotion refuses to replace a link this record never
-recorded placing — so adopting a host without recording the pointer would adopt it once and
-refuse it for ever after.
-
-Two limits belong with it. The adopted environment's bytes are not re-measured here and the swap
-gate is not asked, because this replaces nothing: the directory can only be at that path if it
-was built from these sources, and the record already selects it, so the runtime a host reaches
-afterwards is the one it was already running. And where a pointer exists naming a different
-recorded environment, aiming it at the selected one is the documented repair for a selection and
-a pointer that disagree — the same repair a resume performs, and under the same gate, which both
-re-run rather than inherit.
-
-A directory taken over with `rmdir` first has this command's own two files cleared from it, and
-only those two. A run whose claim write failed used to leave its lock file behind, and `rmdir`
-refuses a directory that still holds one — so the deterministic destination was blocked for ever,
-which is the failure this whole path exists to remove, arriving by a narrower door. Such a failure
-now releases the directory it created like any other.
-
-Finishing an interrupted promotion asks a narrower question about the link than an ordinary
-promotion does. It cannot ask for agreement, because a resume necessarily finds the pointer
-disagreeing with the selection — that IS the interruption it repairs. It asks instead whether the
-link still names a runtime this host record accounts for, and refuses one repointed by hand while
-the run was dead.
-
-It also asks OPS-4.4 again, and not the reading the interrupted run took. What a resume takes
-over is durable — a selection on disk and a claim beside it, sitting there for however long it
-took somebody to notice — while all three gate cells read state outside the process and all
-three move in the meantime: a supervisor can be started, attempts open and close, the store’s
-schema is whatever the selected runtime has since migrated it to. None of them is reusable, and
-the daemon is the strongest case, where a prior `ALLOWED` cannot cross a process boundary at all.
-
-There is nothing to reuse in any case, which states the point more exactly. The interrupted run
-died before recording a verdict, so the durable state holds no gate reading: the resume was not
-carrying a stale `ALLOWED`, it was moving a host’s runtime having never asked. The candidate’s own
-declared schema is the one input that cannot have changed, being derived from bytes already
-built, but it is read only as half of a comparison against a store that can.
-
-The gate is asked where something is REPLACED, which is not every caller of this path. A resume
-finds a link naming the predecessor and moves a host from it to this environment. An installation
-older than claims has no link at all, and writing the first one changes which path reaches a
-runtime the record already selects rather than which runtime is reached — so it is not gated, for
-the same reason its result says its bytes were not re-measured. The test is the link and not the
-caller: a link that already names this environment, or no link, replaces nothing.
-
-A verdict that is not `ALLOWED` refuses by name, carrying the verdict and the cells that blocked
-or could not answer, because "the gate said no" sends an operator to this command’s source while
-the cell sends them to the daemon, the attempts or the store. It refuses before the ownership
-entry, which is this call’s first write, so nothing is written and nothing removed: the selection
-is left as found, the pointer still names what it named, and the destination can be retried as it
-stands once the named condition is cleared.
-
-"Accounts for" is equality against a recorded environment or install location, and containment in
-neither direction. A target that CONTAINS a recorded path is not a recorded runtime: the
-destination root is the parent of every environment under it, so a link repointed at the
-destination read as accounted for and was replaced. The containment helper asks the opposite
-question — is this path inside that root — and is right everywhere it is used; it was the wrong
-question here.
-
-Liveness is the lock and not the recorded process id, for the reason the relay already recorded
-about its own supervisor: inside a container sharing a kernel, the same process id under the same
-boot id is a different process, and a process identity that can lie is worse than no reading. The
-lock cannot lie about contention. Where `flock` is unavailable the answer is that nobody could
-tell, and an owner nobody could establish is never read as an owner that is gone: deleting a live
-run's environment is the accident this exists to prevent. Such a directory is kept and named, so
-an orphan is findable and reportable rather than either silently accumulated or silently removed.
-
-The lock's lifetime is the run's. The operating system releases it when the process ends however
-it ends, which is what makes a killed run readable as abandoned, and a run that reaches an end of
-its own releases it rather than leaving the answer to exit.
-
-Deciding and acting are one step, under a second lock beside the directory. Reading first and
-acting later is not safe even with everything above: two retries can both find the same
-abandoned staging and both decide to reclaim it, and the first then deletes it, recreates it and
-starts building while the second deletes that live build on the strength of an answer it got
-before any of it happened. So the reading is taken again inside that lock, immediately before the
-removal, and a run that cannot take the lock reports that and touches nothing. Past this point
-the exclusive `mkdir` is what a competing run loses to, as it always was.
+Liveness is the lock and never a recorded process id: inside a container sharing a kernel the same
+process id under the same boot id is a different process. Where `flock` is unavailable the answer is
+that nobody could tell, and an owner nobody could establish is never read as an owner that is gone.
+Deciding and acting are one step, under the directory's own `<env>.crw-lock` and then the promotion
+lock ([the lock order](#the-order-a-swap-commits-in)), so two retries that both find the same
+abandoned staging cannot both act on it.
 
 ### Reading whether it is safe to swap
 
@@ -872,1717 +316,857 @@ reconciled. Three readings answer that, each filling only its own cell:
 
 | Cell | The reading that answers it |
 | --- | --- |
-| `daemon` | the relay's `service status`, whose `running` is decided by the lock a supervisor holds |
-| `inFlight` | whether a store is there at all, then the relay's `doctor`, whose `contents.openAttempts` counts in-flight and held-uncertain attempts |
-| `storeSchema` | the store's own schema inventory — every object the catalog reports, read read-only through the relay's `read_only_rows`. Keyed by kind AND name, so its evidence lists carry `index sync_ready` rather than `sync_ready`: a trigger may share a table's name, and an object whose kind changed is one object lost and a different one gained rather than one redefinition. The key was `storeTables` while it already held all of that, which named it narrower than its contents |
+| `daemon` | the selected relay's `service status`, whose `running` is decided by the lock a supervisor holds |
+| `inFlight` | whether a store is there at all, then the selected relay's `doctor`, whose `contents.openAttempts` counts in-flight and held-uncertain attempts |
+| `storeSchema` | the store's own schema, read read-only from `sqlite_master` without opening the store for writing, against the schema the candidate binary declares |
 
-The in-flight cell reads twice, and the order is the point. The relay reports contents
-unavailable both for a store that is missing and for one it cannot read, and those are opposite
-answers here: an absent store has no open attempt, an unreadable one has an unknown number.
-Without the first reading the cell could not say "established absent", so a first install on a
-clean host refused for ever while the schema cell, which does look at the path, answered
-`NO_STORE` about the very same store. Two readings of one cell's own question is not a cell
-borrowing its neighbour's answer; it is the ordered observation the record reader already makes,
-where absence is settled by looking before anything is opened. Two readings that disagree are
-still no answer.
+The in-flight cell reads twice, and the order is the point. The relay reports contents unavailable
+both for a store that is missing and for one it cannot read, and those are opposite answers here: an
+absent store has no open attempt, an unreadable one has an unknown number.
 
 The swap proceeds only when the daemon is established stopped, the open attempts are established
-zero, and the store's schema is established compatible. Any cell that could not be read decides
-`UNESTABLISHED`, which keeps the existing installation exactly as a blocking answer does. A
-check that could not be made is not a check that passed, and a daemon is never reported stopped
-because nobody could ask it.
+zero, and the schema is established compatible: the verdict is `ALLOWED`. A cell that answered no
+decides `BLOCKED`, and a cell that could not be read decides `UNESTABLISHED`; both keep the existing
+installation, and the refusal names the cells. This command never starts or stops a daemon. OPS-4.1
+gives the service to the scope operator, so a running daemon is a refusal here and not something to
+resolve.
 
-This command never starts or stops a daemon. OPS-4.1 gives the service to the scope operator, so a
-running daemon is a refusal here and not something to resolve.
-
-What the daemon cell does **not** guarantee is worth stating, because the gate would otherwise
-read as stronger than it is. The relay's own liveness answer releases its lock before returning,
-so `STOPPED` describes a moment that has already passed. Taking the reading inside the promotion
-lock narrows the window to the promotion's own length; it cannot close it, because that lock
-excludes other runs of this command and says nothing to a supervisor. Closing it would mean
-holding the store's daemon lock across the gate and the promotion — a lock OPS-4.1 deliberately
-keeps in the scope operator's hands — so it is a question about the contract rather than about
-this code, and it is left open rather than answered here.
+`STOPPED` describes a moment that has already passed: the relay's liveness answer releases its lock
+before returning. Taking the reading inside the promotion lock narrows the window to the promotion's
+own length; it cannot close it, because that lock excludes other runs of this command and says
+nothing to a supervisor.
 
 ### Why the schema reading compares statements and not versions
 
-The obvious reading would compare the store's recorded schema version with the candidate's. It
-would also be worthless. The relay declares `SCHEMA_VERSION = 1`, has never raised it, writes it
-once with `INSERT OR IGNORE` when the database is created, and grows its schema through
-separate `CREATE ... IF NOT EXISTS` statements, tables and indexes alike. Every store therefore
-agrees with every candidate at version one, and the comparison would detect neither a downgrade
-nor an upgrade while looking exactly like a check.
+The relay declares schema version 1, has never raised it, and grows its schema through separate
+`CREATE ... IF NOT EXISTS` statements. Every store therefore agrees with every candidate at version
+one, and comparing versions would detect neither a downgrade nor an upgrade while looking exactly
+like a check.
 
-So the cell compares what actually differs: each object's `CREATE` statement in the store's
-`sqlite_master` against the statements the candidate relay declares. Statements and not names,
-because names agree while a column, a constraint or a default differs, and that difference is a
-schema change the new runtime would apply the first time it opens the store for writing.
-Runs of whitespace **outside** quoted text are normalised away, because SQLite keeps the original
-CREATE text verbatim and formatting drifts between a store written long ago and a candidate's
-current DDL. Nothing else is. Going further is not free: lowercasing the statement made
-`DEFAULT 'A'` and `DEFAULT 'a'` compare equal, and collapsing whitespace inside quotes made
-`'a  b'` and `'a b'` compare equal, and both are real schema differences reported as agreement.
-What remains is stated rather than implied: two statements that mean the same thing written
-differently are reported as a difference, which refuses an update and therefore keeps the
-previous installation. A reading that carries object names without their statements cannot answer
-this cell at all and says so, because names agree while a column differs.
-
-Every object, and not only the tables. Both readings ask the catalog one question that names no
-kind at all, so indexes, triggers and views are compared on the same terms tables are. Asking
-only for `type = 'table'` was the name comparison's mistake one level up: it agreed about
-everything it had not looked at, and the relay's own schema has carried indexes all along. A
-store that had lost one compared identical to a candidate that declares it, and the new daemon
-would have re-created it on its first write-open — a migration arrived at by not looking.
-
-What the catalog is asked for is every row it holds, less the objects SQLite maintains for
-itself: the autoindexes a `UNIQUE` or `PRIMARY KEY` constraint creates, whose definition is
-already inside the table statement being compared, and the bookkeeping tables `AUTOINCREMENT`
-and `ANALYZE` leave behind. The exclusion is an exact prefix rather than `NOT LIKE 'sqlite_%'`,
-because `LIKE` reads `_` as a one-character wildcard and that pattern also dropped a legal user
-object named `sqlitexfoo`.
-
-Each object is keyed by its kind **and** its name, so the evidence lists and the refusal text
-read `index sync_ready` rather than `sync_ready`. A trigger may share a name with a table, so
-names alone can collide, and an object whose kind changed would otherwise be reported as one
-redefinition when it is really one object lost and a different one gained. `onlyInStore`,
-`onlyInCandidate` and `definedDifferently` carry entries in that `<type> <name>` form.
+So the cell compares each object's `CREATE` statement in the store's `sqlite_master` with the
+statements the candidate declares, keyed by kind and name (`index sync_ready`, not `sync_ready`),
+over every object the catalog holds except the ones SQLite maintains for itself. Runs of whitespace
+outside quoted text are normalised away and nothing else is.
 
 | Answer | Observed | Decision |
 | --- | --- | --- |
 | `NO_STORE` | no store exists at the resolved selection | allowed, and reported as absence rather than as agreement |
 | `AGREES` | the same schema objects, defined identically | allowed |
-| `EXTENDS` | the candidate declares schema objects the store does not hold | refused |
+| `EXTENDS` | the candidate declares objects the store does not hold | refused |
 | `DIFFERS` | a shared object is defined differently | refused |
-| `NARROWS` | the store holds schema objects the candidate does not declare | refused |
+| `NARROWS` | the store holds objects the candidate does not declare | refused |
 
-`NARROWS` is the implicit downgrade the issue forbids: a runtime that does not know an object
-cannot preserve what is in it. The other two refuse for the contract's reason rather than that
-one. The relay opens its store read-write and runs its whole DDL script on every open, so a
-candidate whose schema is not the store's schema **applies** the difference the moment the new
-daemon first starts. OPS-4.5 reserves that for its own decision, in its own issue, with a copied
-backup of the whole state directory taken first, so letting an update wave it through is exactly
-the implicit migration the clause forbids. An update is not the place either direction is decided,
-and the refusal names the objects so the next step is obvious.
-
-The reading is the relay's own, run under the relay's own interpreter. A second copy of the rule
-here would be a restatement of something the relay owns, and the next change would move only one
-of them. It opens the database read-only and runs no schema script, so asking the question does
-not create the store the question is about. Absence is established by looking at the path, never
-inferred from a failed open, because a permission failure and a locked database also fail to open
-and neither of them means nothing is there. The report names which selection answered, since an
-absent store at the wrong state directory while a sibling store holds the in-flight attempts is
-the OPS-3.4 conflict rather than a clean host.
+The relay applies its whole schema on every write-open, so a candidate whose schema is not the
+store's applies the difference the moment its daemon first starts. OPS-4.5 reserves that for its own
+decision, with a copied backup of the whole state directory taken first, so an update never waves it
+through. The Go and Python runtimes execute the same schema statements
+([decision 14](port/decisions.md)), and no Go release changes them before the commit point
+([cutover](port/cutover.md#commit-point)).
 
 ### The order a swap commits in
 
 The selection in the host record and the pointer on disk are two truths, and both the order they
-are written in and the lock they are written under are the safety argument. They are written
-inside **one** critical section, holding the pointer's lock, and the selection is committed first.
+are written in and the lock they are written under are the safety argument. They are written inside
+one critical section holding the promotion lock, and the selection is committed first.
 
-The reverse order has a real failure: the symlink lands, the record write then fails or the
-process raises, recovery reads a selection that does not name this environment, concludes the
-candidate was never promoted, removes it, and leaves the registered MCP command pointing into a
-directory that no longer exists. OPS-4.4 requires every state transition to be committed before
-its side effect, and this is that rule applied to the two halves of one promotion. Recovery also
-refuses to remove an environment the pointer names, so neither truth alone can authorise deleting
-a runtime the other one is still using.
+The reverse order has a real failure: the link lands, the record write then fails, recovery reads a
+selection that does not name this runtime, concludes the candidate was never promoted, removes it,
+and leaves the declared commands pointing into a directory that no longer exists. OPS-4.4 requires
+every state transition to be committed before its side effect. Recovery also refuses to remove a
+runtime the pointer names, so neither truth alone can authorise deleting a runtime the other one is
+still using. Every judgement the promotion makes is decided on state read inside that lock.
 
-Every judgment the promotion makes is decided on state read INSIDE that lock, and that rule is
-declared rather than remembered. Three separate review findings turned out to be one defect
-arriving three times: the swap gate ran against the record loaded before the build, the rollback
-baseline was captured before the build, and the classification read a pointer at the destination
-rather than the one the record names and the swap replaces. Each is the same shape, a decision
-taken in the critical section on a value read outside it, and each was reported on its own
-because nothing was looking at the class. `PROMOTION_FRESH` names the set and a check fails any
-member read there without being read fresh there, so a fourth fails a test instead of arriving as
-another round.
-
-That lock is an advisory lock on one host-wide file beside the host record, and both halves of
-that are corrections. The lock this command uses for the short staging decision excludes by
-FILENAME on a path the caller derives, and decides validity by a 300-second modification time.
-Neither survives a promotion: two installs with different destinations derived different pointer
-paths, locked different files and never met, and a promotion that outstayed the window had its
-lock unlinked by a waiter while it was still working — because excluding by filename gives the
-holder's open descriptor no protection at all. Three reported defects, one set drawn wrong. The
-promotion lock is created once, never unlinked, and released by the operating system when its
-owner dies however it dies.
-
-Holding one lock across both writes is what keeps two runs of this command from interleaving there
-and finishing with the record selecting one runtime while the pointer reaches another. It is a lock
-between runs of this command and nothing more: an editor or another tool that does not take it is
-not coordinated with, exactly as the configuration writer says of its own. And it cannot stop the
-process being killed, so a kill inside that window leaves a runtime that is selected and
-unreachable. That state is recognisable rather than fatal: the claim is unsettled and the
-environment is selected, so the next run finishes the promotion instead of rebuilding it.
-Rebuilding would be the wrong repair, because the runtime is built, it is already selected, and a
-process may be running out of it.
+The promotion lock is an advisory lock on one host-wide file beside the host record,
+`host-record.json.promotion-lock`, created once, never unlinked, and released by the operating
+system when its owner dies. It excludes runs of this command and of the Python installer, which
+take the same lock, and nothing else. A kill inside the window leaves a runtime that is selected
+and unsettled, which the next run recognises and finishes rather than rebuilds.
 
 Ownership of the pointer is established from the record before it is replaced. Renaming over an
-existing symlink succeeds whoever created it, so a `current` this command never recorded is left
-alone; a real directory at that path fails the rename outright, which is the safe direction.
+existing symlink succeeds whoever created it, so a `current` this host record never recorded
+placing is left alone; a real directory at that path fails the rename outright, which is the safe
+direction. The pointer placed is then proved: it has to resolve, with no loop and nothing dangling,
+to the runtime directory itself by identity, and `<pointer>/bin/crw` has to be a regular file this
+user may execute.
 
-The pointer is read through its own partition over `lstat` and `readlink`. The record reader
-cannot answer for it: that reader follows a link and then refuses anything that is not a regular
-file, so a working directory symlink would be reported as an unreadable record.
+Every `crw install` command takes its locks in one order ([decision 33](port/decisions.md)): a
+runtime directory's `<env>.crw-lock` first, then the host-wide promotion lock, then the host
+record's own `.crw-lock` inside both. The settings records' locks, a claim's and the launcher
+copy's are leaves: nothing else is taken while one is held. It is runtime_install.py's order too.
+Every wait before a command's first write ends when the command is interrupted (SIGINT, SIGTERM,
+SIGHUP): it stops waiting, writes nothing and says so (`register-mcp` and `hook` answer the outcome
+`interrupted`). A wait inside a sequence already under way, such as the restore after a failed
+promotion or the entry drop after a directory was set aside, runs to completion, because stopping
+there would leave the host half-written.
 
 ### What a failed update restores
 
 A failed update leaves the previous runtime selected, the previous pointer target in place, the
-owned configuration untouched, and the store exactly as it was. The result says which step failed
-rather than only that something did: `failedStep` names the step and the boundary it was at, and
-`restored` names the selection that was put back or says there was none to put back.
+Stop settings as it found them and the store exactly as it was. The result says which step failed
+rather than only that something did: `failedStep` names it, `retriable` says whether the same
+archive can be installed again, `residualPaths` names what the run left, and `recoveryRequires` what
+has to happen first.
 
-"Restores the previous selection" is narrower than it sounds, and deliberately. The rollback runs
-under the promotion's own lock and puts back only the entries that still name what **this** run
-wrote. If another run has promoted something else in the meantime, that entry is left alone and
-the result says so in `movedOnByAnotherRun`: rolling back on top of somebody else's success is a
-worse outcome than the failure being rolled back.
+Putting a selection back is narrower than it sounds, and deliberately. The restoration runs under
+the promotion's own lock and puts back only the entries that still name what this run wrote; an
+entry another run has promoted since is left alone. Putting a selection back includes putting it
+back to nothing, for a first install that had no previous selection, and putting the pointer back
+includes putting it back to absence. A restoration that cannot be read back reports a residual
+pointer and keeps the candidate rather than claiming the rollback completed.
 
-Putting a selection back includes putting it back to nothing. A component that had no previous
-selection — a first install, and a legacy install whose combination was never selected before —
-has the entry this run wrote taken away, in the same write that restores the entries that had a
-previous value, so half a rollback cannot land. Until the delta set could say that, the run
-reported a rollback, the pointer correctly went back to absence, and the candidate stayed
-selected; being selected is then exactly what keeps a candidate from being released, so the
-destination could never be retried. The result names what went back in `restored` and what was
-taken away in `removed`.
+A candidate that is selected, whose record could not be read, or that the pointer names, is kept.
+Otherwise the run drops its install entries and removes the directory it created, through a
+tombstone as [remove](#removing-a-runtime) does, and the result says whether that removal was
+verified: verified means the same archive can be installed again; not verified names the residual
+path and what recovery needs, with the original failure reported beside the cleanup failure.
 
-What the pointer is put back to includes being put back to nothing. A first or legacy install
-has no pointer, so the swap creates one, and a rollback that could only restore a previous
-target left that link naming a candidate the selection had just been taken away from — after
-which recovery kept the candidate precisely BECAUSE the pointer named it, and the staging could
-never be reclaimed. Absence was the value missing from that answer set, the same shape as the
-established-absent answer the in-flight cell was missing. Removing a pointer is guarded the way
-placing one is: only a symbolic link, only while it still names what this run placed, and the
-absence is read back before it is claimed. A restoration that cannot be read back reports a
-residual pointer and keeps the candidate rather than claiming the rollback completed.
+Two failure points an update might be expected to have do not exist here. Registration is not part
+of an update: the declared commands name the pointer, so nothing is registered again. And nothing
+starts: OPS-4.1 gives the service to the scope operator, so this command refuses while a daemon runs
+and never starts one.
 
-The ownership record goes with the link, for the run that PUT IT THERE. The record is what makes
-a link this command's — the promotion refuses to replace one the record never recorded placing —
-so a rollback that removed the link and left the record behind said this command owns a link that
-is not there, and armed that guard in favour of whatever appeared at that path next. An entry this
-run introduced is therefore dropped, and only for the path this run recorded. Where the rollback
-restored ABSENCE the record is written only after the link is verifiably gone, because writing it
-first would leave a link nobody recorded — the refusal shape from the opposite side. Where a link
-was REPLACED the record is written whichever way the restoration went, including when putting the
-previous target back could not be read back: a link is at that path either way, so the ordering
-that protects the absence case has nothing to protect here, and the result reports the link's own
-`verified: false` for what did not land.
+This is a POSIX path. The runtime layout, the directory symlink and the advisory locks are POSIX
+assumptions; Windows is out of scope rather than approximated.
 
-An entry this run INHERITED is a different question, because a link that is missing does not mean
-a record that is missing: a host whose recorded link was deleted out from under it has the entry
-and no link. Erasing it takes away the path the registration names, and a retry aimed at a
-different `--dest` then derives another path and reads a registration nobody changed as a
-conflict. So the entry stays and its PLACEMENT is withdrawn — the path the registration depends
-on is kept, and the guard goes on refusing whatever link turns up at that path, which is stricter
-than the state the update found. Where the link is instead put back, the entry goes back whole,
-which also takes this run's refreshed stamp off one it did not introduce; that happens whenever
-the link was replaced, including when the restoration could not be read back, because the path in
-the record is the same either way and the payload reports `verified: false` for the link itself.
+## Rolling back
 
-The two outcomes recovery already had are unchanged. Removal verified on the filesystem means the
-destination is retriable; removal that could not finish reports the residual path, what recovery
-needs, and the original failure alongside the cleanup failure rather than replaced by it. A
-candidate that is selected, or whose record could not be read, or that the pointer names, is kept.
+`crw install rollback` points the owned pointer back at the host record's `outgoing` selection, the
+runtime the last promotion replaced. `crw install rollback <dir>` points it at a runtime directory
+the record lists exactly, as an install entry's `environment`, instead; an empty `<dir>` is a usage
+error. It takes the target's `<env>.crw-lock` and then the promotion lock
+([the lock order](#the-order-a-swap-commits-in)), finds the target again there and refuses with
+nothing written when the record moved it, and then applies a promotion's gate, ownership and
+second-owner rules, commits the selection before the link, and proves the pointer it placed. The
+runtime it leaves stays installed and becomes the outgoing selection, so a second rollback returns
+to it. Where there is no outgoing selection, a bare rollback refuses and writes nothing.
 
-Two of the failure points the issue names do not exist in this command, and saying so is better
-than implying a rollback that has nothing to roll back. **Applying configuration** is
-`register-mcp`'s, not `install`'s, and with the pointer in place it happens once rather than on
-every update; its own failure contract is above, including the one case where a write lands and
-cannot be read back, which is reported as `APPLIED_UNVERIFIED` rather than as a refusal that wrote
-nothing. **Starting** does not happen here at all: OPS-4.1 gives the service to the scope operator,
-so this command refuses while a daemon runs and never starts one, and there is no start to fail or
-to undo.
+The target may be a Go runtime or a Python `env-*` runtime the fence installer made. It has to be
+launchable as it stands, judged without running it, and its claim has to be settled, or unsettled
+with nobody holding it where the record shows a promotion committed it (an exit 3). A rollback
+onto a Python runtime never rewrites the Stop settings; one onto a Go runtime replaces a Python-era
+document as a promotion does ([one Stop settings document](#one-stop-settings-document)). Onto a
+Python runtime it requires the venv to serve that one document before the pointer moves:
+`bin/crw-completion-hook`, `bin/codex-session-relay` and `bin/codex-thread-bridge`, each one's `#!`
+interpreter and the recorded interpreter all resolve to regular files this user may execute, the
+hook script names `codex_session_relay.stopadapter`, the relay package the record lists there is the
+fence release, and every path the settings name through the pointer exists in the venv. Otherwise it
+refuses with nothing changed.
 
-Nothing here removes, moves or recreates the store. Update failure and store loss are different
-accidents and the recovery for one must not cause the other.
+The plugin's declared commands do not follow it there. The native wiring runs
+`current/bin/crw hook --plugin-launch` and execs `current/bin/codex-thread-bridge --plugin-launch`,
+and a Python runtime has no `bin/crw` and a bridge that refuses the flag. So with the native payload
+installed, a rollback onto a Python runtime releases every Stop without a record and stops the
+server from starting. Reinstall a plugin revision whose declarations are the Python bootstrap first,
+then roll the runtime back ([update and roll back](plugin-packaging.md#update-and-roll-back)).
 
-This is a POSIX path. The environment layout, the interpreter under `bin`, the directory symlink
-and the advisory lock are all POSIX assumptions this command already made elsewhere; Windows is
-out of scope rather than approximated.
+Install rollback is not takeover rollback. `crw install rollback` moves which runtime the pointer
+names, and onto a Python runtime it rewrites no settings. It does not move the store's ownership. After the cutover
+the store is owned by the Go runtime, and handing it back to the Python fence release is
+`crw relay takeover rollback --to python --python-relay <path>`, which names the Python relay by
+absolute path and never through the pointer ([cutover rollback](port/cutover.md#rollback)). One does
+not imply the other, and a return to Python needs both. The cutover runbook does not yet say in
+which order they run, or where `crw install install` falls among the forward steps; both orders are
+open items todo 42 settles
+([the backlog](port/refactor-backlog.md#deferred-review-findings-fix-before-todo-42)). The one order
+fixed today is the plugin payload's, above: the payload goes back before the runtime does.
 
+## Removing a runtime
+
+`crw install remove <dir>` deletes one `bin-*` or `env-*` runtime directory directly under the
+destination, and only when nothing may still be using it. The directory is judged by file identity,
+so naming it through a symlink, a bind mount or another spelling of the destination passes no check
+its own name fails. It refuses a directory the record selects, one the pointer names or might name,
+one with no claim this command or the Python installer wrote, one whose claim cannot be read, a
+staging another run still holds, any directory a live process runs out of (its `/proc/<pid>/exe`,
+its working directory, or what its arguments run, resolving inside it, and every relay daemon a
+`daemon.json` or scope claim records alive), and any directory a registration the host reads names
+a path inside: the Stop settings, the bridge record, the cached plugin declarations, the
+`crw-stop-hook.py` copy, `hooks.json` and `config.toml`. A process it cannot rule out or a
+registration it cannot read or judge refuses too, and the answer names it. A process whose working
+directory cannot be read and that runs something by a relative path is one it cannot rule out,
+whatever user runs it, unless that user (not root) is provably shut out of the directory by the
+permissions of the directory or a parent. So on a host where a root agent runs a relative script
+(every Azure VM's WALinuxAgent, for example) `remove` refuses, names the process, and gives the
+manual recovery below.
+
+The process reading is this host's process table, in this command's PID namespace, and every answer
+that rests on it says so under `processTable`: a process in a container sharing the directory, or on
+another host sharing a network home, is not seen, so run `crw install remove` where the runtime's
+processes run. Where there is no process table it can read (darwin has no procfs), whether a relay
+or a bridge still runs out of the directory cannot be established, and every remove refuses,
+fail-closed, with the recovery by hand under `recoveryRequires`: stop the relay daemon started from
+it (`<dir>/bin/codex-session-relay service stop`) and end every Codex session whose bridge it
+started, delete the directory, then run `crw install status` to see that the host record and the
+pointer still name the runtime you meant. Its install entries stay in the record, where a rollback
+naming it is refused because the directory is gone.
+
+A removal survives a kill. Under the directory's `<env>.crw-lock` and then the promotion lock, the
+directory is renamed in one step to its tombstone, `<destination>/.crw-removing-<name>`; its install
+entries leave the host record in one write, with an `outgoing` that names it; only then is the
+tombstone deleted. A drop that cannot be written renames the directory back and refuses, and a
+deletion that does not finish exits 3 naming the tombstone. A kill anywhere leaves either the whole
+directory or a tombstone. `crw install status` lists every tombstone under `interruptedRemovals`,
+and `crw install remove` of the tombstone, or of the runtime's name when only its tombstone is left,
+finishes it once no process runs out of it and no registration names it. Do not delete a tombstone
+by hand: finishing it also drops what the host record still lists under the runtime's name. A
+tombstone that carries no claim of this command's is somebody else's directory: status reports it
+`ours: false`, and nothing removes it.
+
+What remove cannot see is a command fixed before the update that will start a process later. A
+Python runtime stays while any live or resumable task can still spawn it, whatever owns the store
+([retention](port/cutover.md#retention)). Read `crw doctor retention-scan` first, and remove an
+`env-*` directory only once it reports no reference that resolves into it.
+
+## Reading an installation
+
+Three read-only commands, each answering a different question:
+
+- `crw install status` answers what a replacement actually left: what the host record selects, what
+  the owned pointer names and whether they agree, whether the record's pointer is the fixed
+  destination's (`destinationAgrees`, with the repair when it is not), every runtime directory with
+  its claim, every unfinished removal (`interruptedRemovals`), the outgoing selection, the promotion
+  lock and the two settings records.
+- `crw doctor` is the host diagnosis: the host record reading, which runtime kind is selected, the
+  Codex CLI version against the one the wiring was measured on, the App Server observed through the
+  selected bridge, the pointer, the promotion lock, the settings records and every executable they
+  name, the [classification](#installation-ownership) of each component, the residue a later install
+  would reclaim, the relay's own scope reading, and [the six results](#six-results-that-never-imply-one-another).
+  `--temporary` records the destination as a temporary one, so a proof taken there is never read as
+  a claim about a host.
+- `crw doctor retention-scan` enumerates [the fixed retention surface](port/cutover.md#retention-scan-surface)
+  and reports every reference that resolves to a Python interpreter or a `.py` path, with its source.
+  It is the reading the retention rule waits on.
+
+None of them takes a lock across the whole reading, so a host changing underneath is described in
+pieces.
+
+## How skill commands reach the relay
+
+The skills run `codex-session-relay ...` as a shell command ([relay usage](../plugins/crw/skills/crw-run/references/relay.md)),
+and that name is found on `PATH`. The installer does not manage `PATH`: it places the name in
+`<destination>/current/bin/`, and nothing puts that directory on anyone's `PATH`. So either put it
+there, ahead of any other copy, in the environment the Codex tasks run in, or run the relay by that
+absolute path. Check what a task actually reaches:
+
+```sh
+command -v codex-session-relay
+readlink -f "$(command -v codex-session-relay)"
+readlink -f <destination>/current                  # the runtime directory the pointer selects
+```
+
+The first answer has to lie inside the second. On a Go runtime (`bin-<version>-<digest12>`) it is
+that directory's `bin/crw`, which the name links to. On a host still on the Python fence release,
+before the cutover, the pointer selects an `env-*` directory and the answer is its
+`bin/codex-session-relay`, a console script of that environment.
+
+A stale `codex-session-relay` earlier on `PATH`, such as a console script under `~/.local/bin` whose
+shebang names a Python virtual environment in a development checkout, runs whatever that checkout
+holds against the same store, which can be code from before the fence release and so outside the
+cutover's fence. The retention scan does not read
+`PATH`, so this reading is the one that finds it.
+
+## The one definition
+
+`scripts/crw_runtime/components.json` is the single compatibility definition OPS-1.1 requires: the
+two components, their console-script names (the compatibility names beside `crw`), version,
+licence, retained upstream provenance and the tool that identifies each one. The Go side,
+`internal/runtime/definition`, carries only what a Go install needs, and a test keeps it equal to
+the committed file. Release digests are not in it: they live in the release's `SHA256SUMS` and in
+the host record ([decision 35](port/decisions.md)).
+
+The file stays `definitionVersion` 1 and keeps its Python-shaped fields, `packageLocation`,
+`requiresPython`, the package trees and `sourceDigest`, while the Python fence installer reads it;
+`runtime_install.py verify-definition` re-derives every one of them in CI, so editing anything under
+`packages/` means recording the derived trees again. The upstream revision is not derivable from
+this checkout, because the import brought source rather than history, so it is required to appear
+in [packages/README.md](../packages/README.md), the provenance narrative OPS-1.5 says is retained
+rather than replaced.
+
+What the definition does not carry is as important. Installed locations, entry points, host names
+and measured points are host facts. OPS-3.2 makes a real record a private receipt, so they go to the
+host record outside this repository and this repository never commits one.
+
+## The host record
+
+The host record is the other half of the definition and is never committed. It is `recordVersion`
+1, which the Go and Python installers both read and write: Go install entries carry fields of their
+own beside the Python-era entries, which keep theirs. It holds, per component, one entry per install and the measured points, plus what is
+`selected`, the `outgoing` selection a rollback returns to, and the owned `pointer` with who placed
+it and when.
+
+A Go install entry records `location` (the runtime's `bin/`), `environment` (the runtime
+directory), `entryPoint` (the component's compatibility name), `binaryDigest` and `integrity` (the
+binary's SHA-256), `target`, `version`, `archiveDigest`, `reachedVia`, and `source`, the repository
+commit and tree the binary was built from. An entry the Python installer wrote carries
+`interpreter`, `interpreterPath` and `installMode` instead of the binary fields. `crw doctor` reads
+both, and classifies only Go installs: a Python install keeps the Python installer's classification
+until the Python path is removed.
+
+Under OPS-1.3 a point means the combination was exercised, so no amount of reading bytes produces
+one, and an install whose bytes match but whose combination nobody has run classifies `unmeasured`
+and is preserved rather than reused. The install's exercise is what produces a point
+([installing the runtime](#installing-the-runtime), step 4), and a connection, protocol or tool-call
+failure records no point and says why. A Go point records `install`, `installDigest`, `codexCli`,
+`host` and `appServer`, the dimensions it is matched on, beside `date`, `measuredBy`, `method` and
+`archiveDigest`. Points are appended, never replaced.
+
+The `appServer` dimension is the bridge's whole `get_capabilities` payload, serialized and compared
+by exact string equality: the identity of the server a combination was exercised against is
+everything the round trip reported, not a version string someone chose to trust. So a change to that
+payload's shape changes the dimension, and a point measured before it does not cover a bridge built
+after it. The old point is not wrong and is not discarded; it remains evidence about the build it
+was taken against. The same property is why the payload carries no timestamp: a dimension that
+varied between two calls to the same build would never match itself.
+
+## Reading a record, and what happens when it cannot be read
+
+Every record these commands read (the host record, the settings records, a claim, the Codex
+configuration, the hook file) is read at a narrow boundary that turns a failure into an answer
+rather than a crash. The answer is one of four states, decided by an ordered observation rather
+than by a convenience test:
+
+| State | What was observed |
+| --- | --- |
+| `ABSENT` | nothing exists at the path. The only state that may be read as a host with no history |
+| `PRESENT` | it was read. An existing record with nothing in it is `PRESENT`, not `ABSENT` |
+| `UNREADABLE` | something is there and its shape cannot be read: a directory or other non-regular file, a symlink whose target is established missing or looping, invalid UTF-8, unparseable JSON, or containers of the wrong type |
+| `ACCESS_ERROR` | nothing could be established: a permission or I/O failure reaching the path, a symlink whose target could not be resolved, or a parent directory that cannot be traversed |
+
+The distinction that matters most is the last row. Being unable to ask is not being told no, so a
+failure to establish existence is never reported as absence, and a permission problem is never
+reported as a malformed record. A refusal names what failed and where.
+
+**What this guarantees:** the worst case for a record these commands read is a named refusal, not a
+crash. **What it does not guarantee:** that a record which could have been read is never refused.
+That direction is the safe one, and the refusal carries its reason.
+
+- **"Nothing was written" is scoped to what can be guaranteed.** Malformed input detected before
+  the first mutating step refuses and the target file's bytes are unchanged. A read-back failure
+  after a write reports the write instead of denying it (`record_applied_unverified`,
+  `config_applied_unverified`) and exits non-zero, because reporting a landed write as a refusal
+  that wrote nothing invites a retry over a file that now exists.
+- **A read-only diagnosis reports rather than refuses.** `crw doctor` names the failed reading in
+  `hostRecordState` and `hostRecordReading` and continues with what it could still observe, and
+  never reads an unreadable record as a clean host. Commands that write refuse outright.
+
+### One writer for the host record
+
+Every change to the host record takes the record's lock, loads the record inside it, applies the
+caller's narrow delta and saves. A caller never hands back a record it loaded earlier: an install
+that loaded the record, spent minutes unpacking and exercising a runtime, and then saved what it had
+loaded would overwrite whatever another run committed in between, and holding a lock over that save
+would not help, because the staleness is already inside the value. So a caller says what it learned
+(this install, these points, this selection) and the merge happens against the record as it then
+stands. A failed install drops only the install entries keyed to the directory it created and leaves
+the selection exactly as found, because another run's successful promotion is not this run's to
+undo.
 
 ## Installation ownership
 
-Classification reads the four OPS-2.1 signals and nothing else: where the entry point actually
-resolves, the checkout's commit, tree and cleanliness, whether the definition agrees with the
-installed bytes, and what the Codex configuration registers. A signal that cannot be read is
-reported as unreadable and stops classification; it never counts as a signal that agreed.
+`crw doctor` classifies each component of the runtime the pointer names from the OPS-2.1 signals:
+whether its entry point resolves into a recorded install, whether the binary's digest matches the
+recorded `binaryDigest`, whether a measured point covers the combination it runs under, and
+whether a registration conflicts with it or the owned pointer names something other than what the
+record selects. A Go install is an archive, not a checkout, so
+the checkout signals do not exist for it: a fork is bytes that differ from the recorded digest. A
+signal that cannot be read stops classification and is reported; it never counts as a signal that
+agreed. A runtime a host cannot launch, a `bin/crw` that is not an executable regular file or a
+compatibility name that does not resolve to it, is reported as such, because a digest says nothing
+about either.
 
-Cleanliness is read across the whole checkout, not only the component's subdirectory. An
-uncommitted change to a root script or to another package leaves every package digest untouched
-while the checkout is no longer the revision the definition names, and only the checkout-wide
-reading catches it.
+The five OPS-2.2 classes are evaluated in their fixed order and the first match wins: `conflict`,
+`fork`, `foreign`, `unmeasured`, `own`. Only `own` is reused. An install whose bytes match and whose
+combination has no point classifies `unmeasured`, and that is the intended answer, not a gap to
+close by relaxing the rule: OPS-1.3 refuses to let a matching digest stand in for a run nobody
+performed. Exercising it, which is what an install does, is the way out.
 
-The five OPS-2.2 classes are evaluated in their fixed order and the first match wins:
-`conflict`, `fork`, `foreign`, `unmeasured`, `own`. Only `own` is reused. Because the committed
-definition carries no measured points, a host install whose bytes match still classifies
-`unmeasured` until the host record carries a point for the combination it runs under. That is the
-intended answer, not a gap to close by relaxing the rule: OPS-1.3 refuses to let a matching digest
-stand in for a run nobody performed. `measure` is the supported way out, and it is the only one.
-
-Nothing outside a recorded path is ever overwritten, and no predecessor is removed: an
-environment a previous install built stays on disk after the pointer moves off it, which is
-what lets a process already running from it keep running. A foreign relay, a local fork, an existing
-directory, an existing link and an MCP name already registered with a different command are each
-reported with both values, and the run changes nothing.
+Nothing outside a recorded path is ever overwritten, and no predecessor is removed by an install or
+an update.
 
 ## MCP registration
 
-The server is registered as `[mcp_servers.<name>]` in `<CODEX_HOME>/config.toml`, the supported
-configuration path, through `runtime_install.py register-mcp`. What it registers is the owned
-pointer, `<destination>/current/bin/<console script>`, and not the environment underneath it,
-so an update moves the pointer and this file is never written a second time. The two are
-separate claims and stay separately reported: the registration says which command Codex will
-spawn, and the link target says which runtime that command reaches. Registration is append-only and
-idempotent: an identical registration is reported `LINKED` and nothing is written, an absent one is
-appended, and a different command or argument list is reported `CONFLICT` and nothing is written.
-Every other table in the file, including other MCP servers and hook settings, is preserved byte for
-byte, which the command checks by requiring the prior content to be an exact prefix of the new file
-rather than by asserting it.
+The plugin package declares the server, and installing the package registers it. What the package
+cannot carry is where the runtime is and which execution policy the bridge runs under, so that goes
+into `<CODEX_HOME>/crw-bridge-mcp.json`, which `crw install register-mcp --owner plugin` writes and
+the launcher reads at every start ([the native wiring](plugin-packaging.md#the-native-wiring)). The
+record names the owner, the server name, the bridge executable
+(`<destination>/current/bin/codex-thread-bridge` unless `--bridge-command` says otherwise), its
+arguments (`--bridge-arg`, repeatable), and, from version 2, the execution policy. `--dry-run`
+reports what would be written and writes nothing.
 
-The reader is `tomllib`, which arrived in Python 3.11. A controller older than that refuses every
-non-empty configuration instead of approximating one, and refuses into an empty one too, because
-registration reads back the content it proposes to write. The refusal names the interpreter that is
-running and says to rerun on a newer one. The controller's interpreter is not the runtime's: this
-command installs 3.11+ runtimes whatever started it.
-
-Parsing correctly is still not reading a registration. The parsed shape is validated before anything
-is compared - `mcp_servers` a table, each entry a table, `command` a string, `args` a list of strings -
-because a file where `args` is the string `"ab"` parses cleanly and `list()` turns it into
-`["a", "b"]`. Anything that fails that validation is unreadable, and an unreadable file is never
-appended to. Other fields such as `env` are left alone rather than refused.
-
-A name that is not a bare key is written quoted, because a name containing a dot written raw becomes
-a sub-table of another server: the registration the command believes it made would not be the one in
-the file, and the next run would append a second.
+Writing the record is not registering a server. On a host with no plugin installed the record is
+inert, and the command says so. Registered, recorded and a tool actually called stay three claims.
 
 ### Who registers the server
 
-The CRW plugin package declares this server too, so a host can end up with two of them: the
-configuration entry this command writes, and the declaration an installed package carries. Both
-start a bridge.
-
-`--owner` names which one this host uses. `user` is the default and is the behavior above.
-`plugin` writes no configuration entry at all; it writes `crw-bridge-mcp.json` beside the
-completion hook's settings, which is the one fact the package cannot carry: the pointer that
-names the installed runtime. The packaged launcher reads that record, and the declaration is
-what registers the server. The native launcher, `wiring/crw-bridge.sh`, execs the pointer's
-`codex-thread-bridge --plugin-launch`, and the runtime reads the record with the Python launcher's
-checks ([the native wiring](plugin-packaging.md#the-native-wiring)); `crw install register-mcp
---owner plugin` writes the same record.
-
-Either owner can be installed first, so the refusal runs both ways. The user path is refused by
-a record naming the plugin; the plugin path is refused by an entry already in the configuration.
-Both report the other side with its evidence and write nothing, and a record or a configuration
-that could not be read refuses rather than defaulting, because installing on an unanswered
-question is how the second bridge arrives.
-
-Writing the record is not registering a server. On a host with no plugin installed the record
-is inert, and the command says so rather than reporting an installation.
+One owner registers each surface. `--owner plugin` is the only owner `crw install` writes for:
+the user-owned registration, a `[mcp_servers]` table in `config.toml`, retired with the Python
+installer. The refusal still runs both ways, because a host can acquire the other half from
+elsewhere. A record is refused while the Codex configuration already starts this bridge, under this
+server's name or under any other, and the refusal names that entry: the plugin's declaration beside
+it would run a second bridge. The launcher stands down for a record that names another owner. A
+record or configuration that could not be read refuses rather than defaulting, because installing on
+an unanswered question is how the second bridge arrives. Every writer of the record takes the
+ownership lock beside it (`crw-mcp-ownership`) while it writes.
 
 ### The execution policy the plugin bridge runs under
 
 Codex starts a plugin-declared server with the App Server's own environment. Measured on Codex
-Desktop 0.154.0 for Linux, that is `HOME LANG LOGNAME PATH SHELL USER` and nothing else. A bridge started that way reads no
-execution policy: `get_capabilities` reports `presence_only` with no roles, and a child created
-through the Desktop tools is never asked whether it runs its role's pair. `--execution-policy`
-gives the plugin-owned record the one fact that closes that gap:
+Desktop 0.154.0 for Linux, that is `HOME LANG LOGNAME PATH SHELL USER` and nothing else. A bridge
+started that way reads no execution policy: `get_capabilities` reports `presence_only` with no
+roles, and a child created through the Desktop tools is never asked whether it runs its role's pair.
+`--execution-policy` gives the plugin-owned record the one fact that closes that gap:
 
-    python3 scripts/runtime_install.py register-mcp --owner plugin \
-        --bridge-command <destination>/current/bin/codex-thread-bridge \
-        --execution-policy /path/to/execution-policy.json --apply
+    crw install register-mcp --owner plugin --execution-policy /path/to/execution-policy.json
 
-The record becomes version 2 and gains `executionPolicy`, with two fields: `path`, the file as
-given (expanded and made absolute, not resolved, like the relay's own launch declaration), and
-`digest`, the SHA-256 of the bytes this run read. It never carries what the file says. Before
-anything is written, the file goes through the bridge's own parser from this checkout, so a
-policy the bridge would refuse to start under is refused here instead, as
-`execution_policy_unreadable`. The output reports the mode and the declared role pairs, the same
-values `get_capabilities` discloses, and says which parser judged them: the installed runtime
-parses the file again every time it starts and decides for itself.
+The record becomes version 2 and gains `executionPolicy`, with two fields: `path`, the file as given
+(expanded and made absolute, not resolved, like the relay's own launch declaration), and `digest`,
+the SHA-256 of the bytes this run read. It never carries what the file says. Before anything is
+written, the file goes through the bridge's own parser in this binary, so a policy the bridge would
+refuse to start under is refused here instead, as `execution_policy_unreadable`. The output reports
+the mode and the declared role pairs, the same values `get_capabilities` discloses, and says which
+parser judged them: the installed runtime parses the file again every time it starts and decides for
+itself.
 
-At every start the packaged launcher reads the record and does one of two things. It refuses and
-exits 2, naming the record and the repair, when the file is missing, is not a regular file,
-cannot be read, or no longer hashes to `digest`, and also when its own environment already names a
-different policy file or digest. Otherwise it execs the bridge with
-`CODEX_THREAD_BRIDGE_EXECUTION_POLICY` set to `path` and
-`CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST` set to `digest`, and the bridge refuses to start if
-the bytes it parses hash to anything else. Refusing to start is the visible failure. The
-declaration marks the server not required, so the session continues without the bridge's tools,
-and it never continues with a bridge that checks no role. A version-1 record names no policy and
-starts exactly as it always did, with the environment the launcher was given.
+At every start the launcher reads the record and does one of two things. It refuses and exits 2,
+naming the record and the repair, when the file is missing, is not a regular file, cannot be read,
+or no longer hashes to `digest`, and also when its own environment already names a different policy
+file or digest. Otherwise it starts the bridge with `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` set to
+`path` and `CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST` set to `digest`, and the bridge refuses to
+start if the bytes it parses hash to anything else. Refusing to start is the visible failure. The
+declaration marks the server not required, so the session continues without the bridge's tools, and
+it never continues with a bridge that checks no role. A version-1 record names no policy and starts
+the bridge with the environment the launcher was given.
 
 The policy is part of the registration's identity, so the only rerun that succeeds is an identical
-one. Any other difference is refused like any other conflict, and nothing is written: another file,
-the same file with other contents, a rerun that drops the flag, or adding a policy to a version-1
-record. The refusal names the repair. Move the record aside by hand, then run `register-mcp`
-(or `crw install register-mcp`) again. Every edit to the policy file, including adding an
-exception, therefore has two consequences. The relay picks the edit up when its daemon restarts.
-The bridge record has to be moved aside and registered again, and a thread started in between has
-no bridge tools. That differs from the relay's launch declaration, which names only the file. The
-digest is what lets a changed file fail visibly instead of being enforced unregistered.
+one, answered `record_unchanged`. Any other difference is refused as `record_differs` and nothing is
+written: another file, the same file with other contents, a rerun that drops the flag, or adding a
+policy to a version-1 record. The refusal names the repair: move the record aside by hand, then run
+`crw install register-mcp` again. Every edit to the policy file, including adding an exception,
+therefore has two consequences. The relay picks the edit up when its daemon restarts. The bridge
+record has to be moved aside and registered again, and a thread started in between has no bridge
+tools. The digest is what lets a changed file fail visibly instead of being enforced unregistered.
 
 A created record is reported only after the policy file has been hashed again, following the write,
-and still matched. The digest is taken before the write, and nothing locks the policy file, so the
-file is hashed twice more under the record's lock. Immediately before the write, a mismatch writes
-nothing: the run answers `record_policy_changed` with exit 1, and the host keeps no record, as
-before the run. After the write, with the record read back, a mismatch in that short interval gets
-the same answer and the move-aside repair, the record stays where it is, and the answer reports what
-was at the record path when it was last read. The launcher refuses its stale digest at every start,
-so what stays fails visibly. It is not removed. Every writer of the bridge record in this repository
-holds the ownership lock (`crw-mcp-ownership` beside the record) while it writes, moves or retires
-the record: `register-mcp` (and, while it existed, the retired transition). A removal by path cannot
-exclude a writer that does not take that lock, such as an editor, and would delete that writer's
-file. Every file `register-mcp` reads while it holds that lock (the record, the policy, the Codex
-configuration, the cached manifests and declarations, and the package the launcher probe copies) is
-read from one descriptor opened without blocking and judged as a regular file, never by a second
-open of the path, so a pipe put in place of any of them cannot hold the lock. The modules it would
-otherwise import while holding the lock, the configuration parser, the bridge's policy parser and
-the package selector, are imported before it takes it, because an import opens its source by path.
-A `register-mcp` rerun after the file was edited hashes the new bytes and is refused as
-`record_differs` with the move-aside repair. An edit made after the last check is caught where every
-other one is: the launcher hashes the file at every start and refuses the record.
+and still matched. A mismatch immediately before the write writes nothing and answers
+`record_policy_changed`; a mismatch after it gets the same answer and the move-aside repair, and the
+record stays, because the launcher refuses its stale digest at every start. A removal by path cannot
+exclude a writer that does not take the ownership lock, such as an editor, so nothing here removes a
+record.
 
-Two refusals protect the order of operations. `--execution-policy` is refused for `--owner user`,
-because a user-owned registration is started by its configuration entry and never reads the
-record. A version-2 record is also refused while the crw package this host loads ships a launcher
-that cannot be given one (`launcher_predates_policy`): that launcher would refuse the record, or
-start the bridge without the policy, and every thread started afterwards would be affected. What
-the launcher declares is not taken as evidence. The package is copied into a throwaway Codex
-home under the same cache layout and started with its declared command, arguments and working
-directory and the environment the App Server gives a plugin server, with no `CODEX_HOME` and a
-`HOME` that is somewhere else, so it has to find its record the way it would in Desktop. The
-record there names a probe instead of the bridge. The launcher has to start that probe with both
-variables naming the recorded file and digest and exit cleanly, and it has to refuse a record
-whose digest no longer matches, one naming a missing file and one naming a directory. The package is the one the Codex configuration enables as
-`crw@<marketplace>`, read from its single cached version; other plugins that happen to declare a
-server with the same name are not asked. When that selection cannot be
-made, because the configuration cannot be read, crw is registered from two marketplaces, more
-than one version is cached, or the plugin cache or the package's directory cannot be looked at,
-the write is refused as `launcher_not_established`. Only a cache that does not exist counts as
-nothing cached; one this run may not search is not read as empty. The check reads
-the cache, which is not proof of what a running App Server loaded, so the order on a host is:
-install the runtime, update the plugin package, restart Codex so it loads the package, register,
-then start a new thread and read `get_capabilities`. The restart is how this order makes sure the
-package is loaded; at the two replacements measured, the App Server needed none: at the first it
-started bridges from the new package within about a minute, and at the second it started one when
-a thread resumed. A version-1 record already in place cannot take
-a policy; it is moved aside and the registration made again. A bridge started between the package
-update and the registration runs under the record as it is then: with the version-1 record still in
-place it checks no role, and with no record it does not start. At the first measured replacement
-the version-1 record was still in place when bridges started again from the new directory about a
-minute after the add, and those bridges kept running without the policy until the host started them
-again. So after registering, read `get_capabilities` in the threads that were loaded
-during the update as well as in a new one; [updating safely](plugin-packaging.md#updating-safely)
-gives the orders, what each costs, and the checks. An installed runtime older than the digest variable still
-reads the policy file, and the launcher's own digest check is then the only digest check.
-
-Codex starts the server once for each thread it loads. That was observed on Codex Desktop
-0.154.0: one App Server process with a separate bridge child per thread, and the child's start
-time matching the thread's creation to the second. A record written with `--apply` therefore takes
-effect for threads started afterwards, with no App Server restart, and a thread already running
-keeps the bridge it spawned. The launcher's own bytes arrive with a plugin package update, and
-picking that up follows Codex's plugin reload rule. Neither is established on a host until a new
-thread's `get_capabilities` reports the digest the record names.
-
-A package replacement may or may not reach threads that are already running. Two replacements were
-measured on Codex Desktop 0.154.0. At the first, about a minute after `codex plugin add`, the App
-Server started bridges again from the new version directory without restarting itself, and each
-read the record as it stood at that moment. At the second none was seen to start: the bridges
-already running kept running from the removed directory, and a thread that resumed was given one
-from the new directory. What decides between the two was not
-measured. No field of the record ties it to a version directory or a payload, and the launcher
-finds it six directories above its own file, so a launcher in any version directory under the same
-Codex home reads the same record. Once the record is version 2, a bridge started from a new version
-directory whose launcher reads it the way the current one does carries the policy. That was
-measured on the host, for the bridge a thread got when it resumed after the second replacement,
-and in an isolated Codex home, which also showed no record, a changed policy file and a launcher
-older than version 2 each starting no bridge at all. See
-[what two replacements measured](plugin-packaging.md#what-two-replacements-measured).
-
-The property that fixes is a round trip, not three cases: **what the writer emits, the reader reads
-back unchanged, and a rerun then answers `LINKED`** — including values carrying backslashes, quotes,
-control characters and the three-quote sequence.
-
-Writing is held under an exclusive lock for the whole read-modify-write, re-reads immediately before
-replacing, and replaces by temp file. That coordinates runs of this command with each other and
-removes truncation. It cannot coordinate with an editor that does not take the same lock, so it is
-not called compare-and-swap: a writer ignoring the lock can still land in the remaining window. The
-hook file is written the same way, with the same stated limit.
+Codex starts the server once for each thread it loads. That was observed on Codex Desktop 0.154.0:
+one App Server process with a separate bridge child per thread, and the child's start time matching
+the thread's creation to the second. A record written now therefore takes effect for threads started
+afterwards, with no App Server restart, and a thread already running keeps the bridge it spawned.
+Neither is established on a host until a new thread's `get_capabilities` reports the digest the
+record names. A package replacement may or may not reach threads that are already running;
+[what two replacements measured](plugin-packaging.md#what-two-replacements-measured) says what was
+seen, and [updating safely](plugin-packaging.md#updating-safely) gives the order and the checks.
 
 ## Six results that never imply one another
 
-Diagnosis reports the six OPS-6.1 fields separately, in the OPS-6.2 shape, each with its own
-evidence, exact command, acting process and measurement time. A field with no timed observation
+`crw doctor` reports the six OPS-6.1 fields under `checks.results`, in the OPS-6.2 shape, each with
+its own evidence, command, acting process and measurement time. A field with no timed observation
 behind it reports `unknown`; no time is ever invented or copied from another field.
 
 | Field | Established by | Never established by |
 | --- | --- | --- |
-| `installed` | The component classifies `own` | The package importing somewhere |
-| `mcpExposed` | Registration plus tool names observed in a live session | A configuration entry |
-| `connected` | `doctor` reporting `actorReachability.socketConnect` as `ok` | A socket file on disk |
+| `installed` | Every component classifies `own` | The runtime being present |
+| `mcpExposed` | Tool names observed in a live Codex session | A record or a declaration |
+| `connected` | The relay's `doctor` reporting `actorReachability.socketConnect` as `ok` | A socket file on disk |
 | `deliveryAccepted` | An attempt that recorded a returned turn id | A dispatch or an absent error |
 | `verificationComplete` | Every OPS-6.4 condition at once | A completed turn or a green check |
 | `alwaysActive` | A supervised runtime surviving a host restart | Any of the five above |
 
-A live session is the only thing that can list MCP tools, so `mcpExposed` stays `not_verified` on a
-registration alone. It reaches `verified` from real tool names only: either `--observed-tool`
-supplied by a caller that is itself in a live session, or the tool list the bridge's own
-`check_connection.py` returns, which is an actual MCP session over stdio. Every record names the
-destination it measured and whether that destination was temporary, so a temporary-destination
-proof cannot be read as a claim about a host.
-
-Two further results are reported beside those six and are never merged into them, because importing
-and preserving settings are separately falsifiable:
-
-| Result | Established by |
-| --- | --- |
-| `imported` | The module imported under the resolved interpreter, carrying the `__file__` it resolved to, so an import satisfied by another copy is visible |
-| `settingsPreserved` | Every other table in `config.toml` and every other hook entry byte-identical before and after |
-
-## Trial mode
-
-Diagnosis creates no work. `deliveryAccepted` requires an attempt that recorded a returned turn id,
-which means creating one, so it reports `not_applicable` unless `--trial` is given. Trial mode is
-the only mode that registers a relationship and sends, it names the scope it acted in, and it is
-never implied by any other flag.
-
-The send has to go far enough to produce the evidence. `emit` stores the receipt and enqueues the
-delivery; the attempt itself happens in `deliver`. So the trial registers, emits, and then runs a
-bounded `deliver` for that one event, and the field's evidence is the attempt's returned turn id.
-An emitted receipt's own turn id never satisfies it. The authorized recipient and the requested
-settings are recorded before the send, and the settings the host reported back are recorded with the
-result.
-
-Everything the trial needs is checked before its first command, so an incomplete trial writes
-nothing: an artifact, a dispatch turn, a recipient equal to the parent task, and the recipient's
-authorized settings. Each of those was previously discovered at the relay, after rows had already
-been written. Settings are supplied with `--recipient-settings`, or acknowledged with
-`--settings-already-recorded` when they are already authorized on the host; that acknowledgement is
-recorded as the caller's own unverified claim, because every relay read constructs a store and there
-is no read-only way to confirm it from here. A false acknowledgement can still reach the relay and
-leave rows behind.
-
-The dispatch request id is keyed on the issue **and** the dispatch turn. Keyed on the issue alone, a
-second trial for the same issue replays the first generation, `generation-bind` then refuses the new
-anchor, and the trial can only ever succeed once — which is not a delivery test. Keyed on both, a
-retry of one dispatch still replays and reaches the same generation, and a genuinely new dispatch
-opens its own.
-
-The lookup's agreement is decided against the answer's `responsibleRelationship` field, not against
-its serialized text. A substring test matches an archived assignment sitting anywhere in the
-payload, so the guard meant to prove this process reads the expected store would pass against a
-store where that relationship is closed.
-
-`register` is the first mutating step, and the order is the guarantee. It is the producer of
-the replay rule: it compares seven values - the parent task, the child task and the issue key
-it hashes into a relationship id, plus the artifact roots, the allowed recipients and the two
-host ids - and either
-replays the relationship that already exists or refuses the whole registration without writing
-anything else. The read-only lookup exposes only the first three, and no relay command returns the
-other four, so the trial compares what it can read and lets `register` decide the rest before any
-settings are recorded. A settings write placed ahead of it lands for a trial that `register` then
-refuses on a scope or a host the lookup could never have shown.
-
-What the trial compares is the whole identity the lookup exposes, not the responsible child alone.
-An assignment carrying this issue and this child under a different parent hashes to a different
-relationship id, and comparing the child alone read it as the same relationship. The report names
-which fields were compared and which are decided by `register`, so it never reads as a complete
-comparison of all seven.
-
-One thing the trial cannot promise is that nothing at all was written: `assignment-find`
-constructs a store, which creates the database and its schema. What a refusal before `register`
-guarantees is that no settings and no relationship row were written.
-
-
-Getting that far takes more than three commands, and each of the extra ones exists because the relay
-refuses the send without it. Measured against a running App Server, the sequence is:
-
-| Step | Why the send needs it |
-| --- | --- |
-| `assignment-find` | Runs first. A lookup run afterwards could find the relationship the trial itself just created, which says nothing about the store |
-| `register` | Creates the relationship and opens its first generation, and is the first mutating step on purpose |
-| `settings-record` | A send is withheld until the recipient's authorized settings are on record, because preserving them is what the delivery checks against. Recorded after the relationship exists |
-| `generation-open` | Replays that same dispatch request id to read the generation number back; it opens no second generation |
-| `generation-bind` | The generation `register` opened is unbound, and an unbound generation cannot be emitted against |
-| `admit-turn` | Only the anchor turn is admitted by default; a turn the child actually ran is a continuation |
-| `emit` | Stores the receipt and enqueues it. It carries an artifact, because a reviewable receipt with an empty manifest is refused |
-| `deliver` | The attempt itself, and the only step that can return the turn id this field needs |
-
-Those invocations are built as data rather than inline, so a test can compare them against the
-required arguments the relay's own parser declares without performing a delivery. That check reads
-the parser statically, because the relay declares a newer Python than this repository runs its own
-checks with, and it covers every command the trial can send rather than the ones a fixture happened
-to build.
+A live session is the only thing that can list the tools a Codex session exposes, and the
+diagnosis's own session with the bridge is not Codex's, so `mcpExposed` stays `not_verified` from
+`crw doctor`; read it in a task. `deliveryAccepted` needs work created and delivered, which a
+diagnosis never does, so it is `not_applicable` unless a trial produced it. `settingsPreserved` is
+reported beside the six and never merged into them: it answers that the diagnosis wrote nothing.
 
 ## One shared service and one store
 
 OPS-3.1 puts one relay service and one durable store behind an entire operating scope, which is one
 host, one OS user and one App Server. A second repository or a second project installs into that
 same scope and reuses the same service and the same store; nothing here creates a daemon or a store
-per project, per repository or per parent.
-
-Diagnosis therefore reports the resolved scope, the store directory and database, the service owner
-and whether a service is running, by calling the relay's own `doctor` and `service status` rather
-than by rediscovering any of it.
-
-`doctor` is called three times, because one call cannot answer all three questions.
-
-A call that selects a store explicitly skips sibling discovery altogether and reports
-`checked: false`, because the caller already decided which participants share that directory. That
-applies to `CODEX_SESSION_RELAY_STATE` exactly as it applies to `--state`, so the **discovery** call
-passes the socket, no `--state`, and a sanitized environment with that variable removed; inheriting
-it would silently produce an empty conflict inventory. The **selected** call uses the explicit
-`--state` for the store actually in use.
-
-The third call is targeted at the root of the state home. Discovery enumerates child directories
-only, so a `relay.sqlite3` sitting directly in `<state home>/codex-session-relay` is invisible to
-both calls above. A host can be in exactly that state, so it is inspected explicitly rather than
-left out of the inventory. All three results are reported, a `checked: false` is preserved as not
-checked rather than as none found, and no candidate is adopted.
-
-A relay build that reports no `siblingStores` at all is a third answer again, and it is reported as
-its own: an installed relay older than the revision that added sibling reporting emits nothing for
-that field, and rendering that silence as an empty inventory would hide exactly the conflict the
-inventory exists to surface. The summary distinguishes not reported, not checked, and checked.
-
-Because a relay cannot always answer, the inventory also lists every relay database and operations
-ledger visible under the state home, each marked as listed rather than identified. Listing files is
-not rediscovering anything: nothing opens a database, chooses between candidates or decides which
-one serves a socket, and that judgement stays with the relay. It is there so a host whose installed
-relay is too old to report siblings still sees every store it has.
-
-Equality of path strings is not proof under OPS-3.4. Proof is `doctor` from each participating
-process reporting the same `stateDirectory` together with `assignment-find --issue` returning the
-expected relationship. A relationship count is reported as the weaker observation it is: a count of
-zero where an assignment is expected means the process is pointed somewhere else, and a nonzero
-count from a different populated database would satisfy a count check while proving nothing.
-
-That lookup constructs a writable store, and a diagnosis constructs none, so plain `diagnose` does
-not run it and says so rather than claiming it happened. It runs in the trial, before any write, and
-its result is compared against the relationship the caller independently supplies with
-`--expect-relationship`; a store that does not hold it stops the trial before anything is written.
-`diagnose --assignment-lookup` runs the same lookup on its own where that is wanted, and is
-documented as constructing a store. One command cannot produce the reading from every participating
-process that OPS-3.4 also asks for, and the report says so.
-
-Every subsequent call sets both selectors, `--state` and `CODEX_SESSION_RELAY_STATE`, to the same
-resolved absolute path, because under OPS-3.3 the flag alone moves the store while leaving the
-adapter's `operations-<scope>.sqlite3` ledger behind. That ledger is reported as its own artifact.
-
-Other stores beside the resolved one are reported, never adopted and never hidden. `doctor` already
-distinguishes stores that record no socket from stores claiming the same socket, and a host can
-hold both alongside a separate `operations-<scope>.sqlite3` ledger, which OPS-3.3 explains is
-selected differently from the store. A host in that state is reported as ambiguous with its
-candidates listed, because adopting one on a guess is how the wrong store gets served.
-
-## The Linear hook
-
-`runtime_install.py hook` installs the next-step Linear hook into the user hook file. Under OPS-6.3
-a hook's identity is `<source>:<event>:<matcher-index>:<hook-index>` and Codex records a trusted
-hash against it, so installation appends at the end and never inserts: inserting renumbers every
-later hook in the same file and detaches the trusted hash recorded against the old identity. For
-the same reason removal is refused rather than performed, and no content is silently updated.
-
-The command records the identity, the trusted hash, the hook file path with its SHA-256 and the
-issue that installed it, then reads the registration back. Installed, enabled and observed to have
-fired are three separate claims and are reported as three. Installation is not activation: this
-command never enables a daemon, and `alwaysActive` is a separate field with separate evidence.
-
-What survives a hook installation is every existing identity and its hook content, so the trusted
-hash Codex recorded against each one stays attached. The file bytes do not: the document is
-reserialized. The MCP registration is the one that preserves bytes, by appending and leaving the
-prior content as an exact prefix.
+per project, per repository or per parent. `crw doctor` reports the resolved scope, the store and
+the service by calling the relay's own `doctor` rather than by rediscovering any of it, and reports
+other stores beside the resolved one without adopting any of them. Equality of path strings is not
+proof under OPS-3.4; proof is `doctor` from each participating process reporting the same state
+directory together with `assignment-find --issue` returning the expected relationship.
 
 ## The completion hook
 
-`runtime_install.py hook --adapter completion` registers the Stop hook that catches a managed
-turn ending without the records a completion needs. It is the same install path as above, with the
-command derived from this checkout instead of typed, and it lands on `Stop` unless the caller
-names another event.
+The plugin package declares the Stop hook that catches a managed turn ending without the records a
+completion needs, and `crw install hook --owner plugin` writes the settings it reads,
+`<CODEX_HOME>/crw-completion-hook.json`:
+
+| Setting | Written as |
+| --- | --- |
+| `owner`, `configVersion`, `event` | `plugin`, `1`, `Stop` |
+| `adapterInterpreter`, `adapterEntryPoint` | `/usr/bin/env` and `<destination>/current/bin/crw-completion-hook`, so a cached Python launcher that runs `[adapterInterpreter, adapterEntryPoint, <settings>]` reaches the Go hook too ([decision 18](port/decisions.md)) |
+| `relayExecutable` | `<destination>/current/bin/codex-session-relay`, or `--relay-command` |
+| `mode` | `observe` (`--mode`), which classifies and records and never holds a turn |
+| `timeoutSeconds` | the adapter's own budget (`--guard-timeout`, default 5), under the registered timeout (`--timeout`, default 10, at most 10) |
+| `journalRoot`, `journalPolicy` | `<CODEX_HOME>/crw-completion-hook/journal` (`--journal-root`) and `every_invocation` |
+| `markerRoot`, `dbPath`, `socketPath` | the relay's own resolution, or `--marker-root`, `--db-path` and `--socket` |
+| `isolationAssertedBy` | required with `--mode hold`, and nothing else |
 
 The decision is not made in the hook. [The hook contract](../plugins/crw/skills/crw-run/references/hook-contract.md)
-fixes the rules and the relay's `guard-evaluate` implements them, down to the exact Stop JSON to
-print. `scripts/completion_hook.py` is the piece between the host and that guard: it reads the
-delivered payload, asks the configured runtime, and prints only a block that runtime produced.
+fixes the rules and the relay's `guard-evaluate` implements them; `crw hook` is the piece between the
+host and that guard, and it exits 0 on every path, because exit 2 is the host's blocking code.
 
-It cannot cost a turn. The host reads exit 2 as the blocking code and takes stderr as the
-continuation prompt, and `argparse` exits 2 on any usage error, so the entry point parses no
-arguments, writes nothing to stderr, captures the subprocess's streams rather than inheriting
-them, and exits 0 on every path. A stale flag left in somebody's hook file is a hook that does
-nothing, not a hold on every ordinary turn.
+The settings are written before anything could read them, and every precondition is checked before
+any write: the event, the budget against the registered timeout, a hook file that already registers
+this adapter for Stop (the user-owned registration, refused by name, because two registrations run
+twice on every Stop), settings already there that this command cannot act on, and
+`CRW_COMPLETION_HOOK_CONFIG`, refused while it is set, because the plugin's hook reads only the
+Codex home and never that override. Settings that already say something else are refused rather
+than overwritten, because they carry the mode. On a Go host, Python-era settings are replaced only
+by settings that record the same host facts; other flags answer `config_differs`, naming the
+differing fields and the repair: rerun with the flags of the table above that say what those
+settings say, or move the document aside by hand
+([one Stop settings document](#one-stop-settings-document)).
+The run registers nothing and leaves the hook file untouched. Written, registered and observed to
+have fired stay three separate claims.
 
-Its settings are its own file, `crw-completion-hook.json` beside the hook file, and they are
-written before the hook that reads them: a hook registered against settings that are not there
-answers `config_absent` on every Stop and releases, which is an installed hook that does
-nothing and says so nowhere. Settings that already say something else are refused rather than
-overwritten, because they carry the mode and a silent rewrite changes whether turns can be held
-at all. `observe` is what an install writes; holding depends on per-session write isolation this
-command cannot grant.
+`--socket` is recorded as `socketPath`. It is what lets the guard tell that the state directory it
+resolved holds another App Server's store: a store records the socket it serves, and a Stop hook that
+inherits `CODEX_SESSION_RELAY_STATE` from a second installation would otherwise read that store, find
+no relationship for its assignment, and hold a child that has finished. Configure it wherever more
+than one installation shares a machine.
 
-Settings this command can generate but its own reader cannot act on are refused rather than
-written, so an install cannot report success and leave every later Stop reading those settings as
-malformed. The adapter's budget is checked against the registered timeout at the same point,
-because that is the one value whose meaning needs both files: a budget the host's timeout does
-not exceed lets the host kill the adapter before it records why it did not answer.
+The marker root follows the relay's own resolution, including `CODEX_SESSION_RELAY_MARKER_ROOT`. A
+default that skipped it would be a disagreement: the coordinator would publish its intents under one
+tree while this hook looked under another, and every managed turn would read as unmanaged.
 
-`--socket` is recorded into those settings as `socketPath` when the install names one, and both
-adapter copies pass it back as the global `--socket` option. It is what lets the guard tell that
-the state directory it resolved holds another App Server's store: a store records the socket it
-serves, and a Stop hook that inherits `CODEX_SESSION_RELAY_STATE` from a second installation would
-otherwise read that store, find no relationship for its assignment, and hold a child that has
-finished. The field is optional, so a document written before it existed stays byte-identical and
-an ordinary reinstall is still unchanged rather than refused; a host with no socket configured
-compares no provenance, which is what every host did before. Configure it wherever more than one
-installation shares a machine.
+### Trust, and the command that is fixed when a turn starts
 
+Codex runs a declared hook only once it has been trusted, and nothing in this repository grants
+trust. Trust is recorded against the declaration's content, so a plugin update that changes the hook
+command's text needs the hook trusted again, and Codex asks for it; until then nothing fires. An
+update of the runtime changes no declaration, because the command names the pointer, and so needs no
+new trust ([plugin packaging](plugin-packaging.md#why-the-hook-resolves-the-pointer)).
 
-### The fallback launcher, and why this command places it
-
-The package now declares the native Stop command,
-`"$HOME/.local/share/crw-runtime/current/bin/crw" hook --plugin-launch; exit 0`. It needs no
-fallback: it names nothing in the version cache and exits 0 when the pointer names nothing
-([the native wiring](plugin-packaging.md#the-native-wiring)). The fallback below serves turns
-whose command was fixed while the package still declared the Python bootstrap; `crw install`
-leaves an existing copy as it is.
-
-With `--owner plugin` this command also writes `crw-stop-hook.py` beside those settings, and it
-writes it **before** them. That file is the second candidate the package’s Stop declaration
-opens, and it exists because a hook command is fixed when a turn starts, with the plugin root
-already resolved into it. Installing a version removes the previous cache directory whole, so an
-update landing while a task still holds that command leaves it naming a file that is gone, and
-`python3` exits 2 for a missing script — the hook protocol’s blocking code. Measured on the
-user's host: eleven repeated Stop prompts in one turn of one task and eight in a turn of a
-second, and neither turn able to finish until a compatibility path was restored. An isolated
-reproduction produced thirty-seven in one turn.
-[Plugin packaging](plugin-packaging.md#the-cache-lifetime) owns the full reference table and the
-supported range; what belongs here is who writes the file and what that writer refuses.
-
-| Question | Answer |
-| --- | --- |
-| Which command writes it | This one, with `--owner plugin`. The retired `plugin_transition.py transition` wrote it too, because it installed the same plugin-owned settings |
-| In what order | Launcher first. A launcher with no settings stands down in silence; settings whose fallback was never placed look installed and are not |
-| What it refuses | A file that does not carry the launcher marker, and anything that is not a regular file. A symlink is reported by kind and never followed, because replacing through one writes to a file this command was never given |
-| What the marker proves | That CRW put a launcher at that path. Not who ran the command, and not that the bytes are intact. The digest is reported beside it for the second question |
-| How it is replaced | Temp file and `os.replace`, then read back, with the kind and the marker re-judged under the lock immediately before the write |
-| Which command removes it | None. The cutover removes it once the retention scan is clear, through `install.RemoveLauncher` (`internal/runtime/install`): under the launcher’s own lock and only while the marker is still there, and never touching the settings |
-
-The two files take separate locks and there is deliberately no lock spanning them. Widening one
-means reworking a write path that is already proven, and it is not needed: every state the pair
-can be left in is harmless. A launcher alone stands down. Settings alone are what the host had
-before this file existed. What an interleaving can still do is make a receipt wrong, so the run
-reads both paths back at the end and reports `launcherObserved` and `settingsObserved` — what the
-host held, not what the run intended — and exits `3` when either half is missing, changed, or no
-longer what it wrote. That status is the same fourth answer `install` uses: not a refusal,
-because bytes really were written, and not success, because the result did not stay in effect.
-
-A plugin-owned budget is capped at `completion.MAX_PLUGIN_GUARD_SECONDS`, the launcher ceiling
-minus its margin. The launcher waits `min(timeoutSeconds + 2, 9)`, so a budget above 7 collapses
-the margin it exists to keep and the launcher’s deadline arrives while the adapter is still
-writing the record of its own timeout. That bound lived in the retired transition alone until this
-launcher became something every plugin host depends on; it now sits with the validation every
-settings writer runs.
+A hook command is fixed when a turn starts, and every Stop of that turn reuses it. A turn that
+started while the package still declared the Python bootstrap goes on running it:
+`${PLUGIN_ROOT}/wiring/crw_stop_hook.py` first, and `<CODEX_HOME>/crw-stop-hook.py` once that version
+directory is gone. `crw install` places no such launcher and leaves an existing copy exactly as it is;
+the Python installer placed it. Either launcher reads the same settings and runs the adapter they
+name, which is the Go hook once the settings are Go-era. The launcher copy, the packaged launchers
+and the Python runtime stay while any live or resumable task can still run such a command, and go
+only when the retention scan reports no reference to them ([retention](port/cutover.md#retention)).
 
 ### Who registers the hook
 
-The plugin package declares this hook as well, and a host holding both registrations runs both
-on every Stop: each leaves a row, but only the one that claims the event's accepted record asks
-the guard, and the other records itself as a duplicate (see [One accepted record per Stop
-event](#one-accepted-record-per-stop-event)). `--owner` decides which registration exists.
+The plugin package declares this hook, and a host holding a second registration of it would run both
+on every Stop: each leaves a row, and only the one that claims the event's accepted record asks the
+guard ([one accepted record per Stop event](#one-accepted-record-per-stop-event)). `crw install hook`
+writes for the plugin owner only; the user-owned registration, an entry in `<CODEX_HOME>/hooks.json`,
+retired with the Python installer, and one already there is refused by name. The hook repeats the
+check at run time, because installing the plugin is not a command this repository runs:
+`crw hook --plugin-launch` stands down in silence unless the settings name the plugin as owner.
 
-`user` is the default and appends to the hook file as before. Its settings document is
-byte-identical to what installed hosts already hold -- the owner is written only when it is not
-the default -- so an ordinary reinstall is still unchanged rather than refused as settings that
-say something else.
-
-`plugin` writes the settings and registers nothing. It also records the interpreter and the
-adapter entry point, which the user path carries in the command line it writes into the hook
-file and a packaged command has no way to resolve for itself. The refusal runs both ways: the
-user path is refused by settings naming the plugin, the plugin path by a registration already in
-the hook file, and an unreadable hook file refuses both.
-
-The packaged launcher repeats the check at run time, because installing the plugin is not a
-command this repository runs and cannot be refused from here. It reads the owner out of the
-settings and stands down unless the plugin owns the registration, so a host that acquires both
-still answers once.
-
-The event is checked the same way and for the same reason. This adapter implements the `Stop`
-contract and has a decision for no other event: elsewhere the payload means something else and
-the output schema carries no top-level decision, so a hook registered on another event would
-never see the turn it was installed to watch. Naming one is refused; another event still takes
-an explicit `--hook-command`. Settings, budget and event are three checks of one kind, and the
-kind is that an install must not succeed and leave a hook that is registered, inert and silent
-about it.
-
-The read-back belongs to that same kind. Settings that were written and could not be read back
-as written answer `config_applied_unverified`: applied, because reporting a landed write as
-nothing written invites a retry over a file that now exists, and unsettled, because a hook must
-not be registered against settings nobody has read. Which outcomes settle follows the read-back
-rather than the write's intention.
-
-The registered command is a command line, so its two words are joined with shell quoting and
-read back by the same rules. Concatenating them raw fails in two sizes: a path holding a space
-is delivered as more words than it is, and a path holding shell syntax is delivered as syntax
-and runs on every Stop. Ordinary paths are unchanged by the quoting. `hook-status` recognises
-this adapter's own registrations by a complete argument whose last component is the entry point's
-name, never by the command's text containing it: a program called `not-completion_hook.py`
-contains that name and is a different program.
-
-The runtime is named through the owned pointer, `<dest>/current/bin/codex-session-relay`, and
-never through `PATH` or a checkout path. A host can carry a relay on `PATH` whose build
-predates the guard: the file is there, it runs, and it rejects the call. That the executable
-exists and that it offers `guard-evaluate` are two questions, and `hook-status` answers them
-as two cells for that reason.
-
-Every path the settings record is made absolute when they are written and required to be
-absolute when they are read, because this hook runs with the session's own workspace as its
-directory: a relative path would resolve somewhere the install never named, and a bare name
-would be looked up on `PATH`. The pointer itself is not followed, so an update moves the link
-and these settings keep naming the runtime that is actually selected.
-
-The registered command carries the settings path the install resolved, as a third word the entry
-point reads positionally and never parses. Otherwise the path would be resolved twice, in two
-different directories and under two different values of `CODEX_HOME`, and the second resolution
-is the one that decides what every Stop reads. The install decided which file it wrote, so the
-install is what says which file to read.
-
-`hook-status` reads that same word rather than resolving a path of its own, and reports which
-of the two it used. Recomputing it would answer about a file the hook may never open: an install
-that used the override embedded the resolved path in its command, and a later diagnosis has no
-reason to be running under the same environment.
-
-A registration naming its settings with a relative path is reported rather than resolved. The
-hook resolves such a path against each session's workspace, so no single file answers for it,
-and inspecting the one the diagnosis would resolve would report an unrelated file as the hook's
-own. Nothing downstream of those settings is read either.
-
-That judgment uses the same expansion the hook applies, so a `~` path is absolute here too;
-calling it relative would hide a working configuration and every cell below it.
-
-The interpreter the registration names is its own cell beside the script. A virtual environment
-that moved after installation leaves the script in place and the interpreter gone, and then the
-host cannot start the adapter at all: no decision, no journal entry, and a registration that
-still looks correct.
-
-A bare interpreter name is resolved on `PATH`, the way the host resolves it, so a working hook
-is not failed in diagnosis for not spelling a file path. A wrapper's own target is not followed,
-and the cell says so rather than implying the program behind it was checked.
-A relative spelling carrying a separator is reported as workspace-dependent instead: resolving it
-would answer about a program under whatever checkout the diagnosis ran from, not the one the host
-starts in a session's workspace.
-
-Whether the runtime offers `guard-evaluate` requires it to describe the subcommand, not merely
-to exit 0. A program that ignores its arguments and succeeds would otherwise be reported as
-offering one it has never heard of.
-A flag the real help carries is required beside the subcommand's own name, because a program
-that echoes its arguments prints that name back while offering nothing.
-
-A registration naming the adapter with a relative path is reported rather than resolved, for
-the same reason a relative settings path is: the file this command would find is not the one
-the host runs.
-
-Registrations naming different settings files are reported as ambiguous and nothing below them
-is read. Every one of them runs, so naming one would describe one hook while reporting the
-others' state as if it were that one's.
-A relative spelling counts as its own unresolved source there, because two of them name two
-files, and so do one relative and one absolute.
-
-A matcher is part of a registration. Installation only ever appends an unconditional group and
-the hook file's own installer treats only that group as already installed, so an identical
-command sitting under a matcher is a duplicate: appending would add a second registration beside
-it and both would run on a matching `Stop`.
-
-The interpreter in the registered command is settled the same way, and a bare name is looked up
-at install time, on the machine doing the install. That is the only moment the lookup means
-anything, because the hook runs later from each session's own workspace.
-
-It also has to be a Python this adapter runs on. Executable is not the question: `/bin/true` is
-executable and exits 0, and a Python below the supported version fails the same way and looks
-identical from the hook file. Both are refused. The candidate is executed only when the command
-is going to write, because a plan that writes nothing should not run a program the caller named,
-and what it did not check it does not claim.
-
-The registered timeout is held to the one this repository has evidence for. The host clamps an
-over-long timeout at discovery and the clamped value was not measured, so a large number is not
-the deadline it appears to be and could land under the guard budget.
-
-The marker root follows the relay's own resolution, including
-`CODEX_SESSION_RELAY_MARKER_ROOT`. A default that skipped it would not be a default but a
-disagreement: the coordinator would publish its intents under one tree while this hook looked
-under another, and every managed turn would read as unmanaged with nothing recorded.
-
-`--mode hold` additionally requires `--isolation-asserted-by`, recorded in the settings and
-shown by `hook-status`. The contract makes per-session write isolation a prerequisite for
-holding and not for observing, so the assertion is a named record rather than something
-inferred from the mode having been set.
-
-A second registration of this adapter that differs from the one already there is refused rather
-than appended. Installation appends and never removes, so appending would leave two copies
-running on every `Stop`; the existing identity is named so it can be edited.
-
-Every precondition is checked before any write, and that ordering is the point rather than an
-accident of how the command grew. The interpreter, the budget, the event, the settings' own
-readability and the duplicate registration are one list. The shape this protects against is the
-expensive one: settings written, duplicate refused afterwards, and a hook already in the file
-running against settings the command had just reported it would not install. The duplicate check
-and the append are still not one atomic step, so the registration is read back afterwards and a
-second copy is reported rather than claimed away.
-
-`hook-status` writes nothing of its own, but it is not inert: it RUNS two of the programs a
-host registers, and what those programs do is outside this command's control. Answering whether
-the runtime offers `guard-evaluate` means running that runtime with `--help`. Answering whether
-the registered interpreter is an interpreter at all means running the first word of the
-registered command with `-c` and a generated nonce, because a file being present and executable
-establishes nothing about what runs: a program that exits quietly is indistinguishable from a
-working interpreter by any reading of the filesystem, and every Stop would succeed at running it
-and never reach the adapter. Both invocations exist only to answer and exit. Neither is the
-adapter's firing path, and neither can write a journal record, so a reading cannot manufacture
-the firing evidence it is reporting on. The command names the program it ran and the invocation
-it made in the cell's own evidence, so a receipt shows the reading's cost rather than only its
-conclusion.
-
-What running the interpreter establishes is narrow, and the limit is stated rather than left to
-be inferred: the registered first word answers as a supported Python at the spelling this host
-resolves. It does not establish that the registration would start. The command was never run as
-written, the argument convention was never exercised, and a wrapper's own target is deliberately
-not followed -- so a wrapper that answers `-c` while rejecting its normal argv still reads as
-answering. `firingRecordAbsence` therefore treats a present pair as "nothing establishes that
-this cannot start" and never as "this starts".
-
-`hook-status` probes these paths through the four reading states rather than asking whether a
-file is there. A runtime behind a permission wall and one that was never installed answer
-differently, because they are repaired in different places, and a runtime that could not be
-reached is not asked whether it offers the subcommand.
-
-Only a verdict that agrees with itself is acted on. Both halves are read: a verdict whose own
-decision releases while its `hook_output` holds did not come from the guard, and rebuilding a
-block out of the nested half alone would let this adapter deliver a hold nobody decided. Any
-disagreement reads as `guard_verdict_incomplete` and releases.
-
-Failures keep their own names. A runtime that could not be run carries its `errno`, because a
-moved pointer and a file that cannot be executed are different repairs. An exit of 2 carrying the
-relay's own error record is the relay declining a request it understood; an exit of 2 carrying
-nothing is its argument parser refusing before any command ran. Every one of these releases the
-turn and is recorded.
+Only a verdict that agrees with itself is acted on. A verdict whose own decision releases while its
+`hook_output` holds did not come from the guard, and any disagreement reads as
+`guard_verdict_incomplete` and releases. Failures keep their own names: a runtime that could not be
+run carries its `errno`, and an exit of 2 carrying the relay's own error record is the relay
+declining a request it understood, while an exit of 2 carrying nothing is its argument parser
+refusing before any command ran. Every one of these releases the turn and is recorded.
 
 ## One accepted record per Stop event
 
 A turn can end more than once. When any Stop hook holds, the host appends a continuation to the
-same turn and fires Stop again; when a message was waiting, it appends that and does the same.
-Each of those is its own Stop event, and each one gets its own decision. Two registrations
-answering one Stop, or one Stop delivered twice, are a different thing: one event handled twice.
-The adapter keeps exactly one accepted record per event, asks the guard once for it, and still
-leaves a row for every invocation, so the two cases stay apart instead of being counted as one
-number per turn.
+same turn and fires Stop again; when a message was waiting, it appends that and does the same. Each
+of those is its own Stop event, and each one gets its own decision. Two registrations answering one
+Stop, or one Stop delivered twice, are a different thing: one event handled twice. The adapter keeps
+exactly one accepted record per event, asks the guard once for it, and still leaves a row for every
+invocation, so the two cases stay apart instead of being counted as one number per turn.
 
 ### What identifies an event
 
-The host hands a Stop hook nine fields and no per-invocation identifier. None of them separates
-two events of one turn: `turn_id` is kept across a continuation chain, `stop_hook_active` is
-false on a turn's first Stop and true on every later one, and `last_assistant_message` can repeat
-word for word. An isolated run on Codex 0.154.0 produced three Stops in one turn whose second and
-third payloads were byte-identical. What differs is the transcript. Every sampling that ends in a
-Stop leaves one final answer, and before running Stop hooks the host records it in the file named
-by `transcript_path` as an `item_completed` `AgentMessage` carrying the turn id, the thread id
-and an item id of its own. So an event is
+The host hands a Stop hook nine fields and no per-invocation identifier. None of them separates two
+events of one turn: `turn_id` is kept across a continuation chain, `stop_hook_active` is false on a
+turn's first Stop and true on every later one, and `last_assistant_message` can repeat word for
+word. What differs is the transcript. Every sampling that ends in a Stop leaves one final answer,
+and before running Stop hooks the host records it in the file named by `transcript_path` with the
+turn id, the thread id and an item id of its own. So an event is
 
     (session_id, turn_id, stop_hook_active, answer item id)
 
 where the answer item is the one Stop of the turn, as the transcript shows it, that reported the
-payload's text under the payload's `stop_hook_active`. The Stops of a turn are the last answer
-before each later continuation or user message, and the newest answer, which is the latest
-sampling's; a Stop's `stop_hook_active` is true once a hook continuation has happened in the turn.
-The live Stop reports the newest answer, and a late delivery of an earlier Stop reports that
-Stop's own answer, so the rule names the right event for both. It is established only when
+payload's text under the payload's `stop_hook_active`. It is established only when the latest
+sampling's answer is recorded, exactly one Stop of the turn matches, and the matching answer's
+thread is the delivered session. The key is a SHA-256 over the four values, so no host value becomes
+a path component and nothing is minted per invocation.
 
-- the latest sampling's answer is recorded: when the newest item for the turn is a continuation
-  or user message, the invocation may be that sampling's own Stop, whose answer the transcript
-  does not show yet, or a late delivery of an earlier one, and nothing tells them apart;
-- exactly one Stop of the turn matches. Two Stops that reported the same text under the same
-  `stop_hook_active` cannot be told apart, and claiming would let a late delivery of one take the
-  other's event and answer the real one as a duplicate. The isolated run above is such a turn:
-  its third Stop is left unestablished;
-- the matching answer's thread, recorded on the item, is the delivered session.
-
-The key is a SHA-256 over the four values, so no host value becomes a path component and nothing
-is minted per invocation.
-
-The transcript is read backwards from its end to the turn's `task_started`, because the rule needs
-every Stop of the turn. The read is bounded at 64 MiB and 0.75 seconds,
-inside the margin the launcher keeps over the guard budget; the largest turn on the host this was
-built on was 62 MB, and reading that far took about a third of a second. Nothing that could be
-one of the turn's items is read past: a last line without its newline is one the host is still writing,
-and any line naming the turn that does not parse could be an input. A path that is
-missing, relative, not a regular file or unreadable, a scan that hits either bound, a transcript
-that begins without the turn's start (its earlier Stops are not there to compare), an unfinished
-last line, an unreadable line about the turn, and any failed condition above leave the identity
-unestablished, with the reason on the row. An unestablished invocation is asked about exactly as
-before and is never deduplicated: the adapter does not know which event it is, so it cannot know
-that the event was already answered, and a reading of the journal does not vouch for a window
-that holds one.
+The transcript is read backwards from its end to the turn's start, bounded at 64 MiB and 0.75
+seconds, inside the margin the launcher keeps over the guard budget. A missing or unreadable
+transcript, a scan that hits either bound, an unfinished last line and any failed condition leave
+the identity unestablished, with the reason on the row. An unestablished invocation is asked about
+exactly as before and is never deduplicated.
 
 ### Accepted records and attempt rows
 
 A claim is two create-once files. The first is the host's,
-`<CODEX_HOME>/crw-completion-hook/stop-events/<key>.json`, under the Codex home of the process the
-Stop fired in: every registration the host starts for one Stop inherits that environment, while
-the settings each one reads, and so its journal root, may differ, so this is the file two
-registrations of one host always meet. Only the invocation that creates it owns the event, and
-only the owner asks the guard. The owner creates the accepted record,
-`<journalRoot>/accepted/<key>.json`, beside the rows and naming the host's ledger; asks the guard;
-writes its row; and then writes `accepted/<key>.outcome.json` naming the session, the turn, the
-outcome, the row and the `journalPolicy`. An invocation that finds either file already there asks
-nothing, prints nothing and writes a row whose `adapterOutcome` is `duplicate_invocation`, with
-`acceptedAs` naming the file it found (the host's relative to the Codex home, the accepted record
-relative to the root). Creating a file that must not exist is atomic on a local filesystem, so two
-registrations firing in the same instant produce one owner and one duplicate, whichever roots
-their settings name.
+`<CODEX_HOME>/crw-completion-hook/stop-events/<key>.json`: every registration the host starts for
+one Stop inherits that Codex home, while the settings each one reads, and so its journal root, may
+differ, so this is the file two registrations of one host always meet. Only the invocation that
+creates it owns the event, and only the owner asks the guard. The owner creates the accepted record,
+`<journalRoot>/accepted/<key>.json`; asks the guard; writes its row; and then writes
+`accepted/<key>.outcome.json` naming the session, the turn, the outcome and the row. An invocation
+that finds either file already there asks nothing, prints nothing and writes a row whose
+`adapterOutcome` is `duplicate_invocation`. When the host's file can be neither created nor found,
+nobody can own the event, so nobody asks: the invocation writes an `arbitration_failed` row and
+releases the Stop, the adapter's ordinary failure direction.
 
-When the host's file can be neither created nor found, nobody can own the event, so nobody asks:
-the invocation writes an `unarbitrated` row (`adapterOutcome` `arbitration_failed`) and releases
-the Stop, the adapter's ordinary failure direction. An owner whose root cannot hold the accepted
-record (`claim_failed`), or whose settings name no `journalRoot` (`unclaimable`), still asks the
-guard once: the host's file stays, so a later delivery of the event is a duplicate. The claim files
-are state rather than invocation records, and are written under every `journalPolicy`.
+Rows are `<journalRoot>/<YYYYMMDD>/<32 hex>.json`, one JSON object on one line with sorted keys, and
+every count of them counts invocations. A row carries `sessionId`, `turnId`, `adapterOutcome`,
+`eventKey`, `eventIdentity`, `acceptance` (`accepted`, `duplicate`, `unestablished`, `unclaimable`,
+`claim_failed` or `unarbitrated`), `acceptedAs` and `guardInvoked`. `faults_only` leaves out the rows
+of answered and duplicate invocations of identified events; `no_journal` keeps no rows at all.
 
-Rows keep their place and their name, `<journalRoot>/<YYYYMMDD>/<32 hex>.json`, and every
-existing count of them still counts invocations. Version 2 rows add `eventKey`, `eventIdentity`
-(whether it was established, and why not), `identityScanMs`, `acceptance` (`accepted`,
-`duplicate`, `unestablished`, `unclaimable`, `claim_failed` or `unarbitrated`), `acceptedAs` and
-`guardInvoked`. `faults_only` leaves out the rows of answered and duplicate invocations of
-identified events, and keeps every invocation answered without an identity or an owner: no
-accepted record covers those, so the row is the only trace. `no_journal` keeps no rows at all, so
-those invocations leave nothing, and a reading of such a ledger says it cannot vouch for them.
-
-The outcome record says what the adapter answered, not what the host received: it is written
-before the answer is printed, exactly as the row is. A claimant killed after its outcome and
-before printing a hold leaves a complete record of a hold the host never saw; one killed after
-claiming and before its outcome leaves a claim with no outcome; one killed between the host's file
-and its claim leaves only the host's file. In each the event has its owner, a later delivery of it
-is a duplicate and is not answered again, and the Stop was released -- the adapter's ordinary
-failure direction. A reading of the journal names the last two cases; the first is
-indistinguishable from success on disk.
+The outcome record says what the adapter answered, not what the host received: it is written before
+the answer is printed, exactly as the row is. A claimant killed between its claim and its outcome
+leaves a claim with no outcome, and the event still has its owner, so a later delivery of it is a
+duplicate and the Stop was released.
 
 ### Reading it back
 
-`scripts/stop_events.py --journal-root <root>`, and its Go port `crw-dev stop-events`, which takes
-the same flags and prints the same reading as CPython 3.14 runs it (short of a record nested near
-where the interpreter's stack runs out, [a known difference](port/known-defects.md)), read the rows, the accepted records and the host
-ledgers the claims name, and answer one verdict. The reading judges an event as a unit: `--since`,
-`--until`, `--session` and `--turn` choose the events the window reaches, which are the events
-with any record (host file, claim, outcome or row) in it, and every record of a chosen event is
-then checked whatever its own time; rows that name no event are chosen one by one. `FALSE` (exit 1)
-means an event was accepted more than once: claims for one key in two roots, two accepted rows for
-one key, an accepted row whose claim is missing, or a duplicate that asked the guard. `UNREADABLE`
-(exit 3) means the reading cannot vouch for what it read:
-
-- a listing that failed, including an `accepted` or host ledger path that is not a directory, and an
-  `accepted` that is a link;
-- a row, claim, outcome or host file that does not parse or is not one the adapter writes: a link
-  or anything but a regular file in a record's place (the adapter creates each with `O_EXCL`, which
-  never makes or follows a link), bytes other than the ones its writers produce for that content
-  (sorted keys, one line, a newline, so a reformatted file or a key given twice is refused), a
-  missing field its path writes, an outcome its acceptance never ends in (a duplicate is only a
-  `duplicate_invocation`, an unowned release only `arbitration_failed`), a guard outcome that does
-  not follow from the process ending, exit code and stdout reading it records, a decision, state,
-  hold or receipt on a record that got no answer, a hold without a block or a block without a
-  hold, a fault that is not a prefix of `run()`'s order (asked, then the call, then an answer), a
-  version that is not the integer the adapter writes, a time or day directory that is not a real
-  one in the adapter's format, a field the adapter does not write on that record's path (a fault or
-  the journal's answer on a row that did not fault, or any field outside the fixed set a claim, an
-  outcome, a host file or an identity is written with) or one in another type than it writes it, an
-  accepted row that did not ask the guard or names another record, or any record whose own
-  session, turn, `stop_hook_active` and answer item do not hash to its key;
-- a row that records something at a stage it did not reach, or leaves out what a stage it reached
-  records: the payload's session, turn and flag come with the settings' mode or not at all, a
-  release always says why, and a duplicate or an unowned release in the one sentence the adapter
-  has for it, a guard call's detail is present exactly when its process neither exited nor was
-  signalled, the settings path is absolute and normalized and an established transcript path
-  absolute, an unestablished reason is one the adapter gives, and it carries the transcript path
-  and answer item only where that reason is reached after them;
-- a path in a ledger record in a form its writer never gives it: a claim's host ledger that is not
-  absolute, normalized and ending in `crw-completion-hook/stop-events`, or a host file's journal root
-  that is not absolute (the settings require it);
-- a path the adapter had already used with the operating system that the system would never take
-  (an embedded NUL, a character it cannot encode, a name over 255 bytes or a path of 4096 or more):
-  the transcript of an identified Stop, or of any reason reached after its lstat, the settings
-  path of a row past reading them, and the host ledger a claim names. It is judged on the path
-  itself; whether the file is still there when the journal is read is not asked;
-- a guard's stderr the adapter could not have kept: more than the 400 characters it keeps, or not
-  valid text, since it decodes the stream with replacement;
-- a row version it does not know, an entry in a ledger that is not one of its records, or an entry
-  in a journal root or a day directory that the adapter never writes there
-  (`foreignJournalEntries`): the root holds only real day directories (never a link to one) and
-  `accepted`, a day only `<32 hex>.json` rows. These are listed whatever the window, so a copy of a row kept under
-  another name is not skipped, and a journal root shared with other files never reads `TRUE`;
-- an outcome without its claim, naming another session or turn than its claim, or without the
-  accepted row it names (or with none under `every_invocation`), and a claim without its outcome
-  in the same root;
-- a host file whose event has no claim in the root it names, or that names a root the reading was
-  not given, and a claim whose host file is missing;
-- records of one event that disagree (`recordsThatDisagree`): the host file, the claim, the
-  outcome and the accepted row are written by one owner in one run, so they name one slot and one
-  process, the accepted row sits in that slot, the outcome and that row carry one guard result
-  (`adapterOutcome`, `guardDecision`, `guardState`, `held`), only a guard's answer holds, and a
-  duplicate that found the accepted record in its own root finds it there;
-- an accepted row the owner's policy would not have written (`no_journal`, or a plain answer
-  under `faults_only`), or a missing one it would have;
-- a duplicate whose event has no claim in any root read, or a ledger written under `no_journal`;
-- any invocation in the window it cannot judge, nothing to judge, or a reading that could not
-  finish (`readerFault`).
-
-`TRUE` (exit 0) otherwise. The invocations it cannot judge are those whose identity was not
-established, that had no owner, whose owner's root could not hold the claim or that never reached
-an event, and rows written by a runtime older than event identity: for each, the journal does not
-show that its Stop was answered exactly once. They are counted by reason (`unjudgedInvocations`,
-`legacyRows`), and a window that leaves them out can still read `TRUE`. The superseded count of
-rows per (session, turn) is printed too, labelled as superseded, so the two readings can be
-compared. `--since` and `--until` take a time in the records' own format, `YYYY-MM-DDTHH:MM:SSZ`,
-because a record and a bound are compared as strings; any other shape is a usage error (exit 2).
-`--journal-root` repeats for every root the host's registrations write to, and
-`--codex-home` adds a host whose ledger no claim names yet (a host whose only event lost its owner
-before the claim). The same reading is `completion.stop_events()`.
+`crw-dev stop-events --journal-root <root>`, in the repository's development binary, reads the rows,
+the accepted records and the host ledgers the claims name, and answers one verdict (the same reading
+as `scripts/stop_events.py` while that script exists). `FALSE` (exit 1) means an event was
+accepted more than once; `UNREADABLE` (exit 3) means the reading cannot vouch for what it read, and
+names why; `TRUE` (exit 0) otherwise.
+`--session` and `--turn` choose the events of one turn, `--since` and `--until` a window in the
+records' own `YYYY-MM-DDTHH:MM:SSZ` format, `--journal-root` repeats for every root the host's
+registrations write to, and `--codex-home` adds a host whose ledger no claim names yet. The
+invocations it cannot judge, whose identity was not established or that had no owner, are counted by
+reason and never read as answered.
 
 ### Limits
 
-The guarantee holds among the registrations of one Codex home, which is every registration one
-host starts for a Stop. Registrations that do not share it, or an adapter from before the host's
-file existed, each accept an event in their own root; a reading given both roots says `FALSE`.
-The claim files are never removed, like the rows. The reading checks that records are ones the
-adapter writes and that the records of one event agree, and it does not order their timestamps. It
-judges what each file holds and that it is the regular file the adapter creates, with exactly its
-writer's bytes; a regular file holding those same bytes, put in a record's place, is not told
-apart from the one the adapter wrote, since inode, owner, mode and times are not judged. It cannot
-contradict the values the adapter observed once and recorded in one place (timings, the
-transcript path as the host sent it, the guard's stderr, the detail of a guard call or a refused
-input, another absolute settings path or journal root, which of the two modes the
-settings named, and the receipt values an answer carries). It checks the types of those the adapter
-forms itself and the time format, not the values; the receipt values are copied from the guard's
-answer as they came, so any JSON value there is one the adapter writes. A duplicate row records
-one invocation's attempt, so a copy of one under a new slot reads as one more late delivery, which
-it cannot be told apart from; neither is an acceptance or an effect. That the host
-records the answer before running Stop hooks was observed in every isolated run and is consistent
-with every record in the live journal, but it is not a documented host contract; a host that ran a
-Stop before recording both that sampling's continuation and its answer would show the previous
-Stop as the newest, and a Stop reporting the same text as an earlier one of the same kind would be
-taken for it. A sampling that
-ends with no answer at all was not observed. A turn whose Stops repeat the same text trades
-deduplication for safety: those Stops are asked about by every registration, and a reading of a
-window that holds them is `UNREADABLE`.
+The guarantee holds among the registrations of one Codex home, which is every registration one host
+starts for a Stop. The claim files are never removed, like the rows. That the host records the answer
+before running Stop hooks was observed in every isolated run and is consistent with every record in
+the live journal, but it is not a documented host contract. A turn whose Stops repeat the same text
+trades deduplication for safety: those Stops are asked about by every registration, and a reading of
+a window that holds them is `UNREADABLE`.
 
 ## Registration is not firing
 
-`runtime_install.py hook-status` writes nothing, and reads rather than changes -- with the one
-exception above, that it runs the registered runtime and the registered interpreter to ask them
-what they are. It answers registration, the host's
-trust state, whether the registered command's target still exists, the settings, the runtime,
-whether that runtime offers the subcommand, this hook's own record of its invocations, why
-there is no such record when there is none, the guard's records, and the daemon, each as its
-own cell. `not_read` is used where a question was not asked and is never written as an absence.
+Written settings, a declared hook, a trusted hook and a hook that fired are four different facts,
+and the only evidence of the last one is a record of this turn. End a turn in an ordinary task
+started after the change, take its session and turn ids, and look for them in the journal:
 
-The cause cell is `firingRecordAbsence`, and it exists because "there is no record" had several
-repairs behind it and the command answered none of them. It takes no reading of its own: each
-cause declares which cells answer it, every rule runs rather than the first match winning — a
-host whose settings and whose adapter are both gone needs two repairs and is told so — and an
-ambiguity is carried as candidates instead of being settled by choosing. Where several
-registrations name several settings files, each of those files and the journal under it is
-read, because reading one of them and reporting an absence says nothing about the others, and
-reading none of them is what made a hook that had fired indistinguishable from one that never
-had. The operator procedure below lists every cause and the two limits that remain.
+```sh
+journal="${CODEX_HOME:-$HOME/.codex}/crw-completion-hook/journal"
+grep -l '"sessionId": "<session>"' "$journal"/*/*.json | xargs -r grep -l '"turnId": "<turn>"'
+```
 
-This hook records one entry per invocation by default, and the default is not frugality. The
-guard publishes an observation only when it selected an assignment, so on a host with no managed
-session it writes nothing at all, and an empty firing record would be indistinguishable from a
-hook that never runs. The count is always reported beside the policy that produced it.
+A row naming that session and turn is a callback this procedure can attribute; its `adapterOutcome`
+says what the adapter did. No row is not a smaller number of callbacks: the turn did not reach this
+hook's journal, and the cause is one of these, read in order:
 
-A record is whole or it is absent. A short write is finished rather than accepted, and a write
-that cannot finish removes what it left: a truncated record survives under a name nothing will
-reuse and would be counted as an invocation whose contents no longer read back.
+| Cause | How to tell |
+| --- | --- |
+| The hook is not trusted | Codex has not been asked to trust this declaration since the command text last changed; nothing fires until it is |
+| The pointer names no runtime that reads `--plugin-launch` | `crw doctor`: `runtime.state`, `runtime.kind` (`python-venv` has no `bin/crw`), and a Go build older than decision 26 ([the native wiring](plugin-packaging.md#the-native-wiring)) |
+| No usable settings | `crw doctor`: `settings.crw-completion-hook.json.state`; the hook releases in silence without settings, with settings it cannot read, and with settings another owner holds |
+| Journalling is off | `journalPolicy` is `no_journal`, or `faults_only` and nothing faulted |
+| A different journal | the settings name another `journalRoot` than the one you read |
 
-The settings are read before the payload is looked at, because the settings say where a record
-goes. Reading them second meant a payload the adapter could not parse was released with nothing
-written anywhere, which is the one class of invocation that most needs a record.
-
-The daemon is not on this path. The guard reads the marker and a read-only database, so a stopped
-daemon is not observable from a Stop and is never inferred from one; `hook-status` answers it
-separately or says it did not look. Long retries and whole verification loops belong to the daemon
-and to the coordinating task, not to a hook with a five-second budget.
+A subagent's turn is no signal: on the measured host subagent turns recorded no Stop at all. The
+daemon is not on this path. The guard reads the marker and a read-only database, so a stopped daemon
+is not observable from a Stop and is never inferred from one. `runtime_install.py hook-status`, the
+Python installer's cell-by-cell reading of the same question, has no `crw` counterpart
+([the Python fence installer](#the-python-fence-installer)).
 
 ## The composed acceptance run
 
-Installing, updating and hooking each have their own cases above. What none of them states is
-the sequence a host actually lives through, on one destination, with the state that has to
-survive it put there before the first install and read again after the last refusal. A suite of
-separately passing cases is not that sequence, and the difference is where a host loses a
-runtime. `scripts/ci/tests/test_install_acceptance.py` is that sequence.
-
-It reuses the update fixture rather than restating it: the same host, the same injected seams,
-the same snapshot of everything a failed update promised not to change. What it adds is that the
-installation recovered at the end is one the run itself promoted, not a directory a fixture
-placed on disk. An installer that had lost the ability to install would leave the update cases
-green; it fails here at stage one.
-
-| Stage | What runs | What must be true afterwards |
-| --- | --- | --- |
-| A new install | `install --apply` onto a destination holding nothing | An environment was built, the record selects it, `current` reaches it, the claim is `COMPLETE` |
-| The same run again | the identical command | `alreadyInstalled`, staging `SETTLED`, the claim and the configuration byte-identical, no orphan directory |
-| An update that fails | a source arrives, so the candidate is a different directory, and one of the eight seams refuses | exit 1, the seam names itself, and the refusal names the arriving environment |
-| The install it replaced | nothing further | selection, pointer target, configuration bytes, store bytes, store inode and store rows all as stage two left them, and a further install still answers `alreadyInstalled` |
-
-The last column is the reason the stage list is not the test. Every one of those equalities also
-holds for a run that did nothing at all, so the sequence separately requires what a no-op cannot
-produce: an environment in the destination, a selection naming it, and a seam that reported the
-boundary it stopped at against the environment it was building.
+Installing, updating and hooking each have their own rules above. What none of them states is the
+sequence a host actually lives through, with the state that has to survive it put there before the
+first install and read again after the last refusal. The Go installer's tests run that sequence
+against temporary homes: install, the same install again, an update that fails at a step and puts
+everything back, rollback and remove (`internal/runtime/install`, `lifecycle_test.go`,
+`decisions_test.go` and `restore_test.go`), and the native Stop command and both launchers through
+the pointer (`wiring_test.go`).
 
 ### Seven questions, seven readings
 
-The criterion asks for seven judgements and forbids one standing in for another. They are not
-one payload: two are commands and one is a comparison the acceptance module performs. `READINGS`
-declares the cell, the source that answers it and the path the answer is read from, and a single
-`read()` is the only way a cell is filled. A reading that could not be made reads `UNREADABLE` --
-never `False`, and never the value of the cell beside it.
+The composed run asks seven questions and forbids one reading standing in for another. A reading
+that could not be made is unreadable, never `false`, and never the value of the reading beside it.
 
-| Judgement | Answered by | Read from | Never established by it |
+| Question | Answered by | Read from | Never established by it |
 | --- | --- | --- | --- |
-| Skill link | `diagnose` | `skillLinks`, from `scripts/install.py --check` | that a linked skill is loaded or trusted by a host |
-| Runtime import | `diagnose` | `checks.results.imported` | that an imported module is the one a pointer reaches |
-| MCP tool exposure | `diagnose` | `checks.results.mcpExposed` | that a registered server was started, or that a session listed its tools |
-| App Server connection | `diagnose` | `checks.results.connected` | that a socket that accepted a connection will accept delivery |
-| Real hook callback | `hook-status` | `firingJournal` | that a registered hook is an enabled one, or that a firing was judged correctly |
-| Model and permission preservation | the acceptance module | the model and permission keys, read before and again after | that anything else in the configuration survived |
-| Delivery acceptance | `diagnose` | `checks.results.deliveryAccepted` | that an accepted delivery was acted on |
-
-Reaching an answer, reaching it down the path the row names, and reaching it on the host the
-rest of the run describes are three questions, and the last two are the ones a shortcut passes
-silently. All seven readings are taken against one host: the Codex home this run installed
-into, the destination it built in, and the state directory it was pointed at. A row answered
-from a second Codex home made for it would compose readings about two machines and look
-exactly like a composition. In the suite the link, import,
-registration, hook and preservation rows travel the thing the run installed: the links it
-created, the packages inside the candidate, the registration `register-mcp` wrote, the command
-line in the hook file executed as a program with a Stop payload on its stdin, and the
-configuration the install acted over. The connection and delivery rows travel a relay this
-suite wrote, because no App Server runs there -- which is why those two are the rows the table
-above says a host reading needs the live half for.
-
-The hook row is worth naming twice. Calling the adapter helper directly would answer exactly as
-the registered command does, while leaving the entry point, the settings argument the install
-chose and the stdin contract entirely untested. The registration is half of what this page
-documents, so the row reads it out of the hook file and runs it -- out of the hook file in the
-Codex home the rest of the run used, because a registration read from anywhere else is a
-registration on another machine.
-
-The vocabularies are deliberately not merged. The result rows answer in `check.VALUES`, the hook
-row answers in the completion module's own words, and the listing row answers with a listing. A
-cell rewritten into a neighbour's vocabulary is the same borrowed answer with better manners.
-
-Two of the seven are established by construction rather than by trusting a number. The hook row
-counts records, and a count taken from a directory somebody populated says nothing, so the case
-establishes it by the transition instead: the journal is established absent, the Stop hook is
-actually run, and the journal then names exactly one invocation. And no verdict cell anywhere
-reads model or permission state on both sides of an install, so the acceptance module performs
-that comparison itself. `checks.settingsPreserved` is not that reading -- it answers whether a
-command that writes nothing left `config.toml` alone, which is true of a diagnosis whatever the
-model keys say -- and neither is `settings_usable`, which answers whether a value a caller
-supplied is admissible to the relay. Filling the preservation cell from either would be the
-borrowed answer the whole arrangement refuses, so the missing cell is recorded as missing.
-
-A version that moved and a source that moved are likewise two findings and not one. Only
-`definition.verify` reports the first, and it refuses the install rather than filling a cell; a
-reader wanting a version disagreement reads the refusal, not a classification.
-
-### What the run exercised, and what it stood in for
-
-Every path is temporary, and fifteen names are stand-ins inherited from the update fixture: the
-two build steps, the relay, the measurement, the component classification, the definition load
-and verification, the interpreter version, the pointer steps and the store readings. The
-acceptance module declares them in a record it derives by running the fixture and watching which
-attributes are replaced, rather than by reading how the fixture is written, so a stand-in added
-there fails this suite until the record acknowledges it. A provenance record a later change can
-silently outgrow is worse than none.
-
-A stand-in is only half of what a record has to say. A reading can reach its success answer, down
-the path it declared, on the host it declared, and still answer about something the scenario never
-built -- so the module also declares, function by function, whether what that function hands the
-command is the value the scenario built or a stand-in, and a stand-in names what the scenario has
-instead and what a row reading through it therefore does not prove. That inventory is derived by
-asking the module for its functions, so a helper added there arrives unclassified. What it does
-not reach is a value written inline inside a function body: the granularity is the function, and
-the imported fixture's own replacements are covered by the separate record above.
-
-The store is where that mattered. Every install in this suite used to tell the run its store was
-absent and its tables unknown while the fixture had built a populated one at the same path, and
-nothing failed, because a run told there is no store settles that cell as established absence and
-moves on. A regression that detected a store and then lost it stayed green underneath. The
-readings the run takes about the store now describe the store the fixture built, one case reads
-them back out of the run's own result and compares them with it, and no call site may hand that
-switch again.
-
-Rows this repository has exercised are `fixture`: a temporary destination whose build steps and
-relay are simulated. No committed row can say `host`, and a check enforces that. The diagnosis
-runs with `HOME`, `XDG_STATE_HOME`, `CODEX_HOME` and `PATH` pointed inside the temporary
-directory and with `--relay-command` naming a path in it, because redirecting `--state` alone is
-not isolation: the survey runs discovery of its own, the filesystem side reads the real home, and
-an installed entry point on `PATH` would be resolved and run. The case then requires every path
-the diagnosis reported to be inside that directory.
-
-Paths are only half of it. Resolving where a component lives imports it, and the bridge's smoke
-script starts a server, both under whatever interpreter the record names -- so a fallback to the
-interpreter running the suite would reach whatever this machine has installed, which a check may
-read about and must not run. Clearing `PYTHONPATH` and the user site does not reach a system
-site directory, and checking the resolved location afterwards is too late, because by then the
-import has happened. The runtime is therefore supplied rather than discovered: a `-S -E`
-interpreter inside the destination, named by the record for every component and reached through
-the entry points on a `PATH` of the suite's own. The assertion is on the interpreter, which is
-settled before any probe runs; a component asked through this machine's interpreter fails the
-case whatever it happened to find.
+| Skill link | `crw-dev skills link --check`, on a linked host | its report | that a linked skill is loaded or trusted by a host. A plugin host has no links; `codex plugin list` is its reading |
+| Runtime reach | `crw doctor` | `runtime.state`, `runtime.kind`, `runtime.agrees` and each `components.<name>.class` | that the runtime works for a task |
+| MCP tool exposure | a fresh Codex task | the bridge tools it lists, and `get_capabilities` | anything about a task started before the change |
+| App Server connection | `crw doctor` | `checks.results.connected` | that a socket that accepted a connection will accept delivery |
+| Real hook callback | the journal | the rows naming the turn you ended | that a firing was judged correctly |
+| Model and permission preservation | a byte comparison of `config.toml` | the file before the run and after the `crw` commands | that anything a Codex process writes later was preserved |
+| Delivery acceptance | a trial | `checks.results.deliveryAccepted` from a run that created and delivered work | that an accepted delivery was acted on |
 
 ### Running the combination against a real host
 
-A real combination is an operator action, not a check. It needs a destination, a Codex home, a
-host record and a state directory that are yours to change, and it establishes nothing until it
-is recorded. Four of the seven need an input the command cannot supply for itself, so a bare
-`diagnose` produces four answers and three admissions that it did not look.
+A real combination is an operator action, not a check. It needs a home, a Codex home, a host record
+and a state directory that are yours to change, and it establishes nothing until it is recorded. The
+destination is `$HOME/.local/share/crw-runtime` of the `HOME` the commands run under, and the live
+half reaches this runtime only through the plugin's declared commands, so run the block under the
+`HOME` the Codex process runs with. The block names the host record and the Codex home on every
+command, and the state directory wherever one is read, because none of them derives from another:
+the Codex home is where the settings the plugin reads are written, and the host record defaults to
+`$XDG_STATE_HOME/codex-relay-workflow/host-record.json`, whatever the Codex home. `<codex-home>` is
+the Codex home that process reads. Until todo 43 the Go build cannot
+serve a store in that `HOME`'s default relay state directory
+([the live-state guard](port/cutover.md#the-live-state-guard-until-todo-43)), so on a host whose
+relay store is that one, or that still runs the Python runtime, the procedure waits for
+[the cutover](port/cutover.md).
 
 ```sh
-# Substitute every <...> below before running any of it. They are placeholders, not literals:
-# an unsubstituted one is a shell redirection rather than a value, which is as true of the
-# controller assignment below as of the flags further down. Nothing here runs as it stands.
+# Substitute every <...> below before running any of it. They are placeholders, not literals, and
+# an unsubstituted one is a shell redirection rather than a value.
 
-# The receipt directory has to exist before the first write, or the baseline redirect and the
-# install redirect below both fail -- and the second of those stops the install from running at
-# all rather than merely losing a file. It has to be a NEW one. Every reading below is written
-# under a fixed name, and two of them are pairs where one run writes only one of the two names,
-# so a directory still holding an earlier run's files is two runs wearing one name: a guard
-# further down would find that run's snapshot and report a comparison this run never took.
-# mkdir without -p is the check, because it fails rather than adopting a directory already
-# there. It ends the procedure rather than reporting and continuing, because a shell without
-# set -e would run every step below into the directory mkdir just refused, and the mixing works
-# in both directions: an older run's snapshot read as this run's preservation, and an older
-# run's absence marker read as a side this run did not have. Name the receipt under a parent
-# that exists, and a new one for every run.
+# A NEW receipt directory, so no earlier run's files are read as this one's. mkdir without -p is
+# the check, and it ends the procedure rather than running the rest into a directory it refused.
 mkdir <receipt> || exit 1
 
-# One controller for the whole block, on 3.11 or newer. Five of the steps below read a Codex
-# configuration and they do not fail alike without a reader, so naming the interpreter once is
-# the difference between a block that can be copied and a block whose readings quietly degrade.
-# The runtimes this command installs are 3.11+ whatever starts it, so this is a choice about the
-# controller only. What an older one does to each step is recorded after the block.
-controller=<python3.11-or-later>
-
-# Before anything: the model and permission keys as they stand, because preservation is a
-# comparison and there is no cell that makes it for you.
-# A fresh Codex home legitimately has no config.toml at all -- the reader treats absence as an
-# empty configuration -- so record the absence rather than failing on it. And keep the two
-# apart: a baseline that was ABSENT makes the later comparison one between two absences, which
-# establishes that nothing was added and nothing about a posture anybody had set.
+# Preservation is a comparison. No crw command below writes config.toml, so the whole file is
+# compared rather than keys guessed out of it. A fresh Codex home has none; record the absence.
 if [ -f <codex-home>/config.toml ]; then
     cp <codex-home>/config.toml <receipt>/config.before.toml
 else
     printf 'no configuration existed before this run\n' > <receipt>/config.before.absent
 fi
 
-"$controller" scripts/runtime_install.py install --dest <destination> --record <record> \
-    --codex-home <codex-home> --state <state> --apply > <receipt>/install.json
-# The exit code belongs IN the receipt rather than on the terminal: it is the install's own, a
-# pipeline would hide it, and a receipt that kept the result and lost the status cannot say
-# whether the install refused.
-printf 'install exit=%s\n' "$?" > <receipt>/install.exit; cat <receipt>/install.json
+# Nothing puts crw on PATH. The install runs the copy unpacked from the release archive into
+# <scratch> (see "Installing the runtime" above); every later command runs the one the pointer
+# then selects.
+# The exit status belongs IN the receipt: a receipt that kept the result and lost the status
+# cannot say whether the install refused, or that a 3 means the change landed.
+<scratch>/crw install install --release <tag> --record <record> \
+    --codex-home <codex-home> --state <state> --socket <socket> > <receipt>/install.json
+printf 'install exit=%s\n' "$?" > <receipt>/install.exit
 
-# The skill links are a layer of their own: install builds the runtime, and the diagnosis reads
-# the links by running scripts/install.py --check separately. Skip this and the link row answers
-# that every crw-* skill is missing -- an accurate reading of a Codex home nobody linked, and
-# not a reading of the installation just made.
-"$controller" scripts/install.py --apply --dest <codex-home>/skills
+crw="$HOME/.local/share/crw-runtime/current/bin/crw"
 
-# Registration is a separate operation from installing, and tool exposure compares the
-# registered command with the tools a session actually listed. Both halves or neither.
-# Name a 3.11 or later interpreter here too. Registration reads back the content it proposes to
-# write, so it refuses without tomllib for an absent, an empty and a populated configuration
-# alike -- measured on the 3.10 floor: exit 1, outcome CONFLICT naming the interpreter, nothing
-# written. Run this on the floor and there is no registration for the exposure row to compare
-# against, and that row is unreadable rather than unverified.
-"$controller" scripts/runtime_install.py register-mcp --codex-home <codex-home> \
-    --bridge-command <destination>/current/bin/<console-script> --apply
+"$crw" install register-mcp --owner plugin --record <record> \
+    --codex-home <codex-home> --execution-policy <policy-file> > <receipt>/register-mcp.json
+printf 'register-mcp exit=%s\n' "$?" > <receipt>/register-mcp.exit
 
-# This payload carries five of the seven rows, plus repositoryCommit and definitionVersion --
-# the revision a reader needs to reproduce any of it. Printed to a terminal it is gone, and the
-# receipt then cannot substantiate the readings this procedure says it recorded, so it goes to
-# the receipt with its exit status like the install did.
-"$controller" scripts/runtime_install.py diagnose --dest <destination> --record <record> \
-    --codex-home <codex-home> --state <state> --socket <socket> \
-    --bridge-command <destination>/current/bin/<console-script> \
-    --relay-command <destination>/current/bin/codex-session-relay \
-    --observed-tool get_capabilities \
-    --trial --issue <issue> \
-    --parent-task <parent-task> --child-task <child-task> --recipient <recipient> \
-    --artifact-root <artifact-root> --artifact <artifact> \
-    --turn-thread <turn-thread> --turn-id <turn-id> --dispatch-turn-id <dispatch-turn-id> \
-    --recipient-settings <settings-or-@path> > <receipt>/diagnose.json
-printf 'diagnose exit=%s\n' "$?" > <receipt>/diagnose.exit; cat <receipt>/diagnose.json
+"$crw" install hook --owner plugin --record <record> \
+    --codex-home <codex-home> --socket <socket> > <receipt>/hook.json
+printf 'hook exit=%s\n' "$?" > <receipt>/hook.exit
 
-# The hook has to have fired FOR THIS TURN, and no count can say that. hook-status reports what
-# this hook has recorded about itself cumulatively, so an old nonzero count reads as evidence
-# for a callback that never happened -- and comparing before with after does not repair it,
-# because any other session stopping inside the measurement window moves the same number. A
-# count that went up answers "did this hook fire at all lately", which is a different question
-# from the one this row asks.
-#
-# The record carries sessionId and turnId, so ask with them.
-#
-# --socket is the socket diagnose was given above. The install records it as socketPath, which is
-# what lets the guard refuse a state directory whose store records another App Server.
-"$controller" scripts/runtime_install.py hook --codex-home <codex-home> --adapter completion \
-    --dest <destination> --socket <socket> --apply
-#   ... then end a real turn, and only then:
-"$controller" scripts/runtime_install.py hook-status --codex-home <codex-home> > <receipt>/hook.json
+"$crw" doctor --record <record> --codex-home <codex-home> \
+    --state <state> --socket <socket> > <receipt>/doctor.json
+printf 'doctor exit=%s\n' "$?" > <receipt>/doctor.exit
 
-# hook-status names the journal it counted; the records in it name the turn they belong to.
-# This is the ONLY turn-specific reading in the block, and it is the one hook.json above cannot
-# supply: that file carries the cumulative cell and nothing about which turn moved it. So this
-# reading goes to the receipt with its exit status, like the install and the diagnosis did.
-# Printed to a terminal it is gone, and a receipt left holding only the cumulative count cannot
-# say that the named session and turn are the ones that fired.
-"$controller" - <receipt>/hook.json <session-id> <turn-id> > <receipt>/hook.turn.json <<'PY'
-import json, re, sys
-from pathlib import Path
-status, session, turn = sys.argv[1], sys.argv[2], sys.argv[3]
-payload = json.load(open(status))
-cell = payload["firingJournal"]
-# hook-status omits journalRoot whenever its firing-journal reading could not name a usable
-# journal, and that is several states rather than one. The command now answers WHICH of them,
-# in firingRecordAbsence, so this reads the cause beside the absence instead of stopping at it.
-# Read with a default, because a host carrying an older runtime answers the absence and not the
-# cause, and a traceback where a reading belongs is worse than a row that says so.
-cause = payload.get("firingRecordAbsence", {})
-if "journalRoot" not in cell:
-    print(json.dumps({"firingJournal": cell.get("value"),
-                      "firingJournalEvidence": cell.get("evidence"),
-                      "journalRoot": None,
-                      "recordsForThisTurn": None,
-                      "cause": cause.get("value"),
-                      "causeEvidence": cause.get("evidence"),
-                      "causeCandidates": [c["cause"] for c in cause.get("candidates") or []],
-                      "detail": "no journal to attribute a turn to, so this row is unreadable"
-                                " for this run rather than zero. 'cause' says why there is"
-                                " none, and carries every candidate rather than choosing one"
-                                " when it could not be settled"}, indent=2))
-    raise SystemExit(0)
-root = Path(cell["journalRoot"]).expanduser()
-# The same shapes hook-status counts, and one entry that cannot be decoded does not take the
-# reading with it: the hook creates a record before it finishes writing it, so a file being
-# written while you look is neither a match nor a failure of your turn.
-day, name = re.compile(r"^[0-9]{8}$"), re.compile(r"^[0-9a-f]{32}\.json$")
-records, unreadable = [], 0
-for directory in sorted(p for p in root.glob("*") if p.is_dir() and day.match(p.name)):
-    for entry in sorted(e for e in directory.glob("*.json") if name.match(e.name)):
-        try:
-            records.append(json.loads(entry.read_text(encoding="utf-8")))
-        except (OSError, ValueError):
-            unreadable += 1
-mine = [r for r in records if r.get("sessionId") == session and r.get("turnId") == turn]
-# A turn can end more than once, and each end is its own Stop event with its own accepted record.
-# Rows count invocations; the events are the distinct eventKeys the accepted rows name. A runtime
-# older than event identity writes rows without them, and those are counted apart, not guessed at.
-accepted = {r.get("eventKey") for r in mine if r.get("acceptance") == "accepted"}
-print(json.dumps({"recordsRead": len(records), "recordsUnreadable": unreadable,
-                  "recordsForThisTurn": len(mine),
-                  "acceptedEventsForThisTurn": len(accepted),
-                  "duplicatesForThisTurn": sum(r.get("acceptance") == "duplicate" for r in mine),
-                  "unidentifiedForThisTurn": sum(r.get("acceptance") in
-                                                 ("unestablished", "unclaimable", "claim_failed")
-                                                 for r in mine),
-                  "legacyRowsForThisTurn": sum(r.get("recordVersion") != 2 for r in mine),
-                  "record": mine[:1]}, indent=2))
-PY
-printf 'hook turn exit=%s\n' "$?" > <receipt>/hook.turn.exit; cat <receipt>/hook.turn.json
-
-# Afterwards: the other half of the preservation reading. The KEYS, not the file -- the
-# registration above deliberately appended a table, so a whole-file diff reports a change that
-# is this procedure's own doing and would report it whether or not anything was preserved.
-#
-# The post-install side becomes a file first, beside the baseline. Preservation is a comparison
-# between two moments, and a receipt holding only the earlier one cannot substantiate it once
-# <codex-home>/config.toml has moved on. An absence is recorded here the way the baseline
-# branch recorded one, rather than being failed on.
+# The other half of the preservation reading, taken before anything else can write the file.
 if [ -f <codex-home>/config.toml ]; then
     cp <codex-home>/config.toml <receipt>/config.after.toml
+    cmp <receipt>/config.before.toml <receipt>/config.after.toml > <receipt>/config.cmp 2>&1
+    printf 'cmp exit=%s\n' "$?" >> <receipt>/config.cmp
 else
-    printf 'no configuration exists after this run\n' > <receipt>/config.after.absent
+    printf 'no configuration existed after the crw commands\n' > <receipt>/config.after.absent
 fi
 
-# The comparison reads the two snapshots the receipt now holds, so a later reader can re-take
-# exactly this reading from the receipt alone. Which branch runs is decided by what THIS run
-# recorded, and the absence markers are read first for that reason. On a fresh Codex home the
-# branch before the install wrote config.before.absent and no config.before.toml at all, and
-# this reader opens its inputs by name: a comparison that ran anyway would end in
-# FileNotFoundError with no reading written, or -- in a receipt carrying an older run's files
-# -- would compare that run's snapshot and record it as this run's preservation. Where a side
-# was absent there were no model or permission keys to preserve on that side, and the row is
-# recorded as that absence, not as a preservation and not as a failure. Which side it was is
-# not guessed here: the config.before.* and config.after.* names in the receipt already say it.
-# Name a 3.11 or later interpreter, because the reader arrives there. On a host whose python3
-# is the 3.10 floor this command exits before it reads anything, and the receipt then records
-# what the suite records on that interpreter: the reading was not made, and the row is
-# unreadable rather than preserved. The exit line and the captured stderr beside it are what
-# say so. Do not substitute a pattern match for it -- a value guessed out of TOML is a value
-# whose wrongness is invisible.
-if [ -f <receipt>/config.before.absent ] || [ -f <receipt>/config.after.absent ]; then
-    printf '%s\n%s\n' \
-        'no comparison was made: a side of it was absent during this run' \
-        'config.before.* and config.after.* in this receipt name which side' \
-        > <receipt>/config.preservation.absent
-    cat <receipt>/config.preservation.absent
-elif [ -f <receipt>/config.before.toml ] && [ -f <receipt>/config.after.toml ]; then
-    "$controller" -c 'import sys, tomllib
-keys = ("model", "approval_policy", "sandbox_mode")
-for path in sys.argv[1:]:
-    with open(path, "rb") as handle:
-        document = tomllib.load(handle)
-    print(path, {key: document.get(key) for key in keys})' \
-        <receipt>/config.before.toml <receipt>/config.after.toml \
-        > <receipt>/config.preservation.txt 2> <receipt>/config.preservation.err
-    printf 'preservation exit=%s\n' "$?" > <receipt>/config.preservation.exit
-    cat <receipt>/config.preservation.txt
-else
-    printf '%s\n' \
-        'no comparison was made: a side of it has neither a snapshot nor an absence here' \
-        > <receipt>/config.preservation.absent
-    cat <receipt>/config.preservation.absent
-fi
+#   ... then, in Codex: trust the hook if it asks, start a fresh task, read the bridge tools and
+#   get_capabilities there, end a real turn, and note that turn's session and turn ids. Only then:
 
-# If an update has failed here, it has already restored what it found. Read that back rather
-# than assuming it -- and read residualPaths out of the FAILED RUN'S OWN result, which is what
-# THAT RUN left. diagnose answers residualPaths too, and it is a different reading of a
-# different question: what is on the destination NOW. Neither is a superset of the other, so
-# the install result above is kept rather than replaced by the diagnosis below.
-#
-# residualOwnership and recoveryRequires are read from the same result and for the same reason.
-# A rollback can settle the LINK and fail to settle the RECORD, and what that leaves is a claim
-# rather than a path: nothing is on disk to delete, so residualPaths is empty and correct while
-# the record still says something about that path. residualOwnership names the path whose claim
-# is outstanding. recoveryRequires is COMPOSED rather than chosen from a list, because what has
-# to be settled is two separate readings -- what became of the LINK (taken away, put back to a
-# named target, or not put back at all) and where the ENTRY came from (introduced by that run,
-# or inherited and left carrying its stamp) -- and the consequence follows from the pair. A
-# sentence that assumed either would tell an operator the link was put back when it was not, or
-# report a disagreement between a link and a record that in fact agree.
-#
-# Both are empty for a rollback that found the entry belonged to ANOTHER run by the time it
-# wrote. Nothing there is this run's to settle, so asking an operator to settle it would send
-# them after somebody else's record. That case is reported where it belongs, under
-# pointer.pointerRestored: 'ownership' reads "moved on", 'verified' is false because the
-# rollback did not do what it set out to, and 'detail' names the path the record holds now. The
-# command below prints 'pointer', so the receipt carries it.
-#
-# A RESUME or an adoption that fails reports the same rollback at the TOP level rather than
-# under 'pointer', because it never reaches the update's exit. It carries residualOwnership and
-# recoveryRequires from the same helper, so those two read the same either way, and the receipt
-# reads 'pointerRestored' as well so the rollback's own detail is there for both.
-"$controller" -c 'import json, sys
-result = json.load(open(sys.argv[1]))
-print(json.dumps({key: result.get(key) for key in
-                  ("failedStep", "retriable", "residualPaths", "residualOwnership",
-                   "recoveryRequires", "removedCandidate", "pointer", "pointerRestored")},
-                 indent=2))' <receipt>/install.json
+journal=<codex-home>/crw-completion-hook/journal
+grep -l '"sessionId": "<session>"' "$journal"/*/*.json | xargs -r grep -l '"turnId": "<turn>"' \
+    > <receipt>/rows-for-this-turn.txt
+printf 'rows grep exit=%s\n' "$?" >> <receipt>/rows-for-this-turn.txt
 
-# Kept the same way, and under its own name: this is the recovery read-back, a different
-# reading from the one above, and a receipt holding only one of them cannot say which.
-"$controller" scripts/runtime_install.py diagnose --dest <destination> --record <record> \
-    --codex-home <codex-home> --state <state> > <receipt>/diagnose.after-failure.json
-printf 'diagnose exit=%s\n' "$?" > <receipt>/diagnose.after-failure.exit
-cat <receipt>/diagnose.after-failure.json
+# From a checkout, the exactly-once reading for that turn:
+go run -tags dev ./cmd/crw-dev stop-events --journal-root "$journal" --codex-home <codex-home> \
+    --session <session> --turn <turn> > <receipt>/stop-events.json
+printf 'stop-events exit=%s\n' "$?" > <receipt>/stop-events.exit
 ```
 
-What this block is, and what it is not. It installs, registers, takes the seven readings and
-reads the result back. It does not re-run the install, it does not present an arriving source,
-and it does not fail an update -- and this page will not tell an operator to break a runtime
-their host is using in order to watch it come back. Those three stages are exercised against a
-temporary destination by `scripts/ci/tests/test_install_acceptance.py`, at every one of the
-eight seams an update crosses.
+What this block is, and what it is not. It installs, writes both records, takes the readings and
+reads the results back. It does not re-run the install, it does not present a second archive, and
+it does not fail an update; this page will not tell an operator to break a runtime their host is
+using in order to watch it come back. The tests above exercise those stages against temporary homes.
 
-So a receipt from this block records the stages it actually performed, and it is not a receipt
-for the composed run. The last command above is there for the host that arrives at it having
-had an update fail on its own, which is the only way that stage is reached here.
+`cmp` exiting 0 is preservation. A difference means something wrote the file between the two copies,
+and the receipt holds both sides for reading which keys moved. `rows-for-this-turn.txt` naming no
+file is a turn that did not reach the hook ([registration is not firing](#registration-is-not-firing)),
+not a smaller count. More than one row for the turn is not a duplicate by itself: a turn whose Stop
+was held ends again, and that is a second event; `stop-events.json` separates the two.
 
-A receipt also has to record which interpreter took it, and the block names one controller for
-every step for exactly that reason: a page that recommends 3.11 in prose and then invokes bare
-`python3` is a page whose readings degrade for anyone who copies it. Five of its steps read a
-Codex configuration -- `install`, `register-mcp`, both `diagnose` invocations and the
-preservation reader -- and they do not fail alike without `tomllib`, so an operator who runs it
-on the 3.10 floor anyway gets a mixture rather than a refusal. Measured on 3.10 rather than
-inferred: `register-mcp` refuses outright,
-exit 1 with outcome `CONFLICT` naming the interpreter and nothing written, for an absent, an
-empty and a populated configuration alike, against a temporary Codex home. `diagnose` does not
-refuse: run the same way it reports the configuration `UNREADABLE` and the exposure row reads
-`not_verified` -- for want of a reader, not for want of a registration. `install` does not
-refuse either, and that one is measured against a temporary destination with the build steps
-simulated, which is the acceptance suite's arrangement and not a host: it promotes there on
-3.10. Nobody has run this block against a real host from this repository, and it does not claim
-otherwise. The preservation reader exits before reading anything.
+Three of the seven are readings of something live, and the block supplies none of it: an App Server
+accepting connections at `<socket>`, a session that actually listed the bridge tools, and a relay
+that can carry an assignment to a returned turn id. `crw doctor` reports `deliveryAccepted` as
+`not_applicable` because it creates no work; a live trial ([live-trial.md](live-trial.md)) is how a
+host gets that reading. If the live half is absent, the honest receipt records the absence for that
+row and says the rest. It never carries a row forward as though the question had been put.
 
-So on the floor two of the seven readings are unreadable and the rest still stand, and a receipt
-records them that way rather than carrying them forward. The runtimes this command installs are
-3.11 or newer whatever interpreter started it, so an old controller is never a reason to
-postpone the install; it is only a reason two of the seven cannot be taken.
+A real run records the exact release it installed, the host it ran on, the destination kind, and the
+answer to each of the seven with the command that produced it and the time it was produced. Those
+receipts are host facts: they belong in the private record outside this repository, not in a commit.
+This page is the procedure and the shape. It is not a record that anybody ran it.
 
-Every field this section tells you to read is one the command it names actually emits, which is
-worth stating because it was not always true: the closing `diagnose` used to be where an
-operator was sent for `residualPaths` when only an install failure result carried that field.
-`failedStep`, `retriable`, `residualPaths`, `removedCandidate` and `pointer` come from the
-install result kept above. `diagnose` emits `residualPaths` and `residue` of its own, read
-from the destination as it stands: an entry is residue when the installer's own decision
-would reclaim it, so this reports that decision rather than a second opinion about the same
-directory. It is not guaranteed to be the same SET as a later install's: this command asks
-about the pointer the host record names, `cmd_install` asks about the destination it was
-invoked with, and on a host whose recorded pointer lies elsewhere those differ -- with this
-command the conservative of the two. Which question the installer should ask is a decision
-about the installer and is not this issue's to make. A staging the record selects, one somebody
-still holds, one whose owner could not be established, and a finished environment nothing
-selects are each reported with that decision's own reason and none of them is listed for
-removal — a dead staging lock says no installer holds the directory, never that nothing is
-running out of it. The owned pointer reaches `residualPaths` only when it dangles AND the host
-record records that a link **this command placed** is at that path; a dangling link the record
-does not claim is reported as foreign and left alone, because a link's shape is not its
-ownership. Those are two different readings of one entry: a failed promotion keeps the pointer
-`path`, so a retry derives the same pointer, and a rollback that established the link it placed
-is gone withdraws `recordedAt` and `recordedBy`. A record in that state names a location and
-claims no link, so whatever link stands there afterwards is reported as foreign.
-`firingJournal`, `journalRoot` and `firingRecordAbsence` come from `hook-status`;
-`skillLinks`, the `checks.results` cells, `scope.socketConnect`, `definitionVersion` and
-`repositoryCommit` from `diagnose`; `sessionId` and `turnId` from the journal records
-themselves, which is why the snippet reads the records rather than the count.
+## The Python fence installer
 
-That reading used to stop at the absence. `hook-status` omits `journalRoot` whenever its
-firing-journal reading could not name a usable journal, and that covers several different
-states — no hook registered for the event, registrations naming different settings files, a
-settings path spelled relatively, settings the command could not read, and journalling not
-configured — which an operator then had to guess between or stop at. `firingRecordAbsence`
-answers which one. It takes no reading of its own: every cause is decided over the cells
-beside it, and each declares which of them answers it.
+This section is developer-only and pre-cutover. `scripts/runtime_install.py` installs the Python
+runtime, the fence release that step 0 of [the cutover](port/cutover.md#step-0-deploy-and-activate-the-python-fence-release)
+deploys, and it is the rollback path until the Python execution path is removed (todo 44). It
+shares the destination, the owned pointer, the host record, the promotion lock and both settings
+files with `crw install`; what it installs is a Python virtual environment,
+`<destination>/env-1-<digest>`, built from this checkout's packages. It still takes `--dest`, and on
+a host `crw install` also serves, `<destination>` has to be `~/.local/share/crw-runtime`:
+`crw install` refuses a host record whose pointer names another link.
 
-| Cause | What it says | What it does not say |
-| --- | --- | --- |
-| `not_registered` | the hook file was read and registers this adapter for nothing, so nothing on this host invokes it now | that the file is the one the host loads, or that nothing was ever recorded — a registration removed after the hook fired leaves its journal where it was, and this answer names those records rather than reading past them |
-| `record_path_unidentified` | a registration spells its settings relatively, or names none, so no file reachable from here answers for it | that the hook has or has not recorded |
-| `adapter_cannot_run` | the registered adapter or its interpreter is not there, so the host cannot start it | that it was ever startable |
-| `settings_absent` / `settings_unusable` | **one or more** registrations name a settings file that is absent, or that this hook's own reader rejects, so every invocation of *those* registrations releases without recording | which repair the file needs, or anything about a peer registration whose settings are fine |
-| `journalling_off` | one or more registrations keep no journal, so those record nothing about their own invocations by configuration | anything about firing, for those registrations |
-| `recorded_on_another_path` | one journal these registrations name holds records while another was read and holds none | which registration the host ran |
-| `nothing_recorded` | every journal belonging to a registration that can start and has usable settings was read and holds no record | that the hook never ran |
-| `several_causes` | more than one cause is established and each needs its own repair | that repairing one of them is enough |
-| `cause_unreadable` | the cause was not settled; `candidates` carries every one still standing | which of them it is |
+| Command | What it does |
+| --- | --- |
+| `python3 scripts/runtime_install.py install --dest <destination> --apply` | Build, exercise and promote a Python runtime from this checkout. It needs a Python 3.11 or newer interpreter for the runtime (`--python`), and the controller needs `tomllib` (Python 3.11 or newer) to read a Codex configuration |
+| `python3 scripts/runtime_install.py diagnose --dest <destination>` | The Python diagnosis, including `--trial` |
+| `python3 scripts/runtime_install.py register-mcp --owner plugin --bridge-command <destination>/current/bin/codex-thread-bridge --apply` | The bridge record, with `--execution-policy`; before a version-2 record it probes the enabled package's cached launcher |
+| `python3 scripts/runtime_install.py hook --adapter completion --owner plugin --dest <destination> --apply` | The Python-era Stop settings, and the fallback launcher `<CODEX_HOME>/crw-stop-hook.py`, placed before them |
+| `python3 scripts/runtime_install.py hook-status` | The cell-by-cell firing reading, including `firingRecordAbsence` |
+| `python3 scripts/runtime_install.py verify-definition` | Re-derive [the one definition](#the-one-definition); CI runs it |
 
-Every cause above is decided **per registration**, because every registration in the hook file
-runs and reads its own settings. One registration with a missing settings file beside one that
-is fine answers `several_causes`, not the healthier of the two — a peer that works is not
-evidence about a peer that does not. The one place that goes the other way is deliberate: a
-registration the host cannot start is left out of the journal questions entirely, because its
-journal is empty *because* it cannot start, and reading it as a fact about journalling would
-invent a second cause for one repair.
+Two properties of a Python runtime outlive this installer, and the cutover's retention rule rests on
+them. pip writes an absolute shebang into every console script, so a process started through
+`current` reports and keeps its concrete `env-*` directory after the pointer moves; and a Stop
+command fixed before the native wiring names `python3` and a `.py` launcher. Both keep `env-*`
+directories and the launchers in place until `crw doctor retention-scan` reports nothing that
+resolves to them.
 
-Two limits remain, and they are the reason the last two values exist. Under
-`journalPolicy: faults_only` the guard records only an invocation that faulted, so an empty
-journal is equally what a hook that fires constantly and never faults leaves behind and what a
-hook that never fired leaves behind; that host answers `cause_unreadable` carrying both
-`policy_records_only_faults` and `nothing_recorded`, and it does not choose. And
-`nothing_recorded` is named for the journal rather than for the hook on purpose: a journal
-write that fails removes what it left and cannot record its own failure, so "it never ran" and
-"it ran and every record failed to be written" are one observation here. **Neither of those is
-resolved by this command, and neither is guessed at.**
+### Trial mode
 
-A third limit is about cost rather than about truth. `hook-status` now opens every absolute
-settings path a registration names and lists the journal under it, so its work is bounded by
-the number of registrations rather than by one file. That bound is a count and not a clock: a
-journal root on an unavailable network mount makes this command slow, and it has no budget of
-its own to stop at. The hook's own Stop path is unaffected — it reads the one settings file its
-own registration names, under the timeout it is registered with.
+`runtime_install.py diagnose --trial` is the only command that fills `deliveryAccepted` itself: it
+registers one relationship, emits and delivers once, and records the returned turn id. Everything the
+trial needs is checked before its first command, against what the relay itself enforces rather than
+what is merely present, so an incomplete trial writes no settings and no relationship row. It has no
+`crw` counterpart (it is deferred past the Python path's removal in [the inventory](port/inventory.md));
+[a live trial](live-trial.md) is a different thing with a similar name.
 
-This changes what the command answers and not what the acceptance readings are. The hook
-callback row is still answered by `firingJournal`; the cause is detail beside it, and the
-seven readings remain seven.
+The full reference this page carried for the Python installer, its design record and its acceptance
+procedure, is this page at the parent of the commit that rewrote it for `crw`, the oldest one that
+names todo 41:
 
-Name the relay too. Left out, the entry point is discovered on `PATH`, which finds whichever
-relay this host already has rather than the runtime just installed under the destination -- and
-with none on `PATH` the trial refuses before it runs. Every flag after `--trial` is required and
-a blank one is refused before anything is written; the set is declared once in the source as
-`TRIAL_REQUIRED_INPUTS`, together with `--recipient-settings`, which is additionally asked of the
-relay's own settings reader.
-
-The absences are answers, and they are different answers. Omitting `--trial` leaves delivery
-`not_applicable`: nothing was attempted. Asking for a trial whose inputs are missing or blank
-gives `not_verified` naming the input that was not supplied: something was attempted and did not
-establish itself. Without `--observed-tool` the exposure answer is that no tool names were
-observed, and before a Stop has reached the hook the callback row is an absence. What none of
-them is, is a failure of the thing they were asked about, and recording them as though the
-questions had been put is the one way this procedure can lie.
-
-`recordsForThisTurn` is the reading. A record naming the session and the turn that was ended
-is a callback this procedure can attribute; zero is not a smaller number of callbacks, it is a
-turn that did not reach the hook, and the row is unreadable for this run whatever the totals
-say. Do not record a total instead -- it is the answer to a question nobody asked here, and it
-is the one piece of this procedure another session can move.
-
-More than one record for the turn is not a duplicate by itself. A turn whose Stop was held ends
-again, and that second end is a second event: `acceptedEventsForThisTurn` counts them, and
-`duplicatesForThisTurn` counts invocations that found their event already accepted, which is
-what two registrations answering one Stop leave behind. Whether any event anywhere in the journal
-was accepted twice is the question `scripts/stop_events.py` answers; see [One accepted record per
-Stop event](#one-accepted-record-per-stop-event).
-
-Read `recordsUnreadable` before concluding. Zero matches beside a nonzero unreadable count is
-not an answer either: a record the hook had created but not finished writing is neither your
-turn nor evidence against it, and the honest move is to look again rather than to write down a
-callback that did not happen or rule out one that did.
-
-### What this block cannot produce on its own
-
-Three of the seven are readings of something live, and the command supplies none of it. The
-fixture answers them with stand-ins it builds; an operator has the real thing or has nothing,
-and an absence recorded as a result is the one way a receipt from here misleads.
-
-| Reading | What has to be there already | How you know it was |
-| --- | --- | --- |
-| App Server connection | an App Server accepting connections at `<socket>` | `scope.socketConnect` reads `ok`; anything else leaves `connected` `not_verified` or `unknown`, which is an answer about the socket and not about the install |
-| MCP tool exposure | a session that actually listed the bridge tools, whose names go in `--observed-tool` | without the flag the row says no tool names were observed; with it, the evidence names the tools compared against the registered command |
-| Delivery acceptance | a relay that can carry the eight steps through to a returned turn id, and a recipient whose settings its own predicate accepts | `deliveryAccepted` reads `verified` only with that turn id in the evidence; every refusal names the step or the input that stopped it |
-
-None of those is a precondition to arrange around. They are the questions, so if the live half
-is absent the honest receipt records the absence for that row and says the rest. What it must
-not do is carry a row forward as though the question had been put.
-
-Stopping is not on that list, because nothing here starts anything. The installer never starts or
-stops a daemon, and a successful install is reported as `alwaysActive: not_verified` however well
-it went; whoever operates the service starts and stops it. A refused update naming a residual
-pointer is telling you to look at that link rather than telling you it is fine: the restoration
-happened on disk but could not be read back, and the command declines to claim what it could not
-confirm.
-
-A real run records the exact revision it ran at, the interpreter and host it ran on, the
-destination kind, and the answer to each of the seven with the command that produced it and the
-time it was produced. `repositoryCommit` and `definitionVersion` are in the payload for that
-reason. Those receipts are host facts: they belong in the private record outside this repository,
-not in a commit, and `measuredPoints` in the committed definition stays empty until a measured
-point is made. This page is the procedure and the shape. It is not a record that anybody ran it.
+```sh
+rewrite="$(git log --format=%H --grep='(todo 41)' -- docs/runtime-install.md | tail -1)"
+git show "$rewrite^:docs/runtime-install.md"
+```
 
 ## What none of this establishes
 
-Running the entry point against a temporary destination proves what it did there. It is not
-evidence about a host's real Codex home, its installed runtime, its MCP registration or its
-operational database. `installed`, `mcpExposed`, `connected`, `deliveryAccepted`,
-`verificationComplete` and `alwaysActive` are six separate facts under OPS-6.1, and `imported` and
-`settingsPreserved` are two more beside them. None of the eight is read from another.
+Running these commands against a temporary destination proves what they did there. It is not
+evidence about a host's real Codex home, its installed runtime, its bridge record or its operational
+database. `installed`, `mcpExposed`, `connected`, `deliveryAccepted`, `verificationComplete` and
+`alwaysActive` are six separate facts under OPS-6.1, and none of them is read from another.
 
-A registered completion hook is not a fired one, and a fired one is not a delivered hold. That a
-line is in the hook file says nothing about the host having run it, about the runtime it names
-being able to answer, or about any turn having been judged. Those claims need the host's own
-evidence, not this command's.
+Written settings are not a fired hook, and a fired hook is not a delivered hold. That a settings file
+is there says nothing about the host having run the hook, about the runtime it names being able to
+answer, or about any turn having been judged. Those claims need the host's own evidence.
 
-A successful update is not one of them either. That the pointer moved, that the gate found the
-daemon stopped and no attempt open, and that the store's tables were compatible are three
-readings taken at one moment, about one destination. They say a swap was permitted and
-performed; they do not say the new runtime works, and the point that would say so is measured
-before the swap rather than after it. Nor does a refused update establish that a store is
-healthy: the gate reads whether it is safe to replace a runtime, and reads nothing about
-whether the data in the store is correct.
+A successful update is not one of them either. That the pointer moved, that the gate found the daemon
+stopped and no attempt open, and that the store's schema was compatible are readings taken at one
+moment, about one destination. They say a swap was permitted and performed; they do not say the new
+runtime works, and the point that would say so is measured before the swap rather than after it. Nor
+does a refused update establish that a store is healthy: the gate reads whether it is safe to replace
+a runtime, and reads nothing about whether the data in the store is correct.

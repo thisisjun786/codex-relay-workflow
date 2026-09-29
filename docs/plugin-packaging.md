@@ -26,9 +26,10 @@ support turns it into a plain text file. The supported platform is Linux x86_64.
 What may sit in the plugin root is whatever the manifest declares, plus
 `.codex-plugin/` and `LICENSE`. Installation copies that directory verbatim,
 including untracked and ignored files, so anything left there is published, and a
-component nobody declared installs without ever loading. `python3 scripts/ci/plugin.py`
-derives the permitted roots from the manifest, refuses a declaration naming a file the
-package does not ship, and checks the hook and server documents against the shapes that
+component nobody declared installs without ever loading. `crw-dev ci plugin`, in the
+repository's development binary, derives the permitted roots from the manifest, refuses a
+declaration naming a file the package does not ship, and checks the hook and server documents
+against the shapes that
 were measured to load. The manifest itself may carry only the keys
 the ingestion validator knows, and optional presentation fields are checked against
 its shapes: URLs that begin with `https://`, a `#RRGGBB` brand colour, and `./`
@@ -61,8 +62,8 @@ specific to the bytes underneath. Under this rule the two revisions above read
 `0.4.0+344a3a6949c7` and `0.4.0+4bbc00f85a6e`.
 
 The suffix is the first twelve hex characters of the digest of the payload, and it is derived
-rather than maintained. `python3 scripts/ci/plugin.py --record-version` writes it into the
-working-tree manifest; `python3 scripts/ci/plugin.py` re-derives it and refuses a version that
+rather than maintained. `crw-dev ci plugin --record-version` writes it into the
+working-tree manifest; `crw-dev ci plugin` re-derives it and refuses a version that
 names other bytes, naming the value that should have been recorded. That refusal covers the
 release payload, the working tree and an installed cache directory alike, so `--payload <dir>`
 answers which bytes the directory in front of you holds rather than which name it was filed
@@ -243,11 +244,15 @@ its own. The declared MCP server and Stop hook both reach a runtime this package
 not carry, and each needs a step the installation cannot take for you.
 
 1. Install the Go runtime, if this host has none, where both declared commands look for it: run
-   `crw install install --from <crw_<version>_<os>_<arch>.tar.gz>` (or `--release <tag>`) with
-   the `crw` from that release. It installs under `~/.local/share/crw-runtime`, its only
-   destination (it has no `--dest`). A runtime runtime_install.py placed under another `--dest`,
+   `crw install install --from <crw_<version>_<os>_<arch>.tar.gz> --socket <app-server-socket>`
+   (or `--release <tag>` in place of `--from`) with the `crw` from that release; without
+   `--socket` the relay half of the install's exercise has no App Server to reach, and nothing is
+   promoted. It installs under `~/.local/share/crw-runtime`, its only destination (it has no
+   `--dest`). A runtime runtime_install.py placed under another `--dest`,
    or a pointer that still names a Python `env-*` runtime, is one neither command starts: the hook
-   then releases every Stop without a word, and the server exits as it starts.
+   then releases every Stop without a word, and the server exits as it starts. `crw install`
+   refuses a host record whose pointer names such another link, naming the repair, and
+   `crw install status` reports it as `destinationAgrees`.
 
    The runtime also has to be a build that reads `--plugin-launch`
    ([decision 26](port/decisions.md)), and the pointer has to name it before the plugin cache
@@ -269,9 +274,11 @@ not carry, and each needs a step the installation cannot take for you.
    launcher refuses to start the bridge when that file is gone or has changed, and the bridge reads
    it through `CODEX_THREAD_BRIDGE_EXECUTION_POLICY`. See
    [the execution policy the plugin bridge runs under](runtime-install.md#the-execution-policy-the-plugin-bridge-runs-under).
-   Until the cutover the host's installer is still `scripts/runtime_install.py`
-   ([runtime installation](runtime-install.md)), whose `register-mcp` also probes the enabled
-   package's cached launcher before it writes a policy record.
+   A host still on the Python runtime has these records from the Python fence installer instead
+   ([the Python fence installer](runtime-install.md#the-python-fence-installer)), whose
+   `register-mcp` also probed the enabled package's cached launcher before it wrote a policy
+   record. `crw install register-mcp` probes nothing: the launcher it would probe is the runtime
+   itself.
 3. Trust the hook. Until it is trusted nothing fires, and no command in this repository
    grants that: installing writes no trust, and a session without it runs the hook zero
    times and says so nowhere.
@@ -290,9 +297,9 @@ a Stop and exits, and the completion hook installs in `observe` mode, which clas
 records and never holds a turn.
 
 The linked installation in [README](../README.md#install) still works. Both
-installations read the same source: `crw-dev skills link` (and its legacy equivalent
-`scripts/install.py`) links the directory the manifest declares, and the repository
-root keeps `skills` as a link to it so links created before the move still resolve.
+installations read the same source: `crw-dev skills link` links the directory the manifest
+declares, and the repository root keeps `skills` as a link to it so links created before the
+move still resolve.
 
 A host carrying a manual install of the bridge or the hook beside the plugin runs two of
 everything. [Moving a manual install to the plugin install](plugin-transition.md) records how
@@ -308,11 +315,11 @@ unprefixed names and the mapping lives in
 [the shared integration guide](../plugins/crw/skills/crw-plan/references/integrations.md),
 so one revision reads correctly under either installation.
 
-`scripts/ci/plugin.py` derives the namespaced names from the revision rather than
+`crw-dev ci plugin` derives the namespaced names from the revision rather than
 from a list in prose:
 
 ```sh
-python3 scripts/ci/plugin.py --json
+go run -tags dev ./cmd/crw-dev ci plugin --json
 ```
 
 Whether a client resolves a `$`-prefixed invocation token for a plugin skill, and
@@ -323,7 +330,7 @@ plugin installation, were not measured for this change.
 
 Create the directory under `plugins/crw/skills/` with its `SKILL.md` and
 `agents/openai.yaml`. The manifest lists no skills: the package ships whatever the
-declared path holds at the release revision, and `scripts/ci/plugin.py` derives the
+declared path holds at the release revision, and `crw-dev ci plugin` derives the
 namespaced names from that revision, so a skill developed in parallel is included
 once its commit is part of that revision. The installer test pins the registered
 names as a positive control, so a new skill belongs in that list too. Keep relative
@@ -331,7 +338,7 @@ links between skills pointing at siblings under the same parent; the cache prese
 that layout.
 
 Bump `version` in the manifest when the change should reach installations, run
-`python3 scripts/ci/plugin.py --record-version` so the suffix names the new payload, and
+`crw-dev ci plugin --record-version` so the suffix names the new payload, and
 install the plugin again: a cached version changes only on installation, and a turn already
 running keeps the skills directory it was given, which is the one the next install removes, until
 that turn ends ([the cache lifetime](#the-cache-lifetime)). Adding a skill changes the payload, so
@@ -350,8 +357,8 @@ each declared surface is whether its reference outlives the directory it names.
 | --- | --- | --- | --- |
 | Native Stop command | No, it names the runtime pointer under `$HOME` | Nothing | `crw install install` |
 | Stop launcher, first candidate (legacy bootstrap a cached turn may still hold) | Yes | Falls through to the second candidate | This package |
-| Stop launcher, second candidate at `<CODEX_HOME>/crw-stop-hook.py` | No | Nothing | `runtime_install.py hook --owner plugin` |
-| Stop settings at `<CODEX_HOME>/crw-completion-hook.json` | No | Nothing | `crw install hook --owner plugin` (`runtime_install.py hook --owner plugin` until the cutover) |
+| Stop launcher, second candidate at `<CODEX_HOME>/crw-stop-hook.py` | No | Nothing | Placed by the Python fence installer; `crw install` leaves it as it is, and the cutover removes it once the retention scan is clear |
+| Stop settings at `<CODEX_HOME>/crw-completion-hook.json` | No | Nothing | `crw install hook --owner plugin`; one document serves a Go and a Python runtime through the pointer, and no promotion or rollback rewrites it. A Python-era document is replaced by its Go variant when the pointer moves onto a Go runtime (an install, an update or a rollback), which on the relay host is its first Go install; a move onto a Python runtime never rewrites it |
 | Adapter, relay and bridge executables | No, they sit under the installer pointer | Nothing | `crw install install` |
 | Hook document path in the run identifier | Yes | Held as an identifier and never re-read | The host |
 | MCP start `cwd` and `args` | Yes | At one measured replacement the host started bridges again from the new version directory; at the other none was seen to start: the bridges already running kept running from the removed directory, and a thread that resumed was given one from the new directory. Either way a bridge started from the new directory runs under the bridge record as it stands then. Both measured on the host; what decides between the two is not | The host |
@@ -415,8 +422,10 @@ record written, then a different payload installed in its place, which removed t
 The new directory's launcher, started with its declared command, arguments and working directory and
 the App Server's environment, handed the bridge the recorded policy, `get_capabilities` reported its
 digest, and a `register-mcp` rerun answered `record_unchanged`. The two payloads differed in a skill
-and shipped the same launcher bytes, so a launcher with other bytes is outside what this showed;
-[updating safely](#updating-safely) probes every candidate before it is added. Three states failed
+and shipped the same launcher bytes, so a launcher with other bytes is outside what this showed.
+The native wiring's launcher carries no record logic of its own, because the runtime behind the
+pointer reads the record ([the native wiring](#the-native-wiring)), and
+[updating safely](#updating-safely) still looks at every candidate before it is added. Three states failed
 closed rather than open: no record, a policy file that no longer matched its digest, and a rollback
 to a package whose launcher predates version 2 each made the launcher exit 2 and start no bridge.
 Only a version-1 record started a bridge that checks no role, which is what the host had at the
@@ -438,15 +447,39 @@ the old directory as history, so the row speaks of the root a turn is given, not
 None of the six tried to read the removed directory in the forty minutes that followed, so what such
 a read does was not observed.
 
-### Why the Stop hook was declared as a bootstrap
-
-The package no longer declares this bootstrap ([the native wiring](#the-native-wiring)). This
-section describes the command a turn cached before that change may still run.
+### Why the hook resolves the pointer
 
 A hook command is fixed when a turn starts, with the plugin root already resolved into it, and
-the whole turn reuses that string — including every Stop re-fire. Replace the package while a
-task still holds that command and it names a file that no longer exists; nothing measured shows
-a later turn of the same task resolving it afresh. `python3` exits **2** for a
+the whole turn reuses that string, including every Stop re-fire. Replace the package while a task
+still holds that command and anything it names inside the version cache is gone; nothing measured
+shows a later turn of the same task resolving it afresh. So the native command names nothing in
+the cache. `"$HOME/.local/share/crw-runtime/current/bin/crw" hook --plugin-launch; exit 0` resolves
+the runtime through the pointer when the Stop fires, and a cache replacement, before a turn or
+during one, changes nothing it reaches. When the pointer names nothing the shell reports the
+missing program and `; exit 0` still releases the turn, because 2 is the blocking code
+([the native wiring](#the-native-wiring)).
+
+Changing the command text changes the hook’s `trusted_hash`, so an update that changes it needs
+one re-trust per installed hook identity, and Codex asks for it; until it is given nothing fires.
+An update of the runtime changes no declaration, because the command names the pointer rather than
+a version, so it needs none. The move to the native wiring changed the command text once, and so
+needed the hook trusted again once. Trust is keyed to the declaration content and not to
+the version path, so an update that leaves the command alone keeps its trust. Both halves were
+seen on the host. After the first measured replacement, whose declaration had changed, the stored
+value stayed as it was until the new declaration was trusted; after the second, whose declaration
+was byte-identical, no approval was given and the hook still fired in a task started
+afterwards. The stored value reads the same in both cases until someone approves, so it cannot tell
+them apart; [updating safely](#updating-safely) compares the declarations instead.
+
+### The bootstrap a cached turn may still run
+
+This subsection is pre-cutover. It describes the Python bootstrap the package declared before
+[the native wiring](#the-native-wiring), which a turn that started then may still run, and it goes
+with the Python execution path once the retention scan finds no such command
+([retention](port/cutover.md#retention)).
+
+That bootstrap named a file inside the version cache. Replace the package while a task still holds
+it and it names a file that no longer exists. `python3` exits **2** for a
 missing script, and 2 is the hook protocol’s blocking code, so the host feeds the error back
 to the model and fires Stop again. Measured on the user's host: one removed directory, eleven
 repeated Stop prompts in a single turn of one task and eight in a single turn of a second, and
@@ -458,8 +491,8 @@ So the declaration names two candidates and opens the first one it can read:
 
 1. `${PLUGIN_ROOT}/wiring/crw_stop_hook.py` — the packaged copy. Always the current version, so a
    fallback left by an older install can never outrank it.
-2. `<CODEX_HOME>/crw-stop-hook.py` — the copy `runtime_install.py` places. Reached only when
-   the first one is already gone.
+2. `<CODEX_HOME>/crw-stop-hook.py` — the copy the Python fence installer placed, which
+   `crw install` leaves as it is. Reached only when the first one is already gone.
 
 If neither can be opened it exits 0 and prints nothing. That is not error suppression: the
 launcher’s own contract has always been that a Stop it cannot judge is a Stop it releases, and
@@ -480,24 +513,16 @@ Which exits count as success follows the interpreter rather than the code's trut
 zero, and every other object exits 1 even when it is falsey. An empty string and `0.0` are
 therefore failures, and the declaration treats them as failures.
 
-Changing the command text changes the hook’s `trusted_hash`, so an update that changes it needs
-one re-trust per installed hook identity. Trust is keyed to the declaration content and not to
-the version path, so an update that leaves the command alone keeps its trust. Both halves were
-seen on the host. After the first measured replacement, whose declaration had changed, the stored
-value stayed as it was until the new declaration was trusted; after the second, whose declaration
-was byte-identical, no approval was given and the hook still fired in a task started
-afterwards. The stored value reads the same in both cases until someone approves, so it cannot tell
-them apart; [updating safely](#updating-safely) compares the declarations instead.
-
 ### The supported range
 
 | Task holding the old package reference | Stop | MCP bridge | Skill reads |
 | --- | --- | --- | --- |
-| Existing task, including an idle interval between turns | The fallback is available if installed; a quiet turn does not establish package-reference reload | At the first measured replacement, started again by the host from the new directory under the record as it stood then; at the second, left running from the removed directory, while a thread that resumed was given one from the new directory. Both measured on the host | The next turn is given the new root: measured |
-| Existing task during a turn, removed cache | Fallback invocation measured after removal; on the host, a turn begun before the second replacement recorded its Stop once after it | As above; which running bridge belonged to a thread in mid-turn was not mapped. What a tool call in flight across a restart sees was not measured | The turn keeps the removed root until it ends: measured. A read against it was not observed |
+| Existing task, including an idle interval between turns | The native command names no cache path, so a replacement does not reach it. A turn still holding the Python bootstrap falls back to the launcher copy if one was placed; a quiet turn does not establish package-reference reload | At the first measured replacement, started again by the host from the new directory under the record as it stood then; at the second, left running from the removed directory, while a thread that resumed was given one from the new directory. Both measured on the host | The next turn is given the new root: measured |
+| Existing task during a turn, removed cache | The same for the native command. For the Python bootstrap, fallback invocation measured after removal; on the host, a turn begun before the second replacement recorded its Stop once after it | As above; which running bridge belonged to a thread in mid-turn was not mapped. What a tool call in flight across a restart sees was not measured | The turn keeps the removed root until it ends: measured. A read against it was not observed |
 | Fresh task created after update | Invocation measured from the updated installation | Verify the new task's actual MCP call | Verify the new task's actual skill read |
 
-The fallback protects the Stop launcher, and nothing measured shows a later turn resolving the Stop
+The native Stop command needs no protection from a replacement, and the fallback protects the
+Python bootstrap a cached turn may still hold. Nothing measured shows a later turn resolving the Stop
 command afresh: a task can remain alive across many turns, and for that command an idle interval is
 not a session reload. The other two references were measured to behave differently. The skills root
 is renewed when the next turn starts. The bridge is either started again by the host at the
@@ -518,84 +543,86 @@ making its first policy registration as well, and step 8 says what that changes.
    it ends and may have its bridge started again underneath it, and what a tool call in flight
    across such a restart sees was not measured. Nothing here lists running turns for you.
 2. Read the version-2 record without changing it: run `register-mcp` with the arguments it was
-   written with and without `--apply`.
+   written with and `--dry-run`.
 
    ```sh
-   python3 scripts/runtime_install.py register-mcp --owner plugin \
-       --bridge-command <destination>/current/bin/codex-thread-bridge \
-       --execution-policy <file>
+   crw install register-mcp --owner plugin --execution-policy <file> --dry-run
    ```
 
    `record_unchanged` means the record still names that policy and the file still hashes to the
-   recorded digest, and, with crw enabled and one version cached, that the cached package's declared
-   server started a probe under such a record; nothing is written. Every bridge the host starts
-   from the new directory, at the add or when a thread resumes, reads this record at that moment,
-   so settle any other answer first: a policy file edited since it was registered, for one, would
-   make every such bridge refuse to start. If the record is version 1 or absent, read step 8 now, because it decides what happens
+   recorded digest; nothing is written. Every bridge the host starts from the new directory, at the
+   add or when a thread resumes, reads this record at that moment, so settle any other answer
+   first: a policy file edited since it was registered, for one, would make every such bridge refuse
+   to start. If the record is version 1 or absent, read step 8 now, because it decides what happens
    around step 5.
-3. Run the completion hook installation again with the arguments its settings were written with,
-   `--dest` included, so the fallback is current before the directory it backs up can disappear:
-
-   ```sh
-   python3 scripts/runtime_install.py hook --adapter completion --owner plugin \
-       --dest <destination> --apply
-   ```
-
-   Add any other option those settings were written with, such as `--socket`.
-4. Probe the candidate before adding it, whatever its bytes. Install it into a throwaway Codex
-   home and run the step 2 command against that home:
+3. Read the Stop settings the same way: `crw install hook --owner plugin --dry-run`, with any option
+   they were written with, such as `--socket`, answers `config_unchanged`. Nothing about the Stop
+   hook moves with the payload: the native command names the pointer and the settings live in the
+   Codex home. A turn that still holds the Python bootstrap falls back to `<CODEX_HOME>/crw-stop-hook.py`
+   once its version directory is gone, and that copy stays where the Python installer put it until
+   the retention scan is clear ([retention](port/cutover.md#retention)).
+4. Look at the candidate before adding it, whatever its bytes. Install it into a throwaway Codex home:
 
    ```sh
    CODEX_HOME=<throwaway> codex plugin marketplace add <source>
    CODEX_HOME=<throwaway> codex plugin add crw@<marketplace>
-   python3 scripts/runtime_install.py register-mcp --owner plugin --codex-home <throwaway> \
-       --bridge-command <destination>/current/bin/codex-thread-bridge \
-       --execution-policy <file>
+   go run -tags dev ./cmd/crw-dev ci plugin --payload <candidate-dir> --json
    ```
 
-   Proceed only when all three hold: the add reports the one version directory it installed; the MCP
-   declaration in that directory, the file its manifest's `mcpServers` names, declares
-   `codex-thread-bridge`; and `register-mcp` answers `record_would_create`. With the server
-   declared and one version cached, that answer means `register-mcp` started the candidate's declared
-   command, arguments and working directory with a version-2 record naming a probe, and it passed.
-   Without the first two, the same answer means no probe ran. Any other answer means the candidate
-   was not shown to start the bridge under the policy, and `launcher_predates_policy` in particular
-   means its bridge would start without the policy or not at all: do not add it until the answer is
-   `record_would_create`. Both of those answers were measured in throwaway homes, and neither run
-   left a record behind.
+   `<candidate-dir>` is the one version directory the add reports under
+   `<throwaway>/plugins/cache/<marketplace>/crw/`. Proceed only when the add reports that one
+   directory, the check passes, and the candidate declares the native wiring: its MCP declaration
+   starts `codex-thread-bridge` through `sh ./wiring/crw-bridge.sh`, and its Stop declaration, in a
+   file its manifest names under `hooks`, runs `crw hook --plugin-launch`. Such a candidate carries
+   no bridge or hook logic of its own: both start the runtime the pointer names, which reads the
+   record itself, so what it starts under is decided by the runtime and the record rather than by
+   the payload's bytes. A candidate that still declares the Python launchers is a rollback, and it
+   goes in the order [update and roll back](#update-and-roll-back) gives.
 
    The same directory tells whether this update will need the hook trusted again. Trust belongs to
    the hook declaration rather than to the version, so compare the declaration files the two
-   manifests name under `hooks`. `<candidate-dir>` is the version directory the throwaway add
-   reported, and `<installed-dir>` the one installed now,
+   manifests name under `hooks`, and only those: a hook file the manifest does not name never loads
+   ([how hooks and MCP servers load](#how-hooks-and-mcp-servers-load)). The package check's report
+   reads them as the host does, from the checkout: `stopHooks` counts the hooks those files list
+   under `hooks.Stop`, and `hooksDigest` covers which files the manifest names, in its order, with
+   their modes and bytes. `<installed-dir>` is the one installed now,
    `$CODEX_HOME/plugins/cache/<marketplace>/crw/<version>`:
 
    ```sh
-   python3 - <candidate-dir> <installed-dir> <<'EOF'
-   import json, pathlib, sys
-   def declared(root):
-       root = pathlib.Path(root)
-       hooks = json.loads((root / ".codex-plugin" / "plugin.json").read_text()).get("hooks")
-       names = [hooks] if isinstance(hooks, str) else list(hooks or [])
-       return names, [(root / name).read_bytes() for name in names]
-   candidate, installed = declared(sys.argv[1]), declared(sys.argv[2])
-   if not any(json.loads(data).get("hooks", {}).get("Stop") for data in candidate[1]):
-       print("no Stop hook declared")
-   else:
-       print("unchanged" if candidate == installed else "changed")
-   EOF
+   candidate=<candidate-dir> installed=<installed-dir>
+   # The package check's report on a payload; empty when the check refuses the payload.
+   report() { go run -tags dev ./cmd/crw-dev ci plugin --payload "$1" --json; }
+   # One top-level field of such a report, which prints each on its own line, two spaces in.
+   field() { printf '%s\n' "$1" | sed -nE "s/^  \"$2\": (.*[^,]),?\$/\1/p"; }
+   new=$(report "$candidate") old=$(report "$installed")
+   case $(field "$new" stopHooks) in
+       '' | 0) echo "no Stop hook declared" ;;
+       *) if [ "$(field "$new" hooksDigest)" = "$(field "$old" hooksDigest)" ]; then
+              echo unchanged
+          else
+              echo changed
+          fi ;;
+   esac
    ```
 
-   `no Stop hook declared` means none of the candidate's hook declarations has a Stop event, so
-   the completion hook would stop firing after the add; that is not an update this procedure covers,
-   so do not add it.
-   `unchanged` means the stored trust carries over, as it did at the second measured replacement.
+   `no Stop hook declared` means the files the candidate's manifest names under `hooks` list no
+   hook under `hooks.Stop`, so after the add the completion hook would stop firing; that is not an
+   update this procedure covers, so do not add it. The package check does not refuse every such
+   candidate: it passes one whose manifest has no `hooks`, one whose Stop entry sits in a file the
+   manifest does not name, and one whose Stop list sits in a declared file outside its `hooks`
+   object, and the host runs none of those entries.
+   `unchanged` means both manifests name the same files in the same order and each holds the same
+   bytes under the same mode, so the stored trust carries over, as it did at the second measured
+   replacement.
    `changed` means expect to trust the hook again in Codex after step 5, as at the first; that was
    measured for a change to the command text, what a change elsewhere in the file does was not, and
-   step 6's firing check settles it either way. The trust entry also names the marketplace, so adding
-   the package from a marketplace of another name is inferred to need a trust of its own whatever
-   this prints. The trust entry in the Codex configuration cannot decide any of this: its value
-   stays the same after the add in both cases until someone approves.
+   step 6's firing check settles it either way. The check prints no report for a payload it refuses,
+   so a refused candidate reads as declaring no Stop, the side that stops the add, and a refused
+   installed directory reads as `changed`.
+   The trust entry also names the marketplace, so adding the package from a marketplace of another
+   name is inferred to need a trust of its own whatever this prints. The trust entry in the Codex
+   configuration cannot decide any of this: its value stays the same after the add in both cases
+   until someone approves.
 5. On a host that gates the bridge,
    [check the candidate's declaration](#before-you-add-or-update-on-a-host-that-gates-the-bridge),
    passing the version directory step 4's throwaway add reported as `--payload`.
@@ -606,53 +633,39 @@ making its first policy registration as well, and step 8 says what that changes.
    - the installed payload: `go run -tags dev ./cmd/crw-dev ci plugin --payload <dir> --json` on
      the version directory the add installed checks it against the package rules and reports a
      `digest` that should equal the one the same command reports for the throwaway directory from
-     step 4 (`python3 scripts/ci/plugin.py --payload <dir>` is the legacy equivalent of the rule
-     check);
-   - the step 2 dry run again, which now probes the server the new package declares and should
-     still answer `record_unchanged`;
+     step 4;
+   - the step 2 dry run again, which should still answer `record_unchanged`;
    - `get_capabilities` in a fresh task and in the tasks that were loaded during the add: its
      `executionPolicy.digest` is the digest the record names, and a bridge with no policy reports
      `presence_only`;
    - whether the hook fires: end a turn in an ordinary task started after the add and find that
-     session and turn in the Stop journal, as the step of
-     [running the combination against a real host](runtime-install.md#running-the-combination-against-a-real-host)
-     that reads the journal records for one session and turn does. A subagent's turn is no signal:
-     on the measured host subagent turns recorded no Stop at all;
+     session and turn in the Stop journal
+     ([registration is not firing](runtime-install.md#registration-is-not-firing)). A subagent's
+     turn is no signal: on the measured host subagent turns recorded no Stop at all;
    - every running crw bridge, from `/proc`, the way both measured replacements were read. Run it as
      the user the App Server runs as; a bridge process whose directory or environment you may not
      read is listed as `UNREADABLE` rather than skipped. This is an operator reading, not a command
      this repository ships:
 
      ```sh
-     python3 - <<'EOF'
-     import json, os, pathlib
-     home = pathlib.Path(os.environ.get("CODEX_HOME") or pathlib.Path.home() / ".codex")
-     cache = (home / "plugins" / "cache").resolve()
-     record = json.loads((home / "crw-bridge-mcp.json").read_text())
-     want = (record.get("executionPolicy") or {}).get("digest")
-     key = b"CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST="
-     for pid in sorted(filter(str.isdigit, os.listdir("/proc")), key=int):
-         try:
-             argv = open(f"/proc/{pid}/cmdline", "rb").read().split(b"\0")
-         except OSError:
-             continue
-         if not any(a.endswith(b"codex-thread-bridge") for a in argv):
-             continue
-         try:
-             cwd = pathlib.Path(os.readlink(f"/proc/{pid}/cwd"))
-             env = open(f"/proc/{pid}/environ", "rb").read().split(b"\0")
-         except OSError as error:
-             print(pid, "UNREADABLE", error.strerror)
-             continue
-         try:
-             marketplace, plugin, version = cwd.relative_to(cache).parts
-         except ValueError:
-             continue
-         if plugin == "crw":
-             have = next((e[len(key):].decode() for e in env if e.startswith(key)), None)
-             state = "policy" if have and have == want else "OTHER POLICY" if have else "NO POLICY"
-             print(pid, marketplace + "/" + version, state)
-     EOF
+     home="${CODEX_HOME:-$HOME/.codex}"
+     cache="$(cd "$home/plugins/cache" && pwd -P)"
+     want="$(sed -n 's/.*"digest": *"\([0-9a-f]\{64\}\)".*/\1/p' "$home/crw-bridge-mcp.json")"
+     for dir in /proc/[0-9]*; do
+         pid="${dir#/proc/}"
+         tr '\0' '\n' < "$dir/cmdline" 2>/dev/null | grep -q 'codex-thread-bridge$' || continue
+         if ! cwd="$(readlink "$dir/cwd")" || ! env="$(tr '\0' '\n' < "$dir/environ")"; then
+             echo "$pid UNREADABLE"; continue
+         fi
+         case "$cwd" in "$cache"/*) ;; *) continue ;; esac
+         rel="${cwd#"$cache"/}"; marketplace="${rel%%/*}"; rest="${rel#*/}"
+         [ "${rest%%/*}" = crw ] || continue
+         have="$(printf '%s\n' "$env" | sed -n 's/^CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST=//p')"
+         if [ -z "$have" ]; then state="NO POLICY"
+         elif [ "$have" = "$want" ]; then state=policy
+         else state="OTHER POLICY"; fi
+         echo "$pid $marketplace/${rest#*/} $state"
+     done
      ```
 
      Each line is a bridge process, the marketplace and version directory it runs from, and whether
@@ -668,40 +681,35 @@ making its first policy registration as well, and step 8 says what that changes.
      directory while a thread that resumed was given a new one, and what decides between the two was
      not measured. A bridge left running keeps the
      policy it started with. A bridge started from the new directory, at the replacement or when the
-     thread resumes, runs under the record as it is at that moment: with a version-2 record and a
-     candidate that passed step 4 that is the policy, measured on the host at the second replacement
-     and in isolation; with a version-1 record it is no policy, as the first replacement showed; with
-     no record there is no bridge, as the isolated run showed. A bridge that step 6 reports without
-     the recorded policy stays that way until the host starts that thread's bridge again. A resume
-     did that at both measured replacements; nothing in this repository can.
-   - A Stop whose command names the removed directory falls back to the copy step 3 placed.
-8. The first policy registration. Step 4 is what shows the new package starts a bridge under a
-   version-2 record, and it applies in every order below. With no record at all, run the step 2
-   command. `record_would_create` there means no enabled, cached crw launcher on this host would
-   refuse the record, which includes a host with no crw package cached: register with `--apply`
-   before step 5 and continue as above. `launcher_predates_policy` means the cached one would:
-   register with `--apply` right after step 5 instead; until then a launcher that finds no record
-   starts no bridge (measured in isolation), so the threads whose bridges restart in between have no
-   bridge tools until the host starts their bridges again. A version-1 record is not given a policy
-   in place:
-   `register-mcp --execution-policy` answers `record_differs` and names the repair, which is to
-   move the record aside by hand and register again. And while the crw package that is enabled and
-   cached ships a launcher older than version 2, `register-mcp` refuses the version-2 record itself
-   ([turning the wired surfaces on](#turning-the-wired-surfaces-on)). Step 2 therefore answers with
-   one of those refusals, and the choice is when the version-1 record leaves:
+     thread resumes, runs under the record as it is at that moment: with a version-2 record that is
+     the policy, measured on the host at the second replacement and in isolation; with a version-1
+     record it is no policy, as the first replacement showed; with no record there is no bridge, as
+     the isolated run showed. A bridge that step 6 reports without the recorded policy stays that way
+     until the host starts that thread's bridge again. A resume did that at both measured
+     replacements; nothing in this repository can.
+   - A Stop whose command is the native one reaches the runtime whatever the cache holds; one whose
+     command is the Python bootstrap naming the removed directory falls back to the launcher copy.
+8. The first policy registration. With no record at all, `crw install register-mcp --owner plugin
+   --execution-policy <file>` writes a version-2 record. It probes no cached package, so choose its
+   moment yourself: a cached package that declares the native wiring starts the runtime, which
+   reads a version-2 record, and one that still ships a Python launcher older than version 2 refuses
+   the record and starts no bridge (measured in isolation) until the new package is added. With such
+   a package cached, register right after step 5; otherwise register before it. A version-1 record is
+   not given a policy in place: `register-mcp --execution-policy` answers `record_differs` and names
+   the repair, which is to move the record aside by hand and register again. The choice is then when
+   the version-1 record leaves:
    - After step 5, as at the first measured replacement: add the package, move the version-1
-     record aside, run the step 2 command with `--apply`, read back as in step 6, then have the host
-     start again the bridges it reports without the policy. Every bridge the host restarts before
-     the record moves checks no role.
-   - Before step 5: move the version-1 record aside, add the package, then register with `--apply`
-     and read back the same way. A launcher that finds no record starts no bridge (measured in
-     isolation), so a thread whose bridge restarts in between has no bridge tools rather than
-     unchecked ones, until the host starts its bridge again after the registration. What the host
-     does after a bridge refuses to start was not measured.
-   - With the old package disabled or removed first: move the record aside, register with `--apply`,
-     which is accepted while no crw package is enabled or cached, then add the new package and read
-     back. What disabling does to loaded threads, their skills, Stop hook and bridge included, was
-     not measured.
+     record aside, register, read back as in step 6, then have the host start again the bridges it
+     reports without the policy. Every bridge the host restarts before the record moves checks no
+     role.
+   - Before step 5: move the version-1 record aside, add the package, then register and read back
+     the same way. A launcher that finds no record starts no bridge (measured in isolation), so a
+     thread whose bridge restarts in between has no bridge tools rather than unchecked ones, until
+     the host starts its bridge again after the registration. What the host does after a bridge
+     refuses to start was not measured.
+   - With the old package disabled or removed first: move the record aside, register, then add the
+     new package and read back. What disabling does to loaded threads, their skills, Stop hook and
+     bridge included, was not measured.
 
 `codex plugin add` removes the prior version cache. This procedure does not promise to retain
 that directory automatically or prescribe copying it back after a gap as uninterrupted support.
@@ -741,9 +749,12 @@ name a runtime that reads `--plugin-launch` before the cache takes a payload who
 pass it. Going back, the package moves first. Reinstall a revision whose Stop declaration is the
 Python bootstrap before `crw install rollback` points at a runtime without that flag, whether a
 Python `env-*` runtime or a Go runtime built before decision 26. That bootstrap reaches either
-kind through the Stop settings `crw install` leaves for it, and a rollback to a Python runtime
-restores the Python-era settings. In the other order, every Stop in between is released
-without a record ([the native wiring](#the-native-wiring)).
+kind through the one Stop settings document `crw install` writes: `/usr/bin/env
+<destination>/current/bin/crw-completion-hook` is the Go hook on a Go runtime and the fence
+release's console script on a venv, and no rollback rewrites that document; only a Python-era
+one is rewritten, when the pointer moves onto a Go runtime
+([one Stop settings document](runtime-install.md#one-stop-settings-document)). In the other order,
+every Stop in between is released without a record ([the native wiring](#the-native-wiring)).
 
 A rollback past the bridge record's version installs, and then its launcher refuses the record. A
 launcher that predates version 2 starts no bridge under a version-2 record: measured in isolation,
@@ -761,15 +772,19 @@ journal or the runtime installation.
 
 ## Verify
 
-Structural checks run offline and are part of CI:
+Structural checks run offline, from a checkout, and are part of CI:
 
 ```sh
-python3 scripts/ci/plugin.py            # package shape, hygiene, release digest
-python3 scripts/ci/validate.py          # skill metadata, local links, Python syntax
-python3 -m unittest discover -s scripts/ci/tests
+go run -tags dev ./cmd/crw-dev ci plugin     # package shape, hygiene, release digest
+go run -tags dev ./cmd/crw-dev ci validate   # skill metadata, local links, Python syntax
+go test ./internal/runtime/install/...       # the wiring through the pointer, among the installer's tests
 ```
 
-`plugin.py` builds the release payload from a Git revision rather than from the
+Until they are deleted, `scripts/ci/plugin.py` and `scripts/ci/validate.py` answer the same with
+the same flags and output, and `scripts/ci/tests` holds the Python installer's wiring tests; all
+three are developer-only ([CI operation](CI.md)).
+
+`crw-dev ci plugin` builds the release payload from a Git revision rather than from the
 working tree, so the bytes it validates are the ones a clone publishes. `--json`
 prints that payload digest, and `--payload <dir>` applies the same rules to an
 installed cache directory, which is how an installed tree is compared against its
@@ -790,7 +805,7 @@ and the behavior itself.
 
     "tools": { "create_thread": { "approval_mode": "approve" } }
 
-`scripts/ci/plugin.py` checks it, and it is the only signal a mistake here ever produces. Measured:
+`crw-dev ci plugin` checks it, and it is the only signal a mistake here ever produces. Measured:
 an invalid `approval_mode` in a plugin declaration makes `codex plugin add` exit 0 and
 `codex mcp list` exit 0 with **zero** entries. The server disappears and no `disabled_reason` is
 recorded, because there is no entry left to carry one. The same mistake in a user configuration is

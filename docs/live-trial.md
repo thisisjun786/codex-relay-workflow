@@ -13,9 +13,13 @@ produces the result. The preflight (`scripts/trial_startup.py preflight`) perfor
 can perform before the dispatch, and the ledger (`crw-dev trial-ledger`) grades the window after it
 closes; see [Running it](#running-it).
 
+This page is developer-only. Both tools run from a checkout: the preflight is the Python install's
+and retires with it, and the ledger is in the repository's development binary. Neither is part of
+the `crw` runtime a host installs.
+
 One other thing in this repository is named similarly and is not this. `runtime_install.py
---trial` is a diagnosis mode that registers, emits and delivers once to fill one field of its own
-record, and [its own trial preflight](runtime-install.md#the-trial-preflight-matches-what-the-relay-requires)
+--trial` is a diagnosis mode of the Python fence installer that registers, emits and delivers once
+to fill one field of its own record, and [its own trial mode](runtime-install.md#trial-mode)
 owns that name for the checks that mode needs. That name is not reused here.
 
 ## The three failures this exists for

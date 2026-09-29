@@ -2,8 +2,9 @@
 
 The situations the issue requires, each resolved against [the operations contract](../operations.md).
 Every scenario names what was observed, the clause that decides it, the required action, and what
-must survive. These are fixtures for `scripts/check_operations_contract.py`, which verifies that each
-one cites a real clause and that every normative section of the contract is exercised by at least
+must survive. These are fixtures for the operations contract check (`crw-dev ci operations`, and
+`scripts/check_operations_contract.py` until it is deleted), which verifies that each one cites a real
+clause and that every normative section of the contract is exercised by at least
 one of them.
 
 ## S1 New installation on a host that has nothing
@@ -47,15 +48,16 @@ because nothing else matched first.
 
 ## S3 A component installed by somebody else
 
-Observed: the relay console script resolves to a path outside every recorded checkout, for example
-a `pipx` environment or another user's directory.
+Observed: the relay command resolves to a path outside every recorded install, for example a
+`codex-session-relay` earlier on `PATH` that another tool installed, or another user's directory.
 
 Clauses: OPS-2.1, OPS-2.2 `foreign`, OPS-6.1.
 
 Action: never overwrite it. Read its digest and the combination it runs under, because sitting
 outside the recorded paths does not exempt it from the evidence test. It can be used only when the
 digest matches the record and that combination carries a measured point. A digest that matches while
-the interpreter differs is a different combination and is reported `unmeasured`, and a digest that
+it runs under a combination the record has no point for (another Codex CLI, or for a Python-era
+install another interpreter) is reported `unmeasured`, and a digest that
 does not match at all is reported `unverified`, in both cases with the expected and the observed
 location. Installing a second copy to win the race is not a repair, because the entry point that
 actually runs is the one on the path, not the one most recently written.
@@ -492,8 +494,8 @@ Preserved: the external checkouts and their history, the current installation, a
 
 ## S22 A recorded install with no qualifying evidence
 
-Observed: the bridge is installed a second time inside the relay's virtual environment. Nothing
-conflicts, the entry point resolves into a recorded path, the commit and tree match the record, the
+Observed: on a host whose installs the Python fence installer made, the bridge is installed a second
+time inside the relay's virtual environment. Nothing conflicts, the entry point resolves into a recorded path, the commit and tree match the record, the
 working tree is clean, and the digest equals the one the record carries for that install. The
 compatibility record holds no point for the interpreter that environment runs. That is a statement
 about the evidence rather than about the past: somebody may well have run it, but no recorded run

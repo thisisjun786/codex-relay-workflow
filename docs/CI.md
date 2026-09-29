@@ -1,7 +1,10 @@
 # CI operation
 
 [POLICY.md](../POLICY.md) owns the rules. This page maps them to commands and
-the steps needed to activate GitHub enforcement.
+the steps needed to activate GitHub enforcement. It is developer-only: every check
+here runs from a checkout, and the Python scripts and tests it names stay until the
+Python execution path is removed. Installing and operating the runtime is
+[runtime installation](runtime-install.md).
 
 ## Checks
 
@@ -54,6 +57,14 @@ Skill Markdown contains executable instructions. A manifest version update paire
 with a skill edit still selects full coverage; this selector does not infer a
 version-only exemption from JSON contents. The PR template lives under `.github/`
 and conservatively selects full coverage too.
+
+Markdown under `packages/`, the package READMEs included, stays in the full class.
+Every file there is inside a package's subdirectory tree, which
+`runtime_install.py verify-definition` re-derives against
+`scripts/crw_runtime/components.json` in `validate`, so a README edit cannot land
+without that full-class file changing too; and `test_regression_map.py` reads
+`packages/codex-session-relay/docs/contention-regression.md`, so a package document can
+fail a package suite.
 
 `selection` runs first. Selected test and package jobs and `validate` then run
 independently; secret scanning is independent. The contract check runs once in

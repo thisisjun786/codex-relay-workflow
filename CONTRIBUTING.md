@@ -32,14 +32,27 @@ copy an entire issue description, not just its URL.
 
 ## Check locally
 
-Use Python 3.10 or newer. No dependency installation is needed for these checks:
+The repository checks run from the development binary, with the Go toolchain `go.mod`
+names:
+
+```sh
+go run -tags dev ./cmd/crw-dev ci validate
+go run -tags dev ./cmd/crw-dev ci plugin
+go run -tags dev ./cmd/crw-dev ci contracts
+git diff --check
+```
+
+Changes to the runtime (`cmd/`, `internal/`, `contract/`) also need `make lint test`;
+[CI operation](docs/CI.md) lists the parts CI splits that into.
+
+Until the Python execution path is removed, the Python checks remain and CI runs them
+too. They are developer-only, need Python 3.10 or newer and no dependency installation:
 
 ```sh
 python3 scripts/ci/validate.py
 python3 scripts/ci/plugin.py
 python3 -m unittest discover -s scripts/ci/tests -v
 python3 scripts/ci/contracts.py
-git diff --check
 ```
 
 Changes under `packages/` also need [uv](https://docs.astral.sh/uv/) and Python 3.11
@@ -53,6 +66,9 @@ It locks, installs and tests both packages from this checkout, then builds both
 wheels. The bridge's worktree tests create repositories under the pytest temporary
 directory, so the check refuses to run when the system temporary directory is itself
 inside a Git checkout; set `CRW_PACKAGES_TMPDIR` to a clean path if yours is.
+Any edit under `packages/`, a README included, changes the package trees that
+`runtime_install.py verify-definition` re-derives in CI, so record the derived values
+in `scripts/crw_runtime/components.json` in the same change.
 
 Installer tests use temporary destinations; do not point test runs at your real
 Codex skill directory. The bundled Codex skill validator, when installed, is an

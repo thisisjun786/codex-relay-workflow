@@ -4,17 +4,31 @@ Read when an assignment is actually HELD BY A RELAY. Ordinary `crw-run` does not
 this: without a relay the existing dispatch, review, and correction rules stand unchanged, and
 nothing below becomes a prerequisite.
 
-`codex-session-relay` is a separate installed package that records one issue's assignment durably:
-the relationship, its execution generations, each delivery attempt, the parent's acknowledgement
-and verdict, and the coordination summary owed to a Linear document. It owns none of that
+`codex-session-relay` is the relay of the installed runtime: the `crw` binary under that name on a
+Go runtime, or the Python fence release's console script on a host the cutover has not yet moved. It
+records one issue's assignment durably: the relationship, its execution generations, each delivery attempt, the
+parent's acknowledgement and verdict, and the coordination summary owed to a Linear document. It owns none of that
 workflow's authority. It does not read or write any task's CXC state, and CXC startup and phase
 procedure stay with the installed `cxc-loop` and `cxc-pabcd` skills; this reference never restates
 them.
 
-Verified against `codex-session-relay` 0.1.0 on 2026-09-15: the commands, their arguments, the
-refusal reasons quoted here and the record shapes were read from that installed package and
-exercised against temporary stores. A different installed version may not share them, so check
-the version before relying on a refusal reason or a field name.
+Verified against `crw` built from `423c2584` on 2026-09-29: every command and flag this page
+names is one `crw relay <command> --help` lists. The refusal reasons quoted here and the record
+shapes were read from the Python `codex-session-relay` 0.1.0 on 2026-09-15 and exercised against
+temporary stores; the Go relay is held to that package's outputs by
+[the contract corpus](../../../../../contract/README.md), which is a different claim from having
+re-read each of them here. A different installed build may not share them, so check what is
+installed before relying on a refusal reason or a field name.
+
+The commands below run `codex-session-relay` as a shell command, so they reach whatever `PATH`
+finds first. The runtime installer places that name in `~/.local/share/crw-runtime/current/bin/`
+and does not manage `PATH`. Before relying on a result, check that
+`readlink -f "$(command -v codex-session-relay)"` lies inside the runtime directory the pointer
+selects, `readlink -f ~/.local/share/crw-runtime/current`, and not in an older copy earlier on
+`PATH`. That is the directory's `bin/crw` on a Go runtime (`bin-<version>-<digest>`), and its
+`bin/codex-session-relay` on a Python fence runtime (`env-*`) before the cutover. Or run the relay
+by that absolute path
+([how skill commands reach the relay](../../../../../docs/runtime-install.md#how-skill-commands-reach-the-relay)).
 
 Global options come BEFORE the subcommand:
 
@@ -128,8 +142,11 @@ what reports a real assignment as absent from whatever store answers there, or r
 6. `doctor --issue <issue>` again — expect `holds` true, the responsible child, and
    `storeAgreement` `same`.
 
-`tests/test_managed_execution.py` in the relay package runs exactly this sequence against a real
-store and asserts the chain, so an instruction that stopped producing it fails there. It covers
+`tests/test_managed_execution.py` in the Python relay package runs exactly this sequence against a
+real store and asserts the chain, and `Test27_MEX_1_PythonInstructedSequenceWholeOutput` in
+[the Go runtime's managed tests](../../../../../internal/relay/managed/capture_test.go) holds the Go
+relay's output for the same sequence equal to it, so an instruction that stopped producing it fails
+there. It covers
 managed START only: an offline `emit` stages and a staged receipt has no delivery row, and
 `deliver` needs the socket, so the delivery and correction legs are asserted against a real store
 through the fake host instead. Note that the doc and the test are not yet compared automatically —
@@ -153,12 +170,12 @@ The durable owners are separate:
 
 | Boundary | Owner | Evidence it supplies |
 | --- | --- | --- |
-| Dispatch intent and task correlation | [intent.py](../../../../../packages/codex-session-relay/src/codex_session_relay/intent.py) | Published intent, creation observations, identity binding and relationship reference |
-| Authorized assignment and execution | [registry.py](../../../../../packages/codex-session-relay/src/codex_session_relay/registry.py) and [criteria.py](../../../../../packages/codex-session-relay/src/codex_session_relay/criteria.py) | Endpoints, scope, generation, exact dispatch anchor and canonical criteria |
-| Actual worker policy | [service.py](../../../../../packages/codex-session-relay/src/codex_session_relay/service.py) and [rolepolicy.py](../../../../../packages/codex-session-relay/src/codex_session_relay/rolepolicy.py) | The serving process's policy snapshot and point-in-time readiness |
-| Child's declared result and observed turn ending | [receipts.py](../../../../../packages/codex-session-relay/src/codex_session_relay/receipts.py) | Staged versus final result, or failure/interruption/ordinary turn end |
-| Stop-time omission | [guard.py](../../../../../packages/codex-session-relay/src/codex_session_relay/guard.py) | Bounded missing-declaration/receipt observations, never an invented result |
-| Delivery, acknowledgement and judgment | [delivery.py](../../../../../packages/codex-session-relay/src/codex_session_relay/delivery.py) and [ack.py](../../../../../packages/codex-session-relay/src/codex_session_relay/ack.py) | Separate queued, dispatched, received and judged states |
+| Dispatch intent and task correlation | [intent.go](../../../../../internal/relay/delivery/intent.go) | Published intent, creation observations, identity binding and relationship reference |
+| Authorized assignment and execution | [registry.go](../../../../../internal/relay/registry/registry.go) and [criteria.go](../../../../../internal/relay/delivery/criteria.go) | Endpoints, scope, generation, exact dispatch anchor and canonical criteria |
+| Actual worker policy | [the service package](../../../../../internal/relay/service/) and [rolepolicy.go](../../../../../internal/relay/registry/rolepolicy.go) | The serving process's policy snapshot and point-in-time readiness |
+| Child's declared result and observed turn ending | [receipt_classification.go](../../../../../internal/relay/store/receipt_classification.go) and [receipt_staging.go](../../../../../internal/relay/store/receipt_staging.go) | Staged versus final result, or failure/interruption/ordinary turn end |
+| Stop-time omission | [guard.go](../../../../../internal/relay/hook/guard.go) | Bounded missing-declaration/receipt observations, never an invented result |
+| Delivery, acknowledgement and judgment | [the delivery service](../../../../../internal/relay/delivery/service.go) and [ack.go](../../../../../internal/relay/delivery/ack.go) | Separate queued, dispatched, received and judged states |
 
 A registered generation can still lack its first dispatch anchor. Receipt intake refuses it
 until an exact turn is bound. The [live-trial startup order](../../../../../docs/live-trial.md#the-order)

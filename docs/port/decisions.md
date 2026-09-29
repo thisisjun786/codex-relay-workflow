@@ -369,15 +369,17 @@ the entry point with the settings path as its one argument, which is what the Go
 
 One document for both runtime kinds (todo 38 review): `crw install` writes one plugin-owned Stop
 settings document, valid through the pointer for a Go runtime and for a venv alike, and no
-promotion or rollback rewrites it. `/usr/bin/env <destination>/current/bin/crw-completion-hook
-<settings>` runs the Go hook on a Go runtime and, on a venv, the fence release's
+promotion or rollback rewrites that document.
+`/usr/bin/env <destination>/current/bin/crw-completion-hook <settings>` runs the Go hook on a Go runtime and, on a venv, the fence release's
 `crw-completion-hook` console script (`codex_session_relay.stopadapter:main`, which reads
 `argv[1]` as its settings; its `complaints()` accepts `/usr/bin/env`), and `relayExecutable`
 `<destination>/current/bin/codex-session-relay` is the Go link or the venv's console script. The
-only rewrite is forward, once: the relay host's Python-era document (`adapterInterpreter`
-`.../current/bin/python3`, a path that vanishes when the pointer leaves the venv) is archived on
-the first Go install - under the `.superseded-<stamp>` name `steps.retire` gives, as a hard link
-to the same file (a copy where the filesystem refuses a link), never deleted - and replaced by its
+only rewrite is of a Python-era document, when the pointer moves onto a Go runtime: the relay
+host's Python-era document (`adapterInterpreter` `.../current/bin/python3`, a path that vanishes
+when the pointer leaves the venv) is archived on the first Go install, and on any later install,
+update or rollback onto a Go runtime that finds one put back by hand - under the
+`.superseded-<stamp>` name `steps.retire` gives, as a hard link to the same file (a copy where the
+filesystem refuses a link), never deleted - and replaced by its
 Go variant (the same host facts, only the two adapter keys moved) in one rename, inside the
 promotion and before the pointer moves. Both documents run while the pointer still names the
 venv, so there is no window. That holds for the Stop commands that run the adapter keys, the
@@ -1690,13 +1692,14 @@ runtime_install.py would record such a path surrogate-escaped; refusing it is a 
 narrowing, because a record, settings document or pointer carrying U+FFFD names a file that does
 not exist. The execution policy path is the one path recorded surrogate-escaped, as
 runtime_install.py records it (decision 18). A HOME that is relative, holds `..` or starts with
-`//` is refused as well, since pathlib and a lexical join would spell the destination as two
-directories. A relative XDG_STATE_HOME is refused as a usage error, as the doctor refuses it:
-runtime_install.py reads it against the working directory and the XDG specification says to
-ignore it, and either would put the host record somewhere the doctor and the runtime's record
-readers do not look. `--execution-policy` given at all is read as a policy, so an empty value (or
-an empty last value of a repeated flag) is refused as runtime_install.py refuses it, never taken
-as no policy. Exit
+exactly two slashes (`//`, which pathlib keeps and a lexical join folds) is refused as well, since
+pathlib and a lexical join would spell the destination as two directories. A relative XDG_STATE_HOME
+is refused as a usage error, as the doctor refuses to read it (it reports the host record as
+ACCESS_ERROR and exits 0): runtime_install.py reads it against the working directory and the XDG
+specification says to ignore it, and either would put the host record somewhere the doctor and the
+runtime's record readers do not look. `--execution-policy` given at all is read as a policy, so an
+empty value (or an empty last value of a repeated flag) is refused as runtime_install.py refuses
+it, never taken as no policy. Exit
 statuses are 0 (promoted and settled, or already installed), 1 (refused: nothing moved, and this
 run's directory was released unless the record or the pointer may name it), 2 (usage) and 3
 (promoted and in service, only the claim unsettled: never a free destination). `crw install
@@ -1731,8 +1734,9 @@ interrupted move (the pointer names a recorded runtime the record does not selec
 both, since returning to `outgoing` could undo a committed choice. A claim written into a
 directory runtime_install.py claimed (an `env-*` one, or one whose claim it wrote) keeps its shape,
 `writtenBy` runtime_install.py, so runtime_install.py still reads it; and a claim is never written
-into a directory that is gone, which the claim's lock would otherwise make again. No rollback
-rewrites the Stop settings (decision 18); a Stop on a venv reaches them through the pre-native
+into a directory that is gone, which the claim's lock would otherwise make again. A rollback onto
+a venv never rewrites the Stop settings, and one onto a Go runtime replaces a Python-era document as
+a promotion does (decision 18); a Stop on a venv reaches them through the pre-native
 declaration, which a host rolling back holds because the payload goes back before the runtime
 (decision 26). For a Python venv target the gate's schema cell compares the store with this
 build's declared schema, which stands for the Python runtime's because the DDL is identical (decision 14) and no Go

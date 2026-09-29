@@ -11,11 +11,23 @@ transport; it does not restore or impersonate OpenAI's native Desktop tools.
 
 ## Install
 
-Requires Python 3.11+ (and Git for isolated launches), [uv](https://docs.astral.sh/uv/),
-and a running, authenticated Codex App Server with a Unix WebSocket control socket.
-Run the bridge as the same
-user, on the same host as that App Server. Linux is the validated host platform;
-the Unix transport is not a Windows-native transport.
+A host runs this bridge as the `codex-thread-bridge` name of the `crw` runtime, one Go binary
+built from this repository and installed with `crw install`
+([runtime installation](../../docs/runtime-install.md)). The crw plugin declares the MCP server,
+and its launcher starts `~/.local/share/crw-runtime/current/bin/codex-thread-bridge` under the
+record `crw install register-mcp` writes ([plugin packaging](../../docs/plugin-packaging.md)).
+A host that also registers the server in its `config.toml` runs two bridges, and
+`crw install register-mcp` refuses the plugin's record while such an entry exists.
+
+Either way the bridge needs a running, authenticated Codex App Server with a Unix WebSocket
+control socket, and runs as the same user, on the same host as that App Server. Linux is the
+validated host platform; the Unix transport is not a Windows-native transport.
+
+### This Python package
+
+Installing this package is developer-only: it is the Python implementation the runtime was
+ported from, and it stays the development path until the Python execution path is removed. It
+requires Python 3.11+ (and Git for isolated launches) and [uv](https://docs.astral.sh/uv/).
 
 From a clone of this repository:
 
@@ -25,7 +37,8 @@ uv sync --frozen --no-dev
 codex app-server daemon version
 ```
 
-Register the server **on the remote Codex host**, replacing the absolute path:
+To run it on its own, outside the plugin, register the server **on the remote Codex host**,
+replacing the absolute path:
 
 ```sh
 codex mcp add codex-thread-bridge -- /absolute/path/codex-thread-bridge/.venv/bin/codex-thread-bridge
@@ -620,6 +633,8 @@ A worktree lock protects against ordinary pruning, not external deletion, and a
 replayed receipt is historical evidence rather than proof of current existence.
 
 ## Development
+
+This section is developer-only; it works on the Python package.
 
 ```sh
 uv sync --frozen --group dev

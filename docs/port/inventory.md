@@ -28,7 +28,7 @@ differ, when a line count differs from `wc -l`, when an owning issue is missing,
 
 ## Files
 
-Total non-test lines: 95711
+Total non-test lines: 95765
 
 | path | lines | invoked | runs | owner | disposition | consumer_search | removal_trigger |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -118,11 +118,11 @@ Total non-test lines: 95711
 | `plugins/crw/skills/crw-run/scripts/start_policy.py` | 289 | skill instruction (start-policy.md:114) + CI (scripts/ci/contracts.py:18 `selftest`) | end user + relay host | CRW-156 | port | - | - |
 | `plugins/crw/wiring/crw_bridge_mcp.py` | 239 | MCP: mcp.json `python3 ./wiring/crw_bridge_mcp.py` (cwd plugin root); exec's the pointer-named bridge (:230-232) | end user + relay host | CRW-156 | retire-with-evidence | `grep -rn crw_bridge_mcp` over plugins/, scripts/, docs/ (consumers: mcp.json:6, crw_transition/steps.py:40/764, test_plugin_wiring) + host scan of `~/.codex/plugins/cache/crw/crw/*/.mcp.json`/`wiring/*` and `~/.codex/config.toml` command strings | todo 34 switched mcp.json to `sh ./wiring/crw-bridge.sh` and ported the record contract to `codex-thread-bridge --plugin-launch` (internal/pluginwiring, decision 26), so only sessions that cached the older declaration start it; deleted in todo 44 only after todo 43's retention scan reports no live or resumable reference |
 | `plugins/crw/wiring/crw_stop_hook.py` | 156 | Stop hook: `python3 -c <bootstrap>` in hooks/stop-recording-completion.json:8 exec's it (or its copy `<CODEX_HOME>/crw-stop-hook.py`); spawns `adapterInterpreter adapterEntryPoint` (:141) | end user + relay host | CRW-156 | retire-with-evidence | `grep -rn crw_stop_hook` and `grep -rn crw-stop-hook` over plugins/, scripts/, docs/ (consumers: stop-recording-completion.json:8, crw_runtime/completion.py:107/437-438 LAUNCHER_SOURCE, crw_transition/steps.py:40, docs/plugin-packaging.md:375) + host scan of cached `wiring/*` and `<CODEX_HOME>/crw-stop-hook.py` | todo 34 changed the hook command to the `crw hook --plugin-launch; exit 0` shell string (decision 26), so only turns whose command was fixed before it run it; deleted in todo 44 only after todo 43's retention scan reports no live or resumable turn whose fixed hook command still names it |
-| `scripts/check_operations_contract.py` | 241 | CI: scripts/ci/contracts.py:12 (operations fixtures replay) | dev/CI | CRW-160 | port | - | - |
+| `scripts/check_operations_contract.py` | 260 | CI: scripts/ci/contracts.py:12 (operations fixtures replay) | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/contracts.py` | 43 | CI: ci.yml:55 `python3 scripts/ci/contracts.py` | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/gate.py` | 45 | CI: ci.yml:122 required-checks gate | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/packages.py` | 331 | CI: ci.yml:104 per-package pytest (RELAY_CONFORMANCE_REQUIRED=1) | dev/CI | CRW-160 | port | - | - |
-| `scripts/ci/plugin.py` | 964 | CI: ci.yml:54 | dev/CI | CRW-160 | port | - | - |
+| `scripts/ci/plugin.py` | 999 | CI: ci.yml:54 | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/scope.py` | 155 | CI: ci.yml:39 path-scope selection | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/validate.py` | 145 | CI: ci.yml:53 link/metadata validation | dev/CI | CRW-160 | port | - | - |
 | `scripts/completion_hook.py` | 53 | user-owner Stop hook: `<CODEX_HOME>/hooks.json` entry `<python> <checkout>/scripts/completion_hook.py` written by runtime_install.py `hook --owner user`; imports crw_runtime.completion | end user + relay host | CRW-156 | retire-with-evidence | `grep -rn completion_hook` over scripts/, docs/, packages/ (consumers: crw_runtime/completion.py:59 ENTRY_POINT_NAME, crw_transition/inventory.py:59/529, docs/runtime-install.md:1511, docs/plugin-transition.md:18) + host scan of `<CODEX_HOME>/hooks.json` | the user-owned registration is retired in todo 38 (`crw install hook` is plugin-owned only and writes no hooks.json entry); deleted in todo 44 after todo 43's retention scan finds no hooks.json entry naming it |

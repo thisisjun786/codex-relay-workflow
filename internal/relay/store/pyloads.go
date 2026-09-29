@@ -141,7 +141,8 @@ func PythonStrip(value string) string {
 	return strings.TrimFunc(value, func(r rune) bool { return unicode.IsSpace(r) || r >= 0x1c && r <= 0x1f })
 }
 
-// PathlibSpelling is str(Path(value)): empty and "." components collapse, ".." stays.
+// PathlibSpelling is str(Path(value)): empty and "." components collapse, ".." stays. It folds
+// exactly two leading slashes to one, where pathlib keeps them (docs/port/refactor-backlog.md).
 func PathlibSpelling(value string) string { return pathlibSpelling(value) }
 
 // AbsoluteExpanded is str(Path(value).expanduser().absolute()): home expanded (ErrNoHome for an

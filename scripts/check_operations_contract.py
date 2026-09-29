@@ -30,7 +30,12 @@ REQUIRED_PARTS = ("Observed:", "Clauses:", "Action:", "Preserved:")
 # checked by the clause pattern instead.
 MIN_PART_CHARACTERS = {"Observed:": 40, "Clauses:": 7, "Action:": 80, "Preserved:": 40}
 FIELD_VALUES = {"verified", "not_verified", "unknown", "not_applicable"}
-POINT_KEYS = ("interpreter", "codexCli", "appServer", "host", "date", "measuredBy", "method")
+# OPS-1.3: a point names the install it covers and the bytes that ran; a Python-era point (the
+# fence installer's, until the Python execution path is removed) names its interpreter instead,
+# because there the interpreter is part of the combination.
+GO_POINT_KEYS = ("install", "installDigest", "codexCli", "appServer", "host", "date", "measuredBy",
+                 "method")
+PYTHON_POINT_KEYS = ("interpreter", "codexCli", "appServer", "host", "date", "measuredBy", "method")
 
 
 def read(path):
@@ -96,9 +101,16 @@ def compatibility_record(record, problems):
         problems.append("compatibility components do not share one field set")
     for component in components:
         name = component.get("component", "<unnamed>")
-        for key in ("source", "revision", "tree", "version", "requiresPython", "installs"):
+        for key in ("source", "revision", "tree", "version", "installs"):
             if not component.get(key):
                 problems.append(name + " is missing a non-empty " + key)
+        # OPS-1.1: requires-python belongs to a Python-era install, which records an install mode;
+        # a Go install is a release binary and declares no interpreter at all.
+        installs = component.get("installs")
+        python_era = isinstance(installs, list) and any(
+            isinstance(install, dict) and "installMode" in install for install in installs)
+        if python_era and not component.get("requiresPython"):
+            problems.append(name + " is missing a non-empty requiresPython, which a Python-era install needs")
         # OPS-1.3 lets a component legitimately hold no measured point: a combination nobody has
         # exercised is unmeasured, and the honest record says so with an empty list rather than by
         # promoting an inventory observation. The key itself is still required, because silence
@@ -120,9 +132,17 @@ def compatibility_record(record, problems):
             problems.append(name + " tree is not a full 40 character tree id")
         if "remote" not in component.get("source", {}):
             problems.append(name + " does not state a remote, not even as none")
-        for install in component.get("installs", []):
-            if install.get("installMode") not in {"editable", "copied"}:
-                problems.append(name + " has an install with an undeclared installMode")
+        installs = component.get("installs", [])
+        for install in installs:
+            if "installMode" in install:
+                if install.get("installMode") not in {"editable", "copied"}:
+                    problems.append(name + " has an install with an undeclared installMode")
+            else:
+                # A Go install: the binary's own digest and the target it was built for.
+                if len(str(install.get("binaryDigest", ""))) != 64:
+                    problems.append(name + " has a Go install without a 64 character binaryDigest")
+                if not install.get("target"):
+                    problems.append(name + " has a Go install that does not name its target")
             if len(str(install.get("integrity", ""))) != 64:
                 problems.append(name + " has an install without a 64 character integrity digest")
             for key in ("environment", "location", "entryPoint"):
@@ -135,9 +155,24 @@ def compatibility_record(record, problems):
             if not isinstance(point, dict):
                 problems.append(name + " has a measured point that is not an object")
                 continue
-            for key in POINT_KEYS:
+            python_point = "interpreter" in point
+            for key in PYTHON_POINT_KEYS if python_point else GO_POINT_KEYS:
                 if key not in point:
                     problems.append(name + " has a measured point missing " + key)
+            # OPS-1.3: a point takes the kind of the install it covers, so its shape alone proves
+            # nothing. A Python-era point needs a Python-era install beside it; a Go point names one
+            # of this component's Go installs by location and the digest of that binary's bytes.
+            if python_point:
+                if not python_era:
+                    problems.append(name + " has a Python-era measured point but no Python-era install for it to cover")
+            else:
+                covered = [install for install in installs if "installMode" not in install
+                           and isinstance(point.get("install"), str) and install.get("location") == point.get("install")]
+                digest = point.get("installDigest")
+                if not covered:
+                    problems.append(name + " has a measured point that names no Go install of this component")
+                elif not isinstance(digest, str) or covered[0].get("binaryDigest") != digest:
+                    problems.append(name + " has a measured point whose installDigest is not its install's binaryDigest")
     if "unmeasured" not in record:
         problems.append("the compatibility example does not say what is unmeasured, which invites a range claim")
 
