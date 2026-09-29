@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -107,14 +108,34 @@ func venvRoot(path string) string {
 }
 
 // Classify resolves value (relative values against base) and says what it is. pointerPath,
-// when set, marks a reference that reaches its target through the owned pointer.
+// when set, marks a reference that reaches its target through the owned pointer. A shell
+// wrapper's $VAR and ~ words are not expanded here; a Classifier with an Expander does that.
 func Classify(value, base, pointerPath string) Executable {
+	return Classifier{Pointer: pointerPath}.Classify(value, base)
+}
+
+// Classifier classifies the references of one host: its owned pointer, and the expansions a
+// shell wrapper's words are made with.
+type Classifier struct {
+	Pointer string
+	Expand  Expander
+}
+
+// maxWrapperDepth bounds how many shell wrappers are followed from one reference.
+const maxWrapperDepth = 4
+
+// Classify is the package-level Classify with this classifier's pointer and expansions.
+func (c Classifier) Classify(value, base string) Executable {
+	return c.classify(value, base, 0)
+}
+
+func (c Classifier) classify(value, base string, depth int) Executable {
 	e := Executable{Value: value}
 	path := value
 	if !filepath.IsAbs(path) && base != "" {
 		path = base + "/" + path
 	}
-	if pointerPath != "" && (path == pointerPath || strings.HasPrefix(path, strings.TrimSuffix(pointerPath, "/")+"/")) {
+	if pointerPath := c.Pointer; pointerPath != "" && (path == pointerPath || strings.HasPrefix(path, strings.TrimSuffix(pointerPath, "/")+"/")) {
 		e.ThroughPointer = true
 	}
 	if strings.HasSuffix(value, ".py") {
@@ -157,8 +178,7 @@ func Classify(value, base, pointerPath string) Executable {
 		e.Kind, e.Detail = KindUnreadable, "the file could not be read: "+store.PythonOSError(err)
 		return e
 	}
-	switch {
-	case native(head):
+	if native(head) {
 		if PythonName(value) || PythonName(resolved) {
 			e.Kind, e.Python, e.Detail = KindPythonInterpreter, true, "a native binary named as a Python interpreter"
 		} else if root := venvRoot(filepath.Dir(path)); root != "" && PythonName(path) {
@@ -166,22 +186,197 @@ func Classify(value, base, pointerPath string) Executable {
 		} else {
 			e.Kind, e.Detail = KindNative, "a native binary"
 		}
+		return e
+	}
+	interpreter, script := shebang(head)
+	root := venvRoot(filepath.Dir(resolved))
+	switch {
+	case polyglot(head):
+		e.Kind, e.Python, e.Detail = KindPythonScript, true, "a #! shell launcher that re-executes itself under Python (the '''exec' form pip and uv write when the interpreter's path is too long for #! or contains a space)"
+	case script && PythonName(interpreter):
+		e.Kind, e.Python, e.Detail = KindPythonScript, true, "a script run by "+interpreter
+	case root != "":
+		e.Kind, e.Python, e.Detail = KindPythonScript, true, "a file inside the Python virtual environment at "+root
+	case script && shells[filepath.Base(interpreter)]:
+		c.wrapper(&e, resolved, interpreter, depth)
+	case script:
+		e.Kind, e.Detail = KindScript, "a script run by "+interpreter
+	case strings.HasSuffix(resolved, ".py") || e.Python:
+		e.Kind, e.Python, e.Detail = KindPythonScript, true, "a Python source file"
+	case PythonName(value) || PythonName(resolved):
+		e.Kind, e.Python, e.Detail = KindPythonInterpreter, true, "a file named as a Python interpreter"
 	default:
-		if interpreter, ok := shebang(head); ok {
-			if PythonName(interpreter) {
-				e.Kind, e.Python, e.Detail = KindPythonScript, true, "a script run by "+interpreter
-			} else {
-				e.Kind, e.Detail = KindScript, "a script run by "+interpreter
-			}
-		} else if strings.HasSuffix(resolved, ".py") || e.Python {
-			e.Kind, e.Python, e.Detail = KindPythonScript, true, "a Python source file"
-		} else if PythonName(value) || PythonName(resolved) {
-			e.Kind, e.Python, e.Detail = KindPythonInterpreter, true, "a file named as a Python interpreter"
-		} else {
-			e.Kind, e.Detail = KindOther, "neither a native binary nor a #! script"
-		}
+		e.Kind, e.Detail = KindOther, "neither a native binary nor a #! script"
 	}
 	return e
+}
+
+// polyglot is the exec launcher pip and uv write: a #! line, then a line starting with three
+// single quotes and exec, which sh runs as `exec <python> "$0" "$@"` and Python reads as the
+// start of a string literal. Only a Python launcher is written so.
+func polyglot(head []byte) bool {
+	if !bytes.HasPrefix(head, []byte("#!")) {
+		return false
+	}
+	_, rest, _ := bytes.Cut(head, []byte("\n"))
+	return bytes.HasPrefix(rest, []byte("'''exec'"))
+}
+
+// shells are the interpreters whose scripts are read for what they run.
+var shells = map[string]bool{"sh": true, "bash": true, "dash": true, "zsh": true, "ksh": true, "mksh": true, "ash": true}
+
+// wrapperLimit is the most of a shell script read for what it runs; a larger one is not a
+// wrapper this scan can judge.
+const wrapperLimit = 1 << 20
+
+// wrapper judges a shell script by what it runs: a word naming a Python interpreter or a .py
+// file, or a path (the target of exec, or any absolute path) that classifies as Python. A
+// path it cannot expand or read leaves the script unreadable rather than judged.
+func (c Classifier) wrapper(e *Executable, path, interpreter string, depth int) {
+	e.Kind, e.Detail = KindScript, "a script run by "+interpreter
+	if depth >= maxWrapperDepth {
+		e.Kind, e.Detail = KindUnreadable, "a shell script reached through "+strconv.Itoa(maxWrapperDepth)+" wrappers, which this scan does not follow further"
+		return
+	}
+	body, err := readLimited(path, wrapperLimit)
+	switch {
+	case err != nil:
+		e.Kind, e.Detail = KindUnreadable, "the shell script could not be read: "+store.PythonOSError(err)
+		return
+	case len(body) > wrapperLimit:
+		e.Kind, e.Detail = KindUnreadable, "a shell script larger than "+strconv.Itoa(wrapperLimit)+" bytes, which this scan does not read through"
+		return
+	}
+	unresolved := ""
+	for n, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if n == 0 || line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		words := ShellWords(line)
+		for i, word := range words {
+			if strings.Contains(word, "\n") {
+				continue // a program passed to -c
+			}
+			// A quoted message ("run setup.py") is not a path; a quoted path may hold a space,
+			// and "$DIR/x.py" names a .py file whatever DIR is.
+			path := !strings.ContainsAny(word, " \t") || strings.ContainsRune("/$~", rune(word[0]))
+			if PythonName(word) || (strings.HasSuffix(word, ".py") && path) {
+				e.Kind, e.Python, e.Detail = KindPythonScript, true, "a shell script that runs "+word
+				return
+			}
+			target := i > 0 && words[i-1] == "exec"
+			expanded, missing := c.Expand.Expand(word)
+			switch {
+			case missing != "":
+				if target && unresolved == "" {
+					unresolved = "a shell script that execs " + word + ", which needs " + missing + ", an expansion this scan does not make"
+				}
+				continue
+			case target && !strings.Contains(expanded, "/"):
+				found, err := lookPath(expanded, c.Expand.Path)
+				if err != nil {
+					continue
+				}
+				expanded = found
+			case !filepath.IsAbs(expanded):
+				continue
+			}
+			inner := c.classify(expanded, "", depth+1)
+			switch {
+			case inner.Python:
+				e.Kind, e.Python, e.Detail = KindPythonScript, true, "a shell script that runs "+word+", "+inner.Detail
+				return
+			case inner.Kind == KindUnreadable && unresolved == "":
+				unresolved = "a shell script that runs " + word + ", " + inner.Detail
+			}
+		}
+	}
+	if unresolved != "" {
+		e.Kind, e.Detail = KindUnreadable, unresolved
+	}
+}
+
+func readLimited(path string, limit int64) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return io.ReadAll(io.LimitReader(file, limit+1))
+}
+
+// Expander makes the expansions of a command word that this scan can make as the shell would:
+// a leading ~ or ~/ (HOME), and $NAME or ${NAME} for the names in Vars. Path is the PATH a
+// bare command name is looked up in.
+type Expander struct {
+	Vars map[string]string
+	Path string
+}
+
+// Expand returns word with every expansion made, or word unchanged and the first expansion
+// that cannot be made, as written.
+func (x Expander) Expand(word string) (string, string) {
+	expanded := word
+	if strings.HasPrefix(word, "~") {
+		name, rest, slash := strings.Cut(word[1:], "/")
+		home := x.Vars["HOME"]
+		if name != "" || home == "" {
+			return word, "~" + name
+		}
+		expanded = home
+		if slash {
+			expanded = strings.TrimSuffix(home, "/") + "/" + rest
+		}
+	}
+	if strings.Contains(expanded, "`") {
+		return word, "`"
+	}
+	var out strings.Builder
+	for i := 0; i < len(expanded); i++ {
+		if expanded[i] != '$' || i+1 == len(expanded) {
+			out.WriteByte(expanded[i])
+			continue
+		}
+		var name, written string
+		if expanded[i+1] == '{' {
+			end := strings.IndexByte(expanded[i:], '}')
+			if end < 0 {
+				return word, expanded[i:]
+			}
+			name, written = expanded[i+2:i+end], expanded[i:i+end+1]
+			i += end
+		} else {
+			j := i + 1
+			for j < len(expanded) && nameByte(expanded[j], j > i+1) {
+				j++
+			}
+			if j == i+1 {
+				return word, expanded[i : i+2]
+			}
+			name, written = expanded[i+1:j], expanded[i:j]
+			i = j - 1
+		}
+		value := x.Vars[name]
+		if value == "" || !validName(name) {
+			return word, written
+		}
+		out.WriteString(value)
+	}
+	return out.String(), ""
+}
+
+func nameByte(b byte, digitAllowed bool) bool {
+	return b == '_' || b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' || digitAllowed && b >= '0' && b <= '9'
+}
+
+func validName(name string) bool {
+	for i := 0; i < len(name); i++ {
+		if !nameByte(name[i], i > 0) {
+			return false
+		}
+	}
+	return name != ""
 }
 
 func readHead(path string) ([]byte, error) {

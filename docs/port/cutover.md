@@ -956,21 +956,29 @@ the protocol.
 `crw doctor retention-scan --json` (todo 37, `internal/runtime/doctor`) enumerates exactly this
 fixed list. It resolves every executable reference through the owned pointer and every link and
 classifies what the reference resolves to (a native binary, a Python interpreter, a `#!` script
-naming one, a `.py` file, a venv), never the text of the reference: on the relay host
-`current/bin/codex-session-relay` names no Python while `current` points at a venv. It reports:
+naming one, the `#!/bin/sh` then `'''exec'` launcher pip and uv write for a long or spaced
+interpreter path, any non-native file inside a venv, a shell script that runs one of these, a
+`.py` file, a venv), never the text of the reference: on the relay host
+`current/bin/codex-session-relay` names no Python while `current` points at a venv. Each word
+is first expanded as the shell would expand it: `~` and `$HOME` from the scan's environment,
+`$CODEX_HOME` as the scan reads it, and `${PLUGIN_ROOT}` (row 5 only) as the cached version's
+directory. A word that needs any other expansion is listed as unreadable. It reports:
 
 - `pythonReferences`: every reference that resolves to Python, with its row, source file, field
   and what it resolves to;
 - `liveHolds`: every turn that may still be running a command this scan cannot see (rows 1 and
   2); a hold is not a Python reference, it is a reason to wait;
-- `unscanned` and `unreadable`: rows the scan did not read and files it could not read;
+- `unscanned` and `unreadable`: the rows the scan did not read, and everything it could not
+  read or resolve. That covers files, references whose target cannot be read, words it cannot
+  expand, and alive pids whose `exe` or `cmdline` cannot be read. Nothing the scan cannot judge
+  is dropped;
 - `clear`: true only when all four are empty. Todo 43 removes nothing until `clear` is true.
 
 | # | Surface | What counts |
 |---|---|---|
 | 1 | `<CODEX_HOME>/crw-completion-hook/stop-events/*.json` | a claim whose outcome `<claimedBy.journalRoot>/accepted/<eventKey>.outcome.json` is absent (or that names no journal root): a live hold |
-| 2 | `<journalRoot>/<day>/*.json` rows (journalRoot from `crw-completion-hook.json`, else `<CODEX_HOME>/crw-completion-hook/journal`) | a row younger than twice the longest configured Stop hook timeout (the settings `timeoutSeconds` and every cached or user Stop hook `timeout`, at least 10 s): a live hold |
-| 3 | every relay state directory's `daemon.json` (the state root, each scope under it, and `CODEX_SESSION_RELAY_STATE`) | a supervisor or worker pid whose start time and boot still match the record, running a Python interpreter or a `.py` program |
+| 2 | `<journalRoot>/<day>/*.json` rows (journalRoot from `crw-completion-hook.json`, else `<CODEX_HOME>/crw-completion-hook/journal`) | a row younger than twice the longest configured Stop hook timeout (the settings `timeoutSeconds` and every cached or user Stop hook `timeout`, at least 10 s), read from every day directory the window reaches back into: a live hold. A window too large for a duration holds every row; a NaN timeout leaves the row unscanned |
+| 3 | every relay state directory's `daemon.json` (the state root, each scope under it, and `CODEX_SESSION_RELAY_STATE`) | a supervisor or worker pid whose start time and boot still match the record (a zombie is not alive), running a Python interpreter or a `.py` program. Where no process table can be read (darwin has no procfs), the row is unscanned |
 | 4 | `<CODEX_HOME>/crw-*.json` (`crw-completion-hook.json`, `crw-bridge-mcp.json`, any other) | `relayExecutable`, `bridgeExecutable`, `adapterEntryPoint`, `adapterInterpreter`, `interpreterPath`, `command`, `args`, each resolved |
 | 5 | `<CODEX_HOME>/plugins/cache/crw/crw/*/wiring/hooks/*.json`, `wiring/mcp.json`, `.mcp.json` | each word of every hook and MCP command: a Python interpreter name, a `.py` path, or a path (or first word on PATH) that resolves to Python |
 | 6 | every `managed-start-*.lock` in those state directories | its `/proc/locks` flock holder, judged as in row 3, less the pids row 3 reports |

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,7 +17,6 @@ import (
 	"github.com/BurntSushi/toml"
 	"golang.org/x/sys/unix"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/pointer"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
@@ -95,6 +95,52 @@ func (s *scan) unread(what string, err error) {
 	s.unreadable = append(s.unreadable, what+": "+store.PythonOSError(err))
 }
 
+// unresolved lists a reference whose target this scan could not establish: it may be Python,
+// so it is never dropped.
+func (s *scan) unresolved(row int, source, fieldName, value, detail string) {
+	s.unreadable = append(s.unreadable, source+": row "+strconv.Itoa(row)+" "+fieldName+" "+strconv.Quote(value)+": "+detail)
+}
+
+// judge files one classified reference: a Python one is a reference, and one whose target
+// could not be read is unreadable (a Python one that could not be read is both).
+func (s *scan) judge(row int, source, fieldName string, e Executable, extra ...record.Object) {
+	if e.Python {
+		s.reference(row, source, fieldName, e, extra...)
+	}
+	if e.Kind == KindUnreadable {
+		s.unresolved(row, source, fieldName, e.Value, e.Detail)
+	}
+}
+
+// expander is what a reference may name through the shell: ~ and $HOME from the scan's
+// environment, $CODEX_HOME as the scan reads it, and ${PLUGIN_ROOT} for a command declared by
+// a cached plugin version (that version's directory).
+func (s *scan) expander(pluginRoot string) Expander {
+	vars := map[string]string{"HOME": s.o.Env.Get("HOME"), "CODEX_HOME": s.o.CodexHome}
+	if pluginRoot != "" {
+		vars["PLUGIN_ROOT"] = pluginRoot
+	}
+	return Expander{Vars: vars, Path: s.o.Env.Get("PATH")}
+}
+
+// word classifies one reference as written: its expansions made first, and one that cannot be
+// made reported as a Python reference when the word names Python anyway, else as unreadable.
+// It returns false when the word is left unjudged (the caller decides what a bare word is).
+func (s *scan) word(row int, source, fieldName, word, base, pluginRoot string) (Executable, bool) {
+	x := s.expander(pluginRoot)
+	expanded, missing := x.Expand(word)
+	if missing != "" {
+		if strings.HasSuffix(word, ".py") || PythonName(word) {
+			return Executable{Value: word, Kind: KindPythonScript, Python: true, Detail: "names a Python file through " + missing + ", an expansion this scan does not make"}, true
+		}
+		s.unresolved(row, source, fieldName, word, "names "+missing+", an expansion this scan does not make, so what it runs is unknown")
+		return Executable{}, false
+	}
+	e := Classifier{Pointer: s.pointer, Expand: x}.Classify(expanded, base)
+	e.Value = word
+	return e, true
+}
+
 // RetentionScan is `crw doctor retention-scan --json`: every reference to a Python interpreter,
 // venv or .py path that a live or resumable task could still spawn, found by resolving each
 // executable reference (through the owned pointer and every link) and classifying what it
@@ -142,10 +188,7 @@ func RetentionScan(ctx context.Context, o RetentionOptions) Object {
 			unscanned = append(unscanned, "row "+scope.PyStr(record.Get(one.(Object), "row"))+": "+scope.PyStr(record.Get(one.(Object), "detail")))
 		}
 	}
-	longest := DefaultHookTimeout
-	for _, t := range s.timeouts {
-		longest = max(longest, t)
-	}
+	longest := s.longestTimeout()
 	clear := len(s.references) == 0 && len(s.holds) == 0 && len(unscanned) == 0 && len(s.unreadable) == 0
 	return Object{
 		{Key: "command", Value: "doctor retention-scan"},
@@ -212,8 +255,8 @@ func (s *scan) settingsRecords() Object {
 				if _, list := record.Get(value, key).([]any); list {
 					name = key + "[" + strconv.Itoa(i) + "]"
 				}
-				if e := Classify(text, "", s.pointer); e.Python {
-					s.reference(4, path, name, e)
+				if e, ok := s.word(4, path, name, text, "", ""); ok {
+					s.judge(4, path, name, e)
 				}
 			}
 		}
@@ -266,38 +309,37 @@ func globEscape(path string) string {
 
 // commandWords classifies the words of one command line: a word naming a Python interpreter,
 // a .py path, or a path (or a first word found on PATH) that resolves to Python is a reference.
-func (s *scan) commandWords(row int, source, fieldName, line, base string, first bool) {
+// ~, $HOME, $CODEX_HOME and (for a cached plugin version, pluginRoot) ${PLUGIN_ROOT} are
+// expanded as the shell would; a word needing any other expansion is unreadable.
+func (s *scan) commandWords(row int, source, fieldName, line, base, pluginRoot string, first bool) {
 	for i, word := range ShellWords(line) {
 		if strings.ContainsAny(word, "\n") {
 			continue // a -c program, not something executed by name
 		}
+		expanded, missing := s.expander(pluginRoot).Expand(word)
 		var e Executable
 		switch {
-		case strings.Contains(word, "$"):
-			if !strings.HasSuffix(word, ".py") {
+		case missing != "" || strings.Contains(expanded, "/") || strings.HasSuffix(expanded, ".py"):
+			var ok bool
+			if e, ok = s.word(row, source, fieldName, word, base, pluginRoot); !ok {
 				continue
 			}
-			e = Executable{Value: word, Kind: KindPythonScript, Python: true, Detail: "names a .py file through a variable this scan does not expand"}
-		case strings.Contains(word, "/") || strings.HasSuffix(word, ".py"):
-			e = Classify(word, base, s.pointer)
-		case PythonName(word):
+		case PythonName(expanded):
 			e = Executable{Value: word, Kind: KindPythonInterpreter, Python: true, Detail: "names a Python interpreter"}
-			if found, err := lookPath(word, s.o.Env.Get("PATH")); err == nil {
+			if found, err := lookPath(expanded, s.o.Env.Get("PATH")); err == nil {
 				e.Resolves = found
 			}
 		case i == 0 && first:
-			found, err := lookPath(word, s.o.Env.Get("PATH"))
+			found, err := lookPath(expanded, s.o.Env.Get("PATH"))
 			if err != nil {
 				continue
 			}
-			e = Classify(found, "", s.pointer)
+			e = Classifier{Pointer: s.pointer, Expand: s.expander(pluginRoot)}.Classify(found, "")
 			e.Value = word
 		default:
 			continue
 		}
-		if e.Python {
-			s.reference(row, source, fieldName, e)
-		}
+		s.judge(row, source, fieldName, e)
 	}
 }
 
@@ -315,7 +357,7 @@ func lookPath(name, path string) (string, error) {
 }
 
 // hookCommands walks a hooks document ({"hooks": {Event: [{"hooks": [{"command", "timeout"}]}]}}).
-func (s *scan) hookCommands(row int, path string, document Object, base string) int {
+func (s *scan) hookCommands(row int, path string, document Object, base, pluginRoot string) int {
 	count := 0
 	events, _ := record.Get(document, "hooks").(Object)
 	for _, event := range events {
@@ -332,7 +374,7 @@ func (s *scan) hookCommands(row int, path string, document Object, base string) 
 				if seconds, ok := number(record.Get(one, "timeout")); ok && event.Key == "Stop" {
 					s.timeouts = append(s.timeouts, seconds)
 				}
-				s.commandWords(row, path, "hooks."+event.Key+"["+strconv.Itoa(g)+"].hooks["+strconv.Itoa(h)+"].command", command, base, true)
+				s.commandWords(row, path, "hooks."+event.Key+"["+strconv.Itoa(g)+"].hooks["+strconv.Itoa(h)+"].command", command, base, pluginRoot, true)
 			}
 		}
 	}
@@ -345,14 +387,14 @@ func asObject(v any) Object {
 }
 
 // mcpServers walks an MCP document ({"mcpServers": {name: {"command", "args"}}}).
-func (s *scan) mcpServers(row int, path string, servers Object, base string) int {
+func (s *scan) mcpServers(row int, path string, servers Object, base, pluginRoot string) int {
 	for _, server := range servers {
 		entry := asObject(server.Value)
 		if command, ok := record.Get(entry, "command").(string); ok && command != "" {
-			s.commandWords(row, path, "mcpServers."+server.Key+".command", command, base, true)
+			s.commandWords(row, path, "mcpServers."+server.Key+".command", command, base, pluginRoot, true)
 		}
 		for i, arg := range words(record.Get(entry, "args")) {
-			s.commandWords(row, path, "mcpServers."+server.Key+".args["+strconv.Itoa(i)+"]", arg, base, false)
+			s.commandWords(row, path, "mcpServers."+server.Key+".args["+strconv.Itoa(i)+"]", arg, base, pluginRoot, false)
 		}
 	}
 	return len(servers)
@@ -378,13 +420,13 @@ func (s *scan) pluginCache() {
 		sort.Strings(hooks)
 		for _, path := range hooks {
 			if document, ok := s.readJSON(path, "a cached hook declaration"); ok {
-				count += s.hookCommands(5, path, document, base)
+				count += s.hookCommands(5, path, document, base, base)
 			}
 		}
 		for _, path := range []string{filepath.Join(base, "wiring", "mcp.json"), filepath.Join(base, ".mcp.json")} {
 			if document, ok := s.readJSON(path, "a cached MCP declaration"); ok {
 				servers, _ := record.Get(document, "mcpServers").(Object)
-				count += s.mcpServers(5, path, servers, base)
+				count += s.mcpServers(5, path, servers, base, base)
 			}
 		}
 	}
@@ -396,7 +438,7 @@ func (s *scan) userHooks() {
 	path := filepath.Join(s.o.CodexHome, "hooks.json")
 	count := 0
 	if document, ok := s.readJSON(path, "hooks.json"); ok {
-		count = s.hookCommands(9, path, document, s.o.CodexHome)
+		count = s.hookCommands(9, path, document, s.o.CodexHome, "")
 	}
 	s.surface(9, true, count, "every command in "+path)
 }
@@ -457,21 +499,43 @@ func (s *scan) journal(settings Object) {
 	if root == "" {
 		root = filepath.Join(s.o.CodexHome, "crw-completion-hook", "journal")
 	}
-	longest := DefaultHookTimeout
-	for _, t := range s.timeouts {
-		longest = max(longest, t)
+	longest := s.longestTimeout()
+	if math.IsNaN(longest) {
+		s.surface(2, false, 0, "a configured Stop hook timeout is NaN, so no window can be computed and no journal row under "+root+" was judged")
+		return
 	}
-	window := time.Duration(2 * longest * float64(time.Second))
+	// A window a Duration cannot hold (2 x 4.6e9 s or more, or infinite) holds every row.
+	seconds := 2 * longest
+	unbounded := seconds >= float64(math.MaxInt64/int64(time.Second))
+	var window time.Duration
 	now := s.o.Now().UTC()
+	since := time.Time{}
+	if !unbounded {
+		window = time.Duration(seconds * float64(time.Second))
+		since = now.Add(-window)
+	}
+	days, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		s.surface(2, true, 0, "no journal exists at "+root)
+		return
+	}
+	if err != nil {
+		s.unread(root, err)
+		s.surface(2, true, 0, "the journal's day directories could not be listed")
+		return
+	}
 	count := 0
-	seen := map[string]bool{}
-	for _, day := range []time.Time{now, now.Add(-window)} {
-		name := day.Format("20060102")
-		if seen[name] {
+	for _, day := range days {
+		start, err := time.Parse("20060102", day.Name())
+		if err != nil || day.Name() != start.Format("20060102") {
+			continue // not a day directory (accepted/ holds the outcomes)
+		}
+		// Every day from the one the window reaches back into (floor(now - window)) on,
+		// a future-dated one included.
+		if !unbounded && !start.AddDate(0, 0, 1).After(since) {
 			continue
 		}
-		seen[name] = true
-		directory := filepath.Join(root, name)
+		directory := filepath.Join(root, day.Name())
 		entries, err := os.ReadDir(directory)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -500,16 +564,34 @@ func (s *scan) journal(settings Object) {
 				}
 			}
 			count++
-			if now.Sub(written) < window {
+			if unbounded || now.Sub(written) < window {
 				var configuration any
 				if value, ok := row.Value.(Object); ok {
 					configuration = record.Get(value, "configuration")
 				}
-				s.hold(2, path, record.Object{{Key: "at", Value: written.UTC().Format("2006-01-02T15:04:05Z")}, {Key: "configuration", Value: configuration}, {Key: "detail", Value: "a Stop hook ran within the last " + strconv.FormatFloat(window.Seconds(), 'f', -1, 64) + " s, so the turn that ran it may still hold its command"}})
+				detail := "a Stop hook ran within the last " + strconv.FormatFloat(window.Seconds(), 'f', -1, 64) + " s, so the turn that ran it may still hold its command"
+				if unbounded {
+					detail = "the longest configured Stop hook timeout (" + strconv.FormatFloat(longest, 'g', -1, 64) + " s) gives a window no row is outside of, so the turn that ran it may still hold its command"
+				}
+				s.hold(2, path, record.Object{{Key: "at", Value: written.UTC().Format("2006-01-02T15:04:05Z")}, {Key: "configuration", Value: configuration}, {Key: "detail", Value: detail}})
 			}
 		}
 	}
-	s.surface(2, true, count, "journal rows under "+root+" for today and the day the window reaches back to")
+	if unbounded {
+		s.surface(2, true, count, "journal rows in every day directory under "+root+": the window is unbounded")
+		return
+	}
+	s.surface(2, true, count, "journal rows under "+root+" in every day directory from "+since.Format("20060102")+" on")
+}
+
+// longestTimeout is the longest configured Stop hook timeout, at least DefaultHookTimeout. A
+// NaN timeout makes it NaN (max passes NaN through), which row 2 treats as no window at all.
+func (s *scan) longestTimeout() float64 {
+	longest := DefaultHookTimeout
+	for _, t := range s.timeouts {
+		longest = max(longest, t)
+	}
+	return longest
 }
 
 // stateDirectories are the relay state root, every directory under it, and an explicit
@@ -540,14 +622,80 @@ func contains(values []string, value string) bool {
 	return false
 }
 
-// process is what an alive pid is running: its executable and argv, and whether that is Python.
-func (s *scan) process(pid int) (Executable, []any, bool) {
+// errGone is a process that exited (or became a zombie) while the scan looked at it.
+var errGone = errors.New("the process is gone")
+
+// procStat is the fields of <proc>/<pid>/stat after the command name. A pid with no entry
+// while the process table itself is there is gone; with no process table at all (darwin has
+// none) nothing about it can be known.
+func (s *scan) procStat(pid int) ([]string, error) {
+	path := filepath.Join(s.o.Proc, strconv.Itoa(pid), "stat")
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		if _, tableErr := os.Stat(filepath.Join(s.o.Proc, "self")); tableErr != nil {
+			return nil, errors.New("no process table (procfs) exists at " + s.o.Proc)
+		}
+		return nil, errGone
+	}
+	if err != nil {
+		return nil, err
+	}
+	end := strings.LastIndex(string(raw), ") ")
+	var fields []string
+	if end >= 0 {
+		fields = strings.Fields(string(raw)[end+2:])
+	}
+	if len(fields) < 20 {
+		return nil, errors.New(path + " is not a process status line")
+	}
+	if state := fields[0]; state == "Z" || state == "X" || state == "x" {
+		return nil, errGone
+	}
+	return fields, nil
+}
+
+// alive is whether pid is the process a record describes: running, with the same start time
+// (and boot). An error other than errGone is a process table the scan could not read.
+func (s *scan) alive(pid int, ticks any, boot any) (bool, error) {
+	if pid <= 0 {
+		return false, nil
+	}
+	fields, err := s.procStat(pid)
+	if errors.Is(err, errGone) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	now, err := strconv.ParseInt(fields[19], 10, 64)
+	if err != nil {
+		return false, err
+	}
+	if ticks != nil && scope.PyStr(ticks) != scope.PyStr(now) {
+		return false, nil
+	}
+	if raw, err := os.ReadFile(filepath.Join(s.o.Proc, "sys", "kernel", "random", "boot_id")); boot != nil && err == nil && scope.PyStr(boot) != strings.TrimSpace(string(raw)) {
+		return false, nil
+	}
+	return true, nil
+}
+
+// process is what an alive pid is running: its executable and argv, and whether that is
+// Python. An exe or cmdline that cannot be read, of a process still there, is an error: what
+// it runs is unknown.
+func (s *scan) process(pid int) (Executable, []any, error) {
 	base := filepath.Join(s.o.Proc, strconv.Itoa(pid))
+	gone := func(err error) error {
+		if _, statErr := s.procStat(pid); errors.Is(statErr, errGone) {
+			return errGone
+		}
+		return err
+	}
 	exe, err := os.Readlink(filepath.Join(base, "exe"))
 	if err != nil {
-		return Executable{}, nil, false
+		return Executable{}, nil, gone(err)
 	}
-	raw, _ := os.ReadFile(filepath.Join(base, "cmdline"))
+	raw, cmdErr := os.ReadFile(filepath.Join(base, "cmdline"))
 	var argv []any
 	var python bool
 	for i, word := range strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00") {
@@ -562,32 +710,31 @@ func (s *scan) process(pid int) (Executable, []any, bool) {
 	e := Executable{Value: exe, Resolves: exe, Kind: KindNative, Detail: "the process's executable"}
 	if PythonName(exe) || python {
 		e.Kind, e.Python, e.Detail = KindPythonInterpreter, true, "a process running a Python interpreter or a .py program"
+		return e, argv, nil
 	}
-	return e, argv, true
+	if cmdErr != nil {
+		return e, argv, gone(cmdErr)
+	}
+	return e, argv, nil
 }
 
-// alive is whether pid is the process a record describes: same start time (and boot).
-func alive(pid int, ticks any, boot any) bool {
-	if pid <= 0 {
-		return false
+// inspect files what an alive pid runs: a Python process is a reference, one whose exe or
+// cmdline could not be read is unreadable, one that exited meanwhile is nothing.
+func (s *scan) inspect(row int, source, fieldName string, pid int) {
+	e, argv, err := s.process(pid)
+	switch {
+	case errors.Is(err, errGone):
+	case err != nil:
+		s.unreadable = append(s.unreadable, source+": row "+strconv.Itoa(row)+" "+fieldName+" "+strconv.Itoa(pid)+": what the process runs could not be read: "+store.PythonOSError(err))
+	case e.Python:
+		s.reference(row, source, fieldName, e, record.Object{{Key: "pid", Value: int64(pid)}, {Key: "argv", Value: nonNil(argv)}})
 	}
-	now := service.StartTicks(pid)
-	if now == nil {
-		return false
-	}
-	if ticks != nil && scope.PyStr(ticks) != scope.PyStr(now) {
-		return false
-	}
-	if boot != nil && service.BootID() != nil && scope.PyStr(boot) != scope.PyStr(service.BootID()) {
-		return false
-	}
-	return true
 }
 
 // daemons is row 3. It returns every alive recorded pid for row 6 to exclude.
 func (s *scan) daemons() map[int]bool {
 	pids := map[int]bool{}
-	count := 0
+	count, unknown := 0, 0
 	for _, directory := range s.stateDirectories() {
 		path := filepath.Join(directory, "daemon.json")
 		document, ok := s.readJSON(path, "daemon.json")
@@ -597,16 +744,26 @@ func (s *scan) daemons() map[int]bool {
 		count++
 		for _, key := range [][2]string{{"pid", "startTicks"}, {"workerPid", "workerStartTicks"}} {
 			n, ok := number(record.Get(document, key[0]))
-			if !ok || !alive(int(n), record.Get(document, key[1]), record.Get(document, "bootId")) {
+			if !ok {
 				continue
 			}
 			pid := int(n)
-			pids[pid] = true
-			e, argv, ok := s.process(pid)
-			if ok && e.Python {
-				s.reference(3, path, key[0], e, record.Object{{Key: "pid", Value: int64(pid)}, {Key: "argv", Value: nonNil(argv)}})
+			alive, err := s.alive(pid, record.Get(document, key[1]), record.Get(document, "bootId"))
+			if err != nil {
+				unknown++
+				s.unreadable = append(s.unreadable, path+": row 3 "+key[0]+" "+strconv.Itoa(pid)+": whether it is alive could not be read: "+store.PythonOSError(err))
+				continue
 			}
+			if !alive {
+				continue
+			}
+			pids[pid] = true
+			s.inspect(3, path, key[0], pid)
 		}
+	}
+	if unknown > 0 {
+		s.surface(3, false, count, "the process table at "+s.o.Proc+" could not be read for "+strconv.Itoa(unknown)+" recorded pids, so whether they are alive, and what they run, is unknown")
+		return pids
 	}
 	s.surface(3, true, count, "daemon.json in the relay state root and every scope under it; a pid counts only while its start time matches the record")
 	return pids
@@ -676,9 +833,7 @@ func (s *scan) lockHolders(exclude map[int]bool) {
 		if exclude[pid] {
 			continue
 		}
-		if e, argv, ok := s.process(pid); ok && e.Python {
-			s.reference(6, holders[pid], "holder", e, record.Object{{Key: "pid", Value: int64(pid)}, {Key: "argv", Value: nonNil(argv)}})
-		}
+		s.inspect(6, holders[pid], "holder", pid)
 	}
 	s.surface(6, true, len(files), "the /proc/locks holders of every managed-start lock, less the pids row 3 reports")
 }
@@ -689,7 +844,9 @@ func (s *scan) launcherCopy() {
 	_, err := os.Lstat(path)
 	switch {
 	case err == nil:
-		s.reference(8, path, "file", Classify(path, "", s.pointer))
+		e := Classify(path, "", s.pointer)
+		e.Python = true // a .py launcher by definition, whatever it now holds
+		s.judge(8, path, "file", e)
 		s.surface(8, true, 1, "the launcher copy the cached Python Stop bootstrap falls back to")
 	case errors.Is(err, os.ErrNotExist):
 		s.surface(8, true, 0, "no launcher copy exists at "+path)
@@ -727,12 +884,12 @@ func (s *scan) configToml(_ context.Context) {
 	for _, name := range names {
 		entry, _ := servers[name].(map[string]any)
 		if command, ok := entry["command"].(string); ok && command != "" {
-			s.commandWords(10, path, "mcp_servers."+name+".command", command, s.o.CodexHome, true)
+			s.commandWords(10, path, "mcp_servers."+name+".command", command, s.o.CodexHome, "", true)
 		}
 		if args, ok := entry["args"].([]any); ok {
 			for i, arg := range args {
 				if text, ok := arg.(string); ok {
-					s.commandWords(10, path, "mcp_servers."+name+".args["+strconv.Itoa(i)+"]", text, s.o.CodexHome, false)
+					s.commandWords(10, path, "mcp_servers."+name+".args["+strconv.Itoa(i)+"]", text, s.o.CodexHome, "", false)
 				}
 			}
 		}
@@ -748,9 +905,7 @@ func (s *scan) pointerTarget() {
 		s.unreadable = append(s.unreadable, s.pointer+": "+read.Detail)
 		s.surface(11, true, 0, read.Detail)
 	case pointer.Link:
-		if e := Classify(s.pointer, "", s.pointer); e.Python {
-			s.reference(11, s.pointer, "target", e)
-		}
+		s.judge(11, s.pointer, "target", Classify(s.pointer, "", s.pointer))
 		s.surface(11, true, 1, read.Detail)
 	default:
 		s.surface(11, true, 0, read.Detail)

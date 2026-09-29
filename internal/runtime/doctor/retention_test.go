@@ -212,3 +212,234 @@ func TestShellWordsSplitsLikeSh(t *testing.T) {
 		}
 	}
 }
+
+// unreadable is the report's unreadable list.
+func unreadable(report record.Object) []string {
+	var out []string
+	for _, raw := range golden.List(record.Get(report, "unreadable")) {
+		out = append(out, raw.(string))
+	}
+	return out
+}
+
+// listed reports whether one unreadable entry names every part.
+func listed(entries []string, parts ...string) bool {
+	for _, entry := range entries {
+		all := true
+		for _, part := range parts {
+			all = all && strings.Contains(entry, part)
+		}
+		if all {
+			return true
+		}
+	}
+	return false
+}
+
+func skipAsRoot(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root reads through any mode, so EACCES cannot be produced")
+	}
+}
+
+// A reference the scan resolves but cannot read is never dropped: a relayExecutable that is a
+// Python script the scan may execute but not read (mode 0111), and a bridgeExecutable behind a
+// directory it may not search (mode 000), are each listed as unreadable with the row, file and
+// field that named them, so the scan is not clear.
+func TestRetentionScanListsReferencesItCannotRead(t *testing.T) {
+	skipAsRoot(t)
+	h := newHost(t)
+	env := h.pythonVenv(t)
+	secret := filepath.Join(h.home, "exec-only", "relay")
+	write(t, secret, "#!"+filepath.Join(env, "bin", "python3")+"\n", 0o111)
+	locked := filepath.Join(h.home, "locked")
+	write(t, filepath.Join(locked, "bin", "bridge"), "#!/bin/sh\n", 0o755)
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	h.settings(t, map[string]string{"relayExecutable": secret}, map[string]string{"bridgeExecutable": filepath.Join(locked, "bin", "bridge")})
+	report := h.scan(t)
+	got := unreadable(report)
+	for _, want := range [][]string{
+		{"row 4", filepath.Join(h.codex, "crw-completion-hook.json"), "relayExecutable", secret},
+		{"row 4", filepath.Join(h.codex, "crw-bridge-mcp.json"), "bridgeExecutable", filepath.Join(locked, "bin", "bridge")},
+	} {
+		if !listed(got, want...) {
+			t.Errorf("no unreadable entry names %v: %v", want, got)
+		}
+	}
+	if record.Get(report, "clear") != false {
+		t.Fatal("a scan with unreadable references is clear")
+	}
+}
+
+// A hook command names its executable through $HOME, ${HOME} or ~, which the shell running it
+// expands against HOME (not CODEX_HOME): the scan expands them the same way and finds the venv
+// console script each one reaches. A variable the scan cannot expand is listed as unreadable,
+// never skipped.
+func TestRetentionScanExpandsWhatAHookCommandNames(t *testing.T) {
+	h := newHost(t)
+	env := h.pythonVenv(t)
+	link(t, env, filepath.Join(h.home, "venv"))
+	write(t, filepath.Join(h.codex, "hooks.json"), `{"hooks": {"Stop": [{"hooks": [
+ {"type": "command", "command": "\"$HOME/venv/bin/codex-session-relay\" hook", "timeout": 10},
+ {"type": "command", "command": "${HOME}/venv/bin/codex-thread-bridge serve", "timeout": 10},
+ {"type": "command", "command": "~/venv/bin/crw-completion-hook stop", "timeout": 10},
+ {"type": "command", "command": "\"$CODEX_HOME/relay\" hook", "timeout": 10},
+ {"type": "command", "command": "\"$RELAY_HOME/bin/relay\" hook", "timeout": 10}]}]}}`, 0o600)
+	link(t, filepath.Join(env, "bin", "codex-session-relay"), filepath.Join(h.codex, "relay"))
+	report := h.scan(t)
+	want := []string{
+		"9:hooks.Stop[0].hooks[0].command:$HOME/venv/bin/codex-session-relay",
+		"9:hooks.Stop[0].hooks[1].command:${HOME}/venv/bin/codex-thread-bridge",
+		"9:hooks.Stop[0].hooks[2].command:~/venv/bin/crw-completion-hook",
+		"9:hooks.Stop[0].hooks[3].command:$CODEX_HOME/relay",
+	}
+	if got := references(report); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("python references\n got %v\nwant %v", got, want)
+	}
+	if got := unreadable(report); len(got) != 1 || !listed(got, "row 9", "hooks.Stop[0].hooks[4].command", "$RELAY_HOME/bin/relay", "RELAY_HOME") {
+		t.Fatalf("unreadable %v", got)
+	}
+}
+
+// fakeProc is a procfs root (the scan's Proc seam) holding one process whose start time is
+// ticks; the caller lays out its exe and cmdline.
+func fakeProc(t *testing.T, pid int, ticks int64) string {
+	t.Helper()
+	proc := t.TempDir()
+	mkdir(t, filepath.Join(proc, "self"))
+	write(t, filepath.Join(proc, strconv.Itoa(pid), "stat"), strconv.Itoa(pid)+" (relay worker) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 "+strconv.FormatInt(ticks, 10)+" 0 0\n", 0o644)
+	return proc
+}
+
+func (h *host) scanProc(t *testing.T, proc string) record.Object {
+	t.Helper()
+	return doctor.RetentionScan(context.Background(), doctor.RetentionOptions{Env: h.env, Now: func() time.Time { return scanNow }, Proc: proc})
+}
+
+func (h *host) daemon(t *testing.T, pid int, ticks int64) string {
+	t.Helper()
+	path := filepath.Join(h.state, "codex-session-relay", "scope-1", "daemon.json")
+	write(t, path, `{"pid": `+strconv.Itoa(pid)+`, "startTicks": `+strconv.FormatInt(ticks, 10)+`}`, 0o600)
+	return path
+}
+
+// An alive recorded pid whose executable or command line cannot be read is listed as
+// unreadable: what it runs is unknown, so it may be Python. A pid whose process is gone, or
+// is a zombie, is not alive and is not listed.
+func TestRetentionScanListsAnAliveProcessItCannotRead(t *testing.T) {
+	for name, layout := range map[string]func(t *testing.T, dir string){
+		"exe": func(t *testing.T, dir string) { write(t, filepath.Join(dir, "exe"), "not a link", 0o644) },
+		"cmdline": func(t *testing.T, dir string) {
+			link(t, "/usr/bin/true", filepath.Join(dir, "exe"))
+			mkdir(t, filepath.Join(dir, "cmdline"))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHost(t)
+			proc := fakeProc(t, 4242, 777)
+			layout(t, filepath.Join(proc, "4242"))
+			path := h.daemon(t, 4242, 777)
+			report := h.scanProc(t, proc)
+			if got := unreadable(report); !listed(got, "row 3", path, "pid", "4242") {
+				t.Fatalf("unreadable %v", got)
+			}
+			if len(references(report)) != 0 || record.Get(report, "clear") != false {
+				t.Fatalf("references %v clear %v", references(report), record.Get(report, "clear"))
+			}
+		})
+	}
+	h := newHost(t)
+	proc := fakeProc(t, 4242, 777)
+	h.daemon(t, 4243, 777) // gone: no /proc/4243 while /proc/self exists
+	zombie := filepath.Join(proc, "4242", "stat")
+	write(t, zombie, "4242 (relay) Z 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 777 0 0\n", 0o644)
+	write(t, filepath.Join(h.state, "codex-session-relay", "scope-2", "daemon.json"), `{"pid": 4242, "startTicks": 777}`, 0o600)
+	if got := unreadable(h.scanProc(t, proc)); len(got) != 0 {
+		t.Fatalf("a gone or zombie pid is unreadable: %v", got)
+	}
+}
+
+// Where there is no procfs (darwin), whether a recorded pid is alive cannot be read, so row 3
+// is unscanned rather than scanned with nothing found.
+func TestRetentionScanWithoutProcfsLeavesDaemonsUnscanned(t *testing.T) {
+	h := newHost(t)
+	h.daemon(t, os.Getpid(), 777)
+	report := h.scanProc(t, t.TempDir())
+	for _, raw := range golden.List(record.Get(report, "surfaces")) {
+		if one := golden.Obj(raw); record.Get(one, "row") == int64(3) && record.Get(one, "scanned") != false {
+			t.Fatalf("row 3 scanned without a process table: %s", golden.Canon(one))
+		}
+	}
+	unscanned := golden.List(record.Get(report, "unscanned"))
+	if len(unscanned) != 2 || !strings.HasPrefix(unscanned[0].(string), "row 3: ") {
+		t.Fatalf("unscanned %s", golden.Canon(unscanned))
+	}
+}
+
+// Row 2 reads every day directory the window reaches back to, not only its first and last:
+// with a 100000 s timeout (a 200000 s window) a row written 24 hours ago, in the day between,
+// is a hold.
+func TestRetentionScanReadsEveryDayTheJournalWindowReaches(t *testing.T) {
+	h := newHost(t)
+	h.settings(t, map[string]string{"journalRoot": filepath.Join(h.codex, "crw-completion-hook", "journal")}, nil)
+	raw, _ := os.ReadFile(filepath.Join(h.codex, "crw-completion-hook.json"))
+	write(t, filepath.Join(h.codex, "crw-completion-hook.json"), strings.Replace(string(raw), "{", `{"timeoutSeconds": 100000,`, 1), 0o600)
+	journal := filepath.Join(h.codex, "crw-completion-hook", "journal")
+	write(t, filepath.Join(journal, "20260928", "yesterday.json"), `{"at": "2026-09-28T12:00:00Z"}`, 0o600)
+	write(t, filepath.Join(journal, "20260920", "old.json"), `{"at": "2026-09-20T12:00:00Z"}`, 0o600)
+	report := h.scan(t)
+	holds := golden.List(record.Get(report, "liveHolds"))
+	if len(holds) != 1 || record.Get(golden.Obj(holds[0]), "source") != filepath.Join(journal, "20260928", "yesterday.json") {
+		t.Fatalf("holds %s", golden.Canon(holds))
+	}
+}
+
+// A timeout too large for a duration holds every row, however old; a NaN timeout gives no
+// window at all, so row 2 is unscanned. Neither reads as a clear journal.
+func TestRetentionScanHoldsEveryRowForAnUnboundedWindow(t *testing.T) {
+	for _, timeout := range []string{"9.3e9", "1e300", "Infinity"} {
+		t.Run(timeout, func(t *testing.T) {
+			h := newHost(t)
+			journal := filepath.Join(h.codex, "crw-completion-hook", "journal")
+			write(t, filepath.Join(journal, "20260929", "now.json"), `{"at": "2026-09-29T12:00:00Z"}`, 0o600)
+			write(t, filepath.Join(journal, "20190101", "old.json"), `{"at": "2019-01-01T00:00:00Z"}`, 0o600)
+			write(t, filepath.Join(h.codex, "hooks.json"), `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "true", "timeout": `+timeout+`}]}]}}`, 0o600)
+			if holds := golden.List(record.Get(h.scan(t), "liveHolds")); len(holds) != 2 {
+				t.Fatalf("holds %s", golden.Canon(holds))
+			}
+		})
+	}
+	h := newHost(t)
+	write(t, filepath.Join(h.codex, "crw-completion-hook", "journal", "20260929", "now.json"), `{"at": "2026-09-29T12:00:00Z"}`, 0o600)
+	write(t, filepath.Join(h.codex, "hooks.json"), `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "true", "timeout": NaN}]}]}}`, 0o600)
+	report := h.scan(t)
+	unscanned := golden.List(record.Get(report, "unscanned"))
+	if len(unscanned) != 2 || !strings.HasPrefix(unscanned[0].(string), "row 2: ") || record.Get(report, "clear") != false {
+		t.Fatalf("unscanned %s", golden.Canon(unscanned))
+	}
+}
+
+// ${PLUGIN_ROOT} is the cached version's own directory in a cached declaration (row 5), so a
+// word through it that names a console script (no .py to go by) is resolved and reported. The
+// same word in the user's hooks.json (row 9) has no plugin root to expand, so it is unreadable.
+func TestRetentionScanExpandsThePluginRootInTheCacheOnly(t *testing.T) {
+	h := newHost(t)
+	env := h.pythonVenv(t)
+	cache := filepath.Join(h.codex, "plugins", "cache", "crw", "crw", "0.4.0+test")
+	link(t, filepath.Join(env, "bin", "codex-session-relay"), filepath.Join(cache, "wiring", "relay"))
+	command := `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "\"${PLUGIN_ROOT}/wiring/relay\" stop", "timeout": 10}]}]}}`
+	write(t, filepath.Join(cache, "wiring", "hooks", "stop.json"), command, 0o644)
+	write(t, filepath.Join(h.codex, "hooks.json"), command, 0o600)
+	report := h.scan(t)
+	refs := golden.List(record.Get(report, "pythonReferences"))
+	if got := references(report); len(got) != 1 || got[0] != "5:hooks.Stop[0].hooks[0].command:${PLUGIN_ROOT}/wiring/relay" || record.Get(golden.Obj(refs[0]), "resolves") != filepath.Join(env, "bin", "codex-session-relay") {
+		t.Fatalf("python references %s", golden.Canon(refs))
+	}
+	if got := unreadable(report); len(got) != 1 || !listed(got, "row 9", filepath.Join(h.codex, "hooks.json"), "${PLUGIN_ROOT}") {
+		t.Fatalf("unreadable %v", got)
+	}
+}
