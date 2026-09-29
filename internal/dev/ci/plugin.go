@@ -387,6 +387,40 @@ func declaredSkillsPath(m *pyDict) (string, error) {
 	return relative, nil
 }
 
+// SkillsRoot is the skills directory the plugin manifest under the checkout root declares,
+// with symlinks resolved: the directory a linked installation links from, so the linked and
+// the packaged installation read one source. It is refused when the declaration is not a ./
+// path inside the plugin, when it resolves outside the plugin through a symlink, or when it is
+// not a directory.
+func SkillsRoot(root string) (string, error) {
+	manifest := filepath.Join(root, pluginRelative, manifestPath)
+	text, err := readText(manifest)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", manifest, err)
+	}
+	value, err := pyJSONLoadsOrdered(text)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", manifest, err)
+	}
+	m, ok := asDict(value)
+	if !ok {
+		return "", fmt.Errorf("%s: the manifest must be a JSON object", manifest)
+	}
+	relative, err := declaredSkillsPath(m)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", manifest, err)
+	}
+	pluginRoot := realpath(filepath.Join(root, pluginRelative))
+	skills := realpath(filepath.Join(pluginRoot, filepath.FromSlash(relative)))
+	if !strings.HasPrefix(skills, pluginRoot+string(filepath.Separator)) {
+		return "", fmt.Errorf("%s: the declared skills path resolves outside %s", skills, pluginRoot)
+	}
+	if info, err := os.Stat(skills); err != nil || !info.IsDir() {
+		return "", fmt.Errorf("%s: the declared skills directory does not exist", skills)
+	}
+	return skills, nil
+}
+
 func declaredHooks(m *pyDict) ([]any, error) {
 	switch declared := m.get("hooks").(type) {
 	case nil:

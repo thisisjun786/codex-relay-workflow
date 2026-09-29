@@ -45,11 +45,11 @@ read by `hook_probe.py` through `scripts/ci/contracts.py`, not by a test file; t
 
 ## Totals
 
-Files: 124
-Tests: 6165
+Files: 123
+Tests: 5914
 Class A: files=16 tests=633
 Class B: files=88 tests=3368
-Class C: files=20 tests=2164
+Class C: files=19 tests=1913
 
 ## Todo 15 bridge property progress (2026-09-25)
 
@@ -233,7 +233,7 @@ with the Python writers' through `internal/runtime/testdata/goldens.json` (`sett
 | PointerOwnershipTests (1), PointerOwnershipLifetimeTests (20), AbsentPointerRollbackTests (5), SettledPointerTests (1) | a link this record never placed is not replaced | `TestAnUnrecordedPointerIsNotReplaced`; the compare-and-replace deltas are todo 37's |
 | ConflictCallerTests (7), ConfigScannerTests (6), ReaderDomainTests (5), AuthorizedRepairTests (14); acceptance DistinctionTests (7) | one owner per surface, read with a real TOML reader; an unreadable config.toml refuses; nothing writes config.toml or hooks.json | `TestInstallRefusesASecondOwner`, `TestRegisterMCPWritesTheRecordAndRefusesASecondOwner`, `TestHookWritesTheGoSettingsAndRefusesASecondOwner`; the append-writer cases retire with `register --owner user` |
 | HookTests (3), WriteSidePromiseTests (7), PartialApplicationTests (2) | settings and record bytes are Python's and read back; a policy that changed is refused; the Stop settings move with the pointer, replaced in one rename and kept when the write fails | `TestBridgeRecordBytesArePythons`, `TestHookSettingsBytesArePythons`, `TestSupersedeCopiesAsideAndLeavesThePath`, `TestAFailedSettingsWriteKeepsThePythonEraSettings`, `TestPythonEraSettingsMoveWithThePointer`, `TestLegacyStopLaunchersReachTheGoHook`, `TestTheWiringLaunchersStartTheGoBridgeUnderTheRecordedPolicy` |
-| LinkConflictTests (4) | a skill link CONFLICT | todo 39 (`crw install skills`) |
+| LinkConflictTests (4) | a skill link CONFLICT | retired with runtime_install.py's skill-link reading (scope analysis "# 39"); the CONFLICT property itself is `crw-dev skills link`'s (todo 39) |
 | InheritedRegistrationTests (2), InheritedRegistrationScopeTests (1), LegacyInstallTests (6), TrialArgumentTests (6), TrialIdentityTests (2), TrialStepGatingTests (3), PreflightCorpusTests (4), SettingsPreflightTests (4), PreflightInputSetTests (3), PairedMemberTests (11), InterpreterIdentityTests (3), RecordedEnvironmentBindingTests (4), SpacedDestinationTests (1), ClaimedComparisonTests (2), StorePlaceTests (4), RelayRuleCoverageTests (2), SelectorCoverageTests (4) | retired surfaces: the inherited registration, pre-claim adoption, `diagnose --trial`, interpreter binding | retired (docs/port/inventory.md, Functions retired with evidence) |
 | ReadbackCoverageTests (15), ReadbackSweepControlTests (5), ReadbackUnderLockTests (4), ScannerSightTests (3), DeclaredSetReferenceTests (6), DrawnSetTests (10), OwnReadingTests (5), BorrowedAnswerTests (5), UnclaimedReadingTests (4), IncompleteReadingTests (6), StrengthAndSiteTests (6), BodilessTestTests (3); acceptance SevenReadingsTests (38), ProvenanceTests (6) | AST and inspect inventories of Python source | retired: tests of Python internals |
 
@@ -243,6 +243,29 @@ flow does not use) and `TestRun_install_dispatches_to_the_installer` in `cmd/crw
 with no Python counterpart: the release archive's SHA256SUMS verification
 (`TestADigestMismatchIsRefusedBeforeUnpacking`, `TestReleaseAssetsAreFetchedAndVerified`) and the
 `crw install` command line (`TestTheCommandLine`).
+
+## Todo 39 skill-link and launcher-removal property progress (2026-09-29)
+
+The transition retired rather than being ported (scope analysis "# 39"): `scripts/plugin_transition.py`,
+`scripts/crw_transition/steps.py` and `scripts/ci/tests/test_plugin_transition.py` (241 tests,
+class C, ast/importlib over crw_transition; two of them, `RetiredCommandsRefuse`, proved todo 34's
+refusal of the retired commands and go with the tool) are deleted, with the evidence in
+[the inventory](inventory.md#files-deleted-with-evidence). What survives of them is the skill
+linker and the ownership-checked removal of the fallback launcher.
+
+| Python test (tests) | property | Go test |
+| --- | --- | --- |
+| test_install.py `test_missing_check_never_writes` | `--check` on a missing install writes nothing and exits 1 | `internal/dev/skills` `TestCheckOnAMissingInstallWritesNothing` |
+| test_install.py `test_apply_check_and_idempotent_apply` | apply links every skill; check and apply again change nothing | `TestApplyLinksEverySkillAndARerunChangesNothing` |
+| test_install.py `test_foreign_paths_preserved_and_preflight_is_all_or_nothing` | a file, directory, foreign or dangling link at one name is CONFLICT and nothing is written | `TestAnyConflictWritesNothingAndLeavesThePathAsItWas` |
+| test_install.py `test_default_uses_isolated_codex_home` | the default destination is `$CODEX_HOME/skills` | `TestTheCommandLinksThisCheckoutIntoTheCodexHome` (with the usage errors, exit 2) |
+| test_install.py `test_links_that_name_the_previous_skill_path_are_kept` | a link through the root `skills` alias is LINKED | `TestALinkThroughTheRootSkillsAliasIsLinked` |
+| test_install.py `test_declared_skills_path_must_stay_inside_the_plugin` | the manifest's skills path stays inside the plugin, lexically and through a symlink | `TestTheDeclaredSkillsPathMustStayInsideThePlugin` (and `internal/dev/ci` `Test47_PLG_7_SkillsPathStaysInside`) |
+| (untested in Python) | a path created between the preflight and the write is refused, not replaced, and the links already made are kept | `TestAPathThatAppearsAfterThePreflightIsNeverReplaced` |
+| test_install.py retired-name tests (3) | `LEGACY` reporting of `linear-*` and `crw-focus` | dropped with the detection |
+| test_plugin_wiring.py StableLauncherRemovalTest: nothing there, dry run, the file it installed, without the marker, a symlink (5) | removal takes only a regular file carrying `crw-stop-hook/1`, never follows a link, and an absent file is a no-op | `internal/runtime/install` `TestRemoveLauncherOnAnAbsentFileIsANoOp`, `TestRemoveLauncherTakesTheFileItPlacedAndNothingElse`, `TestRemoveLauncherRefusesAFileWithoutTheMarker`, `TestRemoveLauncherNeverFollowsALinkOrADirectory` |
+| (the second proof and the lock, untested in Python) | the marker is proved again under the launcher's own `.crw-lock`, the lock the Python placement takes | `TestRemoveLauncherProvesTheMarkerAgainUnderTheLock`, `TestRemoveLauncherWaitsOnTheLockThePlacementTakes` |
+| StableLauncherRemovalTest: settings written back, a surface that came back, its exit status, disable never claims the fallback (4); PluginGuardBudgetTest `test_the_transition_and_the_installer_share_one_bound` (1) | the transition's `live_again` aggregate and its shared bound | retired with the transition; the Go remover never touches the settings and reports `settingsPresent` as it found them |
 
 ## Files
 
@@ -358,13 +381,12 @@ with no Python counterpart: the release archive's SHA256SUMS verification
 | `scripts/ci/tests/test_completion_hook.py` | 221 | A | completion hook adapter vs a fake relay: journal, claims, exits | - | todo 33 / CRW-156 | corpus: hook | - |
 | `scripts/ci/tests/test_gate.py` | 18 | C | dev-gate check selection, result judgement and parallel CI legs | `.github/workflows/ci.yml`, `Makefile` | todo 47 / CRW-160 | go-test: `crw-dev ci gate` (todo 47; `internal/dev/ci` Test47_GATE_1..10) | importlib spec_from_file_location of scripts/ci/gate.py |
 | `scripts/ci/tests/test_hook_comparison.py` | 127 | C | off/on hook comparison harness states and its declared readings | - | todo 46 / CRW-159 | go-test: `internal/dev` hook-compare, build tag dev (todo 46) + inventory-check: go/ast scan of the harness (todo 46) | ast over scripts/hook_comparison.py |
-| `scripts/ci/tests/test_install.py` | 9 | C | skill-link install: check/apply, idempotence, foreign paths | - | todo 39 / CRW-158 | go-test: `crw install skills` (todo 39) | importlib load of scripts/install.py |
+| `scripts/ci/tests/test_install.py` | 9 | C | skill-link install: check/apply, idempotence, foreign paths | - | todo 39 / CRW-158 | go-test: `crw-dev skills link` (`internal/dev/skills`, todo 39) + drop: the 3 retired-name tests, because the `LEGACY` detection retired with its README migration guidance (scope analysis "# 39") | importlib load of scripts/install.py |
 | `scripts/ci/tests/test_install_acceptance.py` | 61 | C | new install carried through to recovery of the replaced install | - | todo 38 / CRW-158 | go-test: `internal/runtime/install` (todo 38; lifecycle, failure restore, daemon gate, see the todo 38 table) + drop: SevenReadingsTests and ProvenanceTests re-test the Python fixture's own inventories (scope analysis "# 38") | ast over the installer and its fixture (494 reflective sites) |
 | `scripts/ci/tests/test_packages.py` | 27 | C | packages check never prints success over an empty or skipped run; `--shard` splits whole modules disjointly and completely, balanced on recorded seconds | - | todo 47 / CRW-160 | drop: packages.py only runs the Python suites and is deleted in todo 44/47; the property (no success over an empty or skipped run) is inherited by todo 9's `CRW_CONTRACT_STRICT=1` skip counting and `go test` exit status; the shard split leaves with the Python suites it divides | importlib load of scripts/ci/packages.py |
 | `scripts/ci/tests/test_parent_title.py` | 9 | A | parent-title helper command surface and coverage guard | `plugins/crw/skills/crw-run/scripts/fixtures/titles` | todo 35 / CRW-156 | corpus: skill-scripts (domain added by todo 35) | - |
 | `scripts/ci/tests/test_plugin.py` | 62 | C | plugin package validator vs shapes that install silently wrong | - | todo 47 / CRW-160 | go-test: `crw-dev ci plugin` (todo 47; `internal/dev/ci` Test47_PLG_1..18) | importlib load of scripts/ci/plugin.py |
-| `scripts/ci/tests/test_plugin_transition.py` | 241 | C | manual-to-plugin transition on synthetic hosts | - | todo 39 / CRW-158 | go-test: `crw install transition` (todo 39) | ast/importlib over crw_transition |
-| `scripts/ci/tests/test_plugin_wiring.py` | 188 | C | one owner registers the Stop hook; launchers resolve | - | todo 34 / CRW-156 | go-test: `internal/pluginwiring` and `internal/relay/hook` TestPluginLaunch_* for StopLauncher, BridgeLauncher*, LauncherContractVersion (todo 34) + go-test: isolated Codex home integration for those and DeclaredStopCommand (todo 40) + go-test: `internal/runtime/install` for Ownership, BridgeRecord*, RegisterMcpDoesNotShadowADeclaredServer and the legacy Stop bootstrap (todo 38) + go-test: `crw-dev ci plugin` for DeclaredComponent, TheDeclaredApprovalPolicyIsChecked (todo 47) + drop: StableLauncherPlacement, StableLauncherRemoval (retire-dead: the Go installer places no fallback launcher) | exec of plugins/crw/wiring/crw_bridge_mcp.py (:80) + ast (:2132) |
+| `scripts/ci/tests/test_plugin_wiring.py` | 178 | C | one owner registers the Stop hook; launchers resolve | - | todo 34 / CRW-156 | go-test: `internal/pluginwiring` and `internal/relay/hook` TestPluginLaunch_* for StopLauncher, BridgeLauncher*, LauncherContractVersion (todo 34) + go-test: isolated Codex home integration for those and DeclaredStopCommand (todo 40) + go-test: `internal/runtime/install` for Ownership, BridgeRecord*, RegisterMcpDoesNotShadowADeclaredServer and the legacy Stop bootstrap (todo 38) + go-test: `crw-dev ci plugin` for DeclaredComponent, TheDeclaredApprovalPolicyIsChecked (todo 47) + drop: StableLauncherPlacement (retire-dead: the Go installer places no fallback launcher); StableLauncherRemoval left this file with the transition (todo 39: `install.RemoveLauncher`, see the todo 39 table) | exec of plugins/crw/wiring/crw_bridge_mcp.py (:80) + ast (:2132) |
 | `scripts/ci/tests/test_relay_schema_shipped.py` | 1 | A | shipped store objects keep their CREATE text | `scripts/ci/tests/relay_schema_shipped.json` | todo 17 / CRW-152 | corpus: sqlite-ddl | - |
 | `scripts/ci/tests/test_release.py` | 10 | A | release workflow steps against fake git/gh | `scripts/ci/tests/{fake_git.sh,fake_gh.sh,release_steps.py}` | todo 12 / CRW-150 | corpus: release (domain added by todo 12) | - |
 | `scripts/ci/tests/test_runtime_install.py` | 496 | C | runtime installer and diagnosis on temporary destinations | - | todo 38 / CRW-158 | go-test: `internal/runtime/{reading,record,pointer,staging,swapgate,scope,residue,ownership,definition,doctor}` (todo 37) + go-test: `internal/runtime/install` (todo 38) + drop: the reflective AST and inspect inventories of Python source and the retired trial, preflight, inherited-registration and pre-claim paths (scope analysis "# 38") | ast over scripts/runtime_install.py (406 reflective sites) |

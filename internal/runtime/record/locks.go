@@ -39,10 +39,10 @@ func (b *Busy) Error() string { return b.Message }
 //
 // It keeps Python's protocol exactly - O_CREAT|O_EXCL, the pid written into it, a file older
 // than 300 s unlinked as stale, and the file unlinked on release - because the Python
-// installer and plugin_transition take the same files until todo 44 retires them, and a flock
-// on this path would not exclude an O_EXCL holder. It is the documented exception to the rule
-// that no lock file is ever unlinked (docs/port/decisions.md 33). What it does not cover is an
-// editor that ignores it.
+// installer takes the same files until todo 44 retires it, and a flock on this path would not
+// exclude an O_EXCL holder. It is the documented exception to the rule that no lock file is
+// ever unlinked (docs/port/decisions.md 33). What it does not cover is an editor that ignores
+// it.
 type Locked struct {
 	Path   string
 	handle *os.File

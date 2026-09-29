@@ -80,9 +80,10 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ['3.10', '3.13']
-        # test_plugin_transition.py alone takes as long as every other module together, so
-        # it gets its own runner. `rest` is every other module that discovery would load.
-        part: [transition, rest]
+        # Two legs per Python version, split by measured time (docs/CI.md): `heavy` runs the
+        # modules HEAVY names, about half the suite, and `rest` every other module discovery
+        # would load, so a new module always runs and a renamed heavy one fails its leg.
+        part: [heavy, rest]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -93,12 +94,13 @@ jobs:
       - name: Installer and CI-control tests (${{ matrix.part }})
         env:
           PART: ${{ matrix.part }}
+          HEAVY: test_runtime_install test_hook_comparison
         run: |
           modules=$(cd scripts/ci/tests && ls test*.py | sed 's/\.py$//')
-          if [ "$PART" = transition ]; then
-            modules=test_plugin_transition
+          if [ "$PART" = heavy ]; then
+            modules=$HEAVY
           else
-            modules=$(printf '%s\n' $modules | grep -vx test_plugin_transition)
+            modules=$(printf '%s\n' $modules | grep -vxF "$(printf '%s\n' $HEAVY)")
           fi
           # discover -s puts the test directory on sys.path; so does this.
           PYTHONPATH=scripts/ci/tests python3 -m unittest -v $modules

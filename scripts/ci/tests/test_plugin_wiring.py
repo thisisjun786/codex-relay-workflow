@@ -2751,99 +2751,6 @@ class StableLauncherPlacementTest(unittest.TestCase):
         self.assertFalse(drifted["matchesCheckout"])
 
 
-class StableLauncherRemovalTest(unittest.TestCase):
-    """Removal takes only the file it put there, and says what the host held afterwards."""
-
-    SOURCE = ROOT / "plugins/crw/wiring/crw_stop_hook.py"
-
-    def setUp(self):
-        self.stack = contextlib.ExitStack()
-        self.addCleanup(self.stack.close)
-        self.home = Path(self.stack.enter_context(tempfile.TemporaryDirectory(prefix="crw178-")))
-        self.path = completion.launcher_path(self.home)
-        sys.path.insert(0, str(ROOT / "scripts"))
-        from crw_transition import steps
-        self.steps = steps
-        self.host = {"codexHome": str(self.home)}
-
-    def remove(self, **kwargs):
-        return self.steps.launcher_remove(self.host, {}, **kwargs)
-
-    def test_nothing_there_is_already_done(self):
-        self.assertEqual(self.remove(apply=True)["outcome"], self.steps.ALREADY)
-
-    def test_a_dry_run_removes_nothing(self):
-        completion.place_launcher(self.path, self.SOURCE, apply=True)
-        self.assertEqual(self.remove()["outcome"], self.steps.WOULD)
-        self.assertTrue(self.path.is_file())
-
-    def test_the_file_it_installed_is_the_file_it_removes(self):
-        completion.place_launcher(self.path, self.SOURCE, apply=True)
-        answer = self.remove(apply=True)
-        self.assertEqual(answer["outcome"], self.steps.SETTLED)
-        self.assertFalse(self.path.exists())
-
-    def test_a_file_without_the_marker_is_refused(self):
-        self.path.write_text("not ours\n", encoding="utf-8")
-        answer = self.remove(apply=True)
-        self.assertEqual(answer["outcome"], self.steps.REFUSED)
-        self.assertEqual(self.path.read_text(encoding="utf-8"), "not ours\n")
-
-    def test_a_symlink_is_refused_and_its_target_is_untouched(self):
-        target = self.home / "elsewhere.py"
-        target.write_text("someone else\n", encoding="utf-8")
-        self.path.symlink_to(target)
-        answer = self.remove(apply=True)
-        self.assertEqual(answer["outcome"], self.steps.REFUSED)
-        self.assertIn("symlink", answer["detail"])
-        self.assertTrue(target.is_file())
-
-    def test_settings_written_back_around_the_run_are_reported_not_hidden(self):
-        """Two files, two locks. The race is not prevented here; it is made impossible to miss."""
-        completion.place_launcher(self.path, self.SOURCE, apply=True)
-        (self.home / completion.CONFIG_NAME).write_text("{}", encoding="utf-8")
-        answer = self.remove(apply=True)
-        # Not settled: settled is read as "stopped", and a host whose settings came back can be
-        # called again through the packaged copy. The file was still removed, and the detail says so.
-        self.assertEqual(answer["outcome"], self.steps.LIVE_AGAIN)
-        self.assertFalse(self.path.exists())
-        self.assertTrue(answer["settingsPresent"])
-        self.assertIn("are NOT stopped", answer["detail"])
-
-    def test_a_surface_that_came_back_is_not_listed_as_stopped(self):
-        """Devin review: the aggregate claim has to agree with the host, not with an earlier step."""
-        completion.place_launcher(self.path, self.SOURCE, apply=True)
-        (self.home / completion.CONFIG_NAME).write_text("{}", encoding="utf-8")
-        claims = self.steps.stop_claims([self.remove(apply=True)], self.steps.REMOVE_CLAIMS)
-        self.assertFalse(any("fallback" in claim for claim in claims["stopped"]))
-        self.assertTrue(any("fallback" in claim for claim in claims["stillLive"]))
-
-    def test_a_surface_that_came_back_makes_the_command_exit_nonzero(self):
-        """Devin review: shell automation reads the exit status, not the JSON.
-
-        live_again means the file really was removed and the surface is callable again anyway.
-        A zero here would let a cleanup script carry on against a host where the adapter can
-        still be reached, so it gets its own status rather than being folded into a refusal.
-        """
-        sys.path.insert(0, str(ROOT / "scripts"))
-        import plugin_transition
-
-        completion.place_launcher(self.path, self.SOURCE, apply=True)
-        (self.home / completion.CONFIG_NAME).write_text("{}", encoding="utf-8")
-        answer = self.remove(apply=True)
-        self.assertEqual(answer["outcome"], self.steps.LIVE_AGAIN)
-        self.assertEqual(plugin_transition.verdict([answer]), plugin_transition.EXIT_INCOMPLETE)
-        self.assertNotEqual(plugin_transition.EXIT_INCOMPLETE, plugin_transition.EXIT_OK)
-        # settled alone still exits zero, so the new status is not a blanket nonzero.
-        settled = dict(answer, outcome=self.steps.SETTLED)
-        self.assertEqual(plugin_transition.verdict([settled]), plugin_transition.EXIT_OK)
-
-
-    def test_disable_never_claims_the_fallback_it_does_not_touch(self):
-        """disable stops calls and deletes nothing, so the fallback is not its surface to report."""
-        claims = self.steps.stop_claims([])
-        self.assertFalse(any("fallback" in claim for claim in claims["stillLive"]))
-
 class PluginGuardBudgetTest(unittest.TestCase):
     """The budget a plugin-owned document may record, enforced where both writers validate.
 
@@ -2880,14 +2787,6 @@ class PluginGuardBudgetTest(unittest.TestCase):
                 found = completion.complaints(self.document(budget))
                 self.assertEqual([item for item in found if "timeoutSeconds" in item], [],
                                  "budget %r was refused" % budget)
-
-    def test_the_transition_and_the_installer_share_one_bound(self):
-        """They disagreed before: one refused 8 and the other wrote it."""
-        sys.path.insert(0, str(ROOT / "scripts"))
-        from crw_transition import steps
-
-        self.assertEqual(steps.MAX_GUARD_SECONDS, completion.MAX_PLUGIN_GUARD_SECONDS)
-        self.assertEqual(steps.LAUNCHER_MARGIN_SECONDS, completion.LAUNCHER_MARGIN_SECONDS)
 
     def test_the_launcher_mirrors_the_same_two_numbers(self):
         """The launcher cannot import this module, so the numbers are asserted to agree."""

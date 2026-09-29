@@ -927,14 +927,15 @@ contract the Python launchers carried is enforced by the runtime in that mode.
   decision, `crw bridge launcher: no record at ...` from one built with it, and argparse's
   `unrecognized arguments: --plugin-launch` from a Python runtime. Nothing runs that probe yet
   (refactor-backlog, the todo 34 compatibility entry).
-- `scripts/plugin_transition.py` `transition`, `disable` and `remove` refuse with exit 2 and one
+- `scripts/plugin_transition.py` `transition`, `disable` and `remove` refused with exit 2 and one
   line on stderr before reading the host. Their steps hand the surfaces only to a Python runtime
   (preflight requires `<dest>/current/bin/python3` and a cached payload equal to this checkout's),
   and this checkout's payload now declares these commands, so on every host they accepted an
   applied transition removed the working Stop registration and bridge table, reported every step
   settled, and left a Stop hook and a bridge that could not run there. `inspect`,
-  `check-declaration` and `swap-state` still answer. Todo 39 replaces the tool with `crw install
-  transition` and deletes it.
+  `check-declaration` and `swap-state` still answered. Todo 39 then retired the tool rather than
+  porting it (there is no `crw install transition`) and deleted it with its tests; a host that
+  still needs it runs it from a revision before this decision (docs/plugin-transition.md).
 
 Why: the plan's launcher (`exec ... crw bridge "$@"`) read no record, so on a plugin host the
 bridge checked no role pair, lost the recorded `--socket`, and started even where the user owned
@@ -966,7 +967,8 @@ register-mcp` wrote; `TestLegacyStopLaunchersReachTheGoHook`;
 `TestARollbackToAVenvNeverRewritesTheSettings`, the native declaration evaluating the Go-era
 document an update wrote and reaching nothing on a venv; `TestRegisterMCPRecordsANonUTF8PolicyPathAsPythonDoes`,
 both launchers starting under a surrogate-escaped policy path); scripts/ci/tests/test_plugin_wiring.py
-`BridgeRecordPolicyTest`; scripts/ci/tests/test_plugin_transition.py `RetiredCommandsRefuse`.
+`BridgeRecordPolicyTest`; scripts/ci/tests/test_plugin_transition.py `RetiredCommandsRefuse`
+(deleted with the tool by todo 39).
 
 ## 27. Stop parity follows process state, not round-trip distributions
 
@@ -1410,6 +1412,12 @@ scripts/crw_transition/steps.py (nine `Locked` sites); internal/runtime/record/l
 `TestPromotionLockContentionAndTheFileIsNeverUnlinked` and, under the parity tag,
 `TestParity_locks_exclude_across_runtimes` (a Python holder makes Go's promotion Busy and a Go
 holder makes Python's `Exclusive` raise `Busy`).
+
+Correction (todo 39): `scripts/plugin_transition.py` and `scripts/crw_transition/steps.py` retired
+with the transition, so `scripts/runtime_install.py` and the placement it calls
+(`completion.place_launcher`) are the last Python writers under this lock. The ownership-checked
+removal of `<CODEX_HOME>/crw-stop-hook.py` moved to `install.RemoveLauncher`, which takes the same
+`<launcher>.crw-lock` (`TestRemoveLauncherWaitsOnTheLockThePlacementTakes`).
 
 ## 34. The host record stays recordVersion 1; Go install entries are additive
 

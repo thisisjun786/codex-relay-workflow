@@ -1220,14 +1220,12 @@ starts exactly as it always did, with the environment the launcher was given.
 The policy is part of the registration's identity, so the only rerun that succeeds is an identical
 one. Any other difference is refused like any other conflict, and nothing is written: another file,
 the same file with other contents, a rerun that drops the flag, or adding a policy to a version-1
-record. The refusal names the repair. Move the record aside by hand (`plugin_transition.py
-disable`, which retired it with the Stop settings, is retired itself; see
-[the transition](plugin-transition.md)). Then run `register-mcp` again. Every edit to the policy
-file, including adding an exception, therefore has two consequences. The relay picks the edit
-up when its daemon restarts. The bridge record has to be moved aside and registered again, and a
-thread started in between has no bridge tools. That differs from the relay's launch declaration,
-which names only the file. The digest is what lets a changed file fail visibly instead of being
-enforced unregistered.
+record. The refusal names the repair. Move the record aside by hand, then run `register-mcp`
+(or `crw install register-mcp`) again. Every edit to the policy file, including adding an
+exception, therefore has two consequences. The relay picks the edit up when its daemon restarts.
+The bridge record has to be moved aside and registered again, and a thread started in between has
+no bridge tools. That differs from the relay's launch declaration, which names only the file. The
+digest is what lets a changed file fail visibly instead of being enforced unregistered.
 
 A created record is reported only after the policy file has been hashed again, following the write,
 and still matched. The digest is taken before the write, and nothing locks the policy file, so the
@@ -1238,7 +1236,7 @@ the same answer and the move-aside repair, the record stays where it is, and the
 was at the record path when it was last read. The launcher refuses its stale digest at every start,
 so what stays fails visibly. It is not removed. Every writer of the bridge record in this repository
 holds the ownership lock (`crw-mcp-ownership` beside the record) while it writes, moves or retires
-the record: `register-mcp`, the transition's bridge steps and `disable`. A removal by path cannot
+the record: `register-mcp` (and, while it existed, the retired transition). A removal by path cannot
 exclude a writer that does not take that lock, such as an editor, and would delete that writer's
 file. Every file `register-mcp` reads while it holds that lock (the record, the policy, the Codex
 configuration, the cached manifests and declarations, and the package the launcher probe copies) is
@@ -1246,15 +1244,9 @@ read from one descriptor opened without blocking and judged as a regular file, n
 open of the path, so a pipe put in place of any of them cannot hold the lock. The modules it would
 otherwise import while holding the lock, the configuration parser, the bridge's policy parser and
 the package selector, are imported before it takes it, because an import opens its source by path.
-The transition reads the same way while it holds the lock: the configuration, the record and its
-archives, and, in the checks it repeats before removing anything, the cached package's manifest,
-declarations, launchers and payload, and the source of this checkout's packaging check. Two waits
-under the lock are bounded instead: the payload check and the interpreter probe run as subprocesses
-with timeouts of 300 and 30 seconds. A `register-mcp` rerun after the file was edited hashes the new
-bytes and is refused as `record_differs` with the move-aside repair. The transition carries the
-recorded reference, so its preflight refuses a changed file, and its record step writes through the
-same function as `register-mcp`. An edit made after the last check is caught where every other one
-is: the launcher hashes the file at every start and refuses the record.
+A `register-mcp` rerun after the file was edited hashes the new bytes and is refused as
+`record_differs` with the move-aside repair. An edit made after the last check is caught where every
+other one is: the launcher hashes the file at every start and refuses the record.
 
 Two refusals protect the order of operations. `--execution-policy` is refused for `--owner user`,
 because a user-owned registration is started by its configuration entry and never reads the
@@ -1573,13 +1565,12 @@ supported range; what belongs here is who writes the file and what that writer r
 
 | Question | Answer |
 | --- | --- |
-| Which command writes it | This one, with `--owner plugin`. `plugin_transition.py transition` wrote it too, because it installed the same plugin-owned settings and would otherwise have left a host with the settings and no fallback; it is retired and refuses ([the transition](plugin-transition.md)) |
+| Which command writes it | This one, with `--owner plugin`. The retired `plugin_transition.py transition` wrote it too, because it installed the same plugin-owned settings |
 | In what order | Launcher first. A launcher with no settings stands down in silence; settings whose fallback was never placed look installed and are not |
 | What it refuses | A file that does not carry the launcher marker, and anything that is not a regular file. A symlink is reported by kind and never followed, because replacing through one writes to a file this command was never given |
 | What the marker proves | That CRW put a launcher at that path. Not who ran the command, and not that the bytes are intact. The digest is reported beside it for the second question |
 | How it is replaced | Temp file and `os.replace`, then read back, with the kind and the marker re-judged under the lock immediately before the write |
-| Which command removes it | `plugin_transition.py remove` did, under the launcher’s own lock and only while the marker was still there; it is retired and refuses ([the transition](plugin-transition.md)) |
-| What `disable` does to it | Nothing. `disable` stops new calls by retiring the settings and deletes no bytes |
+| Which command removes it | None. The cutover removes it once the retention scan is clear, through `install.RemoveLauncher` (`internal/runtime/install`): under the launcher’s own lock and only while the marker is still there, and never touching the settings |
 
 The two files take separate locks and there is deliberately no lock spanning them. Widening one
 means reworking a write path that is already proven, and it is not needed: every state the pair
@@ -1593,9 +1584,9 @@ because bytes really were written, and not success, because the result did not s
 A plugin-owned budget is capped at `completion.MAX_PLUGIN_GUARD_SECONDS`, the launcher ceiling
 minus its margin. The launcher waits `min(timeoutSeconds + 2, 9)`, so a budget above 7 collapses
 the margin it exists to keep and the launcher’s deadline arrives while the adapter is still
-writing the record of its own timeout. That bound lived in the transition alone until this
-launcher became something every plugin host depends on; it now sits with the validation both
-writers share, and the transition aliases it rather than keeping a second copy.
+writing the record of its own timeout. That bound lived in the retired transition alone until this
+launcher became something every plugin host depends on; it now sits with the validation every
+settings writer runs.
 
 ### Who registers the hook
 

@@ -28,7 +28,7 @@ differ, when a line count differs from `wc -l`, when an owning issue is missing,
 
 ## Files
 
-Total non-test lines: 101588
+Total non-test lines: 98485
 
 | path | lines | invoked | runs | owner | disposition | consumer_search | removal_trigger |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -122,33 +122,31 @@ Total non-test lines: 101588
 | `scripts/ci/contracts.py` | 43 | CI: ci.yml:55 `python3 scripts/ci/contracts.py` | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/gate.py` | 45 | CI: ci.yml:122 required-checks gate | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/packages.py` | 331 | CI: ci.yml:104 per-package pytest (RELAY_CONFORMANCE_REQUIRED=1) | dev/CI | CRW-160 | port | - | - |
-| `scripts/ci/plugin.py` | 964 | CI: ci.yml:54; spawned by crw_transition/steps.py:562 (`--payload`) | dev/CI | CRW-160 | port | - | - |
+| `scripts/ci/plugin.py` | 964 | CI: ci.yml:54 | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/scope.py` | 155 | CI: ci.yml:39 path-scope selection | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/validate.py` | 145 | CI: ci.yml:53 link/metadata validation | dev/CI | CRW-160 | port | - | - |
 | `scripts/completion_hook.py` | 53 | user-owner Stop hook: `<CODEX_HOME>/hooks.json` entry `<python> <checkout>/scripts/completion_hook.py` written by runtime_install.py `hook --owner user`; imports crw_runtime.completion | end user + relay host | CRW-156 | retire-with-evidence | `grep -rn completion_hook` over scripts/, docs/, packages/ (consumers: crw_runtime/completion.py:59 ENTRY_POINT_NAME, crw_transition/inventory.py:59/529, docs/runtime-install.md:1511, docs/plugin-transition.md:18) + host scan of `<CODEX_HOME>/hooks.json` | the user-owned registration is retired in todo 38 (`crw install hook` is plugin-owned only and writes no hooks.json entry); deleted in todo 44 after todo 43's retention scan finds no hooks.json entry naming it |
-| `scripts/crw_runtime/bridgerecord.py` | 455 | imported by runtime_install, crw_transition.inventory, crw_transition.steps | relay host | CRW-157 | port | - | - |
+| `scripts/crw_runtime/bridgerecord.py` | 454 | imported by runtime_install, crw_transition.inventory | relay host | CRW-157 | port | - | - |
 | `scripts/crw_runtime/check.py` | 69 | imported by runtime_install, trial_startup | relay host | CRW-157 | port | - | - |
-| `scripts/crw_runtime/codexconfig.py` | 267 | imported by runtime_install, crw_transition.inventory, crw_transition.steps | relay host | CRW-157 | port | - | - |
-| `scripts/crw_runtime/completion.py` | 4558 | imported by completion_hook, hook_comparison, plugin_transition, runtime_install, stop_events, crw_transition.*; spawns the guard (:767) and interpreter probes (:1031, :3458) | relay host | CRW-157 | port | - | - |
+| `scripts/crw_runtime/codexconfig.py` | 267 | imported by runtime_install, crw_transition.inventory | relay host | CRW-157 | port | - | - |
+| `scripts/crw_runtime/completion.py` | 4558 | imported by completion_hook, hook_comparison, runtime_install, stop_events, crw_transition.inventory; spawns the guard (:767) and interpreter probes (:1031, :3458) | relay host | CRW-157 | port | - | - |
 | `scripts/crw_runtime/definition.py` | 206 | imported by runtime_install, trial_startup; spawns `git` (:100) | relay host | CRW-157 | port | - | - |
 | `scripts/crw_runtime/firing.py` | 761 | imported by crw_runtime.completion | relay host | CRW-157 | port | - | - |
-| `scripts/crw_runtime/hooks.py` | 229 | imported by hook_comparison, runtime_install, crw_runtime.completion, crw_transition.* | relay host | CRW-157 | port | - | - |
-| `scripts/crw_runtime/hostrecord.py` | 607 | imported by trial_startup, crw_runtime.{bridgerecord,completion,hooks,residue,staging}, crw_transition.steps | relay host | CRW-157 | port | - | - |
-| `scripts/crw_runtime/__init__.py` | 6 | package init (docstring only); import target for runtime_install, hook_comparison, trial_startup, stop_events, plugin_transition, completion_hook | relay host | CRW-157 | retire-with-evidence | `grep -rn 'crw_runtime' scripts/ --include=*.py` (importers listed in the Process graph section) | the package is deleted with its last importer in todo 46 (plan: `grep -rn crw_runtime scripts/` returns nothing) |
+| `scripts/crw_runtime/hooks.py` | 229 | imported by hook_comparison, runtime_install, crw_runtime.completion, crw_transition.inventory | relay host | CRW-157 | port | - | - |
+| `scripts/crw_runtime/hostrecord.py` | 607 | imported by trial_startup, crw_runtime.{bridgerecord,completion,hooks,residue,staging} | relay host | CRW-157 | port | - | - |
+| `scripts/crw_runtime/__init__.py` | 6 | package init (docstring only); import target for runtime_install, hook_comparison, trial_startup, stop_events, completion_hook | relay host | CRW-157 | retire-with-evidence | `grep -rn 'crw_runtime' scripts/ --include=*.py` (importers listed in the Process graph section) | the package is deleted with its last importer in todo 46 (plan: `grep -rn crw_runtime scripts/` returns nothing) |
 | `scripts/crw_runtime/ownership.py` | 143 | imported by runtime_install | relay host | CRW-157 | port | - | - |
 | `scripts/crw_runtime/pointer.py` | 171 | imported by runtime_install, crw_runtime.{completion,residue}, crw_transition.inventory | relay host | CRW-157 | port | - | - |
-| `scripts/crw_runtime/reading.py` | 462 | imported by hook_comparison, plugin_transition, trial_startup, runtime_install, 11 crw_runtime/crw_transition modules | relay host | CRW-157 | port | - | - |
+| `scripts/crw_runtime/reading.py` | 462 | imported by hook_comparison, trial_startup, runtime_install, 10 crw_runtime modules and crw_transition.inventory | relay host | CRW-157 | port | - | - |
 | `scripts/crw_runtime/residue.py` | 324 | imported by runtime_install | relay host | CRW-157 | port | - | - |
 | `scripts/crw_runtime/scope.py` | 324 | imported by runtime_install, crw_runtime.swapgate; spawns the relay CLI (:73) | relay host | CRW-157 | port | - | - |
 | `scripts/crw_runtime/staging.py` | 392 | imported by runtime_install, crw_runtime.residue | relay host | CRW-157 | port | - | - |
 | `scripts/crw_runtime/swapgate.py` | 385 | imported by runtime_install | relay host | CRW-157 | port | - | - |
 | `scripts/crw_runtime/text.py` | 28 | imported by runtime_install (`text_prefix`), crw_runtime.codexconfig, crw_runtime.definition | relay host | CRW-157 | retire-with-evidence | `grep -rn text_prefix` and `grep -rn 'crw_runtime.text'` over scripts/ (consumers: runtime_install.py:32, codexconfig.py, definition.py) | no Go counterpart needed (it names Python `str.startswith` call sites; Go uses `strings.HasPrefix` directly); deleted with the crw_runtime package in todo 46 |
-| `scripts/crw_transition/__init__.py` | 8 | package init; `TRANSITION_VERSION = 1` (no in-repo reader outside the package; grep -rn TRANSITION_VERSION) | relay host | CRW-158 | port | - | - |
-| `scripts/crw_transition/inventory.py` | 1123 | imported by plugin_transition, crw_transition.steps, runtime_install (lazy :5077/:5350); spawns install.py (:454) and interpreter probe (:602) | relay host | CRW-158 | port | - | - |
-| `scripts/crw_transition/steps.py` | 2704 | imported by plugin_transition; spawns scripts/ci/plugin.py (:562) | relay host | CRW-158 | port | - | - |
+| `scripts/crw_transition/__init__.py` | 8 | package init; `TRANSITION_VERSION = 1` (no in-repo reader outside the package; grep -rn TRANSITION_VERSION) | relay host | CRW-158 | retire-with-evidence | `grep -rn plugin_transition` and `grep -rn crw_transition` over plugins/crw/skills, .github/workflows, scripts/ci/*.py (non-test), docs/port/cutover.md and control-group.md at 53caad67: 0 hits; the host (~/.codex) is already a plugin host (settings and bridge record owner `plugin`, no CRW entry in hooks.json or config.toml, no crw-* skill link); remaining importer: runtime_install.py (:5077, :5350, through inventory) | the package goes with runtime_install.py in todo 44 (CRW-141) |
+| `scripts/crw_transition/inventory.py` | 1123 | imported by runtime_install (lazy :5077/:5350: `read_plugin` for `register-mcp --execution-policy`); spawns install.py (:454) and interpreter probe (:602), both reached only from the retired transition preflight | relay host | CRW-158 | retire-with-evidence | same search as `scripts/crw_transition/__init__.py`; `read_plugin`'s only remaining consumer is runtime_install.py `_policy_launcher_refusal`, itself not ported (functions table below) | deleted with runtime_install.py in todo 44 (CRW-141) |
 | `scripts/hook_comparison.py` | 2774 | dev CLI `python3 scripts/hook_comparison.py` (docs/hook-comparison.md); spawns runtime_install/relay/tracer | dev/CI | CRW-159 | port | - | - |
-| `scripts/install.py` | 98 | operator CLI `python3 scripts/install.py --check` or `--apply` (docs/runtime-install.md:18); spawned by runtime_install.py:294 and crw_transition/inventory.py:454 | end user + relay host | CRW-158 | port | - | - |
-| `scripts/plugin_transition.py` | 398 | operator CLI `python3 scripts/plugin_transition.py` (docs/plugin-transition.md; transition, disable and remove retired: they refuse since decision 26) | end user + relay host | CRW-158 | port | - | - |
+| `scripts/install.py` | 98 | operator CLI `python3 scripts/install.py --check` or `--apply` (docs/runtime-install.md:18), the legacy equivalent of `crw-dev skills link` (`internal/dev/skills`, todo 39: destination crw-dev, retired-name `LEGACY` detection dropped); spawned by runtime_install.py:294 and crw_transition/inventory.py:454 | end user + relay host | CRW-158 | port | - | - |
 | `scripts/port/check_inventory.py` | 113 | dev CLI `python3 scripts/port/check_inventory.py` (this document's check, todo 1) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn check_inventory` over scripts/, docs/, .github/ (consumers: this document only; no CI job runs it yet) | the Python inventory is obsolete once todo 44 (CRW-141) deletes the product Python; deleted with the remaining dev Python in todo 48 |
 | `scripts/port/corpus_notes.py` | 230 | imported by scripts/port/check_corpus_count.py (todo 6) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn corpus_notes` over scripts/, docs/, .github/ (consumer: scripts/port/check_corpus_count.py; no CI job runs it yet) | todo 48 retires the Python corpus checker after the Go tests assume its coverage obligation |
 | `scripts/port/check_corpus_count.py` | 208 | dev CLI `python3 scripts/port/check_corpus_count.py` (todo 6) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn check_corpus_count` over scripts/, docs/, .github/ (consumer: todo 6 corpus-coverage validation; no CI job runs it yet) | todo 48 retires the Python corpus checker after the Go tests assume its coverage obligation |
@@ -160,6 +158,15 @@ Total non-test lines: 101588
 | `scripts/runtime_install.py` | 5851 | operator CLI `python3 scripts/runtime_install.py <cmd>` (docs/runtime-install.md:19); CI `verify-definition` via scripts/ci/contracts.py:15 | end user + relay host | CRW-158 | port | - | - |
 | `scripts/stop_events.py` | 59 | dev CLI `python3 scripts/stop_events.py --journal-root ...` (docs/runtime-install.md:1867) | dev/CI | CRW-159 | port | - | - |
 | `scripts/trial_startup.py` | 3734 | dev CLI `python3 scripts/trial_startup.py` (docs/live-trial.md); spawns git + relay (:1302) | dev/CI | CRW-159 | port | - | - |
+
+### Files deleted with evidence
+
+Deleted files leave the table above, which lists only files that exist. Their evidence stays here.
+
+| path | lines | invoked | owner | consumer_search | removed by |
+| --- | --- | --- | --- | --- | --- |
+| `scripts/plugin_transition.py` | 398 | operator CLI `python3 scripts/plugin_transition.py {inspect, check-declaration, transition, disable, remove, swap-state}` (docs/plugin-transition.md); `transition`, `disable` and `remove` refused since decision 26 (todo 34) | CRW-158 | `grep -rn plugin_transition` and `grep -rn crw_transition` over plugins/crw/skills, .github/workflows, scripts/ci/*.py (non-test), docs/port/cutover.md and control-group.md at 53caad67: 0 hits; only its own tests and test_plugin_wiring.py parsed it. The host is already a plugin host (settings and bridge record owner `plugin`, no CRW entry in hooks.json or config.toml, no crw-* skill link), and `crw install` writes only plugin-owned registrations | todo 39, which deletes it with its tests (scope analysis "# 39"); a host that still needs it runs it from a revision before decision 26, where `transition` still runs (docs/plugin-transition.md) |
+| `scripts/crw_transition/steps.py` | 2704 | imported by plugin_transition only; spawned scripts/ci/plugin.py (:562) | CRW-158 | same search. `launcher_remove` (the ownership-checked removal of `<CODEX_HOME>/crw-stop-hook.py`) is still needed by todo 43 and is ported as `install.RemoveLauncher`, not a command | todo 39 |
 
 ## Process-spawn graph
 
@@ -194,7 +201,7 @@ disappear from the product path.
 | site | spawns | target | Go replacement |
 | --- | --- | --- | --- |
 | `scripts/runtime_install.py:240` | `sys.executable` named in `installedBy` | Python self reference | the crw binary's own path (`internal/runtime/doctor` actingProcess); `crw install` records the issue and the archive, never an interpreter (todo 38) |
-| `scripts/runtime_install.py:294` | argv `[sys.executable, scripts/install.py, --check, --dest]` | Python | in-process `crw install skills --check` (todo 39) |
+| `scripts/runtime_install.py:294` | argv `[sys.executable, scripts/install.py, --check, --dest]` | Python | retired (scope analysis "# 39"): the Go runtime reads no skill links; a developer checks them with `crw-dev skills link --check` (todo 39) |
 | `scripts/runtime_install.py:296` | runs the :294 argv | Python | same |
 | `scripts/runtime_install.py:528` | `_asked`: `<interpreter> -c <store program>` (store presence/tables, :560-597) | Python | an lstat of the relay's resolved selection and a read-only catalog read that creates no sidecar (`internal/runtime/swapgate` `StorePresence`/`StoreSchema`, decision 36); the candidate's schema from the candidate binary's `crw doctor declared-schema --json` (todo 37) |
 | `scripts/runtime_install.py:639` | `<python> -c "import platform;print(platform.python_version())"` version probe | Python | retired (todo 37): Go points have no interpreter dimension (`internal/runtime/record.Dimensions`) |
@@ -223,10 +230,10 @@ disappear from the product path.
 | `scripts/crw_runtime/completion.py:3458` | `_answers_as_an_interpreter`: `<resolved> -c <source>` | Python probe | kept until todos 43/44: hook status still asks it while a registration or settings record may name a Python interpreter (already ported, `internal/relay/hook/status.go` `answersPython`, todo 33) |
 | `scripts/crw_runtime/definition.py:100` | `git` | non-Python, stays | retired (todo 37): no git at run time; the build stamps the source tree (decision 34) and the definition keeps no derivable digest (decision 35) |
 | `scripts/crw_runtime/scope.py:73` | relay CLI `doctor` (discovery, selected state and root candidate, :114-126) | Python console script | a subprocess of the SELECTED relay executable, Python until the cutover and Go after (`internal/runtime/scope.Relay`, todo 37): the live store refuses in-process opens before todo 42 |
-| `scripts/crw_transition/inventory.py:454` | argv `[sys.executable, scripts/install.py, --check, --dest]` | Python | in-process (todo 39) |
+| `scripts/crw_transition/inventory.py:454` | argv `[sys.executable, scripts/install.py, --check, --dest]` | Python | retired (todo 39) with the transition preflight, its only caller |
 | `scripts/crw_transition/inventory.py:459` | runs the :454 argv | Python | same |
-| `scripts/crw_transition/inventory.py:602` | `_evaluates_python`: `<candidate> -c <arith program>` | Python probe | retired (todo 39) |
-| `scripts/crw_transition/steps.py:562` | argv `[sys.executable, scripts/ci/plugin.py, --payload]` | Python | in-process payload check (todo 39) |
+| `scripts/crw_transition/inventory.py:602` | `_evaluates_python`: `<candidate> -c <arith program>` | Python probe | retired (todo 39) with the transition preflight, its only caller |
+| `scripts/crw_transition/steps.py:562` | argv `[sys.executable, scripts/ci/plugin.py, --payload]` | Python | retired (todo 39): steps.py is deleted; the payload check is `crw-dev ci plugin --payload` run by hand |
 | `scripts/crw_transition/steps.py:565` | runs the :562 argv | Python | same |
 
 ### Dev and CI only (dev/CI; CRW-159, CRW-160)
@@ -283,8 +290,8 @@ hook` (todo 38), which never registers an interpreter.
   receiver and registry. The bridge cannot ship as a separate process from the relay.
 - The daemon re-launches its own interpreter (`service.py:1680`, `:1779`,
   `supervisorchannel.py:205`), so the relay CLI and daemon are one program.
-- `scripts/runtime_install.py`, `hook_comparison.py`, `trial_startup.py`, `stop_events.py`,
-  `plugin_transition.py` and `completion_hook.py` all import `crw_runtime`; the package outlives
+- `scripts/runtime_install.py`, `hook_comparison.py`, `trial_startup.py`, `stop_events.py` and
+  `completion_hook.py` all import `crw_runtime`; the package outlives
   the product Python until the last dev harness is ported (todo 46).
 
 ## Functions retired with evidence
@@ -305,8 +312,8 @@ search, and the trigger after which the Python definition may go.
 | `scripts/crw_runtime/ownership.py:78` `commit_matches`, `tree_matches`, `working_tree_clean` signals | a Go install is an archive, not a checkout: `commit_matches` was never filled and the tree signals describe a checkout (the revision is recorded in the entry's `source`) | `grep -rn commit_matches` over scripts/ at 07caf101: ownership.py and runtime_install.py only | deleted with ownership.py in todo 46 |
 | `scripts/crw_runtime/check.py:14` field `imported` | the location an interpreter imports a package from; a binary has no import | `grep -rn '"imported"\|importedLocation'` over scripts/ at 07caf101: check.py and runtime_install.py, and their tests | deleted with check.py in todo 46 |
 | `scripts/runtime_install.py:4627` `cmd_measure` (the `measure` subcommand) | defer-post-44: the install exercise records the point (OPS-2.4) and `crw doctor` compares it; a standalone re-measure has no caller | `grep -rn 'cmd_measure\|runtime_install.py measure'` over scripts/, plugins/, docs/, packages/, .github/ and internal/ at 1e3583c3: runtime_install.py and docs/runtime-install.md only | deleted with runtime_install.py in todo 44; a Go `crw install measure` is decided after it |
-| `scripts/runtime_install.py:5334` `register-mcp --owner user` and `scripts/crw_runtime/codexconfig.py:217` `register` (the config.toml append), `python_needed`, `cross_check` | the plugin declares the bridge; the Go installer writes no config.toml. `render`, `quote` and `key` are NOT retired: todo 39's transition proves authorship with them | `grep -rn 'codexconfig.register\|python_needed\|cross_check'` over scripts/, plugins/, docs/ at 1e3583c3: runtime_install.py, codexconfig.py and scripts/ci/tests only | deleted with runtime_install.py (todo 44) and codexconfig.py (todo 46) |
-| `scripts/runtime_install.py:2300` `hook --adapter completion --owner user`, `scripts/crw_runtime/completion.py:1105` `duplicate_complaints`, `scripts/crw_runtime/hooks.py:131` `install` (the hooks.json append) | the plugin declares the Stop registration; `crw install hook` writes settings only. `completion.command_for` is NOT retired: todo 39 recognises Python-written entries with it | `grep -rn 'duplicate_complaints\|hooks.install'` over scripts/, plugins/, docs/ at 1e3583c3: runtime_install.py, completion.py, hook_comparison.py (dev, todo 46) and scripts/ci/tests only | deleted with runtime_install.py in todo 44 |
+| `scripts/runtime_install.py:5334` `register-mcp --owner user` and `scripts/crw_runtime/codexconfig.py:217` `register` (the config.toml append), `python_needed`, `cross_check` | the plugin declares the bridge; the Go installer writes no config.toml. `render`, `quote` and `key` were kept for todo 39's transition, which retired instead of being ported, so they get no Go port either | `grep -rn 'codexconfig.register\|python_needed\|cross_check'` over scripts/, plugins/, docs/ at 1e3583c3: runtime_install.py, codexconfig.py and scripts/ci/tests only | deleted with runtime_install.py (todo 44) and codexconfig.py (todo 46) |
+| `scripts/runtime_install.py:2300` `hook --adapter completion --owner user`, `scripts/crw_runtime/completion.py:1105` `duplicate_complaints`, `scripts/crw_runtime/hooks.py:131` `install` (the hooks.json append) | the plugin declares the Stop registration; `crw install hook` writes settings only. `completion.command_for` was kept for todo 39's transition, which retired instead of being ported, so it gets no Go port either | `grep -rn 'duplicate_complaints\|hooks.install'` over scripts/, plugins/, docs/ at 1e3583c3: runtime_install.py, completion.py, hook_comparison.py (dev, todo 46) and scripts/ci/tests only | deleted with runtime_install.py in todo 44 |
 | `scripts/runtime_install.py:2300` `hook --hook-command` (an explicit SessionStart hook) | no product caller | `grep -rn -- '--hook-command'` over scripts/, plugins/, docs/ at 1e3583c3: runtime_install.py, completion.py (a message), docs/runtime-install.md and scripts/ci/tests only | deleted with runtime_install.py in todo 44 |
 | `scripts/crw_runtime/hooks.py:212` `disable` | no caller | `grep -rn 'hooks.disable'` over scripts/ at 1e3583c3: none | deleted with hooks.py in todo 46 |
 | `scripts/runtime_install.py:3839` `_inherited_registration` | adopted a pre-pointer config.toml registration naming a concrete env path as this command's own; the Go promotion refuses a `codex-thread-bridge` table that does not name the pointer instead | `grep -rn _inherited_registration` over scripts/ at 1e3583c3: runtime_install.py and scripts/ci/tests only | deleted with runtime_install.py in todo 44 |
@@ -333,6 +340,6 @@ installer's copy.
 | CRW-155 | 2 |
 | CRW-156 | 7 |
 | CRW-157 | 17 |
-| CRW-158 | 6 |
+| CRW-158 | 4 |
 | CRW-159 | 3 |
 | CRW-160 | 8 |

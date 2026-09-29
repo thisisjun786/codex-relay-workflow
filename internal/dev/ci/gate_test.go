@@ -371,5 +371,18 @@ func Test47_GATE_10_ParallelLegsCoverTheWholeRun(t *testing.T) {
 		expected = append(expected, strconv.Itoa(i+1)+"/"+strconv.Itoa(len(shards)))
 	}
 	expectEqual(t, "package shards", shards, expected)
-	expectEqual(t, "installer test parts", matrixValues(t, jobs["tests"], "part"), []string{"transition", "rest"})
+	expectEqual(t, "installer test parts", matrixValues(t, jobs["tests"], "part"), []string{"heavy", "rest"})
+	// `heavy` names modules that exist; `rest` is every other module, so none is dropped.
+	if !strings.Contains(jobs["tests"], "ls test*.py") || !strings.Contains(jobs["tests"], `grep -vxF "$(printf '%s\n' $HEAVY)"`) {
+		t.Errorf("the rest leg is not every module the heavy leg leaves")
+	}
+	heavy := regexp.MustCompile(`(?m)^          HEAVY: (.+)$`).FindStringSubmatch(jobs["tests"])
+	if heavy == nil {
+		t.Fatal("the tests job names no HEAVY modules")
+	}
+	for _, module := range strings.Fields(heavy[1]) {
+		if info, err := os.Stat(filepath.Join(repoRoot(), "scripts", "ci", "tests", module+".py")); err != nil || !info.Mode().IsRegular() {
+			t.Errorf("HEAVY names %s, which is not a module in scripts/ci/tests", module)
+		}
+	}
 }

@@ -105,7 +105,8 @@ synthetic data. The `packages` check additionally needs uv and the dependencies
 resolved in the root `uv.lock`; pin that tooling by version, commit and checksum,
 and keep its own fixtures synthetic and local. Ordinary CI does not need a
 contributor's Codex, CXC, Paperthin, Linear account, App Server socket or user
-skill installation. Keep `scripts/install.py` standard-library-only. Validate the
+skill installation. Keep `scripts/install.py`, the legacy skill linker, standard-library-only
+while it remains; `crw-dev skills link` is its replacement in the development binary. Validate the
 documented minimum Python version in CI; cross-platform symlink behavior and
 actual host compatibility need their own evidence before claiming support.
 

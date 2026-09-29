@@ -202,11 +202,17 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(shards, [f"{index}/{total}" for index in range(1, total + 1)])
         self.assertIn('packages.py --shard "$SHARD"', workflow_jobs()["packages"])
 
-    def test_installer_tests_split_into_the_transition_module_and_the_rest(self):
-        self.assertEqual(self.matrix("tests", "part"), ["transition", "rest"])
+    def test_installer_tests_split_into_the_heavy_modules_and_the_rest(self):
+        """`heavy` names modules that exist; `rest` is every other module, so none is dropped."""
+        self.assertEqual(self.matrix("tests", "part"), ["heavy", "rest"])
         body = workflow_jobs()["tests"]
         self.assertIn("ls test*.py", body)
-        self.assertIn("grep -vx test_plugin_transition", body)
+        self.assertIn('grep -vxF "$(printf \'%s\\n\' $HEAVY)"', body)
+        heavy = re.search(r"(?m)^          HEAVY: (.+)$", body)
+        self.assertIsNotNone(heavy)
+        tests = WORKFLOW.parents[2] / "scripts" / "ci" / "tests"
+        for module in heavy[1].split():
+            self.assertTrue((tests / (module + ".py")).is_file(), module)
 
 
 if __name__ == "__main__":

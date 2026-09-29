@@ -14,7 +14,7 @@ yet linked.
 Clauses: OPS-2.3 for the skill links, OPS-1.1 and OPS-1.3 for the combination, OPS-2.4 for the
 install order, OPS-3.1 and OPS-3.2 for where the store goes, OPS-6.1 for the result.
 
-Action: link the skills with the existing standard-library installer, install the runtime as a
+Action: link the skills with the repository's skill-link installer, install the runtime as a
 separate step from the single compatibility record, register the MCP server through supported
 configuration, then fill all six check fields. The store is created once for the whole operating
 scope at the default location under the state home, not inside a repository and not in a temporary
@@ -609,14 +609,13 @@ transition. A paused goal resumes only through authorized supported controls.
 Preserved: existing goal identity/status, all child ownership, explicit user limits,
 CXC state and guards, and the difference between a created goal and observed auto-resume.
 
-## S27 Binding-only requests and retired Focus preserve ownership
+## S27 Binding-only requests preserve ownership
 
 Observed: a user asks Run to connect this task to a project without executing it.
 The project already has a coordination document. Variants include the same parent
 binding, another active parent, and a temporary question about a different project.
-An installation still has an old Focus entry after updating the checkout.
 
-Clauses: OPS-2.3, OPS-7.1, OPS-7.2, OPS-8.1; binding decisions belong to
+Clauses: OPS-7.1, OPS-7.2, OPS-8.1; binding decisions belong to
 [Project parent binding](../../../crw-plan/references/integrations.md#project-parent-binding).
 
 Action: reuse and verify the same parent binding and suitable coordination document.
@@ -624,12 +623,10 @@ Apply supported title/pin changes only within the designation request. Do not cr
 children or a goal. Inspect another parent's ownership without waking it; settle a
 material conflict before replacement. A temporary question does not switch the binding.
 Run or Loop execution requests do the same setup and then continue their requested
-operation. The installer reports the retired Focus entry and preserves it; the owner
-can move a verified owned link outside discovery, then recheck the seven current skills.
-It does not recreate Focus or replace foreign files/links.
+operation.
 
 Preserved: stable project/task IDs, existing specifications and coordination history,
-active child ownership, explicit execution limits, old installation contents and runtime state.
+active child ownership, explicit execution limits and runtime state.
 
 ## S28 Three levels run, and each one reads the level below by result
 
