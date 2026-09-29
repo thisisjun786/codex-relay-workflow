@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // Every replay compares CLI bytes and every SQLite table, including refused
@@ -97,6 +98,7 @@ func TestF1ReplayWholeCLI(t *testing.T) {
 			}
 			ctx := context.WithValue(context.Background(), f1InputsKey{}, f1Inputs{clock: &testClock{now: 100000}, entropy: bytes.NewReader([]byte{0, 1, 2, 3, 4, 5, 6, 7})})
 			gd, pd := home+"/go", home+"/py"
+			f1Twins(t, gd, pd)
 			s, e := store.Open(ctx, gd+"/relay.sqlite3", "")
 			if e != nil {
 				t.Fatal(e)
@@ -141,16 +143,8 @@ func TestF1ReplayWholeCLI(t *testing.T) {
 			if e = s.Close(); e != nil {
 				t.Fatal(e)
 			}
-			if e = os.MkdirAll(pd, 0700); e != nil {
-				t.Fatal(e)
-			}
-			data, e := os.ReadFile(gd + "/relay.sqlite3")
-			if e != nil {
-				t.Fatal(e)
-			}
-			if e = os.WriteFile(pd+"/relay.sqlite3", data, 0600); e != nil {
-				t.Fatal(e)
-			}
+			// Python's twin takes the rows Go's ledger seeded, written by Python's own writer.
+			copyRowsToPython(t, ctx, gd, pd)
 			args := make([]string, len(tc.args))
 			for i, a := range tc.args {
 				args[i] = strings.NewReplacer("$pub", pub, "$block", block).Replace(a)
@@ -185,7 +179,7 @@ func f1ReplayCLI(t *testing.T, ctx context.Context, gd, pd string, args []string
 		t.Fatal(e)
 	}
 	var stdout, stderr bytes.Buffer
-	code, handled := ExecuteAs(ctx, "codex-session-relay", append([]string{"--state", gd, "--json"}, args...), &stdout, &stderr, nil)
+	code, handled := executeAsCLI(ctx, append([]string{"--state", gd, "--json"}, args...), &stdout, &stderr)
 	if !handled || code != want.Exit || stdout.String() != want.Stdout || stderr.String() != want.Stderr {
 		var expectedJSON, actualJSON any
 		_ = json.Unmarshal([]byte(want.Stdout), &expectedJSON)
@@ -226,6 +220,10 @@ func f1ReplayCLI(t *testing.T, ctx context.Context, gd, pd string, args []string
 		var got any
 		if e = json.Unmarshal(raw, &got); e != nil {
 			t.Fatal(e)
+		}
+		if key == "schema_meta" {
+			// Each runtime's store names its own owner: the one runtime-identity difference.
+			got, want.Tables[key] = ownerNeutralRows(t, testsupport.Go, got), ownerNeutralRows(t, testsupport.Python, want.Tables[key])
 		}
 		if !reflect.DeepEqual(got, want.Tables[key]) {
 			t.Errorf("whole-output comparison diff: %s\nGo %s\nPython %v", noticeDifference(key, want.Tables[key], got), raw, want.Tables[key])

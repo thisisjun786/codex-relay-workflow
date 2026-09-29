@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 type sr22Capture struct {
@@ -34,6 +35,10 @@ func captureSR22(t *testing.T) (sr22Capture, *store.Store) {
 	}
 	var captured sr22Capture
 	mustDo(t, json.Unmarshal(out, &captured))
+	// The capture is a backup of Python's fenced store, alone in its directory: Go renders from
+	// it after a takeover.
+	testsupport.Rehome(t, dbPath)
+	testsupport.HandOver(t, dbPath, "go")
 	s, err := store.Open(context.Background(), dbPath, "")
 	mustDo(t, err)
 	t.Cleanup(func() { _ = s.Close() })

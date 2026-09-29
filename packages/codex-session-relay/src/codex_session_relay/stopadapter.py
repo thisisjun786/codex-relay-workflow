@@ -47,7 +47,9 @@ import hashlib
 import json
 import os
 import re
+import socket
 import stat as stat_module
+import struct
 import subprocess
 import sys
 import time
@@ -463,11 +465,176 @@ def _text(raw):
     return str(raw)
 
 
-def invoke_guard(config, payload):
-    """Run the guard and report how the process ended, without reading its output."""
-    argv = guard_argv(config)
-    budget = config.get("timeoutSeconds") or DEFAULT_TIMEOUT_SECONDS
+# Decision 24: the control-socket frame limit, the same in both directions and runtimes.
+MAX_GUARD_FRAME = 64 << 20
+# Darwin <sys/un.h>: SOL_LOCAL / LOCAL_PEERCRED return a struct xucred.
+SOL_LOCAL, LOCAL_PEERCRED, XUCRED_SIZE = 0, 0x001, 76
+
+
+def peer_uid(connection):
+    """The kernel-observed Unix peer uid; no request bytes are trusted first.
+
+    Both ends of the control socket read the peer through this one function: the Stop client
+    below, and the Python owner's GuardServer (control.py imports it, because this file imports
+    nothing from the package). Linux answers SO_PEERCRED, Darwin SOL_LOCAL/LOCAL_PEERCRED, as
+    Go's hook/peer_linux.go and hook/peer_darwin.go read them.
+    """
+    if hasattr(socket, "SO_PEERCRED"):
+        raw = connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+        _pid, uid, _gid = struct.unpack("3i", raw)
+        return uid
+    if sys.platform == "darwin":
+        # struct xucred { u_int cr_version; uid_t cr_uid; ... }, cr_version == XUCRED_VERSION (0),
+        # as Go's hook/peer_darwin.go reads it through GetsockoptXucred.
+        raw = connection.getsockopt(getattr(socket, "SOL_LOCAL", SOL_LOCAL),
+                                    getattr(socket, "LOCAL_PEERCRED", LOCAL_PEERCRED), XUCRED_SIZE)
+        version, uid = struct.unpack_from("=II", raw)
+        if version != 0:
+            raise OSError(f"unsupported xucred version {version}")
+        return uid
+    raise OSError("guard peer credentials unavailable")
+
+
+def _trusted_guard_peer(connection, path):
+    """Authenticate the local owner before sending a Stop or trusting its verdict."""
+    peer = peer_uid(connection)
+    ours = os.getuid()
+    endpoint = os.lstat(path)
+    parent = os.stat(Path(path).parent)
+    if stat_module.S_ISLNK(endpoint.st_mode) or not stat_module.S_ISSOCK(endpoint.st_mode):
+        raise OSError("guard control path is not a direct socket")
+    if peer != ours:
+        raise OSError(f"guard peer uid {peer} differs from our uid {ours}")
+    if endpoint.st_uid != ours:
+        raise OSError(f"guard socket uid {endpoint.st_uid} differs from our uid {ours}")
+    if parent.st_uid != ours:
+        raise OSError(f"guard socket directory uid {parent.st_uid} differs from our uid {ours}")
+    if stat_module.S_IMODE(parent.st_mode) & 0o022:
+        raise OSError("guard socket directory is group- or world-writable")
+
+
+def socket_guard(config, payload, *, state=None):
+    """One bounded control request; None permits the retained Python CLI fallback.
+
+    No event arbitration happens here: the adapter already owns that claim.
+    The CLI independently verifies the durable owner before in-process evaluation.
+    """
+    if state is None:
+        if config.get("dbPath"):
+            state = Path(config["dbPath"]).expanduser().resolve().parent
+        elif os.environ.get("CODEX_SESSION_RELAY_STATE"):
+            state = Path(os.environ["CODEX_SESSION_RELAY_STATE"]).expanduser().resolve()
+        else:
+            base = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
+            socket_path = config.get("socketPath")
+            key = hashlib.sha256(str(Path(socket_path).expanduser().resolve()).encode()).hexdigest()[:16] if socket_path else "default"
+            state = base / "codex-session-relay" / key
+    state = Path(state)
+    record = None
+    try:
+        record = json.loads((state / "takeover.json").read_bytes())
+    except (FileNotFoundError, NotADirectoryError):
+        pass
+    except (OSError, ValueError):
+        record = {}
     started = time.monotonic()
+    budget = min(config.get("timeoutSeconds") or DEFAULT_TIMEOUT_SECONDS, DEFAULT_TIMEOUT_SECONDS)
+    argv = guard_argv(config)
+    sent = False
+
+    def exited(stdout, code=GUARD_EXIT_OK):
+        return {"ending": EXITED, "argv": argv, "code": code, "signal": None,
+                "elapsedMs": round((time.monotonic() - started) * 1000),
+                "stdout": stdout, "stderr": "", "detail": None}
+
+    try:
+        stop = json.loads(payload)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(min(0.05, budget))
+            address = str(state / "control.sock")
+            if len(os.fsencode(address)) >= 104 and Path("/proc/self/fd").is_dir():
+                directory = os.open(state, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    connection.connect(f"/proc/self/fd/{directory}/control.sock")
+                finally:
+                    os.close(directory)
+            else:
+                connection.connect(address)
+            _trusted_guard_peer(connection, state / "control.sock")
+            remaining = budget - (time.monotonic() - started)
+            connection.settimeout(max(0.001, remaining))
+            deadline = datetime.fromtimestamp(time.time() + remaining, timezone.utc).isoformat()
+            # socketPath and program are the selection inputs the Go hook client sends (hook
+            # RequestGuard, decision 24): an owner resolving an unpinned Stop's store applies
+            # the local fallback's socket refusals with them. program is the configured relay
+            # unless the caller names the spelling its own refusals print (guard-evaluate).
+            request = {"protocol": 1, "method": "guard-evaluate", "params": {
+                "markerRoot": config["markerRoot"], "stopInput": stop,
+                "mode": config.get("mode") or OBSERVE, "dbPath": config.get("dbPath"),
+                "now": config.get("now"), "noRecord": config.get("noRecord", False),
+                "deadline": deadline, "socketPath": config.get("socketPath"),
+                "program": config.get("program", config.get("relayExecutable"))}}
+            # From here the owner may hold part of the request: never fall back to the CLI and
+            # never invent a refusal; answer as the Go client does (decision 24's rows).
+            sent = True
+            raw = bytearray()
+            try:
+                # The deadline covers the send too: an owner that does not read a large Stop
+                # payload is guard_timed_out, as the Go client classifies a write timeout.
+                connection.sendall(json.dumps(request).encode("utf-8") + b"\n")
+                while b"\n" not in raw and len(raw) <= MAX_GUARD_FRAME:
+                    remaining = budget - (time.monotonic() - started)
+                    if remaining <= 0:
+                        raise TimeoutError("guard socket deadline exceeded")
+                    connection.settimeout(remaining)
+                    chunk = connection.recv(min(65536, MAX_GUARD_FRAME + 1 - len(raw)))
+                    if not chunk:
+                        break
+                    raw.extend(chunk)
+            except TimeoutError:
+                return {"ending": TIMED_OUT, "argv": argv, "code": None, "signal": None,
+                        "elapsedMs": round((time.monotonic() - started) * 1000),
+                        "stdout": "", "stderr": "",
+                        "detail": f"the owner did not answer guard-evaluate within {budget}s"}
+            try:
+                if len(raw) > MAX_GUARD_FRAME:
+                    raise ValueError("guard response exceeds 64 MiB")
+                text = bytes(raw).decode("utf-8")
+                value = json.loads(text) if raw else None
+            except ValueError:
+                # Unreadable output, as the Go client classifies it: never a refusal.
+                return exited(bytes(raw).decode("utf-8", "replace"))
+            if value is None:
+                return exited("")
+            error = value.get("error") if isinstance(value, dict) else None
+            code = ({"refused": GUARD_EXIT_REFUSED, "host": GUARD_EXIT_HOST,
+                     "usage": GUARD_EXIT_USAGE}.get(error, GUARD_EXIT_REFUSED)
+                    if error is not None else GUARD_EXIT_OK)
+            return exited(text, code)
+    except (OSError, ValueError, TypeError) as error:
+        if sent:
+            # EPIPE, ECONNRESET and the like after sending: the adapter records the fault.
+            raise
+        if record is None or isinstance(record, dict) and record.get("owner") == "python":
+            return None
+        answer = {"error": "refused", "reason": "store_owned_by_other",
+                  "detail": "the owner could not answer guard-evaluate: " + str(error)}
+        return {"ending": EXITED, "argv": argv, "code": GUARD_EXIT_REFUSED, "signal": None,
+                "elapsedMs": round((time.monotonic() - started) * 1000),
+                "stdout": json.dumps(answer), "stderr": "", "detail": None}
+
+
+def invoke_guard(config, payload):
+    """Try the owner socket before launching the retained Python CLI."""
+    started = time.monotonic()
+    deadline = started + (config.get("timeoutSeconds") or DEFAULT_TIMEOUT_SECONDS)
+    # Without an explicit receipt store, the CLI must resolve intent/discovery
+    # before any owner dial; an environment pin does not settle that selection.
+    routed = socket_guard(config, payload) if config.get("dbPath") else None
+    if routed is not None:
+        return routed
+    argv = guard_argv(config)
+    budget = max(0.001, deadline - time.monotonic())
     try:
         opened = subprocess.Popen(
             argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -490,7 +657,7 @@ def invoke_guard(config, payload):
         # Draining is bounded by what is LEFT of the budget, never by the budget again: a second
         # full wait would take this to nearly twice the budget, which is the window where the
         # host kills the adapter and the timeout goes unrecorded.
-        remaining = budget - (time.monotonic() - started)
+        remaining = deadline - time.monotonic()
         out, err = b"", b""
         if remaining > 0:
             try:

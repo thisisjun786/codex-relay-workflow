@@ -5,9 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"modernc.org/sqlite"
 )
 
@@ -15,17 +19,31 @@ import (
 // held across a check and the publication that depends on it. It opens with mode=rw, never rwc,
 // so an absent store stays absent. Release rolls back: the hold writes nothing itself.
 type WriteHold struct {
-	db   *sql.DB
-	Conn *sql.Conn
+	db        *sql.DB
+	Conn      *sql.Conn
+	admission *ownership.Admission
 }
 
 // HoldForWrite takes the hold within timeout, or returns why it could not, in
 // registration_hold's words.
 func HoldForWrite(ctx context.Context, path string, timeout time.Duration) (*WriteHold, string) {
+	if err := holdStat(path); err != nil {
+		return nil, "the relay store could not be opened for writing: " + PythonOSErrorText(err)
+	}
 	resolved, err := refuseLiveState(path)
 	if err != nil {
 		return nil, "the relay store path " + quoteRepr(path) + " could not be read as a path"
 	}
+	admission, err := admitWrite(ctx, resolved)
+	if err != nil {
+		return nil, "the relay store could not be opened for writing: " + err.Error()
+	}
+	success := false
+	defer func() {
+		if !success {
+			_ = admission.Close()
+		}
+	}()
 	db, err := boundedDB(resolved, "rw", timeout)
 	if err != nil {
 		return nil, "the relay store could not be opened for writing: " + err.Error()
@@ -35,18 +53,36 @@ func HoldForWrite(ctx context.Context, path string, timeout time.Duration) (*Wri
 		_ = db.Close()
 		return nil, "the relay store could not be opened for writing: " + err.Error()
 	}
+	if err = admission.Revalidate(ctx, conn); err != nil {
+		return nil, "the relay store could not be opened for writing: " + errors.Join(err, conn.Close(), db.Close()).Error()
+	}
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		_ = conn.Close()
 		_ = db.Close()
 		return nil, "the relay store's write lock could not be taken: " + sqliteMessage(err)
 	}
-	return &WriteHold{db: db, Conn: conn}, ""
+	success = true
+	return &WriteHold{db: db, Conn: conn, admission: admission}, ""
+}
+
+// holdStat is registration_hold's resolved.stat(), taken before the fence's Admission: the
+// store as Path(db_path).expanduser().absolute() spells it, symlinks followed. Its error names
+// that spelling, so PythonOSErrorText renders it as str(OSError) does, e.g.
+// "[Errno 2] No such file or directory: '<path>'" for a store or directory that does not exist.
+// It precedes the live-state guard, which protects opens: a failed stat opens nothing.
+func holdStat(path string) error {
+	spelled, err := absoluteExpanded(path)
+	if err != nil {
+		return err
+	}
+	_, err = os.Stat(spelled)
+	return err
 }
 
 // Release rolls back and closes the hold.
 func (h *WriteHold) Release() error {
 	_, rollback := h.Conn.ExecContext(context.Background(), "ROLLBACK")
-	return firstErr(rollback, h.Conn.Close(), h.db.Close())
+	return firstErr(rollback, h.Conn.Close(), h.db.Close(), h.admission.Close())
 }
 
 func firstErr(errs ...error) error {
@@ -88,6 +124,38 @@ func quoteRepr(s string) string {
 // ReadOnly is a mode=ro connection that never creates a store (intent.read_only_connection).
 type ReadOnly struct{ db *sql.DB }
 
+// OpenStopRead is ownership.stop_metadata's read for the read-only Stop path (cutover.md Lock
+// order): it creates no SQLite sidecar and copies nothing. With D-wal and D-shm both present a
+// WAL connection (live or crashed) left SQLite's coordination files, and mode=ro reads its
+// committed frames while creating nothing; otherwise every commit is in D (SQLite unlinks -shm
+// before -wal at a checkpointed close, and a writer creates -wal before it can commit), so D is
+// read immutable=1, which never creates -wal or -shm. A plain mode=ro would create both.
+func OpenStopRead(ctx context.Context, path string, timeout time.Duration) (*ReadOnly, error) {
+	resolved, err := refuseLiveState(path)
+	if err != nil {
+		return nil, err
+	}
+	params := url.Values{"mode": {"ro"}}
+	if !fileExists(resolved+"-wal") || !fileExists(resolved+"-shm") {
+		params.Set("immutable", "1")
+	}
+	db, err := boundedURI(resolved, params, timeout)
+	if err != nil {
+		return nil, err
+	}
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return &ReadOnly{db: db}, nil
+}
+
+// fileExists is os.path.exists: anything at name, following a final symlink.
+func fileExists(name string) bool {
+	_, err := os.Stat(name)
+	return err == nil
+}
+
 // OpenReadOnly opens path read-only with a bounded busy timeout.
 func OpenReadOnly(ctx context.Context, path string, timeout time.Duration) (*ReadOnly, error) {
 	resolved, err := refuseLiveState(path)
@@ -119,3 +187,166 @@ func (r *ReadOnly) ExecContext(ctx context.Context, query string, args ...any) (
 
 // Close closes the connection.
 func (r *ReadOnly) Close() error { return r.db.Close() }
+
+// readOnlyCommandKey marks a context that serves one of cli.py's READ_ONLY_COMMANDS forms.
+type readOnlyCommandKey struct{}
+
+// WithReadOnlyCommand is Services.read_only: every Open under ctx then serves a read-only
+// command the way cli.py's Services.store does (openForRead).
+func WithReadOnlyCommand(ctx context.Context) context.Context {
+	return context.WithValue(ctx, readOnlyCommandKey{}, true)
+}
+
+// ReadOnlyCommand reports whether ctx serves a read-only command form.
+func ReadOnlyCommand(ctx context.Context) bool {
+	marked, _ := ctx.Value(readOnlyCommandKey{}).(bool)
+	return marked
+}
+
+// openForRead is Services.store for a read-only command (cli.py:185-205). A store this
+// runtime may write is opened by the admitted opener, so reads under its own active
+// ownership keep the writer's semantics; any ownership refusal (another owner, draining,
+// starting without a permit, a contended write gate, a disagreeing record) reads through
+// Store(read_only=True) instead. It never creates, initializes or binds a store: an absent
+// one is refused as Python's Services.store refuses it, reason store_absent (cutover.md Record,
+// Read-only clients).
+func openForRead(ctx context.Context, path, socket string) (*Store, error) {
+	resolved, err := refuseLiveState(path)
+	if err != nil {
+		return nil, err
+	}
+	if storeAbsent(resolved) {
+		return nil, &RefusedError{Reason: ReasonStoreAbsent, Detail: "no relay store exists at " + pathlibSpelling(path) + "; a read-only command never creates one"}
+	}
+	if _, err = os.Lstat(resolved); errors.Is(err, os.ErrNotExist) {
+		// A partial store (a write gate or a mirror without D) is refused, never read or
+		// repaired (decision 30), in the words a writer's admission refuses it with.
+		if _, missing := ownership.Physical(resolved); missing != nil {
+			refused := &ownership.Refused{Detail: fmt.Sprintf("existing database required: %v", missing)}
+			return nil, &RefusedError{Reason: "store_owned_by_other", Detail: refused.Error(), cause: refused}
+		}
+	}
+	var refused *ownership.Refused
+	if err = checkStart(ctx, resolved); errors.As(err, &refused) {
+		return OpenReadOnlyStore(ctx, path)
+	}
+	s, err := openFenced(ctx, path, socket, OpenOptions{BusyTimeout: 30 * time.Second})
+	var denied *RefusedError
+	if err != nil && (errors.As(err, &denied) || errors.As(err, &refused)) {
+		return OpenReadOnlyStore(ctx, path)
+	}
+	return s, err
+}
+
+// storeAbsent is the one state a writer, never a reader, may initialize: no database, no
+// ownership mirror and no write gate (decision 30).
+func storeAbsent(resolved string) bool {
+	dir := filepath.Dir(resolved)
+	for _, name := range []string{resolved, filepath.Join(dir, "takeover.json"), filepath.Join(dir, "write-gate.lock")} {
+		if _, err := os.Lstat(name); !errors.Is(err, os.ErrNotExist) {
+			return false
+		}
+	}
+	return true
+}
+
+// checkStart is ownership.check_start without a candidate: the lock-free preflight that keeps
+// a reader from taking the write gate of a store this runtime may not write. It returns an
+// *ownership.Refused for another owner, a draining or starting store, or a record that does
+// not validate, including a legacy store this runtime never adopts; nil when admission may
+// proceed. Other failures (an unreadable file) are left to the admitted opener.
+func checkStart(ctx context.Context, resolved string) error {
+	r, err := ownership.ReadRecord(resolved)
+	if err != nil {
+		return err
+	}
+	s, err := ownership.SnapshotMeta(ctx, resolved)
+	if err != nil {
+		return err
+	}
+	if err = ownership.Validate(resolved, r, s); err != nil {
+		return err
+	}
+	switch {
+	case s.Owner != "go":
+		return &ownership.Refused{Detail: "store belongs to " + s.Owner}
+	case r.Phase == "starting":
+		return &ownership.Refused{Detail: "only designated candidate may enter starting"}
+	case r.Phase != "active":
+		return &ownership.Refused{Detail: "store is draining"}
+	}
+	return nil
+}
+
+// OpenReadOnlyStore is Store(path, read_only=True): mode=ro with query_only=ON on every
+// connection and sqlite3.connect's 5 s timeout, deferred transactions, and no admission,
+// write gate, DDL, guard index or initialization row. SQLite may still create its own
+// WAL/SHM coordination files, which the client never removes (cutover.md).
+func OpenReadOnlyStore(ctx context.Context, path string) (*Store, error) {
+	resolved, err := refuseLiveState(path)
+	if err != nil {
+		return nil, err
+	}
+	db, err := boundedDB(resolved, "ro", 5*time.Second, "PRAGMA query_only=ON")
+	if err != nil {
+		return nil, err
+	}
+	if err = db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		// Python's host envelope for the failed connect: f"{type(error).__name__}: {error}".
+		return nil, errors.New(PythonSQLiteError(err))
+	}
+	return &Store{DB: db, Path: pathlibSpelling(path), readOnly: true}, nil
+}
+
+// ReadOnly reports whether s is a read-only Store, which must never be written.
+func (s *Store) ReadOnly() bool { return s.readOnly }
+
+// Projection is FaultLedger.readonly_queue_state's private copy: the store's current content,
+// backed up through SQLite into a temporary database this process alone may write, so
+// housekeeping can be projected without mutating another runtime's store. The caller runs
+// release, which closes the copy and removes it.
+func (s *Store) Projection(ctx context.Context) (_ *Store, release func() error, err error) {
+	// The backup takes the store's one connection; inside a transaction it would wait on
+	// itself, so it is refused there like a nested transaction.
+	if open, ok := ctx.Value(openTxKey{}).(openTx); ok && open.store == s {
+		return nil, nil, ErrNestedTransaction
+	}
+	dir, err := os.MkdirTemp("", "crw-projection-")
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, os.RemoveAll(dir))
+		}
+	}()
+	copyPath := filepath.Join(dir, "relay.sqlite3")
+	conn, err := s.DB.Conn(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	err = conn.Raw(func(raw any) error {
+		source, ok := raw.(interface {
+			NewBackup(string) (*sqlite.Backup, error)
+		})
+		if !ok {
+			return errors.New("SQLite driver has no backup API")
+		}
+		backup, e := source.NewBackup(copyPath)
+		if e != nil {
+			return e
+		}
+		_, e = backup.Step(-1)
+		return errors.Join(e, backup.Finish())
+	})
+	if err = errors.Join(err, conn.Close()); err != nil {
+		return nil, nil, err
+	}
+	db, err := boundedDB(copyPath, "rw", 5*time.Second)
+	if err != nil {
+		return nil, nil, err
+	}
+	projected := &Store{DB: db, Path: s.Path}
+	return projected, func() error { return errors.Join(db.Close(), os.RemoveAll(dir)) }, nil
+}

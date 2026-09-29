@@ -7,11 +7,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
 // pythonHome isolates HOME, XDG_* and CODEX_HOME for BOTH implementations in one t.TempDir,
@@ -47,9 +49,11 @@ type run struct {
 	stderr string
 }
 
-// python runs the real Python relay CLI with this process's (isolated) environment.
+// python runs the real Python relay CLI with this process's (isolated) environment, on the
+// selected store as its owner.
 func python(t *testing.T, dir string, argv ...string) run {
 	t.Helper()
+	ownedArgs(t, dir, argv, "python")
 	command := exec.Command("uv", append([]string{"run", "--no-sync", "--project", repositoryRoot(t), "codex-session-relay"}, argv...)...)
 	command.Dir = dir
 	var stdout, stderr bytes.Buffer
@@ -65,7 +69,8 @@ func python(t *testing.T, dir string, argv ...string) run {
 	return run{code, stdout.String(), stderr.String()}
 }
 
-// golang runs the Go relay CLI in-process, as `codex-session-relay`.
+// golang runs the Go relay CLI in-process, as `codex-session-relay`, on the selected store as
+// its owner.
 func golang(t *testing.T, dir string, argv ...string) run {
 	t.Helper()
 	previous, err := os.Getwd()
@@ -76,6 +81,7 @@ func golang(t *testing.T, dir string, argv ...string) run {
 		t.Fatal(err)
 	}
 	defer func() { _ = os.Chdir(previous) }()
+	ownedArgs(t, "", argv, "go")
 	var stdout, stderr bytes.Buffer
 	code := cli.ExecuteAs(context.Background(), "codex-session-relay", argv, &stdout, &stderr)
 	return run{code, stdout.String(), stderr.String()}
@@ -118,12 +124,11 @@ func TestDoctor_matches_python_on_a_python_created_store(t *testing.T) {
 	home := pythonHome(t)
 	state := filepath.Join(home, "state")
 	// Given: a store the real Python relay created.
-	if created := python(t, home, "--state", state, "store-identity"); created.code != 0 {
-		t.Fatalf("python store-identity: %+v", created)
-	}
+	pythonCreates(t, home, state)
 
-	// When: both implementations diagnose it.
+	// When: each implementation diagnoses it as its owner (the same file, restamped).
 	py := python(t, home, "--state", state, "doctor")
+	restamp(t, state, "go")
 	got := golang(t, home, "--state", state, "doctor")
 
 	// Then: the whole report is byte-identical once the documented runtime block is removed,
@@ -131,28 +136,68 @@ func TestDoctor_matches_python_on_a_python_created_store(t *testing.T) {
 	if !strings.HasSuffix(strings.TrimSpace(got.stdout), "}\n}") {
 		t.Fatalf("runtime is not the last key:\n%s", got.stdout)
 	}
-	requireSame(t, py, run{got.code, withoutKey(t, got.stdout, "runtime"), got.stderr})
+	requireSame(t, py, run{got.code, asPythonReport(t, got.stdout, "python"), got.stderr})
 	runtimeBlock := decode(t, got.stdout)["runtime"].(map[string]any)
 	if runtimeBlock["language"] != "go" || runtimeBlock["version"] != cli.Version {
 		t.Fatalf("runtime %v", runtimeBlock)
 	}
 }
 
+// A store the answering runtime does not own is diagnosed the same way by both: identity from
+// a disposable copy, no live open and no probe file beside it, and the fence's refusal in the
+// access detail (store.py probe's check_start branch).
+func TestDoctor_matches_python_on_a_store_the_other_runtime_owns(t *testing.T) {
+	home := pythonHome(t)
+	_, alias := packageBinary(t)
+	state := filepath.Join(home, "state")
+	pythonCreates(t, home, state)
+	// Neither run hands the store to its runtime first: each diagnoses the other's store.
+	got := binaryRun(t, alias, "--state", state, "doctor")
+	restamp(t, state, "go")
+	py := fence(t, "--state", state, "doctor")
+	requireSame(t, py, run{got.code, asPythonReport(t, got.stdout, "go"), got.stderr})
+	access := decode(t, got.stdout)["access"].(map[string]any)
+	if access["directoryWritable"] != false || access["dbWritable"] != false || access["dbReadable"] != true ||
+		access["detail"] != "store_owned_by_other: the relay store belongs to another runtime" {
+		t.Fatalf("access %v", access)
+	}
+
+	// A mirror without its database is refused the same way by both, before any probe file.
+	if err := os.Remove(filepath.Join(state, "relay.sqlite3")); err != nil {
+		t.Fatal(err)
+	}
+	py = fence(t, "--state", state, "doctor")
+	got = binaryRun(t, alias, "--state", state, "doctor")
+	requireSame(t, py, run{got.code, asPythonReport(t, got.stdout, "go"), got.stderr})
+	if detail := decode(t, got.stdout)["access"].(map[string]any)["detail"].(string); !strings.HasSuffix(detail, "; store_owned_by_other: missing or unsupported writer protocol") {
+		t.Fatalf("detail %q", detail)
+	}
+}
+
 func TestDoctor_expect_inode_mismatch_refuses_with_python_reason(t *testing.T) {
 	home := pythonHome(t)
 	state := filepath.Join(home, "state")
-	if created := python(t, home, "--state", state, "store-identity"); created.code != 0 {
-		t.Fatalf("python store-identity: %+v", created)
-	}
+	pythonCreates(t, home, state)
 	py := python(t, home, "--state", state, "doctor", "--expect-inode", "1:2")
+	restamp(t, state, "go")
 	got := golang(t, home, "--state", state, "doctor", "--expect-inode", "1:2")
 	if got.code != 2 {
 		t.Fatalf("exit %d", got.code)
 	}
-	requireSame(t, py, run{got.code, withoutKey(t, got.stdout, "runtime"), got.stderr})
+	requireSame(t, py, run{got.code, asPythonReport(t, got.stdout, "python"), got.stderr})
 	if detail := decode(t, got.stdout)["detail"].(string); !strings.Contains(detail, "is not 1:2") {
 		t.Fatalf("detail %q", detail)
 	}
+}
+
+// asPythonReport is a Go doctor report as the Python runtime would word the same observation:
+// without Go's trailing runtime block, with the owner the Python run saw, and with the Python
+// build as runtime_build, which names the answering runtime (decisions.md 31).
+func asPythonReport(t *testing.T, stdout, pythonSawOwner string) string {
+	t.Helper()
+	report := withoutKey(t, stdout, "runtime")
+	report = regexp.MustCompile(`\n    "owner": "[a-z]+",\n`).ReplaceAllString(report, "\n    \"owner\": \""+pythonSawOwner+"\",\n")
+	return regexp.MustCompile(`"runtime_build": "[^"]*"`).ReplaceAllString(report, `"runtime_build": "`+ownership.PythonBuild+`"`)
 }
 
 // A declared execution policy, read through the bridge's parser, from each source doctor
@@ -162,9 +207,7 @@ func TestDoctor_expect_inode_mismatch_refuses_with_python_reason(t *testing.T) {
 func TestDoctor_matches_python_with_a_declared_execution_policy(t *testing.T) {
 	home := pythonHome(t)
 	state := filepath.Join(home, "state")
-	if created := python(t, home, "--state", state, "store-identity"); created.code != 0 {
-		t.Fatalf("python store-identity: %+v", created)
-	}
+	pythonCreates(t, home, state)
 	policy := filepath.Join(home, "policy.json")
 	write := func(path, text string) {
 		t.Helper()
@@ -178,9 +221,11 @@ func TestDoctor_matches_python_with_a_declared_execution_policy(t *testing.T) {
 	declaration := filepath.Join(state, "launch-policy.json")
 	compare := func(t *testing.T, argv ...string) map[string]any {
 		t.Helper()
+		restamp(t, state, "python")
 		py := python(t, home, append([]string{"--state", state, "doctor"}, argv...)...)
+		restamp(t, state, "go")
 		got := golang(t, home, append([]string{"--state", state, "doctor"}, argv...)...)
-		requireSame(t, py, run{got.code, withoutKey(t, got.stdout, "runtime"), got.stderr})
+		requireSame(t, py, run{got.code, asPythonReport(t, got.stdout, "python"), got.stderr})
 		return decode(t, py.stdout)
 	}
 	t.Run("environment", func(t *testing.T) {

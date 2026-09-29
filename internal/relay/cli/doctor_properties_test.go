@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,6 +15,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // plain renders an ordered answer the way the CLI prints it and decodes it back.
@@ -41,18 +43,39 @@ const (
 
 var timestamp = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}\+00:00`)
 
+var runtimeBuild = regexp.MustCompile(`"runtime_build": "[^"]*"`)
+
 // both runs argv through Python and Go and requires the same exit and stdout. Doctor's runtime
-// block (Go only, documented) is removed; timestamps written by the commands themselves are
-// normalised, because the two runs happen at different instants.
+// block (Go only, documented) is removed and its ownership.runtime_build normalised; timestamps
+// written by the commands themselves are normalised, because the two runs happen at different
+// instants.
 func both(t *testing.T, dir string, argv ...string) map[string]any {
 	t.Helper()
-	py, got := python(t, dir, argv...), golang(t, dir, argv...)
+	return sameAnswer(t, argv, python(t, dir, argv...), golang(t, dir, argv...))
+}
+
+// bothAsIs is both without handing the store to each runtime first, for a state directory no
+// takeover can move: a second name of another directory's database has neither mirror nor gate.
+func bothAsIs(t *testing.T, argv ...string) map[string]any {
+	t.Helper()
+	_, alias := packageBinary(t)
+	return sameAnswer(t, argv, fence(t, argv...), binaryRun(t, alias, argv...))
+}
+
+func sameAnswer(t *testing.T, argv []string, py, got run) map[string]any {
+	t.Helper()
 	goOut := got.stdout
 	if strings.Contains(goOut, "\n  \"runtime\": {") {
 		goOut = withoutKey(t, goOut, "runtime")
 	}
 	pyOut := timestamp.ReplaceAllString(py.stdout, "<T>")
 	goOut = timestamp.ReplaceAllString(goOut, "<T>")
+	// ownership.runtime_build names the answering runtime (decisions.md 31).
+	pyOut = runtimeBuild.ReplaceAllString(pyOut, `"runtime_build": "<build>"`)
+	goOut = runtimeBuild.ReplaceAllString(goOut, `"runtime_build": "<build>"`)
+	// Each runtime reads the store as its owner (ownedArgs hands it over first), so the
+	// ownership block's owner, epoch and takeover differ by that handover alone.
+	pyOut, goOut = ownerNeutralBlock(pyOut), ownerNeutralBlock(goOut)
 	if py.code != got.code || pyOut != goOut {
 		t.Fatalf("%v\nexit python=%d go=%d\npython:\n%s\ngo:\n%s\ngo stderr: %s", argv, py.code, got.code, pyOut, goOut, got.stderr)
 	}
@@ -60,6 +83,20 @@ func both(t *testing.T, dir string, argv ...string) map[string]any {
 		return nil
 	}
 	return decode(t, py.stdout)
+}
+
+var handedOver = regexp.MustCompile(`\n    "(owner|owner_epoch|takeover_id)": "[^"]*",`)
+
+// ownerNeutralBlock masks, in doctor's ownership block only, the three schema_meta values a
+// takeover between the runtimes changes.
+func ownerNeutralBlock(stdout string) string {
+	start := strings.Index(stdout, "\n  \"ownership\": {")
+	if start < 0 {
+		return stdout
+	}
+	end := start + strings.Index(stdout[start:], "\n  }")
+	block := handedOver.ReplaceAllString(stdout[start:end], "\n    \"$1\": \"<handed over>\",")
+	return stdout[:start] + block + stdout[end:]
 }
 
 func exitOf(t *testing.T, dir string, argv ...string) int {
@@ -211,7 +248,16 @@ func Test25_CLI17_doctor_never_creates_or_adopts_a_store(t *testing.T) {
 	if err := os.WriteFile(target, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	report = both(t, home, "--state", borrowed, "doctor")
+	// Todo 30 deliberately refuses the write probe on an unfenced foreign DB;
+	// compare the read-only invariants, not pre-fence writable=true.
+	goReport := golang(t, home, "--state", borrowed, "doctor")
+	if goReport.code != 0 {
+		t.Fatal(goReport)
+	}
+	report = decode(t, goReport.stdout)
+	if obj(report["access"])["dbWritable"] != false {
+		t.Fatal("foreign database admitted a write probe")
+	}
 	info, err := os.Stat(target)
 	if err != nil || info.Size() != 0 {
 		t.Fatal("doctor wrote into the unrelated file")
@@ -255,6 +301,9 @@ func challenge(t *testing.T, home, state string) string {
 
 func identity(t *testing.T, home, state string) map[string]any {
 	t.Helper()
+	if _, err := os.Stat(filepath.Join(state, "relay.sqlite3")); errors.Is(err, os.ErrNotExist) {
+		pythonCreates(t, home, state) // a read-only form never creates a store
+	}
 	return obj(both(t, home, "--state", state, "store-identity")["store"])
 }
 
@@ -313,6 +362,8 @@ func Test25_CLI19_same_store_proof_needs_the_nonce_and_the_physical_identity(t *
 			}
 		}
 	}
+	// The copy lives in its own directory: its mirror names the copy, not the original.
+	testsupport.Rehome(t, filepath.Join(copyDir, "relay.sqlite3"))
 	cNonce := challenge(t, home, c)
 	cPair := number(fresh["device"]) + ":" + number(fresh["inode"])
 	cLog := number(fresh["logDevice"]) + ":" + number(fresh["logInode"]) + ":" + fresh["logName"].(string)
@@ -327,11 +378,11 @@ func Test25_CLI19_same_store_proof_needs_the_nonce_and_the_physical_identity(t *
 	if err := os.Link(filepath.Join(a, "relay.sqlite3"), filepath.Join(two, "relay.sqlite3")); err != nil {
 		t.Fatal(err)
 	}
-	counted := both(t, home, "--state", two, "doctor", "--expect-store", mine["storeId"].(string), "--expect-inode", pair, "--expect-nonce", nonce)
+	counted := bothAsIs(t, "--state", two, "doctor", "--expect-store", mine["storeId"].(string), "--expect-inode", pair, "--expect-nonce", nonce)
 	if counted["sameStore"] != "unproven" || !strings.Contains(counted["detail"].(string), "names") {
 		t.Fatal(counted["detail"])
 	}
-	graded := both(t, home, "--state", two, "doctor", "--expect-store", mine["storeId"].(string), "--expect-inode", pair, "--expect-log", log, "--expect-nonce", nonce)
+	graded := bothAsIs(t, "--state", two, "doctor", "--expect-store", mine["storeId"].(string), "--expect-inode", pair, "--expect-log", log, "--expect-nonce", nonce)
 	if graded["sameStore"] != "unproven" || !strings.Contains(graded["detail"].(string), "write-ahead log") || obj(graded["store"])["links"] != float64(2) {
 		t.Fatal(graded["detail"], graded["store"])
 	}
@@ -857,8 +908,7 @@ func Test25_CLI32_participants_reach_one_store_by_three_routes(t *testing.T) {
 		}
 	}
 	other := filepath.Join(home, "other")
-	theirs := receipt(both(t, home, "--state", other, "store-identity"))
-	_ = theirs
+	pythonCreates(t, home, other)
 	elsewhere := both(t, home, "--state", other, "doctor", "--expect-store", byFlag["storeId"].(string))
 	if receipt(elsewhere)["storeId"] == byFlag["storeId"] || elsewhere["sameStore"] == "proven" {
 		t.Fatal(elsewhere["sameStore"])

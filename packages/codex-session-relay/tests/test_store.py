@@ -1197,7 +1197,8 @@ class DescriptorIdentity(unittest.TestCase):
         # challenge row and the swap would be believed for the wrong reason.
         for directory in (self.a, self.b):
             self.assertEqual(
-                [name for name in os.listdir(directory) if name != "relay.sqlite3"], [],
+                [name for name in os.listdir(directory)
+                 if name not in ("relay.sqlite3", "write-gate.lock", "takeover.json")], [],
                 "a closed store left a sidecar behind, so moving the main file loses writes",
             )
 
@@ -1325,6 +1326,10 @@ class DescriptorIdentity(unittest.TestCase):
                     restore()
 
         def wrapper(*args, **kwargs):
+            # Admission reads a private scratch snapshot before the writable open.
+            # This race targets only connections on the held live database.
+            if not str(args[0]).startswith("file:/proc/self/fd/"):
+                return real(*args, **kwargs)
             state["calls"] += 1
             if state["calls"] != nth:
                 return real(*args, **kwargs)
@@ -1471,7 +1476,7 @@ class DescriptorIdentity(unittest.TestCase):
 
         def wrapper(*args, **kwargs):
             connection = real(*args, **kwargs)
-            if not done:
+            if not done and str(args[0]).startswith("file:/proc/self/fd/"):
                 done.append(True)
                 os.rename(self.path, moved)
             return connection
@@ -1584,7 +1589,8 @@ class DescriptorIdentity(unittest.TestCase):
             (store["device"], store["inode"]), (self.mine["device"], self.mine["inode"]))
         self.assertEqual(store["storeId"], self.mine["storeId"])
         self.assertEqual(
-            [name for name in os.listdir(self.a) if name != "relay.sqlite3"], [],
+            [name for name in os.listdir(self.a)
+             if name not in ("relay.sqlite3", "write-gate.lock", "takeover.json")], [],
             "diagnosis left a write-ahead log behind",
         )
 

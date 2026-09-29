@@ -59,7 +59,7 @@ func TestStateSelection_python_precedence_properties(t *testing.T) {
 	})
 	t.Run("test_a_relative_flag_resolves_to_the_same_store_as_its_absolute_form", func(t *testing.T) {
 		target := filepath.Join(root, "rel")
-		created, e := Open(context.Background(), filepath.Join(target, "relay.sqlite3"), "")
+		created, e := fixtureOpen(context.Background(), filepath.Join(target, "relay.sqlite3"), "")
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -248,7 +248,7 @@ func makeStoreIn(t *testing.T, root, base, name, socket string) {
 			t.Error(err)
 		}
 	}()
-	s, e := Open(context.Background(), filepath.Join(base, name, "relay.sqlite3"), socket)
+	s, e := fixtureOpen(context.Background(), filepath.Join(base, name, "relay.sqlite3"), socket)
 	if e != nil {
 		t.Fatal(e)
 	}

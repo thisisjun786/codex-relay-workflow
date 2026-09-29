@@ -11,13 +11,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 type sweepCase struct {
@@ -107,6 +107,17 @@ func runBuiltBinarySweep(t *testing.T, runtimeSweep, rootOnly bool) {
 	if rootOnly {
 		names = []string{}
 	}
+	// Each case must meet the same store state in both runtimes. The oracle runs all its cases
+	// before Go runs any, so a store one oracle case creates exists for every Go case, even for
+	// those the oracle ran before it; since a reader never creates a store (decision 30), a
+	// reader's answer depends on which. So a root case (like a runtime case) gets a home of its
+	// own from the oracle, empty in both runtimes. The per-command cases of an argparse sweep
+	// share the default store, which a writer's accepted parse opens before the kind-module
+	// refusal: it is created here, owned by Python, so every one of them finds it in both
+	// runtimes, not only those after the oracle's first writer.
+	if !runtimeSweep && len(names) > 0 {
+		testsupport.Create(t, filepath.Join(home, "state", "codex-session-relay", "default", "relay.sqlite3"), "", "python")
+	}
 	// Three wrap points cover narrow, default, and wide formatting. The formatter's
 	// all-spec Python parity test covers every command independently of terminal width.
 	widths := []string{"40", "80", "200"}
@@ -121,6 +132,9 @@ func runBuiltBinarySweep(t *testing.T, runtimeSweep, rootOnly bool) {
 			}
 			runEnv = append(runEnv, "PATH="+root+"/internal/relay/cli/testdata:"+os.Getenv("PATH"), "CRW_FORGE_SCENARIO=ready")
 			request, _ := json.Marshal(map[string]any{"commands": names, "runtime": runtimeSweep, "home": home, "root": !runtimeSweep && os.Getenv("CRW_SWEEP_COMMAND") == ""})
+			// Each width runs the oracle on the stores the previous width's Go turn left:
+			// Python takes them back first, as on a host.
+			ownedTree(t, home, "python")
 			oracle := exec.Command(filepath.Join(root, ".venv/bin/python"), "testdata/argparse_sweep.py")
 			oracle.Env = runEnv
 			oracle.Stdin = bytes.NewReader(request)
@@ -132,12 +146,10 @@ func runBuiltBinarySweep(t *testing.T, runtimeSweep, rootOnly bool) {
 			if err = json.Unmarshal(raw, &cases); err != nil {
 				t.Fatalf("oracle decode: %v %s", err, raw)
 			}
-			type job struct {
-				c    sweepCase
-				mode int
-				done chan struct{}
-			}
-			jobs := make(chan job)
+			// The shared store the oracle's per-command cases used is owned by Python; Go runs
+			// the same cases on it next, after a takeover, as on a host.
+			ownedTree(t, home, "go")
+			jobs := make(chan sweepCase)
 			var wg sync.WaitGroup
 			var mu sync.Mutex
 			differences := map[string][]string{}
@@ -147,16 +159,15 @@ func runBuiltBinarySweep(t *testing.T, runtimeSweep, rootOnly bool) {
 			}
 			equal := 0
 			focused := 0
-			for worker := 0; worker < 8; worker++ {
+			for worker := 0; worker < 4; worker++ {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					for j := range jobs {
-						c := j.c
+					for c := range jobs {
 						path := alias
 						args := c.Args
 						wantOut, wantErr := c.Out, c.Err
-						if j.mode == 1 {
+						if c.Mode == 1 {
 							path = binary
 							args = append([]string{"relay"}, args...)
 						}
@@ -170,6 +181,8 @@ func runBuiltBinarySweep(t *testing.T, runtimeSweep, rootOnly bool) {
 							cmd.Dir = c.Home
 							cmd.Env = append(append([]string{}, runEnv...), "HOME="+c.Home, "XDG_STATE_HOME="+c.Home+"/state", "XDG_CONFIG_HOME="+c.Home+"/config", "XDG_DATA_HOME="+c.Home+"/data", "XDG_CACHE_HOME="+c.Home+"/cache", "CODEX_HOME="+c.Home+"/codex")
 						}
+						// A case's home starts empty, as the oracle's did: the Go runtime creates
+						// an absent store itself (owner=go, epoch 1) exactly where Python does.
 						var out, stderr bytes.Buffer
 						cmd.Stdout = &out
 						cmd.Stderr = &stderr
@@ -197,30 +210,16 @@ func runBuiltBinarySweep(t *testing.T, runtimeSweep, rootOnly bool) {
 						if code == c.Code && gotOut == wantOut && stderr.String() == wantErr {
 							equal++
 						} else {
-							differences[c.Command] = append(differences[c.Command], fmt.Sprintf("%s mode=%d\nGo exit=%d stdout=%q stderr=%q\nPython exit=%d stdout=%q stderr=%q", c.Label, j.mode, code, out.String(), stderr.String(), c.Code, wantOut, wantErr))
+							differences[c.Command] = append(differences[c.Command], fmt.Sprintf("%s mode=%d\nGo exit=%d stdout=%q stderr=%q\nPython exit=%d stdout=%q stderr=%q", c.Label, c.Mode, code, out.String(), stderr.String(), c.Code, wantOut, wantErr))
 						}
 						mu.Unlock()
-						if j.done != nil {
-							close(j.done)
-						}
 					}
 				}()
 			}
+			// No case creates a store another case reads: a root or runtime case has a home of
+			// its own and the shared default store already exists, so the cases run in parallel.
 			for _, c := range cases {
-				// The Python oracle executes root cases sequentially. They can
-				// initialize the same scratch store; preserve that order rather
-				// than racing PRAGMA journal_mode during concurrent first opens.
-				if c.Command == "<root>" {
-					done := make(chan struct{})
-					jobs <- job{c: c, mode: c.Mode, done: done}
-					select {
-					case <-done:
-					case <-time.After(30 * time.Second):
-						t.Fatal("root case did not finish: " + c.Label)
-					}
-				} else {
-					jobs <- job{c: c, mode: c.Mode}
-				}
+				jobs <- c
 			}
 			close(jobs)
 			wg.Wait()

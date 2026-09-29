@@ -88,6 +88,8 @@ func replayCLICasesOnly(t *testing.T, dir string, commands, only []string) {
 					}
 				}
 				if step.SQL != "" {
+					// The generator's Store(path): a writer open, which initializes a store still
+					// absent (decision 30); a read-only step before it is refused store_absent.
 					s, err := store.Open(context.Background(), filepath.Join(state, "relay.sqlite3"), "")
 					if err != nil {
 						t.Fatal(err)

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // This bridge replaces ONLY faultnotice.NoticeDeliverer and compose/stage/
@@ -26,11 +27,22 @@ import (
 // Both executions use the same disposable pathname, clock and entropy inputs.
 // Every tick compares complete fault/supervisor rows, journal, lifecycle, sends
 // (including notice bytes), and the full tick report. No output is normalized.
+//
+// Under the fence one runtime writes a store at a time (docs/port/decisions.md 14
+// and 30, cutover.md "When the other runtime owns the record"), so in the hybrid
+// run the fixture's store changes hands at every step of either runtime, as it
+// would between two hosts' processes: the runtime giving control away closes its
+// connection (Python's Store.close ends its write-gate admission), Go hands the
+// store over (testsupport.HandOver) and the runtime taking control opens it as a
+// process of that runtime opens a store it owns. A callback that only reads runs
+// while Go keeps the store, through the read-only Store a Python reader of a
+// Go-owned store uses. The oracle run is untouched Python on a store Python owns.
 const noticePython = `
 import dataclasses, json, os, shutil, sys, traceback
 from unittest import mock
 from codex_session_relay import faultnotice, faults, supervisorchannel, lifecycle
 from codex_session_relay.errors import DeliveryRefused, RefusalReason
+from codex_session_relay.store import Store
 from tests import test_fault_notices as tests, support
 
 base, case_name, method = sys.argv[1:]
@@ -38,17 +50,56 @@ faults.secrets.token_hex = lambda size=None: bytes(range(32 if size is None else
 case = None
 hybrid = False
 snapshots = []
+# What Python holds of the fixture's store: 'writer', 'reader' or None (closed).
+held = None
+# The requests Go serves by writing the store, and the callbacks Python serves only reading it.
+GO_WRITES = ('tick', 'settle', 'stage', 'park')
+READS = ('resolve', 'evidence', 'return')
+
+def suspend():
+    """Python stops using the store, so Go may take it over."""
+    global held
+    if held is None:
+        return
+    if case.store.db.in_transaction:
+        raise RuntimeError('the store would change hands inside a Python transaction')
+    case.store.close()
+    case.store._admission = None
+    held = None
+
+def resume(read_only=False):
+    """Python opens the store again: its own as a writer, or Go's as a reader."""
+    global held
+    want = 'reader' if read_only else 'writer'
+    if held == want:
+        return
+    suspend()
+    hook = case.store.fault_hook
+    Store.__init__(case.store, case.store.path, read_only=read_only)
+    case.store.fault_hook = hook
+    held = want
 
 def send(value):
     print(json.dumps(value), flush=True)
 
 def rpc(op, **values):
-    send(dict(op=op, **values))
+    moves = op in GO_WRITES
+    if moves:
+        suspend()
+    try:
+        send(dict(op=op, **values))
+        return answer_of(op)
+    finally:
+        if moves:
+            resume()
+
+def answer_of(op):
     while True:
         answer = json.loads(sys.stdin.readline())
         if answer.get('op') == 'channel':
+            action, args = answer['action'], answer['args']
             try:
-                action, args = answer['action'], answer['args']
+                resume(read_only=action in READS)
                 channel = active.channel
                 if action == 'resolve': value = channel.resolve(args['anchor'])
                 elif action == 'stage': value = channel.stage_notice(args['notice'])
@@ -60,10 +111,12 @@ def rpc(op, **values):
                 elif action == 'evidence': value = channel._command_line('fault-show', '--fault', args['fault'])
                 elif action == 'return': value = active._return(**args)
                 else: raise ValueError(action)
-                send({'value': value})
+                reply = {'value': value}
             except Exception as error:
                 reason = getattr(error, 'reason', None)
-                send({'error': getattr(reason, 'value', type(error).__name__), 'detail': getattr(error, 'detail', str(error))})
+                reply = {'error': getattr(reason, 'value', type(error).__name__), 'detail': getattr(error, 'detail', str(error))}
+            suspend()
+            send(reply)
             continue
         if 'error' in answer:
             import builtins
@@ -164,6 +217,7 @@ try:
         case = getattr(tests, case_name)(method)
         with mock.patch.object(support.tempfile, 'mkdtemp', tempdir):
             case.setUp()
+        held = 'writer'
         try:
             if hybrid:
                 with mock.patch.object(faultnotice, 'NoticeDeliverer', GoDeliverer), \
@@ -182,13 +236,49 @@ except BaseException:
 `
 
 type noticeBridge struct {
-	t         *testing.T
-	ctx       context.Context
-	input     *bufio.Scanner
-	output    io.Writer
+	t      *testing.T
+	ctx    context.Context
+	input  *bufio.Scanner
+	output io.Writer
+	// ledger is the one Ledger the deliverer keeps across ticks; its Store is the connection
+	// Go holds while it writes the fixture's store, and nil while Python has it.
 	ledger    *Ledger
 	deliverer *NoticeDeliverer
 	path      string
+	held      bool
+}
+
+// noticeReads are the channel callbacks Python answers by only reading the store; Go keeps
+// the store (and any transaction it has open) through them. Every other callback writes it.
+var noticeReads = map[string]bool{"resolve": true, "evidence": true, "return": true}
+
+// acquire has Go write the fixture's store: Python closed it before it asked, and a
+// completed takeover gives it to Go (testsupport.HandOver), which then opens it as its own.
+func (b *noticeBridge) acquire() error {
+	if b.held {
+		return nil
+	}
+	testsupport.HandOver(b.t, b.path, "go")
+	s, err := store.Open(b.ctx, b.path, "")
+	if err != nil {
+		return err
+	}
+	b.ledger.Store, b.held = s, true
+	return nil
+}
+
+// release has Go stop writing the fixture's store before Python runs again: Go's connection
+// closes and a completed takeover gives the store back to Python.
+func (b *noticeBridge) release() {
+	b.t.Helper()
+	if !b.held {
+		return
+	}
+	if err := b.ledger.Store.Close(); err != nil {
+		b.t.Fatal(err)
+	}
+	b.ledger.Store, b.held = nil, false
+	testsupport.HandOver(b.t, b.path, "python")
 }
 
 func (b *noticeBridge) send(value any) {
@@ -209,12 +299,21 @@ func (b *noticeBridge) read() map[string]any {
 	return value
 }
 func (b *noticeBridge) call(action string, args map[string]any) (any, error) {
+	moved := b.held && !noticeReads[action]
+	if moved {
+		b.release()
+	}
 	b.send(map[string]any{"op": "channel", "action": action, "args": args})
 	for {
 		answer := b.read()
 		if op, _ := answer["op"].(string); op != "" {
 			b.respond(answer)
 			continue
+		}
+		if moved {
+			if err := b.acquire(); err != nil {
+				return nil, err
+			}
 		}
 		if kind, ok := answer["error"].(string); ok {
 			return nil, &NoticeError{kind, noticeString(answer, "detail")}
@@ -248,26 +347,25 @@ func (b *noticeBridge) Measure(_ context.Context, task string) error {
 	_, err := b.call("measure", map[string]any{"task": task})
 	return err
 }
-func (b *noticeBridge) open(path string, now float64) error {
+
+// open names the fixture's store and the clock of Python's next request; Go takes the store
+// only when a request writes it.
+func (b *noticeBridge) open(path string, now float64) {
 	if b.path != path {
-		if b.ledger != nil {
-			if err := b.ledger.Store.Close(); err != nil {
-				return err
-			}
-		}
-		s, err := store.Open(b.ctx, path, "")
-		if err != nil {
-			return err
-		}
-		b.ledger = &Ledger{Store: s}
+		b.release()
 		b.path = path
 	}
 	b.ledger.Clock = &testClock{now: now}
-	return nil
 }
 func (b *noticeBridge) respond(request map[string]any) {
 	b.t.Helper()
+	if b.held {
+		// Python asks only while it has the store: never from a callback that reads.
+		b.t.Fatalf("Python sent %v while Go holds the store", request["op"])
+	}
 	value, err := b.handle(request)
+	// Python runs next, so the store is Python's again before it reads the answer.
+	b.release()
 	if err != nil {
 		if e, ok := err.(*NoticeError); ok {
 			b.send(map[string]any{"error": e.Kind, "detail": e.Detail})
@@ -286,9 +384,11 @@ func (b *noticeBridge) handle(r map[string]any) (any, error) {
 		}
 		return nil, nil
 	case "open":
-		return nil, b.open(noticeString(r, "path"), r["now"].(float64))
+		b.open(noticeString(r, "path"), r["now"].(float64))
+		return nil, nil
 	case "tick":
-		if err := b.open(noticeString(r, "path"), r["now"].(float64)); err != nil {
+		b.open(noticeString(r, "path"), r["now"].(float64))
+		if err := b.acquire(); err != nil {
 			return nil, err
 		}
 		if r["reset"] == true {
@@ -300,6 +400,9 @@ func (b *noticeBridge) handle(r map[string]any) (any, error) {
 		// exceptions. The Go seam applies the same shared-cap subtraction.
 		return b.deliverer.Tick(b.ctx, r["now"].(float64), NoticeRemaining(cap, cap-left))
 	case "settle":
+		if err := b.acquire(); err != nil {
+			return nil, err
+		}
 		args := map[string]string{"--notification": noticeString(r, "notification")}
 		for key, value := range r["args"].(map[string]any) {
 			args["--"+key] = value.(string)
@@ -311,6 +414,9 @@ func (b *noticeBridge) handle(r map[string]any) (any, error) {
 		}
 		return value, nil
 	case "stage":
+		if err := b.acquire(); err != nil {
+			return nil, err
+		}
 		notice := r["notice"].(map[string]any)
 		evidence, err := b.call("evidence", map[string]any{"fault": notice["faultId"]})
 		if err != nil {
@@ -320,6 +426,9 @@ func (b *noticeBridge) handle(r map[string]any) (any, error) {
 	case "compose":
 		return ComposeNotice(r["notice"].(map[string]any), r["resolution"].(map[string]any), noticeString(r, "stamp"), noticeString(r, "evidence"))
 	case "park":
+		if err := b.acquire(); err != nil {
+			return nil, err
+		}
 		return nil, b.ledger.ParkNotice(b.ctx, noticeString(r, "message"), noticeString(r, "reason"))
 	}
 	return nil, fmt.Errorf("unknown bridge operation %v", r["op"])
@@ -358,10 +467,10 @@ func noticeReplay(t *testing.T, caseName, method string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
-	b := &noticeBridge{t: t, ctx: context.WithValue(ctx, f1InputsKey{}, f1Inputs{entropy: bytes.NewReader(bytes.Repeat([]byte{0, 1, 2, 3, 4, 5, 6, 7}, 4096))}), input: bufio.NewScanner(stdout), output: stdin}
+	b := &noticeBridge{t: t, ctx: context.WithValue(ctx, f1InputsKey{}, f1Inputs{entropy: bytes.NewReader(bytes.Repeat([]byte{0, 1, 2, 3, 4, 5, 6, 7}, 4096))}), input: bufio.NewScanner(stdout), output: stdin, ledger: &Ledger{}}
 	b.input.Buffer(make([]byte, 4096), 64*1024*1024)
 	defer func() {
-		if b.ledger != nil {
+		if b.held {
 			_ = b.ledger.Store.Close()
 		}
 	}()

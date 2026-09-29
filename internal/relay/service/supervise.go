@@ -93,17 +93,15 @@ func (s *Service) Supervise(ctx context.Context, o Options, onStart func() error
 	if !truth(get(s.Intent(), "enabled")) {
 		return nil, &Refused{"service_disabled", "this service was disabled while this supervisor was starting"}
 	}
+	// service.py supervise: the scope is claimed with the identity read at start; the store
+	// is opened by onStart (cli.py recover), which publishes its identity.
 	if s.Socket != "" {
-		claim, e := s.Scope.claim(s.Socket, func() Object { return s.NewRecord(os.Getpid(), token) }, s.Prepare)
+		claim, e := s.Scope.Claim(s.Socket, s.NewRecord(os.Getpid(), token))
 		if e != nil {
 			return nil, e
 		}
 		if !truth(get(claim, "ok")) {
 			return nil, &Refused{text(get(claim, "reason")), evidence.Dumps(get(claim, "held_by"), false, false, true)}
-		}
-	} else if s.Prepare != nil {
-		if err = s.Prepare(); err != nil {
-			return nil, err
 		}
 	}
 	if err = s.WriteRecord(s.NewRecord(os.Getpid(), token)); err != nil {
@@ -150,7 +148,7 @@ func (s *Service) Supervise(ctx context.Context, o Options, onStart func() error
 		if o.MaxSegments != nil && len(segments) >= *o.MaxSegments {
 			break
 		}
-		if expired() || s.StopRequested() || !truth(get(s.Intent(), "enabled")) {
+		if expired() || s.StopRequested() || s.Draining() || !truth(get(s.Intent(), "enabled")) {
 			break
 		}
 		if err = ctx.Err(); err != nil {
@@ -204,7 +202,7 @@ func (s *Service) Supervise(ctx context.Context, o Options, onStart func() error
 		if err = s.note("consecutiveFailures", failures, "degraded", degraded); err != nil {
 			return nil, err
 		}
-		if s.StopRequested() || !truth(get(s.Intent(), "enabled")) || (o.MaxSegments != nil && len(segments) >= *o.MaxSegments) || expired() {
+		if s.StopRequested() || s.Draining() || !truth(get(s.Intent(), "enabled")) || (o.MaxSegments != nil && len(segments) >= *o.MaxSegments) || expired() {
 			break
 		}
 		delay := RestartDelay(failures)

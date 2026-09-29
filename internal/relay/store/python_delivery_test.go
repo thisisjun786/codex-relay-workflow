@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // pythonDeliveryScript drives the real Python DeliveryService over a fresh store under
@@ -87,7 +89,8 @@ func pythonDeliveryStore(t *testing.T, scenario string) (pythonDelivery, *Store)
 	if err := json.Unmarshal([]byte(out[strings.LastIndex(out, "\n")+1:]), &got); err != nil {
 		t.Fatalf("python output %q: %v", out, err)
 	}
-	s, err := Open(context.Background(), got.DB, "")
+	testsupport.HandOver(t, got.DB, "go")
+	s, err := fixtureOpen(context.Background(), got.DB, "")
 	if err != nil {
 		t.Fatal(err)
 	}

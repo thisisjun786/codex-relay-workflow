@@ -55,7 +55,7 @@ func TestRun_unknown_user_state_is_a_python_host_error(t *testing.T) {
 }
 
 // `crw bridge` and the codex-thread-bridge link both reach the bridge's own entry point, which
-// answers --version like `codex-thread-bridge --version` (0.1.0, exit 0).
+// answers --version like `codex-thread-bridge --version` (the package version, exit 0).
 func TestRun_bridge_mode_and_link_dispatch_to_the_bridge(t *testing.T) {
 	for _, call := range []struct {
 		program string

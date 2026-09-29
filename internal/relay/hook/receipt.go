@@ -37,6 +37,11 @@ func LookupReceipt(ctx context.Context, path string, fallback func() (string, er
 		timeout = min(timeout, max(0, time.Until(deadline)))
 	}
 	ro, err := store.OpenReadOnly(ctx, path, timeout)
+	if errors.Is(err, store.ErrLiveState) {
+		// The live-state guard (until todo 43) is a refusal to report, never a store that
+		// merely reads as unreadable.
+		return nil, false, err
+	}
 	if err != nil {
 		return nil, false, nil
 	}

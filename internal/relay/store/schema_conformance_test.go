@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // pythonDeliveryRecords drives Python's DeliveryService/AckService through each conformance
@@ -81,7 +83,8 @@ func pythonDeliveryRecords(t *testing.T) []deliveryRecordStore {
 
 func openRecorded(t *testing.T, path string) *Store {
 	t.Helper()
-	s, err := Open(context.Background(), path, "")
+	testsupport.HandOver(t, path, "go")
+	s, err := fixtureOpen(context.Background(), path, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,10 +413,11 @@ func TestRelationshipRecord_matches_python_contract_record(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Python reads the same database once Go has stopped and Python has taken it over.
 	if err := f.store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	f.store.DB = openRecorded(t, f.store.Path).DB
+	testsupport.HandOver(t, f.store.Path, "python")
 	want := pythonStoreValue(t, `import json, sys
 from codex_session_relay.clock import FakeClock
 from codex_session_relay.registry import Registry, contract_record

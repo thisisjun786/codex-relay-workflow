@@ -3,11 +3,14 @@ package evidence
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 const head = "c68be165ae8ee4a645f3266eae3e9c543a851382"
@@ -286,24 +289,27 @@ raise SystemExit(cli.main(sys.argv[1:]))`, "--state", state, "linkage-supervise"
 		}
 		cases = [][]string{{"--reference", "relay-envelope/1|supervisor_to_parent|project_assignment|" + other + "|-"}, {"--reference", "relay-envelope/1|supervisor_to_parent|project_assignment|" + good + "|msg-1"}, {"--purpose", "project_assignment", "--correlation", "-"}}
 	}
-	for _, extra := range cases {
+	for index, extra := range cases {
 		args := append(append([]string{}, base...), extra...)
-		// Snapshot with SQLite backup so WAL state, if any, is included.
-		snapshot := filepath.Join(root, "snapshot.sqlite3")
-		copyDB := func(from, to string) {
-			t.Helper()
-			cmd := exec.Command(python, "-c", "import sqlite3,sys; a=sqlite3.connect(sys.argv[1]); b=sqlite3.connect(sys.argv[2]); a.backup(b); b.close(); a.close()", from, to)
-			cmd.Env = env
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("backup: %v %s", err, out)
-			}
+		// Go runs on its own copy of Python's store as it is before this command, taken with
+		// SQLite backup so WAL state, if any, is included. The copy gets its own identity and is
+		// Go's after a takeover; Python's store is left to Python, which runs next on it.
+		goState := filepath.Join(root, fmt.Sprintf("go-state-%d", index))
+		if err := os.MkdirAll(goState, 0700); err != nil {
+			t.Fatal(err)
 		}
-		db := filepath.Join(state, "relay.sqlite3")
-		copyDB(db, snapshot)
-		goCmd := exec.Command(binary, append([]string{"relay"}, args...)...)
+		goDB := filepath.Join(goState, "relay.sqlite3")
+		backup := exec.Command(python, "-c", "import sqlite3,sys; a=sqlite3.connect(sys.argv[1]); b=sqlite3.connect(sys.argv[2]); a.backup(b); b.close(); a.close()", filepath.Join(state, "relay.sqlite3"), goDB)
+		backup.Env = env
+		if out, err := backup.CombinedOutput(); err != nil {
+			t.Fatalf("backup: %v %s", err, out)
+		}
+		testsupport.Rehome(t, goDB)
+		testsupport.HandOver(t, goDB, "go")
+		goArgs := append([]string{"relay", "--state", goState}, args[2:]...)
+		goCmd := exec.Command(binary, goArgs...)
 		goCmd.Env = env
 		got, goErr := goCmd.CombinedOutput()
-		copyDB(snapshot, db)
 		var reply map[string]any
 		if err := json.Unmarshal(got, &reply); err != nil {
 			t.Fatal(err)

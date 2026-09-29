@@ -1,0 +1,1 @@
+{"arguments":{"asserted_by":"supervisor-1","message":"message-1","proof":"proof-1","turn":"supervisor-turn"},"command":"supervisor-read","inboxVersion":1,"operationId":"supervisor-read.message-1","payloadDigest":"sha256:795ed601c8689c8e13f50c4edba304dac910d9f5d85ea35f17902bf8ae751a1a"}

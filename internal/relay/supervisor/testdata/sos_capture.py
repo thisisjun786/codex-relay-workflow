@@ -26,8 +26,20 @@ def keep(path, *args, **kwargs):
     return _real_rmtree(path, *args, **kwargs)
 
 
+def tree_mkdtemp(*args, **kwargs):
+    """A test's own temporary directory is the captured tree; nothing else's is.
+
+    The fence reads a store's ownership stamp through a disposable copy in a TemporaryDirectory
+    (ownership.metadata). Sending that one into the tree too would leave a stale second copy of
+    the store there, which find_db and the Go replay would take for the store itself.
+    """
+    if sys._getframe(1).f_globals.get("__name__", "").startswith("tests."):
+        return TREE
+    return _real_mkdtemp(*args, **kwargs)
+
+
 shutil.rmtree = keep
-tempfile.mkdtemp = lambda *args, **kwargs: TREE
+tempfile.mkdtemp = tree_mkdtemp
 
 
 def plain(value):

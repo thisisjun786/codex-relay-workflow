@@ -17,13 +17,19 @@ evidence in the map.
 """
 
 import ast
+import contextlib
+import io
+import json
+import os
 import pathlib
 import sqlite3
+import sys
 import time
 import unittest
+import urllib.parse
 from unittest import mock
 
-from codex_session_relay import guard, intent, marker
+from codex_session_relay import cli, guard, intent, marker
 from codex_session_relay.ack import AckService
 from codex_session_relay.daemon import RelayDaemon
 from codex_session_relay.delivery import DeliveryService
@@ -509,6 +515,108 @@ class TheWaitBoundReachesEveryReadItGoverns(GuardTestCase):
             f" evaluation receives, so the two have diverged again: {timeouts}",
         )
 
+    # What a whole Stop may open: the evaluation's reader, the fallback selection's socket read,
+    # and (CLI only) the fence's in-place owner read (ownership.check_stop). A Stop never copies
+    # the store: ownership.metadata's snapshot is for writers' admission.
+    STOP_OPENERS = {
+        ("intent.py", "read_only_connection"),
+        ("store.py", "store_socket"),
+        ("ownership.py", "stop_metadata"),
+    }
+
+    def stop_handled(self, bound, argv, *, owner):
+        """One Stop through the relay CLI, as the hook runs it, with the owning constant rebound.
+
+        Every connect is reported with the function that made it. With owner=True the retained
+        owner's control.sock answers, so the connects are the owner's (same process, its thread).
+        """
+        from codex_session_relay.control import GuardServer
+
+        seen = []
+        opener = sqlite3.connect
+
+        def watching(*args, **kwargs):
+            caller = sys._getframe(1).f_code
+            seen.append((
+                pathlib.Path(caller.co_filename).name, caller.co_name,
+                str(args[0] if args else kwargs.get("database")), kwargs.get("timeout"),
+            ))
+            return opener(*args, **kwargs)
+
+        server = GuardServer(self.store.path.parent) if owner else None
+        output = io.StringIO()
+        try:
+            # The owner evaluates only under its own marker root (control.py owner_paths), so it
+            # is configured as the relay is, to the root this Stop names.
+            with mock.patch.object(intent, "SQLITE_TIMEOUT", bound), \
+                    mock.patch.dict(os.environ, {"CODEX_SESSION_RELAY_MARKER_ROOT": str(self.markers)}), \
+                    mock.patch("sqlite3.connect", watching), contextlib.redirect_stdout(output):
+                code = cli.main(argv)
+        finally:
+            if server is not None:
+                server.close()
+        return code, json.loads(output.getvalue()), seen
+
+    def test_a_whole_stop_waits_on_a_live_store_only_under_the_bound(self):
+        """Every connection one Stop opens, through the CLI and through the owner. Measured.
+
+        The evaluation above is handed its store. A Stop is not always: with no --db-path and no
+        dbPath in the intent it judges against the run's own selection, and resolving that reads
+        the socket every candidate store recorded (store.store_socket, from _guard_fallback's
+        refusals and discovery's walk; the owner's control.sock resolves the same fallback). That
+        resolver is a callback handed to guard.evaluate, so no scan of guard's imports sees it.
+        It carried a literal five seconds, a wait inside the hook's budget that the declared
+        bound did not decide. Every connection a Stop opens is on the live store, in place, and
+        carries the bound, including the fence's owner read (ownership.stop_metadata); none is
+        a copied snapshot.
+        """
+        relationship = self.register()
+        self.declare(db_path=None)  # the intent records no store, so the Stop falls back
+        self.claim()
+        self.bind()
+        self.register_marker(relationship)
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        # A second store under the discovery root, so discovery's walk reads one too.
+        other = pathlib.Path(self.tmp, "xdg-state", "codex-session-relay", "other", "relay.sqlite3")
+        Store(other, socket_path=os.path.join(self.tmp, "other.sock")).close()
+        stop = pathlib.Path(self.tmp, "stop.json")
+        stop.write_text(json.dumps(self.stop()), encoding="utf-8")
+        argv = [
+            "--state", str(self.store.path.parent), "--socket", os.path.join(self.tmp, "app.sock"),
+            "guard-evaluate", "--marker-root", str(self.markers), "--stop-input", str(stop),
+            "--now", LATER,
+        ]
+        live = {self.store.path.parent.resolve(), other.parent.resolve()}
+        sentinel = 1.5
+        for owner in (False, True):
+            with self.subTest(owner=owner):
+                code, verdict, seen = self.stop_handled(sentinel, argv, owner=owner)
+
+                self.assertEqual(code, 0, verdict)
+                self.assertEqual(verdict["observation"], "declared_ready_receipted", verdict)
+                executed = {(module, function) for module, function, _database, _wait in seen}
+                self.assertIn(
+                    ("store.py", "store_socket"), executed,
+                    f"the Stop never resolved its fallback selection, so it was not measured: {seen}",
+                )
+                self.assertLessEqual(
+                    executed, self.STOP_OPENERS,
+                    f"a Stop now runs an opener nobody has shown takes the bound: {seen}",
+                )
+                for module, function, database, wait in seen:
+                    where = pathlib.Path(urllib.parse.unquote(urllib.parse.urlsplit(database).path))
+                    self.assertIn(
+                        where.parent.resolve(), live,
+                        f"{module} {function} read a copy rather than the live store: {database}",
+                    )
+                    self.assertEqual(
+                        wait, sentinel,
+                        f"{module} {function} waits {wait!r} on {database}, not the bound the"
+                        " declared constant decides",
+                    )
+                    self.assertIn("mode=ro", database, (module, function))
+
 
 class TheWaitBoundIsDeclaredInOnePlace(unittest.TestCase):
     """Where the bound is decided, derived from the source that is actually imported.
@@ -552,7 +660,7 @@ class TheWaitBoundIsDeclaredInOnePlace(unittest.TestCase):
 
     @staticmethod
     def connect_sites(tree):
-        """(function, line, timeout argument) for every connect call in a parsed module."""
+        """(function, line, timeout, database) arguments for every connect call in a module."""
         sites = {}
         for function in ast.walk(tree):
             if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -565,37 +673,90 @@ class TheWaitBoundIsDeclaredInOnePlace(unittest.TestCase):
                 given = [keyword for keyword in node.keywords if keyword.arg == "timeout"]
                 sites[node.lineno] = (
                     function.name, node.lineno, given[0].value if given else None,
+                    node.args[0] if node.args else None,
                 )
         return sorted(sites.values(), key=lambda site: site[1])
 
+    # Every connect site in guard's import closure, by what decides its lock wait. Listed rather
+    # than derived, so a new opener anywhere in the closure fails until it is placed here.
+    #
+    # The fence widened the closure without adding a Stop path: intent.registration_hold imports
+    # ownership.Admission, and ownership imports store (canonical_socket) and service (scope_key's
+    # ScopeRegistry, and service reaches faults) inside the functions that bind or initialize a
+    # store. A Stop runs none of those functions.
+    DECIDED_BY_THE_BOUND = {
+        ("intent.py", "read_only_connection"),
+        ("intent.py", "registration_hold"),
+        # The read-only Stop's owner read, in place on the live store (ownership.check_stop).
+        ("ownership.py", "stop_metadata"),
+        # A Stop that falls back to the run's own selection runs this (measured by
+        # TheWaitBoundReachesEveryReadItGoverns), so it takes the bound like the evaluation.
+        ("store.py", "store_socket"),
+    }
+    # A database no other connection can hold, so there is no lock to wait on.
+    PRIVATE = {
+        # A copied snapshot in a fresh directory, timeout=0: writers' admission, never a Stop.
+        ("ownership.py", "metadata"),
+        ("faults.py", "readonly_queue_state"),  # :memory:, fault-next's non-owner projection
+    }
+    # Their own waits - the writable Store's 30 s busy timeout (cutover.md Lock order) and the
+    # read-only and diagnostic opens' 5 s - on writer, doctor and store-identity paths. Reached
+    # only through the function-local imports above; a whole Stop, through the CLI and through
+    # the owner's control.sock, runs none of them (TheWaitBoundReachesEveryReadItGoverns).
+    NOT_RUN_BY_A_STOP = {
+        ("store.py", "__init__"),
+        ("store.py", "_open"),
+        ("store.py", "probe"),
+        ("store.py", "read_only_rows"),
+        ("store.py", "nonce_lookup"),
+    }
+
     def test_guard_can_open_a_database_only_where_the_bound_is_declared(self):
-        """Every opener the hook can reach lives beside the constant that bounds it.
+        """Every opener the hook can reach either takes the bound or cannot wait on anyone.
 
         Narrowed from "exactly one place" on purpose. CRW-11 added registration_hold, which
         opens the same store for writing so a generation check and the marker publication that
         depends on it can be held together. It is in intent.py because that is where
         register_relationship is, and intent.py is in this closure whether or not the hook ever
         calls into it. What the count was standing in for is the property kept below: no opener
-        the hook can reach carries a lock wait the constant does not decide. Reachability is a
-        weaker question than execution, and the execution one is answered by
-        TheWaitBoundReachesEveryReadItGoverns, which measures what a real evaluation opens.
+        the hook can reach carries a lock wait the constant does not decide.
+
+        The fence release made the closure reach store.py and faults.py (see the sets above).
+        Reachability is a weaker question than execution, and the execution one is answered by
+        TheWaitBoundReachesEveryReadItGoverns, which measures what a real evaluation and a whole
+        Stop open. So the openers carrying a wait of their own are admitted here only by name,
+        and only because that measurement shows a Stop running none of them; the one a Stop
+        does run, store_socket, takes the bound.
         """
-        openers = {
-            (module, site[0])
-            for module in self.closure()
-            for site in self.connect_sites(self.tree(module))
-        }
+        openers = {}
+        for module in self.closure():
+            for function, line, timeout, database in self.connect_sites(self.tree(module)):
+                openers.setdefault((module, function), []).append((line, timeout, database))
         self.assertEqual(
-            {module for module, _function in openers}, {"intent.py"},
-            "the hook can now open a database outside the module that declares the bound, so"
-            f" that place carries a lock wait of its own: {sorted(openers)}",
+            set(openers), self.DECIDED_BY_THE_BOUND | self.PRIVATE | self.NOT_RUN_BY_A_STOP,
+            "the hook can now reach an opener nobody has placed, so it may carry a lock wait of"
+            f" its own: {sorted(openers)}",
         )
-        self.assertIn(("intent.py", "read_only_connection"), openers)
+        for module, function in sorted(self.DECIDED_BY_THE_BOUND):
+            for line, timeout, _database in openers[(module, function)]:
+                self.assertIsInstance(
+                    timeout, ast.Name,
+                    f"{module} {function} (line {line}) waits a literal, not the declared bound",
+                )
+                self.assertEqual(timeout.id, "SQLITE_TIMEOUT", (module, function, line))
+        # The writers' snapshot reads only its private copy and never waits; the Stop's owner
+        # read (stop_metadata) is on the live store and takes the bound, checked above.
+        for _line, timeout, _database in openers[("ownership.py", "metadata")]:
+            self.assertIsInstance(timeout, ast.Constant)
+            self.assertEqual(timeout.value, 0)
+        for _line, _timeout, database in openers[("faults.py", "readonly_queue_state")]:
+            self.assertIsInstance(database, ast.Constant)
+            self.assertEqual(database.value, ":memory:")
 
     def test_every_opener_takes_its_bound_from_the_constant_rather_than_a_literal(self):
         sites = self.connect_sites(self.tree("intent.py"))
         self.assertTrue(sites, "intent.py opens nothing, so this scan measured nothing")
-        for function, line, timeout in sites:
+        for function, line, timeout, _database in sites:
             self.assertIsInstance(
                 timeout, ast.Name,
                 f"the lock wait is written at the connect call in {function} (line {line})"
@@ -633,7 +794,7 @@ class TheWaitBoundIsDeclaredInOnePlace(unittest.TestCase):
         )
         sites = self.connect_sites(before)
         self.assertEqual(len(sites), 1, "the control sample lost the call this scan looks for")
-        _function, _line, timeout = sites[0]
+        _function, _line, timeout, _database = sites[0]
         self.assertNotIsInstance(
             timeout, ast.Name,
             "the control sample no longer has the shape this scan exists to catch, so the scan"

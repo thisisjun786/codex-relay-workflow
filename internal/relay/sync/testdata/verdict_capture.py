@@ -26,7 +26,9 @@ def wrap(cls,name):
         outer=depth==0
         if outer:
             before=tables(self.store)
-            path=str(keep/f'{len(calls)}.sqlite3')
+            # Each captured store gets a directory of its own: one takeover.json per directory.
+            directory=keep/str(len(calls));directory.mkdir()
+            path=str(directory/'relay.sqlite3')
             dest=sqlite3.connect(path)
             try:self.store.db.backup(dest)
             finally:dest.close()

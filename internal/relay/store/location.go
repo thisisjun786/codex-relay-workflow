@@ -12,14 +12,25 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"modernc.org/sqlite"
 )
 
-func boundedDB(path, mode string, timeout time.Duration) (*sql.DB, error) {
+// boundedDB opens path in mode with a bounded busy timeout, then runs pragmas on every connection.
+func boundedDB(path, mode string, timeout time.Duration, pragmas ...string) (*sql.DB, error) {
+	return boundedURI(path, url.Values{"mode": {mode}}, timeout, pragmas...)
+}
+
+// boundedURI is boundedDB with every SQLite URI parameter given (mode, immutable).
+func boundedURI(path string, params url.Values, timeout time.Duration, pragmas ...string) (*sql.DB, error) {
 	d := &sqlite.Driver{}
 	d.RegisterConnectionHook(func(conn sqlite.ExecQuerierContext, _ string) error {
-		_, err := conn.ExecContext(context.Background(), fmt.Sprintf("PRAGMA busy_timeout=%d", timeout.Milliseconds()), []driver.NamedValue{})
-		return err
+		for _, pragma := range append([]string{fmt.Sprintf("PRAGMA busy_timeout=%d", timeout.Milliseconds())}, pragmas...) {
+			if _, err := conn.ExecContext(context.Background(), pragma, []driver.NamedValue{}); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	id, err := randomBytes(8)
 	if err != nil {
@@ -28,9 +39,7 @@ func boundedDB(path, mode string, timeout time.Duration) (*sql.DB, error) {
 	name := "crw-read-" + hex.EncodeToString(id)
 	sql.Register(name, d)
 	u := url.URL{Scheme: "file", Path: path}
-	q := u.Query()
-	q.Set("mode", mode)
-	u.RawQuery = q.Encode()
+	u.RawQuery = params.Encode()
 	db, err := sql.Open(name, u.String())
 	if err != nil {
 		return nil, err
@@ -39,7 +48,12 @@ func boundedDB(path, mode string, timeout time.Duration) (*sql.DB, error) {
 	return db, nil
 }
 func storeSocket(path string) string {
-	db, err := boundedDB(path, "ro", 5*time.Second)
+	snapshot, cleanup, err := ownership.CopySnapshot(path)
+	if err != nil {
+		return ""
+	}
+	defer cleanup()
+	db, err := boundedDB(snapshot, "ro", 5*time.Second)
 	if err != nil {
 		return ""
 	}

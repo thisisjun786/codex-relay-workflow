@@ -204,6 +204,8 @@ class AParentWhoAlsoSendsByHand(DaemonChannelCase):
 class TheDaemonCommandRunsThePass(DaemonChannelCase):
     """Through the command the installed service runs, not only through RelayDaemon."""
 
+    STORE_SOCKET = "/nonexistent-for-this-test"
+
     def test_the_daemon_command_sends_what_a_silent_parent_owes(self):
         from .test_daemon_cadence import _Args, build_services
         from codex_session_relay.cli import cmd_daemon

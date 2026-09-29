@@ -23,6 +23,8 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 type managedCapture struct {
@@ -137,8 +139,19 @@ func comparePythonExecutionCLI(t *testing.T) {
 	if len(got) != len(want.Receipts) {
 		t.Fatalf("Go steps=%d Python=%d", len(got), len(want.Receipts))
 	}
+	// doctor's ownership.runtime_build names the answering runtime, a documented divergence
+	// (decisions.md 31): the Python fence build from Python and Go's own build, never the fence
+	// build, from Go. Pinned per runtime here; normalizedExecution then compares it as
+	// answeringBuild, and only when it is that runtime's build.
+	for _, i := range []int{0, 6} {
+		goBuild := obj(obj(obj(got[i])["stdout"])["ownership"])["runtime_build"]
+		pythonBuild := obj(obj(obj(want.Receipts[i])["stdout"])["ownership"])["runtime_build"]
+		if goBuild != goRuntimeBuild() || goBuild == ownership.PythonBuild || pythonBuild != ownership.PythonBuild {
+			t.Errorf("step %d doctor runtime_build: Go %v (want %q), Python %v (want %q)", i, goBuild, goRuntimeBuild(), pythonBuild, ownership.PythonBuild)
+		}
+	}
 	for i, expected := range want.Receipts {
-		g, p := normalizedExecution(got[i]), normalizedExecution(expected)
+		g, p := normalizedExecution(t, testsupport.Go, got[i], goRuntimeBuild()), normalizedExecution(t, testsupport.Python, expected, ownership.PythonBuild)
 		if !reflect.DeepEqual(g, p) {
 			t.Errorf("step %d Go=%v Python=%v", i, g, p)
 		}
@@ -176,7 +189,23 @@ func comparePythonExecutionCLI(t *testing.T) {
 
 var executionTime = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|\+00:00)`)
 
-func normalizedExecution(v any) any {
+// goRuntimeBuild is the build doctor's ownership.runtime_build names for the Go runtime: the
+// holder-identity build, else the version (cli doctor.go runtimeBuild).
+func goRuntimeBuild() string {
+	if cli.Build != "" {
+		return cli.Build
+	}
+	return cli.Version
+}
+
+// answeringBuild stands for doctor's ownership.runtime_build when it names the runtime that
+// answered, as decisions.md 31 documents: the Python fence build from Python, Go's own build
+// from Go. Any other value is kept, so a runtime naming the wrong build still differs.
+const answeringBuild = "<answering runtime build>"
+
+// normalizedExecution normalizes the step output of writer, the runtime that produced it; build
+// is the runtime_build that runtime's doctor names.
+func normalizedExecution(t *testing.T, writer testsupport.Runtime, v any, build string) any {
 	switch x := v.(type) {
 	case map[string]any:
 		out := map[string]any{}
@@ -196,13 +225,32 @@ func normalizedExecution(v any) any {
 				out[k] = "<physical inode>"
 				continue
 			}
-			out[k] = normalizedExecution(value)
+			if block, ok := value.(map[string]any); ok && k == "ownership" {
+				// doctor's ownership block is the store's schema_meta ownership rows as read.
+				// Each runtime diagnoses the store it created and owns, so the owner row is the
+				// one runtime-identity difference and must be that runtime's own; every other
+				// key is compared as it is. Before any store exists (step 0) the block reads no
+				// stamp, owner null among the rest, and names no runtime: compared as it is.
+				// runtime_build names the answering runtime (decisions.md 31), not the store.
+				rows := map[string]any{}
+				for key, row := range block {
+					if block["owner"] != nil {
+						row = testsupport.OwnerNeutral(t, writer, key, row)
+					}
+					rows[key] = row
+				}
+				if rows["runtime_build"] == build {
+					rows["runtime_build"] = answeringBuild
+				}
+				value = rows
+			}
+			out[k] = normalizedExecution(t, writer, value, build)
 		}
 		return out
 	case []any:
 		out := make([]any, len(x))
 		for i, item := range x {
-			out[i] = normalizedExecution(item)
+			out[i] = normalizedExecution(t, writer, item, build)
 		}
 		return out
 	case string:

@@ -64,9 +64,7 @@ func replayORDChannel(t *testing.T, mode string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(dbPath, data, 0600); err != nil {
-		t.Fatal(err)
-	}
+	restoreSnapshot(t, dbPath, data, "go")
 	s, err := store.Open(context.Background(), dbPath, "")
 	if err != nil {
 		t.Fatal(err)

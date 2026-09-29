@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // The fixture is a real Python TheRoundtrip store, including the sent attempt,
@@ -34,10 +35,12 @@ func Test24BuiltBinaryRoundtripStoreBytes(t *testing.T) {
 		{"supervisor-stage", "--project", "PRJ-1"},
 	} {
 		t.Run(args[0], func(t *testing.T) {
+			testsupport.HandOver(t, filepath.Join(state, "relay.sqlite3"), "go")
 			goCmd := exec.Command(binary, append([]string{"relay", "--state", state}, args...)...)
 			goCmd.Env = append(os.Environ(), "HOME="+filepath.Join(root, "home"), "XDG_STATE_HOME="+filepath.Join(root, "home", "state"), "CODEX_HOME="+filepath.Join(root, "home", "codex"))
 			got, goErr := goCmd.Output()
 			goCode := commandExit24(t, goErr)
+			testsupport.HandOver(t, filepath.Join(state, "relay.sqlite3"), "python")
 			pyCmd := exec.Command(filepath.Join(repo, ".venv/bin/python"), append([]string{"-m", "codex_session_relay.cli", "--state", state}, args...)...)
 			pyCmd.Env = goCmd.Env
 			want, pyErr := pyCmd.Output()
@@ -60,13 +63,11 @@ func Test24BuiltBinaryEmbeddedProgramParityAndExecution(t *testing.T) {
 	}
 	state := filepath.Join(root, "tree", "state")
 	path := filepath.Join(state, "relay.sqlite3")
-	restore := func() {
+	restore := func(owner string) {
 		t.Helper()
-		if err := os.WriteFile(path, snapshot, 0600); err != nil {
-			t.Fatal(err)
-		}
+		restoreSnapshot(t, path, snapshot, owner)
 	}
-	restore()
+	restore("go")
 	s, err := store.Open(context.Background(), path, "")
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +99,7 @@ func Test24BuiltBinaryEmbeddedProgramParityAndExecution(t *testing.T) {
 		t.Fatalf("alias stage exit=%d JSON=%s: %v", goCode, got, err)
 	}
 
-	restore()
+	restore("python")
 	repo, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +119,7 @@ raise SystemExit(cli.main(sys.argv[3:]))`
 		t.Fatalf("alias stage byte diff\nGo exit=%d\n%s\nPython exit=%d\n%s", goCode, got, pyCode, want)
 	}
 
-	restore()
+	restore("go")
 	crwCmd := exec.Command(built, "relay", "--state", state, "supervisor-stage", "--event", event)
 	crwCmd.Env = env
 	crwOut, crwErr := crwCmd.Output()

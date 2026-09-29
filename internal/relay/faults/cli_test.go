@@ -13,7 +13,7 @@ func cliCall(t *testing.T, dir string, args ...string) (int, map[string]any) {
 	t.Helper()
 	argv := append([]string{"--state", dir}, args...)
 	var out, stderr bytes.Buffer
-	code, handled := ExecuteAs(context.Background(), "codex-session-relay", argv, &out, &stderr, nil)
+	code, handled := executeAsCLI(context.Background(), argv, &out, &stderr)
 	if !handled {
 		t.Fatalf("not handled: %v", argv)
 	}

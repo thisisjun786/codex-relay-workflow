@@ -4,6 +4,7 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"golang.org/x/sys/unix"
 )
 
@@ -391,33 +393,38 @@ func Test29D5RefusalInitializesStore(t *testing.T) {
 			var wantFiles []string
 			for _, python := range []bool{true, false} {
 				result := invoke(t, home, python, args...)
-				entries := []string{}
-				err := filepath.WalkDir(home+"/state", func(path string, entry os.DirEntry, err error) error {
+				// A refusal that leaves no state directory at all is a state of its own
+				// (nil), distinct from an empty one, and still compared across runtimes.
+				var entries []string
+				if _, err := os.Stat(home + "/state"); !errors.Is(err, os.ErrNotExist) {
+					entries = []string{}
+					err = filepath.WalkDir(home+"/state", func(path string, entry os.DirEntry, err error) error {
+						if err != nil {
+							return err
+						}
+						if !entry.IsDir() {
+							entries = append(entries, filepath.Base(path))
+						}
+						return nil
+					})
 					if err != nil {
-						return err
+						t.Fatal(err)
 					}
-					if !entry.IsDir() {
-						entries = append(entries, filepath.Base(path))
-					}
-					return nil
-				})
-				if err != nil {
-					t.Fatal(err)
 				}
 				if python {
 					want = result
-					wantTables = tables(t, home)
+					wantTables = tables(t, home, testsupport.Python)
 					wantFiles = entries
 					resetRuntime(t, home)
-					if err = os.Remove(home + "/state/relay.sqlite3"); err != nil {
+					if err := os.Remove(home + "/state/relay.sqlite3"); err != nil && !errors.Is(err, os.ErrNotExist) {
 						t.Fatal(err)
 					}
 				} else {
 					compare(t, want, result)
-					if !reflect.DeepEqual(wantFiles, entries) || wantTables != tables(t, home) {
+					if !reflect.DeepEqual(wantFiles, entries) || wantTables != tables(t, home, testsupport.Go) {
 						a, _ := json.Marshal(wantFiles)
 						b, _ := json.Marshal(entries)
-						t.Fatalf("refusal state: Python %s Go %s; full tables equal=%v", a, b, wantTables == tables(t, home))
+						t.Fatalf("refusal state: Python %s Go %s; full tables equal=%v", a, b, wantTables == tables(t, home, testsupport.Go))
 					}
 				}
 			}

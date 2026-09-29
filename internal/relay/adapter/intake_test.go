@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func seedIntake(t *testing.T, path, root string) *store.Store {
@@ -100,8 +101,14 @@ func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			goStore := seedIntake(t, filepath.Join(root, "go.sqlite3"), work)
-			pyStore := seedIntake(t, filepath.Join(root, "python.sqlite3"), work)
+			goStore := seedIntake(t, filepath.Join(root, "go", "go.sqlite3"), work)
+			// The oracle's store has a directory of its own (one takeover.json per directory)
+			// and is seeded by Go like Go's; Python then accepts on it after a takeover.
+			pyStore := seedIntake(t, filepath.Join(root, "python", "python.sqlite3"), work)
+			if err := pyStore.Close(); err != nil {
+				t.Fatal(err)
+			}
+			testsupport.HandOver(t, pyStore.Path, "python")
 			raw, _ := json.Marshal(payload)
 			intake := store.ReceiptIntake{Store: goStore, Now: func() string { return "2023-11-14T22:13:20.000000+00:00" }, Minimum: store.BestEffortDetection}
 			_, err = intake.AcceptChildReceipt(context.Background(), raw, store.TurnReference{ThreadID: "01child-task", TurnID: "turn-dispatch-1", Status: "completed"})

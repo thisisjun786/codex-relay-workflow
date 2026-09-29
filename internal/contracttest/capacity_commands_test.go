@@ -68,6 +68,8 @@ func replayTodo27Cases(t *testing.T, dir, casesFile, pythonFile string, commands
 			index := 0
 			for _, step := range steps {
 				if step.SQL != "" {
+					// The generator's Store(path): a writer open, which initializes a store still
+					// absent (decision 30); a read-only step before it is refused store_absent.
 					s, err := store.Open(context.Background(), filepath.Join(state, "relay.sqlite3"), "")
 					if err != nil {
 						t.Fatal(err)

@@ -80,16 +80,7 @@ func TestF1SeededCLIOracle(t *testing.T) {
 			if err = s.Close(); err != nil {
 				t.Fatal(err)
 			}
-			if err = os.MkdirAll(pyDir, 0700); err != nil {
-				t.Fatal(err)
-			}
-			data, err := os.ReadFile(filepath.Join(goDir, "relay.sqlite3"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = os.WriteFile(filepath.Join(pyDir, "relay.sqlite3"), data, 0600); err != nil {
-				t.Fatal(err)
-			}
+			pythonCopy(t, goDir, pyDir)
 			args := tc.args(pub)
 			py := exec.Command("uv", append([]string{"run", "--no-sync", "python", filepath.Join(root, "internal/relay/faults/testdata/f1_cli.py"), "--state", pyDir, "--json"}, args...)...)
 			py.Dir = root
@@ -104,7 +95,7 @@ func TestF1SeededCLIOracle(t *testing.T) {
 				}
 			}
 			var got, stderr bytes.Buffer
-			goCode, handled := ExecuteAs(ctx, "codex-session-relay", append([]string{"--state", goDir, "--json"}, args...), &got, &stderr, nil)
+			goCode, handled := executeAsCLI(ctx, append([]string{"--state", goDir, "--json"}, args...), &got, &stderr)
 			if !handled || pyCode != goCode || !bytes.Equal(want, got.Bytes()) {
 				t.Errorf("python (%d): %s\ngo (%d): %s\nstderr: %s", pyCode, want, goCode, got.String(), stderr.String())
 			}

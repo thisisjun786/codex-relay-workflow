@@ -988,20 +988,15 @@ def _faulted(stop, now, mode, error) -> dict:
     }
 
 
-def _evaluate(root, stop, *, now, mode, db_path, default_db_path, record, reached) -> dict:
-    """Gather the records this Stop is judged against, decide, and publish the observation.
+def _receipt_request(root, stop, reached):
+    """What this Stop is judged on before its receipt, and the receipt read it would make.
 
-    The receipt is read only when a readiness was actually declared. A turn that declared itself
-    waiting or interrupted is released on its own declaration, and going to the database anyway
-    would let an unreadable store overwrite a perfectly good answer the child already gave.
-
-    Which store to read has three sources in a deliberate order: db_path, when the caller named one
-    explicitly; then the dbPath the COORDINATOR recorded in intent.json, because it is the party
-    that registered the relationship and knows where its store lives; then default_db_path, the
-    caller's own resolution, which is only a guess about somebody else's choice. That third source
-    may be a path or a resolver called with no arguments; lookup_receipt calls it, after the
-    identity gate that can answer without any store. That is how a caller gets to refuse a guess at
-    the moment it would actually be read, rather than before this Stop was read.
+    Returns (directory, marker_facts, unreadable, disposition, malformed_label, request). request
+    is None when no receipt would be read: no assignment, no declared readiness, no registered
+    relationship, or a marker whose published facts are not facts. Otherwise it holds the dbPath
+    the coordinator recorded in the intent and lookup_receipt's identity arguments. Shared by
+    _evaluate and selected_store, so the store a routed Stop selects before it is sent is decided by
+    the same gates, in the same order, as the store its evaluation reads.
     """
     workspace = stop.get("cwd")
     session_id, turn_id = stop.get("session_id"), stop.get("turn_id")
@@ -1013,8 +1008,7 @@ def _evaluate(root, stop, *, now, mode, db_path, default_db_path, record, reache
         unreadable = list(unreadable or [])
         reached["directory"] = directory
 
-    disposition = receipt = malformed_label = None
-    counters = {}
+    disposition = malformed_label = request = None
     if directory is not None:
         if not (valid_segment(session_id) and valid_segment(turn_id)):
             # The delivered identity cannot be a directory name, so nothing can be recorded for it
@@ -1039,31 +1033,88 @@ def _evaluate(root, stop, *, now, mode, db_path, default_db_path, record, reache
         # repair at the wrong thing: the marker is what needs fixing, and it is already knowable.
         shape = intents.malformed(marker_facts or {})
         if declared == READY and isinstance(registered, dict) and not shape:
-            recorded = (
-                marker_facts.get("intent", {}).get("dbPath")
-                if isinstance(marker_facts.get("intent"), dict)
-                else None
-            )
-            receipt, readable = lookup_receipt(
-                db_path or recorded or default_db_path,
-                relationship_id=registered.get("relationshipId"),
-                session_id=session_id,
-                turn_id=turn_id,
-                execution_generation=registered.get("executionGeneration"),
-                dispatch_request_id=intents.claimed_dispatch(
+            request = {
+                "recorded": (
+                    marker_facts.get("intent", {}).get("dbPath")
+                    if isinstance(marker_facts.get("intent"), dict)
+                    else None
+                ),
+                "relationship_id": registered.get("relationshipId"),
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "execution_generation": registered.get("executionGeneration"),
+                "dispatch_request_id": intents.claimed_dispatch(
                     marker_facts or {}, session_id,
                     directory.name if directory is not None else None,
                 ),
+            }
+    return directory, marker_facts, unreadable, disposition, malformed_label, request
+
+
+def selected_store(root, stop_input, *, db_path=None, default_db_path=None):
+    """The receipt store evaluate() would read for this Stop, selected without reading it.
+
+    For a caller that must know, before handing the Stop to another process, whether its own
+    selection refuses it (guard-evaluate routing a Stop to the owner's control.sock). The receipt
+    read and the evaluation happen once, where the Stop is evaluated: a second bounded SQLite read
+    here would spend the Stop's budget twice (PR #185 thread 4128457287). The gates are
+    _evaluate's, through _receipt_request, then lookup_receipt's identity gate, then the same
+    precedence: db_path, the intent's recorded dbPath, and default_db_path, which is resolved here
+    exactly when lookup_receipt would resolve it, so a resolver's StoreNotSelected is raised here,
+    before the Stop is sent anywhere. Returns the path, or None when the evaluation would read no
+    store.
+
+    Anything else that escapes is None: evaluate() turns the same failure into guard_faulted, and
+    the evaluation that follows answers it, as the discarded read-only evaluation this replaces
+    did.
+    """
+    try:
+        request = _receipt_request(root, stop_input or {}, {"directory": None})[-1]
+        # lookup_receipt's identity gate, which answers before any store is chosen.
+        if request is None or not (named(request["relationship_id"])
+                                   and named(request["session_id"])
+                                   and named(request["turn_id"])):
+            return None
+        source = db_path or request["recorded"] or default_db_path
+        return source() if callable(source) else source
+    except StoreNotSelected:
+        raise
+    except Exception:  # noqa: BLE001 - classified by the evaluation that follows
+        return None
+
+
+def _evaluate(root, stop, *, now, mode, db_path, default_db_path, record, reached) -> dict:
+    """Gather the records this Stop is judged against, decide, and publish the observation.
+
+    The receipt is read only when a readiness was actually declared. A turn that declared itself
+    waiting or interrupted is released on its own declaration, and going to the database anyway
+    would let an unreadable store overwrite a perfectly good answer the child already gave.
+
+    Which store to read has three sources in a deliberate order: db_path, when the caller named one
+    explicitly; then the dbPath the COORDINATOR recorded in intent.json, because it is the party
+    that registered the relationship and knows where its store lives; then default_db_path, the
+    caller's own resolution, which is only a guess about somebody else's choice. That third source
+    may be a path or a resolver called with no arguments; lookup_receipt calls it, after the
+    identity gate that can answer without any store. That is how a caller gets to refuse a guess at
+    the moment it would actually be read, rather than before this Stop was read.
+    """
+    session_id, turn_id = stop.get("session_id"), stop.get("turn_id")
+    directory, marker_facts, unreadable, disposition, malformed_label, request = _receipt_request(
+        root, stop, reached)
+    receipt = None
+    counters = {}
+    if request is not None:
+        recorded = request.pop("recorded")
+        receipt, readable = lookup_receipt(db_path or recorded or default_db_path, **request)
+        if not readable:
+            # Named apart from the store. A database we could not open and a deliverable we
+            # could not hash are both "could not look", and they are repaired in different
+            # places, so the recorded reason points at the right one.
+            unreadable.append(
+                "the receipt's artifacts"
+                if (receipt or {}).get("evidence") == "deliverable_unverifiable"
+                else "receipts"
             )
-            if not readable:
-                # Named apart from the store. A database we could not open and a deliverable we
-                # could not hash are both "could not look", and they are repaired in different
-                # places, so the recorded reason points at the right one.
-                unreadable.append(
-                    "the receipt's artifacts"
-                    if (receipt or {}).get("evidence") == "deliverable_unverifiable"
-                    else "receipts"
-                )
     observation = {
         "stop_input": stop,
         "marker": marker_facts,

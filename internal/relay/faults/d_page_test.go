@@ -16,7 +16,7 @@ func TestDNotificationsPageWholeBytesAgainstPython(t *testing.T) {
 	check("fault-notifications", "--limit", "2")
 	check("fault-notifications", "--limit", "2", "--after", "2")
 	var stderr bytes.Buffer
-	code, handled := ExecuteAs(ctx, "codex-session-relay", []string{"--state", gd, "--json", "fault-notifications", "--after", "not-a-cursor"}, &bytes.Buffer{}, &stderr, nil)
+	code, handled := executeAsCLI(ctx, []string{"--state", gd, "--json", "fault-notifications", "--after", "not-a-cursor"}, &bytes.Buffer{}, &stderr)
 	if !handled || code != 2 || stderr.Len() == 0 {
 		t.Fatalf("invalid cursor: %d %q", code, stderr.String())
 	}

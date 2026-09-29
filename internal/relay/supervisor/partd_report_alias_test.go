@@ -19,6 +19,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 //go:linkname rrProjectionBudget github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery.reportProjectionBudget
@@ -118,7 +119,43 @@ func rrTables(t *testing.T, s *store.Store) []byte {
 		}
 		tables[name] = out
 	}
+	rrOwnerNeutral(t, testsupport.Go, tables)
 	return rrBytes(t, tables)
+}
+
+// rrOwnerNeutral applies the documented runtime-identity rule, testsupport.OwnerNeutral, to the
+// schema_meta rows of a table dump of a store writer stamped: the owner row of a store each
+// runtime stamped as its own reads "python" in one and "go" in the other, and must read writer's.
+// Nothing else in the dump is touched.
+func rrOwnerNeutral(t *testing.T, writer testsupport.Runtime, tables map[string]any) {
+	t.Helper()
+	rows, _ := tables["schema_meta"].([]any)
+	for _, row := range rows {
+		if cells, ok := row.(map[string]any); ok {
+			if key, ok := cells["key"].(string); ok {
+				cells["value"] = testsupport.OwnerNeutral(t, writer, key, cells["value"])
+			}
+		}
+	}
+}
+
+// rrPythonTables is Python's captured table dump under the same rule. The dump is decoded and
+// re-encoded by the emitter that renders Go's, which must first reproduce it byte for byte, so
+// the owner row is all that can change.
+func rrPythonTables(t *testing.T, raw string) string {
+	t.Helper()
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.UseNumber()
+	var tables map[string]any
+	if err := decoder.Decode(&tables); err != nil {
+		t.Fatal(err)
+	}
+	if again := rrBytes(t, tables); !bytes.Equal(again, []byte(raw)) {
+		rrCompare(t, "re-encoded Python tables", again, raw)
+		t.Fatal("Python's table dump does not re-encode byte for byte")
+	}
+	rrOwnerNeutral(t, testsupport.Python, tables)
+	return string(rrBytes(t, tables))
 }
 func rrCapture(t *testing.T, module, method string) (string, []rrOperation) {
 	t.Helper()
@@ -214,7 +251,10 @@ func rrString(m map[string]any, k string) string { v, _ := m[k].(string); return
 func rrReplay(t *testing.T, root string, op rrOperation) {
 	t.Helper()
 	ctx := context.Background()
-	path := filepath.Join(root, "go.sqlite3")
+	// Each operation replays on its own copy of the Python snapshot, in a directory of its own,
+	// stamped as Go's own store (Restamp): the tables below include schema_meta, which then
+	// differs from Python's only in the owner row that rrOwnerNeutral neutralizes.
+	path := filepath.Join(t.TempDir(), "go.sqlite3")
 	data, err := os.ReadFile(op.Pre)
 	if err != nil {
 		t.Fatal(err)
@@ -222,6 +262,7 @@ func rrReplay(t *testing.T, root string, op rrOperation) {
 	if err = os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
+	testsupport.Restamp(t, path, "go")
 	s, err := store.Open(ctx, path, "")
 	if err != nil {
 		t.Fatal(err)
@@ -267,13 +308,14 @@ func rrReplay(t *testing.T, root string, op rrOperation) {
 	case "attempt":
 		got, err = d.Attempt(ctx, event, &rrHost{}, nil, "relay")
 	case "cli-verdict", "show":
-		state := filepath.Join(root, "cli-state")
+		state := filepath.Join(t.TempDir(), "cli-state")
 		if err = os.MkdirAll(state, 0700); err != nil {
 			t.Fatal(err)
 		}
 		if err = os.WriteFile(filepath.Join(state, "relay.sqlite3"), data, 0600); err != nil {
 			t.Fatal(err)
 		}
+		testsupport.Restamp(t, filepath.Join(state, "relay.sqlite3"), "go")
 		argv := []string{"--state", state, "--json"}
 		if op.Kind == "show" {
 			argv = append(argv, "show", "--event", event)
@@ -307,7 +349,7 @@ func rrReplay(t *testing.T, root string, op rrOperation) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		rrCompare(t, "tables", rrTables(t, cliStore), op.Tables)
+		rrCompare(t, "tables", rrTables(t, cliStore), rrPythonTables(t, op.Tables))
 		if e = cliStore.Close(); e != nil {
 			t.Fatal(e)
 		}
@@ -324,7 +366,7 @@ func rrReplay(t *testing.T, root string, op rrOperation) {
 		output = map[string]any{"error": "refused", "reason": refused.Reason, "detail": refused.Detail}
 	}
 	rrCompare(t, "output", rrBytes(t, output), op.Output)
-	rrCompare(t, "tables", rrTables(t, s), op.Tables)
+	rrCompare(t, "tables", rrTables(t, s), rrPythonTables(t, op.Tables))
 }
 func rrRun(t *testing.T, module string, methods []string) {
 	t.Helper()

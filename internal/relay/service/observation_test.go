@@ -1,29 +1,67 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-func seedObservation(t *testing.T, home, socket string, staged bool) {
+// observationSeed is the fixture both runtimes' stores hold before the daemon ticks.
+var observationSeed = []string{
+	"INSERT INTO relationships(relationship_id,issue_key,status,parent_task_id,parent_host_id,parent_cwd,child_task_id,child_host_id,child_cwd,execution_generation,artifact_roots,allowed_recipients,created_at,updated_at) VALUES('r','REL-1','active','parent','host','/parent','child','host','/child',1,'[]','[\"parent\"]','2023-11-14T22:13:20Z','2023-11-14T22:13:20Z')",
+	"INSERT INTO generations(relationship_id,execution_generation,dispatch_request_id,anchor_state,dispatch_turn_id,reason,opened_at,bound_at) VALUES('r',1,'dispatch','bound','anchor','initial_assignment','2023-11-14T22:13:20Z','2023-11-14T22:13:20Z')",
+}
+
+const observationStaged = "INSERT INTO events(event_id,relationship_id,execution_generation,revision_hash,outcome,producer,turn_thread_id,turn_id,turn_status,receipt,first_seen_at,last_seen_at,stage) VALUES('staged-event','r',1,'revision','ready_for_review','child','child','anchor','inProgress','{}','2023-11-14T22:13:20Z','2023-11-14T22:13:20Z','staged')"
+
+// seedObservation writes the fixture through the store writer of the runtime under test, into
+// the store that runtime owns: each store is its own runtime's from creation, so the two
+// stores' schema_meta differ by the owner alone.
+func seedObservation(t *testing.T, home, socket string, staged, python bool) {
 	t.Helper()
-	cmd := exec.Command(filepath.Join(testRoot, ".venv/bin/python"), "-c", `import sys
+	statements := append([]string{}, observationSeed...)
+	if staged {
+		statements = append(statements, observationStaged)
+	}
+	path := home + "/state/relay.sqlite3"
+	if !python {
+		prepareParityOwnership(t, home, false, []string{"--socket", socket})
+		defer inRuntimeScope(t, home)()
+		s, err := store.Open(context.Background(), path, socket)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, statement := range statements {
+			if _, err = s.DB.Exec(statement); err != nil {
+				t.Fatal(errors.Join(err, s.Close()))
+			}
+		}
+		if err = s.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	encoded, err := json.Marshal(statements)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(filepath.Join(testRoot, ".venv/bin/python"), "-c", `import json, sys
 from codex_session_relay.store import Store
 s=Store(sys.argv[1], socket_path=sys.argv[2])
 try:
- s.db.execute("INSERT INTO relationships(relationship_id,issue_key,status,parent_task_id,parent_host_id,parent_cwd,child_task_id,child_host_id,child_cwd,execution_generation,artifact_roots,allowed_recipients,created_at,updated_at) VALUES('r','REL-1','active','parent','host','/parent','child','host','/child',1,'[]','[\"parent\"]','2023-11-14T22:13:20Z','2023-11-14T22:13:20Z')")
- s.db.execute("INSERT INTO generations(relationship_id,execution_generation,dispatch_request_id,anchor_state,dispatch_turn_id,reason,opened_at,bound_at) VALUES('r',1,'dispatch','bound','anchor','initial_assignment','2023-11-14T22:13:20Z','2023-11-14T22:13:20Z')")
- if sys.argv[3] == 'true':
-  s.db.execute("INSERT INTO events(event_id,relationship_id,execution_generation,revision_hash,outcome,producer,turn_thread_id,turn_id,turn_status,receipt,first_seen_at,last_seen_at,stage) VALUES('staged-event','r',1,'revision','ready_for_review','child','child','anchor','inProgress','{}','2023-11-14T22:13:20Z','2023-11-14T22:13:20Z','staged')")
+ for statement in json.loads(sys.argv[3]):
+  s.db.execute(statement)
 finally:
  s.close()
-`, home+"/state/relay.sqlite3", socket, fmt.Sprint(staged))
+`, path, socket, string(encoded))
 	cmd.Env = environment(home)
 	if raw, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("seed: %v %s", err, raw)
@@ -60,15 +98,15 @@ func Test29ObservationConsoleTables(t *testing.T) {
 			})
 			host.Handle("thread/goal/get", func(json.RawMessage) fakehost.Reply { return fakehost.Reply{Result: map[string]any{"goal": nil}} })
 			args := []string{"--socket", host.SocketPath, "daemon", "--max-ticks", "1", "--allow-isolated-scope"}
-			seedObservation(t, home, host.SocketPath, staged)
+			seedObservation(t, home, host.SocketPath, staged, true)
 			want := invokeFixed(home, true, args)
-			wt := tables(t, home)
-			wf := files(t, home)
+			wt := tables(t, home, testsupport.Python)
+			wf := files(t, home, testsupport.Python)
 			resetRuntime(t, home)
-			seedObservation(t, home, host.SocketPath, staged)
+			seedObservation(t, home, host.SocketPath, staged, false)
 			got := invokeFixed(home, false, args)
-			gt := tables(t, home)
-			gf := files(t, home)
+			gt := tables(t, home, testsupport.Go)
+			gf := files(t, home, testsupport.Go)
 			compare(t, want, got)
 			if wt != gt {
 				t.Fatalf("table byte difference\nPython %s\nGo %s", wt, gt)

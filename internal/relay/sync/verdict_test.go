@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func verdictReplay(t *testing.T, names ...string) {
@@ -51,7 +52,12 @@ func verdictReplay(t *testing.T, names ...string) {
 	}
 	for index, call := range calls {
 		ctx := context.Background()
-		s, e := store.Open(ctx, text(reception.Get(call, "database")), "")
+		// The capture is a copy of Python's store: it gets its own identity, and Go replays the
+		// call on it after a takeover to Go.
+		database := text(reception.Get(call, "database"))
+		testsupport.Rehome(t, database)
+		testsupport.HandOver(t, database, "go")
+		s, e := store.Open(ctx, database, "")
 		if e != nil {
 			t.Fatal(e)
 		}

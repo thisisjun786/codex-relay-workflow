@@ -19,7 +19,7 @@ import (
 )
 
 // PackageVersion is codex_thread_bridge.__version__, which --version prints.
-const PackageVersion = "0.1.0"
+const PackageVersion = appserver.BridgeVersion
 
 const description = "STDIO MCP entry point. No daemon startup or client configuration changes."
 

@@ -43,12 +43,22 @@ func (p Parsed) Integer(name string) *big.Int { return p.p.integer(name) }
 // AddCommand registers an external relay command. exclusive names a required mutually
 // exclusive group of flag options.
 func AddCommand(name string, options []OptionSpec, exclusive []string, run func(context.Context, *Registry, Parsed) (any, error)) {
+	AddCheckedCommand(name, options, exclusive, nil, run)
+}
+
+// AddCheckedCommand is AddCommand for a handler that refuses its own arguments before it touches
+// the store: precheck is that refusal, run where cli.main would reach it (see run in cli.go).
+func AddCheckedCommand(name string, options []OptionSpec, exclusive []string, precheck func(Parsed) error, run func(context.Context, *Registry, Parsed) (any, error)) {
 	converted := make([]option, len(options))
 	for i, o := range options {
 		converted[i] = option{name: o.Name, required: o.Required, multi: o.Multi, flag: o.Flag, integer: o.Integer, choices: o.Choices}
 	}
-	commands = append(commands, command{name: name, options: converted, exclusive: exclusive,
-		run: func(ctx context.Context, r *Registry, p parsed) (any, error) { return run(ctx, r, Parsed{p}) }})
+	c := command{name: name, options: converted, exclusive: exclusive,
+		run: func(ctx context.Context, r *Registry, p parsed) (any, error) { return run(ctx, r, Parsed{p}) }}
+	if precheck != nil {
+		c.precheck = func(p *parsed) error { return precheck(Parsed{*p}) }
+	}
+	commands = append(commands, c)
 }
 
 // WithEnforcement is cli._with_enforcement.

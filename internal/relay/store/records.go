@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ErrNestedTransaction is Python sqlite3's refusal of BEGIN inside an open transaction.
@@ -62,8 +63,16 @@ func (s *Store) Transaction(ctx context.Context, run func(context.Context, *sql.
 		return fmt.Errorf("transaction connection: %w", err)
 	}
 	defer func() { err = errors.Join(err, conn.Close()) }()
-	if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return fmt.Errorf("begin immediate: %w", err)
+	if err = s.admission.Revalidate(ctx, conn); err != nil {
+		return err
+	}
+	// A read-only Store takes no writer lock: deferred BEGIN under query_only (store.py transaction).
+	begin := "BEGIN IMMEDIATE"
+	if s.readOnly {
+		begin = "BEGIN"
+	}
+	if _, err = conn.ExecContext(ctx, begin); err != nil {
+		return fmt.Errorf("%s: %w", strings.ToLower(begin), err)
 	}
 	defer func() {
 		if err != nil {

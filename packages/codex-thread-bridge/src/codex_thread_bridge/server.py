@@ -12,7 +12,7 @@ from mcp.types import ToolAnnotations
 from . import __version__
 from .bridge import Bridge
 from .execution import ExecutionPolicy, ExecutionPolicyError
-from .ledger import open_endpoint_ledger
+from .ledger import RelayFenceUnavailable, open_endpoint_ledger
 from .rpc import AppServer
 
 READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
@@ -415,7 +415,12 @@ def main():
         policy = ExecutionPolicy.from_environment(os.environ)
     except ExecutionPolicyError as error:
         raise SystemExit(str(error)) from error
-    socket_path, ledger = open_endpoint_ledger(args.socket, args.state_dir)
+    # A ledger inside a relay's state directory without the relay package to fence it stops the
+    # server with that diagnostic, before anything is written, rather than a traceback.
+    try:
+        socket_path, ledger = open_endpoint_ledger(args.socket, args.state_dir)
+    except RelayFenceUnavailable as error:
+        raise SystemExit(str(error)) from error
     bridge = Bridge(AppServer(socket_path), ledger, policy=policy)
     make_server(bridge).run(transport="stdio")
 

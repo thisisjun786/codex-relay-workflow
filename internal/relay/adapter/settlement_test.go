@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 type cancelledDelivery struct {
@@ -92,8 +93,11 @@ func Test28_BAD_14_ShutdownSettlesClaimedDelivery(t *testing.T) {
 	root := t.TempDir()
 	repo, _ := filepath.Abs("../../..")
 	script := filepath.Join(repo, "internal/relay/adapter/testdata/settlement_capture.py")
+	// The oracle reads <pyDir>/python.sqlite3. Each runtime's store has a directory of its own:
+	// a directory holds one store's takeover.json.
+	pyDir, goPath := filepath.Join(root, "python"), filepath.Join(root, "go", "go.sqlite3")
 	oracle := func(args ...string) []byte {
-		cmd := exec.Command("uv", append([]string{"run", "--no-sync", "python", script, root}, args...)...)
+		cmd := exec.Command("uv", append([]string{"run", "--no-sync", "python", script, pyDir}, args...)...)
 		cmd.Dir = repo
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -102,6 +106,15 @@ func Test28_BAD_14_ShutdownSettlesClaimedDelivery(t *testing.T) {
 		return out
 	}
 	seed := copyDeliverySeed(t, root)
+	// Both results include every table, schema_meta too, and the only runtime difference that
+	// comparison admits is the owner. So each store is the seed as a pre-fence Python wrote it,
+	// stamped for the runtime that runs on it: Python's by its fence, Go's as Go stamps a store.
+	// (Copies of the fenced seed cannot serve: one runtime would own it only after a takeover,
+	// at another epoch and with a takeover id.)
+	preFenceFixture(t, filepath.Join(root, "python.sqlite3"), filepath.Join(pyDir, "python.sqlite3"), "")
+	testsupport.Fence(t, filepath.Join(pyDir, "python.sqlite3"), "python")
+	preFenceFixture(t, filepath.Join(root, "python.sqlite3"), goPath, "")
+	testsupport.Fence(t, goPath, "go")
 	rpc := &heldRPC{make(chan struct{}), make(chan struct{})}
 	l, err := ledger.OpenWithOptions(filepath.Join(root, "cancel.sqlite3"), ledger.Options{Now: func() float64 { return 1700000000.125 }, Encode: encodeReceipt})
 	if err != nil {
@@ -132,7 +145,7 @@ func Test28_BAD_14_ShutdownSettlesClaimedDelivery(t *testing.T) {
 	if cancellation == nil {
 		t.Fatal("shutdown accepted")
 	}
-	s, err := store.Open(context.Background(), filepath.Join(root, "go.sqlite3"), "")
+	s, err := store.Open(context.Background(), goPath, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,10 +156,12 @@ func Test28_BAD_14_ShutdownSettlesClaimedDelivery(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := map[string]any{"result": plain(result), "tables": allTables(t, s)}
-	var want any
+	var want map[string]any
 	if err := json.Unmarshal(oracle("run", seed.Event), &want); err != nil {
 		t.Fatal(err)
 	}
+	ownerNeutral(t, testsupport.Go, got["tables"])
+	ownerNeutral(t, testsupport.Python, want["tables"])
 	actual, _ := json.Marshal(got)
 	expected, _ := json.Marshal(want)
 	if !bytes.Equal(actual, expected) {

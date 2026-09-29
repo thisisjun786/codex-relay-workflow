@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func TestDRelinkRepointsBoundedWritesAgainstPython(t *testing.T) {
@@ -38,6 +39,8 @@ func TestDRelinkRepointsBoundedWritesAgainstPython(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
+	// Go seeded Python's store as well; Python runs on it after a takeover.
+	testsupport.HandOver(t, filepath.Join(pyDir, "relay.sqlite3"), "python")
 	root, e := filepath.Abs("../../..")
 	if e != nil {
 		t.Fatal(e)
@@ -50,19 +53,17 @@ func TestDRelinkRepointsBoundedWritesAgainstPython(t *testing.T) {
 		t.Fatalf("python: %v", e)
 	}
 	var got, stderr bytes.Buffer
-	code, handled := ExecuteAs(context.Background(), "codex-session-relay", []string{"--state", goDir, "--json", "fault-relink", "--limit", "1"}, &got, &stderr, nil)
+	code, handled := executeAsCLI(context.Background(), []string{"--state", goDir, "--json", "fault-relink", "--limit", "1"}, &got, &stderr)
 	if !handled || code != 0 || !bytes.Equal(want, got.Bytes()) {
 		t.Fatalf("python %s; go %d %s; stderr %s", want, code, got.String(), stderr.String())
 	}
 	for _, dir := range []string{goDir, pyDir} {
-		s, e := store.Open(context.Background(), filepath.Join(dir, "relay.sqlite3"), "")
-		if e != nil {
-			t.Fatal(e)
-		}
-		r, e := s.One(context.Background(), "SELECT tracker_ref FROM fault_publications LIMIT 1")
-		if e != nil || text(r, "tracker_ref") != "team-relay" {
-			t.Fatalf("%s repoint: %v %v", dir, r, e)
-		}
-		s.Close()
+		readStore(t, context.Background(), filepath.Join(dir, "relay.sqlite3"), func(ctx context.Context, s *store.Store) error {
+			r, e := s.One(ctx, "SELECT tracker_ref FROM fault_publications LIMIT 1")
+			if e != nil || text(r, "tracker_ref") != "team-relay" {
+				t.Fatalf("%s repoint: %v %v", dir, r, e)
+			}
+			return nil
+		})
 	}
 }

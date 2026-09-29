@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"golang.org/x/sys/unix"
 )
 
@@ -140,7 +141,9 @@ func Test29D1DeterministicReapStates(t *testing.T) {
 					if result.Code != 0 || get(answer, "worker") != state || !handle.Wait(0) {
 						t.Fatalf("%s: %+v", state, result)
 					}
-					actualFiles := files(t, home)
+					// daemon.json is the record s.NewRecord (Go) wrote above in both runs; either
+					// runtime's stop only adds to it, so its build is Go's own (null) on both sides.
+					actualFiles := files(t, home, testsupport.Go)
 					raw, err := os.ReadFile(home + "/state/stop.request")
 					if err != nil {
 						t.Fatal(err)
@@ -154,10 +157,10 @@ func Test29D1DeterministicReapStates(t *testing.T) {
 					if python {
 						want = result
 						wantFiles = actualFiles
-						wantTables = tables(t, home)
+						wantTables = tables(t, home, testsupport.Python)
 					} else {
 						compare(t, want, result)
-						if !reflect.DeepEqual(wantFiles, actualFiles) || wantTables != tables(t, home) {
+						if !reflect.DeepEqual(wantFiles, actualFiles) || wantTables != tables(t, home, testsupport.Go) {
 							t.Fatalf("persisted state for %s\nPython %v\nGo %v", state, wantFiles, actualFiles)
 						}
 					}

@@ -203,9 +203,7 @@ func supervisorMirror(t *testing.T, id, snapshot string, body func(*Channel, *st
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(dbpath, data, 0600); err != nil {
-		t.Fatal(err)
-	}
+	restoreSnapshot(t, dbpath, data, "go")
 	s, err := store.Open(context.Background(), dbpath, "")
 	if err != nil {
 		t.Fatal(err)

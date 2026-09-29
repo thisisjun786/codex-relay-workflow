@@ -1,8 +1,8 @@
 {
  "limits": [
   {
-   "exit": 0,
-   "stdout": "{\n  \"held\": [],\n  \"total\": 0,\n  \"perParent\": {},\n  \"staleSlots\": []\n}\n"
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"store_absent\",\n  \"detail\": \"no relay store exists at <HOME>/state/relay.sqlite3; a read-only command never creates one\"\n}\n"
   },
   {
    "exit": 0,
@@ -111,8 +111,8 @@
  ],
  "slots": [
   {
-   "exit": 0,
-   "stdout": "{\n  \"held\": [],\n  \"total\": 0,\n  \"perParent\": {},\n  \"staleSlots\": []\n}\n"
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"store_absent\",\n  \"detail\": \"no relay store exists at <HOME>/state/relay.sqlite3; a read-only command never creates one\"\n}\n"
   },
   {
    "exit": 0,

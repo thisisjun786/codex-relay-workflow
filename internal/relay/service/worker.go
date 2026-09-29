@@ -159,7 +159,8 @@ func (s *Service) PublishWorkerPolicy(policy Object) error {
 		run = set(run, key, get(r, key))
 	}
 	run = set(run, "dbDevice", int64(stat.Dev), "dbInode", int64(stat.Ino))
-	payload := obj("schemaVersion", 1, "policy", policy, "observedAt", stamp(), "worker", obj("pid", pid, "startTicks", StartTicks(pid), "bootId", BootID()), "service", run)
+	// The worker's python_compatibility_build is null for the reason NewRecord gives.
+	payload := obj("schemaVersion", 1, "policy", policy, "observedAt", stamp(), "worker", obj("pid", pid, "startTicks", StartTicks(pid), "bootId", BootID(), "python_compatibility_build", nil), "service", run)
 	// json.dump's default separators, unlike the indented supervisor record.
 	raw := evidence.Dumps(payload, false, false, true)
 	f, err := temporaryRecord(s.path("worker-policy.json"))

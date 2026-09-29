@@ -23,34 +23,29 @@ func f1ReplayStores(t *testing.T) (context.Context, string, string) {
 	}
 	ctx := context.WithValue(context.Background(), f1InputsKey{}, f1Inputs{clock: &testClock{now: 100000}, entropy: bytes.NewReader([]byte{0, 1, 2, 3, 4, 5, 6, 7})})
 	gd, pd := home+"/go", home+"/py"
-	f1SeedBoth(t, ctx, gd, pd, nil)
-	// Both implementations start from identical metadata as well as domain rows.
-	seed, e := os.ReadFile(gd + "/relay.sqlite3")
+	// Both implementations start from identical metadata as well as domain rows, each store
+	// owned by the runtime that runs on it: schema_meta differs only in the owner value.
+	f1Twins(t, gd, pd)
+	return ctx, gd, pd
+}
+
+// f1SeedBoth runs the same statements on both stores, each through its owner's writer.
+func f1SeedBoth(t *testing.T, ctx context.Context, gd, pd string, sql []string) {
+	t.Helper()
+	s, e := store.Open(ctx, gd+"/relay.sqlite3", "")
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = os.WriteFile(pd+"/relay.sqlite3", seed, 0600); e != nil {
+	for _, query := range sql {
+		if _, e = s.Q(ctx).ExecContext(ctx, query); e != nil {
+			_ = s.Close()
+			t.Fatalf("%s: %v", query, e)
+		}
+	}
+	if e = s.Close(); e != nil {
 		t.Fatal(e)
 	}
-	return ctx, gd, pd
-}
-func f1SeedBoth(t *testing.T, ctx context.Context, gd, pd string, sql []string) {
-	t.Helper()
-	for _, dir := range []string{gd, pd} {
-		s, e := store.Open(ctx, dir+"/relay.sqlite3", "")
-		if e != nil {
-			t.Fatal(e)
-		}
-		for _, query := range sql {
-			if _, e = s.Q(ctx).ExecContext(ctx, query); e != nil {
-				_ = s.Close()
-				t.Fatalf("%s: %v", query, e)
-			}
-		}
-		if e = s.Close(); e != nil {
-			t.Fatal(e)
-		}
-	}
+	seedPython(t, pd+"/relay.sqlite3", seedSQL(sql...)...)
 }
 
 const f1Relationship = "INSERT INTO relationships(relationship_id,issue_key,status,parent_task_id,parent_host_id,child_task_id,child_host_id,execution_generation,artifact_roots,allowed_recipients,created_at,updated_at) VALUES('rel','ISSUE','active','parent','host','child','host',1,'[]','[]','stamp','stamp')"

@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func Test23_SyncCommandsBuiltBinaryWholeBytes(t *testing.T) {
@@ -50,7 +51,10 @@ func Test23_SyncCommandsBuiltBinaryWholeBytes(t *testing.T) {
 				t.Fatal(e)
 			}
 			db := base + "/state/relay.sqlite3"
-			for _, p := range []string{db + "-wal", db + "-shm"} {
+			// The previous store goes whole, its fence included; the state directory then holds
+			// a copy of Python's store before this command, which gets its own identity and is
+			// Go's after a takeover.
+			for _, p := range []string{db, db + "-wal", db + "-shm", base + "/state/takeover.json", base + "/state/write-gate.lock", base + "/state/takeover.lock"} {
 				if e = os.Remove(p); e != nil && !os.IsNotExist(e) {
 					t.Fatal(e)
 				}
@@ -58,6 +62,8 @@ func Test23_SyncCommandsBuiltBinaryWholeBytes(t *testing.T) {
 			if e = os.WriteFile(db, before, 0600); e != nil {
 				t.Fatal(e)
 			}
+			testsupport.Rehome(t, db)
+			testsupport.HandOver(t, db, "go")
 			commandArgs := argv
 			if program == binary {
 				commandArgs = append([]string{"relay"}, argv...)

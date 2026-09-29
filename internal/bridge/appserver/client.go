@@ -13,6 +13,10 @@ import (
 	"github.com/coder/websocket"
 )
 
+// BridgeVersion is codex_thread_bridge.__version__: the clientInfo.version of the App Server
+// handshake (rpc.py) and what the bridge's --version prints.
+const BridgeVersion = "0.2.0"
+
 // New constructs a reconnecting client; Dial also performs the initial handshake.
 func New(socketPath string, bounds PhaseBounds) *Client {
 	return &Client{socket: socketPath, bounds: bounds, maxFrame: MaxFrameBytes, pending: make(map[string]pending), notifications: make(chan Notification, 64), connectGate: make(chan struct{}, 1)}
@@ -51,7 +55,7 @@ func (c *Client) connect(ctx context.Context) error {
 	c.conn = ws
 	c.mu.Unlock()
 	go c.receive(ws)
-	handshake := map[string]any{"clientInfo": map[string]any{"name": "codex_thread_bridge", "version": "0.1.0"}, "capabilities": map[string]any{"experimentalApi": true}}
+	handshake := map[string]any{"clientInfo": map[string]any{"name": "codex_thread_bridge", "version": BridgeVersion}, "capabilities": map[string]any{"experimentalApi": true}}
 	raw, err := c.request(ctx, ws, "initialize", handshake)
 	if err != nil {
 		c.retire(ws)

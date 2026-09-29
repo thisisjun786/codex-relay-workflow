@@ -226,6 +226,9 @@ class RefusalReason(str, Enum):
     # (merge_currency_stale), so it folds into neither.
     MERGE_EVIDENCE_MALFORMED = "merge_evidence_malformed"
 
+    STORE_OWNED_BY_OTHER = "store_owned_by_other"
+    INBOX_CONFLICT = "inbox_conflict"
+
 
 
 class RelayError(Exception):

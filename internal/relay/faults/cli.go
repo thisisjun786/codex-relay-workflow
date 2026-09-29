@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/inbox"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -73,14 +74,28 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 	if err != nil {
 		return response(stdout, map[string]any{"error": "host", "detail": err.Error()}, 3), true
 	}
+	// cli.main runs its lock-free check_start before the selection refusal and before
+	// --kind-module: an acknowledgment the store's ownership refuses queueably is queued
+	// whatever --socket or --kind-module says (decision 25).
+	if name == "fault-notification-ack" && inbox.RefusedAtStart(ctx, selection.DBPath(), socket) {
+		return queued(stdout, selection.Path, name, argv[i+1:]), true
+	}
 	if check != nil {
+		// The relay CLI's check also admits a writable command's store (its open can be
+		// refused like the one below) and replays the takeover inbox on it.
 		if err = check(selection, socket); err != nil {
 			var payload interface {
 				ExitPayload() (contract.OrderedObject, int)
 			}
-			if errors.As(err, &payload) {
+			var refused *store.RefusedError
+			switch {
+			case name == "fault-notification-ack" && inbox.QueueableRefusal(err):
+				return queued(stdout, selection.Path, name, argv[i+1:]), true
+			case errors.As(err, &payload):
 				body, code := payload.ExitPayload()
 				return response(stdout, body, code), true
+			case errors.As(err, &refused):
+				return response(stdout, map[string]any{"error": "refused", "reason": refused.Reason, "detail": refused.Detail}, 2), true
 			}
 			return response(stdout, map[string]any{"error": "host", "detail": err.Error()}, 3), true
 		}
@@ -109,11 +124,14 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 			return response(stdout, map[string]any{"error": "usage", "detail": fmt.Sprintf("--kind-module '%s' could not be imported: No module named '%s'", module, missing)}, 4), true
 		}
 	}
-	// These two Python handlers validate before their first lazy services.store
-	// access. Other fault commands deliberately retain their existing precedence.
+	// These Python handlers validate before their first lazy services.store access
+	// (cmd_fault_next reads --limit before it asks whether its store is read-only). Other
+	// fault commands deliberately retain their existing precedence.
 	switch name {
 	case "fault-show":
 		err = validateShow(ctx, args)
+	case "fault-next":
+		_, err = cLimit(ctx, args["--limit"], "--limit", 4)
 	case "fault-sweep":
 		var input sweepInput
 		input, err = validateSweep(ctx, args)
@@ -127,7 +145,17 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 		return response(stdout, map[string]any{"error": "host", "detail": err.Error()}, 3), true
 	}
 	s, err := store.Open(ctx, selection.DBPath(), socket)
+	if name == "fault-notification-ack" && inbox.QueueableRefusal(err) {
+		// Another runtime owns the store, or it is draining or starting: the acknowledgment
+		// is durably queued for the owner instead (decision 25, cli.main).
+		return queued(stdout, selection.Path, name, argv[i+1:]), true
+	}
 	if err != nil {
+		// A refusal keeps its reason and exit 2, as cli.main answers every RelayError.
+		var refused *store.RefusedError
+		if errors.As(err, &refused) {
+			return response(stdout, map[string]any{"error": "refused", "reason": refused.Reason, "detail": refused.Detail}, 2), true
+		}
 		return response(stdout, map[string]any{"error": "host", "detail": err.Error()}, 3), true
 	}
 	defer s.Close()
@@ -278,10 +306,30 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 			result = map[string]any{"faultId": args["--fault"], "kept": keep, "removed": removed, "limits": "the ledger's occurrence_count still counts what was observed; these rows are the evidence, not the count"}
 		}
 	}
+	value, code := faultAnswer(name, result, err)
+	if e := contract.Emit(stdout, value); e != nil {
+		return 3, true
+	}
+	return code, true
+}
+
+// queued is cli.main's answer to a queueable refusal of a fault-notification-ack: the request
+// published in S/takeover-inbox, with the fence's answer and exit code.
+func queued(stdout io.Writer, state, name string, argv []string) int {
+	body, code := inbox.Queue(state, name, argv)
+	if e := contract.Emit(stdout, body); e != nil {
+		return 3
+	}
+	return code
+}
+
+// faultAnswer is cli.main's reply to a fault handler's ending: the printed object, in the
+// command family's own key order, and its exit code.
+func faultAnswer(name string, result any, err error) (any, int) {
 	if err != nil {
 		var missing *cMissingFault
 		if errors.As(err, &missing) {
-			return cResponse(stdout, map[string]any{"faultId": missing.id, "found": false}, 2), true
+			return cOrdered(map[string]any{"faultId": missing.id, "found": false}, ""), 2
 		}
 		reason, _, _ := strings.Cut(err.Error(), ":")
 		if strings.HasPrefix(reason, "fault_") || strings.HasPrefix(err.Error(), "transaction body: fault_") {
@@ -289,36 +337,53 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 				reason, _, _ = strings.Cut(strings.TrimPrefix(err.Error(), "transaction body: "), ":")
 			}
 			detail := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(err.Error(), "transaction body: "), reason+":"))
-			if slices.Contains(f1Names, name) {
-				return f1Response(stdout, map[string]any{"error": "refused", "reason": reason, "detail": detail}, 2), true
+			refusal := map[string]any{"error": "refused", "reason": reason, "detail": detail}
+			switch {
+			case slices.Contains(f1Names, name):
+				return f1Ordered(refusal), 2
+			case slices.Contains(f2Names, name):
+				return f2Ordered(refusal), 2
+			case slices.Contains(dNames, name):
+				return dOrdered(refusal, "refusal"), 2
+			case slices.Contains(cNames, name):
+				return cOrdered(refusal, ""), 2
 			}
-			if slices.Contains(f2Names, name) {
-				return f2Response(stdout, map[string]any{"error": "refused", "reason": reason, "detail": detail}, 2), true
-			}
-			if slices.Contains(dNames, name) {
-				return dResponse(stdout, map[string]any{"error": "refused", "reason": reason, "detail": detail}, 2), true
-			}
-			if slices.Contains(cNames, name) {
-				return cResponse(stdout, map[string]any{"error": "refused", "reason": reason, "detail": detail}, 2), true
-			}
-			return response(stdout, map[string]any{"error": "refused", "reason": reason, "detail": detail}, 2), true
+			return ordered(refusal), 2
 		}
-		return response(stdout, map[string]any{"error": "host", "detail": err.Error()}, 3), true
+		return ordered(map[string]any{"error": "host", "detail": err.Error()}), 3
 	}
-	if slices.Contains(f1Names, name) {
-		return f1Response(stdout, result, 0), true
+	switch {
+	case slices.Contains(f1Names, name):
+		return f1Ordered(result), 0
+	case slices.Contains(f2Names, name):
+		return f2Ordered(result), 0
+	case slices.Contains(dNames, name):
+		return dOrdered(result, ""), 0
+	case slices.Contains(cNames, name):
+		return cOrdered(result, ""), 0
 	}
-	if slices.Contains(f2Names, name) {
-		return f2Response(stdout, result, 0), true
-	}
-	if slices.Contains(dNames, name) {
-		return dResponse(stdout, result, 0), true
-	}
-	if slices.Contains(cNames, name) {
-		return cResponse(stdout, result, 0), true
-	}
-	return response(stdout, result, 0), true
+	return ordered(result), 0
 }
+
+// ApplyQueued runs a queued fault-notification-ack (decision 25) through its existing handler
+// on the drainer's store st, inside the composing transaction ctx carries, as inbox.replay
+// calls args.handler(services, args). It answers as inbox.Apply does: 0 or 2 with the
+// handler's stdout object; any host failure is err.
+func ApplyQueued(ctx context.Context, st *store.Store, argv []string) (any, int, error) {
+	const name = "fault-notification-ack"
+	parsed, _, handled := faultParse(name, name, argv, io.Discard, io.Discard)
+	if handled {
+		return nil, 0, fmt.Errorf("queued %s arguments do not parse", name)
+	}
+	ctx = context.WithValue(ctx, numberArgsKey{}, parsed.numbers)
+	result, err := executeD(ctx, &Ledger{Store: st, Clock: f1Clock(ctx)}, name, parsed.text)
+	value, code := faultAnswer(name, result, err)
+	if code == 3 {
+		return nil, code, err
+	}
+	return value, code, nil
+}
+
 func latestPublicationAnswer(ctx context.Context, l *Ledger, id string, before int64) any {
 	rows, err := l.Store.All(ctx, "SELECT p.publication_id,p.kind,p.trigger_key,p.state,p.tracker_ref,x.project_ref FROM fault_publications p LEFT JOIN fault_publication_payloads x ON x.publication_id=p.publication_id WHERE p.fault_id=? ORDER BY p.rowid", id)
 	if err != nil || int64(len(rows)) <= before {

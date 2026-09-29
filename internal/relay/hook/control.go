@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"path/filepath"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
@@ -69,6 +72,25 @@ func RequestGuard(ctx context.Context, conn net.Conn, stop Object, options Guard
 		return nil, &responseError{"guard_rejected_the_call", "said_nothing"}
 	}
 	return response, nil
+}
+
+// sunPathLimit is the shortest sockaddr_un path capacity of the supported targets
+// (darwin 104, Linux 108); Python's control.py uses the same threshold.
+const sunPathLimit = 104
+
+// ControlAddress is the name a bind or connect uses for the control socket at path. A
+// path a sockaddr_un cannot hold is reached through /proc/self/fd/<dirfd>, as Python's
+// GuardServer and Stop adapter do; release closes that directory descriptor once the
+// bind or connect has resolved it.
+func ControlAddress(path string) (string, func(), error) {
+	if len(path) < sunPathLimit {
+		return path, func() {}, nil
+	}
+	fd, err := unix.Open(filepath.Dir(path), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return "", nil, err
+	}
+	return fmt.Sprintf("/proc/self/fd/%d/%s", fd, filepath.Base(path)), func() { _ = unix.Close(fd) }, nil
 }
 
 // rejectControl is the protocol dispatcher's answer before any guard command runs.

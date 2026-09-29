@@ -15579,6 +15579,20 @@
       },
       {
         "flags": [
+          "--takeover-candidate"
+        ],
+        "dest": "takeover_candidate",
+        "kind": "_StoreTrueAction",
+        "required": false,
+        "choices": null,
+        "type": "",
+        "header": "--takeover-candidate",
+        "help": [],
+        "suppressed": true,
+        "children": []
+      },
+      {
+        "flags": [
           "--deadline-monotonic"
         ],
         "dest": "deadline_monotonic",
@@ -15660,7 +15674,8 @@
           5,
           6,
           7,
-          8
+          8,
+          9
         ]
       }
     ],

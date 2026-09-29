@@ -2,6 +2,7 @@ package registry
 
 import (
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -220,7 +221,11 @@ func Test25_ASG8_two_concurrent_registrations_produce_one_assignment(t *testing.
 }
 
 // ASG-10 (identity rows): two stores are distinguishable by the reading alone, and
-// recordedSocket is the socket that CREATED the store (first write wins), null without one.
+// recordedSocket is the socket that CREATED the store, null without one. Under the fence a
+// later process cannot open the store for another socket at all (cutover.md Record, Socket
+// binding; decision 30): it is refused before any socket is recorded, as the Python fence's
+// test_the_recorded_socket_is_provenance_and_does_not_follow_a_later_process pins, and the
+// recorded socket still reads the first.
 func Test25_ASG10_two_stores_and_the_recorded_socket(t *testing.T) {
 	dir := t.TempDir()
 	read := func(s *store.Store) map[string]any {
@@ -243,8 +248,18 @@ func Test25_ASG10_two_stores_and_the_recorded_socket(t *testing.T) {
 		t.Fatal(mine, theirs)
 	}
 	path := filepath.Join(dir, "socketed", "relay.sqlite3")
-	first := read(open(path, filepath.Join(dir, "crw125-first.sock")))["recordedSocket"].(string)
-	again := read(open(path, filepath.Join(dir, "crw125-second.sock")))["recordedSocket"]
+	opened := open(path, filepath.Join(dir, "crw125-first.sock"))
+	first := read(opened)["recordedSocket"].(string)
+	later, err := store.Open(ctx(), path, filepath.Join(dir, "crw125-second.sock"))
+	if err == nil {
+		_ = later.Close()
+		t.Fatal("a store bound to one socket opened for another")
+	}
+	var refused *store.RefusedError
+	if !errors.As(err, &refused) || refused.Reason != "store_owned_by_other" || refused.Detail != "requested socket disagrees with ownership record" {
+		t.Fatalf("second socket: %v", err)
+	}
+	again := read(opened)["recordedSocket"]
 	if !strings.HasSuffix(first, "crw125-first.sock") || again != first {
 		t.Fatal(first, again)
 	}

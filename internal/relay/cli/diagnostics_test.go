@@ -138,6 +138,15 @@ func pythonRecorded(t *testing.T) recorded {
 			return
 		}
 		scenariosErr = json.Unmarshal(output, &scenarios)
+		if scenariosErr == nil {
+			// Python left these stores; Go reads them next, after a takeover, as on a host.
+			for _, s := range scenarios.Status {
+				ownedBy(t, filepath.Join(s.State, "relay.sqlite3"), "go")
+			}
+			for _, s := range scenarios.Show {
+				ownedBy(t, filepath.Join(s.State, "relay.sqlite3"), "go")
+			}
+		}
 	})
 	if scenariosErr != nil {
 		t.Fatalf("Python scenarios: %v", scenariosErr)

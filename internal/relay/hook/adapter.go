@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -443,7 +444,9 @@ func ownsGuard(ctx context.Context, state, configuredDB string) bool {
 	if path == "" {
 		path = filepath.Join(state, "relay.sqlite3")
 	}
-	ro, err := store.OpenReadOnly(ctx, path, 0)
+	// The read-only Stop path reads the durable half in place: no copy and no SQLite sidecar
+	// (store.OpenStopRead, Python's ownership.stop_metadata).
+	ro, err := store.OpenStopRead(ctx, path, 0)
 	if err != nil {
 		return false
 	}
@@ -503,10 +506,83 @@ func HandleControl(ctx context.Context, conn net.Conn, ownerState string) (err e
 			return err
 		}
 	}
-	v, err := evaluateOwner(ctx, stop, GuardOptions{Root: text(get(params, "markerRoot")), Now: text(get(params, "now")), Mode: text(get(params, "mode")), DBPath: text(get(params, "dbPath")), NoRecord: get(params, "noRecord") == true, DefaultDBPath: ownerFallback(ownerState, text(get(params, "socketPath")), text(get(params, "program")))})
+	root, db, refused, err := ownerPaths(ownerState, params)
 	if err != nil {
+		// An owner that cannot resolve its own marker root answers the host record, as
+		// control.py answers the same failure, rather than closing without a word.
+		refused = err.Error()
+	}
+	if refused != "" {
+		// Answered before anything is read or recorded, as a host error: the request asked this
+		// owner to evaluate somewhere it does not, which is no Stop refusal (control.py owner_paths).
+		_, err = io.WriteString(conn, evidence.Dumps(Object{{Key: "error", Value: "host"}, {Key: "detail", Value: refused}}, false, false, true)+"\n")
+		return err
+	}
+	v, err := evaluateOwner(ctx, stop, GuardOptions{Root: root, Now: text(get(params, "now")), Mode: text(get(params, "mode")), DBPath: db, NoRecord: get(params, "noRecord") == true, DefaultDBPath: ownerFallback(ownerState, text(get(params, "socketPath")), text(get(params, "program")))})
+	if err != nil {
+		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			// The requester's deadline has passed: nobody is left to read an answer.
+			return err
+		}
+		// A guard that failed is answered with the relay's host record, as the CLI answers
+		// the same error and control.py answers a guard that raised, never with silence:
+		// the live-state guard's refusal (cutover.md) reaches the requester this way, which
+		// journals guard_host_error. The answered request is not a handler failure.
+		_, err = io.WriteString(conn, evidence.Dumps(Object{{Key: "error", Value: "host"}, {Key: "detail", Value: err.Error()}}, false, false, true)+"\n")
 		return err
 	}
 	_, err = io.WriteString(conn, evidence.Dumps(v, true, false, true)+"\n")
 	return err
+}
+
+// ownerPaths is control.py owner_paths: a control request may not choose where the owner writes
+// (PR #185 thread 4127894432). The owner evaluates only under its own marker root, resolved from
+// its own configuration as the relay resolves one without --marker-root (the root the installer
+// records as the hook's markerRoot), and reads only its own store: a request's dbPath, when
+// present, must name ownerState/relay.sqlite3. Either is then used as the owner's own path, never
+// the request's spelling. journalRoot and the other hook settings are not request parameters;
+// the adapter journals in its own process. refused is the host detail for any other path.
+func ownerPaths(ownerState string, params Object) (root, db, refused string, err error) {
+	selected, err := delivery.ResolveMarkerRoot("")
+	if err != nil {
+		return "", "", "", err
+	}
+	requested, present := evidence.Lookup(params, "markerRoot")
+	if !namesOwnPath(requested, selected.Path) {
+		return "", "", "control.sock evaluates Stops only under this owner's marker root " + selected.Path + "; the request named " + requestedPath(requested, present), nil
+	}
+	own := filepath.Join(ownerState, "relay.sqlite3")
+	requested, present = evidence.Lookup(params, "dbPath")
+	if !present || requested == nil {
+		return selected.Path, "", "", nil
+	}
+	if !namesOwnPath(requested, own) {
+		return "", "", "control.sock reads only this owner's store " + own + "; the request named " + requestedPath(requested, present), nil
+	}
+	return selected.Path, own, "", nil
+}
+
+// namesOwnPath is control.py _names: only an absolute path names anything, by the same
+// normalized spelling or by being the same existing file.
+func namesOwnPath(requested any, own string) bool {
+	path, ok := requested.(string)
+	if !ok || !filepath.IsAbs(path) {
+		return false
+	}
+	if filepath.Clean(path) == filepath.Clean(own) {
+		return true
+	}
+	left, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	right, err := os.Stat(own)
+	return err == nil && os.SameFile(left, right)
+}
+
+func requestedPath(requested any, present bool) string {
+	if path, ok := requested.(string); ok && present {
+		return path
+	}
+	return "no path"
 }

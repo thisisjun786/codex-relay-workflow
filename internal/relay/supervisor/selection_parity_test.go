@@ -21,7 +21,7 @@ func compareSelectionPython(t *testing.T, f *stageFixture, o Obligation, recipie
 	if err != nil {
 		t.Fatal(err)
 	}
-	db := filepath.Join(f.root, "state", "relay.sqlite3")
+	db := pythonCopy(t, f)
 	raw, err := json.Marshal(o)
 	if err != nil {
 		t.Fatal(err)

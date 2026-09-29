@@ -13,8 +13,8 @@
  ],
  "contested_project": [
   {
-   "exit": 0,
-   "stdout": "{\n  \"task\": \"nobody\",\n  \"settings\": null,\n  \"usable\": false,\n  \"deliverable\": false,\n  \"missing\": [\n    \"sandbox\",\n    \"approvalPolicy\",\n    \"cwd\",\n    \"runtimeWorkspaceRoots\",\n    \"model\",\n    \"reasoningEffort\",\n    \"environments\"\n  ],\n  \"recordFinding\": null\n}\n"
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"store_absent\",\n  \"detail\": \"no relay store exists at <HOME>/state/relay.sqlite3; a read-only command never creates one\"\n}\n"
   },
   {
    "exit": 2,
@@ -97,8 +97,8 @@
  ],
  "project_attach": [
   {
-   "exit": 0,
-   "stdout": "{\n  \"task\": \"nobody\",\n  \"settings\": null,\n  \"usable\": false,\n  \"deliverable\": false,\n  \"missing\": [\n    \"sandbox\",\n    \"approvalPolicy\",\n    \"cwd\",\n    \"runtimeWorkspaceRoots\",\n    \"model\",\n    \"reasoningEffort\",\n    \"environments\"\n  ],\n  \"recordFinding\": null\n}\n"
+   "exit": 2,
+   "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"store_absent\",\n  \"detail\": \"no relay store exists at <HOME>/state/relay.sqlite3; a read-only command never creates one\"\n}\n"
   },
   {
    "exit": 0,

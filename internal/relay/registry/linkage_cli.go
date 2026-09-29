@@ -172,7 +172,7 @@ var linkageCommands = []command{
 			return withEnforcement(r, r.Down(ctx, p.text("scope-kind"), p.text("scope"))), nil
 		}},
 	{name: "linkage-up", options: []option{{name: "task"}, {name: "issue"}, {name: "relationship"}, {name: "scope"}},
-		exclusive: []string{"task", "issue", "relationship"}, run: cmdLinkageUp},
+		exclusive: []string{"task", "issue", "relationship"}, precheck: linkageUpPrecheck, run: cmdLinkageUp},
 	{name: "linkage-counterpart", options: []option{{name: "from-task", required: true}, {name: "to-task", required: true}, {name: "from-scope"},
 		{name: "quoted-scope"}, {name: "quoted-revision", integer: true}},
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
@@ -206,14 +206,21 @@ func cmdLinkageDirective(ctx context.Context, r *Registry, p parsed) (any, error
 	return r.RecordDirective(ctx, p.text("scope-kind"), p.text("scope"), p.text("from-task"), p.text("from-scope"), p.text("link"), p.text("digest"), reference)
 }
 
-// cmdLinkageUp is cli.cmd_linkage_up.
-func cmdLinkageUp(ctx context.Context, r *Registry, p parsed) (any, error) {
+// linkageUpPrecheck is cmd_linkage_up's refusal of --scope beside --issue or --relationship,
+// which it raises before services.linkage opens the store: linkage-up is a read-only form, so
+// on an absent store this refusal, not store_absent, is the answer.
+func linkageUpPrecheck(p *parsed) error {
 	if p.text("scope") != "" && p.text("task") == "" {
-		return nil, &linkageExit{payload: contract.OrderedObject{{Key: "ok", Value: false}, {Key: "reason", Value: "bad_invocation"},
+		return &linkageExit{payload: contract.OrderedObject{{Key: "ok", Value: false}, {Key: "reason", Value: "bad_invocation"},
 			{Key: "detail", Value: "--scope chooses between the scopes one TASK owns, so it goes with" +
 				" --task. With --issue or --relationship the starting scope is already" +
 				" decided and --scope would be silently ignored."}}, code: contract.ExitRefused}
 	}
+	return nil
+}
+
+// cmdLinkageUp is cli.cmd_linkage_up after linkageUpPrecheck.
+func cmdLinkageUp(ctx context.Context, r *Registry, p parsed) (any, error) {
 	return withEnforcement(r, r.Up(ctx, UpSelector{Task: p.optional("task"), Issue: p.optional("issue"),
 		Relationship: p.optional("relationship"), Scope: p.optional("scope")})), nil
 }

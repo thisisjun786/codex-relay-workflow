@@ -6,14 +6,20 @@ Each case is a list of steps {"argv": [...], optional "files": {name: text}, opt
 Every step runs `python -m codex_session_relay.cli --state <case>/state <argv>` with HOME and
 the XDG/CODEX dirs inside the case directory. ${HOME} in argv and files is the case directory.
 Timestamps and the case directory are replaced by <T> and <HOME> in the recorded stdout.
+An "sql" step opens the store as a writer does - Store(path), which initializes a store that is
+still absent under the ownership fence, as contract/runner/cli.py does for given.sql_seed - and
+runs the SQL on that connection; the Go replay opens it with store.Open. A read-only step before
+any writer finds no store and is refused store_absent (docs/port/decisions.md 31): no reader
+creates one.
 """
 import json
 import os
 import re
-import sqlite3
 import subprocess
 import sys
 import tempfile
+
+from codex_session_relay.store import Store
 
 STAMP = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}\+00:00")
 cases = json.load(open("internal/relay/registry/testdata/cli_cases.json"))
@@ -29,10 +35,12 @@ for name, steps in cases.items():
             with open(os.path.join(home, fname), "w", encoding="utf-8") as handle:
                 handle.write(text.replace("${HOME}", home))
         if "sql" in step:
-            db = sqlite3.connect(os.path.join(home, "state", "relay.sqlite3"))
-            db.executescript(step["sql"])
-            db.commit()
-            db.close()
+            store = Store(os.path.join(home, "state", "relay.sqlite3"))
+            try:
+                store.db.executescript(step["sql"])
+                store.db.commit()
+            finally:
+                store.close()
             continue
         argv = [a.replace("${HOME}", home) for a in step["argv"]]
         done = subprocess.run([sys.executable, "-m", "codex_session_relay.cli", "--state",

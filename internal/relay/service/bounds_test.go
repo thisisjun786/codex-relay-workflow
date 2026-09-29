@@ -17,7 +17,7 @@ func Test29ServiceBoundedRunConsole(t *testing.T) {
 				}
 				args := append([]string{"--socket", home + "/socket", "service", "run", "--allow-isolated-scope"}, tail...)
 				r := invoke(t, home, python, args...)
-				state := files(t, home)
+				state := files(t, home, writtenBy(python))
 				if python {
 					want = r
 					wf = state

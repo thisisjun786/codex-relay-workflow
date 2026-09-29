@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // Compare the complete presence verdict and memo table with the live Python source
@@ -44,6 +45,8 @@ func testOvertakenPresenceWholePythonPage(t *testing.T, total int) {
 	defer goStore.Close()
 	pyStore := seed(filepath.Join(home, "py"))
 	pyStore.Close()
+	// Go seeded Python's store as well; Python reads it after a takeover.
+	testsupport.HandOver(t, filepath.Join(home, "py", "relay.sqlite3"), "python")
 	script := `import json,sys
 from codex_session_relay.store import Store
 from codex_session_relay import faultsweep, delivery

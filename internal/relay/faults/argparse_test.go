@@ -37,7 +37,7 @@ func pythonFaultCLI(t *testing.T, root, home string, args ...string) cliResult {
 func goFaultCLI(t *testing.T, args ...string) cliResult {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code, handled := ExecuteAs(context.Background(), "codex-session-relay", args, &stdout, &stderr, nil)
+	code, handled := executeAsCLI(context.Background(), args, &stdout, &stderr)
 	if !handled {
 		t.Fatalf("not handled: %v", args)
 	}
@@ -53,7 +53,10 @@ func TestFaultArgparseSurfaceMatchesPython(t *testing.T) {
 		command := command
 		t.Run(command.name, func(t *testing.T) {
 			home := t.TempDir()
-			state := filepath.Join(home, "relay")
+			// Each runtime keeps its own store: neither writes a store the other owns. A case
+			// Python answers without creating its store is asked of Go about the same absent
+			// path (oracleState).
+			pyState, goState := filepath.Join(home, "relay"), filepath.Join(home, "go", "relay")
 			cases := []struct {
 				name string
 				args []string
@@ -94,9 +97,11 @@ func TestFaultArgparseSurfaceMatchesPython(t *testing.T) {
 			}
 			for _, tc := range cases {
 				t.Run(tc.name, func(t *testing.T) {
-					args := append([]string{"--state", state, "--json", command.name}, tc.args...)
-					want := pythonFaultCLI(t, root, home, args...)
-					got := goFaultCLI(t, args...)
+					args := append([]string{"--json", command.name}, tc.args...)
+					want := pythonFaultCLI(t, root, home, append([]string{"--state", pyState}, args...)...)
+					state := oracleState(t, pyState, goState)
+					got := goFaultCLI(t, append([]string{"--state", state}, args...)...)
+					neverCreated(t, pyState, state)
 					if got != want {
 						t.Fatalf("args %v\nPython: code=%d stdout=%q stderr=%q\nGo: code=%d stdout=%q stderr=%q", args, want.code, want.stdout, want.stderr, got.code, got.stdout, got.stderr)
 					}
@@ -120,8 +125,10 @@ func TestFaultObserveMalformedJSONMatchesPython(t *testing.T) {
 	for _, raw := range []string{"{not json", "[1,2"} {
 		t.Run(raw, func(t *testing.T) {
 			home := t.TempDir()
-			args := []string{"--state", filepath.Join(home, "relay"), "--json", "fault-observe", "--observation", raw}
-			if want, got := pythonFaultCLI(t, root, home, args...), goFaultCLI(t, args...); got != want {
+			// Each runtime keeps its own store: neither writes a store the other owns.
+			args := []string{"--json", "fault-observe", "--observation", raw}
+			want := pythonFaultCLI(t, root, home, append([]string{"--state", filepath.Join(home, "relay")}, args...)...)
+			if got := goFaultCLI(t, append([]string{"--state", filepath.Join(home, "go", "relay")}, args...)...); got != want {
 				t.Fatalf("Python: %#v\nGo: %#v", want, got)
 			}
 		})

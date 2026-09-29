@@ -36,7 +36,7 @@ type parsed struct {
 	values  map[string][]string
 	set     map[string]bool
 	numbers map[string]any
-	// writes are register's settings, parsed once before the store is opened.
+	// writes are register's settings, parsed once by its precheck, before the handler.
 	writes []settingsWrite
 }
 
@@ -63,8 +63,9 @@ type command struct {
 	name    string
 	options []option
 	run     func(context.Context, *Registry, parsed) (any, error)
-	// precheck runs before the store is opened: a handler that refuses its arguments before
-	// touching services.store leaves no state directory behind, as Python's lazy Services does.
+	// precheck is the part of a handler that refuses its own arguments before it touches the
+	// store. cli.main decides when that is (run): a write form refuses them only after
+	// _ownership_preflight opened the store, a read-only form before its lazy Services.store.
 	precheck func(*parsed) error
 	// exclusive names a required mutually exclusive group (argparse add_mutually_exclusive_group).
 	exclusive []string
@@ -276,6 +277,11 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 		fmt.Fprintln(stderr, who+": error: "+message)
 		return 2
 	}
+	if argparse.ReadOnlyForm(rest) {
+		// Services.read_only, for this package's own console as for the relay CLI that
+		// already marked ctx: a read-only form never creates the store.
+		ctx = store.WithReadOnlyCommand(ctx)
+	}
 	result, err := run(ctx, g, *chosen, p, check)
 	return emit(stdout, stderr, result, err)
 }
@@ -290,6 +296,21 @@ func run(ctx context.Context, g globalFlags, c command, p parsed, check Selectio
 			return nil, err
 		}
 	}
+	// A write form's store is opened before its handler reads its arguments, as the fence's
+	// cli.main does in _ownership_preflight (services.store): the store is admitted - initialized
+	// when absent (decision 30), refused when another runtime owns it - before any refusal of the
+	// form's own arguments, so a refused write form leaves the store it would have written and
+	// answers another owner's store with the ownership refusal. A read-only form (and a read,
+	// which constructs no Store) keeps Services.store lazy: its own argument refusal comes first
+	// and an absent store is refused store_absent only by a form that reaches the store
+	// (decision 31).
+	var s *store.Store
+	if !store.ReadOnlyCommand(ctx) && c.read == nil {
+		if s, err = store.Open(ctx, selection.DBPath(), g.socket); err != nil {
+			return nil, err
+		}
+		defer s.Close()
+	}
 	// Taken before any handler, as cli.main does: the snapshot is this PROCESS's, not this
 	// question's, so a later edit to the file is not adopted without a restart.
 	policy := EnvironmentRolePolicy()
@@ -301,11 +322,12 @@ func run(ctx context.Context, g globalFlags, c command, p parsed, check Selectio
 	if c.read != nil {
 		return c.read(ctx, selection, p)
 	}
-	s, err := store.Open(ctx, selection.DBPath(), g.socket)
-	if err != nil {
-		return nil, err
+	if s == nil {
+		if s, err = store.Open(ctx, selection.DBPath(), g.socket); err != nil {
+			return nil, err
+		}
+		defer s.Close()
 	}
-	defer s.Close()
 	r := &Registry{Store: s, Policy: policy}
 	return c.run(ctx, r, p)
 }

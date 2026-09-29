@@ -372,8 +372,8 @@ the prose itself. Four places, recorded as accepted differences:
   error(s) for <t>Arguments`, the error count and the failing field locations in signature
   order are Python's; each field's reason line is the bridge's own, without pydantic's
   `[type=...]` detail or the version-specific `errors.pydantic.dev/<ver>` URL.
-- `initialize.serverInfo.version` is the bridge's version (0.1.0, as `--version` prints);
-  FastMCP sends the mcp library version (1.30.0 at the pin).
+- `initialize.serverInfo.version` is the bridge's version, as `--version` prints it
+  (`codex_thread_bridge.__version__`); FastMCP sends the mcp library version (1.30.0 at the pin).
 - The JSON inside a tool reply's text content is compared as parsed values; its key order
   is Go's, not the dict insertion order of the Python receipt.
 - An execution-policy file that is not valid JSON is refused with the same exit code,
@@ -549,6 +549,23 @@ This is a native transport policy, not a Python socket oracle (Python spawns its
 Published marker facts have no Python byte-size ceiling. Native context-aware reads
 retain deadline and regular-file checks but no longer impose a separate 4 MiB limit.
 
+PR #185 notes (todos 30+36 integration). Every control client sends the selection
+inputs `socketPath` and `program`; the Python ones (the legacy `guard-evaluate` CLI and
+the Stop adapter's pinned route) did not, so the owner resolved an unpinned Stop's
+store without the socket-specific refusals (thread 4127894191). The owner decides
+where it evaluates: only under its own marker root and its own `S/relay.sqlite3`; a
+request naming another `markerRoot` or `dbPath` is a host error answered before any
+read or write, worded alike by both owners (thread 4127894432; cutover.md "When the
+other runtime owns the record"). Tests: `Test33RoutedSelectionRefusals`,
+`Test33OwnerEvaluatesOnlyItsOwnLocations`, and test_fence.py's
+`test_a_routed_stop_is_refused_by_the_owner_as_the_owners_fallback_refuses_it` and
+`test_the_owner_writes_only_under_its_own_marker_root_and_reads_only_its_own_store`.
+The legacy CLI's preflight before routing makes the store selection only
+(`guard.selected_store`) and reads no receipt: a routed Stop's receipt read and evaluation
+happen once, at the owner, and a local one resolves its selection once (thread 4128457287;
+held store, intent `dbPath`: 4.2 s to 2.2 s). The Go hook and CLI already evaluate once.
+Test: test_fence.py's `test_a_stop_spends_one_receipt_read_and_one_evaluation`.
+
 Evidence: scripts/crw_runtime/completion.py:529-547,624-635,2728-2737,1870-1902;
 packages/codex-session-relay/src/codex_session_relay/stopadapter.py:241-254,318-323;
 docs/port/cutover.md "Hook budget" (startup/input 100 ms, guard 3500 ms);
@@ -558,6 +575,142 @@ stopadapter.py:1136-1162,1198-1200; marker.py:289-315; store.py:1833;
 `Test33AnsweredDeadlinePython`, `Test33PeerCredentials`, `Test33UntrustedPeerReleases`,
 `Test33PythonStateDirectoryMode`, `Test33LargeMarkerFactPython`, and
 `Test33LargeFactHookPython` (PR #181 threads 4120181139, 4120181488, 4120181269).
+
+## 25. Durable takeover inbox wire format
+
+Decision: Python fence release and Go share the canonical UTF-8 JSON envelope,
+operation-ID encoding, digest, immutable link publication, queue/refusal/host
+responses, and transactionally coupled `schema_meta` replay markers specified in
+[cutover Inbox / Wire format](cutover.md#wire-format-decision-25). Only `emit`,
+`ack`, and `fault-notification-ack` queue when admission refuses
+another runtime's ownership or draining. Other mutations still refuse. An inbox
+acceptance means durably queued, not yet applied. A crash after application commit
+and before unlink cannot repeat the handler. Python applies retained entries when
+it owns the store, including rollback; Go must consume the same golden bytes.
+The check36 correction excludes new `supervisor-read` requests: that command
+verifies a readback against the host rather than ingesting an authored receipt.
+Previously queued entries retain their wire format and receive a terminal usage
+marker when replay lacks required arguments; they cannot block unrelated writers.
+
+Todos 30/36 integration amendments (2026-09-29, binding for Go todo 31; text in
+[cutover Inbox](cutover.md#inbox)): a publisher never removes a linked final entry,
+even when its own directory fsync fails; only the owner removes one, after committing
+its marker. Identifier overlength and non-UTF-8 arguments are exit-4 usage rejections
+before any I/O. Only an `exit` 0 marker with the same digest deduplicates; a refused
+request is judged again on an identical retry and its marker replaced. A retired ID
+reused with different bytes records `inbox-conflict:<id>:<16 hex>` and is retired,
+never raising or blocking. Ownership refusals raised inside the handler and
+host-unconfirmed turn reads keep the entry without a marker and do not stop the drain.
+Replayers serialize on `S/takeover-inbox/.replay.lock`, waiting at most 30 s (cutover
+Lock order) before a retryable host error, and unlink only the inode they read. Names outside the entry grammar are ignored; a grammar-valid link or non-regular
+entry is refused by name; invalid bytes fail closed until an operator moves the entry
+out. Queued requests are judged when applied, so a queued ACK can go stale.
+
+Go side (todo 31, 2026-09-29): `internal/relay/inbox` builds the same envelope from argparse
+dests (defaults omitted, integers at arbitrary precision, argv that is not UTF-8 refused with
+Python's UnicodeEncodeError text before any I/O), publishes it with the fence's protocol, and
+replays it with the rules above. Go's `emit`, `ack` and `fault-notification-ack` queue on a
+queueable ownership refusal (`ownership.Refused.Queueable`: another owner, draining, starting
+without the permit), including a Go writer that finds the write gate held by a transfer
+barrier, which is refused as the fence's lock-free preflight refuses it. As in `cli.main`,
+that preflight (`check_start`, Go `inbox.RefusedAtStart`) runs before the selection refusal and
+`--kind-module`, so neither stops a request from being queued under another owner. The Go
+owner drains where the Python owner does (cutover Wire format): once the relay CLI's dispatch
+admitted a writable command's store and before its handler reads its arguments (the handler
+is handed that store), at daemon start and in supervisor recovery, the takeover candidate
+before readiness; each entry runs its existing handler on the drainer's store inside one
+`store.Compose` with its marker, a legacy `supervisor-read` its readback with a lazily opened
+host.
+`S/control.sock` carries no inbox method: the placeholder `inbox-submit` was removed, because
+the fence never forwards ingress to the socket and a socket method would be a second ingress
+the wire format does not define.
+The Go `takeover commit` is not a drainer: it writes `rollback_allowed=0` only while
+`S/takeover-inbox` holds no entry, by the replay's own name classification, and otherwise
+refuses and names a Go drain (cutover Commit point, decision 30).
+
+Why: neither runtime had an inbox format. The orchestrator supplied this contract
+on 2026-09-28 rather than allowing two implementations to invent incompatible
+persistent ingress records. Canonical argument bytes make retries identical;
+link-without-replacement detects conflicts; the domain result and dedup marker
+commit together, so rollback never restores a stale snapshot or loses a receipt.
+Decision number 25 leaves numbers 23 and 24 to todo 33.
+
+Evidence: orchestrator clarification for todo 36, 2026-09-28;
+`packages/codex-session-relay/src/codex_session_relay/inbox.py`;
+`packages/codex-session-relay/tests/test_fence.py`
+(`test_a_failed_directory_sync_never_removes_a_retry_another_sender_acknowledged`,
+`test_reused_retired_id_with_different_bytes_is_a_terminal_conflict`,
+`test_only_a_successful_application_deduplicates_an_identical_retry`,
+`test_a_stale_replayer_never_retires_a_newer_entry_at_the_same_name`,
+`test_ownership_or_host_failure_during_replay_retains_the_entry`,
+`test_deterministic_ingress_rejects_are_usage_errors_without_io`,
+`test_a_held_replay_lock_bounds_the_writer_wait_as_a_host_error`);
+`contract/golden/takeover-inbox/`; `docs/port/cutover.md` Inbox / Wire format;
+`internal/relay/inbox` tests (`TestEnvelope_is_byte_identical_to_the_python_goldens`,
+`TestEnvelope_matches_the_python_fence_on_edge_arguments`, `TestEnqueue_*`, `TestQueue_*`,
+`TestDrain_*`); `internal/relay/cli/inbox_test.go` (`Test31_*`: Python queues and Go applies as
+direct commands do, Go queues with the fence's bytes and answers and Python applies, a
+queueable refusal queues before the selection and `--kind-module` refusals, every writable
+command drains before its handler reads its arguments, 100 receipts queued while draining
+applied once); `internal/relay/service/takeover_test.go`
+(`Test31GoCandidateDrainsPythonQueuedEntriesBuiltCLI`, `Test30AbortAndFailedCandidateBuiltCLI`).
+
+## 28. Takeover candidate designation and activation channel
+
+Decision: the controller launches exactly one direct child with an inherited,
+connected stream socket on fd 3 and `CRW_TAKEOVER_CHANNEL_FD=3`. No other client
+can discover that channel. Its first JSON line is `{"kind":"start","record":...}`.
+Within 20 seconds the candidate must validate `phase=starting`, its own runtime
+as owner, non-null transition and controller, and the controller's boot ID, PID
+and start ticks against its actual parent. A rejected candidate exits nonzero
+without writing. Python uses the same boot/start identity as its service holder.
+
+The admission permit contains the transition ID, epoch and controller identity.
+First writable admission and every transaction revalidation compare it with the
+durable record and DB stamp. Only that designated process may recover during
+`starting`; ordinary client mutations remain refused or durably queued under
+Decision 25. There is no environment-only starting bypass.
+
+After recovery the candidate sends `kind=ready`, its holder identity including
+build, store ID, epoch and transition ID. It waits for `kind=active` or EOF and
+then rereads both the durable record and DB stamp. Bounds (both runtimes alike):
+the 20 seconds cover only receiving and validating `start`; recovery between
+`start` and `ready` is bounded by the controller's readiness wait alone
+(`--ready-timeout`, default 600 s); sending `ready`, waiting for `active` or EOF
+and acknowledging `activated` get a fresh 20 seconds, the same fresh bound the
+Go controller gives its `Activate` exchange after readiness. The Python candidate
+once reused the expired start deadline there, so a recovery longer than 20 s
+refused activation (PR #185 thread 4127894020; tests
+`test_recovery_longer_than_the_channel_bound_still_activates` and
+`Test30PythonCandidateActivatesAfterRecoveryLongerThanTheChannelBound`).
+It binds `S/control.sock` after recovery and before sending `ready` (decision 30);
+a bind failure exits without `ready`. The control socket it then serves, like
+every owner's, evaluates Stops only under the owner's own marker root and reads
+only its own store (decision 24's PR #185 notes). It serves scheduled work and
+workers only when the phase
+is active and holder, epoch and takeover ID match. Otherwise it closes admission
+and exits without serving. Matching active publication survives controller EOF;
+an active reply is acknowledged with `{"kind":"activated"}`, as in the Go
+controller. The retained Python entry point is `service run --takeover-candidate`.
+It consumes the channel before any writable open and passes the permit explicitly
+to its Store, supervisor and relay-pinned bridge transport ledger. Workers start only after activation and use ordinary
+active admission; they inherit neither the channel nor a discoverable permit.
+Candidate-less `check_start` calls keep their existing behavior.
+
+Why: the reverse transfer uses the same concrete protocol as todo 30 instead of
+inventing a second designation or permitting every Python client to enter starting.
+No controller socket or pending candidate authorizes serving by itself.
+
+Evidence: [cutover record](cutover.md#record) lines 85-104;
+[start candidate](cutover.md#step-6-start-go-on-the-original-store) lines 248-261;
+[rollback](cutover.md#rollback) lines 308-315;
+todo 30 worktree `internal/relay/service/takeover.go` (`Start`,
+`launchedCandidate.Activate/Close`, `ReceiveCandidate`, `CandidateChannel.Ready`)
+and `internal/relay/store/ownership/admission.go` (`Candidate`, `WithCandidate`);
+`packages/codex-session-relay/src/codex_session_relay/takeover.py`,
+`ownership.py`, and `tests/test_takeover_candidate.py`. The Go controller
+launches the retained Python build through this contract (decision 30,
+`Test30TakeoverBuiltCLI`).
 
 ## How this file is checked
 
@@ -626,6 +779,259 @@ Evidence: `packages/codex-session-relay/src/codex_session_relay/service.py:1304-
 `packages-serial.log`), and `.omo/evidence/check29-flake/`
 (`reproduce_leader_exit.py`, `leader-exit.log`, `run-3.log`).
 
+## 31. Read-only command opens and the answering runtime's readings
+
+Decision: a read-only form (`cli.py` `_read_only_command`) is marked on the Go CLI's
+context, and `store.Open` then serves it as `Services.store` does: the lock-free
+ownership preflight first, the admitted opener only where Go may write, and otherwise a
+`mode=ro`, `query_only`, deferred-`BEGIN` store with no write gate, DDL or
+initialization row. Housekeeping a writer persists is projected, never written, for such a
+store - one the answering runtime's ownership preflight or write admission refuses (the other
+runtime's, or one mid-transition) - and only for such a store: `fault-notifications` with
+Python's effective-state query, and `fault-next` on a private SQLite backup
+(`readonly_queue_state`). Both branch on the store having been opened read-only
+(`services.store.read_only`, Go's `Store.ReadOnly`), never on the command's read-only
+classification, so the owner runtime's `fault-next` on its own store is admitted as a writer
+and expires lapsed leases there (it writes), and a lapsed claim is offered again;
+`expire_leases` has no other caller. The fence
+first branched `cmd_fault_next` on `services.read_only`, which left every lapsed lease
+claimed for good on the owner's store; that is corrected in the fence and in Go alike.
+`fault-next` checks `--limit` before the store is opened in both runtimes. An absent store
+(no `D`, `takeover.json` or `write-gate.lock`) is refused by name and never created by a read-only form:
+`{"error":"refused","reason":"store_absent","detail":"no relay store exists at <D>; a
+read-only command never creates one"}`, exit 2, byte for byte the fence's `Services.store`
+answer. `store_absent` is a literal there (as in `declarations.py`), not an
+`errors.RefusalReason` member, so `contract/schema/relay-exit-codes.json`, which
+`scripts/port/dump_contracts.py` derives from that enum, does not list it. Absent-store
+initialization happens on write or daemon opens only (decision 30). A partial store (a
+mirror or a write gate without `D`) is refused with the writer admission's own refusal,
+`store_owned_by_other`, never read, created or repaired; the Python half of that refusal is
+pending (refactor-backlog.md, audit 25). A read-only form never binds an unbound store to
+its socket either: it reads `mode=ro` instead (decision 30).
+
+Argument refusals keep `cli.py` `main`'s order against the store. A read-only form refuses
+its own arguments where its handler does, before the lazy `Services.store`: `merge-turn-show`
+without exactly one selector and `linkage-up --scope` without `--task` answer
+`bad_invocation` on an absent store and create nothing. A write form's store is opened by
+`_ownership_preflight` (`services.store`) before its handler, so a refusal of its own
+arguments (`register`'s unreadable settings, `settings-record --exception` beside
+`--clear-exception`) leaves an absent store initialized, and a store another runtime owns
+answers the ownership refusal instead. Go's relay-registry dispatch (`registry.run`) opens a
+write form's store before the command's `precheck` and a read-only form's after it; the
+`--kind-module` refusal still precedes a write form's store in Go (refactor-backlog.md).
+
+A read the live-state guard refuses (until todo 43) reports the refusal. The owner's
+control socket answers a guard that failed with the relay's host record, as `control.py`
+does, so a Stop journals `guard_host_error` instead of `guard_said_nothing`; the journal
+row keeps the adapters' error-record shape, with `detail` null.
+
+`doctor --json`'s `ownership` block is `ownership.report`: all six keys and the phase
+null together, with `detail`, when either the mirror or the database cannot be read; the
+six keys with `detail` `takeover record missing` for a stamp whose mirror is absent (the
+torn state "initial stamp committed, mirror absent", cutover.md Record);
+the phase and each process record's `python_compatibility_build` echoed raw. A store Go
+may not write is diagnosed like `store.probe`'s `check_start` branch, without a live open
+or a probe file beside it, and its `access.detail` words the refusal as `ownership.mirror`
+and `ownership.py validate` do (Go's preflight still decides that it is refused). `ownership.runtime_build` names the answering runtime: the build
+Go publishes as its holder identity (`cli.Build`, else `cli.Version`), never the Python
+fence build. It is a documented parity difference beside the Go-only `runtime` block, and
+parity harnesses normalize it. The production binary links no test support.
+
+The process records carry `python_compatibility_build` where the fence writes it: first in
+`daemon.json` and the scope registration `scopes/<key>.json` (`service.py` `new_record`) and
+last in `worker-policy.json`'s `worker` (`publish_worker_policy`). It names the Python fence
+build a process runs, and a Go process is not one, so Go writes the same key in the same
+place with the value null. The retained fence reads Go-written records as its own: `service
+status` and `doctor` answer a running Go service (`ownership.processes` null), its `service
+stop` of that service is refused by the fence's admission of a Go-owned store
+(`store_owned_by_other`; Go stops its daemon), and after a completed takeover to Python its
+`status`, `stop`, `doctor` and `service start` read the stopped Go records. That value and
+`schema_meta.owner` are the runtime identity, the only values a whole-state comparison of
+stores and process records normalizes (`testsupport.RuntimeIdentity`; `RuntimeIdentityText`
+for record bytes), and only once each side carries its own: the fence build and `python` from
+the Python side, null and `go` from the Go side. Any other value, the other runtime's
+included, fails the comparison, so a Go record naming the fence build is a difference.
+A service supervisor opens, and so creates, its store in recovery, as `cli.py` `_supervise`
+does, and publishes the identity it read into both records (`publish_store_identity`): a
+`service run` whose bound is already spent creates no store and records the identity read at
+start, null for an absent store.
+
+The relay's `faultsweep.INSTALLATION.version` and the bridge's `__version__` are mirrored
+as `faults.RelayPackageVersion` and `appserver.BridgeVersion` (0.2.0), each checked
+against the real Python package; `ownership.PythonBuild` stays the fence identity and does
+not follow later bumps. Open question, not decided here: the Go daemon's installation
+location is its executable's directory under package `codex-session-relay`, so the
+host-record revision lookup reports `unknown` (refactor-backlog.md, audit 50).
+
+Evidence: `internal/relay/argparse/readonly.go` (`ReadOnlyForm`, read by the relay CLI and
+`registry.ExecuteAs`), `internal/relay/cli/readonly.go`, `internal/relay/store/hold.go`
+(`openForRead`, `OpenReadOnlyStore`, `Projection`),
+`internal/relay/faults/commands_c.go` (`cNext`), `internal/relay/store/diagnostic_probe.go`
+(`ownershipPreflight`), `internal/relay/store/diagnostic_read.go`, `internal/relay/cli/doctor.go`;
+`internal/relay/store/fence_wording.go`, `internal/relay/hook/adapter.go` (`HandleControl`);
+`TestReadOnlyForms_match_python_in_every_ownership_state`,
+`TestReadOnlyForms_never_create_an_absent_store` (byte-compared with the live fence),
+`TestDoctor_reports_a_stamp_without_its_mirror_as_the_fence_does`,
+`TestReadOnlyForms_refuse_a_partial_store_as_a_writer_does`,
+`TestArgumentRefusals_fall_where_the_python_fence_puts_them` (internal/contracttest),
+`Test25_CLI23_a_write_forms_own_refusal_comes_after_its_store` (both against the live fence),
+`TestGuardEvaluate_reports_the_live_state_refusal`,
+`TestPacketCheck_reports_the_live_state_refusal`, `Test33ReviewD8`,
+`TestDoctor_matches_python_on_a_store_the_other_runtime_owns`,
+`TestDoctor_ownership_block_matches_python_on_a_broken_store`,
+`TestDoctor_runtime_build_is_the_answering_go_build`,
+`internal/relay/service/record_identity_test.go`
+(`Test29GoRecordsCarryANullFenceBuildThePythonFenceReads`, `Test29SpentServiceRunCreatesNoStore`,
+against the live fence), `internal/testsupport/identity_test.go`,
+`TestVersion_is_the_python_bridge_package_version`,
+`TestRelayPackageVersion_is_the_python_package_version`,
+`Test22_FC_29_ClaimLeaseBudgetWholeOutput` (the owner's `fault-next` against live Python,
+whole tables), `TestCCLIOracle` (`fault-next --limit 0` on an absent store),
+`tests/test_fence_readonly.py::test_the_owners_fault_next_releases_a_lapsed_claim`.
+
+## 30. Ownership transfer and the Go takeover controller
+
+This implements decision 28's candidate wire contract (fd 3, start/ready/active) on the Go side.
+
+Decision: the Go controller calls modernc v1.59.0's `NewBackup`, `Step`, and
+`Finish` through `sql.Conn.Raw` while daemon, scope, and write-gate exclusion
+are held. The backup and inventory are synced before the ownership CAS. It is
+not a main-file copy and does not require a WAL checkpoint. `VACUUM INTO` was
+rejected because the driver exposes the actual SQLite backup API. Reverse
+transfer always uses the live database and never restores this snapshot.
+
+Admission/status preflight uses a disposable main-plus-WAL copy solely to avoid
+creating source SQLite sidecars before admission. A racing inconsistent copy
+refuses rather than repairing the source; it is not the transfer backup.
+The durable owner/epoch and exact transition ID recover the DB-commit/JSON-publish
+gap. Lock contention bounded-fails immediately; explicit command resumption,
+not a timestamp or PID age, decides the next attempt.
+
+Both runtimes use the same inherited activation channel: a Unix socket on fd 3,
+selected only by `CRW_TAKEOVER_CHANNEL_FD=3`. JSON lines carry `start` with the
+record, `ready` with identity/storeId/epoch/transitionId, `active` with the durable
+record, and the candidate's `activated` acknowledgement. The controller identity
+must equal the direct parent; a starting permit binds the transition ID, epoch,
+and controller identity. Ordinary starting writers are refused. Readiness follows
+recovery and control-socket binding, before scheduled work. EOF quiesces the
+candidate unless its exact holder identity and epoch are already active in both
+the durable stamp and mirror. Holder identity includes the exact runtime build.
+
+Both candidates are the service supervisor, `service run --takeover-candidate`
+(the frozen flag), launched by the controller as its direct child in a new
+session: the Go candidate is `crw relay ... service run --takeover-candidate`,
+not a bounded daemon segment, and runs under the service's launch declaration.
+It recovers, binds `S/control.sock`, sends `ready`, and after activation releases
+that listener and starts workers under ordinary admission. A candidate run that
+fails, including a missing, non-socket, non-stream, silent or malformed channel,
+exits with the retained Python candidate's code (cli.py `main`,
+`takeover.receive_candidate`) and prints nothing on stdout; Go writes its error
+document to stderr, which a launched candidate shares with `daemon.log`. The retained Python
+candidate is `<python-relay> --state S --socket K service run --takeover-candidate`,
+where `<python-relay>` is the absolute path of the retained fence release's
+console script given explicitly on `takeover rollback --to python` or
+`takeover activate` as `--python-relay`; nothing searches PATH or an install
+tree. Its readiness identity must carry `build == pythonCompatibilityBuild`,
+which is rollback step 4. Every launch precondition (the locator, the enabled
+service intent, a launch declaration the candidate will not refuse, and Go's
+ability to open the store) is checked before `begin` publishes draining and
+again before the ownership CAS and before the launch, so a missing precondition
+never strands a store in starting. The 20-second channel bound covers the
+candidate's validation of `start` and, separately, the activation exchange; the
+controller bounds the wait for readiness, which spans recovery, by
+`--ready-timeout` (default 600 seconds). Reverse CAS never fabricates readiness.
+
+`takeover abort` returns a draining transition whose ownership CAS has not
+committed to the unchanged owner's active phase, restoring the installed
+transition from `takeover_id`; it writes no `schema_meta` key. After the CAS it
+refuses; the recovery is activation or the reverse transfer, which `begin` and
+`rollback` accept from the transferred owner's starting phase with a new epoch.
+Aborting such a reverse transfer before its CAS restores that starting phase,
+never active: its draining mirror names no holder, because no candidate became
+ready.
+An existing lock owned by this user is trusted when it grants no group or other
+access (in any directory, as Python and earlier Go builds trust it) or sits in an
+owner-only directory whatever its umask-derived mode; locks are never chmodded. The Go candidate
+drains the takeover inbox before readiness (todo 31, decision 25), so the CAS toward Go does not
+wait for an empty inbox; an entry the candidate cannot apply keeps it from readiness.
+`takeover commit` applies nothing itself (the controller has no handler table and no host) and
+writes `rollback_allowed=0` only over an empty inbox: it refuses while an entry is queued and
+names the Go drain that applies it (a writable relay command or a service restart), so every
+entry queued while the way back was open has been applied by Go before that way closes
+(PR #185 thread 4128457226). An entry is a name in the decision-25 grammar, classified once for
+the replay and the commit (`ownership.IsInboxEntry`); any other name, which no replay removes,
+blocks nothing.
+
+The native status envelope is frozen in `contract/schema/records.json`.
+Go initializes a truly absent store (no database, no `takeover.json`, no
+`write-gate.lock`) as `owner=go`, epoch 1, writer protocol 1, rollback allowed,
+with the pinned Python compatibility build, under the exclusive gate: a host with
+no Python interpreter still needs a store (IS-1). The database is built and
+stamped under a temporary name and linked into place, so it never exists
+without its ownership keys. Anything partial is refused, never repaired, and an
+existing unfenced store is initialized only by the Python fence (Step 0).
+Before refusing an existing `D` that has no `write-gate.lock`, a Go writable open reads
+its `schema_meta` from a disposable copy, as the fence's `Store()` reads it before
+deciding what the store is: a `D` that cannot be read, or is not a database, fails
+with that error in Python's words (`DatabaseError: file is not a database`, a host
+error, exit 3; `store_unopenable` in an intent's store record) and gains no gate or
+sidecar in either runtime; only a readable `D` is refused as unfenced. The
+registration hold (`intent-register`) stats `D` before its admission, as
+`registration_hold` does, so a missing store or directory answers
+`the relay store could not be opened for writing: [Errno 2] No such file or directory: '<D>'`
+in both runtimes, and it raises its admission's refusal (`register_relationship` re-raises the
+fence's `OwnershipRefused`): a store the other runtime owns answers reason
+`store_owned_by_other` in the fence's words, not `unregistered_relationship`.
+The creator places `write-gate.lock` already held EX (a temporary `S/.write-gate-*`
+file, `flock`, `link(2)`), as the fence does, and a Go writer that finds the gate held EX
+while the store is incomplete (no `D` or no mirror) or active (a creation finishing, a socket
+binding) waits to share it within its busy timeout before admission, so racing first
+openers of either runtime never refuse each other as a partial store. A transfer barrier,
+taken only after the record left active, is still refused at once.
+Go binds an unbound store it owns (active, no transition) to the App Server socket of its
+first socketed writable open, as the fence does (cutover.md Record): under `write-gate EX`,
+waited for at most `ownership.LockWait` (30 s; expiry is the fence's `LockWaitExpired` host
+error, exit 3), the rest of the record is revalidated, `schema_meta.socket_path` committed
+and the mirror republished with `appServerSocket` and `scopeKey`; read-only forms and the
+candidate never bind, and a torn binding is completed only by an opener passing its socket,
+which `ownership.CheckStart` lets through. Go's admission and start-preflight refusals for
+another owner, a draining store and a starting store without the permit carry the fence's
+details (`the relay store belongs to another runtime`, `the relay store is draining`, `only
+the designated candidate may enter starting`), so a refused write form answers Python's bytes.
+Existing parity harnesses
+explicitly stamp stopped synthetic fixtures; no test flag bypasses admission.
+`S/control.sock` serves `guard-evaluate` only; todo 31 removed the `inbox-submit`
+placeholder (decision 25: ingress is the queued command's own file publication).
+
+Evidence: `internal/relay/store/ownership/{backup.go,controller.go,record.go}`;
+`Test30BackupIncludesWALAndInventory`, `Test30HappyRollbackSameLiveStore`,
+`Test30CrashMatrix`, `Test30TwoProcessWriterBlocksTransfer`,
+`internal/relay/service/takeover_test.go` (`Test30StatusSchema`,
+`Test30TakeoverBuiltCLI` (Go epoch 2, retained Python epoch 3, Go epoch 4 on one
+store), `Test30RealCandidateControllerEOF`,
+`Test30ActivationEOFRequiresMatchingPublishedHolder`,
+`Test30AbortAndFailedCandidateBuiltCLI`, `Test30CommitRefusesOverQueuedInboxEntries`,
+`Test30ReadyTimeoutBoundsSilentCandidate`,
+`Test30DrainComparesRecordedIdentity`, `Test30IsolatedScopeRootMatchesPython`,
+`Test30GroupWritableStateDirectoryLocks`, `Test30CandidateChannelRefusalMatchesPython`),
+`Test30StartingRequiresExactCandidatePermit`, `Test30AbortReturnsToActiveOwner`,
+`Test30AbortOfReverseBeginReturnsToStarting`,
+`Test30GroupWritableLocksKeepInodeAndMode`, `Test30CommitTearKeepsGoWritersAdmitted`,
+`internal/relay/store/ownership_test.go` (`Test30CreateAbsentNeverExposesUnstampedDatabase`),
+`internal/relay/store/create_race_test.go` (`Test30ConcurrentFirstOpenersNeverSeeAPartialStore`,
+Go and Python first openers paused after placing the gate and racing unpaused),
+`internal/relay/store/socket_binding_test.go` (`Test30SocketBindingBindsAnUnboundStoreOnce`,
+`Test30TornSocketBindingIsCompletedOnlyByItsSocket`,
+`Test30SocketBindingNeverTouchesAForeignOrMovingStore`,
+`Test30SocketBindingWaitsForWritersWithinTheBound`),
+`internal/relay/cli/fence_parity_test.go` (`TestSocketBinding_*` against the live fence),
+`TestWriteForms_refuse_a_foreign_store_as_python_does` (byte for byte),
+`internal/relay/store/registration_hold_python_test.go`
+(`TestOpen_reads_a_gateless_store_before_refusing_it_as_python_does`,
+`TestRegistrationHold_answers_an_unstattable_store_as_python_does`), `Test24_SOS_14_WholeOutputAndSQLite`,
+`TestCLI_intent_register_refuses_a_store_the_other_runtime_owns_like_python`,
+`TestINT10_an_unreadable_missing_or_held_store_refuses_registration` (against the live fence);
+`.omo/evidence/task-30-crw-go-port.txt`.
 ## 29a. Uncaught Python exceptions: final line is contract, frames are not
 
 Decision: when a Python skill script dies with an uncaught exception, the parity

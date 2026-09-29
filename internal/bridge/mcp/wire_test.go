@@ -60,7 +60,7 @@ func (w *wire) next(t *testing.T) map[string]json.RawMessage {
 
 // Python's replies, captured from `python -m codex_thread_bridge.server` (mcp 1.30.0) on the
 // same requests. Only the initialize result's fields outside capabilities are left out:
-// serverInfo.version (0.1.0 here, the mcp library version there) is pending a decision.
+// serverInfo.version (the bridge version here, the mcp library version there; decisions.md 20).
 func Test_protocol_replies_outside_tools_call_are_pythons_bytes(t *testing.T) {
 	w := startWire(t)
 	var initialize struct {

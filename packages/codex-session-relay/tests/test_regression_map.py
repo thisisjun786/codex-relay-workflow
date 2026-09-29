@@ -42,6 +42,7 @@ REAL_TIME_MODULES = (
     "test_daemon_cadence.py",
     "test_dispositions.py",
     "test_failure_recovery.py",
+    "test_fence.py",
     "test_launch_policy.py",
     "test_management_cli.py",
     "test_managed_start.py",
@@ -52,6 +53,7 @@ REAL_TIME_MODULES = (
     "test_service.py",
     "test_stop_adapter.py",
     "test_supervisor_live_findings.py",
+    "test_takeover_candidate.py",
     "test_worker_policy.py",
     "test_wp1_regressions.py",
 )
@@ -258,6 +260,10 @@ SUMMARIES = {
     ("hostadapter.py", None, "is_message", "function"): ((True,), (), ()),
     ("marker.py", None, "named", "function"): ((False,), (), ()),
     ("marker.py", None, "same_identity", "function"): ((False,), (), ()),
+    # Permit agreement folds transition, epoch and controller. Each stale component
+    # is varied independently at admission and transaction revalidation; the matching
+    # permit performs recovery writes before readiness, not just a boolean assertion.
+    ("ownership.py", None, "matches", "function"): ((False,), (), ()),
     # A first assignment is a parent-to-child assignment whose recipient is a stated absence,
     # so the false side is reachable from any one of the three inputs alone: another direction,
     # another purpose, or a named recipient. reception reads it to choose which comparisons
@@ -305,6 +311,10 @@ FOLDS_BEYOND_ITS_PATHS = (
     ("bridge_adapter.py", None, "_scan_listing", "function"),
     ("bridge_adapter.py", None, "same_ledger", "function"),
     ("cli.py", None, "_reads_no_selected_store", "function"),
+    # Whether a control request's path names the owner's own marker root or store: false for a
+    # non-string or relative path, true for the same normalized spelling, else the same file
+    # (PR #185 thread 4127894432). test_fence.py drives each side through a live owner.
+    ("control.py", None, "_names", "function"),
     ("daemon.py", None, "_already_observed", "function"),
     ("daemon.py", None, "_reads_were_complete", "function"),
     ("daemon.py", None, "_worth_polling", "function"),
@@ -390,6 +400,35 @@ UNRESOLVED_READS = (
     ("test_reception_findings.py", "test_a_compared_field_of_another_shape_never_ends_accepted",
      "is_absent", "no enclosing assertion"),
     ("test_service.py", "holder", "lock_is_held", "no enclosing assertion"),
+    # These are the candidate test's JSON-line send helper, not ProcessHandle.send.
+    # The name-only sweep cannot distinguish them; protocol replies, durable rows
+    # and process exits are the assertions. Repeated entries are separate calls.
+    ("test_takeover_candidate.py", "test_active_message_cannot_replace_durable_agreement",
+     "send", "no enclosing assertion"),
+    ("test_takeover_candidate.py", "test_active_message_cannot_replace_durable_agreement",
+     "send", "no enclosing assertion"),
+    # CandidateChannel.send against a size limit: the refusal and the empty peer are asserted.
+    ("test_takeover_candidate.py",
+     "test_candidate_message_has_the_same_bounded_frame_in_both_directions",
+     "send", "no enclosing assertion"),
+    ("test_takeover_candidate.py", "test_candidate_recovery_and_durable_activation",
+     "send", "no enclosing assertion"),
+    ("test_takeover_candidate.py", "test_candidate_recovery_and_durable_activation",
+     "send", "no enclosing assertion"),
+    ("test_takeover_candidate.py", "test_candidate_requires_private_fd_designation",
+     "send", "no enclosing assertion"),
+    ("test_takeover_candidate.py", "test_control_socket_bind_failure_never_reports_ready",
+     "send", "no enclosing assertion"),
+    ("test_takeover_candidate.py", "test_failed_recovery_never_reports_ready",
+     "send", "no enclosing assertion"),
+    ("test_takeover_candidate.py", "test_invalid_start_writes_nothing",
+     "send", "no enclosing assertion"),
+    ("test_takeover_candidate.py", "test_mismatched_controller_is_refused",
+     "send", "no enclosing assertion"),
+    ("test_takeover_candidate.py", "test_recovery_longer_than_the_channel_bound_still_activates",
+     "send", "no enclosing assertion"),
+    ("test_takeover_candidate.py", "test_recovery_longer_than_the_channel_bound_still_activates",
+     "send", "no enclosing assertion"),
 )
 
 # Every place this suite measures something with a folded boolean: module, test, symbol, the
@@ -1290,6 +1329,10 @@ HIDING_CALLS = ("setattr", "exec", "eval")
 UNREADABLE = "unreadable"
 
 FAULT_SITES = (
+    ("test_fence.py", "test_successful_receipt_replay_commits_result_and_marker_together",
+     "raw", None,
+     "replay composes its handler and dedup marker into one transaction; the hook fires"
+     " at that outer commit, after both were written, and both absences are asserted"),
     ("support.py", "killed_before_commit", "raw", None,
      "the helper's own arming, and the only raw one outside a declared row below: every"
      " other case reaches the hook through it"),
@@ -1340,8 +1383,8 @@ FAULT_SITES = (
      " to land. Left raw: there is nothing for a predicate to disambiguate"),
 )
 
-# A shape that could hide an arming and that this reader cannot classify. Two entries, and
-# both are this machinery looking at itself. The HOOK constant: from the outside a string
+# A shape that could hide an arming and that this reader cannot classify. The
+# machinery also looks at itself. The HOOK constant: from the outside a string
 # naming the hook is a string naming the hook, and nothing here can tell a scan's own
 # subject from an attribute name assembled for a setattr. The helper's own def: nothing
 # here can tell the real definition from one that shadows it, and a shadow is how a call
@@ -1349,10 +1392,37 @@ FAULT_SITES = (
 # excluded, because excluding a file is how you create the one place an arming sits unseen.
 UNACCOUNTED_FAULT_OCCURRENCES = (
     ("support.py", "killed_before_commit", "defines the helper"),
+    # Lowers ownership.LOCK_WAIT_SECONDS so a held .replay.lock expires quickly; no DB hook.
+    ("test_fence.py", "test_a_held_replay_lock_bounds_the_writer_wait_as_a_host_error",
+     "calls setattr"),
+    # Fails ownership._publish (the takeover.json write) with ENOSPC after the real DB commit,
+    # to reach the torn socket binding; the store's own transaction runs unpatched.
+    ("test_fence.py", "test_a_torn_socket_binding_is_completed_only_by_its_own_socket",
+     "calls setattr"),
+    # Sets sys.platform to darwin (then another platform) to reach peer_uid's LOCAL_PEERCRED
+    # branch with a fake connection; no store or DB hook is involved.
+    ("test_fence.py", "test_darwin_peer_credentials_read_local_peercred", "calls setattr"),
+    ("test_fence.py", "test_darwin_peer_credentials_read_local_peercred", "calls setattr"),
+    # Lowers ownership.LOCK_WAIT_SECONDS so a held write-gate SH expires the binding quickly.
+    ("test_fence.py", "test_socket_binding_waits_for_other_writers_within_the_declared_bound",
+     "calls setattr"),
+    # Sets sys.platform to darwin so the Stop client's peer_uid reads LOCAL_PEERCRED from a
+    # faked getsockopt on a real connection; no store or DB hook is involved.
+    ("test_fence.py", "test_the_stop_client_authenticates_the_owner_with_its_platform_credentials",
+     "calls setattr"),
     ("test_regression_map.py", "<module>", "names the hook in a string"),
     ("test_regression_map.py",
      "test_the_names_this_reader_tracks_are_the_ones_written_down_here",
      "names the hook in a string"),
+    # Lowers MAX_CANDIDATE_BYTES so a small frame crosses the channel limit, not a DB hook.
+    ("test_takeover_candidate.py",
+     "test_candidate_message_has_the_same_bounded_frame_in_both_directions", "calls setattr"),
+    # Injects only the monotonic clock to cross the channel deadline, not a DB hook.
+    ("test_takeover_candidate.py", "test_start_read_deadline_is_absolute", "calls setattr"),
+    # Replaces Popen's argv with an observer child; the real launcher and fd/env
+    # inheritance remain intact and are checked from the actual exec'd process.
+    ("test_takeover_candidate.py", "test_worker_inherits_locks_but_not_controller_channel",
+     "calls setattr"),
 )
 
 

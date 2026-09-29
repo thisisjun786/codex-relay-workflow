@@ -215,11 +215,12 @@ Execution:
   declares a predecessor this generation does not contain and leaves it with no
   current head at all.
 - [Only when a relay holds this assignment:] if you cannot emit because of the assignment's
-  own state rather than your artifact, whether the issue lookup finds no assignment or the
+  own state rather than your artifact, whether the issue lookup finds no assignment, the
+  lookup is refused `store_absent` because no store exists there yet, or the
   emit is refused with something like `unbound_generation`, stop there and report the
   completion as UNEMITTED with what you actually saw: the exact lookup result where the
-  lookup came back empty, the exact refusal where an emit was rejected. Preserve the artifact
-  as produced and
+  lookup came back empty or was refused, the exact refusal where an emit was rejected.
+  Preserve the artifact as produced and
   return your own task id, the issue identity and the state directory you were given. Do not claim
   a receipt you could not write, do not guess a relationship id, and do not wait for the state
   to change: the coordinator closes that gap and recovers the receipt from you, on this same

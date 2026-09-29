@@ -59,10 +59,13 @@ func TestCLIRunner_fails_a_scenario_whose_exit_differs(t *testing.T) {
 }
 
 func TestCLIRunner_reads_sqlite_rows_and_file_observations(t *testing.T) {
-	// Given: a standalone database from given.sql and a text file from given.files.
+	// Given: a standalone database from given.sql and a text file from given.files. The command
+	// is a read-only form's usage refusal, which never opens the store in either runtime (a
+	// writable form admits the store before its handler, and only the fence initializes an
+	// unfenced one, cutover.md Record).
 	scenario := scenarioFrom(t, `{"given":{"sql":"CREATE TABLE t (a TEXT, b INTEGER); INSERT INTO t VALUES ('x', 7);",
 		"files":{"note.txt":"hi"}},
-		"run":{"kind":"cli","argv":["store-challenge"]},
+		"run":{"kind":"cli","argv":["store-challenge","--read",""]},
 		"expect":{"exit":4,"files":{"note.txt":true,"absent":false},"observe":["note.txt","state"],
 			"queries":{"rows":"SELECT a, b FROM t"},
 			"checks":[{"kind":"eq","path":["sql","rows"],"value":[["x",7]]},

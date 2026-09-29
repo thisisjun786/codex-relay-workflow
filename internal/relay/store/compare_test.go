@@ -24,7 +24,7 @@ func newIdentityFixture(t *testing.T) *identityFixture {
 	t.Setenv("HOME", root)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "xdg"))
 	a := filepath.Join(root, "a")
-	s, err := Open(context.Background(), filepath.Join(a, "relay.sqlite3"), "")
+	s, err := fixtureOpen(context.Background(), filepath.Join(a, "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
 	}

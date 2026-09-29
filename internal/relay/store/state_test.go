@@ -73,14 +73,14 @@ func TestOpen_refuses_symlink_into_live_state(t *testing.T) {
 	if err := os.Symlink(live, alias); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Open(context.Background(), filepath.Join(alias, "relay.sqlite3"), "")
+	_, err := fixtureOpen(context.Background(), filepath.Join(alias, "relay.sqlite3"), "")
 	if err != ErrLiveState {
 		t.Fatalf("got %v", err)
 	}
 }
 func TestLocate_returns_empty_physical_fields_when_missing(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relay.sqlite3")
-	s, err := Open(context.Background(), path, "")
+	s, err := fixtureOpen(context.Background(), path, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestLocate_returns_empty_physical_fields_when_missing(t *testing.T) {
 func TestOpen_seeds_identity_once_and_preserves_socket(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relay.sqlite3")
 	ctx := context.Background()
-	s, err := Open(ctx, path, "first.sock")
+	s, err := fixtureOpen(ctx, path, "first.sock")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,11 @@ func TestOpen_seeds_identity_once_and_preserves_socket(t *testing.T) {
 	if values["store_id"] == "" || values["store_created_at"] == "" {
 		t.Fatal(values)
 	}
-	s, err = Open(ctx, path, "second.sock")
+	if other, e := Open(ctx, path, "second.sock"); e == nil {
+		_ = other.Close()
+		t.Fatal("ownership allowed a different socket")
+	}
+	s, err = Open(ctx, path, "first.sock")
 	if err != nil {
 		t.Fatal(err)
 	}

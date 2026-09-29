@@ -2296,6 +2296,7 @@ class EveryLineSelectsTheStoreItWasWrittenFrom(ChannelTestCase):
     packet_pr = WhatTheEighthReviewRoundFound.packet_pr
 
     SOCKET = "app-server.sock"
+    STORE_SOCKET = SOCKET
 
     @contextmanager
     def elsewhere_by_default(self):

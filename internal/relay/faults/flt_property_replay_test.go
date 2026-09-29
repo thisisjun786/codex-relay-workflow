@@ -1,9 +1,18 @@
 package faults
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // These tests use f1ReplayCLI, which executes the same command against Go and
@@ -71,18 +80,104 @@ func Test22_FLT_11_12_25_26_27_PublicationWholeOutput(t *testing.T) {
 	testFLT252627LifecycleWholeCLI(t)
 }
 
-// FLT-17: Python and Go opening a pre-existing database are exercised through
-// a cloned store; the resulting schema and complete ledger output are compared.
+// FLT-17: opening a pre-existing database that lacks the fault tables. Here the runtimes
+// differ by decision, and each one's documented behaviour is pinned (docs/port/decisions.md 14
+// and 30): Python's Store.__init__ runs the DDL on every open and re-creates each missing
+// IF NOT EXISTS table in the store it owns, while Go validates the required tables and never
+// repairs a store - it refuses the command as a host error and leaves the store as it was.
+// Go's twin is then the store Python repaired, copied and stamped as Go's own
+// (testsupport.Restamp), and the same transitions compare their complete output and tables.
 func Test22_FLT_17_SchemaWholeOutput(t *testing.T) {
 	ctx, gd, pd := f1ReplayStores(t)
+	missing := []string{"fault_ledger", "fault_occurrences", "fault_timeline", "fault_remediations", "fault_publications", "fault_targets", "fault_cursors"}
 	seed := []string{f1Relationship}
-	for _, table := range []string{"fault_ledger", "fault_occurrences", "fault_timeline", "fault_remediations", "fault_publications", "fault_targets", "fault_cursors"} {
+	for _, table := range missing {
 		seed = append(seed, "DROP TABLE "+table)
 	}
 	f1SeedBoth(t, ctx, gd, pd, seed)
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-target", "--product", "crw", "--project", "P", "--team", "team", "--project-ref", "project-P"})
+	target := []string{"fault-target", "--product", "crw", "--project", "P", "--team", "team", "--project-ref", "project-P"}
+
+	// Go: refused, and nothing in the store changes.
+	before := flt17Rows(t, ctx, gd)
+	var stdout, stderr bytes.Buffer
+	code, handled := executeAsCLI(ctx, append([]string{"--state", gd, "--json"}, target...), &stdout, &stderr)
+	const refused = "{\n  \"error\": \"host\",\n  \"detail\": \"ownership refused: required table missing: fault_ledger\"\n}\n"
+	if !handled || code != 3 || stdout.String() != refused || stderr.Len() != 0 {
+		t.Fatalf("Go on a store missing the fault tables: handled=%t exit %d\nstdout %q\nstderr %q\nwant exit 3 stdout %q", handled, code, stdout.String(), stderr.String(), refused)
+	}
+	if after := flt17Rows(t, ctx, gd); !reflect.DeepEqual(before, after) {
+		t.Fatalf("Go's refusal changed the store:\nbefore %v\nafter  %v", before, after)
+	}
+	for _, table := range missing {
+		if _, ok := before[table]; ok {
+			t.Fatalf("the seeded Go store still has %s", table)
+		}
+	}
+
+	// Python: its open re-creates every missing table in the store it owns.
+	repo := f1Root()
+	open := exec.Command(filepath.Join(repo, ".venv", "bin", "python"), "-c",
+		"import sys\nfrom codex_session_relay.store import Store\nStore(sys.argv[1]).close()", filepath.Join(pd, "relay.sqlite3"))
+	open.Dir = repo
+	if out, err := open.CombinedOutput(); err != nil {
+		t.Fatalf("Python open: %v\n%s", err, out)
+	}
+	repaired := flt17Rows(t, ctx, pd)
+	for _, table := range missing {
+		if rows, ok := repaired[table]; !ok || len(rows) != 0 {
+			t.Fatalf("Python's open left %s %v", table, rows)
+		}
+	}
+
+	// Go's twin is the repaired store, as Go would have it had it created it.
+	raw, err := os.ReadFile(filepath.Join(pd, "relay.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Python's close checkpointed the repair; a reader may leave an empty WAL beside it.
+	if wal, err := os.Stat(filepath.Join(pd, "relay.sqlite3-wal")); err == nil && wal.Size() != 0 {
+		t.Fatalf("the repaired store is not checkpointed: %d WAL bytes", wal.Size())
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	if err = os.RemoveAll(gd); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.MkdirAll(gd, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(gd, "relay.sqlite3"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	testsupport.Restamp(t, filepath.Join(gd, "relay.sqlite3"), "go")
+	f1ReplayCLI(t, ctx, gd, pd, target)
 	replayObservation(t, ctx, gd, pd, "report_omitted", Broken, "schema")
 	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-next"})
+}
+
+// flt17Rows is every table of the store at dir and its rows, read without writing it.
+func flt17Rows(t *testing.T, ctx context.Context, dir string) map[string][]string {
+	t.Helper()
+	tables := map[string][]string{}
+	readStore(t, ctx, filepath.Join(dir, "relay.sqlite3"), func(ctx context.Context, s *store.Store) error {
+		names, err := s.All(ctx, "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+		if err != nil {
+			return err
+		}
+		for _, name := range names {
+			key := text(name, "name")
+			rows, err := s.All(ctx, `SELECT * FROM "`+key+`" ORDER BY rowid`)
+			if err != nil {
+				return err
+			}
+			tables[key] = []string{}
+			for _, r := range rows {
+				tables[key] = append(tables[key], fmt.Sprint(r))
+			}
+		}
+		return nil
+	})
+	return tables
 }
 
 func Test22_FLT_12_AwaitingTargetWholeOutput(t *testing.T) {

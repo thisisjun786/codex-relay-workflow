@@ -35,12 +35,6 @@ func f1Clock(ctx context.Context) Clock {
 
 var f1Names = []string{"fault-claim", "fault-operation", "fault-reconcile", "fault-complete", "fault-sweep"}
 
-func f1Response(w io.Writer, result any, code int) int {
-	if err := contract.Emit(w, f1Ordered(result)); err != nil {
-		return 3
-	}
-	return code
-}
 func f1Ordered(value any) any {
 	if list, ok := value.([]any); ok {
 		out := make([]any, len(list))
@@ -1025,7 +1019,7 @@ func f1Sweep(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 	if stateRoot == "" {
 		stateRoot = filepath.Join(os.Getenv("HOME"), ".local", "state")
 	}
-	sw := &Sweeper{Store: l.Store, MaxAttempts: 6, Now: l.Clock.ISO, HostRecordPath: filepath.Join(stateRoot, "codex-relay-workflow", "host-record.json"), Installation: Installation{Package: "codex-session-relay", Version: "0.1.0", Location: filepath.Join(f1Root(), "packages", "codex-session-relay", "src", "codex_session_relay")}}
+	sw := &Sweeper{Store: l.Store, MaxAttempts: 6, Now: l.Clock.ISO, HostRecordPath: filepath.Join(stateRoot, "codex-relay-workflow", "host-record.json"), Installation: Installation{Package: "codex-session-relay", Version: RelayPackageVersion, Location: filepath.Join(f1Root(), "packages", "codex-session-relay", "src", "codex_session_relay")}}
 	sw.SupersessionReason = func(ctx context.Context, event string) (string, error) { return f1SupersessionReason(ctx, l, event) }
 	sw.Current = func(ctx context.Context, event string) (bool, error) {
 		reason, e := f1SupersessionReason(ctx, l, event)

@@ -27,6 +27,9 @@ Names used throughout:
 - `D`: the existing database pathname inside `S`. Never a freshly computed default.
 - `K`: the existing scope key for the App Server socket (service.py:102-159 hashes the resolved
   socket pathname; Go reproduces that canonicalization, it does not substitute `$HOME`).
+  `K.lock` and `K.json` are the registry root as spelled plus `/K.lock` and `/K.json`, never
+  cleaned: a `..` after a symlink in an isolated root is resolved by the kernel in both
+  runtimes, so both lock the same inode.
 
 Objects that already exist and keep their identity: `D`, `D-wal`, `D-shm` (SQLite alone manages
 the last two), `S/daemon.lock`, the scope registry's `K.lock` and `K.json`, receiver-ledger
@@ -41,11 +44,19 @@ Objects the fence release adds, all owner-only (`0700` directories, `0600` files
 | `S/write-gate.lock` | permanent-inode shared/exclusive admission barrier for DB writers |
 | `S/takeover.json` | durable transition record and admission mirror (atomic replace) |
 | `S/takeover-inbox/` | immutable, durable receipt/ACK requests awaiting application |
+| `S/takeover-inbox/.replay.lock` | permanent-inode exclusive lock held by an inbox replayer from reading an entry until after its unlink and directory fsync |
 | `S/control.sock` | stable local control and `guard-evaluate` RPC address served by both runtimes |
 | `S/takeover-backups/<transition-id>/` | SQLite backup plus inventory manifest; disaster-recovery evidence only, never rollback input |
 
 Rule that applies to every lock file, old or new: **never unlink it and never replace it
 atomically.** The inode is the rendezvous point. Atomic replace is for `takeover.json` only.
+Nothing chmods a lock either. An existing lock is trusted when it is a regular file owned by the
+effective user and either grants no group or other access (0600, in any directory, as Python and
+every earlier Go build trust it) or sits in a directory owned by that user with no group or world
+write bit, whatever its own mode (under umask 002 both runtimes leave 0664 locks in 0700
+directories). Only a lock that grants group or other access inside a group- or world-writable
+directory is refused. Locks Go creates are 0600, so Go never leaves behind a lock file it then
+refuses, and a 0775 state directory (Python's `mkdir` under umask 002) serves in both runtimes.
 
 ## Record
 
@@ -103,6 +114,65 @@ updatedAt                diagnostic timestamp
 ```
 
 `holder`, `controller` and `transition` may be null when not applicable.
+`appServerSocket` and `scopeKey` are null exactly when `schema_meta.socket_path` is absent:
+an **unbound** store, created by a socketless writable opener (crw-run's
+`--state "$RELAY_STATE" register`, a `default/` scope). An unbound store is never a takeover
+subject. Otherwise `appServerSocket` is absolute, normalized and equal to
+`schema_meta.socket_path`, and `scopeKey` is the non-empty scope-registry key the binding
+process recorded for it (including the `isolated-<salt>-` namespace of an overridden registry
+root). Both runtimes refuse a record that breaks this (`scope without socket`,
+`invalid socket/scope identity`) at admission and at every revalidation. Go also refuses a
+`scopeKey` that is not the key the validating process would lock
+(`scope key disagrees with lock authority`); Python checks only that it is a non-empty string
+until the refactor-backlog item `[todo36][audit 20/24/46]` lands.
+
+Socket binding. A writable open that passes an App Server socket `K` (canonicalized) to an
+unbound store owned by the opening runtime, in `phase=active` with `transition` null, binds
+it: under `write-gate EX` (bounded, Lock order) it revalidates the rest of the record,
+commits `schema_meta.socket_path = K`, then publishes the mirror with `appServerSocket = K`
+and `scopeKey` = the key for `K`, every other field unchanged except `updatedAt`. Owner,
+epoch, phase and transition never change. A crash between that commit and the publication
+leaves `socket_path = K` under a null mirror: every other opener refuses it
+(`scope without socket`), and the next writable opener passing `K` completes the same
+binding (its preflight treats that record as unbound for `K`). Read-only commands and the
+takeover candidate never bind; a store owned by the other runtime or mid-transition is
+refused as usual and never bound. So crw-run's socketless `register` followed by
+`--socket "$SOCK" deliver|recover|daemon` on the same `--state` works, and a later
+socketless `emit` or `ack` still opens the bound store. Opening a bound store with a socket
+other than `appServerSocket` is refused before any DDL or socket recording
+(`requested socket disagrees with ownership record`; both runtimes answer it as reason
+`store_owned_by_other`, exit 2; at the CLI both first answer a socket the store records
+otherwise with `state_directory_serves_another_socket`), and initialization of a legacy `D`
+records the store's own `schema_meta.socket_path` in the mirror, refusing a requested socket
+that disagrees with it. Both runtimes implement the binding: Go in `store.Open`
+(`internal/relay/store/ownership.go` `bindSocket`), whose daemon and service preflight
+(`ownership.CheckStart`) takes the command's socket as `check_start` does, so the opener
+that completes a torn binding is let through. Any other disagreement between the halves has
+no automatic repair; before todo 42, check that the chosen store's `appServerSocket` equals
+its `schema_meta.socket_path`.
+
+Torn publications. The DB commit always precedes the mirror publication, so a crash, full
+disk or permission failure between them leaves the durable half ahead of the mirror. Besides
+the transition gaps named in Steps 5 and Rollback, initialization has one: **initial stamp
+committed, mirror absent** - all six keys present, `takeover_id` empty, `owner_epoch` `1`,
+and `S/takeover.json` absent (ENOENT only; a malformed mirror still refuses as malformed).
+Every writer refuses it (non-queueable) and `doctor --json` reports its ownership `detail` as
+`takeover record missing`. No opener or writer repairs it. Recovery is an explicit controller
+action under the full lock order that publishes the mirror derived only from `schema_meta`:
+protocol 1, `storeId`, `database` from the physical store, `appServerSocket`/`scopeKey` from
+`socket_path` (both null when absent), epoch 1, the stamped owner, `phase=active`, null
+`transition`/`holder`/`controller`, `rollbackAllowed` and `pythonCompatibilityBuild` from the
+stamp, `relayRPCSocket` = `S/control.sock`. It never writes `schema_meta`.
+
+Read-only clients never create a store and never bind one. Read-only names how a form opens a
+store, not a promise that it writes nothing: on a store its runtime may write, a read-only form
+is admitted as a writer, and the owner's own `fault-next` expires lapsed leases there (Read-only
+clients under a foreign owner). When `D`, `S/takeover.json` and
+`S/write-gate.lock` are all absent, a read-only command answers exit 2
+`{"error":"refused","reason":"store_absent","detail":"no relay store exists at <D>; a read-only command never creates one"}`
+and creates nothing, so the first reader never chooses the owner. A read-only Python command
+that finds an existing unfenced (legacy) `D` still performs the Step 0.4 initialization under
+the exclusive gate, as every Python fence opener does; Go never initializes an unfenced `D`.
 
 The record is fenced, not timed. `updatedAt` is diagnostic only.
 No TTL and no heartbeat authorizes takeover.
@@ -123,7 +193,9 @@ in reverse:
 takeover.lock EX          transition controller only
   -> daemon.lock EX       daemon start and transition paths
   -> scope K.lock EX      daemon start and transition paths
-  -> write-gate SH | EX   SH for admitted writers; EX for the transfer barrier
+  -> write-gate SH | EX   SH for admitted writers; EX for the transfer barrier,
+                          store creation/initialization and socket binding
+  -> inbox .replay.lock EX inbox replay only, while holding write-gate SH
   -> operation locks      managed-start, receiver ledger; sorted by path if several
   -> SQLite transaction   BEGIN IMMEDIATE
 ```
@@ -139,7 +211,31 @@ Details that matter:
   through the whole operation. The connection is closed before the admission is released.
 - The transition controller takes `write-gate EX` only after it has requested shutdown. It never
   holds the gate exclusively while asking the old daemon to finish DB work.
-- The read-only Stop path takes none of these locks.
+- The read-only Stop path takes none of these locks. It decides ownership and routing from the
+  mirror `S/takeover.json` and one in-place read of `schema_meta` that copies nothing and
+  creates no SQLite sidecar (Python `ownership.check_stop`/`stop_metadata`, Go
+  `store.OpenStopRead` in the native hook's `ownsGuard`): with `D-wal` and `D-shm` both present
+  it opens `mode=ro`, which sees committed WAL frames and creates nothing; otherwise every
+  commit is in `D` and it reads `D` with `immutable=1`. The disposable snapshot copy
+  (`metadata`, `SnapshotMeta`) stays with writers' admission and diagnostics; on a Stop it was a
+  write outside the hook's root and a copy of the whole live store per turn end.
+- Two waits that another writer can hold for an unbounded time are bounded by 30 s, the
+  store's SQLite busy timeout and Go's default `BusyTimeout`: the socket binding's
+  `write-gate EX` (other admitted connections hold SH for their lifetime) and the inbox
+  `.replay.lock EX` (a replayer holds it across its handlers' App Server calls). When the bound
+  expires the command has changed nothing and answers a retryable host error (exit 3 in both
+  runtimes,
+  `{"error":"host","detail":"LockWaitExpired: <what> was not acquired within 30s; retry"}`); a
+  daemon's startup recovery fails the same way. Python's admission `write-gate SH` and the
+  initializer's `EX` keep blocking. Go's admission never blocks on the gate, with one
+  exception taken before it: a Go writer that finds the gate held EX while the store is being
+  created (no `D` or no mirror) or is in phase active (a creation finishing, a socket binding)
+  waits until it can share the gate, bounded by its busy timeout (30 s), then is admitted or
+  refused as usual. A transfer barrier is taken only after the record left phase active, so
+  a Go writer still refuses it at once, with the refusal the fence's lock-free `check_start`
+  gives that record (a draining store: queueable, so a Go `emit`, `ack` or
+  `fault-notification-ack` is durably queued, Wire format), and a read-only form never waits
+  (it reads `mode=ro`). Go's inbox replay (`internal/relay/inbox`) uses the same bound.
 - All of them are `flock` locks (`fcntl.flock` today at daemon.py:95-144, receiver.py:660-672,
   managed.py:311-333, service.py:192-205 and 946-962). Go uses `golang.org/x/sys/unix.Flock` on
   the same permanent files. `FcntlFlock`, POSIX record locks and `lockf`-style libraries live in
@@ -161,12 +257,35 @@ Each step names what the controller does, then its failure branch and recovery. 
    release's own `service restart` stops supervisor and worker both (service.py:1304-1421).
 4. Initialize ownership as `owner=python`, `owner_epoch=1`, `writer_protocol=1`,
    `rollback_allowed=1`, under an exclusive maintenance gate; write the matching `takeover.json`.
+   Only the Python fence initializes an existing unfenced (legacy) `D`. A truly absent store
+   (no `D`, no `takeover.json`, no `write-gate.lock`) is created by the first writable opener
+   of either runtime with itself as owner at epoch 1, under the exclusive gate it created.
+   The creator places `write-gate.lock` already held EX: it creates the gate under a temporary
+   `S/.write-gate-*` name, locks it, then `link(2)`s it into place (losing to an existing name
+   means another opener created it), so a concurrent first opener that finds the gate waits
+   for the creation instead of seeing a gate without a database. Both runtimes place it so
+   (Go: `internal/relay/store/ownership.go` `placeGate`), and a Go first opener waits for such a
+   gate within the bound Lock order names. Anything partial - a
+   `write-gate.lock` with no `D` that this opener found rather than created - is refused and
+   never repaired by a runtime.
 5. Confirm every launch path reaches the fence build: `doctor --json` shows
    `python_compatibility_build` equal to the fence build for every running relay process.
 
 Failure and recovery: if any old writable process or uncontrolled launch path can't be excluded,
 do not cut over. Python stays in control. Writing `owner=go` would not repair the missing
-precondition, and a Go opener cannot infer it from the database.
+precondition, and a Go opener cannot infer it from the database. If step 4 stops between the
+`schema_meta` COMMIT and the `takeover.json` publication, the store is in the torn state
+**initial stamp committed, mirror absent** (Record): writers refuse, step 5's `doctor --json`
+fails loudly with `takeover record missing`, and only the explicit mirror recovery completes
+the publication. If a first opener dies after placing the gate and before creating `D`,
+`S` holds only `write-gate.lock` (and possibly a stray `S/.write-gate-*`): every writable
+opener refuses it non-queueably with `partial store: write-gate.lock without a database`
+(Go words it `ownership refused: existing database required: lstat <D>: no such file or
+directory`, reason `store_owned_by_other`, exit 2, after finding the gate unheld).
+Recovery is an operator action, the only removal of a lock file this protocol allows:
+confirm that `D` and `S/takeover.json` are absent and that no process has the gate open
+(`fuser S/write-gate.lock` or `lsof` lists none), then remove `S/write-gate.lock` and any
+`S/.write-gate-*`; the next writable opener creates the store.
 
 ### Step 1: serialize and announce the transition
 
@@ -184,6 +303,21 @@ crash leaves admission closed. A replacement controller takes `takeover.lock`, r
 owner and epoch, and either resumes or explicitly aborts back to `phase=active`. It never
 decides from the JSON alone.
 
+The abort is `crw relay takeover abort`. Under `takeover.lock` it is accepted only while the
+phase is `draining` and the DB stamp still names the old owner at the old epoch, that is, before
+the Step 5 COMMIT. It writes no `schema_meta` key and takes no barrier: it republishes
+`takeover.json` for the unchanged owner and epoch with `phase=active` and the installed
+transition rebuilt from `takeover_id` (null when `takeover_id` is empty). Repeating it on an
+active record changes nothing. After the COMMIT it refuses and names the recovery (Step 5).
+A draining that the reverse transfer began from `phase=starting` (Step 5: a candidate that
+never became ready, so its mirror names no holder) returns to `phase=starting`, not active:
+no ready holder exists to advertise, and the recovery stays `takeover activate` or the
+reverse transfer.
+The drained runtime's service does not restart by itself: after an abort the operator starts it
+again (`service start`), and entries queued in the inbox meanwhile replay on its next writable
+start or writable command, whichever runtime owns it. The same command aborts a rollback that
+has not reached its COMMIT, back to active Go.
+
 ### Step 2: drain Python and stop all of its holders
 
 Request a graceful quiesce: stop scheduling new work and new outbound host effects, finish
@@ -199,7 +333,7 @@ A stopped supervisor is not sufficient: workers inherit the daemon and scope des
 
 Failure and recovery: if identity can't be established or a holder is still alive, ownership
 stays Python and the phase stays draining. Go is not started as a writer. Either complete the
-stop or abort the transition back to active Python.
+stop or abort the transition back to active Python (`crw relay takeover abort`).
 
 ### Step 3: acquire the transfer barrier
 
@@ -209,7 +343,8 @@ and scope locks exclude lingering service holders, the exclusive gate excludes d
 connections and admitted operations that the daemon lock does not cover.
 
 Failure and recovery: release whatever was acquired, in reverse order, and stay in draining.
-Find and finish the holder, then resume. Contention is never a reason to delete a lock file, and
+Find and finish the holder, then resume, or abort to Python (`crw relay takeover abort`).
+Contention is never a reason to delete a lock file, and
 a stale timestamp or a dead supervisor PID never bypasses this barrier.
 
 ### Step 4: preserve and inspect the existing state
@@ -224,7 +359,8 @@ Never copy only the main DB file, never require WAL truncation as a precondition
 WAL or SHM to make the store look clean.
 
 Failure and recovery: the owner does not change. Close the inspection connection, repair the
-inspection or backup failure or abort to Python, leave the original files untouched.
+inspection or backup failure or abort to Python (`crw relay takeover abort`), leave the
+original files untouched.
 
 ### Step 5: commit the ownership fence
 
@@ -240,19 +376,51 @@ Failure and recovery: before COMMIT the DB still belongs to Python. After COMMIT
 JSON publication, Python refuses because the durable owner is Go and new writers refuse the
 mismatched file. Recovery reads the DB stamp and completes Go activation, or performs an
 explicit reverse transfer with a new epoch. It never restores the old JSON to paper over the
-disagreement.
+disagreement. `takeover abort` refuses from here on, because ownership has moved: the recovery
+is `takeover activate`, or the reverse transfer, which `crw relay takeover rollback --to python`
+begins from `owner=go phase=starting` and `crw relay takeover begin --to go` begins from
+`owner=python phase=starting`, each installing `owner_epoch=current+1`. If that reverse
+transfer fails before its own COMMIT, `takeover abort` returns the store to this
+`phase=starting`, never to active.
 
 ### Step 6: start Go on the original store
 
 Release `write-gate EX`, `K.lock` and `daemon.lock` in reverse order; keep `takeover.lock`.
-Start the Go daemon with the expected `transition.id` and epoch. Go then takes `daemon.lock`,
+Start the Go candidate with the expected `transition.id` and epoch: the controller executes
+`crw relay --state S --socket K service run --takeover-candidate` (plus `--allow-isolated-scope`
+for an isolated scope registry) as its direct child, in a new session, with the activation
+channel on fd 3 (decision 28). The candidate is the service supervisor, run under the service's
+launch declaration exactly as `service start` runs it, not a bounded worker segment; the
+service intent must be enabled. Go then takes `daemon.lock`,
 `K.lock`, `write-gate SH`; verifies DB and record ownership agree; opens `D` in existing-file
 mode (never create); applies `journal_mode=WAL`, `synchronous=FULL`, `foreign_keys=ON` on every
 connection; recovers pending operations under their existing identities; drains compatible
 inbox entries; binds `S/control.sock`; and reports readiness with store ID, epoch, build and
 process identity. Readiness comes only after recovery succeeds, matching today's supervisor
 (service.py:1926-1945). During `phase=starting` only the designated candidate may enter;
-ordinary client mutations stay queued.
+ordinary client mutations stay queued. After activation the supervisor releases its readiness
+listener and starts workers under ordinary active admission; the first worker binds
+`S/control.sock` for its lifetime. Workers inherit neither the channel nor its selector.
+
+The Go candidate drains the takeover inbox in its recovery, under its starting permit and before
+`RecoverOnStart`, exactly as the Python candidate replays it (Wire format): every entry present
+when it drains, whether queued while the store drained or after Step 5, is applied or retained
+before readiness, and one queued later is drained at its first worker's daemon start or by the
+next writable command. Step 5 does not wait for an empty inbox. An entry the drain cannot apply
+(an invalid entry, a host or storage failure) fails recovery: no readiness, ownership stays
+starting, the entry is kept. Entries the retained Python CLI queues while Go is active are
+applied by the Go owner's next drain, and `takeover commit` closes the way back to Python only
+once a drain has emptied the inbox (Commit point).
+
+The controller checks the candidate's launch preconditions before Step 1 and again before
+Step 5 and before launching it: the service intent is enabled, the launch declaration is not
+refused, and Go can open `D` (the live-state guard). The wait for readiness spans recovery and
+is bounded by the controller's `--ready-timeout` (default 600 seconds, on `takeover activate`
+and `takeover rollback`); the 20-second channel bound covers the candidate's validation of
+`start` and, separately, the activation exchange after `ready`. The candidate sets no bound of
+its own on recovery, and the start bound never carries over: both candidates (Go
+`CandidateChannel.Ready`, Python `CandidateChannel.ready`) send `ready` and wait for `active`
+or EOF under a fresh 20 seconds, as the controller's `Activate` does after readiness.
 
 Failure and recovery: ownership stays Go, no active service is advertised, inbox entries are
 retained. Restart Go, or run the reverse protocol to the fence Python release. Never launch an
@@ -262,7 +430,9 @@ channel closes; no indefinitely writable, unadvertised candidate may remain.
 
 ### Step 7: publish active Go and switch new hook registrations
 
-After readiness: publish `phase=active` with the Go owner, epoch and verified holder identity;
+After readiness: publish `phase=active` with the Go owner, epoch and verified holder identity
+(the candidate supervisor's; diagnostic only: a later `service start` or `restart` does not
+rewrite it, and a dead holder PID authorizes nothing);
 point new host registrations at the native Go Stop hook; preserve legacy settings and cached
 executable paths; release `takeover.lock`.
 
@@ -278,14 +448,144 @@ configuration; do not touch DB ownership.
 ### When the other runtime owns the record
 
 Fence Python finding `owner=go`: no writable open, no initialization DDL, no refusal journaling,
-no auto-restart. A CLI request goes to `S/control.sock` or the durable inbox; one that can't be
-forwarded returns an explicit ownership/retry error; a Stop invocation turns that into empty
-stdout and exit 0. An already-admitted Python writer delays the takeover through its shared
-gate; it is never displaced.
+no auto-restart. A Stop's `guard-evaluate` goes to `S/control.sock`; a receipt or acknowledgment
+(`emit`, `ack`, `fault-notification-ack`) is published in the durable inbox as a file (Wire
+format), never sent over the socket; every other CLI request returns an explicit
+ownership/retry error; a Stop invocation turns that into empty stdout and exit 0.
+`S/control.sock` serves `guard-evaluate` only, in both runtimes: an `inbox-submit` request is
+rejected like any unknown method (the Go build's former `inbox-submit` placeholder, which no
+sender ever used, is outside decision 25 and was removed with todo 31). An already-admitted
+Python writer delays the takeover through its shared gate; it is never displaced.
+
+Once a Python client has sent a guard request on `S/control.sock`, it never falls back to a
+local evaluation and never invents that ownership refusal, whatever the owner: a missed
+deadline is `guard_timed_out`, EOF without bytes `guard_said_nothing`, unreadable bytes
+`guard_output_unreadable`, and a reset or broken pipe an adapter fault, as the Go client
+classifies them. The legacy `guard-evaluate` CLI answers the first three with exit 3
+`{"error":"host","detail":...}`. The Python control server accepts frames up to decision 24's
+64 MiB, answers a request it could not evaluate with `{"error":"host","detail":...}` and keeps
+serving, closes an unauthenticated peer unanswered, and applies the CLI's selection refusals
+to an unpinned request using its `socketPath` and `program` (decision 24).
+
+Every client sends those two selection inputs: the Go hook client (`RequestGuard`), the Stop
+adapter's pinned route (`socketPath` from its settings, `program` its `relayExecutable`) and
+the legacy `guard-evaluate` CLI (its `--socket` and the program its own refusals print). An
+owner resolves an unpinned Stop's store in its own configuration with them, so a routed Stop
+is refused exactly as the CLI's local fallback refuses it under the owner's configuration;
+the CLI first applies its own read-only preflight in the Stop's environment, so a routed Stop
+is refused wherever either side's selection refuses it (PR #185 thread 4127894191).
+That preflight makes the selection and nothing else (`guard.selected_store`: the gates the
+evaluation passes before its receipt read, then the resolver exactly where the evaluation would
+call it). It reads no receipt and evaluates nothing, so a routed Stop's one receipt read and
+evaluation happen at the owner, and a Stop evaluated locally resolves its selection once and
+reuses it (PR #185 thread 4128457287). Each read is bounded on its own (`SQLITE_TIMEOUT`, 2 s),
+so the evaluating preflight spent one Stop budget twice: with the store held exclusively, a
+Stop whose intent records `dbPath` took 4.2 s through the legacy CLI and now takes 2.2 s. Where
+a Stop falls back to the run's own selection, its selection read stays on both sides (the
+store's recorded socket; decision 24 applies both sides' selection), so that path spends three
+bounded reads where it spent four, 6.4 s held instead of 8.4 s, still past the adapter's 5 s.
+The Go hook and the Go CLI evaluate once, in process or at the owner, and Go's selection reads a
+snapshot copy that waits on no lock.
+
+The owner decides where a Stop is evaluated, never the requester (PR #185 thread 4127894432).
+Both owners (Python `control.py` `owner_paths`, Go `hook.HandleControl` `ownerPaths`) evaluate
+only under their own marker root, the one the relay resolves without `--marker-root` in the
+owner's configuration (`CODEX_SESSION_RELAY_MARKER_ROOT`, then `XDG_STATE_HOME`, then the home
+default; the installer records the same root as the hook's `markerRoot`), and read only their
+own store `S/relay.sqlite3`. A request's `markerRoot`, and its `dbPath` when not null, must be an
+absolute path naming that root or store, by the same normalized spelling or as the same existing
+file; the owner then uses its own path, never the requester's spelling. Anything else is
+answered before any read or record as a host error that both owners word alike,
+`control.sock evaluates Stops only under this owner's marker root <root>; the request named <markerRoot>`
+or `control.sock reads only this owner's store <S/relay.sqlite3>; the request named <dbPath>`
+(`no path` for a non-string), which the adapters journal as `guard_host_error`. So a
+same-user client cannot make the owner write observations or holds under another root, or
+SQLite sidecars beside another store. `journalRoot` and the other hook settings are not request
+parameters: the adapter journals in its own process. The legacy CLI sends its `--db-path` as an
+absolute path. An owner whose configuration resolves another root than the hook's settings
+answers every routed Stop with that host error; set `CODEX_SESSION_RELAY_MARKER_ROOT` in the
+service's environment to the hook's `markerRoot` when an installation chose its own.
 
 Go finding `owner=python`: normal daemon startup refuses to open the DB writable; only an
-explicit transition controller may start the protocol; Go clients use the compatible endpoint or
-the inbox. There is no "lock looks stale, start another daemon" path.
+explicit transition controller may start the protocol; a Go `guard-evaluate` uses the compatible
+endpoint, a Go `emit`, `ack` or `fault-notification-ack` is queued in the inbox exactly as the
+fence queues it, and every other Go writer refuses. There is no "lock looks stale, start another
+daemon" path.
+
+### Read-only clients under a foreign owner
+
+Read-only Store transactions use deferred `BEGIN` with `query_only=ON`, never
+`BEGIN IMMEDIATE`. On a store opened this way - one its runtime may not write - the
+housekeeping a writer persists is projected and never written: `fault-notifications` projects
+expired leases and withdrawn faults, and `fault-next` projects lease expiry (below).
+The connection remains `mode=ro`, not `immutable=1`: immutable reads ignore
+committed WAL frames and can report stale domain data or ownership. `mode=ro`
+may create empty WAL/SHM sidecars for a checkpointed WAL database; these are SQLite
+coordination files, not admitted domain writes, and are never removed by the
+client. Avoiding them by immutable reads would change behavior when the Go writer
+is live. The live-WAL regression test checks this distinction.
+
+Both runtimes serve the same read-only forms: `cli.py` `READ_ONLY_COMMANDS`, plus
+`fault-policy` without `--fault-class`, `fault-limit` without `--kind`, `service status`
+and `store-challenge --read`. A read-only form first asks the lock-free ownership
+preflight; where this runtime may write (its own active store) it opens the admitted
+store as a writer command would, and on any ownership refusal it reads through the
+`mode=ro`, `query_only` store instead, taking no write gate. Go's admission does not wait
+for an exclusively held write gate: that contention is a refusal, so the read goes
+`mode=ro`, where Python's blocking `LOCK_SH` waits for the gate.
+The read-only classification decides how a form opens the store, never what the owner's own
+housekeeping does. The owner runtime's `fault-next` on its own store is admitted as a writer
+and expires lapsed leases there (`expire_leases`, which nothing else calls): it writes, as
+every `fault-next` did before the fence, so a claim whose worker died is offered again and
+`fault-claim` takes it. Only a `fault-next` on a store its runtime may not write (one its
+ownership preflight or write admission refuses: the other runtime's, or one mid-transition),
+which it opened read-only, projects that expiry on a private SQLite backup
+(`readonly_queue_state`) without writing it to the store. Both runtimes branch on how the
+store was opened (`services.store.read_only`, Go's `Store.ReadOnly`), never on the command's
+read-only classification. Its `--limit` is checked before the store is opened, as
+`cmd_fault_next` checks it before its first store access. For a store that exists, the answer
+is the same whichever runtime serves it, except that `doctor`'s `ownership`, `access`, `actorReachability`,
+`accessReceipt` and `runtime` blocks are each runtime's own diagnosis (decision 31), and
+that until it lands the Go CLI evaluates `guard-evaluate` in-process where the Python fence
+routes it to the owner's `control.sock` (refactor-backlog.md, Deferred review findings,
+audit 7).
+
+A read-only client never creates, initializes, binds or repairs a store. When `D`,
+`takeover.json` and `write-gate.lock` are all missing, a read-only form that opens the
+store answers `{"error": "refused", "reason": "store_absent", "detail": "no relay
+store exists at <D>; a read-only command never creates one"}` with exit 2 and leaves `S`
+uncreated, in both runtimes alike (Record). A partial store (`takeover.json` or
+`write-gate.lock` without `D`) is refused by Go with the answer its writer admission gives
+it: reason `store_owned_by_other`, detail `ownership refused: existing database required:
+lstat <D>: no such file or directory`, exit 2, and `S` unchanged. The forms that do not open the store this way (`ack-proof`,
+`dispositions-show`, `doctor`, `guard-evaluate`, `intent-show`, `managed-show`,
+`merge-evidence`, `packet-check`, `reporting-derive`, `reporting-show` and
+`service status`) answer an absent store in their own shape and create nothing either. Only a writer command or a daemon initializes an absent store (decision 30).
+Where a command's own argument refusal falls follows `cli.py` `main`: a read-only form's
+`Services.store` is lazy, so a handler that refuses its arguments before reaching the store
+(`merge-turn-show`'s selectors, `linkage-up`'s `--scope`) answers that refusal and creates
+nothing, never `store_absent`; a write form's store is opened by `_ownership_preflight` before
+its handler, so its own argument refusal comes after admission: an absent store is left
+initialized and a store another runtime owns answers `store_owned_by_other` (decision 31).
+The Python half for a partial store is pending (refactor-backlog.md, Deferred review
+findings, audit 25): until it lands, the fence answers a read-only form on a gate-only or
+mirror-only store with a host error (exit 3), creating nothing.
+
+### The live-state guard (until todo 43)
+
+The Go build refuses a database under `~/.local/state/codex-session-relay` or
+`$XDG_STATE_HOME/codex-session-relay` unless `CRW_ALLOW_LIVE_STATE=1` is set. The todo-42
+runbook exports it for every step that runs a Go process against the live state: the
+controller, and through it the candidate, the supervisor and each worker, which all inherit
+the controller's or service's environment. A read the guard refuses reports the refusal,
+`store: live state requires CRW_ALLOW_LIVE_STATE=1`, instead of answering as if the store
+could not be opened. A read-only form whose store open the guard refuses, including
+`packet-check`'s store reading, answers it as a host error (exit 3). The owner's `control.sock` answers a Stop's `guard-evaluate`
+with the same host record (`{"error": "host", "detail": ...}`, as `control.py` answers a
+guard that raised), and the Stop adapter journals it as `guard_host_error`. The fault
+sweep's managed readings name it in their `unmeasured` reason
+(`store_unreadable: store: live state requires CRW_ALLOW_LIVE_STATE=1`). Removing the
+guard is a todo-43 change.
 
 ## Rollback
 
@@ -296,11 +596,29 @@ Rollback is the same protocol run in reverse, Go to the retained fence Python re
 2. Drain Go: finish admitted operations, close writable connections, stop the Go daemon by
    verified identity.
 3. Acquire `daemon.lock EX`, `K.lock EX`, `write-gate EX`.
-4. Validate that the running Python build equals `python_compatibility_build`.
+4. Validate that the running Python build equals `python_compatibility_build`. The retained
+   entry point is named explicitly, never searched for: `crw relay takeover rollback --to python
+   --python-relay <absolute path of the retained fence release's codex-session-relay>`, and
+   `takeover activate --python-relay <path>` when a Python activation is resumed. Before step 1
+   and again before step 5 the controller refuses unless that path is an executable file, the
+   service intent is enabled (the Python candidate is its supervisor) and the launch declaration
+   is not refused, so a missing precondition never leaves the store at `owner=python
+   phase=starting`. The build itself is proven at readiness: the candidate's holder identity
+   must carry `build == python_compatibility_build`.
 5. `BEGIN IMMEDIATE`; require `owner=go` and the expected epoch; set `owner=python`,
    `owner_epoch=old+1`, `takeover_id=<new transition>`; COMMIT; publish `phase=starting`.
-6. Activate Python under the fence release; replay the remaining inbox entries; publish
-   `phase=active`; release `takeover.lock`.
+6. Activate Python under the fence release: the controller executes `<python-relay> --state S
+   --socket K service run --takeover-candidate` (plus `--allow-isolated-scope` for an isolated
+   registry) directly, with no shell or `uv` wrapper, as its child in a new session with the
+   channel on fd 3; the Python candidate replays the remaining inbox entries and recovers; the
+   controller publishes `phase=active`; release `takeover.lock`.
+
+A rollback that has not reached its step-5 COMMIT is aborted with `crw relay takeover abort`:
+back to active Go when it began from active Go, and back to `owner=go phase=starting` when it
+began from a Go candidate that never became ready (the reverse transfer of cutover Step 5),
+where the recovery stays `takeover activate` or the rollback. After the COMMIT the recovery is
+`takeover activate --python-relay` or the reverse transfer `crw relay takeover begin --to go`
+(Step 5).
 
 Never restore the `S/takeover-backups/` snapshot as rollback. It would discard every receipt
 and ACK accepted while Go was the owner. The backup exists for disaster recovery evidence only.
@@ -315,7 +633,35 @@ with row counts and a `schema_meta` dump equal across the three states except fo
 The irreversible point is an operator-authorized, durable write of
 `schema_meta.rollback_allowed = "0"` inside a SQLite transaction (`crw relay takeover commit`,
 run only after Jun ends the observation window, todo 43). The JSON mirror follows afterwards.
-If the command's response is lost, reread the key to learn whether the commit happened.
+Between that COMMIT and the mirror publication, admitted Go writers treat a mirror
+`rollbackAllowed=true` against the DB's `"0"` (owner Go, same epoch, phase active) as committed
+and keep serving; every other `rollbackAllowed` disagreement still refuses. If the command's
+response is lost, rerun `crw relay takeover commit`: it is idempotent, rereads the key and
+republishes the mirror.
+
+The commit ends every way back to a Python owner. While Go owns the store the retained Python
+CLI queues its `emit`, `ack` and `fault-notification-ack` in `S/takeover-inbox` (Inbox), and the
+Go owner applies them at its next drain (Wire format, "Both owners drain": a writable relay
+command, daemon start, the service supervisor's recovery). The controller holds no handler
+table and no App Server host, so the commit applies nothing itself; it closes the way back only
+over an empty inbox, so that every entry queued while that way was open has been applied by a
+Go drain, not merely accepted. `takeover commit` refuses, inside its write transaction and
+before the CAS, while `S/takeover-inbox` holds any entry: every name the replay reads (the entry
+grammar in Wire format; Go's replay and the commit share one classification,
+`ownership.IsInboxEntry`), whatever its bytes. A name outside that grammar, such as an
+unpublished `.tmp-` file, is never read or removed by a replay and blocks nothing. The refusal
+(`store_owned_by_other`, exit 2) changes nothing and names the recovery: a writable Go relay
+command with the service's socket (for example `crw relay --socket <socket> store-challenge
+--write`), which drains before its handler, or a restart of the Go service, whose recovery
+drains; then rerun the commit. An entry a drain keeps holds the commit back until a later drain
+applies it: a receipt whose host could not confirm its turn is retained for the next drain, and
+an invalid entry fails every drain closed until the operator moves it out (Wire format).
+Meanwhile `takeover rollback --to python --python-relay <path>` stays available, and its Python
+candidate replays the inbox before readiness. No other controller step ends the way back:
+`takeover abort` and `takeover rollback` keep `rollback_allowed=1`, and the owner either leaves
+replays the inbox at its next drain. A receipt the retained Python CLI queues after the commit
+is applied by the Go owner's next drain like any other (PR #185 thread 4128457226;
+`Test30CommitRefusesOverQueuedInboxEntries`).
 
 Only after this point may a later Go release change the schema or the meaning of stored data.
 Cached hook compatibility paths have a separate retirement condition (Retention); closing
@@ -332,22 +678,183 @@ the interval when no owner is active. It ships in the fence release, not only in
    replacing an existing entry (`link(2)`, never `rename` over an existing name), fsync the
    directory.
 3. A repeated ID with identical bytes is a retry; the same ID with different bytes is a conflict
-   and is refused.
+   and is refused while the earlier entry still exists. After that entry is retired the name is
+   free again; replay then records the reused ID as a terminal conflict (Wire format below).
 4. The current owner applies the request through the existing handler.
 5. The owner commits the domain result and an ingestion dedup/result marker in one DB
    transaction. The marker uses a reserved `schema_meta` namespace; no Go-only schema.
-6. The owner unlinks the inbox file only after that commit, then fsyncs the directory.
+6. The owner unlinks the inbox file only after that commit, then fsyncs the directory. It holds
+   `S/takeover-inbox/.replay.lock` (`flock` EX, created `0600` with `O_NOFOLLOW`, never unlinked
+   or replaced; waited for at most the Lock order bound, then a retryable host error) from
+   listing and reading entries until after that unlink and directory fsync, and
+   unlinks only the entry whose bytes it read (same device and inode), never a newer entry that
+   a sender linked under the same name.
 
 Crash before application leaves the file. Crash after commit but before unlink causes an
 idempotent replay that the marker resolves. A queued request is acknowledged as **durably
 queued**, never as applied or verified. A disk-full or fsync failure never receives a durable
 acknowledgment; supported senders keep retrying until they get one.
 
+A queued request is judged when it is applied, not when it was accepted: the envelope carries no
+acceptance time. A durably queued ACK can therefore go stale. A lease-bound
+`fault-notification-ack` applied after its lease lapsed is refused (`fault_claim_stale`) and the
+notification stays uncertain; the sender resolves it with
+`fault-notification-reconcile --delivered yes --ref <ref>`. Entries queued while Go owns the store
+are applied by the Go owner (Wire format, "Both owners drain"), and `takeover commit` refuses
+while any is still queued (Commit point).
+
 Original identifiers, generations, payloads and unresolved states are preserved: managed
 creation IDs are deterministic and an uncertain operation keeps its reservation rather than
 authorizing a replacement child (managed.py:1-5, 178-180, 357-383). The non-DB receiver ledger
 keeps its own answer-versus-applied distinction and its fsync-then-rename save
 (receiver.py:736-786, 788-850).
+
+### Wire format (decision 25)
+
+Both owners use canonical JSON: `json.dumps(value, sort_keys=True,
+separators=(",", ":"), ensure_ascii=False).encode("utf-8")`, without a trailing
+newline. An entry is the canonical encoding of:
+
+```json
+{"inboxVersion":1,"operationId":"<command>.<stable-key>","command":"<CLI subcommand>","arguments":{},"payloadDigest":"sha256:<hex>"}
+```
+
+`arguments` contains the subcommand's parsed option values keyed by argparse dest;
+values equal to their defaults are omitted. Values retain their parsed types
+(string, integer, boolean, or list of strings). Global routing options are not
+included: the entry is already addressed to S. The payload digest is lowercase
+SHA-256 hex over canonical `arguments`, prefixed with `sha256:`. There are no
+clock, process, or host fields in the envelope.
+
+The queueable ingress set is closed:
+
+| Command | Stable key | Receipt/ACK ingested |
+|---|---|---|
+| `emit` | First 32 hex digits of payload digest | Child completion receipt; event ID is derived only inside the handler, not supplied as a parsed option |
+| `ack` | `event` | Parent acknowledgment |
+| `fault-notification-ack` | `notification` | Notification delivery acknowledgment |
+
+Verification claims/verdicts, publication completion, reconciliation, receiver-local
+ledger writes, and operator state changes are not receipt/ACK ingress. They do not
+queue. `supervisor-read` is a host-verified readback operation, not an authored
+receipt: new calls refuse with `store_owned_by_other` rather than queue. Entries
+accepted by the preceding fence build remain readable using the `message` stable
+key; they replay through the existing handler, including its terminal usage result
+when no host socket is supplied. Queueing happens only on admission refusal for another runtime's ownership
+or `phase=draining`; malformed/mismatched/unsupported records still refuse. Both runtimes judge
+that refusal first with the lock-free `check_start`, before the selection refusal and before
+`--kind-module`, and again at the writable open: under another owner a `--socket` that
+disagrees with the store's recorded socket, or a `--kind-module` that cannot be imported,
+does not stop a queueable request from being queued.
+
+The operation ID is `<command>.<stable-key>`. Encode every UTF-8 byte outside
+`[A-Za-z0-9._-]` as uppercase `%XX`; the encoded filename is at most 200 characters.
+An overlength identifier is rejected, never truncated into another operation's ID.
+Publish via `.tmp-<operation-id>-<pid>-<random hex>` in the inbox directory:
+write, file fsync, `link(2)` to the final name without replacement, directory fsync.
+Remove the temporary name after publication or failure. A failed publication receives
+no durable acknowledgment. A byte-identical retry that finds the final name acknowledges
+only after its own successful directory fsync.
+
+An inbox entry is a directory entry whose name does not begin with `.`, matches
+`(?:[A-Za-z0-9._-]|%[0-9A-F]{2})+` and has at most 200 characters, and that is a regular
+file checked without following a link (`O_NOFOLLOW`, `fstat`; a FIFO is never waited on).
+Readers ignore every other name, exactly like `.`-names, and never unlink it. A
+grammar-valid name that is a symbolic link or not a regular file is refused by name
+(`invalid takeover inbox entry: <name>: symbolic link` or `...: not a regular file`) and
+never followed. A grammar-valid regular file whose bytes do not validate (not canonical
+JSON, `inboxVersion` other than the integer `1`, unknown command, mismatched name,
+arguments, identifier or digest) is storage corruption. Both runtimes keep it and fail
+closed: the writable command exits 3 and the daemon does not start. Recovery is an
+operator action: move that one named entry out of `S/takeover-inbox/` (keeping it for
+diagnosis) and rerun; never edit it in place.
+
+CLI answers use the ordinary JSON stdout envelope:
+
+- New entry or byte-identical retry: exit 0,
+  `{"status":"durably_queued","operationId":"...","payloadDigest":"...","detail":"durably queued; not yet applied"}`.
+- Same ID with different bytes while the earlier entry exists: exit 2,
+  `{"error":"refused","reason":"inbox_conflict","detail":"..."}`; preserve the existing file.
+- An identifier that encodes to more than 200 characters, or an argument that is not
+  valid UTF-8: exit 4, `{"error":"usage","detail":"..."}`. This is decided before any
+  I/O: no temporary file, no final entry, never retried as a host error.
+- Write, file-fsync or link failure (before `link(2)` succeeds): exit 3,
+  `{"error":"host","reason":"inbox_unavailable","detail":"..."}`; remove the temporary
+  file and publish no final entry.
+- Directory-sync failure after a successful `link(2)`, or after finding a byte-identical
+  final entry: exit 3 with the same envelope and no acknowledgment. Remove the temporary
+  file but never unlink the final name: another sender may already hold a durable
+  acknowledgment for the same bytes. The entry is a valid publication; the owner applies
+  it once or resolves it through its marker, and a byte-identical retry answers
+  `durably_queued`.
+
+Only `error`, `reason` and the exit code are normative in these answers; `detail` text is
+implementation-specific (Python prints `<exception class>: <message>`). A publisher never
+removes a linked final entry; only the owner does, after committing its marker.
+
+The applying owner's transaction reads `schema_meta['inbox:<operation-id>']`:
+
+- Same `payloadDigest` and `exit` the integer `0`: the request was applied; the handler
+  is not run again and the entry is retired. This is the only deduplication, and it is
+  what makes a crash between commit and unlink replay the marker, not the handler.
+- No marker, or the same digest with a nonzero exit: run the existing handler inside a
+  savepoint and record its domain result together with the canonical marker value
+  `{"payloadDigest":"...","exit":0,"answer":{}}` (the actual integer exit and handler
+  stdout object replace the example), replacing any earlier marker for that key. A
+  refused request is thus judged again when a byte-identical retry is applied, as a
+  direct call would be. A domain refusal rolls back handler writes and stores its
+  exit-2 answer. A usage refusal (exit 4), including a replay whose required global
+  arguments cannot be supplied, likewise rolls back handler writes, stores the exact
+  usage answer in its marker, and retires the entry.
+- A different digest (a retired ID reused with different bytes): a terminal conflict.
+  Never run the handler. In the same transaction insert, if absent,
+  `schema_meta['inbox-conflict:<operation-id>:<first 16 hex digits of the digest>']` =
+  canonical `{"payloadDigest":"<new digest>","exit":2,"answer":{"error":"refused","reason":"inbox_conflict","detail":"committed inbox payload differs"}}`,
+  leave the `inbox:` marker unchanged, commit, retire the entry and go on draining.
+
+Retained, never terminal: an ownership/admission refusal raised by the handler after
+the entry's transaction opened (Python `OwnershipRefused` from transaction
+revalidation, including an unreadable `takeover.json`; Go `ownership.Refused` from
+`Admission.Revalidate`), and a receipt refusal caused by a host that could not confirm
+the turn (`HostUnavailable`). The owner rolls back the handler writes, writes no
+marker, keeps the entry and goes on to the next entry, so a retained entry never
+blocks unrelated writers or daemon recovery. Any other host/storage exception rolls the
+transaction back, keeps the entry and fails the writable command or recovery. Only
+after commit may the owner unlink the final entry and fsync its directory.
+
+Both owners drain entries, the same way, including after rollback:
+
+- before writable CLI work, once the command's writable store open is admitted and after
+  the selection refusal and `--kind-module`, before the handler reads its own arguments:
+  Python in `cli.main` after `_ownership_preflight` opened `services.store`, Go at the relay
+  CLI's dispatch, which then hands that same store to the handler's own open
+  (`store.WithAdmitted`). Both: every writable command but `service`, `daemon`,
+  `managed-start` and `intent-*`, which open their own admitted connection; a handler that
+  refuses its own arguments (`deliver`, `reconcile`, `recover`, `verify-acks`,
+  `supervisor-send` or `supervisor-read` without `--socket`, `supervisor-stage` without a
+  subject, `store-challenge` without `--write` or `--read`) drains first all the same;
+- at daemon start (`daemon`, including an adopted worker) and in the service supervisor's
+  recovery before `RecoverOnStart`, which for the takeover candidate is under its starting
+  permit and before readiness (Step 6).
+
+Each entry is applied through the command's existing handler on the drainer's own admitted
+store (Go: in `store.Compose`, never through a second `store.Open`, which would wait on the
+connection the replay's transaction holds), with the drainer's App Server socket as its host:
+a queued `emit` reads its turn from the host as a direct `emit --socket` does, and a queued
+`ack` confirms a delivery through it. Go's queued-ack host is an adapter that shares no store,
+so the replayed ack records no discovery cursor, where Python's adapter records one inside the
+replay's transaction. A legacy `supervisor-read` entry replays as a direct `supervisor-read`
+does on the drainer's store (Go: `supervisor.Channel.ReadBack` inside the replay's
+transaction): with no drainer socket, its no-host usage answer (exit 4); with one, the
+readback's own store checks first (no such message, another recipient, a wrong proof: the same
+exit-2 answer in both runtimes), and a host opened only on its first use, as Python's
+`_LazyAdapter` is. Go's readback host, like its queued-ack host, shares no store.
+
+Golden entry bytes live in `contract/golden/takeover-inbox/`, one per queueable command plus
+the retained legacy `supervisor-read` format; Go's envelope (`internal/relay/inbox.Envelope`)
+reproduces them byte for byte, and its replay accepts exactly the entries the fence accepts: it
+re-derives an entry from its typed arguments, as the fence does from the rebuilt namespace, so
+an empty append list (which no producer writes) is kept and accepted, never dropped.
 
 ## Hook budget
 
@@ -383,6 +890,10 @@ Decision 32 sets where they are enforced: an allocation bounds time spent waitin
 or a peer (stdin readiness, the guard's answer), never time the process spent unscheduled.
 The settings read, the Unix connect (which never waits) and the decision-22 row are bounded by
 the absolute deadline.
+
+A Stop spends one receipt read and one evaluation wherever it is evaluated: the legacy CLI's
+preflight before it routes to the owner makes the selection without reading the receipt
+(When the other runtime owns the record).
 
 Unreachable fast path (target under 150 ms including startup): read only the small routing
 configuration needed to find the socket; attempt one non-blocking Unix-socket connection; on

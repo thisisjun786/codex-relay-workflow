@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func TestD11SupervisorReportRecordedRefusalMatchesPythonCLI(t *testing.T) {
@@ -51,6 +52,8 @@ raise SystemExit(cli.main(sys.argv[1:]))
 	if err := cmd.Run(); err != nil {
 		pyCode = err.(*exec.ExitError).ExitCode()
 	}
+	// Python ran first on this store; Go runs on it after a takeover, as on a host.
+	testsupport.HandOver(t, filepath.Join(home, "state/relay.sqlite3"), "go")
 	rawArgs, _ := json.Marshal(args)
 	for _, invocation := range []struct{ name, argv0 string }{{"codex-session-relay", "codex-session-relay"}, {"crw relay", "crw relay"}} {
 		t.Run(invocation.name, func(t *testing.T) {

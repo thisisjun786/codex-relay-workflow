@@ -5,8 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
 type ProbeAccess struct {
@@ -38,6 +41,24 @@ func Probe(ctx context.Context, selection StateSelection) (result ProbeResult) {
 	}
 	if result.Access.DirectoryExists {
 		result.Access.DirectoryReadable = syscall.Access(selection.Path, 0x4|0x1) == nil
+	}
+	if _, err := os.Stat(selection.DBPath()); err == nil {
+		result.Access.DBExists = true
+		if real, err := resolvePath(selection.DBPath()); err == nil {
+			result.Store.RealPath = real
+		}
+	} else if result.Access.DirectoryExists {
+		notes = append(notes, "database stat failed: "+PythonOSError(err))
+	}
+	if refusal := ownershipPreflight(ctx, selection.DBPath()); refusal != "" {
+		// A store this runtime may not write is diagnosed without a live SQLite open (even
+		// mode=ro can create WAL/SHM on a copied WAL database) and without creating even a
+		// temporary file beside it.
+		probeForeign(ctx, selection.DBPath(), &result, &notes)
+		notes = append(notes, refusal)
+		return result
+	}
+	if result.Access.DirectoryExists {
 		// Writability is measured by writing: a privileged runner ignores mode bits.
 		if temp, err := os.CreateTemp(selection.Path, ".probe-"); err == nil {
 			result.Access.DirectoryWritable = true
@@ -47,15 +68,8 @@ func Probe(ctx context.Context, selection StateSelection) (result ProbeResult) {
 			notes = append(notes, "directory write failed: "+PythonOSError(err))
 		}
 	}
-	if _, err := os.Stat(selection.DBPath()); err != nil {
-		if result.Access.DirectoryExists {
-			notes = append(notes, "database stat failed: "+PythonOSError(err))
-		}
+	if !result.Access.DBExists {
 		return result
-	}
-	result.Access.DBExists = true
-	if real, err := resolvePath(selection.DBPath()); err == nil {
-		result.Store.RealPath = real
 	}
 	file, expected, refused := holdDatabase(ctx, selection.DBPath())
 	if file == nil {
@@ -85,6 +99,85 @@ func Probe(ctx context.Context, selection StateSelection) (result ProbeResult) {
 	}
 	probeWrite(ctx, file, expected, &result, &notes)
 	return result
+}
+
+// ownershipPreflight is probe's check_start: "" when this runtime may be admitted to write
+// the store (or it is absent or legacy, left to the probe itself), otherwise the refusal as
+// Python's str(OwnershipRefused). The mirror is read as ownership.mirror reads it, before the
+// database; a database that cannot be read at all is left to the probe below, which reports
+// it in detail. Go's admission preflight decides whether a fenced store is refused, and
+// ownership.py validate's words name why wherever validate refuses it too.
+func ownershipPreflight(ctx context.Context, dbPath string) string {
+	const refused = "store_owned_by_other: "
+	raw, err := OwnershipMirror(dbPath)
+	if err != nil {
+		return err.Error()
+	}
+	if raw != nil {
+		if why := MirrorRefusal(raw); why != "" {
+			return refused + why
+		}
+	}
+	meta, err := readMetadata(ctx, dbPath)
+	if err != nil {
+		return ""
+	}
+	fenced := raw != nil
+	for _, key := range ownership.Keys {
+		_, present := meta[key]
+		fenced = fenced || present
+	}
+	if !fenced {
+		return ""
+	}
+	if raw == nil || meta["writer_protocol"] != "1" {
+		return refused + "missing or unsupported writer protocol"
+	}
+	resolved, err := resolvePath(dbPath)
+	if err != nil {
+		return ""
+	}
+	var denied *ownership.Refused
+	switch err := checkStart(ctx, resolved); {
+	case err == nil:
+		return ""
+	case !errors.As(err, &denied):
+		return ""
+	}
+	if why := fenceRefusal(resolved, meta, raw); why != "" {
+		return refused + why
+	}
+	// Refusals validate does not make (the socket and scope identity) keep Go's words.
+	if words := fenceWords(denied.Detail); words != "" {
+		return refused + words
+	}
+	return refused + denied.Detail
+}
+
+// probeForeign is probe's foreign-store branch: identity from a disposable copy and a stat of
+// the resolved path, never a connection to the database itself.
+func probeForeign(ctx context.Context, dbPath string, result *ProbeResult, notes *[]string) {
+	meta, err := readMetadata(ctx, dbPath)
+	if err == nil {
+		var resolved string
+		if resolved, err = resolvePath(dbPath); err == nil {
+			var info os.FileInfo
+			if info, err = os.Stat(resolved); err == nil {
+				result.Store.StoreID, result.Store.CreatedAt, result.Store.SchemaVersion = meta["store_id"], meta["store_created_at"], meta["version"]
+				if st, ok := info.Sys().(*syscall.Stat_t); ok {
+					result.Store.Device, result.Store.Inode, result.Store.Links = uint64(st.Dev), st.Ino, uint64(st.Nlink)
+				}
+				if dir, err := os.Stat(filepath.Dir(resolved)); err == nil {
+					if st, ok := dir.Sys().(*syscall.Stat_t); ok {
+						result.Store.LogDevice, result.Store.LogInode, result.Store.LogName = uint64(st.Dev), st.Ino, filepath.Base(resolved)
+					}
+				}
+				result.Access.DBReadable = true
+				return
+			}
+		}
+	}
+	*notes = append(*notes, "database read failed: "+PythonSQLiteError(err))
 }
 
 func probeRead(ctx context.Context, file *os.File, expected string, result *ProbeResult, notes *[]string) {
@@ -117,6 +210,12 @@ func probeRead(ctx context.Context, file *os.File, expected string, result *Prob
 }
 
 func probeWrite(ctx context.Context, file *os.File, expected string, result *ProbeResult, notes *[]string) {
+	admission, err := admitWrite(ctx, expected)
+	if err != nil {
+		*notes = append(*notes, "database write probe failed: "+err.Error())
+		return
+	}
+	defer admission.Close()
 	conn, err := openHeld(ctx, file, "rw")
 	if err != nil {
 		*notes = append(*notes, "database write probe failed: "+PythonSQLiteError(err))
@@ -126,6 +225,10 @@ func probeWrite(ctx context.Context, file *os.File, expected string, result *Pro
 	// Before the transaction, never after it: BEGIN IMMEDIATE on a moved name creates its -wal.
 	if elsewhere := conn.elsewhere(ctx, file, expected); elsewhere != "" {
 		*notes = append(*notes, "database write probe failed: "+elsewhere)
+		return
+	}
+	if err = admission.Revalidate(ctx, conn.conn); err != nil {
+		*notes = append(*notes, "database write probe failed: "+err.Error())
 		return
 	}
 	if err := conn.exec(ctx, "BEGIN IMMEDIATE"); err != nil {

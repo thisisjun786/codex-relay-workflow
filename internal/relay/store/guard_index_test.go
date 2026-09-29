@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"modernc.org/sqlite"
 )
 
@@ -69,7 +70,8 @@ def surface(e):
     return {"type": type(e).__name__, "message": str(e), "code": getattr(e, "sqlite_errorcode", None)}
 out = {}
 for index, (setup, racers, table, overrides) in cases.items():
-    path = os.path.join(root, index + ".sqlite3")
+    # One store per directory: a directory holds one ownership mirror (takeover.json).
+    path = os.path.join(root, index, index + ".sqlite3")
     s = Store(path); l = Linkage(s, FakeClock()); ctx = setup(s, l)
     # 1. The writer API, raced from separate connections, 8 threads: what escapes?
     escaped = []
@@ -162,9 +164,10 @@ func runGuard(t *testing.T, index string) {
 	if python.ForcedLeft != 0 {
 		t.Fatalf("Python kept %d forced rows", python.ForcedLeft)
 	}
-	// When: Go opens that Python-written store and writes the same row through the typed insert,
-	// bare and inside Transaction.
-	s, err := Open(context.Background(), python.DB, "")
+	// When: Go takes the stopped Python-written store over, opens it and writes the same row
+	// through the typed insert, bare and inside Transaction.
+	testsupport.HandOver(t, python.DB, "go")
+	s, err := fixtureOpen(context.Background(), python.DB, "")
 	must(t, err)
 	defer func() { must(t, s.Close()) }()
 	ctx := context.Background()

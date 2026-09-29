@@ -95,7 +95,7 @@ overstatement this map exists to avoid.
 |---|---|---|
 | `test_registration_contention.py` | 4 | 1 |
 | `test_registration_hold.py` | 3 | 1 |
-| `test_failure_recovery.py` | 14 | 2, 3 |
+| `test_failure_recovery.py` | 15 | 2, 3 |
 | `test_multi_parent_isolation.py` | 8 | 5, 6 |
 | `test_operational_scale.py` | 8 | 7, 8 |
 | `test_regression_map.py` | 29 | 9, the sweep's own reach, and where the faults are injected |
@@ -117,6 +117,15 @@ long one of those waits took would have to read a clock, and the scan would catc
 
 What each one waits on:
 
+- `test_fence.py` starts separate writer and exclusive-lock processes, synchronizes
+  on pipe messages emitted after actual flock outcomes, and reaps both children.
+  Socket tests subscribe before invoking the guard and join the exact response;
+  no sleep or latency luck establishes exclusion.
+
+- `test_takeover_candidate.py` starts direct-child candidates over inherited
+  socketpairs and waits for JSON-line readiness/activation or EOF, then reaps each
+  child. It also executes an observer worker to check descriptor inheritance.
+  Only the 20-second channel deadline case injects time; it waits on no real timer.
 - `test_service.py` starts real subprocesses and polls `time.monotonic` until one
   holds the lock, and runs one real worker for a single short segment outside the
   scripted clock.
@@ -255,7 +264,7 @@ package declares is partitioned into one of three lists and the suite checks the
 total: the ones whose fold reduces to a cheap side, the ones that fold where the rule cannot
 weigh them, and the ones that reach their value down a single path. Every place the suite
 measures something with either folded kind is listed, keyed by the assertion's own text, with
-a verdict written beside it. Today that reads 72 booleans as 19 / 40 / 13, and 98 measured
+a verdict written beside it. Today that reads 74 booleans as 20 / 41 / 13, and 98 measured
 places. Those counts, and the per-module case counts in the landed table above, are read back
 out of this file and compared against the suite, so a number here that went stale fails there.
 

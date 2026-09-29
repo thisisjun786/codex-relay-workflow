@@ -37,6 +37,7 @@ func set1Capture(t *testing.T, id string) (map[string]any, *store.Store) {
 	if err = json.Unmarshal(output, &want); err != nil {
 		t.Fatal(err)
 	}
+	ownCopied(t, filepath.Join(root, "relay.sqlite3"), "go")
 	s, err := store.Open(context.Background(), filepath.Join(root, "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)

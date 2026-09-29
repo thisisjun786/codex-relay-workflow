@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"io"
 	"math/big"
 	"slices"
 	"sort"
@@ -16,12 +15,6 @@ import (
 
 var cNames = []string{"fault-show", "fault-next", "fault-retry", "fault-queue", "fault-cancel", "fault-stage"}
 
-func cResponse(w io.Writer, value any, code int) int {
-	if e := contract.Emit(w, cOrdered(value, "")); e != nil {
-		return 3
-	}
-	return code
-}
 func cOrdered(v any, parent string) any {
 	if m, ok := v.(map[string]any); ok {
 		orders := map[string][]string{"": {"schema", "scopeKey", "faults", "limit", "next", "limits", "publications", "held", "budgets", "budgetsTruncated", "faultId", "found", "error", "reason", "detail", "publicationId", "state", "stage", "ref", "recorded", "remediationId"}, "target": {"team", "projectRef"}, "publicationsFull": {"publication_id", "fault_id", "kind", "trigger_key", "cycle", "tracker_ref", "external_ref", "summary", "identity_digest", "state", "attempts", "next_attempt_at", "lease_owner", "lease_until", "issued_at", "last_error", "external_result", "created_at", "updated_at", "confirmed_at", "payload", "target", "holdReason", "history"}, "faults": {"seq", "fault_id", "product", "fault_class", "component", "severity", "signature", "scope", "scope_key", "state", "cycle", "episode", "occurrence_count", "reopen_count", "detail", "suppression", "external_ref", "first_seen_at", "last_seen_at", "cleared_at", "published_at", "resolved_at", "updated_at", "linkState", "linkedProject", "occurrences", "publicationsTruncated", "publications", "clears"}, "occurrences": {"occurrence_id", "fault_id", "episode", "occurrence_key", "severity", "cleared", "detail", "evidence", "evidence_digest", "truncated", "observed_at", "recorded_at", "recorded_ts"}, "publications": {"publication_id", "kind", "trigger_key", "state", "attempts", "external_ref", "last_error"}, "held": {"publicationId", "kind", "product", "reason"}, "budgets": {"product", "kind", "limit", "window", "used", "remaining", "source"}}
@@ -346,11 +339,23 @@ func cShow(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 	return map[string]any{"schema": "fault-ledger/1", "scopeKey": nil, "faults": faults, "limit": limit, "next": next, "limits": "derived from this store only. A queued publication is not an issue anybody has written, and a confirmed one is not an issue anybody read. Pass next as after to continue; nested lists keep the newest 20 per fault"}, nil
 }
 func cNext(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
-	if e := l.expireLeases(ctx); e != nil {
-		return nil, e
-	}
 	limit, e := cLimit(ctx, a["--limit"], "--limit", 4)
 	if e != nil {
+		return nil, e
+	}
+	if l.Store.ReadOnly() {
+		// cmd_fault_next branches on services.store.read_only: a store this runtime may not
+		// write (cutover.md, Read-only clients under a foreign owner) gets lease expiry
+		// projected on a private copy (readonly_queue_state). The owner's own fault-next
+		// persists it, so a lapsed claim is offered again and claim() takes it.
+		projected, release, e := l.Store.Projection(ctx)
+		if e != nil {
+			return nil, e
+		}
+		defer release()
+		l = &Ledger{Store: projected, Clock: l.Clock}
+	}
+	if e := l.expireLeases(ctx); e != nil {
 		return nil, e
 	}
 	var answer any

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // Carried from todo 25A: test_cli.py CLI-5, CLI-7, CLI-9, CLI-21, CLI-38 (the emit/deliver/ack/
@@ -162,9 +164,18 @@ store.db.commit() if store.db.in_transaction else None
 store.close()
 print(event)
 `
+		// Python writes this fixture on Go's side too: Go's store is Python's for that step, after
+		// a takeover, and Go's again after another.
+		path := filepath.Join(side.state, "relay.sqlite3")
+		if side == gosd {
+			testsupport.HandOver(t, path, "python")
+		}
 		out, err := execUV(side, "python", "-c", script, side.state, side.work, rid).CombinedOutput()
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
+		}
+		if side == gosd {
+			testsupport.HandOver(t, path, "go")
 		}
 		event = strings.TrimSpace(string(out))
 	}

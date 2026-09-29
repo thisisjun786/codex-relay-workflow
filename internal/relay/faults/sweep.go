@@ -43,6 +43,11 @@ type Installation struct {
 	Package, Version, Location string
 }
 
+// RelayPackageVersion is codex_session_relay.__version__, the version faultsweep.INSTALLATION
+// records in every observation's facts. It follows the package, unlike ownership.PythonBuild,
+// which names the fence release and never moves with a later bump.
+const RelayPackageVersion = "0.2.0"
+
 // Sweeper derives the delivery faults of one store.
 type Sweeper struct {
 	Store *store.Store

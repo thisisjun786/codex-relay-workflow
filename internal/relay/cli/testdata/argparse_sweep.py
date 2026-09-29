@@ -9,12 +9,12 @@ children=next(a.choices for a in root._actions if isinstance(a,argparse._SubPars
 results=[]
 if request.get('root'):
  cases=[('none',[]),('help',['--help']),('unknown',['--unknown']),('bad',['zzz']),
-        ('abbreviation',['--st',request['home']+'/root-state','status']),
+        ('abbreviation',['--st','{home}/root-state','status']),
         ('ambiguous',['--s','x','status']),('end',['--']),('end-command',['--','status']),
         ('missing-state',['--state']),('json-value',['--json=1','status']),
         ('missing-module',['--kind-module']),('subcommand-abbreviation',['stat']),
-        ('space-state-equals',['--state='+request['home']+'/x y','--kind-module','crw_parity_absent','status']),
-        ('space-state-abbreviation',['--sta='+request['home']+'/x y','--kind-module','crw_parity_absent','status'])]
+        ('space-state-equals',['--state={home}/x y','--kind-module','crw_parity_absent','status']),
+        ('space-state-abbreviation',['--sta={home}/x y','--kind-module','crw_parity_absent','status'])]
  for prefix in ([],['--unknown']):
   for tail in (['status'],['status','--help'],['status','--unknown'],['show'],['show','--help'],['region-show','--help']):
    cases.append(('unknown-precedence-'+str(prefix+tail),prefix+tail))
@@ -24,16 +24,26 @@ if request.get('root'):
    if command=='capacity-show': tail=[command]
    if command=='region-show': tail=[command,'--repository','x']
    value=[] if option in ('--j','--json=1','--kind-module=crw_parity_absent') else ['x']
-   cases.append((command+'-'+option,['--state',request['home']+'/root-family','--kind-module','crw_parity_absent',option]+value+tail))
+   cases.append((command+'-'+option,['--state','{home}/root-family','--kind-module','crw_parity_absent',option]+value+tail))
+ # Each root case runs in a home of its own, empty in both runtimes: a store one case
+ # created would otherwise be absent for this oracle's earlier cases and present for all of Go's.
+ environ,cwd=dict(os.environ),os.getcwd()
  for mode,prog in enumerate(('codex-session-relay','crw relay')):
   root.prog=prog
   for name,child in children.items(): child.prog=prog+' '+name
-  for label,argv in cases:
+  for label,template in cases:
+   home=str(pathlib.Path(request['home'])/str(len(results)))
+   pathlib.Path(home).mkdir(parents=True)
+   os.environ.update(HOME=home,XDG_STATE_HOME=home+'/state',XDG_CONFIG_HOME=home+'/config',XDG_DATA_HOME=home+'/data',XDG_CACHE_HOME=home+'/cache',CODEX_HOME=home+'/codex')
+   os.chdir(home)
+   argv=[a.replace('{home}',home) for a in template]
    out,err=io.StringIO(),io.StringIO();code=0
    with contextlib.redirect_stdout(out),contextlib.redirect_stderr(err):
     try:code=main(argv)
     except SystemExit as e:code=e.code
-   results.append(dict(command='region-show' if argv==['region-show','--help'] else '<root>',label=label,args=argv,code=code,out=out.getvalue(),err=err.getvalue(),mode=mode,home=''))
+   results.append(dict(command='region-show' if argv==['region-show','--help'] else '<root>',label=label,args=argv,code=code,out=out.getvalue(),err=err.getvalue(),mode=mode,home=home))
+   shutil.rmtree(home)
+ os.chdir(cwd);os.environ.clear();os.environ.update(environ)
 for command in request['commands']:
  p=children[command]
  actions=[a for a in p._actions if a.option_strings and a.dest!='help']

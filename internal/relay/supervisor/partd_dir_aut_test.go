@@ -52,9 +52,7 @@ func partDOpen(t *testing.T, root, snapshot string) (*store.Store, *Channel, *re
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "tree", "state", "relay.sqlite3")
-	if err = os.WriteFile(path, data, 0600); err != nil {
-		t.Fatal(err)
-	}
+	restoreSnapshot(t, path, data, "go")
 	s, err := store.Open(context.Background(), path, "")
 	if err != nil {
 		t.Fatal(err)
