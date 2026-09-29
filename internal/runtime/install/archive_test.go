@@ -182,3 +182,62 @@ func TestAReleaseTagIsCheckedBeforeAnythingIsFetched(t *testing.T) {
 		t.Fatalf("a scratch directory was made for a tag that is not a tag: %v", left)
 	}
 }
+
+// An archive entry whose header declares more than MaxArchiveBytes, or whose body ends before
+// the size its header declares, is refused at the unpack with the destination as it was: no
+// runtime directory is left, no pointer placed, no install recorded. Nothing is truncated to fit.
+func TestAnOversizedOrShortEntryIsNotInstalled(t *testing.T) {
+	raw, err := binary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "crw_0.9.9_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz"
+	for label, last := range map[string]struct {
+		size int64
+		body string
+	}{
+		"over the bound":      {install.MaxArchiveBytes + 1, "short"},
+		"short of its header": {100, "ten bytes!"},
+	} {
+		var buf bytes.Buffer
+		compressed := gzip.NewWriter(&buf)
+		w := tar.NewWriter(compressed)
+		add := func(header *tar.Header, body []byte) {
+			if err := w.WriteHeader(header); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := w.Write(body); err != nil {
+				t.Fatal(err)
+			}
+		}
+		add(&tar.Header{Name: "crw", Mode: 0o755, Size: int64(len(raw)), Typeflag: tar.TypeReg}, raw)
+		for _, link := range []string{"codex-session-relay", "codex-thread-bridge", "crw-completion-hook"} {
+			add(&tar.Header{Name: link, Linkname: "crw", Typeflag: tar.TypeSymlink}, nil)
+		}
+		// The last entry's body stops where the archive ends, short of what its header declares.
+		add(&tar.Header{Name: "LICENSE", Mode: 0o644, Size: last.size, Typeflag: tar.TypeReg}, []byte(last.body))
+		if err := compressed.Close(); err != nil {
+			t.Fatal(err)
+		}
+		dir := t.TempDir()
+		path := filepath.Join(dir, name)
+		write(t, path, buf.String())
+		sum := sha256.Sum256(buf.Bytes())
+		write(t, filepath.Join(dir, install.SumsName), hex.EncodeToString(sum[:])+"  "+name+"\n")
+
+		h := newHost(t)
+		result, code := install.Install(context.Background(), h.options(), "install", install.Source{From: path})
+		if code != install.Refused || at(result, "failedStep") != "unpack the archive" || at(result, "retriable") != true || !strings.Contains(golden.Canon(at(result, "steps")), "nothing was unpacked") {
+			t.Fatalf("%s: exit %d\n%s", label, code, golden.Canon(result))
+		}
+		if entries, _ := os.ReadDir(h.dest); len(entries) != 0 {
+			t.Fatalf("%s: left %v", label, entries)
+		}
+		if _, err := os.Lstat(pointer.Path(h.dest)); !os.IsNotExist(err) {
+			t.Fatalf("%s: the pointer was placed", label)
+		}
+		if installs := golden.List(at(h.hostRecord(t), "components", "codex-session-relay", "installs")); len(installs) != 0 {
+			t.Fatalf("%s: the record lists %v", label, installs)
+		}
+	}
+}

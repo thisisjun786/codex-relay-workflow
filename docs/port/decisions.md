@@ -1408,9 +1408,12 @@ installer places `crw` and the links there itself, and the doctor reads them and
 path component beginning `.crw-` (the staging lock, the claim, the claim's `.crw-lock` sidecar and
 its atomic-write temporaries) or ending `.crw-lock` (any file's lock sidecar, decision 33), and
 `pyvenv.cfg` at any level (the doctor reads a directory holding one, and every path under it, as a
-Python venv, which a rollback's settings transition acts on), compared case-insensitively. Every
-entry is judged before anything is written, so a refused archive leaves nothing of itself, and
-the installer places the three links itself. The Go install entries are recorded before the
+Python venv, which a rollback's settings transition acts on), compared case-insensitively. No
+entry may declare more than `MaxArchiveBytes` (256 MiB, the bound on the compressed archive too),
+nor the entries together, and each body must be exactly the size its header declares (read
+through with `io.CopyN`, then EOF): nothing is ever truncated to a bound. Every entry is judged
+before anything is written, so a refused archive leaves nothing of itself, and the installer
+places the three links itself. The Go install entries are recorded before the
 candidate is exercised, as runtime_install.py records its entries before it measures
 (`cmd_install` writes them, then calls `measure_candidate`); the candidate is exercised through
 its own executables (`bin/codex-session-relay doctor` with a real socket connect; a read-only MCP
@@ -1513,6 +1516,7 @@ scripts/crw_runtime/staging.py:350-352 (a finished, unselected environment is ke
 .goreleaser.yaml (archive names, links, SHA256SUMS); internal/runtime/install and its tests
 (`TestRemoveRefusesARuntimeARegistrationStillNames`,
 `TestRemoveDropsTheInstallEntriesBeforeTheDirectory`, `TestAnArchiveCannotPlantControlData`,
+`TestAnOversizedOrShortEntryIsRefusedBeforeAnythingIsWritten`, `TestAnOversizedOrShortEntryIsNotInstalled`,
 `TestAReleaseTagIsCheckedBeforeAnythingIsFetched`, `TestOutgoingIsWrittenOnlyByAPromotion`,
 `TestAnUnsettledCandidatesInstallEntriesAreNeverActedOn`); internal/runtime/doctor/references.go;
 internal/runtime/exercise (`TestTheSessionClosesItsReaderAtTheDeadlineWithoutACopyingGoroutine`);

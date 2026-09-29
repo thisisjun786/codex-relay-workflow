@@ -16,6 +16,13 @@ type entry struct {
 
 func tarball(t *testing.T, entries ...entry) []byte {
 	t.Helper()
+	return cut(t, entries, nil, "")
+}
+
+// cut is tarball, then (when last is set) one more header declaring last.Size and a body of only
+// the bytes given, where the archive ends: a stream a reader must find short, never pad or trim.
+func cut(t *testing.T, entries []entry, last *tar.Header, body string) []byte {
+	t.Helper()
 	var buf bytes.Buffer
 	compressed := gzip.NewWriter(&buf)
 	w := tar.NewWriter(compressed)
@@ -32,8 +39,17 @@ func tarball(t *testing.T, entries ...entry) []byte {
 			t.Fatal(err)
 		}
 	}
-	if err := w.Close(); err != nil {
-		t.Fatal(err)
+	if last == nil {
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if err := w.WriteHeader(last); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := compressed.Close(); err != nil {
 		t.Fatal(err)
@@ -100,5 +116,60 @@ func TestAnArchiveCannotPlantControlData(t *testing.T) {
 		if _, err := os.Stat(dir + "/" + name); err != nil {
 			t.Fatalf("the release layout did not unpack %s: %v", name, err)
 		}
+	}
+}
+
+// An entry is never truncated to the bound: one whose header declares more than MaxArchiveBytes,
+// one whose body ends before the size its header declares, and entries that together declare
+// more than an archive may unpack to each refuse the whole archive before anything is written -
+// with the release's own entries ahead of them, not even those are unpacked.
+func TestAnOversizedOrShortEntryIsRefusedBeforeAnythingIsWritten(t *testing.T) {
+	release := []entry{
+		{tar.Header{Name: "LICENSE", Typeflag: tar.TypeReg}, "MIT\n"},
+		{tar.Header{Name: "crw", Mode: 0o755, Typeflag: tar.TypeReg}, "\x7fELF crw"},
+		{tar.Header{Name: "codex-session-relay", Linkname: Binary, Typeflag: tar.TypeSymlink}, ""},
+		{tar.Header{Name: "codex-thread-bridge", Linkname: Binary, Typeflag: tar.TypeSymlink}, ""},
+		{tar.Header{Name: "crw-completion-hook", Linkname: Binary, Typeflag: tar.TypeSymlink}, ""},
+	}
+	for label, c := range map[string]struct {
+		raw  []byte
+		want string
+	}{
+		"a header over the bound":        {cut(t, release, &tar.Header{Name: "NOTICE", Mode: 0o644, Size: MaxArchiveBytes + 1, Typeflag: tar.TypeReg}, "short"), "more than the"},
+		"a body short of its header":     {cut(t, release, &tar.Header{Name: "NOTICE", Mode: 0o644, Size: 100, Typeflag: tar.TypeReg}, "ten bytes!"), "holds 10 of the 100 bytes"},
+		"the binary short of its header": {cut(t, release[:1], &tar.Header{Name: "crw", Mode: 0o755, Size: 4096, Typeflag: tar.TypeReg}, "\x7fELF"), "holds 4 of the 4096 bytes"},
+	} {
+		dir := t.TempDir()
+		err := Archive{bytes: c.raw}.Unpack(dir)
+		if err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "nothing was unpacked") {
+			t.Fatalf("%s: %v", label, err)
+		}
+		if left, _ := os.ReadDir(dir); len(left) != 0 {
+			t.Fatalf("%s: refused after writing %v", label, left)
+		}
+	}
+
+	saved := maxUnpacked
+	maxUnpacked = 20
+	defer func() { maxUnpacked = saved }()
+	dir := t.TempDir()
+	over := append(append([]entry{}, release...), entry{tar.Header{Name: "NOTICE", Typeflag: tar.TypeReg}, "ten bytes!"})
+	if err := (Archive{bytes: tarball(t, over...)}).Unpack(dir); err == nil || !strings.Contains(err.Error(), "in all") {
+		t.Fatalf("entries over the total: %v", err)
+	}
+	if left, _ := os.ReadDir(dir); len(left) != 0 {
+		t.Fatalf("entries over the total: refused after writing %v", left)
+	}
+	// A whole entry over the bound is refused, never written cut down to it.
+	dir = t.TempDir()
+	whole := append(append([]entry{}, release...), entry{tar.Header{Name: "NOTICE", Typeflag: tar.TypeReg}, "twenty-one bytes long"})
+	if err := (Archive{bytes: tarball(t, whole...)}).Unpack(dir); err == nil || !strings.Contains(err.Error(), "one entry may hold") {
+		t.Fatalf("a whole entry over the bound: %v", err)
+	}
+	if left, _ := os.ReadDir(dir); len(left) != 0 {
+		t.Fatalf("a whole entry over the bound: refused after writing %v", left)
+	}
+	if err := (Archive{bytes: tarball(t, release...)}).Unpack(t.TempDir()); err != nil {
+		t.Fatalf("the release within the total: %v", err)
 	}
 }

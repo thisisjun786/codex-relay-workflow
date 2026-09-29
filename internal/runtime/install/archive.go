@@ -34,6 +34,11 @@ const ReleaseURL = "https://github.com/thisisjun786/codex-relay-workflow/release
 // the same bytes, so nothing can change between the digest and the unpack.
 const MaxArchiveBytes = 256 << 20
 
+// maxUnpacked bounds what an archive may unpack to, in any one entry and in all of them
+// together (MaxArchiveBytes; the compressed archive is bounded by it too). It is a variable only
+// so that a test can reach the total without writing that many bytes.
+var maxUnpacked int64 = MaxArchiveBytes
+
 // Binary is the multi-call binary's name inside an archive and in <runtime>/bin.
 const Binary = "crw"
 
@@ -258,7 +263,9 @@ func reservedName(name string) string {
 // trusted), and every other regular file (the licences) at its relative path. Every entry is
 // judged before anything is written: an absolute or escaping name, a name the installer or the
 // doctor reads as control data (reservedName), a link to anything but crw, a hard link, a
-// device or a repeated name refuses the whole archive with nothing written.
+// device, a repeated name, an entry declaring more than MaxArchiveBytes (or entries declaring
+// more in all), or a body that is not exactly the size its header declares refuses the whole
+// archive with nothing written. Nothing is ever truncated to a bound.
 func (a Archive) Unpack(environment string) error {
 	links := map[string]bool{}
 	for _, name := range definition.Links() {
@@ -290,7 +297,8 @@ func (a Archive) Unpack(environment string) error {
 		}
 	}
 	seen := map[string]bool{}
-	judged := entries(func(name string, header *tar.Header, _ io.Reader) error {
+	var total int64
+	judged := entries(func(name string, header *tar.Header, body io.Reader) error {
 		if path.IsAbs(name) || name == ".." || strings.HasPrefix(name, "../") {
 			return fmt.Errorf("the archive names %q, outside the directory it is unpacked into", header.Name)
 		}
@@ -304,7 +312,19 @@ func (a Archive) Unpack(environment string) error {
 			}
 		}
 		switch header.Typeflag {
-		case tar.TypeDir, tar.TypeReg:
+		case tar.TypeDir:
+		case tar.TypeReg:
+			// Sizes are judged here, before anything is written: an entry is never truncated to
+			// the bound, and its body must be exactly what its header declares.
+			if header.Size > maxUnpacked {
+				return fmt.Errorf("the archive's %q declares %d bytes, more than the %d one entry may hold; nothing was unpacked", header.Name, header.Size, maxUnpacked)
+			}
+			if total += header.Size; total > maxUnpacked {
+				return fmt.Errorf("the archive's entries declare %d bytes in all by %q, more than the %d an archive may unpack to; nothing was unpacked", total, header.Name, maxUnpacked)
+			}
+			if err := exactly(body, header.Size); err != nil {
+				return fmt.Errorf("the archive's %q %v; nothing was unpacked", header.Name, err)
+			}
 		case tar.TypeSymlink:
 			if !links[name] || header.Linkname != Binary {
 				return fmt.Errorf("the archive carries a symbolic link %s -> %s; only %s -> %s are expected", name, header.Linkname, strings.Join(definition.Links(), ", "), Binary)
@@ -327,9 +347,12 @@ func (a Archive) Unpack(environment string) error {
 		if header.Typeflag != tar.TypeReg {
 			return nil
 		}
-		raw, err := io.ReadAll(io.LimitReader(body, MaxArchiveBytes+1))
+		raw, err := io.ReadAll(io.LimitReader(body, header.Size+1))
 		if err != nil {
 			return err
+		}
+		if int64(len(raw)) != header.Size {
+			return fmt.Errorf("the archive's %q holds %d bytes where it held %d when it was judged", header.Name, len(raw), header.Size)
 		}
 		switch {
 		case name == Binary:
@@ -360,6 +383,23 @@ func (a Archive) Unpack(environment string) error {
 		if err := os.Symlink(Binary, filepath.Join(bin, name)); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// exactly reads an entry's body through, and says how it differs from the size its header
+// declares: fewer bytes (the archive ends inside it, or a read fails), or more.
+func exactly(body io.Reader, size int64) error {
+	n, err := io.CopyN(io.Discard, body, size)
+	if err != nil {
+		return fmt.Errorf("holds %d of the %d bytes its header declares (%v)", n, size, err)
+	}
+	var more [1]byte
+	switch m, err := body.Read(more[:]); {
+	case m > 0:
+		return fmt.Errorf("holds more than the %d bytes its header declares", size)
+	case !errors.Is(err, io.EOF):
+		return fmt.Errorf("could not be read to its end after the %d bytes its header declares (%v)", size, err)
 	}
 	return nil
 }
