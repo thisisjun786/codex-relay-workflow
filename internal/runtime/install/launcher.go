@@ -2,6 +2,7 @@ package install
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -28,6 +29,8 @@ const (
 	LauncherWould   = "would_change"
 	LauncherRefused = "refused"
 	LauncherBusy    = "busy"
+	// LauncherInterrupted is Interrupted: the caller's context ended before the unlink.
+	LauncherInterrupted = Interrupted
 )
 
 // RemoveLauncher deletes <codexHome>/crw-stop-hook.py, and only when it is CRW's: a regular file
@@ -43,10 +46,16 @@ const (
 // deleted as though it were still ours. Without apply it answers what it would do and removes
 // nothing.
 //
+// The launcher's .crw-lock is a leaf in the lock order every crw install path keeps
+// (docs/port/decisions.md 33), like the settings records': nothing else is taken while it is
+// held, so a caller may already hold a runtime directory's lock or the promotion lock. Its wait
+// ends when ctx does, and ctx is asked once more immediately before the unlink, so an
+// interrupted run removes nothing (LauncherInterrupted).
+//
 // It never touches the settings. Removing the fallback stops nothing by itself: the declared
 // Stop hook and crw-completion-hook.json are separate surfaces, so the answer reports what the
 // settings path held afterwards rather than a claim about what still runs.
-func RemoveLauncher(codexHome string, apply bool) Object {
+func RemoveLauncher(ctx context.Context, codexHome string, apply bool) Object {
 	path := filepath.Join(codexHome, LauncherName)
 	settings := filepath.Join(codexHome, SettingsName)
 	answer := func(outcome, detail string, wrote bool) Object {
@@ -72,9 +81,12 @@ func RemoveLauncher(codexHome string, apply bool) Object {
 	if !apply {
 		return answer(LauncherWould, "would remove "+path, false)
 	}
-	lock, err := lockLauncher(path, 0)
+	lock, err := lockLauncher(ctx, path, 0)
 	if err != nil {
 		var busy *record.Busy
+		if ctx.Err() != nil {
+			return answer(LauncherInterrupted, interrupted(err), false)
+		}
 		if errors.As(err, &busy) {
 			return answer(LauncherBusy, busy.Message, false)
 		}
@@ -88,6 +100,9 @@ func RemoveLauncher(codexHome string, apply bool) Object {
 	if err != nil || !bytes.Contains(again, []byte(LauncherMarker)) {
 		return answer(LauncherRefused, "the file at "+path+" was replaced while this ran and no longer carries the marker, so it was left", false)
 	}
+	if err := ctx.Err(); err != nil {
+		return answer(LauncherInterrupted, interrupted(err), false)
+	}
 	if err := os.Remove(path); err != nil {
 		return answer(LauncherRefused, "the launcher could not be removed ("+store.PythonOSError(err)+")", false)
 	}
@@ -95,7 +110,7 @@ func RemoveLauncher(codexHome string, apply bool) Object {
 }
 
 // lockLauncher takes the launcher's .crw-lock; a test replaces it to act inside the window.
-var lockLauncher = record.Lock
+var lockLauncher = record.LockContext
 
 // launcherKind is completion.launcher_kind: what is at path, without following anything.
 func launcherKind(path string) string {

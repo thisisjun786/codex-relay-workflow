@@ -1417,7 +1417,11 @@ Correction (todo 39): `scripts/plugin_transition.py` and `scripts/crw_transition
 with the transition, so `scripts/runtime_install.py` and the placement it calls
 (`completion.place_launcher`) are the last Python writers under this lock. The ownership-checked
 removal of `<CODEX_HOME>/crw-stop-hook.py` moved to `install.RemoveLauncher`, which takes the same
-`<launcher>.crw-lock` (`TestRemoveLauncherWaitsOnTheLockThePlacementTakes`).
+`<launcher>.crw-lock` (`TestRemoveLauncherWaitsOnTheLockThePlacementTakes`). That lock is a leaf
+in the order above, like the settings records': nothing else is taken while it is held. Its wait
+ends when the caller's context does, as every crw install path's does, and the context is asked
+again immediately before the unlink, so an interrupted removal removes nothing
+(`TestRemoveLauncherInterruptedRemovesNothing`).
 
 ## 34. The host record stays recordVersion 1; Go install entries are additive
 

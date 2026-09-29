@@ -59,7 +59,7 @@ func ReplaceExchange(swap func(a, b string) error) (restore func()) {
 var ErrNoExchange = errNoExchange
 
 // ReplaceLauncherLock makes RemoveLauncher take its lock through lock until restored.
-func ReplaceLauncherLock(lock func(target string, timeout time.Duration) (*record.Locked, error)) (restore func()) {
+func ReplaceLauncherLock(lock func(ctx context.Context, target string, timeout time.Duration) (*record.Locked, error)) (restore func()) {
 	saved := lockLauncher
 	lockLauncher = lock
 	return func() { lockLauncher = saved }
