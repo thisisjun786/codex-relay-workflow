@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -69,8 +70,12 @@ func TestReclaimWithoutAProcessTableSaysHowToRecover(t *testing.T) {
 
 // Remove reads the relay's daemon records as the retention scan does (a pid counts while its
 // start time and boot id match this process table): one that cannot be read leaves a daemon
-// unknown, so the directory is kept. Every answer that rests on the process table says what it
-// cannot see: another PID namespace, another host.
+// unknown, so the directory is kept. The records are those of the registry the relay resolves in
+// the command's environment: with CODEX_SESSION_RELAY_SCOPE_DIR set, that one and no other, so a
+// malformed claim in the production registry refuses a remove only where no override is set
+// (todo 40 review: IS-8's remove in an isolated home read this machine's live registry, and a
+// malformed claim there refused it). Every answer that rests on the process table says what it
+// cannot see: another PID namespace, another host; and a remove names the relay records it read.
 func TestRemoveReadsTheRelayDaemonRecords(t *testing.T) {
 	h := newHost(t)
 	first := archive(t, "0.9.0", "")
@@ -86,9 +91,21 @@ func TestRemoveReadsTheRelayDaemonRecords(t *testing.T) {
 	if err := os.Remove(daemon); err != nil {
 		t.Fatal(err)
 	}
-	removed, code := install.Remove(context.Background(), h.options(), old)
-	if code != install.OK || !strings.Contains(text(at(removed, "processTable")), "another PID namespace") {
-		t.Fatalf("remove: exit %d\n%s", code, golden.Canon(removed))
+	o := h.options()
+	malformed := filepath.Join(o.ScopeRegistry, "0000000000000000.json")
+	write(t, malformed, "{not json")
+	o.Env = o.Env.Without("CODEX_SESSION_RELAY_SCOPE_DIR")
+	refused, code = install.Remove(context.Background(), o, old)
+	if code != install.Refused || !strings.Contains(text(at(refused, "refused")), "relay daemon record could not be read") || !strings.Contains(strings.Join(strList(at(refused, "unreadable")), "\n"), malformed) {
+		t.Fatalf("a malformed production claim and no override: exit %d, want a refusal naming it\n%s", code, golden.Canon(refused))
+	}
+	isolated := filepath.Join(h.home, "isolated-scopes")
+	o.Env = o.Env.With("CODEX_SESSION_RELAY_SCOPE_DIR", isolated)
+	removed, code := install.Remove(context.Background(), o, old)
+	registries, states := strList(at(removed, "relayRecords", "scopeRegistries")), strList(at(removed, "relayRecords", "stateDirectories"))
+	if code != install.OK || !strings.Contains(text(at(removed, "processTable")), "another PID namespace") || strings.Join(registries, "|") != isolated ||
+		!slices.Contains(states, h.relayState) || !slices.Contains(states, filepath.Join(h.state, "codex-session-relay")) {
+		t.Fatalf("the same host under an override: exit %d, want the removal to read %s alone and name it\n%s", code, isolated, golden.Canon(removed))
 	}
 }
 

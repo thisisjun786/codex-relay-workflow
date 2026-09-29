@@ -1810,6 +1810,14 @@ process of this user whose exe fails for any other reason, or whose cmdline cann
 not ruled out either. Relay daemons are also read from their records, as the retention scan reads
 them (`doctor.RecordedDaemons`: every daemon.json and scope registry claim; a pid counts while its
 start time and boot id match this process table), and a record that cannot be read refuses. The
+registry is the one the relay resolves in the command's environment: `CODEX_SESSION_RELAY_SCOPE_DIR`
+alone when it is set, as a relay started there reads and claims its scope in that one and no
+other, and otherwise the production one under the passwd entry's home. The retention scan reads
+the production registry under an override too, because it looks for every daemon on the host
+whatever environment started it; remove finds a process running out of the runtime in the
+process table whichever registry recorded it, so an isolated environment's remove (todo 40's
+integration test) no longer reads, or is refused by, the machine's live registry. A remove that
+succeeds names the registries and state directories whose records it read (`relayRecords`). The
 reading rests on one assumption, stated in every answer that depends on it (`processTable`): the
 process table is this host's, in this command's PID namespace, so a process in another PID
 namespace (a container sharing the directory) or on another host (a network home) is not seen,

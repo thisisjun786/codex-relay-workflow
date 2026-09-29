@@ -90,6 +90,17 @@ func RegisteredMatching(ctx context.Context, o RetentionOptions, inside func(pat
 	return found, s.unreadable
 }
 
+// DaemonRecords is what RecordedDaemons read and found.
+type DaemonRecords struct {
+	// Registries are the scope registries whose claims were read, and States the relay state
+	// directories whose daemon.json was read, in the order read.
+	Registries, States []string
+	// Alive are the recorded pids alive in this process table.
+	Alive []int
+	// Unreadable is everything that could not be read, which leaves a recorded daemon unknown.
+	Unreadable []string
+}
+
 // RecordedDaemons is the retention scan's row 3 for a caller that removes a runtime: every relay
 // daemon and worker recorded in a daemon.json (the relay state root, every scope under it,
 // $CODEX_SESSION_RELAY_STATE, each state directory the relay's scope registry records, and the
@@ -98,7 +109,14 @@ func RegisteredMatching(ctx context.Context, o RetentionOptions, inside func(pat
 // could not be read, which leaves a recorded daemon unknown. A record written on another boot, or
 // whose pid is gone or now another process, names nothing alive; a process in another PID
 // namespace or on another host is not in this table at all, so it is not seen. It writes nothing.
-func RecordedDaemons(o RetentionOptions, states ...string) (alive []int, unreadable []string) {
+//
+// The scope registry is the one the relay resolves in o.Env: $CODEX_SESSION_RELAY_SCOPE_DIR alone
+// when it is set, as a relay started there reads and claims its scope in that one and no other,
+// and otherwise the production one (o.ScopeRegistry, or under the passwd entry's home). The
+// retention scan reads the production registry under an override too, because it looks for every
+// daemon on this host whatever environment started it; a caller that removes a runtime finds a
+// process running out of it in the process table, whichever registry recorded it.
+func RecordedDaemons(o RetentionOptions, states ...string) DaemonRecords {
 	if o.CodexHome == "" {
 		o.CodexHome = CodexHome(o.Env)
 	}
@@ -111,16 +129,17 @@ func RecordedDaemons(o RetentionOptions, states ...string) (alive []int, unreada
 	if o.Proc == "" {
 		o.Proc = "/proc"
 	}
-	s := &scan{o: o, pointer: pointer.Path(o.Destination)}
+	s := &scan{o: o, pointer: pointer.Path(o.Destination), relayScope: true}
 	s.stateDirectories()
 	for _, state := range states {
 		if filepath.IsAbs(state) && !contains(s.states, state) {
 			s.states = append(s.states, state)
 		}
 	}
+	var alive []int
 	for pid := range s.daemons() {
 		alive = append(alive, pid)
 	}
 	sort.Ints(alive)
-	return alive, s.unreadable
+	return DaemonRecords{Registries: s.registries, States: s.states, Alive: alive, Unreadable: s.unreadable}
 }

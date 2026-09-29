@@ -16,6 +16,18 @@
 // built-in default and finds the real one. The legacy bootstrap runs this machine's python3 on
 // purpose.
 //
+// Every home and relay root the products resolve lies under the temporary root: HOME,
+// CODEX_HOME, XDG_STATE_HOME and TMPDIR, and the relay roots HOME does not move (isolation).
+// What they still read of this machine is its process table and the programs they classify:
+// `crw install remove` reads /proc to rule out a process running out of the runtime it deletes,
+// and stats the paths other processes' command lines and working directories name to tell an
+// alias of that runtime; the executables PATH and the installer's settings name (sh,
+// /usr/bin/env) are classified where they lie. Apart from this checkout, which the plugin package
+// and the release files are copied from, and the Go toolchain relinking B (its caches, its
+// telemetry, and git reading the repository to stamp the build), nothing the test starts opens a
+// file under this user's home. IS-8 requires every path the remove answers name, the relay
+// records the verdict read (relayRecords) among them, to lie under the root.
+//
 // Every Stop hook path exits 0, so no hook assertion rests on the exit status: each one finds
 // the journal row the hook wrote for that session and turn, or proves that none was written.
 //
@@ -202,10 +214,41 @@ func newIsolated(t *testing.T) *isolated {
 // mustBeInside aborts the test unless path lies under the temporary root.
 func (h *isolated) mustBeInside(t *testing.T, path string) {
 	t.Helper()
-	relative, err := filepath.Rel(h.root, path)
-	if err != nil || relative == ".." || strings.HasPrefix(relative, "../") || filepath.IsAbs(relative) {
+	if !h.inside(path) {
 		t.Fatalf("%s is not under the test's temporary root %s", path, h.root)
 	}
+}
+
+// inside is whether path lies under the temporary root.
+func (h *isolated) inside(path string) bool {
+	relative, err := filepath.Rel(h.root, path)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, "../") && !filepath.IsAbs(relative)
+}
+
+// outside is every absolute path an answer names, at any depth, that is not under the temporary
+// root.
+func (h *isolated) outside(answer any) []string {
+	var paths []string
+	var walk func(any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			for _, value := range v {
+				walk(value)
+			}
+		case []any:
+			for _, value := range v {
+				walk(value)
+			}
+		case string:
+			if filepath.IsAbs(v) && !h.inside(v) {
+				paths = append(paths, v)
+			}
+		}
+	}
+	walk(answer)
+	slices.Sort(paths)
+	return paths
 }
 
 // env is the isolated environment: the four homes, a PATH of tripwires and the Codex stub, and
@@ -222,8 +265,10 @@ func (h *isolated) env(extra ...string) []string {
 // isolation names the relay roots HOME does not move. The scope registry is resolved from the
 // passwd entry's home (service.ResolveScope, as Python's pwd.getpwuid), never from $HOME, so
 // without CODEX_SESSION_RELAY_SCOPE_DIR the relay `crw install`'s swap gate asks
-// (`codex-session-relay service status`) would read this machine's live registry. The marker
-// root follows $HOME already and is named here too, as testsupport.IsolateRelayState names both.
+// (`codex-session-relay service status`) would read this machine's live registry, and so would
+// `crw install remove`, which reads the daemon records of the registry the relay resolves
+// (doctor.RecordedDaemons) and the state directories its claims name. The marker root follows
+// $HOME already and is named here too, as testsupport.IsolateRelayState names both.
 func (h *isolated) isolation() []string {
 	return []string{"CODEX_SESSION_RELAY_SCOPE_DIR=" + h.scopes, "CODEX_SESSION_RELAY_MARKER_ROOT=" + h.markers}
 }
@@ -967,15 +1012,30 @@ func (h *isolated) updateAndRollBack(t *testing.T, archiveA, archiveB string) {
 	h.journaled(t, h.stop(t, stopCommand(t, h.payload), h.hookEnv(), "is8-rolled-back", "t"), "is8-rolled-back", "t")
 	h.bridgeAnswers(t, h.envA, h.bridgeEnv())
 
-	if report, code := h.crw(t, crw, "remove", h.envA); code != 1 || report["applied"] != false ||
-		!strings.Contains(fmt.Sprint(report["refused"]), "the host record selects this runtime") {
+	report, code = h.crw(t, crw, "remove", h.envA)
+	if code != 1 || report["applied"] != false || !strings.Contains(fmt.Sprint(report["refused"]), "the host record selects this runtime") {
 		t.Fatalf("removing the selected runtime: exit %d, want a refusal naming the selection\n%s", code, show(report))
+	}
+	if outside := h.outside(report); len(outside) != 0 {
+		t.Errorf("the refused remove names paths outside the temporary root: %q\n%s", outside, show(report))
 	}
 	if _, err := os.Stat(filepath.Join(h.envA, "bin", "crw")); err != nil {
 		t.Fatalf("a refused remove removed the selected runtime: %v", err)
 	}
-	if report, code := h.crw(t, crw, "remove", h.envB); code != 0 || report["removed"] != true {
+	report, code = h.crw(t, crw, "remove", h.envB)
+	if code != 0 || report["removed"] != true {
 		t.Fatalf("removing the unselected runtime: exit %d\n%s", code, show(report))
+	}
+	// The remove's verdict read the relay records of this environment alone: the registry
+	// CODEX_SESSION_RELAY_SCOPE_DIR names, not the one under this user's passwd home, and the
+	// state directories under the temporary root. Nothing the answer names lies outside it.
+	registries, _ := at(report, "relayRecords", "scopeRegistries").([]any)
+	states, _ := at(report, "relayRecords", "stateDirectories").([]any)
+	if len(registries) != 1 || registries[0] != h.scopes || len(states) == 0 {
+		t.Errorf("the remove read the scope registries %v and state directories %v, want %s alone and at least the state root", registries, states, h.scopes)
+	}
+	if outside := h.outside(report); len(outside) != 0 {
+		t.Errorf("the remove names paths outside the temporary root: %q\n%s", outside, show(report))
 	}
 	if _, err := os.Lstat(h.envB); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the removed runtime is still there: %v", err)

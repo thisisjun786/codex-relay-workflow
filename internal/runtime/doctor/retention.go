@@ -62,6 +62,9 @@ type RetentionOptions struct {
 	ScopeRegistry string
 }
 
+// scopeDirEnv overrides the relay's scope registry (the relay's service.ScopeEnv).
+const scopeDirEnv = "CODEX_SESSION_RELAY_SCOPE_DIR"
+
 // DefaultHookTimeout is the plugin's declared Stop hook timeout, used when nothing configures one.
 const DefaultHookTimeout = 10.0
 
@@ -82,11 +85,15 @@ type scan struct {
 	claimRoots   [][2]string // (claim file, journalRoot)
 	// listed is how many unreadable entries the rows surfaced so far account for.
 	listed int
-	// states are the relay state directories rows 3 and 6 read, scopeClaims the scope registry's
-	// records row 3 judges, and statesUnknown how many sources of either could not be read.
+	// states are the relay state directories rows 3 and 6 read, registries the scope registries
+	// whose claims name more of them, scopeClaims the registries' records row 3 judges, and
+	// statesUnknown how many sources of any could not be read. relayScope narrows registries to
+	// the one the relay resolves in the scan's environment (RecordedDaemons).
 	states        []string
+	registries    []string
 	scopeClaims   []scopeClaim
 	statesUnknown int
+	relayScope    bool
 	// observe, when set, receives every path the registration rows classify, with the row,
 	// source and field naming it (RegisteredInside).
 	observe func(row int, source, field, path string, e Executable)
@@ -995,8 +1002,11 @@ type scopeClaim struct {
 // the relay makes it, and each stateDir the relay's scope registry records. The registry (the
 // production one under the passwd entry's home, and CODEX_SESSION_RELAY_SCOPE_DIR) is where
 // every daemon claims its scope whatever environment started it, so a daemon started with
-// another --state is found there. Anything that cannot be listed, read or made absolute is
-// unreadable and leaves rows 3 and 6 unscanned.
+// another --state is found there. With relayScope set, and CODEX_SESSION_RELAY_SCOPE_DIR set,
+// that override is the only registry read, as it is the only one a relay started in this
+// environment reads or claims its scope in (service.ResolveScope, Python's resolve_scope_root).
+// Anything that cannot be listed, read or made absolute is unreadable and leaves rows 3 and 6
+// unscanned.
 func (s *scan) stateDirectories() {
 	unknown := func(what, detail string) {
 		s.unreadable = append(s.unreadable, what+": rows 3 and 6: "+detail+", so the relay state directories are not all known")
@@ -1038,8 +1048,12 @@ func (s *scan) stateDirectories() {
 	if explicit := absolute(scope.StateEnv); explicit != "" {
 		add(explicit)
 	}
-	registries := []string{s.o.ScopeRegistry, absolute("CODEX_SESSION_RELAY_SCOPE_DIR")}
-	if registries[0] == "" {
+	registries := []string{s.o.ScopeRegistry, absolute(scopeDirEnv)}
+	switch {
+	case s.relayScope && s.o.Env.Get(scopeDirEnv) != "":
+		// The override alone; one that cannot be made absolute was listed unknown above.
+		registries = registries[1:]
+	case registries[0] == "":
 		if u, err := user.LookupId(strconv.Itoa(os.Geteuid())); err != nil {
 			unknown("the relay's scope registry", "the passwd entry whose home holds it could not be read: "+err.Error())
 		} else {
@@ -1050,6 +1064,7 @@ func (s *scan) stateDirectories() {
 		if registry == "" || (i == 1 && registry == registries[0]) {
 			continue
 		}
+		s.registries = append(s.registries, registry)
 		paths, err := listNamed(registry, func(name string) bool { return strings.HasSuffix(name, ".json") })
 		if err != nil {
 			unknown(registry, store.PythonOSError(err))

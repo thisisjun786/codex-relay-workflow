@@ -308,6 +308,13 @@ requires the one healthy outcome with no relay running: `guard_unreachable`, the
 at the default socket the installer's settings name. `CODEX_SESSION_RELAY_SCOPE_DIR` is set
 under the temporary root because the relay resolves its scope registry from the passwd entry's
 home, not `$HOME`; the test asks the relay the swap gate asks which registry it reads.
+`crw install remove` reads the daemon records of the registry the relay resolves, that override
+alone when it is set (`doctor.RecordedDaemons`), and its answer names the registries and state
+directories it read (`relayRecords`); IS-8 requires that registry to be the temporary one and
+every path a remove answer names to lie under the temporary root. What the products still read
+of the machine is the process table (remove rules out a process running out of the runtime from
+`/proc`, and stats the paths other processes' command lines name to tell an alias of it) and the
+executables `PATH` and the installer's settings name, which are classified where they lie.
 
 | Python class | property | Go test (subtest of `TestIsolatedHome`) |
 | --- | --- | --- |

@@ -41,7 +41,10 @@ const processScope = "this host's process table, as this command's PID namespace
 // alive), and any directory a registration the host reads names a path inside
 // (doctor.RegisteredMatching: the Stop settings, the bridge record, config.toml's mcp_servers,
 // hooks.json, the cached plugin declarations and the launcher copy), or holds something that
-// could not be read. It accepts a Python env-* directory and a Go bin-* one alike.
+// could not be read. It accepts a Python env-* directory and a Go bin-* one alike. An answer
+// that removes names what its verdict rests on: the process table (processTable) and the relay
+// records it read (relayRecords: the scope registries and state directories of this
+// environment's relay, doctor.RecordedDaemons).
 //
 // Locks are taken in the one order every crw install path keeps (docs/port/decisions.md 33): the
 // directory's .crw-lock, then the promotion lock, then the host record's .crw-lock; each wait
@@ -138,13 +141,14 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 	if liveness, detail := staging.OwnerLiveness(directory); liveness != staging.Dead {
 		return refuse("another run still holds this directory, or whether one does could not be established: "+detail, "claim", claimValue)
 	}
-	if u := runningOrRegistered(ctx, o, d); u != nil {
+	u, relayRecords := runningOrRegistered(ctx, o, d)
+	if u != nil {
 		return refuse(u.detail, u.extra()...)
 	}
 	if _, err := os.Lstat(grave); err == nil {
 		// A tombstone of this name that an earlier run did not finish: the directory under the
 		// name now is a later install, so the old copy goes without touching the record.
-		if u := tombstoneInUse(ctx, o, grave); u != nil {
+		if u, _ := tombstoneInUse(ctx, o, grave); u != nil {
 			return refuse("an earlier removal of this name left "+grave+", and it cannot be finished: "+u.detail, u.extra()...)
 		}
 		if err := deleteTombstone(grave); err != nil {
@@ -175,14 +179,14 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 			field("claim", claimValue), field("droppedInstallEntries", strs(dropped)), field("clearedOutgoing", clearedOutgoing),
 			field("detail", "the directory was set aside as "+grave+" and could not be deleted completely: "+store.PythonOSError(err)), field("residualPaths", []any{grave}),
 			field("recoveryRequires", "run crw install remove "+grave+" once whatever stopped the deletion is cleared: it finishes the removal. Nothing uses the directory (every check passed), and its install entries are already dropped from the host record"),
-			field("processTable", processScope),
+			field("processTable", processScope), field("relayRecords", relayRecords),
 			field("note", "the host record no longer lists this directory's installs, and nothing is left under its name. Its measured points stay in the host record as history."),
 		}, Incomplete
 	}
 	return Object{
 		field("command", "remove"), field("applied", true), field("directory", directory), field("removed", true),
 		field("claim", claimValue), field("droppedInstallEntries", strs(dropped)), field("clearedOutgoing", clearedOutgoing),
-		field("processTable", processScope),
+		field("processTable", processScope), field("relayRecords", relayRecords),
 		field("note", "the directory was removed after the record, the pointer, its claim, the process table and every registration the host reads all said nothing uses it, and after its install entries were dropped from the host record. Its measured points stay in the host record as history."),
 	}, OK
 }
@@ -198,10 +202,11 @@ func mustIdentify(dest, name string) *runtimeDir {
 
 // tombstoneInUse is why the tombstone at grave may not be finished, or nil: it is not one this
 // command began (unclaimedTombstone: no readable installer claim, or a run holds it), or a live
-// process runs out of it or a registration names it, or that could not be ruled out.
-func tombstoneInUse(ctx context.Context, o Options, grave string) *use {
+// process runs out of it or a registration names it, or that could not be ruled out. With nil it
+// answers the relay records it read (runningOrRegistered).
+func tombstoneInUse(ctx context.Context, o Options, grave string) (*use, Object) {
 	if why := unclaimedTombstone(grave); why != "" {
-		return &use{why, "tombstone", grave, false}
+		return &use{why, "tombstone", grave, false}, nil
 	}
 	return runningOrRegistered(ctx, o, mustIdentify(filepath.Dir(grave), filepath.Base(grave)))
 }
@@ -221,7 +226,8 @@ func finishRemoval(ctx context.Context, o Options, base Object, directory, grave
 		}
 		return append(out, field("note", "nothing was removed and nothing was written.")), Refused
 	}
-	if u := tombstoneInUse(ctx, o, grave); u != nil {
+	u, relayRecords := tombstoneInUse(ctx, o, grave)
+	if u != nil {
 		return refuse(grave+" cannot be finished as an interrupted removal: "+u.detail, u.extra()...)
 	}
 	if err := ctx.Err(); err != nil {
@@ -244,6 +250,7 @@ func finishRemoval(ctx context.Context, o Options, base Object, directory, grave
 	return Object{
 		field("command", "remove"), field("applied", true), field("directory", directory), field("removed", true), field("finished", grave),
 		field("droppedInstallEntries", strs(dropped)), field("clearedOutgoing", clearedOutgoing), field("processTable", processScope),
+		field("relayRecords", relayRecords),
 		field("note", "an interrupted removal of this runtime was finished: its tombstone is deleted and the host record lists nothing under a name that is gone."),
 	}, OK
 }
@@ -320,26 +327,30 @@ func outgoingHeld(rec Object, d *runtimeDir) bool {
 // process runs out of d (liveProcesses), a daemon a daemon.json records alive (its start time and
 // boot id matching this process table) does, or a relay daemon record could not be read; or a
 // registration the host reads names a path inside d (doctor.RegisteredMatching) or could not be
-// read or judged. nil when none does. What it cannot see is processScope.
-func runningOrRegistered(ctx context.Context, o Options, d *runtimeDir) *use {
+// read or judged. nil when none does, with the relay records it read, as an answer names them:
+// the scope registries whose claims and the state directories whose daemon.json it read. What it
+// cannot see is processScope; the relay records are the ones the relay resolves in o.Env
+// (doctor.RecordedDaemons), so a relay isolated with CODEX_SESSION_RELAY_SCOPE_DIR has its own.
+func runningOrRegistered(ctx context.Context, o Options, d *runtimeDir) (*use, Object) {
 	processes, unruled, err := liveProcesses(o.proc(), d)
 	var missing *noProcessTable
 	if errors.As(err, &missing) {
 		return &use{"this platform (" + runtime.GOOS + ") has no process table this command can read (" + missing.proc + " is not a procfs), so whether a relay daemon or a bridge still runs out of this directory cannot be established, and a directory that may be in use is never removed", "recoveryRequires",
-			"remove it by hand: stop the relay daemon started from it (" + filepath.Join(d.path, "bin", definition.Relay) + " service stop) and end every Codex session whose bridge it started, delete " + d.path + ", then run crw install status to see that the host record and the pointer still name the runtime you meant. Its install entries stay in the host record, where a rollback naming it is refused because the directory is gone", true}
+			"remove it by hand: stop the relay daemon started from it (" + filepath.Join(d.path, "bin", definition.Relay) + " service stop) and end every Codex session whose bridge it started, delete " + d.path + ", then run crw install status to see that the host record and the pointer still name the runtime you meant. Its install entries stay in the host record, where a rollback naming it is refused because the directory is gone", true}, nil
 	}
 	if err != nil {
-		return &use{"the process table could not be read, so whether a process still runs out of this directory was not established: " + err.Error(), "", nil, false}
+		return &use{"the process table could not be read, so whether a process still runs out of this directory was not established: " + err.Error(), "", nil, false}, nil
 	}
 	if len(processes) > 0 {
-		return &use{"live processes run out of this directory", "processes", processes, false}
+		return &use{"live processes run out of this directory", "processes", processes, false}, nil
 	}
 	if len(unruled) > 0 {
-		return &use{"what a live process runs could not be read, so it cannot be ruled out that it runs out of this directory", "unreadableProcesses", unruled, false}
+		return &use{"what a live process runs could not be read, so it cannot be ruled out that it runs out of this directory", "unreadableProcesses", unruled, false}, nil
 	}
 	retention := doctor.RetentionOptions{Env: o.Env, CodexHome: o.CodexHome, Destination: o.Dest, Proc: o.proc(), ScopeRegistry: o.ScopeRegistry}
-	if _, unreadable := doctor.RecordedDaemons(retention, o.State); len(unreadable) > 0 {
-		return &use{"a relay daemon record could not be read, so whether a daemon it records still runs out of this directory was not established", "unreadable", strs(unreadable), false}
+	daemons := doctor.RecordedDaemons(retention, o.State)
+	if len(daemons.Unreadable) > 0 {
+		return &use{"a relay daemon record could not be read, so whether a daemon it records still runs out of this directory was not established", "unreadable", strs(daemons.Unreadable), false}, nil
 	}
 	registered, unreadable := doctor.RegisteredMatching(ctx, retention, func(path, resolves string) string {
 		switch {
@@ -351,12 +362,12 @@ func runningOrRegistered(ctx context.Context, o Options, d *runtimeDir) *use {
 		return ""
 	})
 	if len(registered) > 0 {
-		return &use{"a registration the host reads still names a path inside this directory, and each new session starts it from there", "registrations", registered, false}
+		return &use{"a registration the host reads still names a path inside this directory, and each new session starts it from there", "registrations", registered, false}, nil
 	}
 	if len(unreadable) > 0 {
-		return &use{"a registration the host reads could not be read or judged, so whether it names a path inside this directory was not established", "unreadable", strs(unreadable), false}
+		return &use{"a registration the host reads could not be read or judged, so whether it names a path inside this directory was not established", "unreadable", strs(unreadable), false}, nil
 	}
-	return nil
+	return nil, Object{field("scopeRegistries", strs(daemons.Registries)), field("stateDirectories", strs(daemons.States))}
 }
 
 // dropInstalls drops every install entry whose environment is d, and the record's outgoing
