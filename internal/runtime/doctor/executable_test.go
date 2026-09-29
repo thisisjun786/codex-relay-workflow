@@ -68,3 +68,36 @@ func TestRetentionScanFindsAPolyglotConsoleScript(t *testing.T) {
 		t.Fatalf("python references %v", got)
 	}
 }
+
+// A shell wrapper is judged at every command it runs, not only at an exec target: a bare
+// command no PATH directory holds leaves it unreadable whether it is exec'd or run after
+// cd ... &&, a bare command PATH resolves to a venv console script makes it Python, and a
+// builtin (cd, set) runs nothing.
+func TestAShellWrapperIsJudgedAtEveryCommandItRuns(t *testing.T) {
+	root := t.TempDir()
+	venv := filepath.Join(root, "venv")
+	write(t, filepath.Join(venv, "pyvenv.cfg"), "home = /usr/bin\n", 0o644)
+	link(t, "/bin/sh", filepath.Join(venv, "bin", "python3"))
+	write(t, filepath.Join(venv, "bin", "codex-session-relay"), "#!"+filepath.Join(venv, "bin", "python3")+"\n", 0o755)
+	bin := filepath.Join(root, "bin")
+	link(t, filepath.Join(venv, "bin", "codex-session-relay"), filepath.Join(bin, "relay"))
+	native := filepath.Join(root, "native")
+	write(t, native, "\x7fELF\x02\x01\x01\x00", 0o755)
+	wrappers := filepath.Join(root, "wrappers")
+	write(t, filepath.Join(wrappers, "exec-gone"), "#!/bin/sh\nexec gone-relay \"$@\"\n", 0o755)
+	write(t, filepath.Join(wrappers, "runs-gone"), "#!/bin/sh\ncd /tmp && gone-relay\n", 0o755)
+	write(t, filepath.Join(wrappers, "runs-relay"), "#!/bin/sh\nset -e\nrelay \"$@\"\n", 0o755)
+	write(t, filepath.Join(wrappers, "runs-builtin"), "#!/bin/sh\ncd /tmp && exec "+native+"\n", 0o755)
+	classifier := doctor.Classifier{Expand: doctor.Expander{Path: bin + ":/usr/bin:/bin"}}
+	for name, want := range map[string]string{
+		"exec-gone":    doctor.KindUnreadable,
+		"runs-gone":    doctor.KindUnreadable,
+		"runs-relay":   doctor.KindPythonScript,
+		"runs-builtin": doctor.KindScript,
+	} {
+		e := classifier.Classify(filepath.Join(wrappers, name), "")
+		if e.Kind != want || (want == doctor.KindUnreadable && !strings.Contains(e.Detail, "gone-relay")) {
+			t.Errorf("%s: kind %s (%s), want %s", name, e.Kind, e.Detail, want)
+		}
+	}
+}

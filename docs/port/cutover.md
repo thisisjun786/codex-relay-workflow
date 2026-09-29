@@ -962,7 +962,25 @@ interpreter path, any non-native file inside a venv, a shell script that runs on
 `current/bin/codex-session-relay` names no Python while `current` points at a venv. Each word
 is first expanded as the shell would expand it: `~` and `$HOME` from the scan's environment,
 `$CODEX_HOME` as the scan reads it, and `${PLUGIN_ROOT}` (row 5 only) as the cached version's
-directory. A word that needs any other expansion is listed as unreadable. It reports:
+directory. A word that needs any other expansion is listed as unreadable.
+
+A hook command, and a shell script a reference reaches, is parsed as a shell program
+(`mvdan.cc/sh/v3/syntax`, Bash grammar; decisions.md 37) rather than read as its first word:
+every command position is judged, which is the first word of each command
+after `;`, `&`, `&&`, `||`, `|`, a newline, a reserved word (`if`, `then`, `do`, `{`, `!`, ...) or
+leading assignments, and the command that `exec`, `command`, `time`, `env`, `nohup`, `nice`,
+`setsid`, `stdbuf` and `timeout` run after their options. `sh -c` and `bash -c` strings, `eval`
+words, `trap` actions, here-documents fed to a shell and command substitutions are read as
+programs, and `sh FILE` and `. FILE` read FILE as a shell script whatever its `#!` line says. A
+builtin (`cd`, `true`, `set`, ...) runs nothing and a function the program defines is judged by
+its body; any other bare command word is looked up on the scan's PATH (absolute directories
+only, since a relative one resolves where the command runs) and is unreadable when no directory
+holds it. A bare argument that PATH resolves to a Python program is reported as well, because a
+runner such as `sudo`, `xargs` or `uv run` may execute it. A construct the reader does not model
+where a command could start (an unknown option of a prefix command, `env -S`, an arithmetic
+command, a shell reading its program from standard input, a program the parser rejects, nesting
+deeper than four programs) is unreadable, and so is a command word needing an expansion the scan
+does not make. It reports:
 
 - `pythonReferences`: every reference that resolves to Python, with its row, source file, field
   and what it resolves to;
@@ -971,8 +989,8 @@ directory. A word that needs any other expansion is listed as unreadable. It rep
 - `unscanned` and `unreadable`: the rows the scan did not read, and everything it could not
   read or resolve. That covers files, references whose target cannot be read, words it cannot
   expand, a bare command word that no directory on the scan's PATH holds as an executable file,
-  and alive pids whose `exe` or `cmdline` cannot be read. Nothing the scan cannot judge is
-  dropped;
+  a shell construct it does not read, a `crw-*.json` value that is not an absolute path, and
+  alive pids whose `exe` or `cmdline` cannot be read. Nothing the scan cannot judge is dropped;
 - `clear`: true only when all four are empty. Todo 43 removes nothing until `clear` is true.
 
 | # | Surface | What counts |
@@ -980,8 +998,8 @@ directory. A word that needs any other expansion is listed as unreadable. It rep
 | 1 | `<CODEX_HOME>/crw-completion-hook/stop-events/*.json` | a claim whose outcome `<claimedBy.journalRoot>/accepted/<eventKey>.outcome.json` is absent (or that names no journal root): a live hold |
 | 2 | `<journalRoot>/<day>/*.json` rows (journalRoot from `crw-completion-hook.json`, else `<CODEX_HOME>/crw-completion-hook/journal`) | a row younger than twice the longest configured Stop hook timeout (the settings `timeoutSeconds` and every cached or user Stop hook `timeout`, at least 10 s), read from every day directory the window reaches back into: a live hold. A window too large for a duration holds every row; a NaN timeout leaves the row unscanned |
 | 3 | every relay state directory's `daemon.json` (the state root, each scope under it, and `CODEX_SESSION_RELAY_STATE`) | a supervisor or worker pid whose start time and boot still match the record (a zombie is not alive), running a Python interpreter or a `.py` program. Where no process table can be read (darwin has no procfs), the row is unscanned |
-| 4 | `<CODEX_HOME>/crw-*.json` (`crw-completion-hook.json`, `crw-bridge-mcp.json`, any other) | `relayExecutable`, `bridgeExecutable`, `adapterEntryPoint`, `adapterInterpreter`, `interpreterPath`, `command`, `args`, each resolved |
-| 5 | `<CODEX_HOME>/plugins/cache/crw/crw/*/wiring/hooks/*.json`, `wiring/mcp.json`, `.mcp.json` | each word of every hook command (split as the shell splits it), and an MCP server's `command` and each of its `args` as one word each (Codex runs an MCP server without a shell, so a path holding a space is one path): a Python interpreter name, a `.py` path, or a path (or a command word on PATH) that resolves to Python |
+| 4 | `<CODEX_HOME>/crw-*.json` (`crw-completion-hook.json`, `crw-bridge-mcp.json`, any other) | `relayExecutable`, `bridgeExecutable`, `adapterEntryPoint`, `adapterInterpreter`, `interpreterPath`, `command`, each resolved, and each `args` entry as an argument. One of those values, or an `args` entry holding a `/`, that is not an absolute path is a reference when it names Python (`python3`, a `.py` file) and unreadable otherwise: the Stop and bridge launchers accept only absolute paths, and the scan never resolves one against its own working directory |
+| 5 | `<CODEX_HOME>/plugins/cache/crw/crw/*/wiring/hooks/*.json`, `wiring/mcp.json`, `.mcp.json` | every word of every hook command, read as a shell program (above), and an MCP server's `command` and each of its `args` as one word each (Codex runs an MCP server without a shell, so a path holding a space is one path): a Python interpreter name, a `.py` path, or a path (or a command word on PATH) that resolves to Python |
 | 6 | every `managed-start-*.lock` in those state directories | its `/proc/locks` flock holder, judged as in row 3, less the pids row 3 reports |
 | 7 | resumable Codex threads (`crw bridge` `list_threads`) younger than the host's turn-command cache lifetime | not read by todo 37: it needs the cache lifetime todo 43 records on codex-cli 0.154.0, so the scan reports this row unscanned and is never `clear` until todo 43 adds it |
 | 8 | `<CODEX_HOME>/crw-stop-hook.py` | the launcher copy the cached Python bootstrap falls back to, whenever it exists |

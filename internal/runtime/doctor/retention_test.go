@@ -200,19 +200,6 @@ func TestRetentionScanJudgesLiveProcesses(t *testing.T) {
 	}
 }
 
-func TestShellWordsSplitsLikeSh(t *testing.T) {
-	for line, want := range map[string]string{
-		`python3 -c "a b" "${PLUGIN_ROOT}/x.py"`:                        `python3|-c|a b|${PLUGIN_ROOT}/x.py`,
-		`bash '/x/state sh' session`:                                    `bash|/x/state sh|session`,
-		`"$HOME/.local/share/crw-runtime/current/bin/crw" hook; exit 0`: `$HOME/.local/share/crw-runtime/current/bin/crw|hook|exit|0`,
-		`a\ b "c\"d" 'e'f`:                                              `a b|c"d|ef`,
-	} {
-		if got := strings.Join(doctor.ShellWords(line), "|"); got != want {
-			t.Errorf("%s: %s", line, got)
-		}
-	}
-}
-
 // unreadable is the report's unreadable list.
 func unreadable(report record.Object) []string {
 	var out []string
@@ -538,5 +525,88 @@ func TestRetentionScanListsACommandNotFoundOnPath(t *testing.T) {
 	}
 	if len(got) != 2 || record.Get(report, "clear") != false {
 		t.Fatalf("unreadable %v, clear %v", got, record.Get(report, "clear"))
+	}
+}
+
+// A hook command is read as the shell reads it: every command position is judged, not only the
+// line's first word. A bare command there that no PATH directory holds is unreadable after
+// cd ... &&, exec, env, ;, ||, |, inside sh -c and inside a function body, and a builtin (cd,
+// true), a prefix (exec, env) and a function the command defines are not themselves listed. A
+// command word PATH resolves to a venv console script after cd ... && is a reference.
+func TestRetentionScanJudgesEveryCommandPositionOfAHookCommand(t *testing.T) {
+	h := newHost(t)
+	env := h.pythonVenv(t)
+	bin := filepath.Join(h.home, "bin")
+	link(t, filepath.Join(env, "bin", "codex-session-relay"), filepath.Join(bin, "relay"))
+	h.env = scope.Env{"HOME=" + h.home, "XDG_STATE_HOME=" + h.state, "CODEX_HOME=" + h.codex, "PATH=" + bin + ":/usr/bin:/bin"}
+	commands := []string{
+		`cd /tmp && gone-a stop`,
+		`exec gone-b`,
+		`env A=1 gone-c`,
+		`true; gone-d || gone-e | gone-f`,
+		`sh -c 'gone-g'`,
+		`cd /tmp && relay hook`,
+		`f() { gone-h; }; f`,
+	}
+	var hooks []string
+	for _, command := range commands {
+		hooks = append(hooks, `{"type": "command", "command": `+strconv.Quote(command)+`, "timeout": 10}`)
+	}
+	write(t, filepath.Join(h.codex, "hooks.json"), `{"hooks": {"Stop": [{"hooks": [`+strings.Join(hooks, ", ")+`]}]}}`, 0o600)
+	report := h.scan(t)
+	got := unreadable(report)
+	for i, word := range []string{"gone-a", "gone-b", "gone-c", "gone-d", "gone-e", "gone-f", "gone-g", "gone-h"} {
+		hook := map[int]int{0: 0, 1: 1, 2: 2, 3: 3, 4: 3, 5: 3, 6: 4, 7: 6}[i]
+		if !listed(got, "row 9", "hooks.Stop[0].hooks["+strconv.Itoa(hook)+"].command", strconv.Quote(word)) {
+			t.Errorf("no unreadable entry names %s in hook %d: %v", word, hook, got)
+		}
+	}
+	for _, word := range []string{"cd", "true", "exec", "env", "sh", "f"} {
+		if listed(got, " "+strconv.Quote(word)+": ") {
+			t.Errorf("%s is listed as unreadable: %v", word, got)
+		}
+	}
+	if len(got) != 8 {
+		t.Errorf("unreadable %v", got)
+	}
+	if refs := references(report); strings.Join(refs, "|") != "9:hooks.Stop[0].hooks[5].command:relay" {
+		t.Errorf("python references %v", refs)
+	}
+}
+
+// A crw-*.json value that is not an absolute path is not resolved against the scan's own
+// working directory: the Stop and bridge launchers accept only absolute paths, and a relative
+// one would resolve wherever they run. It is a Python reference when it names Python
+// (adapterInterpreter python3) and unreadable otherwise, even with a console script of that name
+// in the scan's directory; plain args are arguments. A PATH directory that is relative is not
+// searched either, so a hook command only such a directory holds is unreadable.
+func TestRetentionScanDoesNotResolveRelativeValuesAgainstItsOwnDirectory(t *testing.T) {
+	h := newHost(t)
+	env := h.pythonVenv(t)
+	cwd := t.TempDir()
+	link(t, filepath.Join(env, "bin", "codex-session-relay"), filepath.Join(cwd, "codex-session-relay"))
+	link(t, filepath.Join(env, "bin", "codex-thread-bridge"), filepath.Join(cwd, "bin", "codex-thread-bridge"))
+	link(t, filepath.Join(env, "bin", "crw-completion-hook"), filepath.Join(cwd, "cwd-relay"))
+	t.Chdir(cwd)
+	h.env = scope.Env{"HOME=" + h.home, "XDG_STATE_HOME=" + h.state, "CODEX_HOME=" + h.codex, "PATH=.:/usr/bin:/bin"}
+	write(t, filepath.Join(h.codex, "crw-completion-hook.json"), `{"relayExecutable": "codex-session-relay", "adapterInterpreter": "python3"}`, 0o600)
+	write(t, filepath.Join(h.codex, "crw-bridge-mcp.json"), `{"bridgeExecutable": "bin/codex-thread-bridge", "args": ["serve", "--stdio"]}`, 0o600)
+	write(t, filepath.Join(h.codex, "hooks.json"), `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "cwd-relay stop", "timeout": 10}]}]}}`, 0o600)
+	report := h.scan(t)
+	if refs := references(report); strings.Join(refs, "|") != "4:adapterInterpreter:python3" {
+		t.Errorf("python references %v", refs)
+	}
+	got := unreadable(report)
+	for _, want := range [][]string{
+		{"row 4", filepath.Join(h.codex, "crw-completion-hook.json"), "relayExecutable", `"codex-session-relay"`, "not an absolute path"},
+		{"row 4", filepath.Join(h.codex, "crw-bridge-mcp.json"), "bridgeExecutable", `"bin/codex-thread-bridge"`, "not an absolute path"},
+		{"row 9", filepath.Join(h.codex, "hooks.json"), `"cwd-relay"`},
+	} {
+		if !listed(got, want...) {
+			t.Errorf("no unreadable entry names %v: %v", want, got)
+		}
+	}
+	if len(got) != 3 {
+		t.Errorf("unreadable %v", got)
 	}
 }

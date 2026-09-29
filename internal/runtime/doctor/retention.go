@@ -123,12 +123,22 @@ func (s *scan) expander(pluginRoot string) Expander {
 	return Expander{Vars: vars, Path: s.o.Env.Get("PATH")}
 }
 
-// word classifies one reference as written: its expansions made first, and one that cannot be
-// made reported as a Python reference when the word names Python anyway, else as unreadable.
-// It returns false when the word is left unjudged (the caller decides what a bare word is).
-func (s *scan) word(row int, source, fieldName, word, base, pluginRoot string) (Executable, bool) {
-	x := s.expander(pluginRoot)
-	expanded, missing := x.Expand(word)
+// literal is a value that no shell reads (a crw-*.json field, an MCP command or argument) as
+// a word: ~, $HOME, $CODEX_HOME and ${PLUGIN_ROOT} expanded over its text (Expander).
+func (s *scan) literal(text, pluginRoot string) shellWord {
+	value, missing := s.expander(pluginRoot).Expand(text)
+	return shellWord{Written: text, Value: value, Missing: missing}
+}
+
+// word classifies one reference: a word whose expansions could not all be made is reported as
+// a Python reference when it names Python anyway, else as unreadable.
+// sourced judges the file as a shell's program (sh FILE, . FILE) whatever its #! line says. A
+// value that is not an absolute path with no base to resolve it against (a crw-*.json record's)
+// is never resolved against the scan's own working directory: the program that reads it runs
+// elsewhere, so it is a Python reference when it names Python and unreadable otherwise. It
+// returns false when the word is left unjudged.
+func (s *scan) word(row int, source, fieldName string, w shellWord, base, pluginRoot string, sourced bool) (Executable, bool) {
+	word, expanded, missing := w.Written, w.Value, w.Missing
 	if missing != "" {
 		if strings.HasSuffix(word, ".py") || PythonName(word) {
 			return Executable{Value: word, Kind: KindPythonScript, Python: true, Detail: "names a Python file through " + missing + ", an expansion this scan does not make"}, true
@@ -136,7 +146,23 @@ func (s *scan) word(row int, source, fieldName, word, base, pluginRoot string) (
 		s.unresolved(row, source, fieldName, word, "names "+missing+", an expansion this scan does not make, so what it runs is unknown")
 		return Executable{}, false
 	}
-	e := Classifier{Pointer: s.pointer, Expand: x}.Classify(expanded, base)
+	if base == "" && !filepath.IsAbs(expanded) {
+		switch {
+		case strings.HasSuffix(expanded, ".py"):
+			return Executable{Value: word, Kind: KindPythonScript, Python: true, Detail: "names a Python file by a relative path"}, true
+		case PythonName(expanded):
+			return Executable{Value: word, Kind: KindPythonInterpreter, Python: true, Detail: "names a Python interpreter by a relative path"}, true
+		}
+		s.unresolved(row, source, fieldName, word, "is not an absolute path: it resolves in whatever directory the program reading it runs in (the Stop and bridge launchers accept only an absolute path), so this scan does not resolve it against its own")
+		return Executable{}, false
+	}
+	c := Classifier{Pointer: s.pointer, Expand: s.expander(pluginRoot)}
+	var e Executable
+	if sourced {
+		e = c.sourced(expanded, base, 0)
+	} else {
+		e = c.Classify(expanded, base)
+	}
 	e.Value = word
 	return e, true
 }
@@ -255,7 +281,9 @@ func (s *scan) settingsRecords() Object {
 				if _, list := record.Get(value, key).([]any); list {
 					name = key + "[" + strconv.Itoa(i) + "]"
 				}
-				if e, ok := s.word(4, path, name, text, "", ""); ok {
+				if key == "args" {
+					s.argvWord(4, path, name, s.literal(text, ""), "", "", roleArgument)
+				} else if e, ok := s.word(4, path, name, s.literal(text, ""), "", "", false); ok {
 					s.judge(4, path, name, e)
 				}
 			}
@@ -307,31 +335,38 @@ func globEscape(path string) string {
 	return b.String()
 }
 
-// commandWords classifies the words of one hook command, which Codex runs through a shell: the
-// line is split into words as sh splits it, and each is judged by argvWord, the first as the
-// command.
+// commandWords reads one hook command, which Codex runs through a shell, as a shell program
+// (shellWalker): every word in a command position is judged as a command, every other word as
+// an argument, and every construct the reader cannot place is unreadable.
 func (s *scan) commandWords(row int, source, fieldName, line, base, pluginRoot string) {
-	for i, word := range ShellWords(line) {
-		s.argvWord(row, source, fieldName, word, base, pluginRoot, i == 0)
+	w := &shellWalker{
+		expand: s.expander(pluginRoot),
+		visit: func(word shellWord, role int) bool {
+			s.argvWord(row, source, fieldName, word, base, pluginRoot, role)
+			return true
+		},
+		unreadable: func(value, detail string) { s.unresolved(row, source, fieldName, value, detail) },
 	}
+	w.walk(line, 0)
 }
 
-// argvWord classifies one word as it reaches exec: a word naming a Python interpreter, a .py
-// path, or a path (or, for the command word, the file PATH finds for a bare name) that resolves
-// to Python is a reference. ~, $HOME, $CODEX_HOME and (for a cached plugin version, pluginRoot)
-// ${PLUGIN_ROOT} are expanded as the shell would; a word needing any other expansion, and a
-// bare command word that no PATH directory holds as an executable file, are unreadable: what
-// they run is unknown.
-func (s *scan) argvWord(row int, source, fieldName, word, base, pluginRoot string, command bool) {
+// argvWord classifies one word as it reaches exec, in its role (roleCommand, roleArgument or
+// roleScript): a word naming a Python interpreter, a .py path, or a path that resolves to
+// Python is a reference. Its expansions are made (~, $HOME, $CODEX_HOME and, for a cached
+// plugin version, ${PLUGIN_ROOT}); a word needing any other expansion is unreadable. A bare command word is looked up on PATH, and one that no PATH directory holds as
+// an executable file is unreadable: what it runs is unknown. A bare argument is looked up too,
+// and reported when it is a Python program, because a runner (sudo, xargs, uv run) may execute
+// it.
+func (s *scan) argvWord(row int, source, fieldName string, w shellWord, base, pluginRoot string, role int) {
+	word, expanded, missing := w.Written, w.Value, w.Missing
 	if strings.ContainsAny(word, "\n") {
 		return // a -c program, not something executed by name
 	}
-	expanded, missing := s.expander(pluginRoot).Expand(word)
 	var e Executable
 	switch {
-	case missing != "" || strings.Contains(expanded, "/") || strings.HasSuffix(expanded, ".py"):
+	case role == roleScript || missing != "" || strings.Contains(expanded, "/") || strings.HasSuffix(expanded, ".py"):
 		var ok bool
-		if e, ok = s.word(row, source, fieldName, word, base, pluginRoot); !ok {
+		if e, ok = s.word(row, source, fieldName, w, base, pluginRoot, role == roleScript); !ok {
 			return
 		}
 	case PythonName(expanded):
@@ -339,23 +374,31 @@ func (s *scan) argvWord(row int, source, fieldName, word, base, pluginRoot strin
 		if found, err := lookPath(expanded, s.o.Env.Get("PATH")); err == nil {
 			e.Resolves = found
 		}
-	case command:
+	default:
 		found, err := lookPath(expanded, s.o.Env.Get("PATH"))
-		if err != nil {
+		switch {
+		case err == nil:
+			e = Classifier{Pointer: s.pointer, Expand: s.expander(pluginRoot)}.Classify(found, "")
+			e.Value = word
+			if role != roleCommand && !e.Python {
+				return
+			}
+		case role == roleCommand:
 			s.unresolved(row, source, fieldName, word, "names a command that no directory on the scan's PATH ("+s.o.Env.Get("PATH")+") holds as an executable file, so what it runs is unknown")
 			return
+		default:
+			return
 		}
-		e = Classifier{Pointer: s.pointer, Expand: s.expander(pluginRoot)}.Classify(found, "")
-		e.Value = word
-	default:
-		return
 	}
 	s.judge(row, source, fieldName, e)
 }
 
+// lookPath is the file a PATH lookup finds for name. A relative PATH directory (or an empty
+// one, which means the current directory) resolves where the program runs, not where the scan
+// runs, so it is not searched: a name only such a directory holds is not found.
 func lookPath(name, path string) (string, error) {
 	for _, dir := range filepath.SplitList(path) {
-		if dir == "" {
+		if !filepath.IsAbs(dir) {
 			continue
 		}
 		candidate := filepath.Join(dir, name)
@@ -403,10 +446,10 @@ func (s *scan) mcpServers(row int, path string, servers Object, base, pluginRoot
 	for _, server := range servers {
 		entry := asObject(server.Value)
 		if command, ok := record.Get(entry, "command").(string); ok && command != "" {
-			s.argvWord(row, path, "mcpServers."+server.Key+".command", command, base, pluginRoot, true)
+			s.argvWord(row, path, "mcpServers."+server.Key+".command", s.literal(command, pluginRoot), base, pluginRoot, roleCommand)
 		}
 		for i, arg := range words(record.Get(entry, "args")) {
-			s.argvWord(row, path, "mcpServers."+server.Key+".args["+strconv.Itoa(i)+"]", arg, base, pluginRoot, false)
+			s.argvWord(row, path, "mcpServers."+server.Key+".args["+strconv.Itoa(i)+"]", s.literal(arg, pluginRoot), base, pluginRoot, roleArgument)
 		}
 	}
 	return len(servers)
@@ -907,12 +950,12 @@ func (s *scan) configToml(_ context.Context) {
 	for _, name := range names {
 		entry, _ := servers[name].(map[string]any)
 		if command, ok := entry["command"].(string); ok && command != "" {
-			s.argvWord(10, path, "mcp_servers."+name+".command", command, s.o.CodexHome, "", true)
+			s.argvWord(10, path, "mcp_servers."+name+".command", s.literal(command, ""), s.o.CodexHome, "", roleCommand)
 		}
 		if args, ok := entry["args"].([]any); ok {
 			for i, arg := range args {
 				if text, ok := arg.(string); ok {
-					s.argvWord(10, path, "mcp_servers."+name+".args["+strconv.Itoa(i)+"]", text, s.o.CodexHome, "", false)
+					s.argvWord(10, path, "mcp_servers."+name+".args["+strconv.Itoa(i)+"]", s.literal(text, ""), s.o.CodexHome, "", roleArgument)
 				}
 			}
 		}
@@ -933,53 +976,4 @@ func (s *scan) pointerTarget() {
 	default:
 		s.surface(11, true, 0, read.Detail)
 	}
-}
-
-// ShellWords splits a command line the way sh would split its words: single quotes literal,
-// double quotes with backslash escapes, a backslash escaping outside quotes. Expansions are
-// left as written.
-func ShellWords(line string) []string {
-	var out []string
-	var word strings.Builder
-	inWord := false
-	for i := 0; i < len(line); i++ {
-		c := line[i]
-		switch {
-		case c == '\'':
-			inWord = true
-			end := strings.IndexByte(line[i+1:], '\'')
-			if end < 0 {
-				word.WriteString(line[i+1:])
-				i = len(line)
-				continue
-			}
-			word.WriteString(line[i+1 : i+1+end])
-			i += end + 1
-		case c == '"':
-			inWord = true
-			for i++; i < len(line) && line[i] != '"'; i++ {
-				if line[i] == '\\' && i+1 < len(line) && strings.IndexByte("\"\\$`\n", line[i+1]) >= 0 {
-					i++
-				}
-				word.WriteByte(line[i])
-			}
-		case c == '\\' && i+1 < len(line):
-			inWord = true
-			i++
-			word.WriteByte(line[i])
-		case c == ' ' || c == '\t' || c == '\n' || c == ';' || c == '&' || c == '|':
-			if inWord {
-				out = append(out, word.String())
-				word.Reset()
-				inWord = false
-			}
-		default:
-			inWord = true
-			word.WriteByte(c)
-		}
-	}
-	if inWord {
-		out = append(out, word.String())
-	}
-	return out
 }

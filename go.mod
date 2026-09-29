@@ -12,6 +12,7 @@ require (
 	golang.org/x/text v0.35.0
 	honnef.co/go/tools v0.8.1
 	modernc.org/sqlite v1.59.0
+	mvdan.cc/sh/v3 v3.14.1
 )
 
 require (

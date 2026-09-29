@@ -229,9 +229,12 @@ var shells = map[string]bool{"sh": true, "bash": true, "dash": true, "zsh": true
 // wrapper this scan can judge.
 const wrapperLimit = 1 << 20
 
-// wrapper judges a shell script by what it runs: a word naming a Python interpreter or a .py
-// file, or a path (the target of exec, or any absolute path) that classifies as Python. A
-// path it cannot expand or read leaves the script unreadable rather than judged.
+// wrapper judges a shell script by what it runs, reading it as a shell program (shellWalker):
+// a word naming a Python interpreter or a .py file, a command word (found on PATH when it is a
+// bare name) or an absolute path that classifies as Python, or a bare argument PATH resolves
+// to a Python program. A command word it cannot expand, resolve or find on PATH, a path it
+// cannot read, and a construct the reader cannot place leave the script unreadable rather
+// than judged.
 func (c Classifier) wrapper(e *Executable, path, interpreter string, depth int) {
 	e.Kind, e.Detail = KindScript, "a script run by "+interpreter
 	if depth >= maxWrapperDepth {
@@ -248,53 +251,84 @@ func (c Classifier) wrapper(e *Executable, path, interpreter string, depth int) 
 		return
 	}
 	unresolved := ""
-	for n, line := range strings.Split(string(body), "\n") {
-		line = strings.TrimSpace(line)
-		if n == 0 || line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		words := ShellWords(line)
-		for i, word := range words {
-			if strings.Contains(word, "\n") {
-				continue // a program passed to -c
-			}
-			// A quoted message ("run setup.py") is not a path; a quoted path may hold a space,
-			// and "$DIR/x.py" names a .py file whatever DIR is.
-			path := !strings.ContainsAny(word, " \t") || strings.ContainsRune("/$~", rune(word[0]))
-			if PythonName(word) || (strings.HasSuffix(word, ".py") && path) {
-				e.Kind, e.Python, e.Detail = KindPythonScript, true, "a shell script that runs "+word
-				return
-			}
-			target := i > 0 && words[i-1] == "exec"
-			expanded, missing := c.Expand.Expand(word)
-			switch {
-			case missing != "":
-				if target && unresolved == "" {
-					unresolved = "a shell script that execs " + word + ", which needs " + missing + ", an expansion this scan does not make"
-				}
-				continue
-			case target && !strings.Contains(expanded, "/"):
-				found, err := lookPath(expanded, c.Expand.Path)
-				if err != nil {
-					continue
-				}
-				expanded = found
-			case !filepath.IsAbs(expanded):
-				continue
-			}
-			inner := c.classify(expanded, "", depth+1)
-			switch {
-			case inner.Python:
-				e.Kind, e.Python, e.Detail = KindPythonScript, true, "a shell script that runs "+word+", "+inner.Detail
-				return
-			case inner.Kind == KindUnreadable && unresolved == "":
-				unresolved = "a shell script that runs " + word + ", " + inner.Detail
-			}
+	note := func(detail string) {
+		if unresolved == "" {
+			unresolved = detail
 		}
 	}
-	if unresolved != "" {
+	w := &shellWalker{
+		expand: c.Expand,
+		unreadable: func(value, detail string) {
+			note("a shell script this scan cannot read through at " + strconv.Quote(value) + ": " + detail)
+		},
+	}
+	w.visit = func(sw shellWord, role int) bool {
+		word := sw.Written
+		if strings.Contains(word, "\n") {
+			return true // a program passed to -c
+		}
+		// A quoted message ("run setup.py") is not a path; a quoted path may hold a space,
+		// and "$DIR/x.py" names a .py file whatever DIR is.
+		pathLike := !strings.ContainsAny(word, " \t") || strings.ContainsRune("/$~", rune(word[0]))
+		if PythonName(word) || (strings.HasSuffix(word, ".py") && pathLike) {
+			e.Kind, e.Python, e.Detail = KindPythonScript, true, "a shell script that runs "+word
+			return false
+		}
+		expanded, missing := sw.Value, sw.Missing
+		if missing != "" {
+			if role != roleArgument {
+				note("a shell script that runs " + word + ", which needs " + missing + ", an expansion this scan does not make")
+			}
+			return true
+		}
+		var inner Executable
+		switch {
+		case !strings.Contains(expanded, "/") && role != roleScript:
+			found, err := lookPath(expanded, c.Expand.Path)
+			if err != nil {
+				if role == roleCommand {
+					note("a shell script that runs " + word + ", which no directory on the scan's PATH holds as an executable file")
+				}
+				return true
+			}
+			inner = c.classify(found, "", depth+1)
+			if role == roleArgument && !inner.Python {
+				return true
+			}
+		case !filepath.IsAbs(expanded):
+			if role != roleArgument {
+				note("a shell script that runs " + word + ", a relative path that resolves in whatever directory the script runs in")
+			}
+			return true
+		case role == roleScript:
+			inner = c.sourced(expanded, "", depth+1)
+		default:
+			inner = c.classify(expanded, "", depth+1)
+		}
+		switch {
+		case inner.Python:
+			e.Kind, e.Python, e.Detail = KindPythonScript, true, "a shell script that runs "+word+", "+inner.Detail
+			return false
+		case inner.Kind == KindUnreadable:
+			note("a shell script that runs " + word + ", " + inner.Detail)
+		}
+		return true
+	}
+	w.walk(string(body), 0)
+	if !e.Python && unresolved != "" {
 		e.Kind, e.Detail = KindUnreadable, unresolved
 	}
+}
+
+// sourced is what a shell reading value as its program (sh FILE, . FILE) runs: the file judged
+// as a shell script whatever its #! line names, unless it is Python or not a readable script.
+func (c Classifier) sourced(value, base string, depth int) Executable {
+	e := c.classify(value, base, depth)
+	if e.Python || (e.Kind != KindOther && e.Kind != KindScript) {
+		return e
+	}
+	c.wrapper(&e, e.Resolves, "sh", depth)
+	return e
 }
 
 func readLimited(path string, limit int64) ([]byte, error) {

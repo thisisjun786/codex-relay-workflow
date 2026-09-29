@@ -1233,18 +1233,35 @@ Evidence: scripts/runtime_install.py:470-600 (`_STORE_TABLES_PROGRAM`,
 directory's file set is unchanged, and a table committed only to a live WAL is read) and, under
 the parity tag, `TestParity_declared_schema_is_the_python_candidates`.
 
-## 37. The TOML reader is github.com/BurntSushi/toml
+## 37. Two third-party readers: github.com/BurntSushi/toml and mvdan.cc/sh/v3
 
 Decision: Go reads `config.toml` with `github.com/BurntSushi/toml`, at the version go.sum already
 pins through staticcheck, now a direct requirement. Todo 37's retention scan reads
 `mcp_servers.*.command` and `args` with it; todo 38's `register-mcp` uses the same reader for its
 append-only registration and read-back.
 
+The retention scan parses hook commands, shell wrappers and the programs they hand a shell
+(`sh -c` strings, `eval`, `trap` actions, here-documents) with `mvdan.cc/sh/v3/syntax` v3.14.1,
+the parser behind shfmt, in its Bash variant, and walks the syntax tree itself
+(internal/runtime/doctor/shell.go): which word is a command position, which runner or shell
+hands a command on, which expansions a word may make, and what is unreadable. Both libraries
+are used for reading only. Nothing is formatted, evaluated, expanded or run through them; the
+`interp` and `expand` packages are not imported.
+
 Why: codexconfig.py refuses to approximate TOML (a hand-written reader produced ten defects), and
-the retention scan must read every registered command rather than guess at text.
+the retention scan must read every registered command rather than guess at text. The same holds
+for shell: todo 43 removes Python behind the scan's answer, so a mis-parse that hides a command
+position is a safety defect, and a hand-written lexer and grammar for it is a large surface of
+exactly that. The Bash variant, because Codex runs a hook command through a shell the scan cannot
+name (dash is /bin/sh on the relay host, bash its login shell) and a wrapper names its own
+interpreter: Bash's grammar is a superset of the POSIX grammar those shells share, so every
+command either would run is read, the Bash-only constructs only add commands to judge, and a
+program neither accepts is a parse error, which the scan reports as unreadable.
 
 Evidence: scripts/crw_runtime/codexconfig.py:1-25; go.mod; internal/runtime/doctor/retention.go
-(`configToml`); `TestRetentionScanReadsTheWiringSurfaces`.
+(`configToml`, `commandWords`); internal/runtime/doctor/shell.go;
+`TestRetentionScanReadsTheWiringSurfaces`, `TestShellWalkerFindsEveryCommandPosition`,
+`TestRetentionScanJudgesEveryCommandPositionOfAHookCommand`.
 
 ## 39. A caller's cancellation claims every answer the send has not yet used
 
