@@ -99,11 +99,13 @@ The skills plan and verify without a runtime. Delegation through the task bridge
 automatic completion reports need the `crw` runtime, which a release publishes as
 `crw_<version>_<os>_<arch>.tar.gz` beside a `SHA256SUMS` ([releases](docs/releases.md#binary-assets)).
 Unpack the archive anywhere and let its `crw` install itself, on the host whose App
-Server it will serve, because the install exercises the new runtime against it:
+Server it will serve, because the install exercises the new runtime against it. Name that
+App Server's socket with `--socket`: the relay has no default socket, so without it the
+exercise fails and nothing is promoted (exit 1):
 
 ```sh
 tar -xzf crw_<version>_linux_amd64.tar.gz -C <scratch>
-<scratch>/crw install install --from crw_<version>_linux_amd64.tar.gz
+<scratch>/crw install install --from crw_<version>_linux_amd64.tar.gz --socket <app-server-socket>
 crw=~/.local/share/crw-runtime/current/bin/crw
 # The bridge record the plugin's server reads, naming the host's execution policy:
 "$crw" install register-mcp --owner plugin --execution-policy <policy-file>

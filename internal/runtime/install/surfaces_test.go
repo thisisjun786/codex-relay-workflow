@@ -171,7 +171,8 @@ func TestAUserRegistrationThroughThePointerIsASecondOwner(t *testing.T) {
 // `crw install hook --owner plugin` replaces a Python-era plugin document on a Go host only by
 // settings that keep every host fact it records: flags that say something else (observe instead
 // of hold, no isolation, no database, no socket) answer config_differs with those fields and the
-// repair, and write nothing; the same flags as the document replace it, moving only the adapter.
+// repair, and write nothing; the same flags as the document, spelled as the repair names them,
+// replace it, moving only the adapter.
 func TestHookKeepsThePythonEraHostFacts(t *testing.T) {
 	h := newHost(t)
 	h.mustInstall(t, "install", archive(t, "0.9.0", ""))
@@ -205,6 +206,29 @@ func TestHookKeepsThePythonEraHostFacts(t *testing.T) {
 	}
 	if readFile(t, path) != held || len(must(filepath.Glob(path+".superseded-*"))) != 0 {
 		t.Fatal("a refusal changed the settings")
+	}
+	// The repair's flags are the command's own: rerunning `crw install hook` with each flag it
+	// names, given what the document records, would replace the document (a dry run answers
+	// config_would_create, archiving the Python-era document, where other flags answer
+	// config_differs).
+	repair := text(at(refused, "settings", "repair"))
+	opening, closing := strings.Index(repair, "("), strings.Index(repair, ")")
+	if opening < 0 || closing < opening {
+		t.Fatalf("the repair names no flags: %s", repair)
+	}
+	says := map[string]string{"--mode": "hold", "--isolation-asserted-by": "operator", "--marker-root": filepath.Join(h.home, "markers"),
+		"--db-path": database, "--socket": socket, "--journal-root": filepath.Join(h.home, "journal"),
+		"--relay-command": filepath.Join(h.dest, "current", "bin", "codex-session-relay"), "--guard-timeout": "5"}
+	rerun := []string{"hook", "--owner", "plugin", "--dry-run"}
+	for _, flag := range strings.Split(repair[opening+1:closing], ", ") {
+		rerun = append(rerun, flag, says[flag])
+	}
+	if code, stdout, stderr := h.main(t, h.env, rerun...); code != install.OK || !strings.Contains(stdout, `"outcome": "`+install.ConfigWouldCreate+`"`) ||
+		!strings.Contains(stdout, "would archive the Python-era settings") {
+		t.Fatalf("following the repair %q: exit %d\nstdout %s\nstderr %s", rerun, code, stdout, stderr)
+	}
+	if readFile(t, path) != held {
+		t.Fatal("a dry run changed the settings")
 	}
 	same := h.hookOptions()
 	same.Mode, same.Isolation, same.Database, same.Socket = "hold", "operator", database, socket

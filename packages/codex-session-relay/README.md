@@ -685,6 +685,16 @@ the host has selected, and never a stale copy earlier on `PATH`.
 The deadline plus `Restart=always` is deliberate: the process is bounded, and the supervisor is what
 makes it continuous. Where a user manager is unavailable, run the same command in the foreground.
 
+Until todo 43, this unit serves only a host whose pointer names the fence release's Python `env-*`
+runtime. The Go runtime refuses to open a store in the relay's default state directory unless
+`CRW_ALLOW_LIVE_STATE=1` is set
+([the live-state guard](../../docs/port/cutover.md#the-live-state-guard-until-todo-43)), and this
+unit runs the relay on that directory and sets no such variable. With the pointer on a Go runtime
+its daemon answers `store: live state requires CRW_ALLOW_LIVE_STATE=1` as a host error and exits 3
+at start, and `Restart=always` starts it again every five seconds. A host moves its store to the Go runtime through [the cutover](../../docs/port/cutover.md),
+whose runbook exports that variable for every Go process it runs against the live state, rather
+than by pointing this unit at a Go runtime.
+
 The execution policy is declared in the unit's own environment, not an interactive shell profile:
 the worker resolves it in its own process at start, and a variable exported only in a shell leaves
 the serving worker with no policy at all. After editing the policy file, restart the service (the

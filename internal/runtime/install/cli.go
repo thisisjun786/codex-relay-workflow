@@ -269,10 +269,21 @@ func fixedHome(home string) string {
 		return notUTF8Detail("HOME", home)
 	case !filepath.IsAbs(home):
 		return "HOME is " + store.PythonRepr(home) + ", which is not an absolute path, so the destination under it would be read wherever this command runs"
-	case store.PathlibSpelling(home) != filepath.Clean(home):
-		return "HOME is " + store.PythonRepr(home) + ", which pathlib spells " + store.PythonRepr(store.PathlibSpelling(home)) + " and a lexical join spells " + store.PythonRepr(filepath.Clean(home)) + ", so the destination under it would not be one directory; set HOME to its plain absolute spelling"
+	case pathlibHome(home) != filepath.Clean(home):
+		return "HOME is " + store.PythonRepr(home) + ", which pathlib spells " + store.PythonRepr(pathlibHome(home)) + " and a lexical join spells " + store.PythonRepr(filepath.Clean(home)) + ", so the destination under it would not be one directory; set HOME to its plain absolute spelling"
 	}
 	return ""
+}
+
+// pathlibHome is str(Path(home)) for an absolute home. store.PathlibSpelling folds every run of
+// leading slashes to one, but pathlib keeps exactly two ("//" is implementation-defined in POSIX)
+// and folds three or more, so a home starting with "//" is spelled apart from its lexical join.
+func pathlibHome(home string) string {
+	spelled := store.PathlibSpelling(home)
+	if strings.HasPrefix(home, "//") && !strings.HasPrefix(home, "///") {
+		return "/" + spelled
+	}
+	return spelled
 }
 
 // environOf is os.environ.get with presence over an explicit environment, the last entry winning.

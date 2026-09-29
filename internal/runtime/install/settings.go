@@ -335,7 +335,7 @@ func settingsWriteOn(ctx context.Context, path string, basis look, wanted Object
 		if PythonEra(found) && replace {
 			return append(answer, field("detail", "the installed settings name the Python adapter and record host facts these flags do not (differingFields). Replacing them moves only the adapter and keeps every host fact - a silent rewrite of the mode, the roots or the isolation changes what a Stop does - so nothing was written"),
 				field("differingFields", hostFactsDiffering(found, wanted)),
-				field("repair", "rerun with flags that say what those settings say (--mode, --isolation-asserted-by, --marker-root, --database, --socket, --journal-root, --relay, --guard-timeout), or move "+path+" aside by hand and rerun to write these flags' settings instead"))
+				field("repair", "rerun with flags that say what those settings say (--mode, --isolation-asserted-by, --marker-root, --db-path, --socket, --journal-root, --relay-command, --guard-timeout), or move "+path+" aside by hand and rerun to write these flags' settings instead"))
 		}
 		detail := "settings are already installed and say something else; this command does not overwrite them"
 		if PythonEra(found) {

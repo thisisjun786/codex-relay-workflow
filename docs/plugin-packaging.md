@@ -244,9 +244,11 @@ its own. The declared MCP server and Stop hook both reach a runtime this package
 not carry, and each needs a step the installation cannot take for you.
 
 1. Install the Go runtime, if this host has none, where both declared commands look for it: run
-   `crw install install --from <crw_<version>_<os>_<arch>.tar.gz>` (or `--release <tag>`) with
-   the `crw` from that release. It installs under `~/.local/share/crw-runtime`, its only
-   destination (it has no `--dest`). A runtime runtime_install.py placed under another `--dest`,
+   `crw install install --from <crw_<version>_<os>_<arch>.tar.gz> --socket <app-server-socket>`
+   (or `--release <tag>` in place of `--from`) with the `crw` from that release; without
+   `--socket` the relay half of the install's exercise has no App Server to reach, and nothing is
+   promoted. It installs under `~/.local/share/crw-runtime`, its only destination (it has no
+   `--dest`). A runtime runtime_install.py placed under another `--dest`,
    or a pointer that still names a Python `env-*` runtime, is one neither command starts: the hook
    then releases every Stop without a word, and the server exits as it starts. `crw install`
    refuses a host record whose pointer names such another link, naming the repair, and
@@ -356,7 +358,7 @@ each declared surface is whether its reference outlives the directory it names.
 | Native Stop command | No, it names the runtime pointer under `$HOME` | Nothing | `crw install install` |
 | Stop launcher, first candidate (legacy bootstrap a cached turn may still hold) | Yes | Falls through to the second candidate | This package |
 | Stop launcher, second candidate at `<CODEX_HOME>/crw-stop-hook.py` | No | Nothing | Placed by the Python fence installer; `crw install` leaves it as it is, and the cutover removes it once the retention scan is clear |
-| Stop settings at `<CODEX_HOME>/crw-completion-hook.json` | No | Nothing | `crw install hook --owner plugin`; one document serves a Go and a Python runtime through the pointer, and no promotion or rollback rewrites it. The relay host's Python-era document is replaced once, by its first Go install |
+| Stop settings at `<CODEX_HOME>/crw-completion-hook.json` | No | Nothing | `crw install hook --owner plugin`; one document serves a Go and a Python runtime through the pointer, and no promotion or rollback rewrites it. A Python-era document is replaced by its Go variant when the pointer moves onto a Go runtime (an install, an update or a rollback), which on the relay host is its first Go install; a move onto a Python runtime never rewrites it |
 | Adapter, relay and bridge executables | No, they sit under the installer pointer | Nothing | `crw install install` |
 | Hook document path in the run identifier | Yes | Held as an identifier and never re-read | The host |
 | MCP start `cwd` and `args` | Yes | At one measured replacement the host started bridges again from the new version directory; at the other none was seen to start: the bridges already running kept running from the removed directory, and a thread that resumed was given one from the new directory. Either way a bridge started from the new directory runs under the bridge record as it stands then. Both measured on the host; what decides between the two is not | The host |
@@ -570,38 +572,62 @@ making its first policy registration as well, and step 8 says what that changes.
    `<candidate-dir>` is the one version directory the add reports under
    `<throwaway>/plugins/cache/<marketplace>/crw/`. Proceed only when the add reports that one
    directory, the check passes, and the candidate declares the native wiring: its MCP declaration
-   starts `codex-thread-bridge` through `sh ./wiring/crw-bridge.sh`, and its Stop declaration runs
-   `crw hook --plugin-launch`. Such a candidate carries no bridge or hook logic of its own: both
-   start the runtime the pointer names, which reads the record itself, so what it starts under is
-   decided by the runtime and the record rather than by the payload's bytes. A candidate that still
-   declares the Python launchers is a rollback, and it goes in the order
-   [update and roll back](#update-and-roll-back) gives.
+   starts `codex-thread-bridge` through `sh ./wiring/crw-bridge.sh`, and its Stop declaration, in a
+   file its manifest names under `hooks`, runs `crw hook --plugin-launch`. Such a candidate carries
+   no bridge or hook logic of its own: both start the runtime the pointer names, which reads the
+   record itself, so what it starts under is decided by the runtime and the record rather than by
+   the payload's bytes. A candidate that still declares the Python launchers is a rollback, and it
+   goes in the order [update and roll back](#update-and-roll-back) gives.
 
    The same directory tells whether this update will need the hook trusted again. Trust belongs to
-   the hook declaration rather than to the version, so compare the declarations the two manifests
-   name under `hooks`. `<installed-dir>` is the one installed now,
-   `$CODEX_HOME/plugins/cache/<marketplace>/crw/<version>`:
+   the hook declaration rather than to the version, so compare the declaration files the two
+   manifests name under `hooks`, and only those: a hook file the manifest does not name never loads
+   ([how hooks and MCP servers load](#how-hooks-and-mcp-servers-load)). `<installed-dir>` is the one
+   installed now, `$CODEX_HOME/plugins/cache/<marketplace>/crw/<version>`:
 
    ```sh
-   declared() { sed -n '/"hooks": *\[/,/\]/p' "$1/.codex-plugin/plugin.json"; }
-   if ! grep -qs '"Stop"' <candidate-dir>/wiring/hooks/*.json; then
+   candidate=<candidate-dir> installed=<installed-dir>
+   # The files a manifest names under "hooks" (one path or a list of them), one per line.
+   hook_files() {
+       tr -d '\n\r' < "$1/.codex-plugin/plugin.json" |
+           sed -nE 's/.*"hooks"[[:space:]]*:[[:space:]]*(\[[^]]*\]|"[^"]*").*/\1/p' |
+           grep -o '"[^"]*"' | tr -d '"'
+   }
+   # Whether one of those files declares a nonempty Stop list.
+   declares_stop() {
+       hook_files "$1" | while IFS= read -r name; do
+           tr -d '\n\r' < "$1/$name" | grep -q '"Stop"[[:space:]]*:[[:space:]]*\[[[:space:]]*[{]' && echo yes
+       done | grep -q yes
+   }
+   # Whether both manifests name the same files, each holding the same bytes in both.
+   same_hook_files() {
+       [ "$(hook_files "$1")" = "$(hook_files "$2")" ] || return 1
+       ! hook_files "$1" | while IFS= read -r name; do
+           cmp -s "$1/$name" "$2/$name" || echo differs
+       done | grep -q differs
+   }
+   if ! declares_stop "$candidate"; then
        echo "no Stop hook declared"
-   elif [ "$(declared <candidate-dir>)" = "$(declared <installed-dir>)" ] &&
-        diff -r <candidate-dir>/wiring/hooks <installed-dir>/wiring/hooks >/dev/null; then
+   elif same_hook_files "$candidate" "$installed"; then
        echo unchanged
    else
        echo changed
    fi
    ```
 
-   `no Stop hook declared` means none of the candidate's hook declarations has a Stop event, so
-   the completion hook would stop firing after the add; that is not an update this procedure covers,
-   so do not add it.
-   `unchanged` means the stored trust carries over, as it did at the second measured replacement.
+   `no Stop hook declared` means no file the candidate's manifest names under `hooks` holds a
+   nonempty Stop list, so after the add the completion hook would stop firing; that is not an
+   update this procedure covers, so do not add it. The package check does not catch every such
+   candidate: it passes one whose manifest has no `hooks`, or whose Stop entry sits in a file the
+   manifest does not name.
+   `unchanged` means both manifests name the same files and each holds the same bytes, so the
+   stored trust carries over, as it did at the second measured replacement.
    `changed` means expect to trust the hook again in Codex after step 5, as at the first; that was
    measured for a change to the command text, what a change elsewhere in the file does was not, and
-   step 6's firing check settles it either way. The comparison reads the whole hook directory, so a
-   difference in a file the manifest does not name also reads `changed`, which is the cautious side.
+   step 6's firing check settles it either way. The snippet reads the manifest with `sed` rather
+   than a JSON parser, so run it on a candidate the check passed; a declared path it cannot open as
+   spelled, such as one written with a JSON escape, counts as declaring no Stop, the side that stops
+   the add.
    The trust entry also names the marketplace, so adding the package from a marketplace of another
    name is inferred to need a trust of its own whatever this prints. The trust entry in the Codex
    configuration cannot decide any of this: its value stays the same after the add in both cases
@@ -734,7 +760,8 @@ Python bootstrap before `crw install rollback` points at a runtime without that 
 Python `env-*` runtime or a Go runtime built before decision 26. That bootstrap reaches either
 kind through the one Stop settings document `crw install` writes: `/usr/bin/env
 <destination>/current/bin/crw-completion-hook` is the Go hook on a Go runtime and the fence
-release's console script on a venv, and no rollback rewrites it
+release's console script on a venv, and no rollback rewrites that document; only a Python-era
+one is rewritten, when the pointer moves onto a Go runtime
 ([one Stop settings document](runtime-install.md#one-stop-settings-document)). In the other order,
 every Stop in between is released without a record ([the native wiring](#the-native-wiring)).
 
