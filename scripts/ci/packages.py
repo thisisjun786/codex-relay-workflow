@@ -35,6 +35,9 @@ from xml.etree import ElementTree
 
 ROOT = Path(__file__).resolve().parents[2]
 BRIDGE_SKIP = "pinned bridge is not importable"
+# Seconds per test module, by package directory then module path as pytest names it.
+# Shards are balanced on it; `CRW_PACKAGES_RECORD` on a whole run regenerates it.
+DURATIONS = Path(__file__).resolve().with_name("package-durations.json")
 
 # directory under packages/, importable module, console script
 PACKAGES = (
@@ -44,26 +47,39 @@ PACKAGES = (
 
 
 # Loaded into pytest with `-p` when a CI leg runs one shard. Whole test modules are
-# assigned to shards, largest first onto the lightest shard, so a module's tests (and
-# any module-level test that checks what its siblings recorded) stay together. Every
-# leg computes the same assignment from the same collection, so shards 1..N are
-# disjoint and together hold every collected test. Deselected items are reported as
-# such, never as skips, and each leg still refuses an empty or skipped run.
+# assigned to shards, heaviest first onto the lightest shard (ties go to the lower
+# shard, and equal weights are taken in name order), so a module's tests (and any
+# module-level test that checks what its siblings recorded) stay together. A module
+# weighs the seconds DURATIONS recorded for it; a module the table does not name yet
+# weighs its collected tests at the mean seconds per test of the recorded modules in
+# this collection, or 1 per test when none of them is recorded. Every leg computes the
+# same assignment from the same collection and table, so shards 1..N are disjoint and
+# together hold every collected test. Deselected items are reported as such, never as
+# skips, and each leg still refuses an empty or skipped run.
 SHARD_PLUGIN = """\
+import json
 import os
 
 
 def pytest_collection_modifyitems(config, items):
     index, total = (int(part) for part in os.environ["CRW_PACKAGES_SHARD"].split("/"))
+    recorded = json.loads(os.environ.get("CRW_PACKAGES_DURATIONS") or "{}")
     counts = {}
     for item in items:
         module = item.nodeid.split("::", 1)[0]
         counts[module] = counts.get(module, 0) + 1
+    known = [module for module in counts if module in recorded]
+    known_tests = sum(counts[module] for module in known)
+    per_test = sum(recorded[module] for module in known) / known_tests if known_tests else 1
+    weight = {
+        module: recorded[module] if module in recorded else counts[module] * per_test
+        for module in counts
+    }
     loads, owner = [0] * total, {}
-    for module in sorted(counts, key=lambda name: (-counts[name], name)):
+    for module in sorted(counts, key=lambda name: (-weight[name], name)):
         shard = loads.index(min(loads))
         owner[module] = shard
-        loads[shard] += counts[module]
+        loads[shard] += weight[module]
     keep, drop = [], []
     for item in items:
         (keep if owner[item.nodeid.split("::", 1)[0]] == index - 1 else drop).append(item)
@@ -194,7 +210,51 @@ def read_report(path, directory):
     return tests
 
 
-def run_suite(directory, scratch, env, shard=(1, 1)):
+def load_durations(path=DURATIONS):
+    """The recorded table: {package directory: {module path: seconds}}."""
+    try:
+        table = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise Failure(f"could not read the duration table {path}: {exc}") from exc
+    if not isinstance(table, dict) or not all(
+        isinstance(modules, dict)
+        and all(type(seconds) in (int, float) and seconds >= 0 for seconds in modules.values())
+        for modules in table.values()
+    ):
+        raise Failure(f"{path} must map each package directory to {{module path: seconds}}")
+    return table
+
+
+def module_durations(report, package):
+    """Seconds per test module from one JUnit report, rounded to 0.1.
+
+    pytest writes a case's classname as its node id with `/` and `::` turned into dots
+    and `.py` dropped, so the module is the longest dotted prefix that names a file
+    under the package directory. The key is that file's path, as the shard plugin
+    reads it from the node id.
+    """
+    totals = {}
+    for case in ElementTree.parse(str(report)).getroot().iter("testcase"):
+        classname = case.get("classname", "")
+        parts = classname.split(".")
+        candidates = ("/".join(parts[:end]) + ".py" for end in range(len(parts), 0, -1))
+        module = next((path for path in candidates if (Path(package) / path).is_file()), None)
+        if module is None:
+            raise Failure(f"no test module under {package} matches the classname {classname!r}")
+        totals[module] = totals.get(module, 0.0) + float(case.get("time") or 0)
+    return {module: round(seconds, 1) for module, seconds in totals.items()}
+
+
+def write_durations(path, table):
+    text = json.dumps(table, indent=1, sort_keys=True) + "\n"
+    try:
+        Path(path).expanduser().write_text(text, encoding="utf-8")
+    except OSError as exc:
+        raise Failure(f"could not write the duration table {path}: {exc}") from exc
+
+
+def run_suite(directory, scratch, env, shard=(1, 1), durations=None):
+    """Run one package's suite (or its shard) and return (tests, JUnit report path)."""
     report = scratch / f"{directory}.xml"
     command = [
         "uv", "run", "--no-sync", "python", "-m", "pytest", "-q", "-rs",
@@ -208,9 +268,11 @@ def run_suite(directory, scratch, env, shard=(1, 1)):
         env = dict(env)
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(plugins), env.get("PYTHONPATH")]))
         env["CRW_PACKAGES_SHARD"] = f"{shard[0]}/{shard[1]}"
+        # The plugin runs in the package's environment, which cannot import this script.
+        env["CRW_PACKAGES_DURATIONS"] = json.dumps((durations or {}).get(directory, {}))
         command += ["-p", SHARD_MODULE]
     run(command, cwd=ROOT / "packages" / directory, env=env)
-    return read_report(report, directory)
+    return read_report(report, directory), report
 
 
 def main(argv=None):
@@ -219,6 +281,7 @@ def main(argv=None):
     # The relay's own conformance gate skips itself unless this is set, and a skip is
     # not a result. The run stays offline: it validates packaged schemas and fixtures.
     env.setdefault("RELAY_CONFORMANCE_REQUIRED", "1")
+    record = env.get("CRW_PACKAGES_RECORD")
     scratch = None
     try:
         if argv[:1] == ["--shard"] and len(argv) == 2:
@@ -227,10 +290,17 @@ def main(argv=None):
             shard = (1, 1)
         else:
             raise Failure("usage: packages.py [--shard K/N]")
+        if record and shard != (1, 1):
+            raise Failure("CRW_PACKAGES_RECORD needs the whole run; a shard times only its slice")
+        durations = load_durations() if shard != (1, 1) else {}
         run(["uv", "sync", "--locked", "--all-packages"], env=env)
         import_locations(env)
         scratch = temporary_root()
-        counts = {name: run_suite(name, scratch, env, shard) for name, _, _ in PACKAGES}
+        counts, recorded = {}, {}
+        for name, _, _ in PACKAGES:
+            counts[name], report = run_suite(name, scratch, env, shard, durations)
+            if record:
+                recorded[name] = module_durations(report, ROOT / "packages" / name)
         for _, _, script in PACKAGES:
             run(["uv", "run", "--no-sync", script, "--help"], env=env)
         for directory, _, _ in PACKAGES:
@@ -238,6 +308,9 @@ def main(argv=None):
                 ["uv", "build", "--package", directory, "--out-dir", str(scratch / "dist")],
                 env=env,
             )
+        if record:
+            write_durations(record, recorded)
+            print(f"Recorded the per-module durations of both suites in {record}")
     except Failure as exc:
         print(f"Packages check failed: {exc}", file=sys.stderr)
         return 1

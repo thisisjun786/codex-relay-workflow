@@ -146,6 +146,32 @@ successes, because each of them otherwise reads as a pass:
   `codex_session_relay.__file__` are resolved and required to sit under
   `packages/<name>/src` before any test runs.
 
+Each Python version runs as two `--shard K/2` legs. Every leg collects the whole
+suite and keeps whole test modules, assigned heaviest first onto the lightest shard.
+A module weighs the seconds recorded for it in
+[`scripts/ci/package-durations.json`](../scripts/ci/package-durations.json), keyed by
+package directory and then module path. A module the table does not name yet weighs
+its collected tests at the mean seconds per test of that package's recorded modules
+(1 per test when none is recorded), so a new module is still placed and still run;
+only the balance suffers until the table is refreshed. Refresh it after adding,
+renaming or substantially slowing a module, with a whole run that writes the
+per-module seconds from its own JUnit reports once every check has passed:
+
+```sh
+CRW_PACKAGES_RECORD=scripts/ci/package-durations.json TMPDIR=/var/tmp python3 scripts/ci/packages.py
+```
+
+A sharded run refuses `CRW_PACKAGES_RECORD`, because it times only its slice. The
+recorded seconds come from whichever machine ran the command; only their proportions
+matter to the balance. Record on an otherwise idle machine: under contention a
+module's time can move several-fold between runs, and the balance moves with it.
+
+The leg count is a trade against concurrency. A CI run already holds about as many
+jobs as a free-plan account runs at once (20), so a third leg per Python version
+would wait in the queue rather than shorten the run. With the table, two legs are
+expected to finish within the slowest other leg of the run; add legs only when that
+stops holding.
+
 The job then runs both CLIs with `--help` and builds both wheels. All of this is
 evidence about this source. It is not evidence about an installed bridge or relay,
 an App Server socket, an MCP registration or delivery on any host; those remain
