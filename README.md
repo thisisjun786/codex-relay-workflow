@@ -7,11 +7,13 @@ OpenAI or Codex product. Its workflow connects child-task delegation, PR review
 resolution, and parent-task verification and integration.
 
 This is an experimental workflow built from a personal setup. It contains the skill
-instruction sets listed below, a symlink installer, and the two Python packages the
-workflow delegates and reports through. CXC and Paperthin remain separate
-dependencies. Having the package source here does not install or activate a
-runtime, and offline contract checks do not establish live Codex hook or Desktop
-compatibility.
+instruction sets listed below, the `crw` runtime the workflow delegates and reports
+through (one Go binary serving the task bridge, the session relay and the completion
+hook), a symlink installer for development, and the two Python packages that runtime
+was ported from, kept as the development and rollback path until the Python execution
+path is removed. CXC and Paperthin remain separate dependencies. Having the source here
+does not install or activate a runtime, and offline contract checks do not establish
+live Codex hook or Desktop compatibility.
 
 | Skill | Purpose |
 |---|---|
@@ -59,9 +61,8 @@ go run -tags dev ./cmd/crw-dev skills link --check
 ```
 
 `crw-dev` is the repository's development binary; the linker is in it because it
-links a checkout, and a release archive has none. `python3 scripts/install.py
---apply` and `--check` are the legacy equivalent and stay until the Python
-execution path is removed.
+links a checkout, and a release archive has none. `scripts/install.py` is its legacy
+equivalent and stays until the Python execution path is removed.
 
 ### Retired skill migration
 
@@ -85,17 +86,42 @@ while a linked installation offers them unprefixed. Both read the same source. S
 [plugin packaging](docs/plugin-packaging.md) for the package layout, updates, and
 what installing does not do.
 
+### Install the runtime
+
+The skills plan and verify without a runtime. Delegation through the task bridge and
+automatic completion reports need the `crw` runtime, which a release publishes as
+`crw_<version>_<os>_<arch>.tar.gz` beside a `SHA256SUMS` ([releases](docs/releases.md#binary-assets)).
+Unpack the archive anywhere and let its `crw` install itself, on the host whose App
+Server it will serve, because the install exercises the new runtime against it:
+
+```sh
+tar -xzf crw_<version>_linux_amd64.tar.gz -C <scratch>
+<scratch>/crw install install --from crw_<version>_linux_amd64.tar.gz
+crw=~/.local/share/crw-runtime/current/bin/crw
+"$crw" install register-mcp --owner plugin   # the bridge record the plugin's server reads
+"$crw" install hook --owner plugin           # the Stop settings the plugin's hook reads
+"$crw" doctor                                # read what landed
+```
+
+The runtime goes to `~/.local/share/crw-runtime`, the path the plugin's declared server
+and Stop hook name, so keep that default on a plugin host. Nothing puts its
+`current/bin/` on `PATH`, which the relay commands in the skills need. The Stop hook
+then has to be trusted in Codex before it fires. [Runtime installation](docs/runtime-install.md)
+covers updating, rolling back, removing and reading an installation, and
+[the cutover](docs/port/cutover.md) covers moving a host that runs the Python runtime.
+
 ### Before using the skills
 
 | Capability | What you need |
 | --- | --- |
 | Link the skills from a checkout | The Go toolchain `go.mod` names, and directory symlinks |
-| Run repository checks | Python 3.10+ |
-| Work on the packages | Python 3.11+ and [uv](https://docs.astral.sh/uv/) |
+| Install the runtime | A release archive for Linux (amd64 or arm64); darwin/arm64 is built but unvalidated |
+| Run repository checks | The Go toolchain, and Python 3.10+ for the Python checks that remain until the Python path is removed (developer-only) |
+| Work on the Python packages (developer-only) | Python 3.11+ and [uv](https://docs.astral.sh/uv/) |
 | Plan and verify Linear work | Codex with local skill support and a connected Linear workspace you can access |
 | Use the shared workflow | Separately installed CXC and Paperthin skills referenced by the [integration guide](plugins/crw/skills/crw-plan/references/integrations.md) |
 | Delegate independent tasks | A host exposing task creation and coordination tools, or an installed bridge |
-| Receive automatic completion reports | An installed relay and verified host capability; installing these skills alone does not enable delivery |
+| Receive automatic completion reports | An installed runtime, a trusted Stop hook and verified host capability; installing these skills alone does not enable delivery |
 
 Use your own Linear project and repository. The examples describe the maintainer's
 workflow, including task names, model preferences, and worktree locations; adapt
@@ -114,11 +140,10 @@ contracts or passing offline fixtures as a supported turnkey runtime.
 
 - CXC: follow the upstream [Codexclaw installation guide](https://github.com/lidge-jun/codexclaw#install).
 - Paperthin: follow the upstream [Paperthin setup guide](https://github.com/LilMGenius/paperthin#readme), selecting Codex as the target agent.
-- Bridge and relay: the source is in [packages/](packages/README.md) and you can
-  build both wheels with `uv build`, but there is no published distribution,
-  supported version, or installation procedure from this repository yet. Without an
-  installed bridge or host-native task tools, independent delegation is unavailable;
-  without an installed relay, automatic completion reporting is unavailable.
+- Bridge, relay and completion hook: the `crw` runtime above, from a release that
+  carries its archives. Without an installed bridge or host-native task tools,
+  independent delegation is unavailable; without an installed relay and a trusted
+  Stop hook, automatic completion reporting is unavailable.
 
 You can read, install, and validate the skill sources without these runtimes.
 With Linear and the referenced CXC/Paperthin skills configured, planning and
@@ -152,19 +177,31 @@ None of that is the same as using the change. A conversation that already read a
 
 ## Maintain
 
+Everything in this section is developer-only: it needs a checkout.
+
 Edit `plugins/crw/skills/`, review the diff, and commit the change. Use a scoped branch from `dev` and target `dev` for ordinary pull requests; an explicit dependent pull request may target its prerequisite branch instead. The owner releases a verified `dev` commit and fast-forwards `main` to it with the [release workflow](docs/releases.md); there is no promotion PR. Read [repository policy](POLICY.md), [contribution steps](CONTRIBUTING.md) and [CI operation](docs/CI.md). Remote pushes remain user-authorized. Do not copy project state into the skills.
 
-Repository checks need only Python 3.10+:
+Repository checks run from the development binary:
+
+```sh
+go run -tags dev ./cmd/crw-dev ci validate
+go run -tags dev ./cmd/crw-dev ci plugin
+go run -tags dev ./cmd/crw-dev ci contracts
+git diff --check
+```
+
+The runtime itself is checked with `make lint test` ([CI operation](docs/CI.md) lists the
+parts CI splits that into). Until the Python execution path is removed, the Python checks
+remain and CI runs them too; they need Python 3.10+:
 
 ```sh
 python3 scripts/ci/validate.py
 python3 scripts/ci/plugin.py
 python3 -m unittest discover -s scripts/ci/tests -v
 python3 scripts/ci/contracts.py
-git diff --check
 ```
 
-Changing either package additionally needs Python 3.11+ and uv:
+Changing either Python package additionally needs Python 3.11+ and uv:
 
 ```sh
 python3 scripts/ci/packages.py

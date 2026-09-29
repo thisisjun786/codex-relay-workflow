@@ -36,7 +36,16 @@ store lives outside repositories; caller-selected receipt and artifact locations
 
 ## Install
 
-The core has no third-party dependency. The real host adapter needs the transport bridge.
+A host runs this relay as the `codex-session-relay` name of the `crw` runtime, one Go binary
+built from this repository and installed with `crw install`
+([runtime installation](../../docs/runtime-install.md)). Its command line, records and store are
+the ones this README documents, and both implementations are held to them by
+[the contract corpus](../../contract/README.md).
+
+This package is the Python implementation that runtime was ported from. Installing it is
+developer-only: it is the development path, and the fence release's rollback path, until the
+Python execution path is removed. The core has no third-party dependency. The real host adapter
+needs the transport bridge.
 
     pip install -e .
     pip install -e '.[bridge]'      # only to talk to a live App Server
@@ -657,7 +666,9 @@ segment buys that work no segment to be useful in.
 Not installed, not started and not verified as a running service by this delivery, which has only
 ever exercised the package offline and against injected transports. The unit below is a worked
 example of the CLI's real shape, with the global options before the subcommand and an explicit
-bound; whoever operates the host owns whether it is correct for that machine.
+bound; whoever operates the host owns whether it is correct for that machine. It names the relay
+through the runtime installer's pointer rather than through `PATH`, so it starts whichever runtime
+the host has selected, and never a stale copy earlier on `PATH`.
 
     # ~/.config/systemd/user/codex-session-relay.service
     [Unit]
@@ -665,7 +676,7 @@ bound; whoever operates the host owns whether it is correct for that machine.
     [Service]
     Environment=RELAY_SOCKET=%h/.codex/app-server-control/app-server-control.sock
     Environment=CODEX_THREAD_BRIDGE_EXECUTION_POLICY=%h/.codex/execution-policy.json
-    ExecStart=%h/.local/bin/codex-session-relay --socket ${RELAY_SOCKET} daemon --deadline 3600
+    ExecStart=%h/.local/share/crw-runtime/current/bin/codex-session-relay --socket ${RELAY_SOCKET} daemon --deadline 3600
     Restart=always
     RestartSec=5
     [Install]
