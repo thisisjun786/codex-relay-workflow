@@ -598,15 +598,16 @@ making its first policy registration as well, and step 8 says what that changes.
    stays the same after the add in both cases until someone approves.
 5. On a host that gates the bridge,
    [check the candidate's declaration](#before-you-add-or-update-on-a-host-that-gates-the-bridge),
-   passing the version directory step 4's throwaway add reported as `--package`.
+   passing the version directory step 4's throwaway add reported as `--payload`.
    Then run `codex plugin add crw@<marketplace>`, and trust the hook again in Codex if step 4
    found its declaration changed. At the first measured replacement the host started bridges again
    before that trust was found in place; at the second, which needed none, none was seen to start.
 6. Read back what landed:
-   - the installed payload: `check-declaration --package` on the version directory the add
-     installed reports a `payloadDigest` that should equal the one the same command reports for
-     the throwaway directory from step 4; `python3 scripts/ci/plugin.py --payload <dir>` checks it
-     against the package rules;
+   - the installed payload: `go run -tags dev ./cmd/crw-dev ci plugin --payload <dir> --json` on
+     the version directory the add installed checks it against the package rules and reports a
+     `digest` that should equal the one the same command reports for the throwaway directory from
+     step 4 (`python3 scripts/ci/plugin.py --payload <dir>` is the legacy equivalent of the rule
+     check);
    - the step 2 dry run again, which now probes the server the new package declares and should
      still answer `record_unchanged`;
    - `get_capabilities` in a fresh task and in the tasks that were loaded during the add: its
