@@ -74,7 +74,14 @@ then move it outside the skills directory Codex discovers (`$CODEX_HOME/skills`,
 `~/.codex/skills`). `crw-dev skills link` does not look for retired names.
 
 Or install the same skills as a versioned plugin, which needs no checkout to stay
-in place:
+in place. The plugin also declares an MCP server and a Stop hook that run the installed
+runtime, so on a host that will use them [install the runtime](#install-the-runtime)
+first and add the plugin after it: runtime first, then payload
+([turning the wired surfaces on](docs/plugin-packaging.md#turning-the-wired-surfaces-on)).
+A host whose runtime is still the Python one does not add or update the plugin before
+[the cutover](docs/port/cutover.md). This payload's declared commands cannot start a
+Python runtime, so every Stop would be released without a record and the bridge would
+not start.
 
 ```sh
 codex plugin marketplace add thisisjun786/codex-relay-workflow --ref dev
@@ -98,17 +105,33 @@ Server it will serve, because the install exercises the new runtime against it:
 tar -xzf crw_<version>_linux_amd64.tar.gz -C <scratch>
 <scratch>/crw install install --from crw_<version>_linux_amd64.tar.gz
 crw=~/.local/share/crw-runtime/current/bin/crw
-"$crw" install register-mcp --owner plugin   # the bridge record the plugin's server reads
+# The bridge record the plugin's server reads, naming the host's execution policy:
+"$crw" install register-mcp --owner plugin --execution-policy <policy-file>
 "$crw" install hook --owner plugin           # the Stop settings the plugin's hook reads
 "$crw" doctor                                # read what landed
 ```
+
+Without `--execution-policy` the bridge record is version 1 and the bridge checks no role
+pairs. `register-mcp` never overwrites a record that says something else, so naming a policy
+later means moving that record aside by hand first
+([the execution policy](docs/runtime-install.md#the-execution-policy-the-plugin-bridge-runs-under)).
 
 The runtime goes to `~/.local/share/crw-runtime`, the path the plugin's declared server
 and Stop hook name, so keep that default on a plugin host. Nothing puts its
 `current/bin/` on `PATH`, which the relay commands in the skills need. The Stop hook
 then has to be trusted in Codex before it fires. [Runtime installation](docs/runtime-install.md)
-covers updating, rolling back, removing and reading an installation, and
-[the cutover](docs/port/cutover.md) covers moving a host that runs the Python runtime.
+covers updating, rolling back, removing and reading an installation.
+
+Until todo 43, this procedure is not yet the way a live host gets the runtime. The Go build
+refuses to open a store in the relay's default state directory unless `CRW_ALLOW_LIVE_STATE=1`
+is set ([the live-state guard](docs/port/cutover.md#the-live-state-guard-until-todo-43)). The
+install itself is not refused by it, because its exercise and its swap gate read the store
+without opening it. But the relay commands the skills run are refused there, and so is the Stop hook's guard
+whenever it has to read the store. The runtime this procedure leaves on a live host therefore
+cannot serve that host's store. Until then a live host, and any host still on the Python
+runtime, moves through [the cutover](docs/port/cutover.md). That runbook moves the store's
+ownership. Where the pointer move and the Stop settings carry (`crw install install`) fall among
+its steps is not written yet: todo 42 settles it.
 
 ### Before using the skills
 

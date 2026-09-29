@@ -4,14 +4,15 @@ Read when an assignment is actually HELD BY A RELAY. Ordinary `crw-run` does not
 this: without a relay the existing dispatch, review, and correction rules stand unchanged, and
 nothing below becomes a prerequisite.
 
-`codex-session-relay` is the relay of the installed `crw` runtime, and it records one issue's
-assignment durably: the relationship, its execution generations, each delivery attempt, the
+`codex-session-relay` is the relay of the installed runtime: the `crw` binary under that name on a
+Go runtime, or the Python fence release's console script on a host the cutover has not yet moved. It
+records one issue's assignment durably: the relationship, its execution generations, each delivery attempt, the
 parent's acknowledgement and verdict, and the coordination summary owed to a Linear document. It owns none of that
 workflow's authority. It does not read or write any task's CXC state, and CXC startup and phase
 procedure stay with the installed `cxc-loop` and `cxc-pabcd` skills; this reference never restates
 them.
 
-Verified against `crw` built from `7e5a06fc` on 2026-09-29: every command and flag this page
+Verified against `crw` built from `423c2584` on 2026-09-29: every command and flag this page
 names is one `crw relay <command> --help` lists. The refusal reasons quoted here and the record
 shapes were read from the Python `codex-session-relay` 0.1.0 on 2026-09-15 and exercised against
 temporary stores; the Go relay is held to that package's outputs by
@@ -22,9 +23,11 @@ installed before relying on a refusal reason or a field name.
 The commands below run `codex-session-relay` as a shell command, so they reach whatever `PATH`
 finds first. The runtime installer places that name in `~/.local/share/crw-runtime/current/bin/`
 and does not manage `PATH`. Before relying on a result, check that
-`readlink -f "$(command -v codex-session-relay)"` resolves into the selected runtime, a
-`bin-<version>-<digest>/bin/crw` under that directory, and not to an older copy earlier on `PATH`;
-or run the relay by that absolute path
+`readlink -f "$(command -v codex-session-relay)"` lies inside the runtime directory the pointer
+selects, `readlink -f ~/.local/share/crw-runtime/current`, and not in an older copy earlier on
+`PATH`. That is the directory's `bin/crw` on a Go runtime (`bin-<version>-<digest>`), and its
+`bin/codex-session-relay` on a Python fence runtime (`env-*`) before the cutover. Or run the relay
+by that absolute path
 ([how skill commands reach the relay](../../../../../docs/runtime-install.md#how-skill-commands-reach-the-relay)).
 
 Global options come BEFORE the subcommand:

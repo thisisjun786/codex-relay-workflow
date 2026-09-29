@@ -34,7 +34,10 @@ mean the same thing wherever this page uses them. A plugin installation has no s
 The Python installer, `scripts/runtime_install.py`, still exists. It installs the Python fence
 release and it is the development and rollback path until the Python execution path is removed;
 [the Python fence installer](#the-python-fence-installer) is the one section of this page about it.
-Moving a host from the Python runtime to this one is [the cutover](port/cutover.md), not an install.
+Moving a host from the Python runtime to this one is [the cutover](port/cutover.md), not an install
+alone. The cutover moves the store's ownership. Where `crw install install`, which moves the pointer
+and carries the Stop settings, falls among its steps is not written yet; that order is an open item
+todo 42 settles ([the backlog](port/refactor-backlog.md#deferred-review-findings-fix-before-todo-42)).
 
 ## What an installation is
 
@@ -111,9 +114,15 @@ and the pointer where it was ([what a failed update restores](#what-a-failed-upd
 Nothing here removes, moves or recreates the store: update failure and store loss are different
 accidents and the recovery for one must not cause the other.
 
-Until todo 43 removes it, the Go build refuses the live store unless `CRW_ALLOW_LIVE_STATE=1` is set
-([the live-state guard](port/cutover.md#the-live-state-guard-until-todo-43)). Every `crw` process
-that opens the live store is subject to it, the relay an install exercises included.
+Until todo 43 removes it, the Go build refuses to open a store in the relay's default state
+directory unless `CRW_ALLOW_LIVE_STATE=1` is set
+([the live-state guard](port/cutover.md#the-live-state-guard-until-todo-43)). This run is not
+refused by it: the exercise and the swap gate read the store without opening it, through the
+relay's `doctor` and `service status` and a catalog read that takes no lock. What the guard does
+refuse is the runtime's use of that store afterwards: the relay commands the skills run, and the
+Stop hook's guard whenever it has to read the store. So on a host whose store is the live one, an
+install before todo 43 leaves a runtime that cannot serve it, and that host moves through
+[the cutover](port/cutover.md) instead.
 
 ### The record is not the replacement
 
@@ -383,7 +392,11 @@ names and which settings the hook reads. It does not move the store's ownership.
 the store is owned by the Go runtime, and handing it back to the Python fence release is
 `crw relay takeover rollback --to python --python-relay <path>`, which names the Python relay by
 absolute path and never through the pointer ([cutover rollback](port/cutover.md#rollback)). One does
-not imply the other, and a return to Python needs both, in the order the cutover runbook gives.
+not imply the other, and a return to Python needs both. The cutover runbook does not yet say in
+which order they run, or where `crw install install` falls among the forward steps; both orders are
+open items todo 42 settles
+([the backlog](port/refactor-backlog.md#deferred-review-findings-fix-before-todo-42)). The one order
+fixed today is the plugin payload's, above: the payload goes back before the runtime does.
 
 ## Removing a runtime
 
@@ -430,8 +443,14 @@ absolute path. Check what a task actually reaches:
 
 ```sh
 command -v codex-session-relay
-readlink -f "$(command -v codex-session-relay)"   # expect <destination>/bin-<version>-<digest12>/bin/crw
+readlink -f "$(command -v codex-session-relay)"
+readlink -f <destination>/current                  # the runtime directory the pointer selects
 ```
+
+The first answer has to lie inside the second. On a Go runtime (`bin-<version>-<digest12>`) it is
+that directory's `bin/crw`, which the name links to. On a host still on the Python fence release,
+before the cutover, the pointer selects an `env-*` directory and the answer is its
+`bin/codex-session-relay`, a console script of that environment.
 
 A stale `codex-session-relay` earlier on `PATH`, such as a console script under `~/.local/bin` whose
 shebang names a Python virtual environment in a development checkout, runs whatever that checkout
@@ -882,7 +901,16 @@ that could not be made is unreadable, never `false`, and never the value of the 
 
 A real combination is an operator action, not a check. It needs a destination, a Codex home, a host
 record and a state directory that are yours to change, and it establishes nothing until it is
-recorded.
+recorded. The block names the destination, the host record and the Codex home on every command,
+and the state directory wherever one is read, because none of them derives from another:
+`--codex-home` alone would move the default pointer and host record while carrying the Stop settings
+into a different Codex home. The live half reaches this runtime only through the plugin's declared
+commands, so `<destination>` has to be `.local/share/crw-runtime` under the `HOME` the Codex process
+runs with, and `<codex-home>` the Codex home that process reads. Until todo 43 the Go build cannot
+serve a store in that `HOME`'s default relay state directory
+([the live-state guard](port/cutover.md#the-live-state-guard-until-todo-43)), so on a host whose
+relay store is that one, or that still runs the Python runtime, the procedure waits for
+[the cutover](port/cutover.md).
 
 ```sh
 # Substitute every <...> below before running any of it. They are placeholders, not literals, and
@@ -900,21 +928,27 @@ else
     printf 'no configuration existed before this run\n' > <receipt>/config.before.absent
 fi
 
+# Nothing puts crw on PATH. The install runs the copy unpacked from the release archive into
+# <scratch> (see "Installing the runtime" above); every later command runs the one the pointer
+# then selects.
 # The exit status belongs IN the receipt: a receipt that kept the result and lost the status
 # cannot say whether the install refused, or that a 3 means the change landed.
-crw install install --release <tag> --codex-home <codex-home> --socket <socket> \
-    > <receipt>/install.json
+<scratch>/crw install install --release <tag> --dest <destination> --record <record> \
+    --codex-home <codex-home> --state <state> --socket <socket> > <receipt>/install.json
 printf 'install exit=%s\n' "$?" > <receipt>/install.exit
 
-crw install register-mcp --owner plugin --codex-home <codex-home> \
-    --execution-policy <policy-file> > <receipt>/register-mcp.json
+crw=<destination>/current/bin/crw
+
+"$crw" install register-mcp --owner plugin --dest <destination> --record <record> \
+    --codex-home <codex-home> --execution-policy <policy-file> > <receipt>/register-mcp.json
 printf 'register-mcp exit=%s\n' "$?" > <receipt>/register-mcp.exit
 
-crw install hook --owner plugin --codex-home <codex-home> --socket <socket> \
-    > <receipt>/hook.json
+"$crw" install hook --owner plugin --dest <destination> --record <record> \
+    --codex-home <codex-home> --socket <socket> > <receipt>/hook.json
 printf 'hook exit=%s\n' "$?" > <receipt>/hook.exit
 
-crw doctor --codex-home <codex-home> --socket <socket> > <receipt>/doctor.json
+"$crw" doctor --dest <destination> --record <record> --codex-home <codex-home> \
+    --state <state> --socket <socket> > <receipt>/doctor.json
 printf 'doctor exit=%s\n' "$?" > <receipt>/doctor.exit
 
 # The other half of the preservation reading, taken before anything else can write the file.
