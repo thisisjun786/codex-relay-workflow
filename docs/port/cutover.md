@@ -1024,9 +1024,14 @@ else the scan's. It reports:
   2); a hold is not a Python reference, it is a reason to wait;
 - `unscanned` and `unreadable`: the rows the scan did not read, and everything it could not
   read, resolve or judge: files, references whose target cannot be read, every construct and
-  word outside the grammar above, a `crw-*.json` value that is not an absolute path, a relay
-  state directory that cannot be established, and alive pids whose `exe` or `cmdline` cannot be
-  read. Nothing the scan cannot judge is dropped;
+  word outside the grammar above, a `crw-*.json` value that is not an absolute path (or not a
+  string or list of strings), a hooks document, event, group, hook, command, type or timeout,
+  or an MCP server table, entry, command, `args`, `cwd` or `env`, that is not what the host
+  reads there (a malformed Stop entry also leaves row 2's settings unknown), a relay state
+  directory that cannot be established, alive pids whose `exe` or `cmdline` cannot be read, and
+  a program whose reading failed inside the scan (recovered around that one program, never
+  ending the scan). A row with anything of its own listed unreadable is unscanned. Nothing the
+  scan cannot judge is dropped;
 - `clear`: true only when all four are empty. Todo 43 removes nothing until `clear` is true.
 
 | # | Surface | What counts |

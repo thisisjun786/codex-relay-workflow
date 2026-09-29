@@ -203,13 +203,19 @@ func pattern(raw string) bool {
 }
 
 // positional reports whether a word is one positional parameter ($@, "$@", $*, $0, $1, ${1}).
+// Every index is guarded: an empty quoted word ("", or two single quotes) holds no part.
 func positional(word *syntax.Word) bool {
 	parts := word.Parts
-	if q, ok := parts[0].(*syntax.DblQuoted); ok && len(parts) == 1 && !q.Dollar {
-		parts = q.Parts
+	if len(parts) == 1 {
+		if q, ok := parts[0].(*syntax.DblQuoted); ok && !q.Dollar {
+			parts = q.Parts
+		}
+	}
+	if len(parts) != 1 {
+		return false
 	}
 	p, ok := parts[0].(*syntax.ParamExp)
-	return len(parts) == 1 && ok && plain(p) && strings.Trim(p.Param.Value, "@*0123456789") == ""
+	return ok && plain(p) && strings.Trim(p.Param.Value, "@*0123456789") == ""
 }
 
 // plain is $NAME or ${NAME}: a parameter and no operator.
@@ -254,6 +260,7 @@ func (j argvJudge) unreadable(word, detail string) {
 
 // program judges every simple command of a shell program.
 func (j argvJudge) program(text string) {
+	defer j.recovered(text)
 	if j.depth > maxDepth {
 		j.unreadable(snippet(text), nestedTooDeep)
 		return
@@ -264,6 +271,15 @@ func (j argvJudge) program(text string) {
 	}
 	for _, argv := range argvs {
 		j.argv(argv, true)
+	}
+}
+
+// recovered is deferred around the reading of one program or declaration (text): a failure of
+// the scan's own reading of it (a panic) becomes an unreadable entry naming that text, never
+// the end of the scan.
+func (j argvJudge) recovered(text string) {
+	if r := recover(); r != nil {
+		j.unreadable(snippet(text), fmt.Sprintf("this scan's reading of it failed (%v), so what it runs is unknown", r))
 	}
 }
 
@@ -287,6 +303,9 @@ func setOf(words string) map[string]bool {
 // they read; env runs the command after its options; anything else runs what it is, and each
 // of its arguments is judged as something it may run (argument).
 func (j argvJudge) argv(argv []shellWord, shell bool) {
+	if len(argv) == 0 {
+		return
+	}
 	head := argv[0]
 	if shell && head.Missing == "" {
 		switch head.Value {

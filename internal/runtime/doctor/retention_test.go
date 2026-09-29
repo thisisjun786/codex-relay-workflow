@@ -336,8 +336,8 @@ func TestRetentionScanListsAnAliveProcessItCannotRead(t *testing.T) {
 			if got := unreadable(report); !listed(got, "row 3", path, "pid", "4242") {
 				t.Fatalf("unreadable %v", got)
 			}
-			if len(references(report)) != 0 || record.Get(report, "clear") != false {
-				t.Fatalf("references %v clear %v", references(report), record.Get(report, "clear"))
+			if len(references(report)) != 0 || record.Get(report, "clear") != false || record.Get(surfaceRow(t, report, 3), "scanned") != false {
+				t.Fatalf("references %v clear %v row 3 %s", references(report), record.Get(report, "clear"), golden.Canon(surfaceRow(t, report, 3)))
 			}
 		})
 	}
@@ -815,7 +815,7 @@ func TestRetentionScanJudgesOnlyWhatItsGrammarReads(t *testing.T) {
 			t.Errorf("%q: %s, want %s", c.command, got, c.want)
 		}
 	}
-	if row := surfaceRow(t, report, 9); record.Get(row, "scanned") != true || record.Get(report, "clear") != false {
+	if row := surfaceRow(t, report, 9); record.Get(row, "scanned") != false || record.Get(report, "clear") != false {
 		t.Fatalf("row 9 %s", golden.Canon(row))
 	}
 	h.env = scope.Env{"HOME=" + h.home, "XDG_STATE_HOME=" + h.state, "CODEX_HOME=" + h.codex, "PATH=relbin:" + bin}
@@ -1066,5 +1066,92 @@ func TestRetentionScanDoesNotResolveARelativeClaimRoot(t *testing.T) {
 	}
 	if !listed(unreadable(report), path, "row 2", `"j"`) {
 		t.Fatalf("unreadable %v", unreadable(report))
+	}
+}
+
+// A declaration the host reads is validated at every level (finding 4131865227): a hooks
+// document, event, group or hook that is not what Codex reads, a command that is not a string,
+// a type other than command, a timeout that is not a number, an MCP server table, entry or
+// field of the wrong kind, and a crw-*.json value that is neither a string nor a list of
+// strings are each unreadable, and leave their row unscanned; a malformed Stop entry leaves the
+// settings it reads unknown for row 2 as well.
+func TestRetentionScanListsAMalformedDeclaration(t *testing.T) {
+	for _, c := range []struct {
+		name, file, text string
+		row              int64
+		stop             bool
+	}{
+		{"command not a string", "hooks.json", `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": 42}]}]}}`, 9, true},
+		{"hooks not an object", "hooks.json", `{"hooks": ["true"]}`, 9, true},
+		{"event not a list", "hooks.json", `{"hooks": {"Stop": {"hooks": []}}}`, 9, true},
+		{"group hooks not a list", "hooks.json", `{"hooks": {"Stop": [{"hooks": "true"}]}}`, 9, true},
+		{"hook not an object", "hooks.json", `{"hooks": {"Stop": [{"hooks": ["true"]}]}}`, 9, true},
+		{"another type", "hooks.json", `{"hooks": {"Stop": [{"hooks": [{"type": "prompt", "command": "true"}]}]}}`, 9, true},
+		{"timeout not a number", "hooks.json", `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "true", "timeout": "10"}]}]}}`, 9, true},
+		{"another event", "hooks.json", `{"hooks": {"SessionStart": [{"hooks": [{"command": null}]}]}}`, 9, false},
+		{"cached hook", "plugins/cache/crw/crw/0.5.0/wiring/hooks/stop.json", `{"hooks": {"Stop": [{"hooks": [{"command": 42}]}]}}`, 5, true},
+		{"cached servers not an object", "plugins/cache/crw/crw/0.5.0/wiring/mcp.json", `{"mcpServers": ["x"]}`, 5, false},
+		{"cached server command", "plugins/cache/crw/crw/0.5.0/wiring/mcp.json", `{"mcpServers": {"x": {"command": 42}}}`, 5, false},
+		{"cached server args", "plugins/cache/crw/crw/0.5.0/.mcp.json", `{"mcpServers": {"x": {"command": "true", "args": "--x"}}}`, 5, false},
+		{"server env", "config.toml", "[mcp_servers.x]\ncommand = \"true\"\nenv = { PATH = 1 }\n", 10, false},
+		{"server cwd", "config.toml", "[mcp_servers.x]\ncommand = \"true\"\ncwd = 1\n", 10, false},
+		{"servers not a table", "config.toml", "mcp_servers = 1\n", 10, false},
+		{"setting not a string", "crw-completion-hook.json", `{"relayExecutable": 42}`, 4, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHost(t)
+			write(t, filepath.Join(h.codex, filepath.FromSlash(c.file)), c.text, 0o600)
+			report := h.scan(t)
+			got := unreadable(report)
+			if !listed(got, filepath.Join(h.codex, filepath.FromSlash(c.file))+": row "+strconv.FormatInt(c.row, 10)+" ") || record.Get(surfaceRow(t, report, c.row), "scanned") != false {
+				t.Fatalf("row %d %s, unreadable %v", c.row, golden.Canon(surfaceRow(t, report, c.row)), got)
+			}
+			if listed(got, ": row 2 ") != c.stop {
+				t.Fatalf("row 2 settings unknown %v, want %v: %v", !c.stop, c.stop, got)
+			}
+		})
+	}
+	h := newHost(t)
+	write(t, filepath.Join(h.codex, "config.toml"), "[mcp_servers.remote]\nurl = \"https://example.invalid/mcp\"\n", 0o600)
+	if got := unreadable(h.scan(t)); len(got) != 0 {
+		t.Fatalf("a server reached over HTTP is not malformed: %v", got)
+	}
+}
+
+// Every row reads as scanned only when nothing it enumerates was listed unreadable (finding
+// 4131865399 and the same pattern in each row's loop): a Stop-event claim that is not JSON
+// leaves row 1 unscanned, and an alive daemon whose executable cannot be read leaves row 3
+// unscanned (TestRetentionScanListsAnAliveProcessItCannotRead).
+func TestRetentionScanDoesNotReadARowWithAnUnreadableItemAsScanned(t *testing.T) {
+	h := newHost(t)
+	claim(t, h, strings.Repeat("b", 64), true)
+	write(t, filepath.Join(h.codex, "crw-completion-hook", "stop-events", "torn.json"), `{"eventKey": `, 0o600)
+	report := h.scan(t)
+	if row := surfaceRow(t, report, 1); record.Get(row, "scanned") != false || !strings.Contains(record.Text(row, "detail"), "could not be read or judged") {
+		t.Fatalf("row 1 %s", golden.Canon(row))
+	}
+	for _, row := range []int64{2, 3, 4, 5, 6, 8, 9, 10, 11} {
+		if record.Get(surfaceRow(t, report, row), "scanned") != true {
+			t.Errorf("row %d charged with row 1's entry: %s", row, golden.Canon(surfaceRow(t, report, row)))
+		}
+	}
+}
+
+// The scan never ends on a hook or MCP text (finding 4131865048): an empty quoted word, an
+// empty program and a lone separator are read, and so is an MCP server with an empty argument.
+func TestRetentionScanReadsEmptyWordsAndPrograms(t *testing.T) {
+	h := newHost(t)
+	stopHooks(t, h, `""`, `true ""`, `"" x`, `$''`, ``, `;`, `sh -c ""`, `exec "" "$@"`)
+	write(t, filepath.Join(h.codex, "config.toml"), "[mcp_servers.x]\ncommand = \"true\"\nargs = [\"\"]\n", 0o600)
+	report := h.scan(t)
+	for _, entry := range unreadable(report) {
+		if strings.Contains(entry, "reading of it failed") {
+			t.Errorf("a panic was recovered: %s", entry)
+		}
+	}
+	for i, want := range []string{"unreadable", "clean", "unreadable", "unreadable", "clean", "unreadable", "clean", "unreadable"} {
+		if got := outcome(report, 9, "hooks.Stop[0].hooks["+strconv.Itoa(i)+"].command"); got != want {
+			t.Errorf("hook %d: %s, want %s", i, got, want)
+		}
 	}
 }

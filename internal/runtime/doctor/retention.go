@@ -79,7 +79,9 @@ type scan struct {
 	// stopSettings are the settings documents the retained Stop registrations read (row 2),
 	// and claimRoots the journal roots Stop-event claims name.
 	stopSettings []stopSettings
-	claimRoots   []string
+	claimRoots   [][2]string // (claim file, journalRoot)
+	// listed is how many unreadable entries the rows surfaced so far account for.
+	listed int
 	// states are the relay state directories rows 3 and 6 read, scopeClaims the scope registry's
 	// records row 3 judges, and statesUnknown how many sources of either could not be read.
 	states        []string
@@ -107,7 +109,14 @@ func (s *scan) hold(row int, source string, fields record.Object) {
 	s.holds = append(s.holds, append(o, fields...))
 }
 
+// surface records one row. The rows are read in turn and each surfaces once, so every unreadable
+// entry listed since the previous row surfaced is this row's: a row with any is not scanned,
+// whatever its reader concluded, because something it should judge was not judged.
 func (s *scan) surface(row int, scanned bool, examined int, detail string) {
+	if unjudged := len(s.unreadable) - s.listed; unjudged > 0 && scanned {
+		scanned, detail = false, strconv.Itoa(unjudged)+" of what this row reads could not be read or judged (see unreadable); "+detail
+	}
+	s.listed = len(s.unreadable)
 	s.surfaces = append(s.surfaces, Object{{Key: "row", Value: int64(row)}, {Key: "surface", Value: Surfaces[row-1].Name}, {Key: "scanned", Value: scanned}, {Key: "examined", Value: int64(examined)}, {Key: "detail", Value: detail}})
 }
 
@@ -298,10 +307,17 @@ func (s *scan) settingsRecords() {
 			}
 		}
 		for _, key := range SettingsKeys {
-			for i, text := range words(record.Get(value, key)) {
+			values, ok := texts(record.Get(value, key))
+			if !ok {
+				s.malformed(4, path, key, "the value is "+scope.TypeName(record.Get(value, key))+", not a string or a list of strings")
+			}
+			for i, text := range values {
 				name := key
 				if _, list := record.Get(value, key).([]any); list {
 					name = key + "[" + strconv.Itoa(i) + "]"
+				}
+				if text == "" {
+					continue // a launcher reads an empty value as unset
 				}
 				// The Stop and bridge launchers run a value as written, with no shell, and accept only
 				// an absolute path, so one that is not is never resolved against the scan's own
@@ -322,23 +338,33 @@ func (s *scan) settingsRecords() {
 	s.surface(4, true, len(matches), "every crw-*.json record in "+s.o.CodexHome+", each executable resolved through links")
 }
 
-// words is a string value, or each string in a list value.
-func words(v any) []string {
+// texts is a string value, or each item of a list of strings, and whether the value is one of
+// those (absent is none); anything else is malformed, which a caller lists rather than reads as
+// nothing.
+func texts(v any) ([]string, bool) {
 	switch value := v.(type) {
+	case nil:
+		return nil, true
 	case string:
-		if value != "" {
-			return []string{value}
-		}
+		return []string{value}, true
 	case []any:
-		var out []string
+		out := make([]string, 0, len(value))
 		for _, item := range value {
-			if text, ok := item.(string); ok && text != "" {
-				out = append(out, text)
+			text, ok := item.(string)
+			if !ok {
+				return nil, false
 			}
+			out = append(out, text)
 		}
-		return out
+		return out, true
 	}
-	return nil
+	return nil, false
+}
+
+// malformed lists a declaration or record entry that is not what its reader takes: what it
+// runs, or which settings it reads, is unknown.
+func (s *scan) malformed(row int, source, field, what string) {
+	s.unreadable = append(s.unreadable, source+": row "+strconv.Itoa(row)+" "+field+": "+what+", which is not what the host reads there, so what it runs is unknown")
 }
 
 func number(v any) (float64, bool) {
@@ -378,24 +404,55 @@ func lookPath(name, path string) (string, error) {
 // (argvJudge) with no working directory: a relative word in it is unreadable.
 func (s *scan) hookCommands(row int, path string, document Object, pluginRoot string) int {
 	count := 0
-	events, _ := record.Get(document, "hooks").(Object)
+	// bad lists an entry that is not a hook declaration; one that may be a Stop hook also leaves
+	// the settings it reads unknown (row 2).
+	bad := func(field, what string, stop bool) {
+		s.malformed(row, path, field, what)
+		if stop {
+			s.stopSettings = append(s.stopSettings, stopSettings{source: path, field: field, problem: "the Stop declaration is malformed"})
+		}
+	}
+	declared, present := record.Lookup(document, "hooks")
+	events, ok := declared.(Object)
+	if present && !ok {
+		bad("hooks", "hooks is "+scope.TypeName(declared)+", not an object of events", true)
+	}
 	for _, event := range events {
-		groups, _ := event.Value.([]any)
+		stop := event.Key == "Stop"
+		groups, ok := event.Value.([]any)
+		if !ok {
+			bad("hooks."+event.Key, "the event is "+scope.TypeName(event.Value)+", not a list of groups", stop)
+			continue
+		}
 		for g, group := range groups {
-			hooks, _ := record.Get(asObject(group), "hooks").([]any)
+			at := "hooks." + event.Key + "[" + strconv.Itoa(g) + "]"
+			hooks, ok := record.Get(asObject(group), "hooks").([]any)
+			if !ok {
+				bad(at+".hooks", "the group's hooks are "+scope.TypeName(record.Get(asObject(group), "hooks"))+", not a list", stop)
+				continue
+			}
 			for h, hook := range hooks {
-				one := asObject(hook)
-				command, _ := record.Get(one, "command").(string)
-				if command == "" {
+				field := at + ".hooks[" + strconv.Itoa(h) + "].command"
+				one, isObject := hook.(Object)
+				command, isText := record.Get(one, "command").(string)
+				kind, typed := record.Lookup(one, "type")
+				timeout, timed := record.Lookup(one, "timeout")
+				seconds, isNumber := number(timeout)
+				switch {
+				case !isObject:
+					bad(field, "the hook is "+scope.TypeName(hook)+", not an object", stop)
 					continue
-				}
-				count++
-				if seconds, ok := number(record.Get(one, "timeout")); ok && event.Key == "Stop" {
+				case !isText || (typed && kind != "command"):
+					bad(field, "the hook's command is "+scope.TypeName(record.Get(one, "command"))+" and its type "+scope.PyStr(kind)+", not a command string", stop)
+					continue
+				case timed && !isNumber:
+					bad(field, "the hook's timeout is "+scope.TypeName(timeout)+", not a number", stop) // a Stop hook's window cannot be computed
+				case stop && timed:
 					s.timeouts = append(s.timeouts, seconds)
 				}
-				field := "hooks." + event.Key + "[" + strconv.Itoa(g) + "].hooks[" + strconv.Itoa(h) + "].command"
+				count++
 				j := s.judge(row, path, field, "", s.expander(pluginRoot))
-				if event.Key != "Stop" {
+				if !stop {
 					j.program(command)
 					continue
 				}
@@ -424,24 +481,37 @@ func asObject(v any) Object {
 // command is found on env's PATH, else the scan's. versionDir is a cached plugin version's
 // directory, which a ./ or ${PLUGIN_ROOT} cwd names.
 func (s *scan) server(row int, source, field string, get func(string) any, versionDir string) {
-	command, _ := get("command").(string)
-	if command == "" {
-		return
+	command, isText := get("command").(string)
+	args, argsOK := texts(get("args"))
+	if _, isList := get("args").([]any); get("args") != nil && !isList {
+		argsOK = false
 	}
+	cwd, cwdOK := get("cwd").(string)
 	env := map[string]string{}
+	envOK := true
+	each := func(key string, v any) {
+		text, ok := v.(string)
+		env[key], envOK = text, envOK && ok
+	}
 	switch declared := get("env").(type) {
+	case nil:
 	case Object:
 		for _, f := range declared {
-			if v, ok := f.Value.(string); ok {
-				env[f.Key] = v
-			}
+			each(f.Key, f.Value)
 		}
 	case map[string]any:
 		for k, v := range declared {
-			if v, ok := v.(string); ok {
-				env[k] = v
-			}
+			each(k, v)
 		}
+	default:
+		envOK = false
+	}
+	switch {
+	case get("command") == nil && get("url") != nil:
+		return // a server Codex reaches over HTTP starts nothing here
+	case !isText || command == "" || !argsOK || (!cwdOK && get("cwd") != nil) || !envOK:
+		s.malformed(row, source, field, "its command, args, cwd or env is not a non-empty string, a list of strings, a string and an object of strings")
+		return
 	}
 	x := Expander{Vars: map[string]string{"HOME": s.o.Env.Get("HOME")}, Path: s.o.Env.Get("PATH")}
 	for _, name := range []string{"HOME", "CODEX_HOME"} {
@@ -452,7 +522,6 @@ func (s *scan) server(row int, source, field string, get func(string) any, versi
 	if v, ok := env["PATH"]; ok {
 		x.Path = v
 	}
-	cwd, _ := get("cwd").(string)
 	switch plugin := strings.TrimPrefix(cwd, "${PLUGIN_ROOT}"); {
 	case filepath.IsAbs(cwd):
 	case versionDir != "" && (cwd == "." || strings.HasPrefix(cwd, "./")):
@@ -463,10 +532,12 @@ func (s *scan) server(row int, source, field string, get func(string) any, versi
 		cwd = ""
 	}
 	argv := []shellWord{literal(command)}
-	for _, arg := range words(get("args")) {
+	for _, arg := range args {
 		argv = append(argv, literal(arg))
 	}
-	s.judge(row, source, field, cwd, x).argv(argv, false)
+	j := s.judge(row, source, field, cwd, x)
+	defer j.recovered(strings.Join(append([]string{command}, args...), " "))
+	j.argv(argv, false)
 }
 
 // pluginCache is row 5: every cached version's hook and MCP declarations. Codex loads only a
@@ -506,7 +577,11 @@ func (s *scan) pluginCache() {
 		}
 		for _, path := range []string{filepath.Join(base, "wiring", "mcp.json"), filepath.Join(base, ".mcp.json")} {
 			if document, ok := s.readJSON(path, "a cached MCP declaration"); ok {
-				servers, _ := record.Get(document, "mcpServers").(Object)
+				declared, present := record.Lookup(document, "mcpServers")
+				servers, ok := declared.(Object)
+				if present && !ok {
+					s.malformed(5, path, "mcpServers", "mcpServers is "+scope.TypeName(declared)+", not an object of servers")
+				}
 				for _, server := range servers {
 					entry := asObject(server.Value)
 					s.server(5, path, "mcpServers."+server.Key, func(key string) any { return record.Get(entry, key) }, base)
@@ -563,10 +638,8 @@ func (s *scan) claims() {
 		}
 		claimed := asObject(record.Get(claim, "claimedBy"))
 		root, _ := record.Get(claimed, "journalRoot").(string)
-		if filepath.IsAbs(root) {
-			s.claimRoots = append(s.claimRoots, root)
-		} else if root != "" {
-			s.unreadable = append(s.unreadable, path+": row 2: journalRoot "+strconv.Quote(root)+" is not an absolute path, so the journal root that turn wrote to is unknown")
+		if root != "" {
+			s.claimRoots = append(s.claimRoots, [2]string{path, root})
 		}
 		fields := record.Object{{Key: "eventKey", Value: key}, {Key: "claimedAt", Value: record.Get(claim, "claimedAt")}, {Key: "pid", Value: record.Get(claimed, "pid")}}
 		switch {
@@ -725,9 +798,11 @@ func (s *scan) journalRoots() []string {
 			s.unreadable = append(s.unreadable, one.path+": row 2: journalRoot is "+scope.TypeName(root)+", not a path, so the journal root is unknown")
 		}
 	}
-	for _, root := range s.claimRoots {
-		if filepath.IsAbs(root) {
-			add(root)
+	for _, claim := range s.claimRoots {
+		if filepath.IsAbs(claim[1]) {
+			add(claim[1])
+		} else {
+			s.unreadable = append(s.unreadable, claim[0]+": row 2: journalRoot "+strconv.Quote(claim[1])+" is not an absolute path, so the journal root that turn wrote to is unknown")
 		}
 	}
 	roots := make([]string, 0, len(found))
@@ -1336,7 +1411,10 @@ func (s *scan) configToml(_ context.Context) {
 		s.surface(10, false, 0, "config.toml could not be parsed")
 		return
 	}
-	servers, _ := document["mcp_servers"].(map[string]any)
+	servers, ok := document["mcp_servers"].(map[string]any)
+	if declared, present := document["mcp_servers"]; present && !ok {
+		s.malformed(10, path, "mcp_servers", "mcp_servers is "+scope.TypeName(declared)+", not a table of servers")
+	}
 	names := make([]string, 0, len(servers))
 	for name := range servers {
 		names = append(names, name)

@@ -119,3 +119,64 @@ func TestAProgramNestedTooDeepIsUnreadable(t *testing.T) {
 		t.Fatalf("reports %v", reports)
 	}
 }
+
+// failures is every report of a recovered panic judging program with a judge that finds
+// commands on /usr/bin:/bin.
+func failures(program string) []string {
+	var failed []string
+	judge := argvJudge{c: Classifier{Expand: Expander{Vars: testExpander.Vars, Path: "/usr/bin:/bin"}}, report: func(word string, e Executable) {
+		if strings.Contains(e.Detail, "reading of it failed") {
+			failed = append(failed, word+": "+e.Detail)
+		}
+	}}
+	readStopCommand(judge, program)
+	return failed
+}
+
+// emptyWords are the texts finding 4131865048 names, and their neighbours: an empty quoted word
+// has no parts, so nothing may index them.
+var emptyWords = []string{`""`, `''`, `"$@"`, `"" x`, `x "" y`, `$''`, `$""`, ``, `;`, ` `, "\n", `sh -c ""`, `sh -c ''`, `exec ""`, `env ""`, `true "" ''`, `"""$@"`, `"$@"""`, `> ""`, `""()`, `a=""`}
+
+// Parsing and judging an empty word, an empty program or a lone separator neither panics nor
+// needs the recovery below.
+func TestTheGrammarReadsEmptyWordsWithoutPanicking(t *testing.T) {
+	for _, program := range emptyWords {
+		parse(program, testExpander) // no recovery here: a panic fails the test
+		if failed := failures(program); len(failed) != 0 {
+			t.Errorf("%q: %v", program, failed)
+		}
+	}
+}
+
+// A failure of the scan's own reading of one program is recovered around that program alone
+// and reported unreadable with its text; the next program is still read.
+func TestAFailureReadingOneProgramIsUnreadableNotTheEndOfTheScan(t *testing.T) {
+	var reports []string
+	judge := argvJudge{c: Classifier{Expand: Expander{Path: "/usr/bin:/bin"}}, report: func(word string, e Executable) {
+		reports = append(reports, word+": "+e.Kind+": "+e.Detail)
+	}, seen: func(argv []shellWord, _ Executable) {
+		if argv[0].Value == "env" {
+			panic("boom")
+		}
+	}}
+	judge.program("exit 0; env")
+	judge.program("python3 -m relay")
+	if len(reports) != 2 || !strings.Contains(reports[0], "exit 0; env: unreadable: this scan's reading of it failed (boom)") || !strings.HasPrefix(reports[1], "python3: python-interpreter") {
+		t.Fatalf("reports %v", reports)
+	}
+}
+
+// FuzzTheStopReaderNeverFails runs the seed corpus in go test; go test -fuzz explores further.
+// Neither the grammar nor the Stop reader may panic, recovered or not.
+func FuzzTheStopReaderNeverFails(f *testing.F) {
+	for _, seed := range append(emptyWords, `"$HOME/.local/share/crw-runtime/current/bin/crw" hook --plugin-launch; exit 0`,
+		"python3 -c \"\nimport os\n\" \"${PLUGIN_ROOT}/wiring/crw_stop_hook.py\"", `f() { x; }; f`, `a[b] {a,b} ~u "${x:-$(y)}"`) {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, program string) {
+		parse(program, testExpander)
+		if failed := failures(program); len(failed) != 0 {
+			t.Fatalf("%q: %v", program, failed)
+		}
+	})
+}
