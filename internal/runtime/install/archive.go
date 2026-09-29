@@ -40,6 +40,15 @@ const Binary = "crw"
 // archiveName is GoReleaser's name_template: crw_<version>_<os>_<arch>.tar.gz.
 var archiveName = regexp.MustCompile(`^crw_([0-9A-Za-z][0-9A-Za-z.+~-]*)_([a-z0-9]+)_([a-z0-9]+)\.tar\.gz$`)
 
+// releaseVersion is the version --release <tag> names once a leading v is taken off: the
+// version archiveName carries, so a tag never holds a path separator or a dot segment and names
+// nothing but one release's archive.
+var releaseVersion = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z.+~-]*$`)
+
+// fetchedArchive is the fixed name a fetched archive is written under in the run's scratch
+// directory: the tag chooses what is requested, never where anything is written.
+const fetchedArchive = "archive.tar.gz"
+
 var hexDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // Archive is a release archive read and verified against its SHA256SUMS.
@@ -76,6 +85,11 @@ func Resolve(ctx context.Context, source Source) (Archive, func(), error) {
 	case source.From != "" && source.Release != "":
 		return Archive{}, done, refuse("--from and --release name two sources; give one")
 	case source.Release != "":
+		// Checked before anything is created, fetched or named after it.
+		version := strings.TrimPrefix(source.Release, "v")
+		if !releaseVersion.MatchString(version) {
+			return Archive{}, done, refuse("--release %q is not a release tag (v<version>, the version in the archive name's grammar: letters, digits, '.', '+', '~' and '-', starting with a letter or digit); nothing was fetched", source.Release)
+		}
 		scratch, err := os.MkdirTemp("", "crw-install-release-")
 		if err != nil {
 			return Archive{}, done, err
@@ -85,14 +99,13 @@ func Resolve(ctx context.Context, source Source) (Archive, func(), error) {
 		if base == "" {
 			base = ReleaseURL
 		}
-		version := strings.TrimPrefix(source.Release, "v")
 		name := "crw_" + version + "_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz"
-		for _, asset := range []string{SumsName, name} {
-			if err := fetch(ctx, strings.TrimSuffix(base, "/")+"/"+source.Release+"/"+asset, filepath.Join(scratch, asset)); err != nil {
-				return Archive{}, done, refuse("the release asset %s could not be fetched: %v", asset, err)
+		for _, asset := range []struct{ remote, local string }{{SumsName, SumsName}, {name, fetchedArchive}} {
+			if err := fetch(ctx, strings.TrimSuffix(base, "/")+"/"+source.Release+"/"+asset.remote, filepath.Join(scratch, asset.local)); err != nil {
+				return Archive{}, done, refuse("the release asset %s could not be fetched: %v", asset.remote, err)
 			}
 		}
-		archive, err := read(filepath.Join(scratch, name), filepath.Join(scratch, SumsName))
+		archive, err := read(filepath.Join(scratch, fetchedArchive), name, filepath.Join(scratch, SumsName))
 		return archive, done, err
 	case source.From != "":
 		from, err := filepath.Abs(source.From)
@@ -103,7 +116,7 @@ func Resolve(ctx context.Context, source Source) (Archive, func(), error) {
 		if sums == "" {
 			sums = filepath.Join(filepath.Dir(from), SumsName)
 		}
-		archive, err := read(from, sums)
+		archive, err := read(from, filepath.Base(from), sums)
 		return archive, done, err
 	}
 	return Archive{}, done, refuse("name the archive with --from <crw_<version>_<os>_<arch>.tar.gz> or a release with --release <tag>")
@@ -134,8 +147,8 @@ func fetch(ctx context.Context, url, target string) error {
 	return os.WriteFile(target, raw, 0o600)
 }
 
-func read(archivePath, sumsPath string) (Archive, error) {
-	name := filepath.Base(archivePath)
+// read verifies the archive at archivePath under the name it was published as.
+func read(archivePath, name, sumsPath string) (Archive, error) {
 	match := archiveName.FindStringSubmatch(name)
 	if match == nil {
 		return Archive{}, refuse("%s is not named crw_<version>_<os>_<arch>.tar.gz, so its version and target are unknown", name)
@@ -205,40 +218,79 @@ func sumsFor(sumsPath, name string) (string, error) {
 	return found[0], nil
 }
 
+// reservedName is why an archive entry's name (cleaned, slash-separated, relative) is one the
+// installer or the doctor reads as control data inside a runtime directory, or "" when it is
+// not. Unpacking such an entry would plant that data rather than a release file:
+//
+//   - bin/ is the installer's own: bin/crw and the three compatibility links are placed from the
+//     archive's crw, and the doctor reads bin/crw, the links and bin/python* there;
+//   - a component beginning .crw- is installer control data at any level: the staging lock
+//     (.crw-staging-lock), the claim (.crw-staging-claim.json), the claim's .crw-lock sidecar
+//     and the claim's atomic-write temporaries (.crw-write-*);
+//   - a component ending .crw-lock is the O_EXCL lock sidecar of the file beside it
+//     (decision 33), which a writer of that file would wait on and read as another run;
+//   - pyvenv.cfg at any level makes the doctor read the directory holding it, and every path
+//     under it, as a Python virtual environment (RuntimeKind, venvRoot), which is what a
+//     rollback and the Stop settings transition act on.
+//
+// Names are compared case-insensitively, because a case-insensitive filesystem makes PYVENV.CFG
+// the same file.
+func reservedName(name string) string {
+	parts := strings.Split(strings.ToLower(name), "/")
+	if parts[0] == "bin" {
+		return "bin/ is where the installer places crw and its three compatibility links itself"
+	}
+	for _, part := range parts {
+		switch {
+		case strings.HasPrefix(part, ".crw-"):
+			return "a name beginning .crw- is the installer's staging lock, claim, claim lock or claim write"
+		case strings.HasSuffix(part, ".crw-lock"):
+			return "a name ending .crw-lock is the lock sidecar of the file beside it"
+		case part == "pyvenv.cfg":
+			return "pyvenv.cfg makes the doctor read the directory holding it as a Python virtual environment"
+		}
+	}
+	return ""
+}
+
 // Unpack writes the verified bytes into environment: the binary into bin/crw, the three
 // compatibility names as symlinks to it (the archive's own entries for them are checked, never
-// trusted), and every other regular file (the licences) at its relative path. An absolute or
-// escaping name, a link to anything but crw, a hard link, a device or a repeated name refuses
-// the whole archive.
+// trusted), and every other regular file (the licences) at its relative path. Every entry is
+// judged before anything is written: an absolute or escaping name, a name the installer or the
+// doctor reads as control data (reservedName), a link to anything but crw, a hard link, a
+// device or a repeated name refuses the whole archive with nothing written.
 func (a Archive) Unpack(environment string) error {
-	compressed, err := gzip.NewReader(bytes.NewReader(a.bytes))
-	if err != nil {
-		return err
-	}
-	bin := filepath.Join(environment, "bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		return err
-	}
 	links := map[string]bool{}
 	for _, name := range definition.Links() {
 		links[name] = true
 	}
-	seen := map[string]bool{}
-	pending := map[string][]byte{}
-	var binary []byte
-	entries := tar.NewReader(compressed)
-	for {
-		header, err := entries.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
+	// entries walks the archive, handing each entry that is not a directory to visit with its
+	// cleaned name.
+	entries := func(visit func(name string, header *tar.Header, body io.Reader) error) error {
+		compressed, err := gzip.NewReader(bytes.NewReader(a.bytes))
 		if err != nil {
 			return err
 		}
-		name := path.Clean(strings.TrimPrefix(header.Name, "./"))
-		if name == "." {
-			continue
+		reader := tar.NewReader(compressed)
+		for {
+			header, err := reader.Next()
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			name := path.Clean(strings.TrimPrefix(header.Name, "./"))
+			if name == "." {
+				continue
+			}
+			if err := visit(name, header, reader); err != nil {
+				return err
+			}
 		}
+	}
+	seen := map[string]bool{}
+	judged := entries(func(name string, header *tar.Header, _ io.Reader) error {
 		if path.IsAbs(name) || name == ".." || strings.HasPrefix(name, "../") {
 			return fmt.Errorf("the archive names %q, outside the directory it is unpacked into", header.Name)
 		}
@@ -246,33 +298,52 @@ func (a Archive) Unpack(environment string) error {
 			return fmt.Errorf("the archive names %q twice", name)
 		}
 		seen[name] = true
+		if name != Binary && !links[name] {
+			if why := reservedName(name); why != "" {
+				return fmt.Errorf("the archive carries %q, a name the installer or the doctor reads as control data (%s); nothing was unpacked", header.Name, why)
+			}
+		}
 		switch header.Typeflag {
-		case tar.TypeDir:
-			continue
+		case tar.TypeDir, tar.TypeReg:
 		case tar.TypeSymlink:
 			if !links[name] || header.Linkname != Binary {
 				return fmt.Errorf("the archive carries a symbolic link %s -> %s; only %s -> %s are expected", name, header.Linkname, strings.Join(definition.Links(), ", "), Binary)
 			}
-			continue
-		case tar.TypeReg:
 		default:
 			return fmt.Errorf("the archive carries %q of a kind that is not a regular file, a directory or a compatibility link", name)
 		}
-		body, err := io.ReadAll(io.LimitReader(entries, MaxArchiveBytes+1))
+		return nil
+	})
+	if judged != nil {
+		return judged
+	}
+	bin := filepath.Join(environment, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		return err
+	}
+	pending := map[string][]byte{}
+	var binary []byte
+	unpacked := entries(func(name string, header *tar.Header, body io.Reader) error {
+		if header.Typeflag != tar.TypeReg {
+			return nil
+		}
+		raw, err := io.ReadAll(io.LimitReader(body, MaxArchiveBytes+1))
 		if err != nil {
 			return err
 		}
 		switch {
 		case name == Binary:
-			binary = body
+			binary = raw
 		case links[name]:
 			// A dereferenced compatibility name: it must be the binary's own bytes.
-			pending[name] = body
+			pending[name] = raw
 		default:
-			if err := writeFile(filepath.Join(environment, filepath.FromSlash(name)), body, 0o644); err != nil {
-				return err
-			}
+			return writeFile(filepath.Join(environment, filepath.FromSlash(name)), raw, 0o644)
 		}
+		return nil
+	})
+	if unpacked != nil {
+		return unpacked
 	}
 	if len(binary) == 0 {
 		return fmt.Errorf("the archive carries no %s binary", Binary)

@@ -145,7 +145,7 @@ func Argv(ctx context.Context, argv []string, env scope.Env) Bridge {
 		cmd.Env = env
 	}
 	var stderr strings.Builder
-	cmd.Stderr = &limited{w: &stderr, left: 4000}
+	cmd.Stderr = stderrOf(&stderr)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		result.Err = err
@@ -156,14 +156,19 @@ func Argv(ctx context.Context, argv []string, env scope.Env) Bridge {
 		result.Err = err
 		return result
 	}
-	// A descendant that inherited stdout keeps the pipe open after the bridge is killed, and a
-	// read blocked on it would outlive the deadline: WaitDelay closes the pipes once the session's
-	// time is up (or the bridge has exited) and that long has passed.
+	// A descendant that inherited stdout keeps the pipe open after the bridge is killed, so a
+	// read blocked on it would outlive the deadline. The session's own reader is closed the moment
+	// the session's time is up, which ends that read whatever the command's other streams are.
+	// WaitDelay then bounds Wait itself: os/exec closes the pipes it copies (stderr) that long
+	// after the deadline or the exit, but it closes the stdout pipe only while such a copying
+	// goroutine exists, so it is not what bounds the session.
 	cmd.WaitDelay = WaitDelay
 	if err := cmd.Start(); err != nil {
 		result.Err = errors.New(store.PythonOSError(err))
 		return result
 	}
+	stopClosing := context.AfterFunc(run, func() { _ = stdout.Close() })
+	defer stopClosing()
 	session := &session{in: stdin, out: bufio.NewReaderSize(stdout, 1<<16)}
 	result.Tools, result.Connection, result.Err = session.run()
 	_ = stdin.Close()
@@ -200,6 +205,11 @@ func waitBriefly(cmd *exec.Cmd, cancel context.CancelFunc) error {
 		return <-done
 	}
 }
+
+// stderrOf is where the bridge's stderr goes: the first 4000 bytes, kept for the report. It is a
+// variable only so that a test can send stderr nowhere, which leaves os/exec no copying goroutine
+// and proves the session's deadline does not depend on one.
+var stderrOf = func(into *strings.Builder) io.Writer { return &limited{w: into, left: 4000} }
 
 type limited struct {
 	w    io.Writer

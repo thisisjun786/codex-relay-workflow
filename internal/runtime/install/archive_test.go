@@ -17,6 +17,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/pointer"
 )
 
 // forged is a verified archive (its SHA256SUMS agrees) whose entries are hostile or malformed.
@@ -102,5 +103,82 @@ func TestReleaseAssetsAreFetchedAndVerified(t *testing.T) {
 	missing := newHost(t)
 	if _, code := install.Install(context.Background(), missing.options(), "install", install.Source{Release: "v9.9.9", BaseURL: server.URL}); code != install.Refused {
 		t.Fatalf("an absent release: exit %d", code)
+	}
+}
+
+// A verified archive that carries pyvenv.cfg (which would make the doctor, and a rollback to this
+// runtime, read it as a Python venv and put the Python-era Stop settings back over a runtime
+// with no python3) or the claim's lock sidecar (which would stall settling the claim behind a
+// run that does not exist) is refused at the unpack: nothing is promoted, the directory is
+// released and the host record lists no install of it.
+func TestAnArchiveCarryingControlDataIsNotInstalled(t *testing.T) {
+	raw, err := binary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "crw_0.9.9_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz"
+	for _, planted := range []string{"pyvenv.cfg", ".crw-staging-claim.json.crw-lock"} {
+		headers := []*tar.Header{{Name: "crw", Mode: 0o755, Size: int64(len(raw)), Typeflag: tar.TypeReg}}
+		bodies := [][]byte{raw}
+		for _, link := range []string{"codex-session-relay", "codex-thread-bridge", "crw-completion-hook"} {
+			headers = append(headers, &tar.Header{Name: link, Linkname: "crw", Typeflag: tar.TypeSymlink})
+			bodies = append(bodies, nil)
+		}
+		headers = append(headers, &tar.Header{Name: planted, Mode: 0o644, Size: 1, Typeflag: tar.TypeReg})
+		bodies = append(bodies, []byte("1"))
+		h := newHost(t)
+		result, code := install.Install(context.Background(), h.options(), "install", install.Source{From: forged(t, name, headers, bodies)})
+		if code != install.Refused || at(result, "failedStep") != "unpack the archive" || at(result, "retriable") != true || !strings.Contains(golden.Canon(at(result, "steps")), "control data") {
+			t.Fatalf("%s: exit %d\n%s", planted, code, golden.Canon(result))
+		}
+		if entries, _ := os.ReadDir(h.dest); len(entries) != 0 {
+			t.Fatalf("%s: left %v", planted, entries)
+		}
+		if _, err := os.Lstat(pointer.Path(h.dest)); !os.IsNotExist(err) {
+			t.Fatalf("%s: the pointer was placed", planted)
+		}
+		if installs := golden.List(at(h.hostRecord(t), "components", "codex-session-relay", "installs")); len(installs) != 0 {
+			t.Fatalf("%s: the record lists %v", planted, installs)
+		}
+	}
+}
+
+// --release <tag> is checked as a tag before anything is created, fetched or named after it: a
+// tag holding a path separator, a dot segment or anything outside the archive name's version
+// grammar is refused with no request sent, no scratch directory made, and no file outside the
+// run's scratch directory written - a tag once chose the local file a fetched asset replaced.
+func TestAReleaseTagIsCheckedBeforeAnythingIsFetched(t *testing.T) {
+	base := t.TempDir()
+	scratch := filepath.Join(base, "tmp")
+	if err := os.MkdirAll(scratch, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", scratch)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		_, _ = w.Write([]byte("PWNED\n"))
+	}))
+	defer server.Close()
+	victim := filepath.Join(base, "victim_"+runtime.GOOS+"_"+runtime.GOARCH+".tar.gz")
+	write(t, victim, "the user's own file\n")
+	for _, tag := range []string{"v1/../../../victim", "../victim", "v1/2", "..", "v..", "-v1", "v1 2", "v1%2F..", "v1\\x", "v1\n"} {
+		h := newHost(t)
+		result, code := install.Install(context.Background(), h.options(), "install", install.Source{Release: tag, BaseURL: server.URL})
+		if code != install.Refused || !strings.Contains(text(at(result, "refused")), "is not a release tag") {
+			t.Fatalf("%q: exit %d\n%s", tag, code, golden.Canon(result))
+		}
+		if _, err := os.Lstat(h.dest); !os.IsNotExist(err) {
+			t.Fatalf("%q: the destination was created", tag)
+		}
+	}
+	if requests != 0 {
+		t.Fatalf("%d requests were sent for tags that are not tags", requests)
+	}
+	if got := readFile(t, victim); got != "the user's own file\n" {
+		t.Fatalf("a file outside the scratch directory was replaced: %q", got)
+	}
+	if left, _ := filepath.Glob(filepath.Join(scratch, "crw-install-release-*")); len(left) != 0 {
+		t.Fatalf("a scratch directory was made for a tag that is not a tag: %v", left)
 	}
 }

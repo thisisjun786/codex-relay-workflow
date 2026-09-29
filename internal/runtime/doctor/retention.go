@@ -87,6 +87,9 @@ type scan struct {
 	states        []string
 	scopeClaims   []scopeClaim
 	statesUnknown int
+	// observe, when set, receives every path the registration rows classify, with the row,
+	// source and field naming it (RegisteredInside).
+	observe func(row int, source, field, path string, e Executable)
 }
 
 // stopTimeout is one configured Stop hook timeout, in seconds, and where it is configured.
@@ -161,10 +164,20 @@ func (s *scan) expander(pluginRoot string) Expander {
 
 // judge is an argvJudge whose reports are filed under one row, source and field.
 func (s *scan) judge(row int, source, field, cwd string, x Expander) argvJudge {
-	return argvJudge{c: Classifier{Pointer: s.pointer, Expand: x}, cwd: cwd, report: func(word string, e Executable) {
+	return argvJudge{c: s.classifier(row, source, field, x), cwd: cwd, report: func(word string, e Executable) {
 		e.Value = word
 		s.verdict(row, source, field, e)
 	}}
+}
+
+// classifier is the host's Classifier for one row, source and field, passing every path it
+// classifies to observe when the scan has one.
+func (s *scan) classifier(row int, source, field string, x Expander) Classifier {
+	c := Classifier{Pointer: s.pointer, Expand: x}
+	if s.observe != nil {
+		c.Observe = func(path string, e Executable) { s.observe(row, source, field, path, e) }
+	}
+	return c
 }
 
 // absolute is a path the relay or the hook reads from its environment, made as they make it
@@ -303,45 +316,51 @@ func (s *scan) settingsRecords() {
 		return
 	}
 	for _, path := range matches {
-		value, ok := s.readJSON(path, filepath.Base(path))
+		s.settingsRecord(path)
+	}
+	s.surface(4, true, len(matches), "every crw-*.json record in "+s.o.CodexHome+", each executable resolved through links")
+}
+
+// settingsRecord reads one crw-*.json record as row 4 reads it: every value of SettingsKeys
+// resolved through links and classified.
+func (s *scan) settingsRecord(path string) {
+	value, ok := s.readJSON(path, filepath.Base(path))
+	if !ok {
+		return
+	}
+	if filepath.Base(path) == "crw-completion-hook.json" {
+		if seconds, ok := number(record.Get(value, "timeoutSeconds")); ok {
+			s.timeouts = append(s.timeouts, stopTimeout{seconds, path + " timeoutSeconds"})
+		}
+	}
+	for _, key := range SettingsKeys {
+		values, ok := texts(record.Get(value, key))
 		if !ok {
-			continue
+			s.malformed(4, path, key, "the value is "+scope.TypeName(record.Get(value, key))+", not a string or a list of strings")
 		}
-		if filepath.Base(path) == "crw-completion-hook.json" {
-			if seconds, ok := number(record.Get(value, "timeoutSeconds")); ok {
-				s.timeouts = append(s.timeouts, stopTimeout{seconds, path + " timeoutSeconds"})
+		for i, text := range values {
+			name := key
+			if _, list := record.Get(value, key).([]any); list {
+				name = key + "[" + strconv.Itoa(i) + "]"
 			}
-		}
-		for _, key := range SettingsKeys {
-			values, ok := texts(record.Get(value, key))
-			if !ok {
-				s.malformed(4, path, key, "the value is "+scope.TypeName(record.Get(value, key))+", not a string or a list of strings")
+			if text == "" {
+				continue // a launcher reads an empty value as unset
 			}
-			for i, text := range values {
-				name := key
-				if _, list := record.Get(value, key).([]any); list {
-					name = key + "[" + strconv.Itoa(i) + "]"
+			// The Stop and bridge launchers run a value as written, with no shell, and accept only
+			// an absolute path, so one that is not is never resolved against the scan's own
+			// directory (argvJudge.path); a file neither native nor #! is not this scan's to judge.
+			j := s.judge(4, path, name, "", s.expander(""))
+			if key == "args" {
+				j.argument(literal(text), false)
+			} else if target, ok := j.path(literal(text), false); ok {
+				e := j.c.classify(target, "", 0)
+				if e.Kind == KindOther {
+					e.Kind = KindUnreadable
 				}
-				if text == "" {
-					continue // a launcher reads an empty value as unset
-				}
-				// The Stop and bridge launchers run a value as written, with no shell, and accept only
-				// an absolute path, so one that is not is never resolved against the scan's own
-				// directory (argvJudge.path); a file neither native nor #! is not this scan's to judge.
-				j := s.judge(4, path, name, "", s.expander(""))
-				if key == "args" {
-					j.argument(literal(text), false)
-				} else if target, ok := j.path(literal(text), false); ok {
-					e := j.c.classify(target, "", 0)
-					if e.Kind == KindOther {
-						e.Kind = KindUnreadable
-					}
-					j.report(text, e)
-				}
+				j.report(text, e)
 			}
 		}
 	}
-	s.surface(4, true, len(matches), "every crw-*.json record in "+s.o.CodexHome+", each executable resolved through links")
 }
 
 // texts is a string value, or each item of a list of strings, and whether the value is one of
@@ -1410,7 +1429,7 @@ func (s *scan) launcherCopy() {
 	_, err := os.Lstat(path)
 	switch {
 	case err == nil:
-		e := Classify(path, "", s.pointer)
+		e := s.classifier(8, path, "file", Expander{}).Classify(path, "")
 		e.Python = true // a .py launcher by definition, whatever it now holds
 		s.verdict(8, path, "file", e)
 		s.surface(8, true, 1, "the launcher copy the cached Python Stop bootstrap falls back to")

@@ -10,6 +10,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/pointer"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -26,11 +27,20 @@ func runtimeDirectory(name string) bool {
 // only when nothing may still be using it. It refuses a directory the record selects, one the
 // owned pointer names (or might - an unread pointer is not a pointer aimed elsewhere), one
 // with no claim this command (or runtime_install.py) wrote, an unreadable claim, a staging
-// another run still holds, and any directory a live process runs out of - its /proc/<pid>/exe,
+// another run still holds, any directory a live process runs out of - its /proc/<pid>/exe,
 // or the interpreter or script its argv starts, resolving inside it (which covers every
-// daemon.json pid). It accepts a Python env-* directory and a Go bin-* one alike, and drops the
-// directory's install entries from the host record once it is gone.
-func Remove(_ context.Context, o Options, named string) (Object, int) {
+// daemon.json pid) - and any directory a registration the host reads names a path inside
+// (doctor.RegisteredInside: the Stop settings, the bridge record, config.toml's mcp_servers,
+// hooks.json, the cached plugin declarations and the launcher copy), or holds something that
+// could not be read. It accepts a Python env-* directory and a Go bin-* one alike.
+//
+// The record goes first, as runtime_install.py's release_candidate drops a candidate's entries
+// before its directory is removed: the directory's install entries are dropped under the host
+// record's lock (where the selection is read again), and only once that write has landed is
+// the directory removed. A drop that cannot be written refuses with nothing removed; a removal
+// that does not finish after the drop is exit 3, the entries gone and the rest of the
+// directory named for removal by hand.
+func Remove(ctx context.Context, o Options, named string) (Object, int) {
 	base := Object{field("command", "remove"), field("applied", false)}
 	refuse := func(detail string, extra ...any) (Object, int) {
 		out := append(base, field("refused", detail))
@@ -105,34 +115,83 @@ func Remove(_ context.Context, o Options, named string) (Object, int) {
 	if len(processes) > 0 {
 		return refuse("live processes run out of this directory", "processes", processes)
 	}
-	var environments []string
-	resolved, _ := record.Resolve(directory)
-	for _, c := range definition.Components {
-		for _, install := range installsIn(rec, c.Name, directory) {
-			if environment, ok := record.Get(install, "environment").(string); ok && environment != "" {
-				if real, err := record.Resolve(environment); err == nil && real == resolved {
-					environments = append(environments, environment)
-				}
-			}
-		}
+	registered, unreadable := doctor.RegisteredInside(ctx, doctor.RetentionOptions{Env: o.Env, CodexHome: o.CodexHome, Destination: o.Dest}, directory)
+	if len(registered) > 0 {
+		return refuse("a registration the host reads still names a path inside this directory, and each new session starts it from there", "registrations", registered)
+	}
+	if len(unreadable) > 0 {
+		return refuse("a registration the host reads could not be read or judged, so whether it names a path inside this directory was not established", "unreadable", strs(unreadable))
+	}
+	dropped, why := dropInstalls(o.RecordPath, directory)
+	if why != "" {
+		return refuse(why)
 	}
 	if err := os.RemoveAll(directory); err != nil {
 		_, statErr := os.Lstat(directory)
-		return append(base, field("refused", "the directory could not be removed completely: "+store.PythonOSError(err)), field("residualPaths", []any{directory}),
-			field("gone", errors.Is(statErr, os.ErrNotExist)), field("note", "whatever was removed is gone; the host record was not changed")), Refused
-	}
-	dropped := 0
-	for _, environment := range uniqueStrings(environments...) {
-		environment := environment
-		if _, err := record.Update(o.RecordPath, definition.Version, record.Delta{DropEnvironment: &environment}); err == nil {
-			dropped++
-		}
+		return Object{
+			field("command", "remove"), field("applied", true), field("directory", directory), field("removed", false),
+			field("gone", errors.Is(statErr, os.ErrNotExist)), field("claim", claimValue), field("droppedInstallEntries", strs(dropped)),
+			field("detail", "the directory could not be removed completely: "+store.PythonOSError(err)), field("residualPaths", []any{directory}),
+			field("recoveryRequires", "remove what is left of "+directory+" by hand: nothing uses it (every check above passed), and its install entries are already dropped from the host record. Rerunning crw install remove finishes it only while its claim is still there"),
+			field("note", "the host record no longer lists this directory's installs, and part of the directory may be gone. Its measured points stay in the host record as history."),
+		}, Incomplete
 	}
 	return Object{
 		field("command", "remove"), field("applied", true), field("directory", directory), field("removed", true),
-		field("claim", claimValue), field("droppedInstallEntries", strs(uniqueStrings(environments...))),
-		field("note", "the directory was removed after the record, the pointer, its claim and the process table all said nothing uses it. Its measured points stay in the host record as history."),
+		field("claim", claimValue), field("droppedInstallEntries", strs(dropped)),
+		field("note", "the directory was removed after the record, the pointer, its claim, the process table and every registration the host reads all said nothing uses it, and after its install entries were dropped from the host record. Its measured points stay in the host record as history."),
 	}, OK
+}
+
+// dropInstalls drops every install entry whose environment resolves to directory, in one write
+// under the host record's lock, after reading again that the record does not select it. It
+// answers the environments dropped, or why nothing was written.
+func dropInstalls(recordPath, directory string) ([]string, string) {
+	lock, err := record.Lock(recordPath, 0)
+	if err != nil {
+		return nil, "the host record's lock could not be taken, so this directory's install entries could not be dropped before it is removed: " + err.Error()
+	}
+	defer lock.Release()
+	current := record.Load(recordPath, definition.Version)
+	if !current.Usable() {
+		return nil, "the host record could not be read to drop this directory's install entries: " + current.Detail
+	}
+	rec := current.Value.(Object)
+	if selectsUnder(rec, directory) {
+		return nil, "the host record selects this runtime now, so it is in service"
+	}
+	root, err := record.Resolve(directory)
+	if err != nil {
+		return nil, "the directory could not be resolved: " + err.Error()
+	}
+	var dropped []string
+	components, _ := record.Get(rec, "components").(Object)
+	for i, c := range components {
+		entry, _ := c.Value.(Object)
+		installs, _ := record.Get(entry, "installs").([]any)
+		kept := []any{}
+		for _, raw := range installs {
+			install, _ := raw.(Object)
+			if environment, ok := record.Get(install, "environment").(string); ok && environment != "" {
+				if real, err := record.Resolve(environment); err == nil && real == root {
+					dropped = append(dropped, environment)
+					continue
+				}
+			}
+			kept = append(kept, raw)
+		}
+		if len(kept) != len(installs) {
+			components[i].Value = record.Set(entry, "installs", kept)
+		}
+	}
+	dropped = uniqueStrings(dropped...)
+	if len(dropped) == 0 {
+		return []string{}, ""
+	}
+	if err := record.Save(recordPath, rec); err != nil {
+		return nil, "the host record could not be written to drop this directory's install entries: " + store.PythonOSError(err)
+	}
+	return dropped, ""
 }
 
 func (o Options) proc() string {
