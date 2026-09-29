@@ -135,7 +135,7 @@ func TestLiveProcessesRuleOutOnlyWhatTheyRead(t *testing.T) {
 		{"another user's process under hidepid", FakeProcess{Pid: other + 4, Exe: "denied", Cmdline: Argv("x"), Hidden: true}, false, true},
 		{"a denied process starting a runtime name bare", FakeProcess{Pid: other + 6, Exe: "denied", Cmdline: Argv("codex-session-relay", "service", "run")}, false, true},
 	} {
-		found, unruled, err := liveProcesses(FakeProc(t, c.process), directory)
+		found, unruled, err := liveProcesses(FakeProc(t, c.process), mustIdentify(filepath.Dir(directory), filepath.Base(directory)))
 		if err != nil {
 			t.Fatalf("%s: %v", c.label, err)
 		}

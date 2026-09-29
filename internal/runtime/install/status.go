@@ -40,9 +40,15 @@ func Status(_ context.Context, o Options) (Object, int) {
 		listing = "the destination could not be listed: " + store.PythonOSError(err)
 	}
 	var names []string
+	interrupted := []any{}
 	for _, entry := range entries {
 		if entry.IsDir() && runtimeDirectory(entry.Name()) {
 			names = append(names, entry.Name())
+		}
+		if original, ok := tombstoneOf(entry.Name()); ok {
+			path := filepath.Join(o.Dest, entry.Name())
+			interrupted = append(interrupted, Object{field("path", path), field("runtime", filepath.Join(o.Dest, original)),
+				field("recoveryRequires", "crw install remove "+path+" finishes this removal: a run that set the runtime aside to delete it did not live to finish")})
 		}
 	}
 	sort.Strings(names)
@@ -77,6 +83,7 @@ func Status(_ context.Context, o Options) (Object, int) {
 		field("destination", o.Dest), field("destinationAgrees", destinationAgrees(rec, o)), field("selected", record.Get(runtime, "kind")), field("runtime", runtime),
 		field("outgoing", record.Get(rec, "outgoing")), field("runtimes", runtimes), field("destinationListing", listing),
 		field("promotionLock", Object{field("state", lockState), field("detail", lockDetail)}), field("settings", settings),
+		field("interruptedRemovals", interrupted),
 		field("note", "read-only. 'runtime.agrees' is whether the owned pointer contains what the host record selects; a failed install or update leaves both as they were, and its directory is gone unless it is reported here."),
 	}, OK
 }

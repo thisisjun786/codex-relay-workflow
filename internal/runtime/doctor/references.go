@@ -3,11 +3,13 @@ package doctor
 import (
 	"context"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/pointer"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
 )
 
 // RegisteredInside is every path the host's registrations name inside directory, and everything
@@ -22,27 +24,38 @@ import (
 // through. What the host starts from one of these is started afresh by each new session, so no
 // process table shows it between sessions. It writes nothing.
 func RegisteredInside(ctx context.Context, o RetentionOptions, directory string) (inside []any, unreadable []string) {
+	root, err := record.Resolve(directory)
+	if err != nil {
+		return nil, []string{directory + ": the directory could not be resolved: " + err.Error()}
+	}
+	spelled := filepath.Clean(directory)
+	return RegisteredMatching(ctx, o, func(path, resolves string) string {
+		switch {
+		case filepath.IsAbs(path) && record.Within(filepath.Clean(path), spelled):
+			return filepath.Clean(path)
+		case resolves != "" && record.Within(resolves, root):
+			return resolves
+		}
+		return ""
+	})
+}
+
+// RegisteredMatching is RegisteredInside with the question put by the caller: inside answers,
+// for a path a registration names (absolute, as written) and what it resolves to ("" when it
+// could not be resolved), the path it counts as inside, or "" when it does not count. A caller
+// that knows a directory by its file identity rather than its spelling asks through it.
+func RegisteredMatching(ctx context.Context, o RetentionOptions, inside func(path, resolves string) string) (found []any, unreadable []string) {
 	if o.CodexHome == "" {
 		o.CodexHome = CodexHome(o.Env)
 	}
 	if o.Destination == "" {
 		o.Destination = DefaultDestination(o.Env)
 	}
-	root, err := record.Resolve(directory)
-	if err != nil {
-		return nil, []string{directory + ": the directory could not be resolved: " + err.Error()}
-	}
-	spelled := filepath.Clean(directory)
 	seen := map[string]bool{}
 	s := &scan{o: o, pointer: pointer.Path(o.Destination)}
 	s.observe = func(row int, source, field, path string, e Executable) {
-		var names string
-		switch {
-		case filepath.IsAbs(path) && record.Within(filepath.Clean(path), spelled):
-			names = filepath.Clean(path)
-		case e.Resolves != "" && record.Within(e.Resolves, root):
-			names = e.Resolves
-		default:
+		names := inside(path, e.Resolves)
+		if names == "" {
 			return
 		}
 		key := strconv.Itoa(row) + "\x00" + source + "\x00" + field + "\x00" + path
@@ -50,7 +63,7 @@ func RegisteredInside(ctx context.Context, o RetentionOptions, directory string)
 			return
 		}
 		seen[key] = true
-		inside = append(inside, Object{
+		found = append(found, Object{
 			{Key: "row", Value: int64(row)}, {Key: "surface", Value: Surfaces[row-1].Name}, {Key: "source", Value: source},
 			{Key: "field", Value: field}, {Key: "names", Value: path}, {Key: "inside", Value: names}, {Key: "kind", Value: e.Kind},
 		})
@@ -74,5 +87,40 @@ func RegisteredInside(ctx context.Context, o RetentionOptions, directory string)
 			s.settingsRecord(settings.path)
 		}
 	}
-	return inside, s.unreadable
+	return found, s.unreadable
+}
+
+// RecordedDaemons is the retention scan's row 3 for a caller that removes a runtime: every relay
+// daemon and worker recorded in a daemon.json (the relay state root, every scope under it,
+// $CODEX_SESSION_RELAY_STATE, each state directory the relay's scope registry records, and the
+// extra state directories given) or a scope registry claim that is alive - its pid present in
+// this process table with the start time and boot id the record gives - and everything that
+// could not be read, which leaves a recorded daemon unknown. A record written on another boot, or
+// whose pid is gone or now another process, names nothing alive; a process in another PID
+// namespace or on another host is not in this table at all, so it is not seen. It writes nothing.
+func RecordedDaemons(o RetentionOptions, states ...string) (alive []int, unreadable []string) {
+	if o.CodexHome == "" {
+		o.CodexHome = CodexHome(o.Env)
+	}
+	if o.Destination == "" {
+		o.Destination = DefaultDestination(o.Env)
+	}
+	if o.StateRoot == "" {
+		o.StateRoot = scope.DefaultStateRoot(o.Env)
+	}
+	if o.Proc == "" {
+		o.Proc = "/proc"
+	}
+	s := &scan{o: o, pointer: pointer.Path(o.Destination)}
+	s.stateDirectories()
+	for _, state := range states {
+		if filepath.IsAbs(state) && !contains(s.states, state) {
+			s.states = append(s.states, state)
+		}
+	}
+	for pid := range s.daemons() {
+		alive = append(alive, pid)
+	}
+	sort.Ints(alive)
+	return alive, s.unreadable
 }

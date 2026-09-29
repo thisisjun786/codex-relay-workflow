@@ -26,23 +26,34 @@ func runtimeDirectory(name string) bool {
 	return strings.HasPrefix(name, "env-") || strings.HasPrefix(name, "bin-")
 }
 
+// processScope is what a process-table reading can see, stated in every answer that rests on
+// one: this host's procfs in this command's PID namespace.
+const processScope = "this host's process table, as this command's PID namespace shows it: a process in another PID namespace (a container sharing this directory) or on another host (a network home) is not seen, and crw install remove is run where the runtime's processes run"
+
 // Remove is `crw install remove <dir>`: delete one runtime directory under the destination,
-// only when nothing may still be using it. It refuses a directory the record selects, one the
-// owned pointer names (or might - an unread pointer is not a pointer aimed elsewhere), one
-// with no claim this command (or runtime_install.py) wrote, an unreadable claim, a staging
-// another run still holds, any directory a live process runs out of - its /proc/<pid>/exe,
-// or the interpreter or script its argv starts, resolving inside it (which covers every
-// daemon.json pid) - and any directory a registration the host reads names a path inside
-// (doctor.RegisteredInside: the Stop settings, the bridge record, config.toml's mcp_servers,
+// only when nothing may still be using it. The directory is taken by its name under the
+// destination and judged by file identity (runtimeDir), so an alias of the destination - a
+// symlink, a bind mount, a case-folded spelling - cannot pass a check its canonical spelling
+// fails. It refuses a directory the record selects, one the owned pointer names (or might - an
+// unread pointer is not a pointer aimed elsewhere), one with no claim this command (or
+// runtime_install.py) wrote, an unreadable claim, a staging another run still holds, any
+// directory a live process runs out of (liveProcesses, and every daemon a daemon.json records
+// alive), and any directory a registration the host reads names a path inside
+// (doctor.RegisteredMatching: the Stop settings, the bridge record, config.toml's mcp_servers,
 // hooks.json, the cached plugin declarations and the launcher copy), or holds something that
 // could not be read. It accepts a Python env-* directory and a Go bin-* one alike.
 //
-// The record goes first, as runtime_install.py's release_candidate drops a candidate's entries
-// before its directory is removed: the directory's install entries are dropped under the host
-// record's lock (where the selection is read again), and only once that write has landed is
-// the directory removed. A drop that cannot be written refuses with nothing removed; a removal
-// that does not finish after the drop is exit 3, the entries gone and the rest of the
-// directory named for removal by hand.
+// Locks are taken in the one order every crw install path keeps (docs/port/decisions.md 33): the
+// directory's .crw-lock, then the promotion lock, then the host record's .crw-lock; each wait
+// ends when ctx does, and an interrupted run removes and writes nothing.
+//
+// The directory is renamed to its tombstone (<destination>/.crw-removing-<name>) in one step,
+// its install entries (and an outgoing selection naming it) are dropped under the host record's
+// lock, and only then is the tombstone deleted, so a kill leaves either the whole directory, or
+// a tombstone this command finishes: `crw install remove` of the tombstone, or of the name when
+// only its tombstone is left, deletes it and drops what the record still lists under the name.
+// A drop that cannot be written renames the directory back and refuses; a deletion that does not
+// finish is exit 3, naming the tombstone.
 func Remove(ctx context.Context, o Options, named string) (Object, int) {
 	base := Object{field("command", "remove"), field("applied", false)}
 	refuse := func(detail string, extra ...any) (Object, int) {
@@ -55,39 +66,65 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 	if named == "" {
 		return append(base, field("refused", "name the runtime directory to remove")), Usage
 	}
-	directory, err := filepath.Abs(named)
+	spelled, err := filepath.Abs(named)
 	if err != nil {
 		return refuse(err.Error())
 	}
-	base = append(base, field("directory", directory))
-	if !runtimeDirectory(filepath.Base(directory)) || !reading.SameDirectory(filepath.Dir(directory), o.Dest) {
-		return refuse(directory + " is not an env-* or bin-* runtime directory directly under the destination " + o.Dest + ", so it is not one this command installs")
+	name := filepath.Base(spelled)
+	original, tombstone := tombstoneOf(name)
+	if !tombstone {
+		original = name
 	}
+	if !runtimeDirectory(original) || !reading.SameDirectory(filepath.Dir(spelled), o.Dest) {
+		return refuse(spelled + " is not an env-* or bin-* runtime directory (or the tombstone of one) directly under the destination " + o.Dest + ", so it is not one this command installs")
+	}
+	directory := filepath.Join(o.Dest, original)
+	base = append(base, field("directory", directory))
+	if spelled != directory {
+		base = append(base, field("named", spelled))
+	}
+	lock, err := record.LockContext(ctx, directory, 0)
+	if err != nil {
+		if ctx.Err() != nil {
+			return refuse(interrupted(err))
+		}
+		return refuse("another run is deciding what to do with this directory: " + err.Error())
+	}
+	defer lock.Release()
+	exclusive, err := record.PromoteContext(ctx, o.RecordPath, 0)
+	if err != nil {
+		if ctx.Err() != nil {
+			return refuse(interrupted(err))
+		}
+		return refuse("another run holds the promotion lock: " + err.Error())
+	}
+	defer exclusive.Release()
+	grave := filepath.Join(o.Dest, tombstonePrefix+original)
 	info, err := os.Lstat(directory)
 	switch {
-	case errors.Is(err, os.ErrNotExist):
-		return refuse("nothing exists at " + directory)
+	case tombstone || errors.Is(err, os.ErrNotExist):
+		if _, graveErr := os.Lstat(grave); graveErr != nil {
+			if tombstone {
+				return refuse("nothing exists at " + grave)
+			}
+			return refuse("nothing exists at " + directory)
+		}
+		return finishRemoval(ctx, o, base, directory, grave)
 	case err != nil:
 		return refuse("whether " + directory + " exists could not be established: " + store.PythonOSError(err))
 	case !info.IsDir():
 		return refuse(directory + " is not a directory, so it is not a runtime this command installed")
 	}
-	exclusive, err := record.Promote(o.RecordPath, 0)
+	d, err := identify(o.Dest, original)
 	if err != nil {
-		return refuse("another run holds the promotion lock: " + err.Error())
+		return refuse("the destination " + o.Dest + " could not be read: " + store.PythonOSError(err))
 	}
-	defer exclusive.Release()
-	lock, err := record.Lock(directory, 0)
-	if err != nil {
-		return refuse("another run is deciding what to do with this directory: " + err.Error())
-	}
-	defer lock.Release()
 	loaded := record.Load(o.RecordPath, definition.Version)
 	if !loaded.Usable() {
 		return refuse("the host record could not be read, so whether it selects this directory was not established: "+loaded.Detail, "reading", loaded.Refusal())
 	}
 	rec := loaded.Value.(Object)
-	if u := selectedOrPointed(rec, o.Dest, directory); u != nil {
+	if u := selectedOrPointed(rec, o.Dest, d); u != nil {
 		return refuse(u.detail, u.extra()...)
 	}
 	claim := staging.ReadClaim(directory)
@@ -101,35 +138,111 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 	if liveness, detail := staging.OwnerLiveness(directory); liveness != staging.Dead {
 		return refuse("another run still holds this directory, or whether one does could not be established: "+detail, "claim", claimValue)
 	}
-	if u := runningOrRegistered(ctx, o, directory); u != nil {
+	if u := runningOrRegistered(ctx, o, d); u != nil {
 		return refuse(u.detail, u.extra()...)
 	}
-	dropped, clearedOutgoing, why := dropInstalls(o.RecordPath, directory)
+	if _, err := os.Lstat(grave); err == nil {
+		// A tombstone of this name that an earlier run did not finish: the directory under the
+		// name now is a later install, so the old copy goes without touching the record.
+		if u := runningOrRegistered(ctx, o, mustIdentify(o.Dest, tombstonePrefix+original)); u != nil {
+			return refuse("an earlier removal of this name left "+grave+", and it cannot be finished: "+u.detail, u.extra()...)
+		}
+		if err := os.RemoveAll(grave); err != nil {
+			return refuse("an earlier removal of this name left " + grave + ", which could not be deleted: " + store.PythonOSError(err))
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return refuse(interrupted(err))
+	}
+	if err := os.Rename(directory, grave); err != nil {
+		return refuse("the directory could not be set aside as " + grave + ": " + store.PythonOSError(err))
+	}
+	dropped, clearedOutgoing, why := dropInstalls(o.RecordPath, d)
 	if why != "" {
+		if err := os.Rename(grave, directory); err != nil {
+			return Object{
+				field("command", "remove"), field("applied", true), field("directory", directory), field("removed", false), field("tombstone", grave),
+				field("detail", why+"; and the directory could not be renamed back from "+grave+": "+store.PythonOSError(err)), field("residualPaths", []any{grave}),
+				field("recoveryRequires", "rename "+grave+" back to "+directory+" by hand (nothing uses it, and the host record still lists it), or run crw install remove "+grave+" to finish removing it"),
+				field("note", "the host record was not changed."),
+			}, Incomplete
+		}
 		return refuse(why)
 	}
-	if err := os.RemoveAll(directory); err != nil {
-		_, statErr := os.Lstat(directory)
+	if err := os.RemoveAll(grave); err != nil {
 		return Object{
-			field("command", "remove"), field("applied", true), field("directory", directory), field("removed", false),
-			field("gone", errors.Is(statErr, os.ErrNotExist)), field("claim", claimValue), field("droppedInstallEntries", strs(dropped)), field("clearedOutgoing", clearedOutgoing),
-			field("detail", "the directory could not be removed completely: "+store.PythonOSError(err)), field("residualPaths", []any{directory}),
-			field("recoveryRequires", "remove what is left of "+directory+" by hand: nothing uses it (every check above passed), and its install entries are already dropped from the host record. Rerunning crw install remove finishes it only while its claim is still there"),
-			field("note", "the host record no longer lists this directory's installs, and part of the directory may be gone. Its measured points stay in the host record as history."),
+			field("command", "remove"), field("applied", true), field("directory", directory), field("removed", false), field("tombstone", grave),
+			field("claim", claimValue), field("droppedInstallEntries", strs(dropped)), field("clearedOutgoing", clearedOutgoing),
+			field("detail", "the directory was set aside as "+grave+" and could not be deleted completely: "+store.PythonOSError(err)), field("residualPaths", []any{grave}),
+			field("recoveryRequires", "run crw install remove "+grave+" once whatever stopped the deletion is cleared: it finishes the removal. Nothing uses the directory (every check passed), and its install entries are already dropped from the host record"),
+			field("processTable", processScope),
+			field("note", "the host record no longer lists this directory's installs, and nothing is left under its name. Its measured points stay in the host record as history."),
 		}, Incomplete
 	}
 	return Object{
 		field("command", "remove"), field("applied", true), field("directory", directory), field("removed", true),
 		field("claim", claimValue), field("droppedInstallEntries", strs(dropped)), field("clearedOutgoing", clearedOutgoing),
+		field("processTable", processScope),
 		field("note", "the directory was removed after the record, the pointer, its claim, the process table and every registration the host reads all said nothing uses it, and after its install entries were dropped from the host record. Its measured points stay in the host record as history."),
 	}, OK
 }
 
-// use is why a runtime directory may still be in use, and the reading that says so.
+// mustIdentify is identify for a directory known to be there; a failure leaves only its name
+// to match, which still reaches every path spelled under it.
+func mustIdentify(dest, name string) *runtimeDir {
+	if d, err := identify(dest, name); err == nil {
+		return d
+	}
+	return &runtimeDir{path: filepath.Join(dest, name), name: name}
+}
+
+// finishRemoval finishes a removal a killed or failed run left as a tombstone: the tombstone is
+// deleted once no live process runs out of it and no registration names it, and when nothing is
+// under the runtime's name any more, what the host record still lists under that name (its
+// install entries, an outgoing selection naming it) is dropped first. A runtime installed again
+// under the name since keeps its entries.
+func finishRemoval(ctx context.Context, o Options, base Object, directory, grave string) (Object, int) {
+	refuse := func(detail string, extra ...any) (Object, int) {
+		out := append(append(Object{}, base...), field("tombstone", grave), field("refused", detail))
+		for i := 0; i+1 < len(extra); i += 2 {
+			out = append(out, field(extra[i].(string), extra[i+1]))
+		}
+		return append(out, field("note", "nothing was removed and nothing was written.")), Refused
+	}
+	if u := runningOrRegistered(ctx, o, mustIdentify(o.Dest, filepath.Base(grave))); u != nil {
+		return refuse("an interrupted removal left "+grave+", and it cannot be finished: "+u.detail, u.extra()...)
+	}
+	if err := ctx.Err(); err != nil {
+		return refuse(interrupted(err))
+	}
+	dropped, clearedOutgoing := []string{}, false
+	if _, err := os.Lstat(directory); errors.Is(err, os.ErrNotExist) {
+		d := mustIdentify(o.Dest, filepath.Base(directory))
+		var why string
+		if dropped, clearedOutgoing, why = dropInstalls(o.RecordPath, d); why != "" {
+			return refuse(why)
+		}
+	}
+	if err := os.RemoveAll(grave); err != nil {
+		return append(append(Object{}, base...), field("applied", true), field("removed", false), field("tombstone", grave),
+			field("droppedInstallEntries", strs(dropped)), field("clearedOutgoing", clearedOutgoing),
+			field("detail", "the tombstone could not be deleted completely: "+store.PythonOSError(err)), field("residualPaths", []any{grave}),
+			field("recoveryRequires", "run crw install remove "+grave+" again once whatever stopped the deletion is cleared")), Incomplete
+	}
+	return Object{
+		field("command", "remove"), field("applied", true), field("directory", directory), field("removed", true), field("finished", grave),
+		field("droppedInstallEntries", strs(dropped)), field("clearedOutgoing", clearedOutgoing), field("processTable", processScope),
+		field("note", "an interrupted removal of this runtime was finished: its tombstone is deleted and the host record lists nothing under a name that is gone."),
+	}, OK
+}
+
+// use is why a runtime directory may still be in use, and the reading that says so. noTable is
+// a platform without a process table, where the recovery by hand depends on the caller.
 type use struct {
-	detail string
-	key    string
-	value  any
+	detail  string
+	key     string
+	value   any
+	noTable bool
 }
 
 // extra is the reading as a refusal carries it.
@@ -149,62 +262,98 @@ func (u *use) fields() []contract.Field {
 }
 
 // selectedOrPointed is the half of the in-use rule the host record and the owned pointer
-// answer: the record selects something inside directory, or the pointer - the one the record
-// names, or the default one - names it, or could not be read (an unread pointer is not a
-// pointer aimed elsewhere). nil when neither does.
-func selectedOrPointed(rec Object, dest, directory string) *use {
-	if selectsUnder(rec, directory) {
-		return &use{"the host record selects this runtime, so it is in service", "selected", record.Get(rec, "selected")}
+// answer: the record selects something inside d, or the pointer - the one the record names, or
+// the default one - reaches it, or could not be read (an unread pointer is not a pointer aimed
+// elsewhere). nil when neither does.
+func selectedOrPointed(rec Object, dest string, d *runtimeDir) *use {
+	if selectionHeld(rec, d) {
+		return &use{"the host record selects this runtime, so it is in service", "selected", record.Get(rec, "selected"), false}
 	}
 	for _, path := range uniqueStrings(recordedPointer(rec, dest), pointer.Path(dest)) {
-		names := pointer.Names(path, directory)
+		names := d.pointed(path)
 		if names == nil {
-			return &use{"whether the pointer at " + path + " names this runtime could not be established, and an unread pointer is not a pointer aimed elsewhere", "pointer", pointerObject(path)}
+			return &use{"whether the pointer at " + path + " names this runtime could not be established, and an unread pointer is not a pointer aimed elsewhere", "pointer", pointerObject(path), false}
 		}
 		if *names {
-			return &use{"the pointer at " + path + " names this runtime, so the commands a host reaches still resolve into it", "pointer", pointerObject(path)}
+			return &use{"the pointer at " + path + " names this runtime, so the commands a host reaches still resolve into it", "pointer", pointerObject(path), false}
 		}
 	}
 	return nil
+}
+
+// selectionHeld is whether the record selects any component inside d.
+func selectionHeld(rec Object, d *runtimeDir) bool {
+	selected, _ := record.Get(rec, "selected").(Object)
+	for _, f := range selected {
+		if location, ok := f.Value.(string); ok && location != "" && d.holds(location) {
+			return true
+		}
+	}
+	return false
+}
+
+// outgoingHeld is whether the record's outgoing baseline selects any component inside d.
+func outgoingHeld(rec Object, d *runtimeDir) bool {
+	outgoing, _ := record.Get(rec, "outgoing").(Object)
+	for _, f := range outgoing {
+		entry, _ := f.Value.(Object)
+		if location, ok := record.Get(entry, "selected").(string); ok && location != "" && d.holds(location) {
+			return true
+		}
+	}
+	return false
 }
 
 // runningOrRegistered is the half of the in-use rule nothing in the record answers: a live
-// process runs out of directory (its /proc/<pid>/exe, or the interpreter or script its argv
-// starts, resolving inside it, which covers every daemon.json pid), or a registration the host
-// reads names a path inside it (doctor.RegisteredInside) or could not be read or judged. nil
-// when neither does.
-func runningOrRegistered(ctx context.Context, o Options, directory string) *use {
-	processes, unruled, err := liveProcesses(o.proc(), directory)
+// process runs out of d (liveProcesses), a daemon a daemon.json records alive (its start time and
+// boot id matching this process table) does, or a relay daemon record could not be read; or a
+// registration the host reads names a path inside d (doctor.RegisteredMatching) or could not be
+// read or judged. nil when none does. What it cannot see is processScope.
+func runningOrRegistered(ctx context.Context, o Options, d *runtimeDir) *use {
+	processes, unruled, err := liveProcesses(o.proc(), d)
 	var missing *noProcessTable
 	if errors.As(err, &missing) {
 		return &use{"this platform (" + runtime.GOOS + ") has no process table this command can read (" + missing.proc + " is not a procfs), so whether a relay daemon or a bridge still runs out of this directory cannot be established, and a directory that may be in use is never removed", "recoveryRequires",
-			"remove it by hand: stop the relay daemon started from it (" + filepath.Join(directory, "bin", definition.Relay) + " service stop) and end every Codex session whose bridge it started, delete " + directory + ", then run crw install status to see that the host record and the pointer still name the runtime you meant. Its install entries stay in the host record, where a rollback naming it is refused because the directory is gone"}
+			"remove it by hand: stop the relay daemon started from it (" + filepath.Join(d.path, "bin", definition.Relay) + " service stop) and end every Codex session whose bridge it started, delete " + d.path + ", then run crw install status to see that the host record and the pointer still name the runtime you meant. Its install entries stay in the host record, where a rollback naming it is refused because the directory is gone", true}
 	}
 	if err != nil {
-		return &use{"the process table could not be read, so whether a process still runs out of this directory was not established: " + err.Error(), "", nil}
+		return &use{"the process table could not be read, so whether a process still runs out of this directory was not established: " + err.Error(), "", nil, false}
 	}
 	if len(processes) > 0 {
-		return &use{"live processes run out of this directory", "processes", processes}
+		return &use{"live processes run out of this directory", "processes", processes, false}
 	}
 	if len(unruled) > 0 {
-		return &use{"what a live process runs could not be read, so it cannot be ruled out that it runs out of this directory", "unreadableProcesses", unruled}
+		return &use{"what a live process runs could not be read, so it cannot be ruled out that it runs out of this directory", "unreadableProcesses", unruled, false}
 	}
-	registered, unreadable := doctor.RegisteredInside(ctx, doctor.RetentionOptions{Env: o.Env, CodexHome: o.CodexHome, Destination: o.Dest}, directory)
+	retention := doctor.RetentionOptions{Env: o.Env, CodexHome: o.CodexHome, Destination: o.Dest, Proc: o.proc(), ScopeRegistry: o.ScopeRegistry}
+	if _, unreadable := doctor.RecordedDaemons(retention, o.State); len(unreadable) > 0 {
+		return &use{"a relay daemon record could not be read, so whether a daemon it records still runs out of this directory was not established", "unreadable", strs(unreadable), false}
+	}
+	registered, unreadable := doctor.RegisteredMatching(ctx, retention, func(path, resolves string) string {
+		switch {
+		case d.holds(path):
+			return path
+		case resolves != "" && d.holds(resolves):
+			return resolves
+		}
+		return ""
+	})
 	if len(registered) > 0 {
-		return &use{"a registration the host reads still names a path inside this directory, and each new session starts it from there", "registrations", registered}
+		return &use{"a registration the host reads still names a path inside this directory, and each new session starts it from there", "registrations", registered, false}
 	}
 	if len(unreadable) > 0 {
-		return &use{"a registration the host reads could not be read or judged, so whether it names a path inside this directory was not established", "unreadable", strs(unreadable)}
+		return &use{"a registration the host reads could not be read or judged, so whether it names a path inside this directory was not established", "unreadable", strs(unreadable), false}
 	}
 	return nil
 }
 
-// dropInstalls drops every install entry whose environment resolves to directory, and the
-// record's outgoing selection when it names anything inside directory (a bare rollback would
-// otherwise be sent to a runtime that no longer exists and has no install entry), in one write
-// under the host record's lock, after reading again that the record does not select it. It
-// answers the environments dropped, whether outgoing was cleared, or why nothing was written.
-func dropInstalls(recordPath, directory string) ([]string, bool, string) {
+// dropInstalls drops every install entry whose environment is d, and the record's outgoing
+// selection when it names anything inside d (a bare rollback would otherwise be sent to a
+// runtime that no longer exists and has no install entry), in one write under the host record's
+// lock, after reading again that the record does not select it. d is matched by identity and by
+// its name in the destination, so this holds after the directory was renamed to its tombstone.
+// It answers the environments dropped, whether outgoing was cleared, or why nothing was written.
+func dropInstalls(recordPath string, d *runtimeDir) ([]string, bool, string) {
 	lock, err := record.Lock(recordPath, 0)
 	if err != nil {
 		return nil, false, "the host record's lock could not be taken, so this directory's install entries could not be dropped before it is removed: " + err.Error()
@@ -215,12 +364,8 @@ func dropInstalls(recordPath, directory string) ([]string, bool, string) {
 		return nil, false, "the host record could not be read to drop this directory's install entries: " + current.Detail
 	}
 	rec := current.Value.(Object)
-	if selectsUnder(rec, directory) {
+	if selectionHeld(rec, d) {
 		return nil, false, "the host record selects this runtime now, so it is in service"
-	}
-	root, err := record.Resolve(directory)
-	if err != nil {
-		return nil, false, "the directory could not be resolved: " + err.Error()
 	}
 	var dropped []string
 	components, _ := record.Get(rec, "components").(Object)
@@ -230,11 +375,9 @@ func dropInstalls(recordPath, directory string) ([]string, bool, string) {
 		kept := []any{}
 		for _, raw := range installs {
 			install, _ := raw.(Object)
-			if environment, ok := record.Get(install, "environment").(string); ok && environment != "" {
-				if real, err := record.Resolve(environment); err == nil && real == root {
-					dropped = append(dropped, environment)
-					continue
-				}
+			if environment, ok := record.Get(install, "environment").(string); ok && environment != "" && d.names(environment) {
+				dropped = append(dropped, environment)
+				continue
 			}
 			kept = append(kept, raw)
 		}
@@ -243,7 +386,7 @@ func dropInstalls(recordPath, directory string) ([]string, bool, string) {
 		}
 	}
 	dropped = uniqueStrings(dropped...)
-	clearOutgoing := outgoingUnder(rec, directory)
+	clearOutgoing := outgoingHeld(rec, d)
 	if clearOutgoing {
 		rec = record.Delete(rec, "outgoing")
 	}
@@ -338,7 +481,7 @@ func runtimeNames() map[string]bool {
 // too (a procfs mounted hidepid) or when it starts one of this runtime's executables by a bare
 // name, which could be this runtime's. A process of this user whose exe or cmdline cannot be
 // read for any other reason is not ruled out.
-func liveProcesses(proc, directory string) (found, unruled []any, err error) {
+func liveProcesses(proc string, d *runtimeDir) (found, unruled []any, err error) {
 	if _, err := os.Stat(filepath.Join(proc, "self")); err != nil {
 		return nil, nil, &noProcessTable{proc}
 	}
@@ -346,20 +489,7 @@ func liveProcesses(proc, directory string) (found, unruled []any, err error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	root, err := record.Resolve(directory)
-	if err != nil {
-		return nil, nil, err
-	}
-	inside := func(path string) bool {
-		if !filepath.IsAbs(path) {
-			return false
-		}
-		if record.Within(filepath.Clean(path), filepath.Clean(directory)) {
-			return true
-		}
-		resolved, err := record.Resolve(path)
-		return err == nil && record.Within(resolved, root)
-	}
+	inside := d.holds
 	self, me := os.Getpid(), os.Getuid()
 	for _, entry := range entries {
 		pid, err := strconv.Atoi(entry.Name())

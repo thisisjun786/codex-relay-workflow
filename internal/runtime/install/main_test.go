@@ -52,6 +52,9 @@ func TestMain(m *testing.M) {
 
 // binary is the crw this package's tests install: the real multi-call binary, built once.
 var binary = sync.OnceValues(func() ([]byte, error) {
+	if built := os.Getenv("CRW_TEST_CRW"); built != "" { // a test rerun in a child process
+		return os.ReadFile(built)
+	}
 	path := filepath.Join(buildDir, "crw")
 	cmd := exec.Command("go", "build", "-trimpath", "-o", path, "./cmd/crw")
 	cmd.Dir = golden.Root()
@@ -101,7 +104,7 @@ func codexCli(context.Context) *string {
 }
 
 func (h *host) options() install.Options {
-	return install.Options{Env: h.env, Dest: h.dest, CodexHome: h.codex, RecordPath: h.record, Socket: h.fake.SocketPath, State: h.relayState,
+	return install.Options{Env: h.env, Dest: h.dest, CodexHome: h.codex, RecordPath: h.record, Socket: h.fake.SocketPath, State: h.relayState, ScopeRegistry: filepath.Join(h.home, "scopes"),
 		Issue: "CRW-158", CodexVersion: codexCli, Now: func() time.Time { return time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC) }}
 }
 

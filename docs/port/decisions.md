@@ -1474,21 +1474,34 @@ never both, and a `codex-thread-bridge` table must name the pointer; the Stop ad
 provide - the venv's `bin/python3` on a Go runtime - because the user-owned registrations are
 retired and such an entry is a second owner that would run nothing after the swap), the Stop
 settings are carried to the new runtime kind (decision 18), then the selection, the pointer's placement and `outgoing` are committed in one
-write, the pointer is renamed over and read back, and on any failure the pointer, the selection,
+write (`outgoing` is the runtime the pointer leaves - the selection unless an interrupted move
+left them apart - as a moving rollback records it), the pointer is renamed over and proved - it must resolve without an error (no loop, nothing
+dangling) to the runtime directory itself by identity, and `<pointer>/bin/crw` must be a regular
+file the user may execute; comparing resolved spellings is not proof, because a pointer that loops
+resolves to the same text as a candidate spelled through it - and on any failure the pointer, the selection,
 `outgoing` and the settings are put back (the settings are replaced by copying the old document
 aside and renaming the new one over it, so the path is never empty and a write that fails or does
 not read back leaves the old document where it was). The COMPLETE claim is written last; the
 runtime the promotion replaced, selected and named by the pointer and so in service, has its claim
 settled COMPLETE too (under the lock, after the pointer is read back) when it still says STAGING
 with nobody holding it (an exit 3), so no later install of its archive reads it as abandoned
-staging. An existing directory of the candidate's name that is abandoned staging (a STAGING claim
-nobody holds, which the record does not select and the pointer does not name) is reclaimed only
-under the rules `crw install remove` applies, read again under the promotion lock: the record
-selects it, a pointer (the recorded one or the default) names it or cannot be read, a live process
-runs out of it (which covers every daemon.json pid), or a registration the host reads names a path
-inside it or cannot be read, each keeps it and refuses with nothing removed or built. One the
-record's `outgoing` names was put in service by a promotion, so it is never reclaimed either: its
-claim is settled COMPLETE and it is kept, which `crw install rollback` returns to.
+staging. A claim runtime_install.py wrote (a venv's) is settled in runtime_install.py's own shape
+and marker, so runtime_install.py still reads the directory as its own. A destination that is
+spelled through the owned pointer, resolves inside the pointer's target, or lies inside a runtime
+directory is refused before anything is created. An existing directory of the candidate's name
+that is abandoned staging (a STAGING claim nobody holds, which the record does not select and the
+pointer does not name) is reclaimed only under the rules `crw install remove` applies, read again
+- the claim and its lock too - under the promotion lock, which `take()` takes after the directory's
+own lock (decision 33): the record selects it, a pointer (the recorded one or the default) names it
+or cannot be read, a live process runs out of it or cannot be ruled out, a relay daemon record
+cannot be read, or a registration the host reads names a path inside it or cannot be read, each
+keeps it and refuses with nothing removed or built. Where there is no process table (darwin) the
+reclaim keeps it too, fail-closed, and says so with the recovery for a staging that was never
+promoted: once no crw install run and nothing it started is still running, delete it by hand and
+rerun. One the record's `outgoing` names was put in service by a promotion, so it is never
+reclaimed either: its claim is settled COMPLETE and it is kept, which `crw install rollback`
+returns to. What the reclaim removes, and a failed run's own candidate, goes through a tombstone,
+as remove's does.
 runtime_install.py reclaims the same staging with `rmtree` and none of these readings
 (scripts/runtime_install.py:2831-2844); `crw install remove`, an operator's explicit request, still
 removes an outgoing runtime nothing else uses (the Python venv after the cutover is one). A runtime
@@ -1550,7 +1563,12 @@ into a directory that is gone, which the claim's lock would otherwise make again
 rewrites the Stop settings (decision 18). For a Python venv target the gate's schema cell compares the store with this build's declared
 schema, which stands for the Python runtime's because the DDL is identical (decision 14) and no Go
 release changes it before the commit point (docs/port/cutover.md). `crw install remove <dir>`
-deletes one `env-*` or `bin-*` directory directly under the destination only when the record does
+deletes one `env-*` or `bin-*` directory directly under the destination. It is taken by its name
+under the destination and judged by file identity (a path counts when, as written or once its links
+are followed, it or an ancestor is the directory's own file, or is an entry of its name in the
+destination's file), so naming it through an alias of the destination - a symlink, a bind mount,
+a case-folded spelling - or a record written through another spelling cannot pass a check the
+canonical spelling fails. It deletes only when the record does
 not select it, the pointer does not (and is established not to) name it, it carries a readable
 claim of runtime_install.py's or crw install's whose lock nobody holds, no live process runs
 out of it (its `/proc/<pid>/exe`, or the interpreter or script its argv starts, resolving inside
@@ -1565,14 +1583,24 @@ is followed through. These are started afresh by each new session, so no process
 between sessions, and runtime_install.py never faced the question because it never removes a
 settled runtime; a registration that cannot be read or judged refuses too. Then, in
 runtime_install.py's order (`_install_failed` has `release_candidate` drop a candidate's entries
-before it removes the directory), the directory's install entries are dropped in one write under
+before it removes the directory), the directory is first renamed, in one atomic step, to its
+tombstone `<destination>/.crw-removing-<name>`; its install entries are dropped in one write under
 the host record's lock, where the selection is read again, and in the same write `outgoing` is
 removed when it names anything inside the directory, so a bare `crw install rollback` then refuses
 because the record carries no outgoing selection instead of being sent to a directory that is
-gone and whose entries are not in the record; only after that write lands is the directory
-removed: a drop that cannot be written refuses with nothing removed, and a removal that
-does not finish after the drop exits 3 with the entries gone, the rest of the directory named in
-`residualPaths` and its removal by hand as `recoveryRequires`. The process table is read so that
+gone and whose entries are not in the record; only after that write lands is the tombstone
+deleted. A drop that cannot be written renames the directory back and refuses; a deletion that
+does not finish exits 3 naming the tombstone. A kill anywhere in that sequence leaves either the
+whole directory or a tombstone - never a directory under the runtime's name with its claim gone,
+which every command would then read as somebody else's. `crw install status` lists each tombstone
+(`interruptedRemovals`), and `crw install remove` of the tombstone, or of the name when only its
+tombstone is left, finishes it: the tombstone is deleted once no process runs out of it and no
+registration names it, after what the record still lists under the name (its entries, an
+outgoing naming it) is dropped, unless a runtime was installed under that name again. Remove, the
+reclaim and the already-installed reading take the directory's `<env>.crw-lock` first and the
+promotion lock after it, the order of decision 33, and the host record's `.crw-lock` inside both;
+every wait honours the command's context (`record.LockContext`, `record.PromoteContext`), so a
+command interrupted (SIGINT, SIGTERM, SIGHUP) while it waits stops waiting and removes nothing. The process table is read so that
 nothing unread passes for absent. A pid whose entries are gone (ENOENT, ESRCH: exited, a zombie, a
 kernel thread) is skipped. The kernel shows a process's exe only with ptrace access, which it
 refuses for another user's process and for this user's own when it holds capabilities the reader
@@ -1582,7 +1610,14 @@ spelled and resolved, inside the directory refuse; a cmdline that is hidden as w
 mounted hidepid) or that starts one of this runtime's executables by a bare name leaves the
 process not ruled out, which refuses too, naming the pid and why (`unreadableProcesses`). A
 process of this user whose exe fails for any other reason, or whose cmdline cannot be read, is
-not ruled out either. The reclaim of an abandoned staging applies the same reading. Live
+not ruled out either. Relay daemons are also read from their records, as the retention scan reads
+them (`doctor.RecordedDaemons`: every daemon.json and scope registry claim; a pid counts while its
+start time and boot id match this process table), and a record that cannot be read refuses. The
+reading rests on one assumption, stated in every answer that depends on it (`processTable`): the
+process table is this host's, in this command's PID namespace, so a process in another PID
+namespace (a container sharing the directory) or on another host (a network home) is not seen,
+and `crw install remove` is to be run where the runtime's processes run. The reclaim of an
+abandoned staging applies the same reading. Live
 processes are read from procfs, so on a platform without one (darwin) whether a relay or bridge still runs out of the directory
 cannot be established and `crw install remove` always refuses there (fail-closed), saying that
 this platform has no process table it can read and giving the recovery by hand as
@@ -1626,6 +1661,12 @@ scripts/crw_runtime/staging.py:350-352 (a finished, unselected environment is ke
 `TestAnOversizedOrShortEntryIsRefusedBeforeAnythingIsWritten`, `TestAnOversizedOrShortEntryIsNotInstalled`,
 `TestAReleaseTagIsCheckedBeforeAnythingIsFetched`, `TestAReinstallNeverReclaimsARuntimeThatWasInService`,
 `TestReclaimKeepsAStagingThatMayStillBeInUse`, `TestLiveProcessesRuleOutOnlyWhatTheyRead`,
+`TestAPromotionProvesThePointerItPlaced`, `TestLandedAtIsWhatAHostReaches`,
+`TestADestinationInsideTheRuntimeIsRefused`, `TestSettlingAPythonClaimKeepsItPythons`,
+`TestRemoveKnowsARuntimeByIdentityNotSpelling` (bwrap), `TestReclaimWithoutAProcessTableSaysHowToRecover`,
+`TestRemoveReadsTheRelayDaemonRecords`, `TestAnInterruptedWaitRemovesNothing`,
+`TestAnInterruptedRemovalIsFinished`, `TestAnInstallCommandStopsWhenAsked` (cmd/crw),
+`TestRemoveTakesTheDirectoryLockBeforeThePromotionLock`, `TestAPromotionRecordsTheRuntimeThePointerLeaves`,
 `TestRemoveAndReclaimRefuseAProcessTheyCannotRuleOut`, `TestRemovingTheOutgoingRuntimeClearsOutgoing`, `TestOutgoingIsWrittenOnlyByAPromotion`,
 `TestAnUnsettledCandidatesInstallEntriesAreNeverActedOn`); internal/runtime/doctor/references.go;
 internal/runtime/exercise (`TestTheSessionClosesItsReaderAtTheDeadlineWithoutACopyingGoroutine`);

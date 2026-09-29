@@ -158,16 +158,37 @@ func TestRemoveDropsTheInstallEntriesBeforeTheDirectory(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root removes a read-only directory's entries, so the removal cannot be made to fail")
 	}
+	// The directory is set aside as its tombstone before anything under it is deleted, so a
+	// deletion that stops part-way leaves the tombstone - named for what it is - and nothing
+	// under the runtime's own name; status lists it and remove finishes it.
+	grave := filepath.Join(h.dest, ".crw-removing-"+filepath.Base(old))
 	bin := filepath.Join(old, "bin")
 	if err := os.Chmod(bin, 0o555); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = os.Chmod(bin, 0o755) }()
+	defer func() { _ = os.Chmod(filepath.Join(grave, "bin"), 0o755) }()
 	partial, code := install.Remove(context.Background(), h.options(), old)
-	if code != install.Incomplete || at(partial, "removed") != false || !listed(golden.List(at(partial, "droppedInstallEntries")), old) || !listed(golden.List(at(partial, "residualPaths")), old) || !strings.Contains(text(at(partial, "recoveryRequires")), "by hand") {
+	if code != install.Incomplete || at(partial, "removed") != false || !listed(golden.List(at(partial, "droppedInstallEntries")), old) || !listed(golden.List(at(partial, "residualPaths")), grave) || !strings.Contains(text(at(partial, "recoveryRequires")), "crw install remove "+grave) {
 		t.Fatalf("a removal that does not finish: exit %d\n%s", code, golden.Canon(partial))
 	}
 	if listed(h.installsOf(t), old) {
 		t.Fatal("exit 3 says the entries were dropped, and the record still lists them")
+	}
+	if _, err := os.Lstat(old); !os.IsNotExist(err) {
+		t.Fatal("something is left under the runtime's own name")
+	}
+	status, _ := install.Status(context.Background(), h.options())
+	if interrupted := golden.List(at(status, "interruptedRemovals")); len(interrupted) != 1 || at(golden.Obj(interrupted[0]), "path") != grave {
+		t.Fatalf("status: %s", golden.Canon(at(status, "interruptedRemovals")))
+	}
+	if err := os.Chmod(filepath.Join(grave, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	finished, code := install.Remove(context.Background(), h.options(), old)
+	if code != install.OK || at(finished, "finished") != grave {
+		t.Fatalf("finishing the removal: exit %d\n%s", code, golden.Canon(finished))
+	}
+	if _, err := os.Lstat(grave); !os.IsNotExist(err) {
+		t.Fatal("the tombstone is still there")
 	}
 }

@@ -123,3 +123,25 @@ func TestAnUnsettledCandidatesInstallEntriesAreNeverActedOn(t *testing.T) {
 		t.Fatalf("after the rerun the record lists %d entries for %s, pointer %s", count, next, h.pointerTarget(t))
 	}
 }
+
+// A promotion records as outgoing the runtime the pointer leaves - what a host was reaching - as
+// a moving rollback does: the selection, unless an interrupted move left the pointer on another
+// recorded runtime, which is then the one a bare rollback returns the host to.
+func TestAPromotionRecordsTheRuntimeThePointerLeaves(t *testing.T) {
+	h := newHost(t)
+	first, second, third := archive(t, "0.9.0", ""), archive(t, "0.9.1", ""), archive(t, "0.9.2", "")
+	old, next := runtimeDir(h, "0.9.0", first, t), runtimeDir(h, "0.9.1", second, t)
+	h.mustInstall(t, "install", first)
+	h.mustInstall(t, "update", second)
+	if err := pointer.Place(pointer.Path(h.dest), old); err != nil { // an interrupted move
+		t.Fatal(err)
+	}
+	h.mustInstall(t, "update", third)
+	if got := at(h.hostRecord(t), "outgoing", "codex-session-relay", "selected"); got != filepath.Join(old, "bin") {
+		t.Fatalf("outgoing selects %v; the pointer left %s, and the record selected %s", got, old, next)
+	}
+	h.mustInstall(t, "update", archive(t, "0.9.3", ""))
+	if got := at(h.hostRecord(t), "outgoing", "codex-thread-bridge", "selected"); got != filepath.Join(runtimeDir(h, "0.9.2", third, t), "bin") {
+		t.Fatalf("with the pointer and the selection agreeing, outgoing selects %v", got)
+	}
+}

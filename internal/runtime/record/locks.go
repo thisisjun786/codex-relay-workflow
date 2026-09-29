@@ -1,6 +1,7 @@
 package record
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -49,6 +50,27 @@ type Locked struct {
 
 // Lock takes target's .crw-lock, waiting up to timeout (LockTimeout when zero).
 func Lock(target string, timeout time.Duration) (*Locked, error) {
+	return LockContext(context.Background(), target, timeout)
+}
+
+// wait sleeps one polling interval, or answers the context's error once it is done: a
+// cancelled caller stops waiting for a lock at once, and never takes it afterwards.
+func wait(ctx context.Context) error {
+	timer := time.NewTimer(50 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// LockContext is Lock that stops waiting, taking nothing, once ctx is done.
+func LockContext(ctx context.Context, target string, timeout time.Duration) (*Locked, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if timeout == 0 {
 		timeout = LockTimeout
 	}
@@ -84,7 +106,9 @@ func Lock(target string, timeout time.Duration) (*Locked, error) {
 		if time.Now().After(deadline) {
 			return nil, &Busy{Message: "another run holds " + path}
 		}
-		time.Sleep(50 * time.Millisecond)
+		if err := wait(ctx); err != nil {
+			return nil, err
+		}
 	}
 }
 
@@ -111,6 +135,14 @@ type Exclusive struct {
 // Promote takes the promotion lock beside recordPath, waiting up to timeout (PromotionTimeout
 // when zero).
 func Promote(recordPath string, timeout time.Duration) (*Exclusive, error) {
+	return PromoteContext(context.Background(), recordPath, timeout)
+}
+
+// PromoteContext is Promote that stops waiting, taking nothing, once ctx is done.
+func PromoteContext(ctx context.Context, recordPath string, timeout time.Duration) (*Exclusive, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if timeout == 0 {
 		timeout = PromotionTimeout
 	}
@@ -136,7 +168,10 @@ func Promote(recordPath string, timeout time.Duration) (*Exclusive, error) {
 			_ = handle.Close()
 			return nil, &Busy{Message: "another run holds the promotion lock at " + path}
 		}
-		time.Sleep(50 * time.Millisecond)
+		if err := wait(ctx); err != nil {
+			_ = handle.Close()
+			return nil, err
+		}
 	}
 }
 
