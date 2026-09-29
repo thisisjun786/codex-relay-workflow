@@ -1413,11 +1413,15 @@ selected `bin/crw`:
   by the path it is run under (`/usr/bin/env` or `/bin/env`, resolving to a native executable
   regular file), and an entry point holding `=` is a conflict because env reads it as an
   assignment;
-- every Stop command in `<CODEX_HOME>/hooks.json` that runs a Stop adapter, for every owner: the
-  selected `crw-completion-hook` (or `crw hook`) executed by path and reading these settings
-  agrees; the checkout's `completion_hook.py`, another runtime's hook and a hook handed to an
-  interpreter conflict; a bare hook, an expansion the doctor does not make, other settings or a
-  hooks.json it cannot read are unreadable;
+- every Stop command in `<CODEX_HOME>/hooks.json` that runs a Stop adapter, for every owner,
+  read by the retention scan's own Stop-command reader (`readStopCommand`: its allowlisted
+  grammar, following `exec`, `env` and `sh -c`), so one reader answers both which settings a
+  Stop reads and which hook it runs: the selected `crw-completion-hook` (or `crw hook`)
+  executed by path and reading these settings agrees; the checkout's `completion_hook.py`,
+  another runtime's hook and a hook handed to an interpreter conflict; a bare hook, a word or
+  construct outside the grammar, a script that may run the adapter itself, other settings
+  (named, or `$CRW_COMPLETION_HOOK_CONFIG` for a hook naming none) or a hooks.json it cannot
+  read are unreadable;
 - a plugin-owned `crw-bridge-mcp.json` through `crw_bridge_mcp.py`'s record contract
   (`recordVersion` 1 or 2 by Python's `==`, `serverName`, an absolute `bridgeExecutable`, `args`
   a list of strings, no policy in version 1, a version-2 policy that exists, is regular and
@@ -1453,7 +1457,8 @@ took (Codex CLI, host name). Python's diagnose reads the Stop hook not at all an
 that descendant exited.
 
 Evidence: internal/runtime/doctor/registration.go (`stopSettings`, `interpreter`, `stopHooks`,
-`pluginBridge`, `policy`, `codexConfig`, `mcpCommand`); internal/runtime/doctor/doctor.go
+`stopCommand`, `hookCall`, `pluginBridge`, `policy`, `codexConfig`, `mcpCommand`);
+internal/runtime/doctor/retention.go (`readStopCommand`, `stopAdapterIn`, `settingsOf`); internal/runtime/doctor/doctor.go
 (`observe`, `classifyGo`, `codexVersion`, `Diagnose`); internal/runtime/record/home.go; internal/relay/hook/
 settings.go (`Complaints`, `ReadSettings`); plugins/crw/wiring/crw_stop_hook.py (`adapter_call`);
 plugins/crw/wiring/crw_bridge_mcp.py (`main`, `policy_environment`); scripts/crw_runtime/

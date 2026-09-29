@@ -399,17 +399,13 @@ func (s *scan) hookCommands(row int, path string, document Object, pluginRoot st
 					j.program(command)
 					continue
 				}
-				r := &registration{s: s, source: path, field: field}
-				report := j.report
-				j.report = func(word string, e Executable) {
-					if e.Kind == KindUnreadable && r.unknown == "" {
-						r.unknown = "it holds " + strconv.Quote(word) + ", which this scan cannot judge"
-					}
-					report(word, e)
+				calls, unknown := readStopCommand(j, command)
+				for _, call := range calls {
+					s.stopSettings = append(s.stopSettings, s.settingsOf(path, field, call))
 				}
-				j.seen = r.see
-				j.program(command)
-				r.done()
+				if unknown != "" {
+					s.stopSettings = append(s.stopSettings, stopSettings{source: path, field: field, problem: unknown})
+				}
 			}
 		}
 	}
@@ -753,60 +749,89 @@ var launcherEntries = map[string]bool{"crw_stop_hook.py": true, "crw-stop-hook.p
 // names no settings (completion.configuration_path, internal/relay/hook/settings.go).
 const settingsEnv = "CRW_COMPLETION_HOOK_CONFIG"
 
-// registration collects the settings documents one Stop command reads (row 2) from each command
-// it runs (argvJudge.seen): the word after the adapter's entry point or after `crw hook`, which
-// the adapter and the Go hook take first; with no such word, $CRW_COMPLETION_HOOK_CONFIG as the
-// scan's environment holds it, else the default settings; and the default settings for the
-// packaged launcher and `crw hook --plugin-launch`. A command holding anything the scan cannot
-// judge, or running a script that is neither (it may run the adapter with settings of its own),
-// leaves them unknown.
-type registration struct {
-	s             *scan
-	source, field string
-	found         []stopSettings
-	unknown       string
+// stopAdapterCall is one command of a Stop command that runs a Stop adapter, found by the word
+// naming it: the adapter's entry point (completion_hook.py, crw-completion-hook) or crw hook,
+// which take their settings as the next word, or the packaged launcher (and crw hook
+// --plugin-launch), which reads the default settings.
+type stopAdapterCall struct {
+	argv     []shellWord
+	at       int       // the word naming the adapter: the entry point, the launcher, or crw of crw hook
+	crwHook  bool      // crw hook
+	launcher bool      // the packaged launcher or crw hook --plugin-launch
+	settings shellWord // the word after the adapter (after crw hook); Written "" when there is none
 }
 
-func (r *registration) see(argv []shellWord, command Executable) {
+// stopAdapterIn is the Stop adapter one command runs, if any.
+func stopAdapterIn(argv []shellWord) (stopAdapterCall, bool) {
 	for i, w := range argv {
 		base := filepath.Base(w.Written)
+		call := stopAdapterCall{argv: argv, at: i}
+		next := i + 1
 		if base == "crw" && i+1 < len(argv) && argv[i+1].Value == "hook" {
-			i++
+			call.crwHook, next = true, i+2
 		} else if !adapterEntries[base] && !launcherEntries[base] {
 			continue
 		}
-		var named shellWord
-		if i+1 < len(argv) {
-			named = argv[i+1]
+		if next < len(argv) {
+			call.settings = argv[next]
 		}
-		one := stopSettings{source: r.source, field: r.field, path: filepath.Join(r.s.o.CodexHome, "crw-completion-hook.json")}
-		switch override := r.s.o.Env.Get(settingsEnv); {
-		case launcherEntries[base] || named.Value == "--plugin-launch":
-		case named.Written == "" && override != "":
-			if one.path, one.problem = r.s.absolute(override); one.problem != "" {
-				one.problem = "$" + settingsEnv + " " + strconv.Quote(override) + " " + one.problem
-			}
-		case named.Written == "":
-		case named.Missing != "":
-			one.problem = "its settings argument " + strconv.Quote(named.Written) + " needs " + named.Missing + ", an expansion this scan does not make"
-		case !filepath.IsAbs(named.Value):
-			one.problem = "its settings argument " + strconv.Quote(named.Written) + " is a relative path, which resolves wherever the hook runs"
-		default:
-			one.path = named.Value
-		}
-		r.found = append(r.found, one)
-		return
+		call.launcher = launcherEntries[base] || call.settings.Value == "--plugin-launch"
+		return call, true
 	}
-	if command.Kind == KindScript || command.Kind == KindPythonScript {
-		r.unknown = "it runs " + strconv.Quote(argv[0].Written) + ", a script that may run the adapter with settings of its own"
-	}
+	return stopAdapterCall{}, false
 }
 
-func (r *registration) done() {
-	if r.unknown != "" {
-		r.found = append(r.found, stopSettings{source: r.source, field: r.field, problem: r.unknown})
+// readStopCommand is the one reader of a Stop command, for the retention scan (row 2: which
+// settings it reads) and the doctor (which hook it runs): the program is read through the scan's
+// grammar and judge (j, whose own reports still reach its report), and each command it runs
+// that runs a Stop adapter is returned. unknown says why that list cannot be complete: the
+// command holds a word or construct the scan cannot judge, or runs a script that may run the
+// adapter itself.
+func readStopCommand(j argvJudge, command string) (calls []stopAdapterCall, unknown string) {
+	report := j.report
+	j.report = func(word string, e Executable) {
+		if e.Kind == KindUnreadable && unknown == "" {
+			unknown = "it holds " + strconv.Quote(word) + ", which this scan cannot judge"
+		}
+		if report != nil {
+			report(word, e)
+		}
 	}
-	r.s.stopSettings = append(r.s.stopSettings, r.found...)
+	j.seen = func(argv []shellWord, command Executable) {
+		if call, ok := stopAdapterIn(argv); ok {
+			calls = append(calls, call)
+			return
+		}
+		if command.Kind == KindScript || command.Kind == KindPythonScript {
+			unknown = "it runs " + strconv.Quote(argv[0].Written) + ", a script that may run the adapter with settings of its own"
+		}
+	}
+	j.program(command)
+	return calls, unknown
+}
+
+// settingsOf is the settings document one Stop adapter call reads (row 2): the word after the
+// adapter's entry point or after crw hook, which the adapter and the Go hook take first; with no
+// such word, $CRW_COMPLETION_HOOK_CONFIG as the scan's environment holds it, else the default
+// settings; and the default settings for the packaged launcher and crw hook --plugin-launch.
+func (s *scan) settingsOf(source, field string, call stopAdapterCall) stopSettings {
+	named := call.settings
+	one := stopSettings{source: source, field: field, path: filepath.Join(s.o.CodexHome, "crw-completion-hook.json")}
+	switch override := s.o.Env.Get(settingsEnv); {
+	case call.launcher:
+	case named.Written == "" && override != "":
+		if one.path, one.problem = s.absolute(override); one.problem != "" {
+			one.problem = "$" + settingsEnv + " " + strconv.Quote(override) + " " + one.problem
+		}
+	case named.Written == "":
+	case named.Missing != "":
+		one.problem = "its settings argument " + strconv.Quote(named.Written) + " needs " + named.Missing + ", an expansion this scan does not make"
+	case !filepath.IsAbs(named.Value):
+		one.problem = "its settings argument " + strconv.Quote(named.Written) + " is a relative path, which resolves wherever the hook runs"
+	default:
+		one.path = named.Value
+	}
+	return one
 }
 
 // journalRow is when a journal row's Stop hook ran (its at: completion.now writes

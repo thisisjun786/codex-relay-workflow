@@ -78,6 +78,10 @@ func TestDoctorNeverLooksARegisteredCommandUpOnItsOwnPATH(t *testing.T) {
 		{name: "a bare config.toml command", stop: goodStop, bridge: goodBridge, config: "[mcp_servers.codex-thread-bridge]\ncommand = \"codex-thread-bridge\"\n", relay: "own", bridgeClass: "unreadable",
 			want: []string{"a bare command Codex looks up on its own PATH, which this doctor does not read"}},
 		{name: "a bare config.toml command on the table's env.PATH", stop: goodStop, bridge: goodBridge, config: "[mcp_servers.codex-thread-bridge]\ncommand = \"codex-thread-bridge\"\nenv = { PATH = \"" + bin + "\" }\n", relay: "own", bridgeClass: "own"},
+		{name: "a bare config.toml command on an env.PATH with a relative directory first", stop: goodStop, bridge: goodBridge, config: "[mcp_servers.codex-thread-bridge]\ncommand = \"codex-thread-bridge\"\nenv = { PATH = \"bin:" + bin + "\" }\n", relay: "own", bridgeClass: "unreadable",
+			want: []string{"whose relative or empty directory comes first, so what it names depends on the directory Codex starts the server in"}},
+		{name: "a bare config.toml command no env.PATH directory holds", stop: goodStop, bridge: goodBridge, config: "[mcp_servers.codex-thread-bridge]\ncommand = \"codex-thread-bridge\"\nenv = { PATH = \"/nonexistent\" }\n", relay: "own", bridgeClass: "unreadable",
+			want: []string{"a bare command no directory on the table's env.PATH (/nonexistent) holds"}},
 		{name: "a bare Stop command in hooks.json", stop: userStop, bridge: goodBridge, hooks: `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "crw-completion-hook"}]}]}}`, relay: "unreadable", bridgeClass: "own",
 			want: []string{"looks up on the session's PATH"}},
 	})
@@ -231,6 +235,8 @@ func TestDoctorJudgesTheStopCommandsInHooksJSON(t *testing.T) {
 		return encodeJSON(t, map[string]any{"hooks": map[string]any{"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command, "timeout": 10}}}}}})
 	}
 	current := filepath.Join(h.current(), "bin")
+	script := filepath.Join(h.home, "bin", "on-stop")
+	write(t, script, "#!/bin/sh\necho stopped\n", 0o755)
 	cases := []registrationCase{
 		{name: "the selected hook", stop: userStop, bridge: goodBridge, hooks: hooks(filepath.Join(current, "crw-completion-hook") + " " + settings), relay: "own", bridgeClass: "own"},
 		{name: "crw hook", stop: userStop, bridge: goodBridge, hooks: hooks(filepath.Join(dir, "bin", "crw") + " hook " + settings), relay: "own", bridgeClass: "own"},
@@ -245,12 +251,29 @@ func TestDoctorJudgesTheStopCommandsInHooksJSON(t *testing.T) {
 			want: []string{"to /usr/bin/python3 as an argument"}},
 		{name: "a hook reading other settings", stop: userStop, bridge: goodBridge, hooks: hooks(filepath.Join(current, "crw-completion-hook") + " " + filepath.Join(h.home, "other.json")), relay: "unreadable", bridgeClass: "own",
 			want: []string{"the hook reads " + filepath.Join(h.home, "other.json")}},
-		{name: "an expansion this command does not make", stop: userStop, bridge: goodBridge, hooks: hooks("$RUNTIME/bin/crw-completion-hook " + settings), relay: "unreadable", bridgeClass: "own",
-			want: []string{"an expansion this doctor does not make"}},
+		{name: "an expansion the grammar does not make", stop: userStop, bridge: goodBridge, hooks: hooks("$RUNTIME/bin/crw-completion-hook " + settings), relay: "unreadable", bridgeClass: "own",
+			want: []string{`it holds \"$RUNTIME/bin/crw-completion-hook\", which this scan cannot judge, so whether it starts the relay's hook cannot be told`}},
+		{name: "a construct outside the grammar", stop: userStop, bridge: goodBridge, hooks: hooks("if true; then " + filepath.Join(current, "crw-completion-hook") + " " + settings + "; fi"), relay: "unreadable", bridgeClass: "own",
+			want: []string{"which this scan cannot judge"}},
+		{name: "the selected hook through exec", stop: userStop, bridge: goodBridge, hooks: hooks("exec " + filepath.Join(current, "crw-completion-hook") + " " + settings), relay: "own", bridgeClass: "own"},
+		{name: "an old runtime's hook inside sh -c", stop: userStop, bridge: goodBridge, hooks: hooks("sh -c '" + filepath.Join(old, "bin", "crw-completion-hook") + " " + settings + "'"), relay: "conflict", bridgeClass: "own",
+			want: []string{"names " + filepath.Join(old, "bin", "crw-completion-hook")}},
+		{name: "a script that may run the hook itself", stop: userStop, bridge: goodBridge, hooks: hooks(script), relay: "unreadable", bridgeClass: "own",
+			want: []string{"a script that may run the adapter with settings of its own"}},
 		{name: "a hooks.json that is not JSON", stop: userStop, bridge: goodBridge, hooks: `{"hooks": `, relay: "unreadable", bridgeClass: "own", want: []string{"hooks.json " + filepath.Join(h.codex, "hooks.json")}},
 		{name: "a Stop list that is not a list", stop: userStop, bridge: goodBridge, hooks: `{"hooks": {"Stop": {"hooks": []}}}`, relay: "unreadable", bridgeClass: "own", want: []string{"hooks.Stop is dict, not a list"}},
 		{name: "an old runtime's hook beside a plugin owner", stop: encodeJSON(t, h.stopSettings(t, nil)), bridge: goodBridge, hooks: hooks(filepath.Join(old, "bin", "crw-completion-hook")), relay: "conflict", bridgeClass: "own",
 			want: []string{filepath.Join(old, "bin", "crw")}},
 	}
 	h.runRegistrationCases(t, cases)
+
+	// A hook naming no settings reads $CRW_COMPLETION_HOOK_CONFIG when the session carries it.
+	saved := h.env
+	defer func() { h.env = saved }()
+	h.env = h.env.With("CRW_COMPLETION_HOOK_CONFIG", filepath.Join(h.home, "other.json"))
+	h.runRegistrationCases(t, []registrationCase{
+		{name: "a hook reading the settings override", stop: userStop, bridge: goodBridge, hooks: hooks(filepath.Join(current, "crw-completion-hook")), relay: "unreadable", bridgeClass: "own",
+			want: []string{"it reads $CRW_COMPLETION_HOOK_CONFIG (" + filepath.Join(h.home, "other.json") + ")"}},
+		{name: "a hook naming these settings despite the override", stop: userStop, bridge: goodBridge, hooks: hooks(filepath.Join(current, "crw-completion-hook") + " " + settings), relay: "own", bridgeClass: "own"},
+	})
 }

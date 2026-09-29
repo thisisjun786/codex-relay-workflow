@@ -92,7 +92,10 @@ func ReadRegistrations(ctx context.Context, codexHome, target string, env scope.
 		}
 		return out
 	}
-	j := judge{crw: crw, expand: Expander{Vars: map[string]string{"HOME": env.Get("HOME"), "CODEX_HOME": codexHome}}}
+	// The expansions a hook command's shell makes that the scan's grammar makes too; PATH is only
+	// where the grammar finds what a bare command around a hook is (a shell whose -c program it
+	// reads, a script): a hook word itself must be absolute.
+	j := judge{crw: crw, x: Expander{Vars: map[string]string{"HOME": env.Get("HOME"), "CODEX_HOME": codexHome}, Path: env.Get("PATH")}, override: env.Get(settingsEnv)}
 
 	relay := out[definition.Relay]
 	stop := filepath.Join(codexHome, hook.ConfigName)
@@ -106,8 +109,9 @@ func ReadRegistrations(ctx context.Context, codexHome, target string, env scope.
 }
 
 type judge struct {
-	crw    string   // the selected runtime's binary, resolved
-	expand Expander // what a hook command's shell expands that this command can expand too
+	crw      string   // the selected runtime's binary, resolved
+	x        Expander // what a hook command's shell expands that the scan's grammar expands too
+	override string   // $CRW_COMPLETION_HOOK_CONFIG, which a hook naming no settings reads
 }
 
 // executable judges one registered command the host execs directly: path (absolute) is what
@@ -330,68 +334,69 @@ func (j judge) stopHooks(into *componentRegistrations, path, settings string) {
 	}
 }
 
-// stopCommand judges one Stop command line: every simple command in it that runs a Stop adapter.
+// stopCommand judges one Stop command line through the retention scan's reader
+// (readStopCommand: its allowlisted grammar, with exec, env and sh -c programs followed): each
+// command in it that runs a Stop adapter is judged, and a command whose hooks cannot all be told
+// (a word or construct outside the grammar, a script that may run the adapter itself) is
+// unreadable. The packaged launcher runs what the settings name, so it is judged through them.
 func (j judge) stopCommand(into *componentRegistrations, source, field, command, settings string) {
-	calls, err := shellWords(command)
-	if err != nil {
-		into.unreadable(registrationEntry(source, field, command), nil, source+" "+field, "a command this doctor cannot parse ("+err.Error()+"), so whether it starts the relay's hook cannot be told")
-		return
-	}
-	for _, words := range calls {
-		for i, word := range words {
-			base := filepath.Base(word)
-			switch {
-			case base == pythonStopAdapter:
-				into.conflict(registrationEntry(source, field, command), nil, source+" "+field+" runs the checkout's Python Stop adapter "+word+" (through "+words[0]+"), not the selected runtime's "+definition.HookScript)
-			case base == definition.HookScript || base == "crw" && i+1 < len(words) && words[i+1] == "hook":
-				j.hookWord(into, source, field, command, words, i, settings)
-			default:
-				continue
-			}
-			break
+	calls, unknown := readStopCommand(argvJudge{c: Classifier{Expand: j.x}}, command)
+	for _, call := range calls {
+		switch base := filepath.Base(call.argv[call.at].Written); {
+		case launcherEntries[base]:
+		case base == pythonStopAdapter:
+			into.conflict(registrationEntry(source, field, command), nil, source+" "+field+" runs the checkout's Python Stop adapter "+call.argv[call.at].Written+" (through "+call.argv[0].Written+"), not the selected runtime's "+definition.HookScript)
+		default:
+			j.hookCall(into, source, field, command, call, settings)
 		}
+	}
+	if unknown != "" {
+		into.unreadable(registrationEntry(source, field, command), nil, source+" "+field, unknown+", so whether it starts the relay's hook cannot be told")
 	}
 }
 
-// hookWord judges the Go hook named at words[i] of one simple command: it must be the program
-// the shell executes (not an argument of another), an absolute path after the expansions its
-// shell makes, reading the settings this command judged.
-func (j judge) hookWord(into *componentRegistrations, source, field, command string, words []string, i int, settings string) {
+// hookCall judges one call of the Go hook: its word must be the program the command executes
+// (not an argument of another), an absolute path once the grammar's expansions are made, and it
+// must read the settings this command judged.
+func (j judge) hookCall(into *componentRegistrations, source, field, command string, call stopAdapterCall, settings string) {
 	entry := registrationEntry(source, field, command)
-	word := words[i]
-	if i > 0 {
-		into.conflict(entry, nil, source+" "+field+" hands "+word+" to "+words[0]+" as an argument, so the host's Stop does not run it as "+definition.HookScript)
+	word := call.argv[call.at]
+	if call.at > 0 {
+		into.conflict(entry, nil, source+" "+field+" hands "+word.Written+" to "+call.argv[0].Written+" as an argument, so the host's Stop does not run it as "+definition.HookScript)
 		return
 	}
 	var args []string
-	next := i + 1
-	if filepath.Base(word) == "crw" {
-		args, next = []string{"hook"}, i+2
+	if call.crwHook {
+		args = []string{"hook"}
 	}
-	path, missing := j.expand.Expand(word)
 	switch {
-	case missing != "":
-		into.unreadable(entry, nil, source+" "+field+" "+word, "it needs "+missing+", an expansion this doctor does not make")
+	case word.Missing != "":
+		into.unreadable(entry, nil, source+" "+field+" "+word.Written, "it needs "+word.Missing+", an expansion this doctor does not make")
 		return
-	case !filepath.IsAbs(path) && strings.Contains(path, "/"):
-		into.unreadable(entry, nil, source+" "+field+" "+word, "a relative path, which resolves in the session's workspace")
+	case !filepath.IsAbs(word.Value) && strings.Contains(word.Value, "/"):
+		into.unreadable(entry, nil, source+" "+field+" "+word.Written, "a relative path, which resolves in the session's workspace")
 		return
-	case !filepath.IsAbs(path):
-		into.unreadable(entry, nil, source+" "+field+" "+word, "a bare command the host's shell looks up on the session's PATH, which this doctor does not read")
+	case !filepath.IsAbs(word.Value):
+		into.unreadable(entry, nil, source+" "+field+" "+word.Written, "a bare command the host's shell looks up on the session's PATH, which this doctor does not read")
 		return
 	}
-	j.executable(into, source, field, word, path, args, definition.HookScript)
-	if next >= len(words) {
-		return // the hook reads its default settings, the ones judged here
-	}
-	named, missing := j.expand.Expand(words[next])
+	j.executable(into, source, field, word.Written, word.Value, args, definition.HookScript)
+	named := call.settings
 	switch {
-	case missing != "":
-		into.unreadable(entry, nil, source+" "+field+" settings argument "+words[next], "it needs "+missing+", an expansion this doctor does not make")
-	case !filepath.IsAbs(named):
-		into.unreadable(entry, nil, source+" "+field+" settings argument "+words[next], "a relative path, which resolves in the session's workspace")
-	case store.PathlibSpelling(named) != store.PathlibSpelling(settings):
-		into.unreadable(entry, nil, source+" "+field+" settings argument "+words[next], "the hook reads "+named+", not the Stop settings "+settings+" this doctor judged, so the relay it starts is not known")
+	case call.launcher:
+		// crw hook --plugin-launch reads the default settings, the ones judged here
+	case named.Written == "" && j.override != "":
+		if store.PathlibSpelling(j.override) != store.PathlibSpelling(settings) {
+			into.unreadable(entry, nil, source+" "+field+" settings", "the hook names no settings, so it reads $"+settingsEnv+" ("+j.override+"), not the Stop settings "+settings+" this doctor judged")
+		}
+	case named.Written == "":
+		// the hook reads its default settings, the ones judged here
+	case named.Missing != "":
+		into.unreadable(entry, nil, source+" "+field+" settings argument "+named.Written, "it needs "+named.Missing+", an expansion this doctor does not make")
+	case !filepath.IsAbs(named.Value):
+		into.unreadable(entry, nil, source+" "+field+" settings argument "+named.Written, "a relative path, which resolves in the session's workspace")
+	case store.PathlibSpelling(named.Value) != store.PathlibSpelling(settings):
+		into.unreadable(entry, nil, source+" "+field+" settings argument "+named.Written, "the hook reads "+named.Value+", not the Stop settings "+settings+" this doctor judged, so the relay it starts is not known")
 	}
 }
 
@@ -660,7 +665,11 @@ func (j judge) mcpCommand(into *componentRegistrations, source, field, command s
 		return
 	}
 	found, err := lookPath(command, path)
-	if err != nil {
+	switch {
+	case errors.Is(err, errRelativePath):
+		into.unreadable(entry, nil, source+" "+field+" "+command, "a bare command looked up on the table's env.PATH ("+path+"), whose relative or empty directory comes first, so what it names depends on the directory Codex starts the server in")
+		return
+	case err != nil:
 		into.unreadable(entry, nil, source+" "+field+" "+command, "a bare command no directory on the table's env.PATH ("+path+") holds")
 		return
 	}
