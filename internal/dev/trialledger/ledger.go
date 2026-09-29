@@ -24,6 +24,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/pyload"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
@@ -86,38 +87,27 @@ const help = `Grade a finished live trial's intervention ledger (docs/live-trial
 
 Exit 0 when every judgment passed, 1 when one failed, 2 when the trial cannot be graded.`
 
+// parser is the ledger subcommand's argparse parser in trial_startup.py, so the command takes
+// what it takes: a unique prefix of --start, a value that looks like a negative number, and help
+// wherever -h is.
+var parser = argparse.Spec{Actions: []argparse.Action{
+	{Flags: []string{"-h", "--help"}, Kind: "_HelpAction"},
+	{Flags: []string{"--start"}, Required: true},
+}}
+
 // Run is `crw-dev trial-ledger --start <start.json>`.
 func Run(args []string, stdout, stderr io.Writer) int {
-	usageError := func(message string) int {
+	parsed := argparse.ParseSpec(parser, args)
+	if parsed.Help {
+		fmt.Fprintln(stdout, usage+"\n\n"+help)
+		return 0
+	}
+	if parsed.Message != "" {
 		fmt.Fprintln(stderr, usage)
-		fmt.Fprintln(stderr, "crw-dev trial-ledger: error: "+message)
+		fmt.Fprintln(stderr, "crw-dev trial-ledger: error: "+parsed.Message)
 		return 2
 	}
-	var start *string
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch {
-		case arg == "-h" || arg == "--help":
-			fmt.Fprintln(stdout, usage+"\n\n"+help)
-			return 0
-		case arg == "--start":
-			if i+1 >= len(args) || (strings.HasPrefix(args[i+1], "-") && args[i+1] != "-") {
-				return usageError("argument --start: expected one argument")
-			}
-			i++
-			value := args[i]
-			start = &value
-		case strings.HasPrefix(arg, "--start="):
-			value := strings.TrimPrefix(arg, "--start=")
-			start = &value
-		default:
-			return usageError("unrecognized arguments: " + strings.Join(args[i:], " "))
-		}
-	}
-	if start == nil {
-		return usageError("the following arguments are required: --start")
-	}
-	document, failed, err := Grade(*start)
+	document, failed, err := Grade(parsed.Values["start"][0])
 	if err != nil {
 		var refused *refusal
 		if !errors.As(err, &refused) {

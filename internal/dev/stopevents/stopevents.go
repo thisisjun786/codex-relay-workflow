@@ -20,8 +20,8 @@ package stopevents
 import (
 	"fmt"
 	"io"
-	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
@@ -50,53 +50,37 @@ func WindowBound(value string) error {
 	return nil
 }
 
+// parser is stop_events.py's argparse parser, so the command takes what that parser takes: a
+// unique prefix of a flag, a value that looks like a negative number, and help wherever -h is.
+var parser = argparse.Spec{Actions: []argparse.Action{
+	{Flags: []string{"-h", "--help"}, Kind: "_HelpAction"},
+	{Flags: []string{"--journal-root"}, Kind: "_AppendAction", Required: true},
+	{Flags: []string{"--since"}, Type: "window_bound", Check: func(v string) bool { return WindowBound(v) == nil }},
+	{Flags: []string{"--until"}, Type: "window_bound", Check: func(v string) bool { return WindowBound(v) == nil }},
+	{Flags: []string{"--session"}},
+	{Flags: []string{"--turn"}},
+	{Flags: []string{"--codex-home"}, Kind: "_AppendAction"},
+}}
+
 // Run is `crw-dev stop-events`.
 func Run(args []string, stdout, stderr io.Writer) int {
-	usageError := func(message string) int {
+	parsed := argparse.ParseSpec(parser, args)
+	if parsed.Help {
+		fmt.Fprintln(stdout, usage+"\n\n"+help)
+		return 0
+	}
+	if parsed.Message != "" {
 		fmt.Fprintln(stderr, usage)
-		fmt.Fprintln(stderr, "crw-dev stop-events: error: "+message)
+		fmt.Fprintln(stderr, "crw-dev stop-events: error: "+parsed.Message)
 		return 2
 	}
-	var roots, hosts []string
 	var window Window
-	options := map[string]**string{"--since": &window.Since, "--until": &window.Until, "--session": &window.Session, "--turn": &window.Turn}
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "-h" || arg == "--help" {
-			fmt.Fprintln(stdout, usage+"\n\n"+help)
-			return 0
-		}
-		name, value, inline := strings.Cut(arg, "=")
-		_, single := options[name]
-		if !single && name != "--journal-root" && name != "--codex-home" {
-			return usageError("unrecognized arguments: " + strings.Join(args[i:], " "))
-		}
-		if !inline {
-			if i+1 >= len(args) || (strings.HasPrefix(args[i+1], "-") && args[i+1] != "-") {
-				return usageError("argument " + name + ": expected one argument")
-			}
-			i++
-			value = args[i]
-		}
-		switch name {
-		case "--journal-root":
-			roots = append(roots, value)
-		case "--codex-home":
-			hosts = append(hosts, value)
-		case "--since", "--until":
-			if WindowBound(value) != nil {
-				return usageError("argument " + name + ": invalid window_bound value: " + evidence.StrRepr(value))
-			}
-			fallthrough
-		default:
-			v := value
-			*options[name] = &v
+	for name, into := range map[string]**string{"since": &window.Since, "until": &window.Until, "session": &window.Session, "turn": &window.Turn} {
+		if values, given := parsed.Values[name]; given {
+			*into = &values[0]
 		}
 	}
-	if len(roots) == 0 {
-		return usageError("the following arguments are required: --journal-root")
-	}
-	reading := Read(roots, window, hosts)
+	reading := Read(parsed.Values["journal-root"], window, parsed.Values["codex-home"])
 	fmt.Fprintln(stdout, evidence.DumpsIndent(reading.Answer(), 2, true, true))
 	return Exit[reading.Verdict()]
 }

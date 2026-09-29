@@ -27,6 +27,9 @@ type Action struct {
 	Choices                  []string
 	Help                     []string
 	Children                 []Action
+	// Check is a type= callable other than int or float, named by Type: false is the ValueError
+	// argparse reports as "invalid <Type> value". Only a parser declared in Go carries one.
+	Check func(string) bool `json:"-"`
 }
 type Section struct {
 	Title   string
@@ -256,8 +259,11 @@ type Result struct {
 
 // Parse classifies tokens before consuming actions. Like CPython 3.13, ambiguity
 // is reported when the action is consumed; an earlier help action still exits.
-func Parse(command string, argv []string) Result {
-	spec := Specs[command]
+func Parse(command string, argv []string) Result { return ParseSpec(Specs[command], argv) }
+
+// ParseSpec is Parse for a parser declared in Go rather than generated from build_parser. Its
+// first action must be -h/--help, which a -h cluster resolves to.
+func ParseSpec(spec Spec, argv []string) Result {
 	r := Result{Values: map[string][]string{}, Numbers: map[string]any{}, Given: map[string]bool{}}
 	type token struct {
 		action                int
@@ -384,11 +390,13 @@ func Parse(command string, argv []string) Result {
 			value = argv[i]
 		}
 		valid := true
-		switch a.Type {
-		case "int":
+		switch {
+		case a.Type == "int":
 			r.Numbers[name], valid = ParseInt(value)
-		case "float":
+		case a.Type == "float":
 			r.Numbers[name], valid = ParseFloat(value)
+		case a.Check != nil:
+			valid = a.Check(value)
 		}
 		if !valid {
 			r.Message = "argument " + label + ": invalid " + a.Type + " value: " + store.PythonRepr(value)
