@@ -129,14 +129,18 @@ func Test47_OperationsContractParity(t *testing.T) {
 	}
 }
 
-// A record whose only installs are Go installs (OPS-1.1) carries no requiresPython and no
-// installMode, and its points name the install instead of an interpreter (OPS-1.3); both twins
-// accept it.
-func TestOperationsGoShapedCompatibilityRecordParity(t *testing.T) {
-	root := opsCopy(t)
+// goShapedRecord is a compatibility record whose only installs are Go installs (OPS-1.1): no
+// requiresPython and no installMode, and its point names the install instead of an interpreter
+// (OPS-1.3). point replaces that measured point's JSON when it is not empty.
+func goShapedRecord(point string) string {
 	runtimeDir := "/example/home/.local/share/crw-runtime/bin-0.5.0-aaaaaaaaaaaa"
 	digest := strings.Repeat("c", 64)
-	record := `{
+	if point == "" {
+		point = `{"install": "` + runtimeDir + `/bin", "installDigest": "` + digest + `",
+        "codexCli": "codex-cli 0.154.0", "appServer": "{}", "host": "example-host", "date": "2026-01-01",
+        "measuredBy": "<issue-id>", "method": "codex-session-relay doctor; an MCP session calling get_capabilities"}`
+	}
+	return `{
   "components": [
     {
       "component": "codex-session-relay",
@@ -148,17 +152,58 @@ func TestOperationsGoShapedCompatibilityRecordParity(t *testing.T) {
       "installs": [{"location": "` + runtimeDir + `/bin", "environment": "` + runtimeDir + `",
         "entryPoint": "` + runtimeDir + `/bin/codex-session-relay", "integrity": "` + digest + `",
         "binaryDigest": "` + digest + `", "target": "linux/amd64"}],
-      "measuredPoints": [{"install": "` + runtimeDir + `/bin", "installDigest": "` + digest + `",
-        "codexCli": "codex-cli 0.154.0", "appServer": "{}", "host": "example-host", "date": "2026-01-01",
-        "measuredBy": "<issue-id>", "method": "codex-session-relay doctor; an MCP session calling get_capabilities"}]
+      "measuredPoints": [` + point + `]
     }
   ],
   "unmeasured": []
 }
 `
-	editOps(t, root, "operations/compatibility-record.example.json", func(string) string { return record })
+}
+
+// Both twins accept a Go-shaped record.
+func TestOperationsGoShapedCompatibilityRecordParity(t *testing.T) {
+	root := opsCopy(t)
+	editOps(t, root, "operations/compatibility-record.example.json", func(string) string { return goShapedRecord("") })
 	if got := opsParity(t, "go-shaped record", root); got.code != 0 {
 		t.Fatalf("a Go-shaped compatibility record must pass: %+v", got)
+	}
+}
+
+// OPS-1.3: a point takes the kind of the install it covers. Its own shape cannot choose the
+// lighter schema, and a Go point has to name one of the component's Go installs and the digest
+// of that binary; both twins refuse the rest alike.
+func TestOperationsMeasuredPointCoversAnInstallOfItsKindParity(t *testing.T) {
+	bin := "/example/home/.local/share/crw-runtime/bin-0.5.0-aaaaaaaaaaaa/bin"
+	rest := `"codexCli": "codex-cli 0.154.0", "appServer": "{}", "host": "example-host", "date": "2026-01-01", "measuredBy": "<issue-id>", "method": "doctor"`
+	for _, row := range []struct {
+		label, point, fragment string
+	}{
+		{"python-era point on a go install", `{"interpreter": "3.13.0", ` + rest + `}`,
+			"has a Python-era measured point but no Python-era install for it to cover"},
+		{"go point naming no install", `{"install": "/elsewhere/bin", "installDigest": "` + strings.Repeat("c", 64) + `", ` + rest + `}`,
+			"has a measured point that names no Go install of this component"},
+		{"go point naming no install at all", `{"install": 7, "installDigest": "` + strings.Repeat("c", 64) + `", ` + rest + `}`,
+			"has a measured point that names no Go install of this component"},
+		{"go point with other bytes", `{"install": "` + bin + `", "installDigest": "` + strings.Repeat("d", 64) + `", ` + rest + `}`,
+			"has a measured point whose installDigest is not its install's binaryDigest"},
+		{"go point with no digest", `{"install": "` + bin + `", ` + rest + `}`,
+			"has a measured point whose installDigest is not its install's binaryDigest"},
+	} {
+		root := opsCopy(t)
+		editOps(t, root, "operations/compatibility-record.example.json", func(string) string { return goShapedRecord(row.point) })
+		got := opsParity(t, row.label, root)
+		if got.code != 1 || !strings.Contains(got.stderr, row.fragment) {
+			t.Errorf("%s: %+v", row.label, got)
+		}
+	}
+	// A Go-shaped point on a component whose only installs are Python-era ones covers nothing.
+	root := opsCopy(t)
+	editOps(t, root, "operations/compatibility-record.example.json", func(s string) string {
+		location := "/example/checkouts/codex-session-relay/.venv/lib/python3.13/site-packages/codex_session_relay"
+		return strings.Replace(s, `"measuredPoints": []`, `"measuredPoints": [{"install": "`+location+`", "installDigest": "`+strings.Repeat("9", 64)+`", `+rest+`}]`, 1)
+	})
+	if got := opsParity(t, "go point on a python-era install", root); got.code != 1 || !strings.Contains(got.stderr, "has a measured point that names no Go install of this component") {
+		t.Errorf("go point on a python-era install: %+v", got)
 	}
 }
 

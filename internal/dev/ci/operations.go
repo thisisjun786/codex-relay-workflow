@@ -281,6 +281,7 @@ func compatibilityRecord(record *pyDict, problems []string) ([]string, error) {
 			}
 			installs = list
 		}
+		var goInstalls []*pyDict
 		for _, item := range installs {
 			install, ok := dictItems(item)
 			if !ok {
@@ -291,6 +292,7 @@ func compatibilityRecord(record *pyDict, problems []string) ([]string, error) {
 					problems = append(problems, name+" has an install with an undeclared installMode")
 				}
 			} else {
+				goInstalls = append(goInstalls, install)
 				// A Go install: the binary's own digest and the target it was built for.
 				digest := ""
 				if install.has("binaryDigest") {
@@ -323,14 +325,41 @@ func compatibilityRecord(record *pyDict, problems []string) ([]string, error) {
 				problems = append(problems, name+" has a measured point that is not an object")
 				continue
 			}
+			pythonPoint := point.has("interpreter")
 			keys := opsGoPointKeys
-			if point.has("interpreter") {
+			if pythonPoint {
 				keys = opsPythonPointKeys
 			}
 			for _, key := range keys {
 				if !point.has(key) {
 					problems = append(problems, name+" has a measured point missing "+key)
 				}
+			}
+			// OPS-1.3: a point takes the kind of the install it covers, so its shape alone proves
+			// nothing. A Python-era point needs a Python-era install beside it; a Go point names one
+			// of this component's Go installs by location and the digest of that binary's bytes.
+			if pythonPoint {
+				if !pythonEra {
+					problems = append(problems, name+" has a Python-era measured point but no Python-era install for it to cover")
+				}
+				continue
+			}
+			var covered *pyDict
+			if want, ok := point.get("install").(string); ok {
+				for _, install := range goInstalls {
+					if location, ok := install.get("location").(string); ok && location == want {
+						covered = install
+						break
+					}
+				}
+			}
+			if covered == nil {
+				problems = append(problems, name+" has a measured point that names no Go install of this component")
+				continue
+			}
+			digest, digestOK := point.get("installDigest").(string)
+			if binary, ok := covered.get("binaryDigest").(string); !digestOK || !ok || binary != digest {
+				problems = append(problems, name+" has a measured point whose installDigest is not its install's binaryDigest")
 			}
 		}
 	}

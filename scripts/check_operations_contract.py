@@ -132,7 +132,8 @@ def compatibility_record(record, problems):
             problems.append(name + " tree is not a full 40 character tree id")
         if "remote" not in component.get("source", {}):
             problems.append(name + " does not state a remote, not even as none")
-        for install in component.get("installs", []):
+        installs = component.get("installs", [])
+        for install in installs:
             if "installMode" in install:
                 if install.get("installMode") not in {"editable", "copied"}:
                     problems.append(name + " has an install with an undeclared installMode")
@@ -154,9 +155,24 @@ def compatibility_record(record, problems):
             if not isinstance(point, dict):
                 problems.append(name + " has a measured point that is not an object")
                 continue
-            for key in PYTHON_POINT_KEYS if "interpreter" in point else GO_POINT_KEYS:
+            python_point = "interpreter" in point
+            for key in PYTHON_POINT_KEYS if python_point else GO_POINT_KEYS:
                 if key not in point:
                     problems.append(name + " has a measured point missing " + key)
+            # OPS-1.3: a point takes the kind of the install it covers, so its shape alone proves
+            # nothing. A Python-era point needs a Python-era install beside it; a Go point names one
+            # of this component's Go installs by location and the digest of that binary's bytes.
+            if python_point:
+                if not python_era:
+                    problems.append(name + " has a Python-era measured point but no Python-era install for it to cover")
+            else:
+                covered = [install for install in installs if "installMode" not in install
+                           and isinstance(point.get("install"), str) and install.get("location") == point.get("install")]
+                digest = point.get("installDigest")
+                if not covered:
+                    problems.append(name + " has a measured point that names no Go install of this component")
+                elif not isinstance(digest, str) or covered[0].get("binaryDigest") != digest:
+                    problems.append(name + " has a measured point whose installDigest is not its install's binaryDigest")
     if "unmeasured" not in record:
         problems.append("the compatibility example does not say what is unmeasured, which invites a range claim")
 
