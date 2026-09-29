@@ -172,23 +172,20 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 	}
 	transition := transitionSettings(o.CodexHome, pointerPath, kind)
 	if transition.refused != "" {
-		return append(base, field("refused", transition.refused), field("settings", transition.report), field("note", "nothing was written.")), Refused
+		return append(base, field("refused", transition.refused), field("settings", append(transition.report, field("undone", transition.undo()))), field("note", "nothing was written; any Stop settings this run had set aside were put back (settings.undone).")), Refused
 	}
 	outgoing := outgoingOf(current)
-	committed, err := record.Update(o.RecordPath, definition.Version, record.Delta{
+	committed, err := commitSelection(o.RecordPath, definition.Version, record.Delta{
 		Select:   selection,
 		Pointer:  Object{field("path", pointerPath), field("recordedAt", o.stamp()), field("recordedBy", o.Issue)},
 		Outgoing: &record.Outgoing{Value: outgoing},
 	})
 	if err != nil || !committed.Usable() {
 		undone := transition.undo()
-		detail := "the selection could not be committed"
-		if err != nil {
-			detail += ": " + err.Error()
-		}
-		return append(base, field("refused", detail), field("settings", undone), field("note", "the pointer was not moved.")), Refused
+		return append(base, field("refused", "the selection could not be committed: "+commitDetail(committed, err)), field("settings", append(transition.report, field("undone", undone))),
+			field("note", "the pointer was not moved, and the Stop settings were put back as 'settings.undone' says.")), Refused
 	}
-	placeErr := pointer.Place(pointerPath, environment)
+	placeErr := placePointer(pointerPath, environment)
 	landed := pointer.Names(pointerPath, environment)
 	if placeErr != nil || landed == nil || !*landed {
 		detail := "the pointer does not name " + environment + " after it was placed"
@@ -198,7 +195,7 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 		putBack := restorePointer(o, pointerPath, before, environment, ownedBefore)
 		restored := restoreSelection(o, current, selection, outgoingBefore)
 		undone := transition.undo()
-		return append(base, field("refused", detail), field("pointerRestored", putBack), field("selectionRestored", restored), field("settings", undone),
+		return append(base, field("refused", detail), field("pointerRestored", putBack), field("selectionRestored", restored), field("settings", append(transition.report, field("undone", undone))),
 			field("note", "the selection, the pointer and the Stop settings were put back to what this run found.")), Refused
 	}
 	var previousTarget any

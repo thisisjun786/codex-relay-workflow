@@ -360,10 +360,14 @@ runs (plugins/crw/wiring/crw_stop_hook.py, its `<CODEX_HOME>/crw-stop-hook.py` c
 its own path as the settings argument and evaluate nothing on every Stop. `/usr/bin/env` executes
 the entry point with the settings path as its one argument, which is what the Go hook reads. The
 relay host's Python-era document (`adapterInterpreter` `.../current/bin/python3`, a path that
-vanishes when the pointer leaves the venv) is retired beside itself (`.superseded-<stamp>`, never
-deleted) and replaced by its Go variant - the same host facts, only the two adapter keys moved -
-inside the promotion that moves the pointer, before the move; a rollback to a Python runtime puts
-the newest retired Python-era document back before its move.
+vanishes when the pointer leaves the venv) is copied aside (`.superseded-<stamp>`, the name
+`steps.retire` gives, never deleted) and replaced by its Go variant - the same host facts, only the
+two adapter keys moved - in one rename, inside the promotion that moves the pointer and before the
+move; a rollback to a Python runtime renames the newest archived Python-era document back over the
+Go one before its move. Neither replacement removes the document first, as `steps.retire` does:
+between a move and the write that follows it a Stop finds no settings and is released without a
+journal row, and a write that fails there leaves none at all. A replacement that fails or does not
+read back as written leaves the document it found in place.
 
 Evidence: scripts/crw_runtime/completion.py:55 (`CONFIG_NAME`), :550 (`complaints`), :2751
 (`configuration`); scripts/crw_runtime/bridgerecord.py:77 (`record_path`), :163 (`document`);
@@ -1361,11 +1365,14 @@ never both, and a `codex-thread-bridge` table must name the pointer; the Stop ad
 `hooks.json` or plugin settings, never both), the Stop settings are carried to the new runtime kind
 (decision 18), then the selection, the pointer's placement and `outgoing` are committed in one
 write, the pointer is renamed over and read back, and on any failure the pointer, the selection,
-`outgoing` and the settings are put back. The COMPLETE claim is written last. Exit statuses are
-0 (promoted and settled, or already installed), 1 (refused: nothing moved, and this run's directory
-was released unless the record or the pointer may name it), 2 (usage) and 3 (promoted and in
-service, only the claim unsettled: never a free destination). `crw install rollback` returns the
-pointer to `outgoing` (or to a directory the record lists) under the same lock and rules;
+`outgoing` and the settings are put back (the settings are replaced by copying the old document
+aside and renaming the new one over it, so the path is never empty and a write that fails or does
+not read back leaves the old document where it was). The COMPLETE claim is written last. Exit
+statuses are 0 (promoted and settled, or already installed), 1 (refused: nothing moved, and this
+run's directory was released unless the record or the pointer may name it), 2 (usage) and 3
+(promoted and in service, only the claim unsettled: never a free destination). `crw install
+rollback` returns the pointer to `outgoing` (or to a directory the record lists) under the same
+lock and rules;
 for a Python venv target the gate's schema cell compares the store with this build's declared
 schema, which stands for the Python runtime's because the DDL is identical (decision 14) and no Go
 release changes it before the commit point (docs/port/cutover.md). `crw install remove <dir>`
@@ -1380,6 +1387,19 @@ selected runtime's `bin/codex-thread-bridge` (`exercise.Session`) and compares i
 reach `installed: verified`; a bridge that answers nothing leaves the dimension unread, which stops
 classification (decision 41). The report's `appServer` member names the bridge asked and whether
 it answered.
+
+The execution policy after the cutover is not delivered here. On this base the plugin wiring still
+starts the bridge through `plugins/crw/wiring/crw_bridge_mcp.py`, which reads the version-2 record
+`crw install register-mcp` writes and enforces its policy with only HOME set, from the plugin cache
+under the Codex home (`TestTheWiringLauncherStartsTheGoBridgeUnderTheRecordedPolicy`). The
+brief's must-hold - `crw bridge`, started by `plugins/crw/wiring/crw-bridge.sh` with no
+environment, reads that record itself - is delivered by todo 34's `pluginwiring.Prepare`, so it
+holds only once todo 34 is rebased onto this change. That rebase is gated on two things
+(docs/port/refactor-backlog.md, Deferred review findings): its refusal names the repair as
+`crw install register-mcp --owner plugin --execution-policy <file>` rather than
+`runtime_install.py register-mcp`, and a test starts `crw-bridge.sh` from a cache-layout
+directory with only HOME set against a record written by `crw install register-mcp`. The Python
+launcher keeps naming `runtime_install.py`, which is the host's installer until the cutover.
 
 Why: the plan's per-target digests in the components definition were dropped (decision 35), so
 the release's SHA256SUMS is the only digest authority a host can check; everything else carries

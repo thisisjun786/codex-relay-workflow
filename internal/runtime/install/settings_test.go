@@ -69,25 +69,33 @@ func TestHookSettingsBytesArePythons(t *testing.T) {
 	}
 }
 
-// Retiring moves a document aside under <path>.superseded-<stamp>, a name that sorts after every
-// archive already there (a future stamp included), and never deletes it.
-func TestRetireSortsAfterEveryArchive(t *testing.T) {
+// Superseding copies a document aside under <path>.superseded-<stamp>, a name that sorts after
+// every archive already there (a future stamp included), with its bytes and permission bits, and
+// leaves the document where it is: it is then replaced by a rename over the path, so a Stop
+// never finds the path empty.
+func TestSupersedeCopiesAsideAndLeavesThePath(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, install.SettingsName)
 	write(t, path+".superseded-29990101T000000Z", "future")
 	write(t, path, "live")
-	retired, err := install.Retire(path)
+	if err := os.Chmod(path, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	archived, err := install.Supersede(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if retired != path+".superseded-29990101T000000Z-001" {
-		t.Fatalf("retired to %s", retired)
+	if archived != path+".superseded-29990101T000000Z-001" {
+		t.Fatalf("archived to %s", archived)
 	}
-	if raw, _ := os.ReadFile(retired); string(raw) != "live" {
-		t.Fatal("the retired bytes changed")
+	if raw, _ := os.ReadFile(archived); string(raw) != "live" {
+		t.Fatal("the archived bytes are not the document's")
 	}
-	if _, err := os.Lstat(path); !os.IsNotExist(err) {
-		t.Fatal("the live file is still there")
+	if info, err := os.Stat(archived); err != nil || info.Mode().Perm() != 0o640 {
+		t.Fatalf("the archive does not keep the document's permission bits: %v %v", info.Mode(), err)
+	}
+	if raw, err := os.ReadFile(path); err != nil || string(raw) != "live" {
+		t.Fatalf("the document left its path: %q %v", raw, err)
 	}
 	if read := reading.ReadText(path+".superseded-29990101T000000Z", "x"); !strings.Contains(text(read.Value), "future") {
 		t.Fatal("an older archive was touched")

@@ -483,7 +483,7 @@ func (r *run) promote(installs, measurement Object) (Object, int) {
 	transition := transitionSettings(r.o.CodexHome, r.pointerPath, doctor.KindGoRuntime)
 	if transition.refused != "" {
 		r.step("carry the Stop settings to this runtime", false, field("detail", transition.refused))
-		return r.failed("carry the Stop settings to this runtime", failure{settings: transition.report})
+		return r.failed("carry the Stop settings to this runtime", failure{settings: append(transition.report, field("undone", transition.undo()))})
 	}
 	r.step("carry the Stop settings to this runtime", true, field("detail", record.Get(transition.report, "detail")))
 
@@ -492,16 +492,17 @@ func (r *run) promote(installs, measurement Object) (Object, int) {
 		selection = append(selection, field(f.Key, record.Get(f.Value.(Object), "location")))
 	}
 	outgoing := outgoingOf(previous)
-	promoted, err := record.Update(r.o.RecordPath, definition.Version, record.Delta{
+	promoted, err := commitSelection(r.o.RecordPath, definition.Version, record.Delta{
 		Select:   selection,
 		Pointer:  Object{field("path", r.pointerPath), field("recordedAt", r.o.stamp()), field("recordedBy", r.o.Issue)},
 		Outgoing: &record.Outgoing{Value: outgoing},
 	})
 	if err != nil || !promoted.Usable() {
+		r.step("commit the selection", false, field("detail", commitDetail(promoted, err)))
 		undone := transition.undo()
-		return r.failed("commit the selection", failure{reading: &promoted, err: err, settings: undone})
+		return r.failed("commit the selection", failure{reading: &promoted, err: err, settings: append(transition.report, field("undone", undone))})
 	}
-	placeErr := pointer.Place(r.pointerPath, r.environment)
+	placeErr := placePointer(r.pointerPath, r.environment)
 	landed := pointer.Names(r.pointerPath, r.environment)
 	if placeErr != nil || landed == nil || !*landed {
 		detail := "the pointer does not name this runtime after it was placed: " + pointer.Read(r.pointerPath).Detail
@@ -513,7 +514,7 @@ func (r *run) promote(installs, measurement Object) (Object, int) {
 		r.step("put the pointer back", record.Get(putBack, "verified") == true, field("detail", record.Get(putBack, "detail")))
 		restored := restoreSelection(r.o, previous, selection, outgoingBefore)
 		undone := transition.undo()
-		return r.failed("replace the owned pointer", failure{restored: restored, pointerRestored: putBack, settings: undone})
+		return r.failed("replace the owned pointer", failure{restored: restored, pointerRestored: putBack, settings: append(transition.report, field("undone", undone))})
 	}
 	var previousTarget any
 	if before.Target != "" {
@@ -584,16 +585,16 @@ func (r *run) resume() (Object, int) {
 	}
 	transition := transitionSettings(r.o.CodexHome, r.pointerPath, doctor.KindGoRuntime)
 	if transition.refused != "" {
-		return refusedResult(r.command, transition.refused, "nothing was written.", field("environment", r.environment), field("settings", transition.report))
+		return refusedResult(r.command, transition.refused, "nothing was written; any Stop settings this run had set aside were put back (settings.undone).", field("environment", r.environment), field("settings", append(transition.report, field("undone", transition.undo()))))
 	}
 	if names == nil || !*names {
 		// The placement is recorded before the link moves (OPS-4.4: a transition is committed
 		// before its side effect), and put back with it when the move does not land.
-		if _, err := record.Update(r.o.RecordPath, definition.Version, record.Delta{Pointer: Object{field("path", r.pointerPath), field("recordedAt", r.o.stamp()), field("recordedBy", r.o.Issue)}}); err != nil {
-			transition.undo()
-			return refusedResult(r.command, "the pointer ownership could not be recorded: "+err.Error(), "the pointer was not moved.", field("environment", r.environment))
+		if written, err := commitSelection(r.o.RecordPath, definition.Version, record.Delta{Pointer: Object{field("path", r.pointerPath), field("recordedAt", r.o.stamp()), field("recordedBy", r.o.Issue)}}); err != nil || !written.Usable() {
+			undone := transition.undo()
+			return refusedResult(r.command, "the pointer ownership could not be recorded: "+commitDetail(written, err), "the pointer was not moved.", field("environment", r.environment), field("settings", append(transition.report, field("undone", undone))))
 		}
-		placeErr := pointer.Place(r.pointerPath, r.environment)
+		placeErr := placePointer(r.pointerPath, r.environment)
 		if landed := pointer.Names(r.pointerPath, r.environment); placeErr != nil || landed == nil || !*landed {
 			putBack := restorePointer(r.o, r.pointerPath, before, r.environment, ownedBefore)
 			undone := transition.undo()
@@ -601,7 +602,7 @@ func (r *run) resume() (Object, int) {
 			if placeErr != nil {
 				detail = "the pointer could not be placed: " + store.PythonOSError(placeErr)
 			}
-			return refusedResult(r.command, detail, "the pointer and its ownership were put back; the selection stays as the interrupted run committed it.", field("environment", r.environment), field("pointerRestored", putBack), field("settings", undone))
+			return refusedResult(r.command, detail, "the pointer and its ownership were put back; the selection stays as the interrupted run committed it.", field("environment", r.environment), field("pointerRestored", putBack), field("settings", append(transition.report, field("undone", undone))))
 		}
 	}
 	r.step("replace the owned pointer", true, field("target", r.environment))
@@ -618,6 +619,22 @@ func (r *run) resume() (Object, int) {
 		field("claim", settled), field("recoveryRequires", record.Get(settled, "recoveryRequires")), field("settings", transition.report), field("swapGate", r.gate),
 		field("note", "a previous run committed this runtime as selected and did not live to move the pointer. Nothing was rebuilt and nothing was removed: the missing half of that promotion was written."),
 	}, code
+}
+
+// The promotion's two writes that come after the settings transition - committing the
+// selection and moving the pointer - are variables only so that tests can make them fail and
+// prove that everything before them is put back.
+var (
+	commitSelection = record.Update
+	placePointer    = pointer.Place
+)
+
+// commitDetail is why a commit did not land.
+func commitDetail(written reading.Reading, err error) string {
+	if err != nil {
+		return err.Error()
+	}
+	return "the host record could not be read to write the selection: " + written.Detail
 }
 
 // failure is what a failed step carries into the release report.

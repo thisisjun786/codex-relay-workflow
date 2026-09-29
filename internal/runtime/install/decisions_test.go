@@ -266,9 +266,10 @@ func TestAnUnrecordedPointerIsNotReplaced(t *testing.T) {
 }
 
 // OPS-4.4 is asked on the reading the promotion promotes on: a store holding a schema object the
-// candidate does not declare blocks the swap, the candidate is released, and the runtime a host
-// reaches is the one it reached before.
-func TestAHeldDaemonBlocksTheSwap(t *testing.T) {
+// candidate does not declare (the candidate NARROWS it) blocks the swap, the candidate is
+// released, and the runtime a host reaches is the one it reached before. A running daemon is
+// TestARunningDaemonOfTheSelectedRuntimeBlocksTheSwap.
+func TestAStoreSchemaTheCandidateNarrowsBlocksTheSwap(t *testing.T) {
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
 	old := runtimeDir(h, "0.9.0", first, t)

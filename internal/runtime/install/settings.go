@@ -1,6 +1,7 @@
 package install
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -44,6 +45,7 @@ const (
 	ConfigAppliedUnverified  = "config_applied_unverified"
 	ConfigWouldNotBeReadable = "config_would_not_be_readable"
 	ConfigReplaced           = "config_replaced"
+	ConfigNotWritten         = "config_not_written"
 	ConfigUnreadable         = "config_unreadable"
 	ConfigUnreachable        = "config_unreachable"
 )
@@ -172,14 +174,15 @@ func supersededPrefix(path string) string { return path + ".superseded-" }
 
 var supersededStamp = regexp.MustCompile(`^(\d{8}T\d{6}Z)(?:-(\d{3,}))?$`)
 
-// Retire moves path aside under a name nothing reads (steps.retire): <path>.superseded-<stamp>,
-// chosen to sort after every archive already there, and never deletes it.
-func Retire(path string) (string, error) {
+// claimArchive creates, exclusively, the archive name steps.retire gives path's document:
+// <path>.superseded-<stamp>, chosen to sort after every archive already there (a future stamp
+// included), so the recoveries that read the greatest name read the newest document.
+func claimArchive(path string) (*os.File, string, error) {
 	prefix := supersededPrefix(path)
 	holder, stem := filepath.Dir(prefix), filepath.Base(prefix)
 	entries, err := os.ReadDir(holder)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 	moment := time.Now().UTC().Format("20060102T150405Z")
 	taken := -1
@@ -223,15 +226,62 @@ func Retire(path string) (string, error) {
 			continue
 		}
 		if err != nil {
-			return "", err
+			return nil, "", err
 		}
-		_ = handle.Close()
-		if err := os.Rename(path, target); err != nil {
-			_ = os.Remove(target)
-			return "", err
-		}
-		return target, nil
+		return handle, target, nil
 	}
+}
+
+// Supersede copies the document at path to a new archive beside it, under the name steps.retire
+// would give it and with its permission bits, and leaves path where it is. The document is then
+// replaced by a rename over path, so there is no moment at which path is absent and a Stop finds
+// no settings; steps.retire's move-then-write had one.
+func Supersede(path string) (string, error) {
+	handle, target, err := claimArchive(path)
+	if err != nil {
+		return "", err
+	}
+	if err := fillExclusive(handle, target, path); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
+// copyExclusive creates target, which must not exist, holding source's bytes and permission bits.
+func copyExclusive(source, target string) error {
+	handle, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	return fillExclusive(handle, target, source)
+}
+
+// fillExclusive writes source's bytes and permission bits into handle, a file this run just
+// created at target, and removes target when any of it fails.
+func fillExclusive(handle *os.File, target, source string) (err error) {
+	defer func() {
+		if closeErr := handle.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			_ = os.Remove(target)
+		}
+	}()
+	raw, err := os.ReadFile(source)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(source)
+	if err != nil {
+		return err
+	}
+	if _, err = handle.Write(raw); err != nil {
+		return err
+	}
+	if err = handle.Chmod(info.Mode().Perm()); err != nil {
+		return err
+	}
+	return handle.Sync()
 }
 
 func pad3(n int) string {
@@ -266,9 +316,13 @@ func newestRetired(path string, keep func(Object) bool) (string, Object) {
 	return "", nil
 }
 
+// writeSettings writes a settings document atomically (a temporary sibling renamed over the
+// path). It is a variable only so that a test can make the write fail.
+var writeSettings = record.AtomicWrite
+
 // settingsWrite is completion.write_configuration: decided twice, acted on once, and never
 // over settings that say something else - except a Python-era document when replace allows
-// it, which is retired (moved aside, never deleted) and replaced by wanted.
+// it, which is archived (copied aside, never deleted) and replaced by wanted in one rename.
 func settingsWrite(path string, wanted Object, apply, replace bool) Object {
 	answer := Object{field("configuration", path), field("outcome", ""), field("applied", false), field("wrote", false)}
 	if wrong := Complaints(wanted); len(wrong) > 0 {
@@ -300,25 +354,58 @@ func settingsWrite(path string, wanted Object, apply, replace bool) Object {
 		return append(record.Set(answer, "outcome", ConfigChangedUnderneath), field("detail", "the settings changed after they were read, so nothing was written; rerun to decide against the file as it now stands"))
 	}
 	if outcome == ConfigReplaced {
-		retired, err := Retire(path)
-		if err != nil {
-			return append(record.Set(answer, "outcome", ConfigDiffers), field("detail", "the Python-era settings could not be retired, so nothing was written: "+store.PythonOSError(err)))
-		}
-		answer = append(answer, field("retired", retired))
+		return replaceSettings(path, wanted, answer)
 	}
-	if err := record.AtomicWrite(path, record.Encode(wanted)); err != nil {
-		return append(answer, field("detail", "the settings could not be written: "+store.PythonOSError(err)))
+	if err := writeSettings(path, record.Encode(wanted)); err != nil {
+		return append(record.Set(answer, "outcome", ConfigNotWritten), field("detail", "the settings could not be written, so the file stands as it was found: "+store.PythonOSError(err)))
 	}
-	back := reading.ReadJSON(path, "the completion hook configuration", nil, nil)
-	readBack := back.OK() && evidence.Dumps(back.Value, true, true, false) == evidence.Dumps(wanted, true, true, false)
+	readBack := readsBackAs(path, wanted)
 	answer = append(record.Set(record.Set(answer, "applied", true), "wrote", true), field("readBack", readBack))
 	if !readBack {
 		return append(record.Set(answer, "outcome", ConfigAppliedUnverified), field("detail", "the settings were written and could not be read back as written; no hook should be relied on until they can be"))
 	}
-	if outcome == ConfigReplaced {
-		return append(answer, field("detail", "the Python-era settings were retired beside this file and replaced by the Go adapter's"))
-	}
 	return answer
+}
+
+// readsBackAs reports whether the document at path now reads as wanted.
+func readsBackAs(path string, wanted Object) bool {
+	back := reading.ReadJSON(path, "the completion hook configuration", nil, nil)
+	return back.OK() && evidence.Dumps(back.Value, true, true, false) == evidence.Dumps(wanted, true, true, false)
+}
+
+// replaceSettings replaces a Python-era document by wanted, under the settings lock, with no
+// moment at which path is absent: the document is copied to an archive first (steps.retire's
+// name, so the recoveries that read the newest archive find it), and wanted is then renamed over
+// path. A write that fails, or that lands and does not read back as written, leaves path holding
+// the document it held - the archive is removed, or renamed back over path when path changed -
+// so a failed replacement never leaves a Stop without settings.
+func replaceSettings(path string, wanted, answer Object) Object {
+	archived, err := Supersede(path)
+	if err != nil {
+		return append(record.Set(answer, "outcome", ConfigNotWritten), field("detail", "the Python-era settings could not be archived, so nothing was written: "+store.PythonOSError(err)))
+	}
+	if err := writeSettings(path, record.Encode(wanted)); err != nil {
+		return failedReplacement(path, answer, archived, "the Go adapter's settings could not be written ("+store.PythonOSError(err)+")")
+	}
+	answer = record.Set(answer, "wrote", true)
+	if !readsBackAs(path, wanted) {
+		return failedReplacement(path, append(answer, field("readBack", false)), archived, "the Go adapter's settings were written and did not read back as written")
+	}
+	return append(record.Set(answer, "applied", true), field("readBack", true), field("retired", archived),
+		field("detail", "the Python-era settings were archived to "+archived+" and replaced by the Go adapter's in one rename"))
+}
+
+// failedReplacement returns path to the Python-era document after a replacement that did not
+// land as written. The answer carries 'retired' only while the archive still exists, which is
+// when path could not be put back.
+func failedReplacement(path string, answer Object, archived, why string) Object {
+	back := settleBack(path, archived)
+	answer = append(answer, field("putBack", back))
+	if record.Get(back, "undone") == true {
+		return append(record.Set(answer, "outcome", ConfigNotWritten), field("detail", why+", so the Python-era settings were kept: "+scopeStr(record.Get(back, "detail"))))
+	}
+	return append(record.Set(answer, "outcome", ConfigAppliedUnverified), field("retired", archived),
+		field("detail", why+", and the Python-era settings archived at "+archived+" could not be put back: "+scopeStr(record.Get(back, "detail"))))
 }
 
 // settingsOutcome is completion.config_outcome, with the Python-era replacement.
@@ -364,7 +451,9 @@ func differing(found, wanted Object) any {
 }
 
 // transition is what a promotion does to the plugin-owned Stop settings so the adapter they
-// name exists on both sides of the pointer swap, and how to undo it.
+// name exists on both sides of the pointer swap, and how to undo it. undo is never nil: it puts
+// back whatever this transition changed or left behind, refused or not, and says so; a caller
+// runs it on every path on which the pointer does not end up where the transition prepared for.
 type transition struct {
 	report  Object
 	refused string
@@ -373,10 +462,11 @@ type transition struct {
 
 // transitionSettings carries the plugin-owned settings to the runtime kind the pointer is about
 // to name, BEFORE it moves: a Python-era document (adapterInterpreter .../current/bin/python3,
-// which vanishes when the pointer leaves the venv) is retired and replaced by its Go variant for
-// a Go target, and for a Python target the newest retired Python-era document is put back. It
-// is ordered before the swap so that no cached launcher is left naming an interpreter the
-// pointer no longer reaches; undo reverses it when the promotion then fails.
+// which vanishes when the pointer leaves the venv) is archived and replaced by its Go variant for
+// a Go target, and for a Python target the newest archived Python-era document is put back. Each
+// replacement is one rename over the path, so a Stop finds settings at every moment, and it is
+// ordered before the swap so that no cached launcher is left naming an interpreter the pointer
+// no longer reaches.
 func transitionSettings(codexHome, pointerPath, targetKind string) transition {
 	path := filepath.Join(codexHome, SettingsName)
 	none := func() Object { return nil }
@@ -400,38 +490,96 @@ func transitionSettings(codexHome, pointerPath, targetKind string) transition {
 			return transition{report: report, refused: "the Go variant of the Python-era settings would be refused by the Go hook: " + strings.Join(wrong, "; "), undo: none}
 		}
 		written := settingsWrite(path, wanted, true, true)
-		if record.Get(written, "outcome") != ConfigReplaced || record.Get(written, "readBack") != true {
-			return transition{report: append(report, field("write", written)), refused: "the Python-era settings could not be replaced by the Go adapter's: " + scopeStr(record.Get(written, "detail")), undo: none}
-		}
 		retired, _ := record.Get(written, "retired").(string)
+		undo := none
+		if retired != "" {
+			undo = func() Object { return lockedSettleBack(path, retired) }
+		}
+		if record.Get(written, "outcome") != ConfigReplaced || record.Get(written, "readBack") != true {
+			return transition{report: append(report, field("write", written)), refused: "the Python-era settings could not be replaced by the Go adapter's: " + scopeStr(record.Get(written, "detail")), undo: undo}
+		}
 		return transition{report: append(report, field("action", "replaced"), field("retired", retired), field("write", written),
-			field("detail", "the Python-era settings were retired to "+retired+" and replaced by the Go adapter's, before the pointer moved")),
-			undo: func() Object { return putBack(path, retired) }}
+			field("detail", "the Python-era settings were archived to "+retired+" and replaced by the Go adapter's, before the pointer moved")), undo: undo}
 	case targetKind == doctor.KindPythonVenv && GoEra(document):
-		retired, previous := newestRetired(path, PythonEra)
-		if previous == nil {
-			return transition{report: report, refused: "the settings name the Go adapter and no retired Python-era settings exist beside " + path + " to put back, so after the swap the Stop hook would reach no adapter", undo: none}
-		}
-		moved, err := Retire(path)
-		if err != nil {
-			return transition{report: report, refused: "the Go settings could not be retired: " + store.PythonOSError(err), undo: none}
-		}
-		if err := os.Rename(retired, path); err != nil {
-			_ = os.Rename(moved, path)
-			return transition{report: report, refused: "the retired Python-era settings could not be put back: " + store.PythonOSError(err), undo: none}
-		}
-		return transition{report: append(report, field("action", "restored"), field("restoredFrom", retired), field("retired", moved),
-			field("detail", "the Go settings were retired to "+moved+" and the Python-era settings from "+retired+" were put back, before the pointer moved")),
-			undo: func() Object {
-				if _, err := Retire(path); err != nil {
-					return Object{field("undone", false), field("detail", store.PythonOSError(err))}
-				}
-				return putBack(path, moved)
-			}}
+		return restorePythonEra(path, report, document)
 	case targetKind == doctor.KindPythonVenv && PythonEra(document):
 		return transition{report: append(report, field("action", "none"), field("detail", "the settings already name the Python adapter")), undo: none}
 	}
 	return transition{report: append(report, field("action", "none"), field("detail", "the settings name an adapter this command did not write, so they are left as they are")), undo: none}
+}
+
+// restorePythonEra puts the newest archived Python-era document back over the Go one before the
+// pointer moves to a venv: the Go document is copied to an archive, and the Python-era archive is
+// renamed over the path, so the path holds one document or the other at every moment. Undone,
+// the Python-era document goes back to the archive name it came from and the Go document's copy
+// is renamed over the path again, which is the state this run found.
+func restorePythonEra(path string, report, document Object) transition {
+	none := func() Object { return nil }
+	refuse := func(why string) transition { return transition{report: report, refused: why, undo: none} }
+	retired, previous := newestRetired(path, PythonEra)
+	if previous == nil {
+		return refuse("the settings name the Go adapter and no archived Python-era settings exist beside " + path + " to put back, so after the swap the Stop hook would reach no adapter")
+	}
+	lock, err := record.Lock(path, 0)
+	if err != nil {
+		return refuse("the Stop settings are being written by another run, so they were not moved: " + err.Error())
+	}
+	defer lock.Release()
+	if again := reading.ReadJSON(path, "the completion hook configuration", nil, nil); !again.OK() || evidence.Dumps(again.Value, true, true, false) != evidence.Dumps(document, true, true, false) {
+		return refuse("the Stop settings changed after they were read, so they were not moved; rerun to decide against the file as it now stands")
+	}
+	moved, err := Supersede(path)
+	if err != nil {
+		return refuse("the Go settings could not be archived: " + store.PythonOSError(err))
+	}
+	if err := os.Rename(retired, path); err != nil {
+		_ = os.Remove(moved)
+		return refuse("the archived Python-era settings could not be put back: " + store.PythonOSError(err))
+	}
+	return transition{report: append(report, field("action", "restored"), field("restoredFrom", retired), field("retired", moved),
+		field("detail", "the Go settings were archived to "+moved+" and the Python-era settings from "+retired+" were renamed over them, before the pointer moved")),
+		undo: func() Object {
+			lock, err := record.Lock(path, 0)
+			if err != nil {
+				return Object{field("undone", false), field("detail", "the settings lock could not be taken: "+err.Error())}
+			}
+			defer lock.Release()
+			if err := copyExclusive(path, retired); err != nil {
+				return Object{field("undone", false), field("detail", "the Python-era settings could not be archived again at "+retired+": "+store.PythonOSError(err))}
+			}
+			if err := os.Rename(moved, path); err != nil {
+				_ = os.Remove(retired)
+				return Object{field("undone", false), field("detail", "the Go settings archived at "+moved+" could not be put back: "+store.PythonOSError(err))}
+			}
+			return Object{field("undone", true), field("detail", "the Go settings were put back from "+moved+" and the Python-era settings archived at "+retired+" again")}
+		}}
+}
+
+// lockedSettleBack is settleBack under the settings lock the Python writers take.
+func lockedSettleBack(path, archived string) Object {
+	lock, err := record.Lock(path, 0)
+	if err != nil {
+		return Object{field("undone", false), field("detail", "the settings lock could not be taken, so the settings archived at "+archived+" were not put back: "+err.Error())}
+	}
+	defer lock.Release()
+	return settleBack(path, archived)
+}
+
+// settleBack returns path to the document archived from it and consumes the archive: when path
+// still holds those bytes the archive is removed, and otherwise it is renamed over path (one
+// rename, so path is never absent).
+func settleBack(path, archived string) Object {
+	kept, err := os.ReadFile(archived)
+	if err != nil {
+		return Object{field("undone", false), field("detail", "the settings archived at "+archived+" could not be read: "+store.PythonOSError(err))}
+	}
+	if now, err := os.ReadFile(path); err == nil && bytes.Equal(now, kept) {
+		if err := os.Remove(archived); err != nil {
+			return Object{field("undone", true), field("residual", archived), field("detail", path+" still holds the settings as they were found; their copy at "+archived+" could not be removed: "+store.PythonOSError(err))}
+		}
+		return Object{field("undone", true), field("detail", path+" still holds the settings as they were found; their copy at "+archived+" was removed")}
+	}
+	return putBack(path, archived)
 }
 
 // putBack moves an archived document over path again (an atomic rename).

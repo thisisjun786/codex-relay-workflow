@@ -94,11 +94,14 @@ func TestLegacyStopLaunchersReachTheGoHook(t *testing.T) {
 }
 
 // The plugin's bridge is started with a bare environment, so the only way the host's execution
-// policy reaches it is the record register-mcp wrote. The wiring launcher reads that record and
-// starts the Go bridge under the recorded policy (get_capabilities reports the allowlist and its
-// digest, not presence_only), and refuses to start - exit 2, naming the record and the repair -
-// when the policy file is missing, not a regular file, no longer hashes to the recorded digest,
-// or the environment names a different policy.
+// policy reaches it is the record register-mcp wrote. With only HOME set on both sides - `crw
+// install register-mcp` resolving the Codex home as ~/.codex, and the wiring launcher run from
+// the plugin cache under that home, which is how it finds the home when no CODEX_HOME is set -
+// the launcher reads the record and starts the Go bridge under the recorded policy
+// (get_capabilities reports the allowlist and its digest, not presence_only), and refuses to
+// start - exit 2, naming the record and the repair - when the policy file is missing, not a
+// regular file, no longer hashes to the recorded digest, or the environment names a different
+// policy.
 func TestTheWiringLauncherStartsTheGoBridgeUnderTheRecordedPolicy(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 runs the packaged bridge launcher")
@@ -107,21 +110,27 @@ func TestTheWiringLauncherStartsTheGoBridgeUnderTheRecordedPolicy(t *testing.T) 
 	h.mustInstall(t, "install", archive(t, "0.9.0", ""))
 	policy, digest := h.policy(t)
 	ledger := filepath.Join(h.home, "bridge-ledger")
-	if result, code := install.RegisterMCP(context.Background(), h.options(), install.RegisterOptions{Owner: install.OwnerPlugin, ExecutionPolicy: policy,
-		BridgeArgs: []string{"--socket", h.fake.SocketPath, "--state-dir", ledger}}); code != install.OK {
-		t.Fatalf("register-mcp: %s", golden.Canon(result))
+	homeOnly := []string{"HOME=" + h.home}
+	var stdout, stderr strings.Builder
+	if code := install.Main(context.Background(), []string{"register-mcp", "--owner", "plugin", "--execution-policy", policy,
+		"--bridge-arg=--socket", "--bridge-arg=" + h.fake.SocketPath, "--bridge-arg=--state-dir", "--bridge-arg=" + ledger}, scope.Env(homeOnly), &stdout, &stderr); code != install.OK {
+		t.Fatalf("register-mcp with only HOME set: exit %d\n%s%s", code, stdout.String(), stderr.String())
 	}
 	recordPath := filepath.Join(h.codex, install.BridgeRecordName)
+	if _, err := os.Stat(recordPath); err != nil {
+		t.Fatalf("register-mcp with only HOME set did not write %s: %v\n%s", recordPath, err, stdout.String())
+	}
+	cached := filepath.Join(h.codex, "plugins", "cache", "crw", "crw", "0.9.0", "wiring", "crw_bridge_mcp.py")
+	write(t, cached, readFile(t, wiring("crw_bridge_mcp.py")))
 	launch := func(extra ...string) exercise.Bridge {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		cmd := []string{"python3", wiring("crw_bridge_mcp.py")}
-		return exercise.Argv(ctx, cmd, scope.Env(append(h.launcherEnv(wiring()), extra...)))
+		return exercise.Argv(ctx, []string{"python3", cached}, scope.Env(append(append([]string{}, homeOnly...), extra...)))
 	}
 	started := launch()
 	if started.Err != nil {
-		t.Fatalf("the launcher did not start the bridge: %v", started.Err)
+		t.Fatalf("the launcher did not start the bridge: %v\n%s", started.Err, started.Stderr)
 	}
 	summary := golden.Obj(record.Get(golden.Obj(started.Connection), "executionPolicy"))
 	if record.Get(summary, "mode") != "allowlist" || record.Get(summary, "digest") != digest {
