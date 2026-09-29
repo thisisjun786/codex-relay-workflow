@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -173,6 +174,11 @@ func selectedOrPointed(rec Object, dest, directory string) *use {
 // when neither does.
 func runningOrRegistered(ctx context.Context, o Options, directory string) *use {
 	processes, err := liveProcesses(o.proc(), directory)
+	var missing *noProcessTable
+	if errors.As(err, &missing) {
+		return &use{"this platform (" + runtime.GOOS + ") has no process table this command can read (" + missing.proc + " is not a procfs), so whether a relay daemon or a bridge still runs out of this directory cannot be established, and a directory that may be in use is never removed", "recoveryRequires",
+			"remove it by hand: stop the relay daemon started from it (" + filepath.Join(directory, "bin", definition.Relay) + " service stop) and end every Codex session whose bridge it started, delete " + directory + ", then run crw install status to see that the host record and the pointer still name the runtime you meant. Its install entries stay in the host record, where a rollback naming it is refused because the directory is gone"}
+	}
 	if err != nil {
 		return &use{"the process table could not be read, so whether a process still runs out of this directory was not established: " + err.Error(), "", nil}
 	}
@@ -259,13 +265,20 @@ func uniqueStrings(values ...string) []string {
 	return out
 }
 
+// noProcessTable is liveProcesses' answer where there is no procfs to read, which is every
+// platform but Linux (darwin has none; its process table is read through proc_pidpath or sysctl
+// KERN_PROCARGS2, which this command does not do). Remove refuses on it, saying so.
+type noProcessTable struct{ proc string }
+
+func (n *noProcessTable) Error() string { return "no process table (procfs) at " + n.proc }
+
 // liveProcesses is every process (but this one) whose executable, or the interpreter or script
 // its argv starts, resolves inside directory. A Python runtime runs as <venv>/bin/python (whose
 // /proc exe is the base interpreter outside the venv) or as a console script under <venv>/bin,
 // so argv's first two words are read as spelled and as resolved; a Go runtime is its exe.
 func liveProcesses(proc, directory string) ([]any, error) {
 	if _, err := os.Stat(filepath.Join(proc, "self")); err != nil {
-		return nil, errors.New("no process table (procfs) at " + proc)
+		return nil, &noProcessTable{proc}
 	}
 	entries, err := os.ReadDir(proc)
 	if err != nil {

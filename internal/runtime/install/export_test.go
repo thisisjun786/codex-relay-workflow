@@ -26,3 +26,11 @@ func ReplacePointerPlacement(place func(path, target string) error) (restore fun
 	placePointer = place
 	return func() { placePointer = saved }
 }
+
+// ReplaceBeforeWriteLock runs between every settings or bridge record write's decision and the
+// lock it acts under, until restored.
+func ReplaceBeforeWriteLock(between func(path string)) (restore func()) {
+	saved := beforeWriteLock
+	beforeWriteLock = between
+	return func() { beforeWriteLock = saved }
+}

@@ -401,6 +401,17 @@ which restores the document's own file. A document whose `adapterInterpreter` is
 `adapterEntryPoint` holds `=` is never written: GNU env reads such an argument as an assignment
 and executes the settings path instead.
 
+A write lands only on the document it was decided from (todo 38 review, PR #192). Every write of
+the Stop settings and of the bridge record looks at the file before it reads anything - device,
+inode, size, modification time and bytes, through one descriptor - and decides (and, for the
+Python-era replacement, builds the Go variant) from that document; under the lock the Python
+writers take it looks again, and anything but the same document writes nothing. A transition then
+decides again from a fresh reading, up to three times, so a cooperating writer's newer document is
+the one carried forward and archived, never overwritten by a variant of the bytes read before it;
+`crw install hook` and `register-mcp` answer `config_changed_underneath` /
+`record_changed_underneath` with the repair to rerun, as the Python writers do. The archive a
+replacement takes has to hold those same bytes, or its name is dropped and nothing is written.
+
 The bridge record names its execution policy as runtime_install.py records it,
 `Path(value).expanduser().absolute()`: `..` is kept rather than folded by text, so the record,
 its digest and the bridge all name the file the kernel opens for that spelling, a symbolic link
@@ -419,7 +430,10 @@ fallback); internal/relay/hook/adapter.go (args[0] is the settings path); intern
 `TestARollbackToAVenvNeverRewritesTheSettings`, `TestARollbackKilledAtItsCommitLeavesStopsRecorded`,
 `TestARollbackToAVenvNeedsNoArchive`, `TestARollbackKeepsTheHostFactsTheSettingsRecord`,
 `TestHookKeepsThePythonEraHostFacts`, `TestAReplacementNeverDestroysAnotherWritersDocument`,
-`TestAnEntryPointEnvWouldMisreadIsRefused`, `TestTheExecutionPolicyPathIsSpelledAsPythonRecordsIt`);
+`TestAnEntryPointEnvWouldMisreadIsRefused`, `TestTheExecutionPolicyPathIsSpelledAsPythonRecordsIt`,
+`TestATransitionNeverWritesAGoVariantBuiltFromStaleBytes`,
+`TestHookNeverWritesOverADocumentThatChangedAfterItWasRead`,
+`TestRegisterMCPNeverWritesOverARecordThatChangedAfterItWasRead`);
 draft L1, L4, L5, GAP-9, D6.
 
 ## 19. Bridge provenance
@@ -1497,7 +1511,15 @@ before it removes the directory), the directory's install entries are dropped in
 the host record's lock, where the selection is read again, and only after that write lands is the
 directory removed: a drop that cannot be written refuses with nothing removed, and a removal that
 does not finish after the drop exits 3 with the entries gone, the rest of the directory named in
-`residualPaths` and its removal by hand as `recoveryRequires`. `crw doctor` now makes the App Server observation decision 41
+`residualPaths` and its removal by hand as `recoveryRequires`. Live processes are read from procfs,
+so on a platform without one (darwin) whether a relay or bridge still runs out of the directory
+cannot be established and `crw install remove` always refuses there (fail-closed), saying that
+this platform has no process table it can read and giving the recovery by hand as
+`recoveryRequires`: stop the relay daemon started from it (`<dir>/bin/codex-session-relay service
+stop`) and end every Codex session whose bridge it started, delete the directory, then run `crw
+install status` to see that the record and the pointer still name the intended runtime (the
+directory's install entries stay in the record, where a rollback naming it is refused because the
+directory is gone). A darwin process reader is deferred (docs/port/refactor-backlog.md). `crw doctor` now makes the App Server observation decision 41
 left to this todo: with `Options.AppServer` unset it runs the same read-only session with the
 selected runtime's `bin/codex-thread-bridge` (`exercise.Session`) and compares its
 `get_capabilities` answer as a point's `appServer` dimension, so a real diagnosis of a Go host can

@@ -306,8 +306,18 @@ var writeSettings = record.AtomicWrite
 // settingsWrite is completion.write_configuration: decided twice, acted on once, and never
 // over settings that say something else - except a Python-era document when replace allows it
 // and wanted keeps every host fact it records (only the adapter and installedBy move), which is
-// archived (a second name, never deleted) and replaced by wanted in one rename.
+// archived (a second name, never deleted) and replaced by wanted in one rename. It is decided
+// on a look taken before anything is read, so a write lands only on that document.
 func settingsWrite(path string, wanted Object, apply, replace bool) Object {
+	return settingsWriteOn(path, lookAt(path), wanted, apply, replace)
+}
+
+// settingsWriteOn is settingsWrite decided on basis: the look at path taken before the reading
+// the decision (and, for a transition, wanted itself) was built from. Under the settings lock the
+// document is looked at again, and anything but the same document - another file renamed in, a
+// rewrite, the same shape saying another mode - answers config_changed_underneath with nothing
+// written: a document built from an earlier reading is never written over a newer one.
+func settingsWriteOn(path string, basis look, wanted Object, apply, replace bool) Object {
 	answer := Object{field("configuration", path), field("outcome", ""), field("applied", false), field("wrote", false)}
 	if wrong := Complaints(wanted); len(wrong) > 0 {
 		return append(record.Set(answer, "outcome", ConfigWouldNotBeReadable), field("detail", strings.Join(wrong, "; ")), field("complaints", strs(wrong)))
@@ -338,16 +348,18 @@ func settingsWrite(path string, wanted Object, apply, replace bool) Object {
 		}
 		return append(record.Set(answer, "outcome", ConfigWouldCreate), field("detail", detail))
 	}
+	beforeWriteLock(path)
 	lock, err := record.Lock(path, 0)
 	if err != nil {
 		return append(record.Set(answer, "outcome", "busy"), field("detail", err.Error()))
 	}
 	defer lock.Release()
-	if again, _ := settingsOutcome(path, wanted, replace); again != outcome {
-		return append(record.Set(answer, "outcome", ConfigChangedUnderneath), field("detail", "the settings changed after they were read, so nothing was written; rerun to decide against the file as it now stands"))
+	if again, _ := settingsOutcome(path, wanted, replace); again != outcome || !lookAt(path).same(basis) {
+		return append(record.Set(answer, "outcome", ConfigChangedUnderneath), field("detail", "the settings at "+path+" changed after they were read (another file, size, modification time or bytes), so nothing was written: settings decided on an earlier reading are never written over a newer document"),
+			field("repair", "rerun to decide against the file as it now stands"))
 	}
 	if outcome == ConfigReplaced {
-		return replaceSettings(path, wanted, answer)
+		return replaceSettings(path, basis, wanted, answer)
 	}
 	if err := writeSettings(path, record.Encode(wanted)); err != nil {
 		return append(record.Set(answer, "outcome", ConfigNotWritten), field("detail", "the settings could not be written, so the file stands as it was found: "+store.PythonOSError(err)))
@@ -369,13 +381,20 @@ func readsBackAs(path string, wanted Object) bool {
 // replaceSettings replaces a Python-era document by wanted, under the settings lock, with no
 // moment at which path is absent: the document is given its archive name first (steps.retire's
 // name, so the recoveries that read the newest archive find it), and wanted is then renamed over
-// path. A write that fails leaves path holding the document it held and drops the archive name;
-// a write that lands and does not read back as written means path now holds bytes this run did
-// not write, and those are left where they are with the archive kept (settleBack).
-func replaceSettings(path string, wanted, answer Object) Object {
+// path. The archive has to hold the document the replacement was decided on (basis), or the
+// archive name is dropped and nothing is written. A write that fails leaves path holding the
+// document it held and drops the archive name; a write that lands and does not read back as
+// written means path now holds bytes this run did not write, and those are left where they are
+// with the archive kept (settleBack).
+func replaceSettings(path string, basis look, wanted, answer Object) Object {
 	archived, err := Supersede(path)
 	if err != nil {
 		return append(record.Set(answer, "outcome", ConfigNotWritten), field("detail", "the Python-era settings could not be archived, so nothing was written: "+store.PythonOSError(err)))
+	}
+	if kept := lookAt(archived); kept.failed != "" || !bytes.Equal(kept.raw, basis.raw) {
+		_ = os.Remove(archived)
+		return append(record.Set(answer, "outcome", ConfigChangedUnderneath), field("detail", "the settings at "+path+" changed while they were being archived, so the archive name was dropped and nothing was written"),
+			field("repair", "rerun to decide against the file as it now stands"))
 	}
 	encoded := record.Encode(wanted)
 	if err := writeSettings(path, encoded); err != nil {
@@ -486,30 +505,63 @@ func transitionSettings(codexHome, pointerPath, targetKind string) transition {
 // That document is valid on both sides of the swap, so there is no window. No move to a venv
 // rewrites the settings back: every path the live document reaches through the pointer must be
 // served by the target, or the move is refused with nothing changed.
+//
+// The Go variant is built from one look at the document and written only onto that document
+// (settingsWriteOn). When another writer replaced it in between, nothing is written and the
+// transition is decided again from a fresh reading, a bounded number of times.
 func transitionSettingsFor(codexHome, pointerPath, targetKind string, target provides) transition {
+	var last transition
+	for attempt := 0; attempt < transitionAttempts; attempt++ {
+		decided, changed := transitionOnce(codexHome, pointerPath, targetKind, target)
+		if !changed {
+			if attempt > 0 {
+				decided.report = append(decided.report, field("rebuiltFromFreshReading", int64(attempt)))
+			}
+			return decided
+		}
+		last = decided
+	}
+	path := filepath.Join(codexHome, SettingsName)
+	return transition{report: last.report, refused: "the Stop settings at " + path + " changed under this run each of the " + strconv.Itoa(transitionAttempts) + " times it read them, so nothing was written and the pointer was not moved: stop whatever is rewriting them, then rerun", undo: func() Object { return nil }}
+}
+
+// transitionAttempts bounds how often a transition is decided again after the settings changed
+// under it.
+const transitionAttempts = 3
+
+// transitionOnce is one decision of transitionSettingsFor on one look at the settings, and
+// whether the settings turned out to have changed under it (nothing was written then).
+func transitionOnce(codexHome, pointerPath, targetKind string, target provides) (transition, bool) {
 	path := filepath.Join(codexHome, SettingsName)
 	none := func() Object { return nil }
+	basis := lookAt(path)
 	found := reading.ReadJSON(path, "the completion hook configuration", nil, nil)
 	report := Object{field("configuration", path), field("state", found.State)}
+	if found.OK() && !basis.holds(found.Value) {
+		return transition{report: report, undo: none}, true
+	}
 	switch {
 	case found.State == reading.Absent:
-		return transition{report: append(report, field("action", "none"), field("detail", "no Stop settings exist, so nothing names an adapter the swap could strand")), undo: none}
+		return transition{report: append(report, field("action", "none"), field("detail", "no Stop settings exist, so nothing names an adapter the swap could strand")), undo: none}, false
 	case !found.OK():
-		return transition{report: report, refused: "the Stop settings at " + path + " could not be read (" + found.Detail + "), so whether the swap would strand the adapter they name was not established", undo: none}
+		return transition{report: report, refused: "the Stop settings at " + path + " could not be read (" + found.Detail + "), so whether the swap would strand the adapter they name was not established", undo: none}, false
 	}
 	document, _ := found.Value.(Object)
 	if record.Get(document, "owner") != "plugin" {
-		return transition{report: append(report, field("action", "none"), field("detail", "these settings belong to a user-owned registration; what its command runs through the pointer was judged with the second owners")), undo: none}
+		return transition{report: append(report, field("action", "none"), field("detail", "these settings belong to a user-owned registration; what its command runs through the pointer was judged with the second owners")), undo: none}, false
 	}
 	if targetKind == doctor.KindGoRuntime && PythonEra(document) {
 		wanted := GoVariant(document, pointerPath)
 		if wrong := Complaints(wanted); len(wrong) > 0 {
-			return transition{report: report, refused: "the Go variant of the Python-era settings would be refused by the Go hook: " + strings.Join(wrong, "; "), undo: none}
+			return transition{report: report, refused: "the Go variant of the Python-era settings would be refused by the Go hook: " + strings.Join(wrong, "; "), undo: none}, false
 		}
 		if stranded := strandedSettings(wanted, pointerPath, target); len(stranded) > 0 {
-			return transition{report: report, refused: "the Go variant of the Python-era settings would reach through the pointer what the runtime does not provide: " + strings.Join(stranded, "; "), undo: none}
+			return transition{report: report, refused: "the Go variant of the Python-era settings would reach through the pointer what the runtime does not provide: " + strings.Join(stranded, "; "), undo: none}, false
 		}
-		written := settingsWrite(path, wanted, true, true)
+		written := settingsWriteOn(path, basis, wanted, true, true)
+		if record.Get(written, "outcome") == ConfigChangedUnderneath {
+			return transition{report: append(report, field("write", written)), undo: none}, true
+		}
 		retired, _ := record.Get(written, "retired").(string)
 		undo := none
 		if retired != "" {
@@ -517,13 +569,13 @@ func transitionSettingsFor(codexHome, pointerPath, targetKind string, target pro
 			undo = func() Object { return lockedSettleBack(path, retired, encoded) }
 		}
 		if record.Get(written, "outcome") != ConfigReplaced || record.Get(written, "readBack") != true {
-			return transition{report: append(report, field("write", written)), refused: "the Python-era settings could not be replaced by the Go adapter's: " + scopeStr(record.Get(written, "detail")), undo: undo}
+			return transition{report: append(report, field("write", written)), refused: "the Python-era settings could not be replaced by the Go adapter's: " + scopeStr(record.Get(written, "detail")), undo: undo}, false
 		}
 		return transition{report: append(report, field("action", "replaced"), field("retired", retired), field("write", written),
-			field("detail", "the Python-era settings were archived to "+retired+" and replaced by the Go adapter's, before the pointer moved; that one document serves a Go runtime and a venv alike")), undo: undo}
+			field("detail", "the Python-era settings were archived to "+retired+" and replaced by the Go adapter's, before the pointer moved; that one document serves a Go runtime and a venv alike")), undo: undo}, false
 	}
 	if wrong := strandedSettings(document, pointerPath, target); len(wrong) > 0 {
-		return transition{report: append(report, field("action", "none")), refused: "the Stop settings at " + path + " would reach no adapter once the pointer names this runtime: " + strings.Join(wrong, "; ") + ". Nothing was changed: no promotion or rollback rewrites these settings. Point them at what this runtime serves by hand, or choose a runtime that serves them", undo: none}
+		return transition{report: append(report, field("action", "none")), refused: "the Stop settings at " + path + " would reach no adapter once the pointer names this runtime: " + strings.Join(wrong, "; ") + ". Nothing was changed: no promotion or rollback rewrites these settings. Point them at what this runtime serves by hand, or choose a runtime that serves them", undo: none}, false
 	}
 	detail := "every path the settings reach through the pointer is one this runtime serves, so they are left exactly as they are"
 	switch {
@@ -534,7 +586,7 @@ func transitionSettingsFor(codexHome, pointerPath, targetKind string, target pro
 	case PythonEra(document):
 		detail = "the settings name the Python adapter, which this venv serves through the pointer, so they are left exactly as they are"
 	}
-	return transition{report: append(report, field("action", "none"), field("detail", detail)), undo: none}
+	return transition{report: append(report, field("action", "none"), field("detail", detail)), undo: none}, false
 }
 
 // strandedSettings is every path a settings document names through the pointer that the target

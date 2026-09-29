@@ -227,12 +227,14 @@ const policyRepair = "move %s aside by hand, then run crw install register-mcp a
 
 // bridgeWrite is bridgerecord.write: decided twice, acted on once, never over a record that
 // says something else, and a record naming a policy is settled only against the policy file as
-// it stands when the answer is given.
+// it stands when the answer is given. The decision is made on a look taken before anything is
+// read, and the record is written only while a look under the lock sees that same document.
 func bridgeWrite(path string, wanted Object, apply bool) Object {
 	answer := Object{field("record", path), field("outcome", ""), field("applied", false), field("wrote", false)}
 	if wrong := bridgeComplaints(wanted); len(wrong) > 0 {
 		return append(record.Set(answer, "outcome", RecordMalformed), field("detail", strings.Join(wrong, "; ")), field("complaints", strs(wrong)))
 	}
+	basis := lookAt(path)
 	outcome, found := bridgeOutcome(path, wanted)
 	answer = record.Set(answer, "outcome", outcome)
 	policyNow := func() []string {
@@ -261,13 +263,15 @@ func bridgeWrite(path string, wanted Object, apply bool) Object {
 	if !apply {
 		return append(answer, field("detail", "would write this record; nothing was written"))
 	}
+	beforeWriteLock(path)
 	lock, err := record.Lock(path, 0)
 	if err != nil {
 		return append(record.Set(answer, "outcome", Busy), field("detail", err.Error()))
 	}
 	defer lock.Release()
-	if again, _ := bridgeOutcome(path, wanted); again != outcome {
-		return append(record.Set(answer, "outcome", RecordChangedUnderneath), field("detail", "the record changed after it was read, so nothing was written; rerun to decide against the file as it now stands"))
+	if again, _ := bridgeOutcome(path, wanted); again != outcome || !lookAt(path).same(basis) {
+		return append(record.Set(answer, "outcome", RecordChangedUnderneath), field("detail", "the record at "+path+" changed after it was read (another file, size, modification time or bytes), so nothing was written"),
+			field("repair", "rerun to decide against the file as it now stands"))
 	}
 	if stale := policyNow(); len(stale) > 0 {
 		return append(record.Set(answer, "outcome", RecordPolicyChanged), field("detail", "the execution policy changed after it was read: "+strings.Join(stale, "; ")+". A record naming it would start no bridge, so nothing was written"), field("repair", "run register-mcp again against the file as it now stands"))
