@@ -45,11 +45,11 @@ read by `hook_probe.py` through `scripts/ci/contracts.py`, not by a test file; t
 
 ## Totals
 
-Files: 123
-Tests: 5914
+Files: 122
+Tests: 5787
 Class A: files=16 tests=633
 Class B: files=88 tests=3368
-Class C: files=19 tests=1913
+Class C: files=18 tests=1786
 
 ## Todo 15 bridge property progress (2026-09-25)
 
@@ -268,6 +268,25 @@ linker and the ownership-checked removal of the fallback launcher.
 | (the second proof and the lock, untested in Python) | the marker is proved again under the launcher's own `.crw-lock`, the lock the Python placement takes; the wait and the unlink stop when the caller's context ends | `TestRemoveLauncherProvesTheMarkerAgainUnderTheLock`, `TestRemoveLauncherWaitsOnTheLockThePlacementTakes`, `TestRemoveLauncherInterruptedRemovesNothing` |
 | StableLauncherRemovalTest: settings written back, a surface that came back, its exit status, disable never claims the fallback (4); PluginGuardBudgetTest `test_the_transition_and_the_installer_share_one_bound` (1) | the transition's `live_again` aggregate and its shared bound | retired with the transition; the Go remover never touches the settings and reports `settingsPresent` as it found them |
 
+## Todo 46 developer-harness property progress (2026-09-29)
+
+Todo 46 ports two readings to the development binary and retires the rest (scope analysis
+"# Todo 46"). `scripts/hook_comparison.py`, `scripts/ci/tests/test_hook_comparison.py` (127
+tests, class C: the harness's own report shape plus Python-only items) and
+`docs/hook-comparison.md` are deleted, with the evidence in
+[the inventory](inventory.md#files-deleted-with-evidence). `scripts/stop_events.py`,
+`scripts/trial_startup.py` and their tests stay until todo 44: the first protects the Python
+adapter, the second is the Python install's preflight.
+
+| Python test (tests) | property | Go test |
+| --- | --- | --- |
+| test_stop_events.py VerifierTests and the verifier cases of the review-round classes | SEV-5 TRUE and its counters; SEV-6 FALSE; SEV-7 unjudged invocations; SEV-8 ledger integrity; SEV-9 row integrity; SEV-10 records of one event agree; SEV-11 only what the writer writes; SEV-12 the writer's on-disk form; SEV-13 a refused transcript path; SEV-14 window bounds | `internal/dev/stopevents` `TestSEV05_*` .. `TestSEV14_*`, over records the real `crw hook` writes, then mutated |
+| test_stop_events.py `test_a_complete_event_reads_true`, `test_rows_from_before_event_identity_are_legacy_and_never_judged` (corpus) | the two frozen `verify` fixtures | `internal/contracttest` hook domain, through a `crw-dev` built once per test binary |
+| test_stop_events.py RealPathControls, ReviewRoundOne/Two/Four writer cases | SEV-1..4, the writer's | the Go hook's tests (todo 33) and the corpus |
+| test_trial_startup.py Ledger (9), the ledger cases of the hosted rounds | TSU-13 counted apart, TSU-14 and TSU-24 refusals, TSU-30 and TSU-37 (ledger halves) graded without an installation once the window closed, TSU-70 the window opens at the dispatch, TSU-71 corroboration carries only compared times, TSU-90 operator words are text | `internal/dev/trialledger` `TestLedgerGradesAsThePythonLedgerDid` (70 cases against goldens from the Python ledger), `TestTSU13_*`, `TestTSU71_*`, `TestLedgerRefusals`, `TestTSU30_*`, `TestFromISOFormatIsCPythons` |
+| test_trial_startup.py preflight classes | the preflight's readings of the Python install | dropped with the preflight (todo 44) |
+| test_hook_comparison.py (127) | HKC-1..46 | retired with the harness |
+
 ## Files
 
 | path | tests | class | family | fixtures | owner | destination | coupling |
@@ -381,7 +400,6 @@ linker and the ownership-checked removal of the fallback launcher.
 | `scripts/ci/tests/test_adapter_agreement.py` | 53 | A | packaged vs checkout adapter over the same invocations | `packages/codex-session-relay/tests/fixtures/stop_event_r1.json` | todo 33 / CRW-156 | corpus: hook | - |
 | `scripts/ci/tests/test_completion_hook.py` | 221 | A | completion hook adapter vs a fake relay: journal, claims, exits | - | todo 33 / CRW-156 | corpus: hook | - |
 | `scripts/ci/tests/test_gate.py` | 18 | C | dev-gate check selection, result judgement and parallel CI legs | `.github/workflows/ci.yml`, `Makefile` | todo 47 / CRW-160 | go-test: `crw-dev ci gate` (todo 47; `internal/dev/ci` Test47_GATE_1..10) | importlib spec_from_file_location of scripts/ci/gate.py |
-| `scripts/ci/tests/test_hook_comparison.py` | 127 | C | off/on hook comparison harness states and its declared readings | - | todo 46 / CRW-159 | go-test: `internal/dev` hook-compare, build tag dev (todo 46) + inventory-check: go/ast scan of the harness (todo 46) | ast over scripts/hook_comparison.py |
 | `scripts/ci/tests/test_install.py` | 9 | C | skill-link install: check/apply, idempotence, foreign paths | - | todo 39 / CRW-158 | go-test: `crw-dev skills link` (`internal/dev/skills`, todo 39) + drop: the 3 retired-name tests, because the `LEGACY` detection retired with its README migration guidance (scope analysis "# 39") | importlib load of scripts/install.py |
 | `scripts/ci/tests/test_install_acceptance.py` | 61 | C | new install carried through to recovery of the replaced install | - | todo 38 / CRW-158 | go-test: `internal/runtime/install` (todo 38; lifecycle, failure restore, daemon gate, see the todo 38 table) + drop: SevenReadingsTests and ProvenanceTests re-test the Python fixture's own inventories (scope analysis "# 38") | ast over the installer and its fixture (494 reflective sites) |
 | `scripts/ci/tests/test_packages.py` | 27 | C | packages check never prints success over an empty or skipped run; `--shard` splits whole modules disjointly and completely, balanced on recorded seconds | - | todo 47 / CRW-160 | drop: packages.py only runs the Python suites and is deleted in todo 44/47; the property (no success over an empty or skipped run) is inherited by todo 9's `CRW_CONTRACT_STRICT=1` skip counting and `go test` exit status; the shard split leaves with the Python suites it divides | importlib load of scripts/ci/packages.py |
@@ -392,8 +410,8 @@ linker and the ownership-checked removal of the fallback launcher.
 | `scripts/ci/tests/test_release.py` | 10 | A | release workflow steps against fake git/gh | `scripts/ci/tests/{fake_git.sh,fake_gh.sh,release_steps.py}` | todo 12 / CRW-150 | corpus: release (domain added by todo 12) | - |
 | `scripts/ci/tests/test_runtime_install.py` | 496 | C | runtime installer and diagnosis on temporary destinations | - | todo 38 / CRW-158 | go-test: `internal/runtime/{reading,record,pointer,staging,swapgate,scope,residue,ownership,definition,doctor}` (todo 37) + go-test: `internal/runtime/install` (todo 38) + drop: the reflective AST and inspect inventories of Python source and the retired trial, preflight, inherited-registration and pre-claim paths (scope analysis "# 38") | ast over scripts/runtime_install.py (406 reflective sites) |
 | `scripts/ci/tests/test_scope.py` | 14 | C | CI selection evidence from real git changes incl. renames | - | todo 47 / CRW-160 | go-test: `crw-dev ci scope` (todo 47; `internal/dev/ci` Test47_SCOPE_1..7) | importlib load of scripts/ci/scope.py |
-| `scripts/ci/tests/test_stop_events.py` | 75 | A | one accepted record per Stop event through host paths (CRW-212) | `packages/codex-session-relay/tests/fixtures/stop_event_r1.json` | todo 46 / CRW-159 | corpus: hook | - |
-| `scripts/ci/tests/test_trial_startup.py` | 374 | C | live-trial preflight states asserted against runs (A/C mix) | - | todo 46 / CRW-159 | go-test: `internal/dev` trial-startup, build tag dev (todo 46) + inventory-check: go/ast scan (todo 46) | ast over scripts/trial_startup.py; subprocess runs of the harness |
+| `scripts/ci/tests/test_stop_events.py` | 75 | A | one accepted record per Stop event through host paths (CRW-212) | `packages/codex-session-relay/tests/fixtures/stop_event_r1.json` | todo 46 / CRW-159 | corpus: hook + go-test: `crw-dev stop-events` (`internal/dev/stopevents`, reader properties SEV-5..SEV-14 over records the real `crw hook` writes; SEV-1..4 are the hook's, todo 33) | - |
+| `scripts/ci/tests/test_trial_startup.py` | 374 | C | live-trial preflight states asserted against runs (A/C mix) | - | todo 46 / CRW-159 | go-test: `crw-dev trial-ledger` (`internal/dev/trialledger`, the ledger-mode properties TSU-13, -14, -24, -30, -37, -70, -71 and -90 against goldens captured from the Python ledger, todo 46) + drop: the preflight properties, because the preflight reads the Python install (consoleScript, the v1 host record) and retires with it in todo 44 (scope analysis "# Todo 46") | ast over scripts/trial_startup.py; subprocess runs of the harness |
 | `scripts/ci/tests/test_validate.py` | 3 | C | skill structure validator: metadata, links | - | todo 47 / CRW-160 | go-test: `crw-dev ci validate` (todo 47; `internal/dev/ci` Test47_VAL_1..2) | importlib load of scripts/ci/validate.py |
 
 ## Todo 15 owned-name parity ledger

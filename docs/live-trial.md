@@ -9,15 +9,14 @@ deliver to, and a child that emitted against a relationship that had already bee
 
 This document fixes what is confirmed before a trial starts, in what order the parts are built, and
 how the interventions during preparation are kept apart from the ones inside the window that
-produces the result. `scripts/trial_startup.py` performs the checks it can perform and grades the
-evidence it cannot take itself.
+produces the result. The preflight (`scripts/trial_startup.py preflight`) performs the checks it
+can perform before the dispatch, and the ledger (`crw-dev trial-ledger`) grades the window after it
+closes; see [Running it](#running-it).
 
-Two other things in this repository are named similarly and are not this.
-[The hook off/on comparison](hook-comparison.md) runs against two temporary Codex homes with no
-host, no daemon and no App Server, and it says so about itself. `runtime_install.py --trial` is a
-diagnosis mode that registers, emits and delivers once to fill one field of its own record, and
-[its own trial preflight](runtime-install.md#the-trial-preflight-matches-what-the-relay-requires)
-owns that name for the checks that mode needs. Neither name is reused here.
+One other thing in this repository is named similarly and is not this. `runtime_install.py
+--trial` is a diagnosis mode that registers, emits and delivers once to fill one field of its own
+record, and [its own trial preflight](runtime-install.md#the-trial-preflight-matches-what-the-relay-requires)
+owns that name for the checks that mode needs. That name is not reused here.
 
 ## The three failures this exists for
 
@@ -233,10 +232,15 @@ synthetic. This document carries placeholders for the same reason.
 ## Running it
 
     python3 scripts/trial_startup.py preflight --start <trial-root>/start.json
-    python3 scripts/trial_startup.py ledger    --start <trial-root>/start.json
+    crw-dev trial-ledger --start <trial-root>/start.json
 
-The first is run once, immediately before the dispatch that opens the window. The second is run
-after the window has closed, which is what it needs in order to grade anything. Both print one JSON object on standard
+The first is run once, immediately before the dispatch that opens the window. It is the Python
+install's preflight: it reaches the relay through the Python runtime's host record and console
+script, so it is the tool for a trial on a Python install, and it retires with that install.
+The second is run after the window has closed, which is what it needs in order to grade anything.
+It is the development binary's ledger (`make crw-dev` builds `dist/crw-dev`), and it prints the
+document `python3 scripts/trial_startup.py ledger --start ...` printed, byte for byte, so a grade
+taken with either compares with a grade taken with the other. Both print one JSON object on standard
 output and create no file of their own. That is a claim about the checker rather than about the
 commands it runs: every relay command opens the store on construction and `doctor` writes a
 temporary file to measure whether the state directory is writable, so a mistyped state

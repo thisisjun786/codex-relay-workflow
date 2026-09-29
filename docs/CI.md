@@ -91,10 +91,10 @@ module discovery would load, so a new module always runs in `rest` and a renamed
 module fails its leg instead of being skipped. The split is by measured time. Each
 module was timed once with `python3 -m unittest <module>` on four CPUs of a loaded
 host (load average 6-14, Python 3.14) on 2026-09-29: `test_runtime_install` 98 s and
-`test_hook_comparison` 43 s make `heavy` 141 s, and the other fifteen modules make
-`rest` 154 s, led by `test_stop_events` 40 s, `test_trial_startup` 38 s,
-`test_install_acceptance` 28 s and `test_plugin_wiring` 18 s. Re-measure and move a
-module when one leg grows well past the other. `test_gate.py` and `internal/dev/ci`
+`test_install_acceptance` 28 s make `heavy` 126 s, and the other fourteen modules make
+`rest` 126 s, led by `test_stop_events` 40 s, `test_trial_startup` 38 s and
+`test_plugin_wiring` 18 s (`test_hook_comparison`, 43 s, was deleted with the harness it
+tested in todo 46). Re-measure and move a module when one leg grows well past the other. `test_gate.py` and `internal/dev/ci`
 run the step's own script once per leg over a copy of the test directory, with
 `python3` replaced by a recorder, and check that together the legs run every module
 discovery would load exactly once.

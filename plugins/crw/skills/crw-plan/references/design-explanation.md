@@ -198,25 +198,26 @@ not have forged the facts the decision read. The rules are in
 [the hook contract](../../crw-run/references/hook-contract.md); what matters here is that a hook
 appearing in a configuration file has established none of it.
 
-How far it is built. The contract, the comparison harness and the document recording which of its
-six measures were performed are in this checkout; two of the six are recorded as not performed. The
-revision is deliberately not written into this page, because a commit named inside the commit that
-contains it is self-referential; an answer written anywhere else names the revision it read, and a
-reader is right to ask for it. Nobody here re-ran it, no run result is committed, and no host is
-claimed to have this installed, active or live.
+How far it is built. The contract is in this checkout, and so are the six measures an off and on
+comparison of it is judged by ([the hook contract's decision criteria](../../crw-run/references/hook-contract.md#decision-criteria-fixed-before-implementation)).
+The comparison harness that once ran against temporary Codex homes is no longer in this checkout,
+and two of the six measures were recorded as not performed. The revision is deliberately not
+written into this page, because a commit named inside the commit that contains it is
+self-referential; an answer written anywhere else names the revision it read, and a reader is right
+to ask for it. Nobody here re-ran a comparison, no run result is committed, and no host is claimed
+to have this installed, active or live.
 
-CXC is an existing owner and is left alone: the contract modifies no CXC state, and the
-comparison deliberately keeps a foreign CXC Stop entry in the same hook file, reads it back after
-the install to prove it was not displaced, and never executes it.
+CXC is an existing owner and is left alone: the contract modifies no CXC state, and an install
+keeps a foreign Stop entry beside its own rather than displacing it, and never executes it.
 
-How an improvement is judged. The off and on comparison in `docs/hook-comparison.md` builds both
-arms from one command where a single flag is the only difference, and its own rule is the one
-worth copying: the pass is never the difference between the arms, because that difference is
-settled by the flag before any turn ends. What it can answer is bounded and it says so. It reaches
-both missed-detection measures. Handoff success and duplicate execution, meaning no verification
-or correction running twice for one event across a hold, a restart or a recovery, are recorded as
-not performed, and the installed runtime is outside what it reads at all, because no daemon runs
-in it and nothing is installed.
+How an improvement is judged. An off and on comparison builds both arms from one command where a
+single flag is the only difference, and its rule is the one worth copying: the pass is never the
+difference between the arms, because that difference is settled by the flag before any turn ends.
+What a comparison can answer is bounded, and it has to say so. The retired harness reached both
+missed-detection measures; handoff success and duplicate execution, meaning no verification or
+correction running twice for one event across a hold, a restart or a recovery, were recorded as
+not performed, and the installed runtime was outside what it read at all, because no daemon ran
+in it and nothing was installed.
 
 The criteria were fixed before implementation so the comparison could not be tuned once numbers
 arrived, and they are per-measure criteria rather than a combined keep-or-revert threshold. No such
