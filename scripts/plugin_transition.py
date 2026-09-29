@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Move a manual CRW installation to the plugin installation, and own what follows it.
 
+RETIRED for the commands that change a host: transition, disable and remove refuse before reading
+anything (RETIRED below). The read-only commands still answer. Todo 39 deletes this tool.
+
 Six commands, one JSON document each, so a run leaves a receipt that can be diffed:
 
     inspect     read-only: both installs, the owner of each surface, in-flight work
@@ -51,6 +54,15 @@ EXIT_OK, EXIT_REFUSED, EXIT_USAGE = 0, 1, 2
 # A step that removed its file and then found the surface live again is not a refusal -- bytes
 # were removed -- and it is not success either, because the operation did not remain done.
 EXIT_INCOMPLETE = 3
+
+# The commands that change a host, retired since the plugin payload declares the native wiring
+# (docs/port/decisions.md 26): its Stop hook and bridge run the Go runtime's crw and
+# codex-thread-bridge behind $HOME/.local/share/crw-runtime/current. The steps behind these
+# commands hand the surfaces only to a Python runtime (preflight requires <dest>/current/bin/python3
+# and a payload equal to this checkout's), so on every host they accept, an applied transition
+# removed the working registration and table, reported each step settled, and left a Stop hook
+# and a bridge that cannot run there. They refuse before anything is read; todo 39 replaces them.
+RETIRED = ("transition", "disable", "remove")
 
 
 def emit(document):
@@ -352,6 +364,11 @@ def main(argv=None):
     """
     parser = build()
     args = parser.parse_args(argv)
+    if args.command in RETIRED:
+        sys.stderr.write("plugin_transition.py: " + args.command + " is retired and changed nothing:"
+                         " this checkout's plugin declares the native wiring, which these steps"
+                         " cannot hand a host to. See docs/plugin-transition.md.\n")
+        return EXIT_USAGE
     try:
         return args.handler(args)
     except ValueError as error:

@@ -142,7 +142,12 @@ ends in `codex-thread-bridge` and its environment carries the policy, which is w
 [the `/proc` reading below](#updating-safely) looks for. `crw hook --plugin-launch` reads only
 `<CODEX_HOME>/crw-completion-hook.json`, never `CRW_COMPLETION_HOOK_CONFIG`, and stands down in
 silence unless those settings name the plugin as owner, so a host that holds both Stop
-registrations evaluates each Stop once.
+registrations under user-owned settings evaluates each Stop once. Under settings the plugin owns,
+both registrations evaluate it: a hook-file entry reads no owner, and cannot, because the legacy
+launchers reach `crw hook` without the flag under those same settings. The only guard there is
+that `crw install hook
+--owner plugin` and runtime_install.py each refuse to register a second owner, so the state takes
+a hand edit ([decision 26](port/decisions.md)).
 
 The hook command does not `exec` and ends in `; exit 0`. When the pointer names nothing, as
 mid-rollback or with `HOME` unset, the shell reports the missing program on stderr and the
@@ -170,9 +175,11 @@ Known limits of this wiring:
   releases the Stop with no output at all. That `crw hook` takes `--plugin-launch` for a
   settings path relative to its working directory, finds none, exits 0 and writes no journal
   row. In both cases the bridge exits 2 from argument parsing, so the server does not start and
-  no bridge runs without the recorded policy. The only guard is the order in step 1 of
-  [turning the wired surfaces on](#turning-the-wired-surfaces-on). To confirm it, end a turn and
-  read its journal row ([registration is not firing](runtime-install.md#registration-is-not-firing)).
+  no bridge runs without the recorded policy. That bridge answer tells the three runtimes apart
+  without side effects (decision 26), but nothing runs it yet. The only guard is the order in
+  step 1 of [turning the wired surfaces on](#turning-the-wired-surfaces-on). To confirm it, end a
+  turn and read its journal row
+  ([registration is not firing](runtime-install.md#registration-is-not-firing)).
 
 `wiring/crw_stop_hook.py` and `wiring/crw_bridge_mcp.py` still ship. The package no longer
 declares them. A turn whose Stop command was fixed before this change, or a session that loaded
@@ -285,8 +292,10 @@ directory the manifest declares, and the repository root keeps `skills` as a lin
 to it so links created before the move still resolve.
 
 A host carrying both runs two of everything. [Moving a manual install to the plugin
-install](plugin-transition.md) is how one becomes the other, and it owns the update, the failed
-update, the disable and the removal that follow.
+install](plugin-transition.md) described how one became the other, and the update, the failed
+update, the disable and the removal that follow. Its commands that change a host are retired since
+the payload declares the native wiring, and refuse; todo 39's `crw install transition` replaces
+them.
 
 ## Skill names
 

@@ -16,6 +16,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -124,11 +125,11 @@ func pythonHome(env map[string]string) string {
 }
 
 // readRegular is crw_bridge_mcp.py read_regular: opened without blocking, judged on the descriptor.
-// The error text is str(OSError).
-func readRegular(path string) ([]byte, error) {
+// path is the bytes opened; shown is the str Python opened them as, which str(OSError) names.
+func readRegular(path, shown string) ([]byte, error) {
 	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
 	if err != nil {
-		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+		return nil, &os.PathError{Op: "open", Path: shown, Err: err}
 	}
 	file := os.NewFile(uintptr(fd), path)
 	defer file.Close()
@@ -176,19 +177,26 @@ func canonical(path string) string {
 	return resolved
 }
 
-// fsEncodable is os.fsencode's answer: a lone surrogate (kept WTF-8 by the decoder) encodes only
-// in U+DC80..U+DCFF, the surrogateescape range.
-func fsEncodable(s string) bool {
-	b := []byte(s)
-	for i := 0; i+2 < len(b); i++ {
-		if b[i] == 0xed && b[i+1] >= 0xa0 && b[i+1] <= 0xbf {
-			cp := 0xd000 | rune(b[i+1]&0x3f)<<6 | rune(b[i+2]&0x3f)
+// fsencode is os.fsencode of a str the record decoded, which os.open and os.execve apply to every
+// path, argument and environment value: a lone surrogate in U+DC80..U+DCFF, which the decoder keeps
+// as WTF-8 and which is how runtime_install.py's json.dumps records a byte that is not UTF-8,
+// becomes that byte again (surrogateescape), and everything else stays UTF-8. ok is false where
+// Python raises UnicodeEncodeError: any other lone surrogate.
+func fsencode(s string) (string, bool) {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if i+2 < len(s) && s[i] == 0xed && s[i+1] >= 0xa0 && s[i+1] <= 0xbf && s[i+2] >= 0x80 && s[i+2] <= 0xbf {
+			cp := 0xd000 | rune(s[i+1]&0x3f)<<6 | rune(s[i+2]&0x3f)
 			if cp < 0xdc80 || cp > 0xdcff {
-				return false
+				return "", false
 			}
+			b.WriteByte(byte(cp - 0xdc00))
+			i += 2
+			continue
 		}
+		b.WriteByte(s[i])
 	}
-	return true
+	return b.String(), true
 }
 
 func repr(v any) string { return evidence.Repr(v) }
@@ -222,7 +230,8 @@ func policyEnvironment(env map[string]string, record string, reference any) (str
 		return "", "", fail("the record at " + record + " must name the execution policy as an absolute" +
 			" path with no surrounding whitespace or control characters, found " + repr(pathValue))
 	}
-	if !fsEncodable(path) {
+	encoded, encodable := fsencode(path)
+	if !encodable {
 		return "", "", fail("the record at " + record + " names an execution policy path this system" +
 			" cannot encode, found " + repr(path))
 	}
@@ -231,7 +240,7 @@ func policyEnvironment(env map[string]string, record string, reference any) (str
 		return "", "", fail("the record at " + record + " must name the execution policy digest as 64" +
 			" lowercase hexadecimal characters")
 	}
-	if named, set := inherited(env, execution.EnvPolicy); set && canonical(named) != canonical(path) {
+	if named, set := inherited(env, execution.EnvPolicy); set && canonical(named) != canonical(encoded) {
 		return "", "", fail("the record at " + record + " names the execution policy " + repr(path) +
 			" and this process was started with " + execution.EnvPolicy + "=" + repr(named) +
 			". Unset the variable, or register the other file")
@@ -241,7 +250,7 @@ func policyEnvironment(env map[string]string, record string, reference any) (str
 			" and this process was started with " + execution.EnvDigest + "=" + expected +
 			". Unset the variable, or register the policy it names")
 	}
-	raw, err := readRegular(path)
+	raw, err := readRegular(encoded, path)
 	if err != nil {
 		return "", "", fail("the execution policy the record at " + record + " names could not be read (" +
 			path + ": " + osText(err) + "). The bridge is not started without it, because it" +
@@ -254,17 +263,17 @@ func policyEnvironment(env map[string]string, record string, reference any) (str
 			" after it was registered, so the bridge is not started under a policy nobody" +
 			" registered." + repair)
 	}
-	return path, digest, nil
+	return encoded, digest, nil
 }
 
 // Prepare is crw_bridge_mcp.py main() up to its exec: the record read and judged, then the bridge
-// arguments (the record's, then the launcher's own) and the environment it starts under.
-// bridgeExecutable is checked as Python checks it and not executed: the Go runtime behind the
-// pointer is the bridge.
+// arguments (the record's, fs-encoded, then the launcher's own) and the environment it starts
+// under. bridgeExecutable is checked as Python checks it, its execv included, and not executed: the
+// Go runtime behind the pointer is the bridge.
 func Prepare(env map[string]string, extra []string) ([]string, map[string]string, error) {
 	home, how := codexHome(env)
 	record := purePath(home + "/" + RecordName)
-	raw, err := readRegular(record)
+	raw, err := readRegular(record, record)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil, fail("no record at " + record + " (resolved from " + how + "). If the" +
 			" package is to own this server, run " + RepairCommand + " to write it. If this host" +
@@ -301,7 +310,8 @@ func Prepare(env map[string]string, extra []string) ([]string, map[string]string
 			", and this package declares " + repr(declaredServer) +
 			"; the record belongs to a registration this launcher does not start")
 	}
-	if executable, ok := evidence.Get(document, "bridgeExecutable").(string); !ok || !strings.HasPrefix(executable, "/") {
+	executable, ok := evidence.Get(document, "bridgeExecutable").(string)
+	if !ok || !strings.HasPrefix(executable, "/") {
 		return nil, nil, fail("the record at " + record + " must name bridgeExecutable as an absolute path")
 	}
 	arguments := []string{}
@@ -337,6 +347,21 @@ func Prepare(env map[string]string, extra []string) ([]string, map[string]string
 		environment[execution.EnvPolicy] = path
 		environment[execution.EnvDigest] = digest
 	}
+	// os.execv then encodes the executable and each argument in turn, and a lone surrogate outside
+	// the surrogateescape range or a NUL raises there: a traceback, exit 1, and no bridge. The
+	// executable is not run here, but a record Python never starts is refused all the same.
+	if _, encodable := fsencode(executable); !encodable || strings.ContainsRune(executable, 0) {
+		return nil, nil, fail("the record at " + record + " names bridgeExecutable " + repr(executable) +
+			", which this system cannot pass to exec. Rewrite it with " + RepairCommand + ".")
+	}
+	for i, word := range arguments {
+		encoded, encodable := fsencode(word)
+		if !encodable || strings.ContainsRune(word, 0) {
+			return nil, nil, fail("the record at " + record + " lists the argument " + repr(word) +
+				", which this system cannot pass to exec. Rewrite it with " + RepairCommand + ".")
+		}
+		arguments[i] = encoded
+	}
 	return append(arguments, extra...), environment, nil
 }
 
@@ -370,8 +395,26 @@ func Bridge(program string, args []string) int {
 	if !errors.As(err, &refused) {
 		refused = &refusal{err.Error()}
 	}
-	fmt.Fprintln(os.Stderr, "crw bridge launcher: "+refused.message)
+	fmt.Fprintln(os.Stderr, stderrText("crw bridge launcher: "+refused.message))
 	return 2
+}
+
+// stderrText is text as Python's sys.stderr writes it (errors="backslashreplace"): a lone
+// surrogate, which UTF-8 cannot carry, as its escape, and every other character as it stands. A
+// record path or policy path that holds one reaches the refusal unescaped, as Python's str() of it
+// does, and only the stream escapes it.
+func stderrText(text string) string {
+	var b strings.Builder
+	for i := 0; i < len(text); {
+		r, size := settings.CodePoint(text, i)
+		if r >= 0xd800 && r <= 0xdfff {
+			fmt.Fprintf(&b, "\\u%04x", r)
+		} else {
+			b.WriteString(text[i : i+size])
+		}
+		i += size
+	}
+	return b.String()
 }
 
 // environ is the process environment entries with environment's values for the two policy

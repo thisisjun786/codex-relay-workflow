@@ -46,10 +46,10 @@ read by `hook_probe.py` through `scripts/ci/contracts.py`, not by a test file; t
 ## Totals
 
 Files: 124
-Tests: 6163
+Tests: 6165
 Class A: files=16 tests=633
 Class B: files=88 tests=3368
-Class C: files=20 tests=2162
+Class C: files=20 tests=2164
 
 ## Todo 15 bridge property progress (2026-09-25)
 
@@ -363,7 +363,7 @@ with no Python counterpart: the release archive's SHA256SUMS verification
 | `scripts/ci/tests/test_packages.py` | 27 | C | packages check never prints success over an empty or skipped run; `--shard` splits whole modules disjointly and completely, balanced on recorded seconds | - | todo 47 / CRW-160 | drop: packages.py only runs the Python suites and is deleted in todo 44/47; the property (no success over an empty or skipped run) is inherited by todo 9's `CRW_CONTRACT_STRICT=1` skip counting and `go test` exit status; the shard split leaves with the Python suites it divides | importlib load of scripts/ci/packages.py |
 | `scripts/ci/tests/test_parent_title.py` | 9 | A | parent-title helper command surface and coverage guard | `plugins/crw/skills/crw-run/scripts/fixtures/titles` | todo 35 / CRW-156 | corpus: skill-scripts (domain added by todo 35) | - |
 | `scripts/ci/tests/test_plugin.py` | 62 | C | plugin package validator vs shapes that install silently wrong | - | todo 47 / CRW-160 | go-test: `crw-dev ci plugin` (todo 47; `internal/dev/ci` Test47_PLG_1..18) | importlib load of scripts/ci/plugin.py |
-| `scripts/ci/tests/test_plugin_transition.py` | 239 | C | manual-to-plugin transition on synthetic hosts | - | todo 39 / CRW-158 | go-test: `crw install transition` (todo 39) | ast/importlib over crw_transition |
+| `scripts/ci/tests/test_plugin_transition.py` | 241 | C | manual-to-plugin transition on synthetic hosts | - | todo 39 / CRW-158 | go-test: `crw install transition` (todo 39) | ast/importlib over crw_transition |
 | `scripts/ci/tests/test_plugin_wiring.py` | 188 | C | one owner registers the Stop hook; launchers resolve | - | todo 34 / CRW-156 | go-test: `internal/pluginwiring` and `internal/relay/hook` TestPluginLaunch_* for StopLauncher, BridgeLauncher*, LauncherContractVersion (todo 34) + go-test: isolated Codex home integration for those and DeclaredStopCommand (todo 40) + go-test: `internal/runtime/install` for Ownership, BridgeRecord*, RegisterMcpDoesNotShadowADeclaredServer and the legacy Stop bootstrap (todo 38) + go-test: `crw-dev ci plugin` for DeclaredComponent, TheDeclaredApprovalPolicyIsChecked (todo 47) + drop: StableLauncherPlacement, StableLauncherRemoval (retire-dead: the Go installer places no fallback launcher) | exec of plugins/crw/wiring/crw_bridge_mcp.py (:80) + ast (:2132) |
 | `scripts/ci/tests/test_relay_schema_shipped.py` | 1 | A | shipped store objects keep their CREATE text | `scripts/ci/tests/relay_schema_shipped.json` | todo 17 / CRW-152 | corpus: sqlite-ddl | - |
 | `scripts/ci/tests/test_release.py` | 10 | A | release workflow steps against fake git/gh | `scripts/ci/tests/{fake_git.sh,fake_gh.sh,release_steps.py}` | todo 12 / CRW-150 | corpus: release (domain added by todo 12) | - |

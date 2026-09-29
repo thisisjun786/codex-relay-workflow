@@ -1,5 +1,16 @@
 # Moving a manual install to the plugin install
 
+**Retired.** `transition`, `disable` and `remove` refuse with exit 2 and one line on stderr, and
+change nothing. The plugin payload now declares the native wiring
+([decision 26](port/decisions.md)): its Stop hook and bridge run the Go runtime's `crw` and
+`codex-thread-bridge` behind `$HOME/.local/share/crw-runtime/current`. These steps hand the
+surfaces only to a Python runtime (preflight requires `<dest>/current/bin/python3` and a cached
+payload equal to this checkout's), so on every host they accepted, an applied transition removed
+the working Stop registration and bridge table, reported every step settled, and left a Stop hook
+and a bridge that could not run there. `inspect`, `check-declaration` and `swap-state` still
+answer, read-only. Todo 39 replaces the tool with `crw install transition` and deletes it. The rest
+of this page describes the tool as it was.
+
 The [linked installation](../README.md#install) and the [plugin installation](plugin-packaging.md)
 can both be present on one host, and on that host two things run for every one that should. This
 page is how a host with a manual install becomes a host with a plugin install, and what owns the

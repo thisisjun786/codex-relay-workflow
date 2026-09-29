@@ -28,7 +28,7 @@ differ, when a line count differs from `wc -l`, when an owning issue is missing,
 
 ## Files
 
-Total non-test lines: 101571
+Total non-test lines: 101588
 
 | path | lines | invoked | runs | owner | disposition | consumer_search | removal_trigger |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -148,7 +148,7 @@ Total non-test lines: 101571
 | `scripts/crw_transition/steps.py` | 2704 | imported by plugin_transition; spawns scripts/ci/plugin.py (:562) | relay host | CRW-158 | port | - | - |
 | `scripts/hook_comparison.py` | 2774 | dev CLI `python3 scripts/hook_comparison.py` (docs/hook-comparison.md); spawns runtime_install/relay/tracer | dev/CI | CRW-159 | port | - | - |
 | `scripts/install.py` | 98 | operator CLI `python3 scripts/install.py --check` or `--apply` (docs/runtime-install.md:18); spawned by runtime_install.py:294 and crw_transition/inventory.py:454 | end user + relay host | CRW-158 | port | - | - |
-| `scripts/plugin_transition.py` | 381 | operator CLI `python3 scripts/plugin_transition.py` (docs/plugin-transition.md) | end user + relay host | CRW-158 | port | - | - |
+| `scripts/plugin_transition.py` | 398 | operator CLI `python3 scripts/plugin_transition.py` (docs/plugin-transition.md; transition, disable and remove retired: they refuse since decision 26) | end user + relay host | CRW-158 | port | - | - |
 | `scripts/port/check_inventory.py` | 113 | dev CLI `python3 scripts/port/check_inventory.py` (this document's check, todo 1) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn check_inventory` over scripts/, docs/, .github/ (consumers: this document only; no CI job runs it yet) | the Python inventory is obsolete once todo 44 (CRW-141) deletes the product Python; deleted with the remaining dev Python in todo 48 |
 | `scripts/port/corpus_notes.py` | 230 | imported by scripts/port/check_corpus_count.py (todo 6) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn corpus_notes` over scripts/, docs/, .github/ (consumer: scripts/port/check_corpus_count.py; no CI job runs it yet) | todo 48 retires the Python corpus checker after the Go tests assume its coverage obligation |
 | `scripts/port/check_corpus_count.py` | 208 | dev CLI `python3 scripts/port/check_corpus_count.py` (todo 6) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn check_corpus_count` over scripts/, docs/, .github/ (consumer: todo 6 corpus-coverage validation; no CI job runs it yet) | todo 48 retires the Python corpus checker after the Go tests assume its coverage obligation |

@@ -3,11 +3,14 @@ package hook
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -163,6 +166,43 @@ func TestPluginLaunch_double_registration_evaluates_the_Stop_once(t *testing.T) 
 			rows := rowsAt(t, home)
 			if requests := stop(); requests != 1 || len(rows) != 1 || rows[0]["configuration"] != filepath.Join(home, ConfigName) {
 				t.Fatalf("plugin command %v: guard asked %d times, %d journal rows %v; want 1 and 1", plugin, requests, len(rows), outcomes(rows))
+			}
+		})
+	}
+}
+
+// The once above holds because the settings name the user. With settings the plugin owns, the
+// declared command evaluates, and so does a leftover hook-file `crw hook` entry: that path reads
+// no owner, and cannot, because the legacy crw_stop_hook.py call reaches it without the flag under
+// the same plugin-owned settings (crw_stop_hook.py and completion_hook.py behave the same). Only
+// the installers keep this state from arising (`crw install hook --owner plugin` and
+// runtime_install.py refuse the second registration), so it needs a hand edit; this pins what
+// happens then: an unestablished Stop asks the guard twice, and an established one is kept to one
+// request by the event claim and writes a duplicate_invocation row (docs/port/decisions.md 26).
+func TestPluginLaunch_plugin_owned_settings_beside_a_hook_file_entry_evaluate_the_Stop_twice(t *testing.T) {
+	plugin := declaredPluginHookArgs(t)
+	for name, c := range map[string]struct {
+		payload  func(home string) string
+		requests int
+		rows     []any
+	}{
+		"unestablished identity": {func(string) string { return `{"session_id":"s","turn_id":"t"}` }, 2, []any{"guard_answered", "guard_answered"}},
+		"established identity":   {establishedStop(t), 1, []any{"duplicate_invocation", "guard_answered"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := hookHome(t, 5)
+			withOwner(t, home, "plugin")
+			stop := countingControl(t, home)
+			for _, args := range [][]string{{"hook"}, plugin} {
+				if code, stdout, stderr := runHookWith(t, home, c.payload(home), args...); code != 0 || stdout != "" || stderr != "" {
+					t.Fatalf("%v: exit %d stdout %q stderr %q", args, code, stdout, stderr)
+				}
+			}
+			// Sorted: the journal's row order is not the order of the two invocations.
+			seen := outcomes(rowsAt(t, home))
+			slices.SortFunc(seen, func(a, b any) int { return strings.Compare(fmt.Sprint(a), fmt.Sprint(b)) })
+			if requests := stop(); requests != c.requests || !reflect.DeepEqual(seen, c.rows) {
+				t.Fatalf("guard asked %d times, journal rows %v; want %d and %v", requests, seen, c.requests, c.rows)
 			}
 		})
 	}
