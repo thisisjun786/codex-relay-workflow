@@ -13,7 +13,9 @@ package definition
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -79,7 +81,9 @@ func Of(name string) (Component, bool) {
 // anything under __pycache__, sorted by POSIX relative path, each contributing its relative
 // path, a zero byte and the SHA-256 of its bytes. A subtree that cannot be read fails the walk
 // instead of being left out. Symbolic links to directories are not descended; a link to a file
-// counts as the file it names.
+// counts as the file it names. An entry whose target is absent (a dangling link) is not a file,
+// as os.DirEntry.is_file answers; any other failure to examine one (a link loop, a directory
+// without search permission) fails the walk, as it raises out of files_under.
 func Digest(root string) (string, error) {
 	var files []string
 	pending := []string{root}
@@ -100,7 +104,12 @@ func Digest(root string) (string, error) {
 				continue
 			}
 			info, err := os.Stat(path)
-			if err != nil || !info.Mode().IsRegular() {
+			switch {
+			case errors.Is(err, fs.ErrNotExist):
+				continue
+			case err != nil:
+				return "", err
+			case !info.Mode().IsRegular():
 				continue
 			}
 			relative, err := filepath.Rel(root, path)

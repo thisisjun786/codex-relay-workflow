@@ -331,3 +331,63 @@ func TestAFailedCandidateIsUnreadableWhateverItPrinted(t *testing.T) {
 		t.Fatalf("a candidate's own readable-false answer at exit 0 was not kept: %s", golden.Canon(got))
 	}
 }
+
+// A store whose WAL holds frames with no shared-memory index beside it (an unclean shutdown)
+// has commits an immutable read of the main file would miss, here a table the candidate does
+// not declare: its schema is unreadable, never AGREES, and the read creates nothing. An empty
+// WAL beside no index holds no commit, so the main file is read and agrees.
+func TestAStoreWhoseWALHasNoIndexIsUnreadable(t *testing.T) {
+	ctx := context.Background()
+	live := filepath.Join(t.TempDir(), "live")
+	if err := os.MkdirAll(live, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s, err := store.Open(ctx, filepath.Join(live, "relay.sqlite3"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	checkpointed, err := os.ReadFile(filepath.Join(live, "relay.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err = store.Open(ctx, filepath.Join(live, "relay.sqlite3"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.DB.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS only_in_wal (x)"); err != nil {
+		t.Fatal(err)
+	}
+	wal, err := os.ReadFile(filepath.Join(live, "relay.sqlite3-wal"))
+	if err != nil || len(wal) <= 32 {
+		t.Fatalf("the live WAL holds no frame: %d %v", len(wal), err)
+	}
+	crashed := filepath.Join(t.TempDir(), "crashed")
+	if err := os.MkdirAll(crashed, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string][]byte{"relay.sqlite3": checkpointed, "relay.sqlite3-wal": wal} {
+		if err := os.WriteFile(filepath.Join(crashed, name), content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	declared := swapgate.DeclaredSchema(ctx)
+	before := listing(t, crashed)
+	held := swapgate.StoreSchema(ctx, crashed, "")
+	cell := swapgate.SchemaCell(held, declared)
+	if record.Get(held, "readable") != false || !strings.Contains(scopeText(held), "shared-memory index") || record.Get(cell, "answer") != reading.Unreadable {
+		t.Errorf("a WAL with frames and no index was read as the store's schema: %s / %s", golden.Canon(held), golden.Canon(cell))
+	}
+	if after := listing(t, crashed); after != before {
+		t.Errorf("the read changed the state directory:\n before %s\n after  %s", before, after)
+	}
+	if err := os.WriteFile(filepath.Join(crashed, "relay.sqlite3-wal"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := swapgate.SchemaCell(swapgate.StoreSchema(ctx, crashed, ""), declared); record.Get(got, "answer") != swapgate.Agrees {
+		t.Errorf("an empty WAL beside no index: %s", golden.Canon(got))
+	}
+}

@@ -3,7 +3,10 @@ BINARY := dist/crw
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 # The git tree the binary is built from: the fault sweepers read it from the host record as the
 # installed revision, and Go build information carries only the commit (internal/runtime/record).
-SOURCE_TREE := $(shell git rev-parse 'HEAD^{tree}' 2>/dev/null)
+# Stamped only from a clean working tree (`git status --porcelain` empty, the test Go's own
+# vcs.modified applies): a build with modified or untracked files is not HEAD's tree, so it
+# stamps nothing and the sweepers report the revision as incomplete (decision 34).
+SOURCE_TREE := $(shell test -z "$$(git status --porcelain 2>/dev/null)" && git rev-parse 'HEAD^{tree}' 2>/dev/null)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X github.com/thisisjun786/codex-relay-workflow/internal/runtime/record.sourceTree=$(SOURCE_TREE)
 STATICCHECK := $(GO) run honnef.co/go/tools/cmd/staticcheck
 # Per-package test binary budget. internal/relay/delivery drives its Python oracle serially and

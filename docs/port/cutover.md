@@ -229,8 +229,12 @@ Details that matter:
   mirror `S/takeover.json` and one in-place read of `schema_meta` that copies nothing and
   creates no SQLite sidecar (Python `ownership.check_stop`/`stop_metadata`, Go
   `store.OpenStopRead` in the native hook's `ownsGuard`): with `D-wal` and `D-shm` both present
-  it opens `mode=ro`, which sees committed WAL frames and creates nothing; otherwise every
-  commit is in `D` and it reads `D` with `immutable=1`. The disposable snapshot copy
+  it opens `mode=ro`, which sees committed WAL frames and creates nothing; with no `D-wal`, or
+  one holding no frame, every commit is in `D` and it reads `D` with `immutable=1`. A `D-wal`
+  holding frames beside no usable `D-shm` (an unclean shutdown) has no such read, since an
+  immutable read would miss its commits: Go's read fails and the hook asks the owner rather than
+  trusting `D` (`store.InPlaceRead`; Python's `stop_metadata` still reads `D` immutable there,
+  a deferred review finding). The disposable snapshot copy
   (`metadata`, `SnapshotMeta`) stays with writers' admission and diagnostics; on a Stop it was a
   write outside the hook's root and a copy of the whole live store per turn end.
 - Two waits that another writer can hold for an unbounded time are bounded by 30 s, the

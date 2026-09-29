@@ -2,6 +2,7 @@ package record_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
@@ -69,5 +70,70 @@ func TestFileDigestIsTheBytesSHA256(t *testing.T) {
 	}
 	if got, _ := record.FileDigest(path); got != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" {
 		t.Fatal(got)
+	}
+}
+
+// The Makefile stamps a tree only from a clean working tree: the repository's own Makefile,
+// run in a temporary repository, stamps HEAD's tree when nothing is modified or untracked (an
+// ignored build output included), and nothing once a tracked file is modified or an untracked
+// file exists, because the binary is then not built from that tree. Source then records null
+// trees (TestSourceWithoutAStampIsNull).
+func TestMakefileStampsTheTreeOnlyFromACleanTree(t *testing.T) {
+	for _, tool := range []string{"git", "make"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(tool + " is not installed")
+		}
+	}
+	makefile, err := os.ReadFile(filepath.Join(golden.Root(), "Makefile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	env := append(os.Environ(), "HOME="+repo, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "MAKEFLAGS=", "MAKELEVEL=")
+	run := func(name string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command(name, args...)
+		cmd.Dir, cmd.Env = repo, env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s %v: %v\n%s", name, args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	for name, content := range map[string]string{"Makefile": string(makefile), ".gitignore": "/dist/\n", "main.go": "package main\n"} {
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run("git", "init", "-q")
+	run("git", "add", ".")
+	run("git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "fixture")
+	tree := run("git", "rev-parse", "HEAD^{tree}")
+	stamp := func() string {
+		return run("make", "-s", "--no-print-directory", "--eval", `print-stamp: ; @echo "[$(SOURCE_TREE)]"`, "print-stamp")
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "dist"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "dist", "crw"), []byte("built"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := stamp(); got != "["+tree+"]" {
+		t.Errorf("a clean tree (an ignored build output beside it): %s, want [%s]", got, tree)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "extra.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := stamp(); got != "[]" {
+		t.Errorf("an untracked file was built over, yet HEAD's tree was stamped: %s", got)
+	}
+	if err := os.Remove(filepath.Join(repo, "extra.go")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := stamp(); got != "[]" {
+		t.Errorf("a modified file was built, yet HEAD's tree was stamped: %s", got)
 	}
 }

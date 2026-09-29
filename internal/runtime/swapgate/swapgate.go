@@ -377,14 +377,14 @@ func StoreSchema(ctx context.Context, state, socket string) Object {
 
 // readCatalog asks SchemaObjectsQuery of the database at path without creating anything beside
 // it and without store.Open (which refuses the live state root before todo 42 and would run the
-// schema script). It is the Stop path's read-only rule (store.OpenStopRead): with both -wal and
-// -shm present a WAL connection left SQLite's coordination files and mode=ro reads its
-// committed frames; otherwise every commit is in the main file, which is read immutable=1,
-// because a plain mode=ro would create both sidecars. It takes no lock and writes nothing.
+// schema script). It reads under the Stop path's no-sidecar rule (store.InPlaceRead): mode=ro
+// when a WAL connection left both -wal and -shm, immutable=1 when no -wal holds a frame, and no
+// read at all when a -wal holds frames beside no usable -shm, whose commits an immutable read
+// would miss. It takes no lock and writes nothing.
 func readCatalog(ctx context.Context, path string) (Object, error) {
-	params := url.Values{"mode": {"ro"}}
-	if !exists(path+"-wal") || !exists(path+"-shm") {
-		params.Set("immutable", "1")
+	params, err := store.InPlaceRead(path)
+	if err != nil {
+		return nil, err
 	}
 	params.Set("_pragma", "busy_timeout(5000)")
 	u := url.URL{Scheme: "file", Path: path, RawQuery: params.Encode()}
@@ -413,11 +413,6 @@ func readCatalog(ctx context.Context, path string) (Object, error) {
 		objects = append(objects, record.Object{{Key: name, Value: value}}...)
 	}
 	return objects, rows.Err()
-}
-
-func exists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }
 
 // DeclaredSchema is the schema this build installs: its DDL script and then its guard indexes

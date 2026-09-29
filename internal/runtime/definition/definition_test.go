@@ -102,3 +102,57 @@ func TestDigestIsTheOPS12Walk(t *testing.T) {
 		}
 	}
 }
+
+// An entry the walk cannot examine is answered as definition.ops12_digest answers it: a link
+// whose target is absent is not a file (os.DirEntry.is_file is False) and leaves the digest as
+// it was, while a link loop or a link into a directory without search permission raises there,
+// so here it fails the walk instead of producing a digest that claims the whole tree.
+func TestDigestFailsOnAnEntryItCannotExamine(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "pkg")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.py"), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	base, err := definition.Digest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "nowhere"), filepath.Join(root, "dangling")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := definition.Digest(root); err != nil || got != base {
+		t.Fatalf("a dangling link: %s %v, want %s", got, err, base)
+	}
+	if err := os.Symlink("loop", filepath.Join(root, "loop")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := definition.Digest(root); err == nil {
+		t.Errorf("a link loop was left out of digest %s", got)
+	}
+	if err := os.Remove(filepath.Join(root, "loop")); err != nil {
+		t.Fatal(err)
+	}
+	if os.Geteuid() == 0 {
+		return // root searches any directory
+	}
+	locked := filepath.Join(dir, "locked")
+	if err := os.MkdirAll(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(locked, "f.py"), []byte("f"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(locked, "f.py"), filepath.Join(root, "behind")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(locked, 0o755)
+	if got, err := definition.Digest(root); err == nil {
+		t.Errorf("a link into a directory without search permission was left out of digest %s", got)
+	}
+}

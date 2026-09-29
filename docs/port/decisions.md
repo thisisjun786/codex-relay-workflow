@@ -1175,9 +1175,12 @@ its own), `entryPoint`, `environment`, `integrity` and `binaryDigest` (the binar
 the installed revision: `repositoryCommit` and `workingTreeClean` come from the binary's build
 information, and `repositoryTree` and `subdirectoryTree` (equal: the Go module is the repository
 root) from the tree `make build`/`make dist` stamp with
-`-X .../internal/runtime/record.sourceTree=$(git rev-parse HEAD^{tree})`. A binary built without
-the stamp - today every GoReleaser release build, until todo 44 adds the stamp to the release
-workflow - records null trees, and both sweepers then report "this copy's install entry records
+`-X .../internal/runtime/record.sourceTree=$(git rev-parse HEAD^{tree})`, and only when the
+working tree is clean (`git status --porcelain` empty, the test behind Go's own `vcs.modified`):
+a build with a modified tracked file or an untracked one is not built from HEAD's tree, so it
+stamps nothing. A binary built without the stamp - a build from a dirty tree, and today every
+GoReleaser release build, until todo 44 adds the stamp to the release workflow - records null
+trees, and both sweepers then report "this copy's install entry records
 an incomplete revision (repositoryTree, subdirectoryTree missing or malformed), which identifies
 nothing" rather than a revision nobody measured. The dead `outgoing` key and component-level
 facts are carried through when present and never written.
@@ -1190,7 +1193,9 @@ Evidence: scripts/crw_runtime/hostrecord.py:77-160, :451-540; internal/runtime/r
 internal/runtime/record/testdata/host-record-v1.json (the relay host's record, redacted and
 reduced to three installs and two points per component); `TestV1RecordRoundTripsByteForByte`,
 `TestUpdateWritesWhatPythonWrites` (seven deltas against Python's bytes in
-internal/runtime/testdata/goldens.json), `Test37_SweeperReadsTheGoInstallEntry`
+internal/runtime/testdata/goldens.json), `TestMakefileStampsTheTreeOnlyFromACleanTree` (the
+Makefile run in a temporary repository: clean stamps HEAD's tree, modified or untracked stamps
+nothing), `TestSourceWithoutAStampIsNull`, `Test37_SweeperReadsTheGoInstallEntry`
 (internal/relay/faults) and, under the parity tag, `TestParity_python_faultsweep_reads_a_go_install_entry`.
 
 ## 35. The components definition stays definitionVersion 1, without per-target digests
@@ -1215,23 +1220,34 @@ Evidence: scripts/crw_runtime/components.json; scripts/crw_runtime/definition.py
 
 Decision: the runtime swap gate settles store presence with an lstat of the path the relay's
 own selection rule resolves (`store.ResolveStateDir`) and reads the store's schema objects with a
-read-only SQLite connection that creates nothing beside the database: `mode=ro` when both `-wal`
-and `-shm` exist (a connection left them and its committed frames are read), `immutable=1`
-otherwise, as `store.OpenStopRead` reads the Stop path's store. It never calls `store.Open`, runs
-no schema script and takes no lock. The daemon and in-flight cells ask the SELECTED relay
+read-only SQLite connection that creates nothing beside the database, under `store.InPlaceRead`,
+the rule `store.OpenStopRead` reads the Stop path's store with: `mode=ro` when both `-wal` and
+`-shm` exist (a connection left them and its committed frames are read); `immutable=1` when there
+is no `-wal` or it holds no frame (empty, or only its 32-byte header), since every commit is then
+in the main file; and no read at all when a `-wal` holding frames has no usable `-shm` beside it
+(an unclean shutdown) or cannot be examined, because an immutable read ignores frames that may
+commit what the main file lacks and `mode=ro` would create the index. The swap gate reports that
+store's schema unreadable, so the gate is UNESTABLISHED rather than AGREES, and the Stop owner
+read fails, so the native hook asks the owner rather than trusting the main file. It never
+calls `store.Open`, runs no schema script and takes no lock. The daemon and in-flight cells ask the SELECTED relay
 executable (`service status`, `doctor`) as a subprocess, and the candidate's schema is what the
 candidate binary prints for `crw doctor declared-schema --json`.
 
 Why: runtime_install.py asked `<interpreter> -c <program>` for all three, and a Go runtime has
 no interpreter. `store.Open` refuses the live state root before todo 42 (`ErrLiveState`) and a
-plain `mode=ro` connection creates `-wal` and `-shm` beside a checkpointed store.
+plain `mode=ro` connection creates `-wal` and `-shm` beside a checkpointed store. Python's
+`read_only_rows` answers the swap gate from a copy, which reads the WAL; its
+`ownership.stop_metadata` shares the immutable read of a WAL without its index (deferred review
+finding PR190 4130471334).
 
 Evidence: scripts/runtime_install.py:470-600 (`_STORE_TABLES_PROGRAM`,
-`_CANDIDATE_TABLES_PROGRAM`, `store_presence`); internal/relay/store/hold.go:127-150
-(`OpenStopRead`); internal/runtime/swapgate/swapgate.go (`StoreSchema`, `readCatalog`,
+`_CANDIDATE_TABLES_PROGRAM`, `store_presence`); internal/relay/store/hold.go (`InPlaceRead`,
+`OpenStopRead`); internal/runtime/swapgate/swapgate.go (`StoreSchema`, `readCatalog`,
 `DeclaredSchema`); `TestStoreReadingsCreateNothingAndAgreeWithTheDeclaredSchema` (the state
-directory's file set is unchanged, and a table committed only to a live WAL is read) and, under
-the parity tag, `TestParity_declared_schema_is_the_python_candidates`.
+directory's file set is unchanged, and a table committed only to a live WAL is read),
+`TestAStoreWhoseWALHasNoIndexIsUnreadable`, `TestInPlaceReadRefusesAWALWithoutItsIndex`,
+`Test30StopOwnerReadCreatesNothing/wal-without-index` and, under the parity tag,
+`TestParity_declared_schema_is_the_python_candidates`.
 
 ## 37. Two third-party readers: github.com/BurntSushi/toml and mvdan.cc/sh/v3
 

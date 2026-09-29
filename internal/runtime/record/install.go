@@ -32,7 +32,8 @@ func resolvePath(path string) (string, error) {
 }
 
 // sourceTree is the git tree of the commit this binary was built from, stamped at build time
-// (Makefile: -X .../internal/runtime/record.sourceTree=$(git rev-parse HEAD^{tree})). Go's
+// (Makefile: -X .../internal/runtime/record.sourceTree=$(git rev-parse HEAD^{tree}), and only
+// from a clean working tree, so a build of modified or untracked files stamps nothing). Go's
 // build information carries the commit and whether the tree was modified, never a tree hash,
 // and both fault sweepers require repositoryTree and subdirectoryTree as 40-hex values.
 var sourceTree string
