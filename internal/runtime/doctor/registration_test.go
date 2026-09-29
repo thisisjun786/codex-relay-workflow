@@ -124,6 +124,7 @@ func TestDoctorJudgesTheBridgeRecordAsTheLauncherAcceptsIt(t *testing.T) {
 	v2 := func(reference any) string {
 		return bridge(map[string]any{"recordVersion": 2, "executionPolicy": reference})
 	}
+	write(t, filepath.Join(h.home, "pol\x80icy.toml"), "roles = []\n", 0o600)
 	mkdir(t, filepath.Join(h.home, "policy-directory"))
 	refused := func(name, record, want string) registrationCase {
 		return registrationCase{name: name, stop: goodStop, bridge: record, relay: "own", bridgeClass: "conflict", want: []string{want, "so it starts no bridge"}}
@@ -144,6 +145,10 @@ func TestDoctorJudgesTheBridgeRecordAsTheLauncherAcceptsIt(t *testing.T) {
 		refused("a policy that is a directory", v2(map[string]any{"path": filepath.Join(h.home, "policy-directory"), "digest": digest}), "is not a regular file"),
 		refused("a policy that changed", v2(map[string]any{"path": policy, "digest": strings.Repeat("0", 64)}), "now hashes to "+digest),
 		{name: "a version-2 record whose policy agrees", stop: goodStop, bridge: v2(map[string]any{"path": policy, "digest": digest}), relay: "own", bridgeClass: "own"},
+		// The launcher opens os.fsencode(path): a name holding a byte that is not UTF-8 is recorded
+		// as its surrogate escape and opened as that byte; a surrogate fsencode refuses names no file.
+		{name: "a policy whose name is not UTF-8", stop: goodStop, bridge: strings.Replace(v2(map[string]any{"path": filepath.Join(h.home, "POLICY-NAME"), "digest": digest}), "POLICY-NAME", `pol\udc80icy.toml`, 1), relay: "own", bridgeClass: "own"},
+		refused("a policy path fsencode refuses", strings.Replace(v2(map[string]any{"path": filepath.Join(h.home, "POLICY-NAME"), "digest": digest}), "POLICY-NAME", `pol\ud800icy.toml`, 1), "cannot encode"),
 		{name: "recordVersion true", stop: goodStop, bridge: bridge(map[string]any{"recordVersion": true}), relay: "own", bridgeClass: "own"},
 		{name: "recordVersion 1.0", stop: goodStop, bridge: strings.Replace(bridge(nil), `"recordVersion":1`, `"recordVersion":1.0`, 1), relay: "own", bridgeClass: "own"},
 		{name: "crw with its bridge mode", stop: goodStop, bridge: bridge(map[string]any{"bridgeExecutable": filepath.Join(h.current(), "bin", "crw"), "args": []any{"bridge"}}), relay: "own", bridgeClass: "own"},

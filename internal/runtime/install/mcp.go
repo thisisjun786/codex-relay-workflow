@@ -132,7 +132,13 @@ func policyFileComplaints(reference any) []string {
 	}
 	o := reference.(Object)
 	path, recorded := record.Get(o, "path").(string), record.Get(o, "digest").(string)
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	// The launcher opens os.fsencode(path): a byte the path held that is not UTF-8 is recorded
+	// as its surrogate escape, and opened as that byte again.
+	name, encodable := reading.FSEncode(path)
+	if !encodable {
+		return []string{"the execution policy path " + evidence.Repr(path) + " names a surrogate os.fsencode refuses, so no launcher can open it"}
+	}
+	file, err := os.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return []string{"the execution policy " + path + " could not be opened (" + store.PythonOSError(err) + ")"}
 	}
@@ -539,7 +545,9 @@ func executionPolicyReading(value string) (Object, string) {
 		return nil, err.Error()
 	}
 	summary := policy.Summary()
-	return Object{field("path", candidate), field("digest", summary["digest"]), field("mode", summary["mode"]), field("roles", ordered(summary["roles"])),
+	// Recorded as os.fsdecode spells it: a byte that is not UTF-8 is its surrogate escape, which
+	// the record carries as "\udcXX" and each launcher fs-encodes back to the byte.
+	return Object{field("path", reading.FSDecode(candidate)), field("digest", summary["digest"]), field("mode", summary["mode"]), field("roles", ordered(summary["roles"])),
 		field("parsedWith", "this crw binary's bridge policy parser; the installed runtime parses the file again at every start and decides for itself")}, ""
 }
 

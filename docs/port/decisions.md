@@ -415,7 +415,10 @@ replacement takes has to hold those same bytes, or its name is dropped and nothi
 The bridge record names its execution policy as runtime_install.py records it,
 `Path(value).expanduser().absolute()`: `..` is kept rather than folded by text, so the record,
 its digest and the bridge all name the file the kernel opens for that spelling, a symbolic link
-before the `..` included.
+before the `..` included. A name holding a byte that is not UTF-8 is recorded as `os.fsdecode`
+spells it (the byte as its surrogate escape, which the record carries as `"\udcXX"`) with the
+digest over the file itself, and every reader - the Python launcher, the Go wiring, `register-mcp`'s
+own check and the doctor - opens `os.fsencode` of it, the byte again.
 
 Evidence: scripts/crw_runtime/completion.py:55 (`CONFIG_NAME`), :550 (`complaints`), :2751
 (`configuration`); scripts/crw_runtime/bridgerecord.py:77 (`record_path`), :163 (`document`);
@@ -433,7 +436,8 @@ fallback); internal/relay/hook/adapter.go (args[0] is the settings path); intern
 `TestAnEntryPointEnvWouldMisreadIsRefused`, `TestTheExecutionPolicyPathIsSpelledAsPythonRecordsIt`,
 `TestATransitionNeverWritesAGoVariantBuiltFromStaleBytes`,
 `TestHookNeverWritesOverADocumentThatChangedAfterItWasRead`,
-`TestRegisterMCPNeverWritesOverARecordThatChangedAfterItWasRead`);
+`TestRegisterMCPNeverWritesOverARecordThatChangedAfterItWasRead`,
+`TestRegisterMCPRecordsANonUTF8PolicyPathAsPythonDoes`);
 draft L1, L4, L5, GAP-9, D6.
 
 ## 19. Bridge provenance
