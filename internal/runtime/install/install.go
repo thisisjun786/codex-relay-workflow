@@ -389,7 +389,10 @@ func (r *run) reclaim(standing []contract.Field) (Object, int, bool) {
 	if err := r.ctx.Err(); err != nil {
 		return keep(interrupted(err), "nothing was removed, built or written.")
 	}
-	free, residue, err := discard(r.environment)
+	free, residue, err := discard(r.environment, r.tombstoneRefusal)
+	if errors.Is(err, errForeignTombstone) {
+		return keep("the abandoned staging is not removed: "+err.Error(), "nothing was removed, built or written.", field("tombstone", filepath.Join(r.o.Dest, tombstonePrefix+filepath.Base(r.environment))))
+	}
 	if !free {
 		return keep("the abandoned staging could not be removed: "+store.PythonOSError(err), "nothing else was written.", field("residualPaths", []any{r.environment}))
 	}
@@ -398,6 +401,15 @@ func (r *run) reclaim(standing []contract.Field) (Object, int, bool) {
 			field("recoveryRequires", "crw install remove "+residue+" finishes it"))
 	}
 	return nil, 0, true
+}
+
+// tombstoneRefusal is why a tombstone already at this run's directory's tombstone name may not be
+// deleted before the directory is set aside there, or "" (tombstoneInUse).
+func (r *run) tombstoneRefusal(tombstone string) string {
+	if u := tombstoneInUse(r.ctx, r.o, tombstone); u != nil {
+		return u.detail
+	}
+	return ""
 }
 
 // settleInService writes the COMPLETE claim of a runtime that a promotion put in service when
@@ -441,13 +453,13 @@ func (r *run) build() (Object, int) {
 		installs = append(installs, field(c.Name, entry))
 		delta.Installs = append(delta.Installs, record.Named{Component: c.Name, Entry: entry})
 	}
-	if written, err := record.Update(r.o.RecordPath, definition.Version, delta); err != nil || !written.Usable() {
+	if written, err := record.UpdateContext(r.ctx, r.o.RecordPath, definition.Version, delta); err != nil || !written.Usable() {
 		return r.failed("record the install entries", failure{reading: &written, err: err})
 	}
 	r.step("record the install entries", true)
 	measurement, points := r.measure(installs, digest)
 	if len(points) > 0 {
-		if appended, err := record.Update(r.o.RecordPath, definition.Version, record.Delta{Points: points}); err != nil || !appended.Usable() {
+		if appended, err := record.UpdateContext(r.ctx, r.o.RecordPath, definition.Version, record.Delta{Points: points}); err != nil || !appended.Usable() {
 			return r.failed("record the measured point", failure{reading: &appended, err: err})
 		}
 	}
@@ -670,7 +682,7 @@ func (r *run) promote(installs, measurement Object) (Object, int) {
 		r.step("carry the Stop settings to this runtime", false, field("detail", interrupted(err)))
 		return r.failed("carry the Stop settings to this runtime", failure{err: err})
 	}
-	transition := transitionSettings(r.o.CodexHome, r.pointerPath, doctor.KindGoRuntime)
+	transition := transitionSettings(r.ctx, r.o.CodexHome, r.pointerPath, doctor.KindGoRuntime)
 	if transition.refused != "" {
 		r.step("carry the Stop settings to this runtime", false, field("detail", transition.refused))
 		return r.failed("carry the Stop settings to this runtime", failure{settings: append(transition.report, field("undone", transition.undo()))})
@@ -687,7 +699,7 @@ func (r *run) promote(installs, measurement Object) (Object, int) {
 		undone := transition.undo()
 		return r.failed("commit the selection", failure{err: err, settings: append(transition.report, field("undone", undone))})
 	}
-	promoted, err := commitSelection(r.o.RecordPath, definition.Version, record.Delta{
+	promoted, err := commitSelection(r.ctx, r.o.RecordPath, definition.Version, record.Delta{
 		Select:   selection,
 		Pointer:  Object{field("path", r.pointerPath), field("recordedAt", r.o.stamp()), field("recordedBy", r.o.Issue)},
 		Outgoing: &record.Outgoing{Value: outgoing},
@@ -786,17 +798,28 @@ func (r *run) resume() (Object, int) {
 			return refusedResult(r.command, "finishing this promotion moves the owned pointer, and the swap gate answered "+scopeStr(record.Get(r.gate, "verdict")), "nothing was written; the selection stays as the interrupted run committed it, and a rerun finishes it once the gate allows.", field("environment", r.environment), field("swapGate", r.gate))
 		}
 	}
+	// One owner per surface, read now under the promotion lock: the registrations may have changed
+	// since the interrupted run judged them, and finishing its promotion moves the pointer they
+	// start through as a promotion does.
+	owners, conflict := secondOwners(r.o.CodexHome, filepath.Join(r.pointerPath, "bin", definition.Bridge))
+	if conflict != "" {
+		return refusedResult(r.command, conflict, "nothing was written; the selection stays as the interrupted run committed it, and a rerun finishes it once one owner registers each surface.", field("environment", r.environment), field("secondOwner", owners))
+	}
 	if err := r.ctx.Err(); err != nil {
 		return refusedResult(r.command, interrupted(err), "nothing was written.", field("environment", r.environment))
 	}
-	transition := transitionSettings(r.o.CodexHome, r.pointerPath, doctor.KindGoRuntime)
+	transition := transitionSettings(r.ctx, r.o.CodexHome, r.pointerPath, doctor.KindGoRuntime)
 	if transition.refused != "" {
 		return refusedResult(r.command, transition.refused, "nothing was written; any Stop settings this run had set aside were put back (settings.undone).", field("environment", r.environment), field("settings", append(transition.report, field("undone", transition.undo()))))
+	}
+	if err := r.ctx.Err(); err != nil {
+		undone := transition.undo()
+		return refusedResult(r.command, interrupted(err), "nothing was written; any Stop settings this run had set aside were put back (settings.undone).", field("environment", r.environment), field("settings", append(transition.report, field("undone", undone))))
 	}
 	if names == nil || !*names {
 		// The placement is recorded before the link moves (OPS-4.4: a transition is committed
 		// before its side effect), and put back with it when the move does not land.
-		if written, err := commitSelection(r.o.RecordPath, definition.Version, record.Delta{Pointer: Object{field("path", r.pointerPath), field("recordedAt", r.o.stamp()), field("recordedBy", r.o.Issue)}}); err != nil || !written.Usable() {
+		if written, err := commitSelection(r.ctx, r.o.RecordPath, definition.Version, record.Delta{Pointer: Object{field("path", r.pointerPath), field("recordedAt", r.o.stamp()), field("recordedBy", r.o.Issue)}}); err != nil || !written.Usable() {
 			undone := transition.undo()
 			return refusedResult(r.command, "the pointer ownership could not be recorded: "+commitDetail(written, err), "the pointer was not moved.", field("environment", r.environment), field("settings", append(transition.report, field("undone", undone))))
 		}
@@ -822,7 +845,7 @@ func (r *run) resume() (Object, int) {
 	return Object{
 		field("command", r.command), field("applied", true), field("resumed", true), field("promoted", true), field("environment", r.environment),
 		field("steps", r.steps), field("inService", record.Get(settled, "inService")), field("claimSettled", record.Get(settled, "settled")),
-		field("claim", settled), field("recoveryRequires", record.Get(settled, "recoveryRequires")), field("settings", transition.report), field("swapGate", r.gate),
+		field("claim", settled), field("recoveryRequires", record.Get(settled, "recoveryRequires")), field("settings", transition.report), field("swapGate", r.gate), field("secondOwner", owners),
 		field("note", "a previous run committed this runtime as selected and did not live to move the pointer. Nothing was rebuilt and nothing was removed: the missing half of that promotion was written."),
 	}, code
 }
@@ -831,7 +854,7 @@ func (r *run) resume() (Object, int) {
 // selection and moving the pointer - are variables only so that tests can make them fail and
 // prove that everything before them is put back.
 var (
-	commitSelection = record.Update
+	commitSelection = record.UpdateContext
 	placePointer    = pointer.Place
 )
 
@@ -871,7 +894,12 @@ func (r *run) failed(step string, cause failure) (Object, int) {
 	if r.owned && !keeping {
 		// Through its tombstone, so a kill part-way leaves no claimless half under the name.
 		var err error
-		if _, tombstone, err = discard(r.environment); err != nil {
+		if _, tombstone, err = discard(r.environment, r.tombstoneRefusal); errors.Is(err, errForeignTombstone) {
+			// The tombstone's name is somebody else's directory: this run's own candidate is deleted
+			// where it stands instead.
+			err = os.RemoveAll(r.environment)
+		}
+		if err != nil {
 			cleanupError = store.PythonOSError(err)
 		}
 		_, err = os.Lstat(r.environment)

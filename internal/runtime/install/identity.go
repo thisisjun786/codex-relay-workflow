@@ -1,6 +1,8 @@
 package install
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -10,7 +12,9 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/pointer"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/staging"
 )
@@ -132,24 +136,107 @@ func tombstoneOf(name string) (string, bool) {
 	return original, ok && runtimeDirectory(original)
 }
 
-// discard renames directory to its tombstone and deletes that. It answers whether the name is
-// free (nothing is left under it) and, when the deletion did not finish, the tombstone left and
-// why. A tombstone already there - an earlier discard of the same name that did not finish - is
-// deleted first.
-func discard(directory string) (free bool, residue string, err error) {
+// errForeignTombstone is discard's answer when something already at the tombstone's name is not
+// an interrupted removal it may finish (verify refused it).
+var errForeignTombstone = errors.New("the tombstone's name is taken")
+
+// discard renames directory to its tombstone and deletes that (deleteTombstone). It answers
+// whether the name is free (nothing is left under it) and, when the deletion did not finish, the
+// tombstone left and why. Something already at the tombstone's name - an earlier removal of the
+// same name that did not finish - is deleted first only when verify (which answers why not, or
+// "") accepts it; otherwise nothing is touched and the error is errForeignTombstone.
+func discard(directory string, verify func(tombstone string) string) (free bool, residue string, err error) {
 	tombstone := filepath.Join(filepath.Dir(directory), tombstonePrefix+filepath.Base(directory))
 	if _, statErr := os.Lstat(tombstone); statErr == nil {
-		if err := os.RemoveAll(tombstone); err != nil {
+		if why := verify(tombstone); why != "" {
+			return false, "", fmt.Errorf("%w: %s", errForeignTombstone, why)
+		}
+		if err := deleteTombstone(tombstone); err != nil {
 			return false, tombstone, err
 		}
 	}
 	if err := os.Rename(directory, tombstone); err != nil {
 		return false, "", err
 	}
-	if err := os.RemoveAll(tombstone); err != nil {
+	if err := deleteTombstone(tombstone); err != nil {
 		return true, tombstone, err
 	}
 	return true, "", nil
+}
+
+// deleteTombstone deletes a tombstone with its claim last: everything else under it, then the
+// staging lock, then the claim, then the empty directory. A deletion that stops part-way leaves a
+// tombstone that still carries its claim, or an empty one, which is how the next run knows it as
+// an interrupted removal of this command's rather than somebody's directory of that name.
+func deleteTombstone(tombstone string) error {
+	entries, err := os.ReadDir(tombstone)
+	if err != nil {
+		return err
+	}
+	var first error
+	for _, entry := range entries {
+		if name := entry.Name(); name != staging.ClaimName && name != staging.LockName {
+			if err := os.RemoveAll(filepath.Join(tombstone, name)); err != nil && first == nil {
+				first = err
+			}
+		}
+	}
+	if first != nil {
+		return first
+	}
+	for _, path := range []string{staging.LockPath(tombstone), staging.ClaimPath(tombstone)} {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return os.Remove(tombstone)
+}
+
+// unclaimedTombstone is why the tombstone at path is not one this command may finish, or "": an
+// empty one may go (its deletion reached the claim), and one that carries a readable claim of
+// crw install's or runtime_install.py's whose staging lock nobody holds may; anything else is
+// somebody's directory of that name and is left alone. Whether a process runs out of it or a
+// registration names it is the caller's question (runningOrRegistered).
+func unclaimedTombstone(path string) string {
+	entries, err := os.ReadDir(path)
+	switch {
+	case err != nil:
+		return path + " could not be listed, so whether it is an interrupted removal of this command's was not established: " + store.PythonOSError(err)
+	case len(entries) == 0:
+		return ""
+	}
+	claim := staging.ReadClaim(path)
+	switch {
+	case claim.State == reading.Absent:
+		return path + " carries no claim of crw install's or runtime_install.py's, so it is not a removal this command began: it is somebody's directory of that name and is left alone"
+	case !claim.OK():
+		return "the claim in " + path + " could not be read, so whether it is an interrupted removal of this command's was not established: " + claim.Detail
+	}
+	if liveness, detail := staging.OwnerLiveness(path); liveness != staging.Dead {
+		return "a run may still hold " + path + ": " + detail
+	}
+	return ""
+}
+
+// reached is landedAt for a runtime of kind: a Go runtime is proved through its bin/crw, and a
+// Python venv (a rollback's target, judged launchable before the move) by the pointer resolving,
+// without an error, to the directory itself.
+func reached(pointerPath, environment, kind string) (bool, string) {
+	if kind == doctor.KindGoRuntime {
+		return landedAt(pointerPath, environment)
+	}
+	at, err := os.Stat(pointerPath)
+	if err != nil {
+		return false, "the pointer does not resolve: " + store.PythonOSError(err)
+	}
+	wanted, err := os.Stat(environment)
+	if err != nil {
+		return false, "the runtime the pointer was placed at could not be read: " + store.PythonOSError(err)
+	}
+	if !os.SameFile(at, wanted) {
+		return false, "the pointer resolves to a directory other than " + environment
+	}
+	return true, ""
 }
 
 // landedAt proves the placed pointer reaches environment as a host will: it resolves without an

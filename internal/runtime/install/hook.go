@@ -53,7 +53,7 @@ func budgetComplaints(guard, registered int64) []string {
 // settings that record every host fact it records - mode, isolation, roots, database, socket,
 // relay and budget - so that only the adapter and installedBy move; settings built from other
 // flags answer config_differs with the fields and the repair, and nothing is written.
-func Hook(_ context.Context, o Options, h HookOptions) (Object, int) {
+func Hook(ctx context.Context, o Options, h HookOptions) (Object, int) {
 	hookFile := filepath.Join(o.CodexHome, "hooks.json")
 	base := Object{field("command", "hook"), field("adapter", "completion"), field("owner", h.Owner), field("hookFile", hookFile)}
 	usage := func(complaints []string) (Object, int) {
@@ -112,7 +112,7 @@ func Hook(_ context.Context, o Options, h HookOptions) (Object, int) {
 	if target, ok := pointerTarget(current); ok {
 		replace = doctor.RuntimeKind(target) == doctor.KindGoRuntime
 	}
-	written := settingsWrite(path, wanted, !h.DryRun, replace)
+	written := settingsWrite(ctx, path, wanted, !h.DryRun, replace)
 	outcome, _ := record.Get(written, "outcome").(string)
 	out := append(base, field("settings", written), field("registrations", []any{}),
 		field("note", "Settings written; no registration was made and the hook file was not touched. The plugin owner registers this event through the plugin package's own manifest, so install that package to register it. Written, registered and observed to have fired stay three separate claims."))

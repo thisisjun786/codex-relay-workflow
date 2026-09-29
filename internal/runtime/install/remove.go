@@ -144,10 +144,10 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 	if _, err := os.Lstat(grave); err == nil {
 		// A tombstone of this name that an earlier run did not finish: the directory under the
 		// name now is a later install, so the old copy goes without touching the record.
-		if u := runningOrRegistered(ctx, o, mustIdentify(o.Dest, tombstonePrefix+original)); u != nil {
+		if u := tombstoneInUse(ctx, o, grave); u != nil {
 			return refuse("an earlier removal of this name left "+grave+", and it cannot be finished: "+u.detail, u.extra()...)
 		}
-		if err := os.RemoveAll(grave); err != nil {
+		if err := deleteTombstone(grave); err != nil {
 			return refuse("an earlier removal of this name left " + grave + ", which could not be deleted: " + store.PythonOSError(err))
 		}
 	}
@@ -169,7 +169,7 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 		}
 		return refuse(why)
 	}
-	if err := os.RemoveAll(grave); err != nil {
+	if err := deleteTombstone(grave); err != nil {
 		return Object{
 			field("command", "remove"), field("applied", true), field("directory", directory), field("removed", false), field("tombstone", grave),
 			field("claim", claimValue), field("droppedInstallEntries", strs(dropped)), field("clearedOutgoing", clearedOutgoing),
@@ -196,8 +196,20 @@ func mustIdentify(dest, name string) *runtimeDir {
 	return &runtimeDir{path: filepath.Join(dest, name), name: name}
 }
 
+// tombstoneInUse is why the tombstone at grave may not be finished, or nil: it is not one this
+// command began (unclaimedTombstone: no readable installer claim, or a run holds it), or a live
+// process runs out of it or a registration names it, or that could not be ruled out.
+func tombstoneInUse(ctx context.Context, o Options, grave string) *use {
+	if why := unclaimedTombstone(grave); why != "" {
+		return &use{why, "tombstone", grave, false}
+	}
+	return runningOrRegistered(ctx, o, mustIdentify(filepath.Dir(grave), filepath.Base(grave)))
+}
+
 // finishRemoval finishes a removal a killed or failed run left as a tombstone: the tombstone is
-// deleted once no live process runs out of it and no registration names it, and when nothing is
+// deleted, its claim last, once it is established as this command's (it carries a readable claim
+// of crw install's or runtime_install.py's whose staging lock nobody holds, or it is empty), no
+// live process runs out of it and no registration names it, and when nothing is
 // under the runtime's name any more, what the host record still lists under that name (its
 // install entries, an outgoing selection naming it) is dropped first. A runtime installed again
 // under the name since keeps its entries.
@@ -209,8 +221,8 @@ func finishRemoval(ctx context.Context, o Options, base Object, directory, grave
 		}
 		return append(out, field("note", "nothing was removed and nothing was written.")), Refused
 	}
-	if u := runningOrRegistered(ctx, o, mustIdentify(o.Dest, filepath.Base(grave))); u != nil {
-		return refuse("an interrupted removal left "+grave+", and it cannot be finished: "+u.detail, u.extra()...)
+	if u := tombstoneInUse(ctx, o, grave); u != nil {
+		return refuse(grave+" cannot be finished as an interrupted removal: "+u.detail, u.extra()...)
 	}
 	if err := ctx.Err(); err != nil {
 		return refuse(interrupted(err))
@@ -223,7 +235,7 @@ func finishRemoval(ctx context.Context, o Options, base Object, directory, grave
 			return refuse(why)
 		}
 	}
-	if err := os.RemoveAll(grave); err != nil {
+	if err := deleteTombstone(grave); err != nil {
 		return append(append(Object{}, base...), field("applied", true), field("removed", false), field("tombstone", grave),
 			field("droppedInstallEntries", strs(dropped)), field("clearedOutgoing", clearedOutgoing),
 			field("detail", "the tombstone could not be deleted completely: "+store.PythonOSError(err)), field("residualPaths", []any{grave}),

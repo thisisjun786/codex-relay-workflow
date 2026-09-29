@@ -173,13 +173,19 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 	if refused != nil {
 		return refused, code
 	}
-	lock, err := record.Lock(candidate, 0)
+	lock, err := record.LockContext(ctx, candidate, 0)
 	if err != nil {
+		if ctx.Err() != nil {
+			return append(base, field("environment", candidate), field("refused", interrupted(err)), field("note", "nothing was written.")), Refused
+		}
 		return append(base, field("environment", candidate), field("refused", "another run is deciding what to do with this runtime directory ("+err.Error()+"): runtime_install.py and crw install hold "+candidate+record.LockSuffix+" while they decide about it, and one left by a run that died is removed once it is "+record.StaleLock.String()+" old"), field("note", "nothing was written.")), Refused
 	}
 	defer lock.Release()
-	exclusive, err := record.Promote(o.RecordPath, 0)
+	exclusive, err := record.PromoteContext(ctx, o.RecordPath, 0)
 	if err != nil {
+		if ctx.Err() != nil {
+			return append(base, field("refused", interrupted(err)), field("note", "nothing was written.")), Refused
+		}
 		return append(base, field("refused", "another run holds the promotion lock: "+err.Error()), field("note", "nothing was written.")), Refused
 	}
 	defer exclusive.Release()
@@ -252,7 +258,10 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 		return nothing(conflict, field("secondOwner", owners))
 	}
 	leaving := inService(rec, pointerPath)
-	transition := transitionSettingsFor(o.CodexHome, pointerPath, kind, target)
+	if err := ctx.Err(); err != nil {
+		return nothing(interrupted(err))
+	}
+	transition := transitionSettingsFor(ctx, o.CodexHome, pointerPath, kind, target)
 	if transition.refused != "" {
 		return append(base, field("refused", transition.refused), field("settings", append(transition.report, field("undone", transition.undo()))), field("note", "nothing was written; any Stop settings this run had set aside were put back (settings.undone).")), Refused
 	}
@@ -276,7 +285,12 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 			delta.Outgoing, outgoing = &record.Outgoing{Value: left}, left
 		}
 	}
-	committed, err := commitSelection(o.RecordPath, definition.Version, delta)
+	if err := ctx.Err(); err != nil {
+		undone := transition.undo()
+		return append(base, field("refused", interrupted(err)), field("settings", append(transition.report, field("undone", undone))),
+			field("note", "the pointer was not moved, and the Stop settings were put back as 'settings.undone' says.")), Refused
+	}
+	committed, err := commitSelection(ctx, o.RecordPath, definition.Version, delta)
 	if err != nil || !committed.Usable() {
 		undone := transition.undo()
 		return append(base, field("refused", "the selection could not be committed: "+commitDetail(committed, err)), field("settings", append(transition.report, field("undone", undone))),
@@ -286,9 +300,9 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 	if moving {
 		placeErr = placePointer(pointerPath, environment)
 	}
-	landed := pointer.Names(pointerPath, environment)
-	if placeErr != nil || landed == nil || !*landed {
-		detail := "the pointer does not name " + environment + " after it was placed"
+	landed, why := reached(pointerPath, environment, kind)
+	if placeErr != nil || !landed {
+		detail := "the pointer does not reach " + environment + " after it was placed: " + why
 		if placeErr != nil {
 			detail = "the pointer could not be placed: " + store.PythonOSError(placeErr)
 		}

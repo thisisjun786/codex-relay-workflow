@@ -1,6 +1,8 @@
 package install
 
 import (
+	"context"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
@@ -16,7 +18,9 @@ func ReplaceSettingsWriter(write func(path string, text []byte) error) (restore 
 // ReplaceSelectionCommit makes the promotion's commit go through commit until restored.
 func ReplaceSelectionCommit(commit func(path string, definitionVersion int, delta record.Delta) (reading.Reading, error)) (restore func()) {
 	saved := commitSelection
-	commitSelection = commit
+	commitSelection = func(_ context.Context, path string, definitionVersion int, delta record.Delta) (reading.Reading, error) {
+		return commit(path, definitionVersion, delta)
+	}
 	return func() { commitSelection = saved }
 }
 

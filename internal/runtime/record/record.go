@@ -12,6 +12,7 @@
 package record
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -399,7 +400,13 @@ type Delta struct {
 // the .crw-lock, at write time. Nothing is written when the record could not be read; the
 // returned reading says why. A lock that could not be taken is a *Busy error.
 func Update(path string, definitionVersion int, delta Delta) (reading.Reading, error) {
-	lock, err := Lock(path, 0)
+	return UpdateContext(context.Background(), path, definitionVersion, delta)
+}
+
+// UpdateContext is Update whose wait for the record's lock ends, writing nothing, once ctx is
+// done.
+func UpdateContext(ctx context.Context, path string, definitionVersion int, delta Delta) (reading.Reading, error) {
+	lock, err := LockContext(ctx, path, 0)
 	if err != nil {
 		return reading.Reading{}, err
 	}

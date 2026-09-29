@@ -2,6 +2,7 @@ package install
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -48,6 +49,9 @@ const (
 	ConfigNotWritten         = "config_not_written"
 	ConfigUnreadable         = "config_unreadable"
 	ConfigUnreachable        = "config_unreachable"
+	// Interrupted is a settings or bridge-record write whose command was interrupted while it
+	// waited for the file's lock: nothing was written.
+	Interrupted = "interrupted"
 )
 
 var configSettled = map[string]bool{ConfigCreated: true, ConfigUnchanged: true, ConfigWouldCreate: true, ConfigReplaced: true}
@@ -308,8 +312,8 @@ var writeSettings = record.AtomicWrite
 // and wanted keeps every host fact it records (only the adapter and installedBy move), which is
 // archived (a second name, never deleted) and replaced by wanted in one rename. It is decided
 // on a look taken before anything is read, so a write lands only on that document.
-func settingsWrite(path string, wanted Object, apply, replace bool) Object {
-	return settingsWriteOn(path, lookAt(path), wanted, apply, replace)
+func settingsWrite(ctx context.Context, path string, wanted Object, apply, replace bool) Object {
+	return settingsWriteOn(ctx, path, lookAt(path), wanted, apply, replace)
 }
 
 // settingsWriteOn is settingsWrite decided on basis: the look at path taken before the reading
@@ -317,7 +321,7 @@ func settingsWrite(path string, wanted Object, apply, replace bool) Object {
 // document is looked at again, and anything but the same document - another file renamed in, a
 // rewrite, the same shape saying another mode - answers config_changed_underneath with nothing
 // written: a document built from an earlier reading is never written over a newer one.
-func settingsWriteOn(path string, basis look, wanted Object, apply, replace bool) Object {
+func settingsWriteOn(ctx context.Context, path string, basis look, wanted Object, apply, replace bool) Object {
 	answer := Object{field("configuration", path), field("outcome", ""), field("applied", false), field("wrote", false)}
 	if wrong := append(Complaints(wanted), unspellable(wanted)...); len(wrong) > 0 {
 		return append(record.Set(answer, "outcome", ConfigWouldNotBeReadable), field("detail", strings.Join(wrong, "; ")), field("complaints", strs(wrong)))
@@ -349,8 +353,11 @@ func settingsWriteOn(path string, basis look, wanted Object, apply, replace bool
 		return append(record.Set(answer, "outcome", ConfigWouldCreate), field("detail", detail))
 	}
 	beforeWriteLock(path)
-	lock, err := record.Lock(path, 0)
+	lock, err := record.LockContext(ctx, path, 0)
 	if err != nil {
+		if ctx.Err() != nil {
+			return append(record.Set(answer, "outcome", Interrupted), field("detail", interrupted(err)))
+		}
 		return append(record.Set(answer, "outcome", "busy"), field("detail", err.Error()))
 	}
 	defer lock.Release()
@@ -490,8 +497,8 @@ type transition struct {
 // transitionSettings is transitionSettingsFor the Go runtime a promotion moves the pointer to
 // (its callers pass doctor.KindGoRuntime); a rollback, which may name a venv, calls
 // transitionSettingsFor with what that venv serves.
-func transitionSettings(codexHome, pointerPath, targetKind string) transition {
-	return transitionSettingsFor(codexHome, pointerPath, targetKind, goProvides)
+func transitionSettings(ctx context.Context, codexHome, pointerPath, targetKind string) transition {
+	return transitionSettingsFor(ctx, codexHome, pointerPath, targetKind, goProvides)
 }
 
 // transitionSettingsFor makes sure the plugin-owned Stop settings name an adapter the pointer
@@ -509,10 +516,10 @@ func transitionSettings(codexHome, pointerPath, targetKind string) transition {
 // The Go variant is built from one look at the document and written only onto that document
 // (settingsWriteOn). When another writer replaced it in between, nothing is written and the
 // transition is decided again from a fresh reading, a bounded number of times.
-func transitionSettingsFor(codexHome, pointerPath, targetKind string, target provides) transition {
+func transitionSettingsFor(ctx context.Context, codexHome, pointerPath, targetKind string, target provides) transition {
 	var last transition
 	for attempt := 0; attempt < transitionAttempts; attempt++ {
-		decided, changed := transitionOnce(codexHome, pointerPath, targetKind, target)
+		decided, changed := transitionOnce(ctx, codexHome, pointerPath, targetKind, target)
 		if !changed {
 			if attempt > 0 {
 				decided.report = append(decided.report, field("rebuiltFromFreshReading", int64(attempt)))
@@ -531,7 +538,7 @@ const transitionAttempts = 3
 
 // transitionOnce is one decision of transitionSettingsFor on one look at the settings, and
 // whether the settings turned out to have changed under it (nothing was written then).
-func transitionOnce(codexHome, pointerPath, targetKind string, target provides) (transition, bool) {
+func transitionOnce(ctx context.Context, codexHome, pointerPath, targetKind string, target provides) (transition, bool) {
 	path := filepath.Join(codexHome, SettingsName)
 	none := func() Object { return nil }
 	basis := lookAt(path)
@@ -558,7 +565,7 @@ func transitionOnce(codexHome, pointerPath, targetKind string, target provides) 
 		if stranded := strandedSettings(wanted, pointerPath, target); len(stranded) > 0 {
 			return transition{report: report, refused: "the Go variant of the Python-era settings would reach through the pointer what the runtime does not provide: " + strings.Join(stranded, "; "), undo: none}, false
 		}
-		written := settingsWriteOn(path, basis, wanted, true, true)
+		written := settingsWriteOn(ctx, path, basis, wanted, true, true)
 		if record.Get(written, "outcome") == ConfigChangedUnderneath {
 			return transition{report: append(report, field("write", written)), undo: none}, true
 		}

@@ -235,7 +235,7 @@ const policyRepair = "move %s aside by hand, then run crw install register-mcp a
 // says something else, and a record naming a policy is settled only against the policy file as
 // it stands when the answer is given. The decision is made on a look taken before anything is
 // read, and the record is written only while a look under the lock sees that same document.
-func bridgeWrite(path string, wanted Object, apply bool) Object {
+func bridgeWrite(ctx context.Context, path string, wanted Object, apply bool) Object {
 	answer := Object{field("record", path), field("outcome", ""), field("applied", false), field("wrote", false)}
 	if wrong := append(bridgeComplaints(wanted), unspellable(wanted)...); len(wrong) > 0 {
 		return append(record.Set(answer, "outcome", RecordMalformed), field("detail", strings.Join(wrong, "; ")), field("complaints", strs(wrong)))
@@ -270,8 +270,11 @@ func bridgeWrite(path string, wanted Object, apply bool) Object {
 		return append(answer, field("detail", "would write this record; nothing was written"))
 	}
 	beforeWriteLock(path)
-	lock, err := record.Lock(path, 0)
+	lock, err := record.LockContext(ctx, path, 0)
 	if err != nil {
+		if ctx.Err() != nil {
+			return append(record.Set(answer, "outcome", Interrupted), field("detail", interrupted(err)))
+		}
 		return append(record.Set(answer, "outcome", Busy), field("detail", err.Error()))
 	}
 	defer lock.Release()
@@ -593,14 +596,17 @@ func pathlibAbsolute(value string) (string, error) {
 // RegisterMCP is `crw install register-mcp --owner plugin`: the record the packaged launcher
 // reads, never a Codex configuration entry (the user owner is retired). The ownership decision
 // and the write it authorizes happen under the crw-mcp-ownership lock the Python writers take.
-func RegisterMCP(_ context.Context, o Options, r RegisterOptions) (Object, int) {
+func RegisterMCP(ctx context.Context, o Options, r RegisterOptions) (Object, int) {
 	recordPath := filepath.Join(o.CodexHome, BridgeRecordName)
 	base := Object{field("command", "register-mcp"), field("owner", r.Owner), field("record", recordPath)}
 	if r.Owner != OwnerPlugin {
 		return append(base, field("outcome", Conflict), field("detail", "only --owner plugin is supported: the user-owned registration (a config.toml [mcp_servers] table) is retired with runtime_install.py, and the plugin declares the server itself"), field("applied", false), field("wrote", false), field("note", "nothing was written")), Usage
 	}
-	lock, err := record.Lock(filepath.Join(o.CodexHome, OwnershipLockName), 0)
+	lock, err := record.LockContext(ctx, filepath.Join(o.CodexHome, OwnershipLockName), 0)
 	if err != nil {
+		if ctx.Err() != nil {
+			return append(base, field("outcome", Interrupted), field("detail", interrupted(err)), field("applied", false), field("wrote", false), field("note", "nothing was written")), Refused
+		}
 		return append(base, field("outcome", Busy), field("detail", err.Error()), field("applied", false), field("wrote", false), field("note", "nothing was written: another run holds the ownership lock")), Refused
 	}
 	defer lock.Release()
@@ -627,7 +633,7 @@ func RegisterMCP(_ context.Context, o Options, r RegisterOptions) (Object, int) 
 	if conflict := pluginOwnership(o.CodexHome, recordPath, name, wanted); conflict != "" {
 		return append(base, field("outcome", Conflict), field("detail", conflict), field("applied", false), field("wrote", false), field("note", "nothing was written. One owner registers this server; the other is reported with its evidence rather than joined.")), Refused
 	}
-	written := bridgeWrite(recordPath, wanted, !r.DryRun)
+	written := bridgeWrite(ctx, recordPath, wanted, !r.DryRun)
 	outcome, _ := record.Get(written, "outcome").(string)
 	out := append(base, field("outcome", outcome), field("detail", record.Get(written, "detail")), field("applied", record.Get(written, "applied")), field("wrote", record.Get(written, "wrote")))
 	for _, key := range []string{"differingFields", "repair", "readBack"} {

@@ -47,8 +47,14 @@ func Status(_ context.Context, o Options) (Object, int) {
 		}
 		if original, ok := tombstoneOf(entry.Name()); ok {
 			path := filepath.Join(o.Dest, entry.Name())
-			interrupted = append(interrupted, Object{field("path", path), field("runtime", filepath.Join(o.Dest, original)),
-				field("recoveryRequires", "crw install remove "+path+" finishes this removal: a run that set the runtime aside to delete it did not live to finish")})
+			one := Object{field("path", path), field("runtime", filepath.Join(o.Dest, original))}
+			if why := unclaimedTombstone(path); why != "" {
+				one = append(one, field("ours", false), field("detail", why), field("recoveryRequires", nil))
+			} else {
+				one = append(one, field("ours", true), field("detail", "a run that set the runtime aside to delete it did not live to finish"),
+					field("recoveryRequires", "crw install remove "+path+" finishes this removal, once no process runs out of it and no registration names it"))
+			}
+			interrupted = append(interrupted, one)
 		}
 	}
 	sort.Strings(names)

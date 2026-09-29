@@ -11,6 +11,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/staging"
 )
 
 // installsOf is every environment the host record lists an install of the relay in.
@@ -176,6 +177,9 @@ func TestRemoveDropsTheInstallEntriesBeforeTheDirectory(t *testing.T) {
 	}
 	if _, err := os.Lstat(old); !os.IsNotExist(err) {
 		t.Fatal("something is left under the runtime's own name")
+	}
+	if _, err := os.Stat(staging.ClaimPath(grave)); err != nil {
+		t.Fatal("the deletion that stopped part-way took the tombstone's claim, which goes last")
 	}
 	status, _ := install.Status(context.Background(), h.options())
 	if interrupted := golden.List(at(status, "interruptedRemovals")); len(interrupted) != 1 || at(golden.Obj(interrupted[0]), "path") != grave {

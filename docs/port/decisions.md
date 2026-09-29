@@ -1486,7 +1486,10 @@ runtime the promotion replaced, selected and named by the pointer and so in serv
 settled COMPLETE too (under the lock, after the pointer is read back) when it still says STAGING
 with nobody holding it (an exit 3), so no later install of its archive reads it as abandoned
 staging. A claim runtime_install.py wrote (a venv's) is settled in runtime_install.py's own shape
-and marker, so runtime_install.py still reads the directory as its own. A destination that is
+and marker, so runtime_install.py still reads the directory as its own. Finishing a promotion a
+killed run committed (a resume) moves the pointer as a promotion does, so it asks the same
+questions under the promotion lock before it moves it: the swap gate, the pointer's ownership and
+one owner per surface, on the registrations as they stand now, refusing as a promotion refuses. A destination that is
 spelled through the owned pointer, resolves inside the pointer's target, or lies inside a runtime
 directory is refused before anything is created. An existing directory of the candidate's name
 that is abandoned staging (a STAGING claim nobody holds, which the record does not select and the
@@ -1534,7 +1537,9 @@ rollback` returns the pointer to `outgoing`, or to a runtime directory the recor
 install entry's `environment`, never a directory that merely contains one; an empty directory
 argument is a usage error), holding the target's `<env>.crw-lock` and then the promotion lock
 (decision 33), under the same
-rules. `outgoing` means the selection the last promotion replaced: crw install writes it only in the
+rules; both waits, the settings transition and the commit honour the command's context, and a
+pointer a rollback placed is proved as a promotion's is (a Go target through its `bin/crw`, a venv
+by resolving to it by identity). `outgoing` means the selection the last promotion replaced: crw install writes it only in the
 write that commits a promotion or a rollback and puts it back when that promotion is undone, so an
 install that fails before its promotion leaves it as it was. runtime_install.py writes the same key
 with another meaning, the selection current when its install starts (written right after its
@@ -1594,13 +1599,29 @@ does not finish exits 3 naming the tombstone. A kill anywhere in that sequence l
 whole directory or a tombstone - never a directory under the runtime's name with its claim gone,
 which every command would then read as somebody else's. `crw install status` lists each tombstone
 (`interruptedRemovals`), and `crw install remove` of the tombstone, or of the name when only its
-tombstone is left, finishes it: the tombstone is deleted once no process runs out of it and no
-registration names it, after what the record still lists under the name (its entries, an
-outgoing naming it) is dropped, unless a runtime was installed under that name again. Remove, the
-reclaim and the already-installed reading take the directory's `<env>.crw-lock` first and the
-promotion lock after it, the order of decision 33, and the host record's `.crw-lock` inside both;
-every wait honours the command's context (`record.LockContext`, `record.PromoteContext`), so a
-command interrupted (SIGINT, SIGTERM, SIGHUP) while it waits stops waiting and removes nothing. The process table is read so that
+tombstone is left, finishes it, under the directory's lock and the promotion lock: the tombstone
+is finished only when it is one this command began - it carries a readable claim of crw install's
+or runtime_install.py's whose staging lock nobody holds, or it is empty - and no process runs out
+of it and no registration names it; somebody's directory of that name, holding files and no
+claim, is refused by name and left alone, by remove, by the reclaim and by a failed run's
+release (which then deletes its own candidate in place), and status reports it as not ours
+(`ours: false`). A tombstone is deleted with its claim last (everything else, then the staging
+lock, then the claim, then the empty directory), so a deletion that stops part-way leaves it
+claimed or empty, never a claimless half. What the record still lists under the name (its
+entries, an outgoing naming it) is dropped first, unless a runtime was installed under that name
+again. Remove, the reclaim and the already-installed reading take the directory's `<env>.crw-lock`
+first and the promotion lock after it, the order of decision 33, and the host record's `.crw-lock`
+inside both. Every command's lock waits before its first write honour its context
+(`record.LockContext`, `record.PromoteContext`, `record.UpdateContext`): the directory, promotion
+and ownership locks, the settings and bridge-record locks of `hook`, `register-mcp` and a
+promotion's or rollback's settings transition, a build's first record writes and the commit of a
+selection (which undoes the settings transition when it is interrupted); so a command interrupted
+(SIGINT, SIGTERM, SIGHUP) while it waits stops waiting, writes nothing, and answers so
+(`register-mcp` and `hook` with the outcome `interrupted`). A wait inside a sequence already
+under way - a restore after a failed promotion or rollback, the entry drop after a directory was
+set aside, the claim settled after a promotion, the snapshot that follows it - is bounded and runs
+to completion whatever the context says, because stopping there would leave the host
+half-written. The process table is read so that
 nothing unread passes for absent. A pid whose entries are gone (ENOENT, ESRCH: exited, a zombie, a
 kernel thread) is skipped. The kernel shows a process's exe only with ptrace access, which it
 refuses for another user's process and for this user's own when it holds capabilities the reader
@@ -1667,6 +1688,8 @@ scripts/crw_runtime/staging.py:350-352 (a finished, unselected environment is ke
 `TestRemoveReadsTheRelayDaemonRecords`, `TestAnInterruptedWaitRemovesNothing`,
 `TestAnInterruptedRemovalIsFinished`, `TestAnInstallCommandStopsWhenAsked` (cmd/crw),
 `TestRemoveTakesTheDirectoryLockBeforeThePromotionLock`, `TestAPromotionRecordsTheRuntimeThePointerLeaves`,
+`TestATombstoneNeedsItsClaim`, `TestAResumedPromotionAsksForSecondOwners`, `TestAnInterruptedRollbackMovesNothing`,
+`TestInterruptedRegistrationsWriteNothing`, `TestARollbackProvesThePointerItPlaced`,
 `TestRemoveAndReclaimRefuseAProcessTheyCannotRuleOut`, `TestRemovingTheOutgoingRuntimeClearsOutgoing`, `TestOutgoingIsWrittenOnlyByAPromotion`,
 `TestAnUnsettledCandidatesInstallEntriesAreNeverActedOn`); internal/runtime/doctor/references.go;
 internal/runtime/exercise (`TestTheSessionClosesItsReaderAtTheDeadlineWithoutACopyingGoroutine`);
