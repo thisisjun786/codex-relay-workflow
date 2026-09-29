@@ -34,8 +34,8 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 		return nil, err
 	}
 	for _, step := range steps {
-		if step["kind"] == "verify" || step["kind"] == "mutate" {
-			return nil, fmt.Errorf("%w: stop-events diagnostic command", ErrNotPorted)
+		if step["kind"] == "mutate" {
+			return nil, fmt.Errorf("%w: stop-events record mutation", ErrNotPorted)
 		}
 	}
 	bin, err := crwBinary()
@@ -224,6 +224,15 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 	outcomes := []any{}
 	started := time.Now()
 	for stepIndex, step := range steps {
+		if step["kind"] == "verify" {
+			// The per-event judge over what the steps before it wrote (crw-dev stop-events).
+			outcome, err := runVerify(ctx, step, env, expand)
+			if err != nil {
+				return nil, err
+			}
+			outcomes = append(outcomes, outcome)
+			continue
+		}
 		payload := step["stdin"]
 		if payload == nil {
 			payload = map[string]any{"cwd": "/tmp/workspace", "hook_event_name": "Stop", "last_assistant_message": "I finished the task.", "model": "test-model", "permission_mode": "default", "session_id": "01a0b109-1ea5-7fb3-9adc-87f45ed83688", "stop_hook_active": false, "transcript_path": "/tmp/transcript.jsonl", "turn_id": "turn-1"}
@@ -398,6 +407,38 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 	return actual, nil
 }
 func number(v any) float64 { n, _ := v.(float64); return n }
+
+// runVerify runs `crw-dev stop-events` with a verify step's argv, as the Python runner runs
+// scripts/stop_events.py.
+func runVerify(ctx context.Context, step map[string]any, env []string, expand func(string) string) (map[string]any, error) {
+	bin, err := crwDevBinary()
+	if err != nil {
+		return nil, err
+	}
+	args := []string{"stop-events"}
+	if values, ok := step["argv"].([]any); ok {
+		for _, arg := range values {
+			args = append(args, expand(arg.(string)))
+		}
+	}
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Env = env
+	var out, errs bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errs
+	code := 0
+	if err := cmd.Run(); err != nil {
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) {
+			return nil, err
+		}
+		code = exit.ExitCode()
+	}
+	var parsed any
+	if err := json.Unmarshal(out.Bytes(), &parsed); err != nil {
+		return nil, fmt.Errorf("crw-dev stop-events printed no reading (exit %d): %w\n%s", code, err, errs.String())
+	}
+	return map[string]any{"exit": float64(code), "stdout": out.String(), "stderr": errs.String(), "stdout_json": parsed, "timeout": false, "signal": nil}, nil
+}
 
 func writeHookFiles(home string, files any) error {
 	entries, _ := files.(map[string]any)

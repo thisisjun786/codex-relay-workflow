@@ -16,7 +16,7 @@ func TestCommandTreeDispatches(t *testing.T) {
 	}{
 		{nil, 2, "", "the following arguments are required: command"},
 		{[]string{"nope"}, 2, "", `invalid command "nope"`},
-		{[]string{"--help"}, 0, "usage: crw-dev {ci,skills}", ""},
+		{[]string{"--help"}, 0, "usage: crw-dev {ci,skills,stop-events}", ""},
 		{[]string{"ci"}, 2, "", "crw-dev ci: error: the following arguments are required: check"},
 		{[]string{"ci", "--help"}, 0, "usage: crw-dev ci {contracts,gate,operations,plugin,scope,validate}", ""},
 		{[]string{"ci", "nope"}, 2, "", "invalid choice: 'nope'"},
@@ -24,6 +24,10 @@ func TestCommandTreeDispatches(t *testing.T) {
 		{[]string{"skills"}, 2, "", "crw-dev skills: error: the following arguments are required: command"},
 		{[]string{"skills", "--help"}, 0, "usage: crw-dev skills {link}", ""},
 		{[]string{"skills", "link", "--bogus"}, 2, "", "unrecognized arguments: --bogus"},
+		{[]string{"stop-events"}, 2, "", "the following arguments are required: --journal-root"},
+		{[]string{"stop-events", "--help"}, 0, "usage: crw-dev stop-events", ""},
+		{[]string{"stop-events", "--journal-root", "/x", "--since", "2026-09-23T11:58:17.500Z"}, 2, "", "argument --since: invalid window_bound value: '2026-09-23T11:58:17.500Z'"},
+		{[]string{"stop-events", "--journal-root"}, 2, "", "argument --journal-root: expected one argument"},
 	} {
 		var stdout, stderr bytes.Buffer
 		code := run(row.args, &stdout, &stderr)

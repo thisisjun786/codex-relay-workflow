@@ -152,7 +152,7 @@ func ReadNativePrescanRow(path string) (Object, bool) {
 	if err != nil || !NativePrescanUnreachable(row) {
 		return nil, false
 	}
-	if !bytes.Equal(raw, []byte(evidence.Dumps(row, false, true, true)+"\n")) {
+	if !bytes.Equal(raw, RecordBytes(row)) {
 		return nil, false
 	}
 	return row, true

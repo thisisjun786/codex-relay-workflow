@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -45,15 +46,20 @@ var runners = map[RunKind]Runner{
 var ported = map[string]bool{"hook": true, "sqlite-ddl": true, "appserver": true, "ledger-fingerprint": true, "git": true, "mcp-tools": true, "cli-shape": true}
 
 // crwBinary is the crw under test: CRW_TEST_BINARY, or ./cmd/crw built once per package run
-// into buildDir, which TestMain creates and removes.
+// into buildDir, which TestMain creates and removes. crwDevBinary is the development binary the
+// hook corpus's `verify` steps run (`crw-dev stop-events`): CRW_TEST_DEV_BINARY, or ./cmd/crw-dev
+// built with -tags dev once, on its first use.
 var (
-	buildDir   string
-	crwBinary  = sync.OnceValues(buildCRW)
+	buildDir     string
+	crwBinary    = sync.OnceValues(func() (string, error) { return build("CRW_TEST_BINARY", "crw", "./cmd/crw") })
+	crwDevBinary = sync.OnceValues(func() (string, error) {
+		return build("CRW_TEST_DEV_BINARY", "crw-dev", "-tags", "dev", "./cmd/crw-dev")
+	})
 	errNoBuild = errors.New("contracttest: build directory not set (TestMain did not run)")
 )
 
-func buildCRW() (string, error) {
-	if path := os.Getenv("CRW_TEST_BINARY"); path != "" {
+func build(override, name string, args ...string) (string, error) {
+	if path := os.Getenv(override); path != "" {
 		return filepath.Abs(path)
 	}
 	if buildDir == "" {
@@ -67,11 +73,11 @@ func buildCRW() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	out := filepath.Join(buildDir, "crw")
-	build := exec.Command(goBinary, "build", "-buildvcs=false", "-o", out, "./cmd/crw")
-	build.Dir = root
-	if output, err := build.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("contracttest: go build ./cmd/crw: %w\n%s", err, output)
+	out := filepath.Join(buildDir, name)
+	command := exec.Command(goBinary, append([]string{"build", "-buildvcs=false", "-o", out}, args...)...)
+	command.Dir = root
+	if output, err := command.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("contracttest: go build %s: %w\n%s", strings.Join(args, " "), err, output)
 	}
 	return out, nil
 }

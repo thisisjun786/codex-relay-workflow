@@ -185,7 +185,7 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 	if err != nil {
 		return 0
 	}
-	record := Object{{Key: "recordVersion", Value: int64(2)}, {Key: "event", Value: "Stop"}, {Key: "at", Value: now()}, {Key: "adapterOutcome", Value: nil}, {Key: "processEnding", Value: nil}, {Key: "stdoutReading", Value: nil}, {Key: "guardState", Value: nil}, {Key: "guardDecision", Value: nil}, {Key: "guardMode", Value: nil}, {Key: "assignmentId", Value: nil}, {Key: "guardRecordedAs", Value: nil}, {Key: "held", Value: false}, {Key: "eventKey", Value: nil}, {Key: "eventIdentity", Value: nil}, {Key: "identityScanMs", Value: nil}, {Key: "acceptance", Value: nil}, {Key: "acceptedAs", Value: nil}, {Key: "guardInvoked", Value: false}, {Key: "configuration", Value: path}}
+	record := Object{{Key: "recordVersion", Value: int64(RecordVersion)}, {Key: "event", Value: "Stop"}, {Key: "at", Value: now()}, {Key: "adapterOutcome", Value: nil}, {Key: "processEnding", Value: nil}, {Key: "stdoutReading", Value: nil}, {Key: "guardState", Value: nil}, {Key: "guardDecision", Value: nil}, {Key: "guardMode", Value: nil}, {Key: "assignmentId", Value: nil}, {Key: "guardRecordedAs", Value: nil}, {Key: "held", Value: false}, {Key: "eventKey", Value: nil}, {Key: "eventIdentity", Value: nil}, {Key: "identityScanMs", Value: nil}, {Key: "acceptance", Value: nil}, {Key: "acceptedAs", Value: nil}, {Key: "guardInvoked", Value: false}, {Key: "configuration", Value: path}}
 	claimed := ""
 	finish := func(outcome string, detail any, answer string) {
 		record = set(record, "adapterOutcome", outcome)
@@ -315,7 +315,7 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 	if identified.key == "" {
 		record = set(record, "acceptance", "unestablished")
 	} else {
-		host, _ := filepath.Abs(filepath.Join(codexHome(), "crw-completion-hook", "stop-events"))
+		host, _ := filepath.Abs(filepath.Join(append([]string{codexHome()}, HostLedgerParts...)...))
 		type claimResult struct {
 			acceptance string
 			where      any
@@ -332,10 +332,10 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 		record = set(record, "acceptedAs", claim.where)
 		switch claim.acceptance {
 		case "duplicate":
-			finish("duplicate_invocation", "this Stop event already has its accepted record, so the guard was not asked again", "")
+			finish(DuplicateInvocation, DuplicateDetail, "")
 			return 0
 		case "unarbitrated":
-			finish("arbitration_failed", "the host's record of this Stop event could be neither made nor found, so no invocation can own it and the guard was not asked", "")
+			finish(ArbitrationFailed, UnarbitratedDetail, "")
 			return 0
 		case "accepted":
 			claimed = identified.key

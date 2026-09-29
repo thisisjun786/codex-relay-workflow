@@ -1,8 +1,8 @@
 //go:build dev
 
-// Command crw-dev carries the repository's development tooling: the CI checks and the skill
-// links a checkout installs. It is built only with -tags dev and is never part of a release
-// archive.
+// Command crw-dev carries the repository's development tooling: the CI checks, the skill links a
+// checkout installs, and the per-event Stop judge a live trial is read with. It is built only
+// with -tags dev and is never part of a release archive.
 package main
 
 import (
@@ -12,12 +12,14 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/ci"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/skills"
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/stopevents"
 )
 
 // commands is the top-level command tree; each entry owns its own arguments.
 var commands = map[string]func(args []string, stdout, stderr io.Writer) int{
-	"ci":     ci.Run,
-	"skills": skills.Run,
+	"ci":          ci.Run,
+	"skills":      skills.Run,
+	"stop-events": stopevents.Run,
 }
 
 func main() {
@@ -25,7 +27,7 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	const usage = "usage: crw-dev {ci,skills} ..."
+	const usage = "usage: crw-dev {ci,skills,stop-events} ..."
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, usage)
 		fmt.Fprintln(stderr, "crw-dev: error: the following arguments are required: command")
