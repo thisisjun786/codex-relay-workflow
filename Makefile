@@ -58,9 +58,11 @@ parity:
 	$(GO) test -tags parity -count=1 -run '^TestCLI_marker_preflight_parity_with_live_python$$' ./internal/relay/delivery/
 
 # The development tooling (cmd/crw-dev, internal/dev) builds only with -tags dev, so lint and
-# test cover it in a second pass; dist and goreleaser never pass the tag.
+# test cover it in a second pass; dist and goreleaser never pass the tag. The isolated-home
+# integration test builds only with -tags integration (CI runs it in the dist leg), so lint vets
+# it too and it cannot rot outside `make test`.
 lint:
-	@if ! $(GO) list ./... 2>/dev/null | grep -q .; then echo "no Go packages yet: lint skipped"; else $(GO) vet ./... && $(GO) vet -tags dev ./cmd/crw-dev/... ./internal/dev/... && $(STATICCHECK) ./... && $(STATICCHECK) -tags dev ./cmd/crw-dev/... ./internal/dev/... && test -z "$$(find . -name '*.go' -not -path './.git/*' -exec gofmt -l {} +)"; fi
+	@if ! $(GO) list ./... 2>/dev/null | grep -q .; then echo "no Go packages yet: lint skipped"; else $(GO) vet ./... && $(GO) vet -tags dev ./cmd/crw-dev/... ./internal/dev/... && $(GO) vet -tags integration ./internal/runtime/integration/... && $(STATICCHECK) ./... && $(STATICCHECK) -tags dev ./cmd/crw-dev/... ./internal/dev/... && test -z "$$(find . -name '*.go' -not -path './.git/*' -exec gofmt -l {} +)"; fi
 
 dist:
 ifneq ($(CGO_ENABLED),0)

@@ -1551,6 +1551,14 @@ scan does not make - is reported unreadable with the construct, never interprete
 libraries are used for reading only. Nothing is formatted, evaluated, expanded or run through
 them; the `interp` and `expand` packages are not imported.
 
+An argument is a thing such a program may run only if it could be executed: a regular file with
+an execute bit, a file with no `#!` among them because a shell's ENOEXEC fallback runs it. A
+socket, FIFO or device is not, whatever its mode bits, because execve(2) refuses it. Before todo
+40 the scan asked only for the mode bits, so the App Server socket a bridge record passes with
+`--socket` (bind(2) creates it with 0777 less the umask, so it has execute bits) made the record
+unreadable, and `crw install remove`, which refuses whatever registration it cannot judge,
+refused every runtime on such a host.
+
 Why: codexconfig.py refuses to approximate TOML (a hand-written reader produced ten defects), and
 the retention scan must read every registered command rather than guess at text; concluding a
 server is absent when it is registered is how a second bridge arrives. The same holds
@@ -1577,7 +1585,8 @@ internal/runtime/doctor/retention.go (`configToml`, `hookCommands`, `server`); i
 internal/runtime/install/mcp.go (`readServers`); `TestRetentionScanReadsTheWiringSurfaces`,
 `TestTheGrammarRefusesEveryOtherConstruct`, `TestRetentionScanJudgesOnlyWhatItsGrammarReads`,
 `TestRetentionScanJudgesAnMCPServerAsCodexStartsIt`, `TestRegisterMCPWritesTheRecordAndRefusesASecondOwner`,
-`TestInstallRefusesASecondOwner`.
+`TestInstallRefusesASecondOwner`, `TestRetentionScanDoesNotTakeWhatCannotBeExecutedForAProgram`,
+`TestIsolatedHome` (IS-8's remove, under the `integration` tag).
 
 ## 38. `crw install`: the release digest authorizes the unpack, the exercise earns the point
 
@@ -1741,8 +1750,30 @@ executable could not be read (a readable one settles what runs) and it holds no 
 process title such as sshd's is no path), the command `env` runs, and an interpreter's script
 operand after its options (the interpreter known by argv[0] or by its executable), a relative one
 resolved against `/proc/<pid>/cwd`, with a Python's `-c` and `-m` and a shell's `-c` ending the
-options - resolving inside it; a process whose argv runs something relative to a working
-directory it cannot read is not ruled out), and no registration the host reads names a path inside it. The registrations are read by the
+options - resolving inside it; a process whose argv runs something relative to a working directory
+it cannot read is not ruled out, whatever its uid, because that working directory may itself be
+inside the directory whatever the relative path names (and a process of this user whose working
+directory fails for a reason other than a refusal is not ruled out at all). The one exception is
+another user's process, not root's, whose working directory the kernel hides (EACCES, EPERM:
+`/proc/<pid>/cwd` needs ptrace access) and which provably cannot work inside: some directory from
+the runtime directory up to `/` (resolved) denies search (x) to every uid it holds, by that
+directory's mode, owner and group, read against the credentials `/proc/<pid>/status` shows every
+user (its real, effective, saved and filesystem uids and gids and its supplementary groups). A
+process holding root among its uids or CAP_DAC_OVERRIDE or CAP_DAC_READ_SEARCH in its permitted
+or effective set is never ruled out this way, a directory carrying an ACL (POSIX or NFSv4) or that
+cannot be read closes nothing, and a status that cannot be read or lacks any of those lines rules
+out nothing. It judges the modes and credentials as they are now through the path the directory
+resolves to here, so a process that entered it before either changed, or through a bind mount or
+a descriptor it was passed, is not seen; the answer's `processTable` says so. A runtime under a
+home closed to other users (0700, or 0750 to users outside its group) is therefore removable past other users'
+processes, but not past root's: a host whose root agents run a relative script - every Azure VM
+runs WALinuxAgent as `python3 -u bin/WALinuxAgent-<version>.egg -run-exthandlers`, which is how
+todo 40's integration test found it on a GitHub-hosted runner - sees `crw install remove` refuse
+there, naming each such pid, its uid and why (`unreadableProcesses`), and giving the removal by
+hand as `recoveryRequires` (the same as where there is no process table, below); the reclaim of an
+abandoned staging refuses the same way with its own recovery (delete the staging, rerun the
+install). Deleting a directory a process may run out of is worse than a removal left to the user),
+and no registration the host reads names a path inside it. The registrations are read by the
 retention scan's own readers (`doctor.RegisteredInside`, rows 4, 5, 8, 9 and 10: every
 `crw-*.json` record, so the Stop settings' `relayExecutable`, `adapterEntryPoint` and
 `adapterInterpreter` and the bridge record's `bridgeExecutable`; the cached plugin declarations;
@@ -1801,10 +1832,21 @@ process of this user whose exe fails for any other reason, or whose cmdline cann
 not ruled out either. Relay daemons are also read from their records, as the retention scan reads
 them (`doctor.RecordedDaemons`: every daemon.json and scope registry claim; a pid counts while its
 start time and boot id match this process table), and a record that cannot be read refuses. The
-reading rests on one assumption, stated in every answer that depends on it (`processTable`): the
+registry is the one the relay resolves in the command's environment: `CODEX_SESSION_RELAY_SCOPE_DIR`
+alone when it is set, as a relay started there reads and claims its scope in that one and no
+other, and otherwise the production one under the passwd entry's home. The retention scan reads
+the production registry under an override too, because it looks for every daemon on the host
+whatever environment started it; remove finds a process running out of the runtime in the
+process table whichever registry recorded it, so an isolated environment's remove (todo 40's
+integration test) no longer reads, or is refused by, the machine's live registry. A remove that
+succeeds names the registries and state directories whose records it read (`relayRecords`). The
+reading rests on two assumptions, stated in every answer that depends on it (`processTable`): the
 process table is this host's, in this command's PID namespace, so a process in another PID
 namespace (a container sharing the directory) or on another host (a network home) is not seen,
-and `crw install remove` is to be run where the runtime's processes run. The reclaim of an
+and `crw install remove` is to be run where the runtime's processes run; and another user's
+hidden working directory is ruled out only by a directory closed to it as modes and credentials
+now stand, so one entered before either changed, or through a bind mount or a passed descriptor,
+is not seen. The reclaim of an
 abandoned staging applies the same reading. Live
 processes are read from procfs, so on a platform without one (darwin) whether a relay or bridge still runs out of the directory
 cannot be established and `crw install remove` always refuses there (fail-closed), saying that

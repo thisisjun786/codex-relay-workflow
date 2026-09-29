@@ -68,8 +68,11 @@ type Options struct {
 	CodexVersion func(context.Context) *string
 	// Proc is the process table remove reads (default /proc).
 	Proc string
-	// ScopeRegistry is the relay's scope registry, whose claims name the state directories a
-	// daemon.json may be in ("" is the relay's own, under the passwd entry's home).
+	// ScopeRegistry is the relay's production scope registry, whose claims name the state
+	// directories a daemon.json may be in ("" is the relay's own, under the passwd entry's home).
+	// Remove and the reclaim read it only where CODEX_SESSION_RELAY_SCOPE_DIR is unset: a relay
+	// started with that set reads and claims its scope there alone, and so do they
+	// (doctor.RecordedDaemons).
 	ScopeRegistry string
 }
 
@@ -413,10 +416,17 @@ func (r *run) reclaim(standing []contract.Field) (Object, int, bool) {
 			"nothing was removed or built. Its claim was settled COMPLETE ('claim'), so it now reads as a runtime whose install finished; crw install rollback "+r.environment+" puts it back in service.",
 			field("outgoing", record.Get(rec, "outgoing")), field("claim", orNull(settled)))
 	}
-	if u := runningOrRegistered(r.ctx, r.o, d); u != nil {
-		if u.noTable {
-			return keep("this staging's run is gone, but "+u.detail, "nothing was removed, built or written.", field("recoveryRequires",
-				"this staging was left by an install that did not finish (its run holds no lock), and it was never promoted: nothing selects it, points at it or registers it. Once no crw install run and nothing it started is still running (an interrupted run's exercise ends within "+exercise.BridgeTimeout.String()+"), delete "+r.environment+" by hand and rerun the install"))
+	if u, _ := runningOrRegistered(r.ctx, r.o, d); u != nil {
+		if u.recovery != "" {
+			// Only a recovery by hand removes it, and a staging's is not a settled runtime's.
+			var fields []contract.Field
+			also := ""
+			if u.key != "" {
+				fields = append(fields, field(u.key, u.value))
+				also = ", and none of the processes named in " + u.key + " runs out of it"
+			}
+			return keep("this staging's run is gone, but "+u.detail, "nothing was removed, built or written.", append(fields, field("recoveryRequires",
+				"this staging was left by an install that did not finish (its run holds no lock), and it was never promoted: nothing selects it, points at it or registers it. Once no crw install run and nothing it started is still running (an interrupted run's exercise ends within "+exercise.BridgeTimeout.String()+")"+also+", delete "+r.environment+" by hand and rerun the install"))...)
 		}
 		return keep("this staging's run is gone, but it is not abandoned: "+u.detail, "nothing was removed, built or written.", u.fields()...)
 	}
@@ -440,7 +450,7 @@ func (r *run) reclaim(standing []contract.Field) (Object, int, bool) {
 // tombstoneRefusal is why a tombstone already at this run's directory's tombstone name may not be
 // deleted before the directory is set aside there, or "" (tombstoneInUse).
 func (r *run) tombstoneRefusal(tombstone string) string {
-	if u := tombstoneInUse(r.ctx, r.o, tombstone); u != nil {
+	if u, _ := tombstoneInUse(r.ctx, r.o, tombstone); u != nil {
 		return u.detail
 	}
 	return ""

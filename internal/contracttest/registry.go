@@ -48,7 +48,7 @@ var ported = map[string]bool{"hook": true, "sqlite-ddl": true, "appserver": true
 // crwBinary is the crw under test: CRW_TEST_BINARY, or ./cmd/crw built once per package run
 // into buildDir, which TestMain creates and removes. crwDevBinary is the development binary the
 // hook corpus's `verify` steps run (`crw-dev stop-events`): CRW_TEST_DEV_BINARY, or ./cmd/crw-dev
-// built with -tags dev once, on its first use.
+// built with -tags dev once. TestMain builds both before it isolates HOME.
 var (
 	buildDir     string
 	crwBinary    = sync.OnceValues(func() (string, error) { return build("CRW_TEST_BINARY", "crw", "./cmd/crw") })

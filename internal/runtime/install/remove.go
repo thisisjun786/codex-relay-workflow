@@ -6,9 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -27,8 +30,9 @@ func runtimeDirectory(name string) bool {
 }
 
 // processScope is what a process-table reading can see, stated in every answer that rests on
-// one: this host's procfs in this command's PID namespace.
-const processScope = "this host's process table, as this command's PID namespace shows it: a process in another PID namespace (a container sharing this directory) or on another host (a network home) is not seen, and crw install remove is run where the runtime's processes run"
+// one: this host's procfs in this command's PID namespace, and another user's hidden working
+// directory ruled out only by a directory closed to it as the two now stand (closedTo).
+const processScope = "this host's process table, as this command's PID namespace shows it: a process in another PID namespace (a container sharing this directory) or on another host (a network home) is not seen, and crw install remove is run where the runtime's processes run; and another user's process (not root's) whose working directory the kernel hides was ruled out only where a directory from / down to this one is closed to every uid it holds, by that directory's mode, owner and group and the credentials the process holds now: one that entered this directory before either changed, or through a bind mount or a descriptor it was passed, is not seen"
 
 // Remove is `crw install remove <dir>`: delete one runtime directory under the destination,
 // only when nothing may still be using it. The directory is taken by its name under the
@@ -41,7 +45,10 @@ const processScope = "this host's process table, as this command's PID namespace
 // alive), and any directory a registration the host reads names a path inside
 // (doctor.RegisteredMatching: the Stop settings, the bridge record, config.toml's mcp_servers,
 // hooks.json, the cached plugin declarations and the launcher copy), or holds something that
-// could not be read. It accepts a Python env-* directory and a Go bin-* one alike.
+// could not be read. It accepts a Python env-* directory and a Go bin-* one alike. An answer
+// that removes names what its verdict rests on: the process table (processTable) and the relay
+// records it read (relayRecords: the scope registries and state directories of this
+// environment's relay, doctor.RecordedDaemons).
 //
 // Locks are taken in the one order every crw install path keeps (docs/port/decisions.md 33): the
 // directory's .crw-lock, then the promotion lock, then the host record's .crw-lock; each wait
@@ -138,13 +145,14 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 	if liveness, detail := staging.OwnerLiveness(directory); liveness != staging.Dead {
 		return refuse("another run still holds this directory, or whether one does could not be established: "+detail, "claim", claimValue)
 	}
-	if u := runningOrRegistered(ctx, o, d); u != nil {
+	u, relayRecords := runningOrRegistered(ctx, o, d)
+	if u != nil {
 		return refuse(u.detail, u.extra()...)
 	}
 	if _, err := os.Lstat(grave); err == nil {
 		// A tombstone of this name that an earlier run did not finish: the directory under the
 		// name now is a later install, so the old copy goes without touching the record.
-		if u := tombstoneInUse(ctx, o, grave); u != nil {
+		if u, _ := tombstoneInUse(ctx, o, grave); u != nil {
 			return refuse("an earlier removal of this name left "+grave+", and it cannot be finished: "+u.detail, u.extra()...)
 		}
 		if err := deleteTombstone(grave); err != nil {
@@ -175,14 +183,14 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 			field("claim", claimValue), field("droppedInstallEntries", strs(dropped)), field("clearedOutgoing", clearedOutgoing),
 			field("detail", "the directory was set aside as "+grave+" and could not be deleted completely: "+store.PythonOSError(err)), field("residualPaths", []any{grave}),
 			field("recoveryRequires", "run crw install remove "+grave+" once whatever stopped the deletion is cleared: it finishes the removal. Nothing uses the directory (every check passed), and its install entries are already dropped from the host record"),
-			field("processTable", processScope),
+			field("processTable", processScope), field("relayRecords", relayRecords),
 			field("note", "the host record no longer lists this directory's installs, and nothing is left under its name. Its measured points stay in the host record as history."),
 		}, Incomplete
 	}
 	return Object{
 		field("command", "remove"), field("applied", true), field("directory", directory), field("removed", true),
 		field("claim", claimValue), field("droppedInstallEntries", strs(dropped)), field("clearedOutgoing", clearedOutgoing),
-		field("processTable", processScope),
+		field("processTable", processScope), field("relayRecords", relayRecords),
 		field("note", "the directory was removed after the record, the pointer, its claim, the process table and every registration the host reads all said nothing uses it, and after its install entries were dropped from the host record. Its measured points stay in the host record as history."),
 	}, OK
 }
@@ -198,10 +206,11 @@ func mustIdentify(dest, name string) *runtimeDir {
 
 // tombstoneInUse is why the tombstone at grave may not be finished, or nil: it is not one this
 // command began (unclaimedTombstone: no readable installer claim, or a run holds it), or a live
-// process runs out of it or a registration names it, or that could not be ruled out.
-func tombstoneInUse(ctx context.Context, o Options, grave string) *use {
+// process runs out of it or a registration names it, or that could not be ruled out. With nil it
+// answers the relay records it read (runningOrRegistered).
+func tombstoneInUse(ctx context.Context, o Options, grave string) (*use, Object) {
 	if why := unclaimedTombstone(grave); why != "" {
-		return &use{why, "tombstone", grave, false}
+		return &use{why, "tombstone", grave, ""}, nil
 	}
 	return runningOrRegistered(ctx, o, mustIdentify(filepath.Dir(grave), filepath.Base(grave)))
 }
@@ -221,7 +230,8 @@ func finishRemoval(ctx context.Context, o Options, base Object, directory, grave
 		}
 		return append(out, field("note", "nothing was removed and nothing was written.")), Refused
 	}
-	if u := tombstoneInUse(ctx, o, grave); u != nil {
+	u, relayRecords := tombstoneInUse(ctx, o, grave)
+	if u != nil {
 		return refuse(grave+" cannot be finished as an interrupted removal: "+u.detail, u.extra()...)
 	}
 	if err := ctx.Err(); err != nil {
@@ -244,33 +254,48 @@ func finishRemoval(ctx context.Context, o Options, base Object, directory, grave
 	return Object{
 		field("command", "remove"), field("applied", true), field("directory", directory), field("removed", true), field("finished", grave),
 		field("droppedInstallEntries", strs(dropped)), field("clearedOutgoing", clearedOutgoing), field("processTable", processScope),
+		field("relayRecords", relayRecords),
 		field("note", "an interrupted removal of this runtime was finished: its tombstone is deleted and the host record lists nothing under a name that is gone."),
 	}, OK
 }
 
-// use is why a runtime directory may still be in use, and the reading that says so. noTable is
-// a platform without a process table, where the recovery by hand depends on the caller.
+// use is why a runtime directory may still be in use, and the reading that says so. recovery is
+// set where this command can never establish that nothing uses it - a platform without a process
+// table, a process it cannot rule out - and says how to remove it by hand (recoveryRequires); a
+// caller whose directory is not a settled runtime (the reclaim) gives its own.
 type use struct {
-	detail  string
-	key     string
-	value   any
-	noTable bool
+	detail   string
+	key      string
+	value    any
+	recovery string
 }
 
 // extra is the reading as a refusal carries it.
 func (u *use) extra() []any {
-	if u.key == "" {
-		return nil
+	var out []any
+	for _, f := range u.fields() {
+		out = append(out, f.Key, f.Value)
 	}
-	return []any{u.key, u.value}
+	return out
 }
 
 // fields is the reading as result fields, or none.
 func (u *use) fields() []contract.Field {
-	if u.key == "" {
-		return nil
+	var out []contract.Field
+	if u.key != "" {
+		out = append(out, field(u.key, u.value))
 	}
-	return []contract.Field{field(u.key, u.value)}
+	if u.recovery != "" {
+		out = append(out, field("recoveryRequires", u.recovery))
+	}
+	return out
+}
+
+// byHand is how to remove d by hand where this command cannot establish that nothing uses it,
+// once what is named first no longer runs out of it: stop what runs from it, delete it, and read
+// the host record and the pointer again.
+func byHand(d *runtimeDir, first string) string {
+	return "remove it by hand" + first + ": stop the relay daemon started from it (" + filepath.Join(d.path, "bin", definition.Relay) + " service stop) and end every Codex session whose bridge it started, delete " + d.path + ", then run crw install status to see that the host record and the pointer still name the runtime you meant. Its install entries stay in the host record, where a rollback naming it is refused because the directory is gone"
 }
 
 // selectedOrPointed is the half of the in-use rule the host record and the owned pointer
@@ -279,15 +304,15 @@ func (u *use) fields() []contract.Field {
 // elsewhere). nil when neither does.
 func selectedOrPointed(rec Object, dest string, d *runtimeDir) *use {
 	if selectionHeld(rec, d) {
-		return &use{"the host record selects this runtime, so it is in service", "selected", record.Get(rec, "selected"), false}
+		return &use{"the host record selects this runtime, so it is in service", "selected", record.Get(rec, "selected"), ""}
 	}
 	for _, path := range uniqueStrings(recordedPointer(rec, dest), pointer.Path(dest)) {
 		names := d.pointed(path)
 		if names == nil {
-			return &use{"whether the pointer at " + path + " names this runtime could not be established, and an unread pointer is not a pointer aimed elsewhere", "pointer", pointerObject(path), false}
+			return &use{"whether the pointer at " + path + " names this runtime could not be established, and an unread pointer is not a pointer aimed elsewhere", "pointer", pointerObject(path), ""}
 		}
 		if *names {
-			return &use{"the pointer at " + path + " names this runtime, so the commands a host reaches still resolve into it", "pointer", pointerObject(path), false}
+			return &use{"the pointer at " + path + " names this runtime, so the commands a host reaches still resolve into it", "pointer", pointerObject(path), ""}
 		}
 	}
 	return nil
@@ -320,26 +345,30 @@ func outgoingHeld(rec Object, d *runtimeDir) bool {
 // process runs out of d (liveProcesses), a daemon a daemon.json records alive (its start time and
 // boot id matching this process table) does, or a relay daemon record could not be read; or a
 // registration the host reads names a path inside d (doctor.RegisteredMatching) or could not be
-// read or judged. nil when none does. What it cannot see is processScope.
-func runningOrRegistered(ctx context.Context, o Options, d *runtimeDir) *use {
+// read or judged. nil when none does, with the relay records it read, as an answer names them:
+// the scope registries whose claims and the state directories whose daemon.json it read. What it
+// cannot see is processScope; the relay records are the ones the relay resolves in o.Env
+// (doctor.RecordedDaemons), so a relay isolated with CODEX_SESSION_RELAY_SCOPE_DIR has its own.
+func runningOrRegistered(ctx context.Context, o Options, d *runtimeDir) (*use, Object) {
 	processes, unruled, err := liveProcesses(o.proc(), d)
 	var missing *noProcessTable
 	if errors.As(err, &missing) {
-		return &use{"this platform (" + runtime.GOOS + ") has no process table this command can read (" + missing.proc + " is not a procfs), so whether a relay daemon or a bridge still runs out of this directory cannot be established, and a directory that may be in use is never removed", "recoveryRequires",
-			"remove it by hand: stop the relay daemon started from it (" + filepath.Join(d.path, "bin", definition.Relay) + " service stop) and end every Codex session whose bridge it started, delete " + d.path + ", then run crw install status to see that the host record and the pointer still name the runtime you meant. Its install entries stay in the host record, where a rollback naming it is refused because the directory is gone", true}
+		return &use{"this platform (" + runtime.GOOS + ") has no process table this command can read (" + missing.proc + " is not a procfs), so whether a relay daemon or a bridge still runs out of this directory cannot be established, and a directory that may be in use is never removed", "", nil, byHand(d, "")}, nil
 	}
 	if err != nil {
-		return &use{"the process table could not be read, so whether a process still runs out of this directory was not established: " + err.Error(), "", nil, false}
+		return &use{"the process table could not be read, so whether a process still runs out of this directory was not established: " + err.Error(), "", nil, ""}, nil
 	}
 	if len(processes) > 0 {
-		return &use{"live processes run out of this directory", "processes", processes, false}
+		return &use{"live processes run out of this directory", "processes", processes, ""}, nil
 	}
 	if len(unruled) > 0 {
-		return &use{"what a live process runs could not be read, so it cannot be ruled out that it runs out of this directory", "unreadableProcesses", unruled, false}
+		return &use{"what a live process runs could not be read, so it cannot be ruled out that it runs out of this directory", "unreadableProcesses", unruled,
+			byHand(d, " once none of the processes named in unreadableProcesses (each with its pid, its uid and why it could not be ruled out) runs out of it")}, nil
 	}
 	retention := doctor.RetentionOptions{Env: o.Env, CodexHome: o.CodexHome, Destination: o.Dest, Proc: o.proc(), ScopeRegistry: o.ScopeRegistry}
-	if _, unreadable := doctor.RecordedDaemons(retention, o.State); len(unreadable) > 0 {
-		return &use{"a relay daemon record could not be read, so whether a daemon it records still runs out of this directory was not established", "unreadable", strs(unreadable), false}
+	daemons := doctor.RecordedDaemons(retention, o.State)
+	if len(daemons.Unreadable) > 0 {
+		return &use{"a relay daemon record could not be read, so whether a daemon it records still runs out of this directory was not established", "unreadable", strs(daemons.Unreadable), ""}, nil
 	}
 	registered, unreadable := doctor.RegisteredMatching(ctx, retention, func(path, resolves string) string {
 		switch {
@@ -351,12 +380,12 @@ func runningOrRegistered(ctx context.Context, o Options, d *runtimeDir) *use {
 		return ""
 	})
 	if len(registered) > 0 {
-		return &use{"a registration the host reads still names a path inside this directory, and each new session starts it from there", "registrations", registered, false}
+		return &use{"a registration the host reads still names a path inside this directory, and each new session starts it from there", "registrations", registered, ""}, nil
 	}
 	if len(unreadable) > 0 {
-		return &use{"a registration the host reads could not be read or judged, so whether it names a path inside this directory was not established", "unreadable", strs(unreadable), false}
+		return &use{"a registration the host reads could not be read or judged, so whether it names a path inside this directory was not established", "unreadable", strs(unreadable), ""}, nil
 	}
-	return nil
+	return nil, Object{field("scopeRegistries", strs(daemons.Registries)), field("stateDirectories", strs(daemons.States))}
 }
 
 // dropInstalls drops every install entry whose environment is d, and the record's outgoing
@@ -587,7 +616,13 @@ func runtimeNames() map[string]bool {
 // judged by its cmdline, which every user may read, and is not ruled out when that is hidden
 // too (a procfs mounted hidepid) or when it starts one of this runtime's executables by a bare
 // name, which could be this runtime's. A process of this user whose exe or cmdline cannot be
-// read for any other reason is not ruled out.
+// read for any other reason is not ruled out. A relative operand is opened against the
+// process's working directory (its cwd link, which also needs ptrace access), and a process whose
+// argv runs something relative to a working directory that cannot be read is not ruled out,
+// whatever its uid: that working directory may itself be inside, whatever the relative path
+// names. The one exception is another user's process, not root's, whose working directory the
+// kernel hides and which no working directory inside can hold, because a directory from / down
+// to directory is closed to it (closedTo).
 func liveProcesses(proc string, d *runtimeDir) (found, unruled []any, err error) {
 	if _, err := os.Stat(filepath.Join(proc, "self")); err != nil {
 		return nil, nil, &noProcessTable{proc}
@@ -666,8 +701,17 @@ func liveProcesses(proc string, d *runtimeDir) (found, unruled []any, err error)
 			}
 		}
 		if unresolved != "" && len(hits) == 0 {
-			unknown(int64(uid), "its command line runs "+unresolved+" relative to its working directory, which could not be read ("+store.PythonOSError(cwdErr)+"), so what it runs is unknown")
-			continue
+			why := "its command line runs " + unresolved + " relative to its working directory, which could not be read (" + store.PythonOSError(cwdErr) + ")"
+			if uid == me || !denied(cwdErr) {
+				unknown(int64(uid), why+", so what it runs is unknown")
+				continue
+			}
+			// Another user's process whose working directory the kernel hides: ruled out only
+			// when no working directory of its can lie inside d (closedTo).
+			if closed, reading := closedTo(base, d); !closed {
+				unknown(int64(uid), why+", and "+reading+", so it may work inside this directory and what it runs is unknown")
+				continue
+			}
 		}
 		for _, word := range words {
 			if _, value, ok := strings.Cut(word, "="); ok && strings.HasPrefix(word, "-") {
@@ -683,4 +727,142 @@ func liveProcesses(proc string, d *runtimeDir) (found, unruled []any, err error)
 		}
 	}
 	return found, unruled, nil
+}
+
+// closedTo is whether no working directory of the process at base - another user's, whose
+// working directory the kernel hides from this one - can lie inside d, and when not, what was
+// read. None can when some directory from d up to / denies that process search (x) permission
+// by its mode, owner and group, for every uid it holds: a process enters d only through each of
+// those. Its credentials are the ones /proc/<pid>/status shows every user: its real,
+// effective, saved and filesystem uids and gids, its supplementary groups, and its permitted and
+// effective capabilities. It is never established for a process that runs as root or holds root
+// among its uids, or holds CAP_DAC_OVERRIDE or CAP_DAC_READ_SEARCH (either passes a directory's
+// permissions), nor by a directory carrying an ACL (its mode does not say who may search it) or
+// one that could not be read; and credentials that cannot be read establish nothing. It judges
+// the credentials and modes as they are now, through the path d resolves to here: a process that
+// entered d before either changed, or through a bind mount or a descriptor it was passed, is not
+// seen (processScope says so).
+func closedTo(base string, d *runtimeDir) (bool, string) {
+	raw, err := os.ReadFile(filepath.Join(base, "status"))
+	if err != nil {
+		return false, "its credentials could not be read (" + store.PythonOSError(err) + ")"
+	}
+	c, err := parseCredentials(string(raw))
+	if err != nil {
+		return false, "its credentials could not be read (" + err.Error() + ")"
+	}
+	if slices.Contains(c.uids, 0) {
+		return false, "it runs as root or holds root among its uids (" + ints(c.uids) + "), which every directory lets search"
+	}
+	const dacOverride, dacReadSearch = 1 << 1, 1 << 2
+	if c.caps&(dacOverride|dacReadSearch) != 0 {
+		return false, "it holds CAP_DAC_OVERRIDE or CAP_DAC_READ_SEARCH, which passes every directory's permissions"
+	}
+	resolved, err := filepath.EvalSymlinks(d.path)
+	if err != nil {
+		return false, "where this directory lies could not be resolved to judge who may enter it (" + store.PythonOSError(err) + ")"
+	}
+	for p := resolved; ; p = filepath.Dir(p) {
+		if closes(p, c) {
+			return true, ""
+		}
+		if filepath.Dir(p) == p {
+			break
+		}
+	}
+	return false, "no directory from / down to this one is established to close it to that process (uids " + ints(c.uids) + ", groups " + ints(c.groups) + ")"
+}
+
+// credentials are what a process's status says it may enter a directory as.
+type credentials struct {
+	uids, groups []int
+	caps         uint64 // permitted | effective
+}
+
+// parseCredentials reads the Uid, Gid, Groups, CapPrm and CapEff lines of a /proc/<pid>/status.
+// The gids are among the groups: any of them may be the one a directory's group is checked for.
+func parseCredentials(status string) (credentials, error) {
+	var c credentials
+	seen := map[string]bool{}
+	for _, line := range strings.Split(status, "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(value)
+		switch key {
+		case "Uid", "Gid", "Groups":
+			var ids []int
+			for _, f := range fields {
+				id, err := strconv.Atoi(f)
+				if err != nil {
+					return c, errors.New("its " + key + " line is not a list of ids: " + strconv.Quote(line))
+				}
+				ids = append(ids, id)
+			}
+			if key != "Groups" && len(ids) != 4 {
+				return c, errors.New("its " + key + " line does not hold four ids: " + strconv.Quote(line))
+			}
+			if key == "Uid" {
+				c.uids = ids
+			} else {
+				c.groups = append(c.groups, ids...)
+			}
+		case "CapPrm", "CapEff":
+			bits, err := strconv.ParseUint(strings.TrimSpace(value), 16, 64)
+			if err != nil {
+				return c, errors.New("its " + key + " line is not a capability set: " + strconv.Quote(line))
+			}
+			c.caps |= bits
+		default:
+			continue
+		}
+		seen[key] = true
+	}
+	for _, key := range []string{"Uid", "Gid", "Groups", "CapPrm", "CapEff"} {
+		if !seen[key] {
+			return c, errors.New("it has no " + key + " line")
+		}
+	}
+	return c, nil
+}
+
+// closes is whether the directory at path denies search permission to a process with credentials
+// c, by its mode, owner and group, for every uid c holds. For a uid that owns it, its owner bits
+// decide; for any other, its other bits, or its group bits when c holds its group - either may
+// let the process in, since which gid it entered with cannot be read. A directory whose mode is
+// not the whole answer (an ACL: POSIX's, or NFSv4's) or that cannot be read closes nothing.
+func closes(path string, c credentials) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false
+	}
+	for _, attribute := range []string{"system.posix_acl_access", "system.nfs4_acl"} {
+		if _, err := unix.Lgetxattr(path, attribute, nil); !errors.Is(err, unix.ENODATA) && !errors.Is(err, unix.ENOTSUP) && !errors.Is(err, unix.EOPNOTSUPP) {
+			return false
+		}
+	}
+	mode, owner, group := uint32(stat.Mode), int(stat.Uid), int(stat.Gid)
+	for _, uid := range c.uids {
+		switch {
+		case uid == owner && mode&0o100 != 0:
+			return false
+		case uid != owner && (mode&0o001 != 0 || (mode&0o010 != 0 && slices.Contains(c.groups, group))):
+			return false
+		}
+	}
+	return true
+}
+
+// ints is ids as a list a reader can follow.
+func ints(ids []int) string {
+	words := make([]string, len(ids))
+	for i, id := range ids {
+		words[i] = strconv.Itoa(id)
+	}
+	return "[" + strings.Join(words, " ") + "]"
 }

@@ -13,11 +13,14 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
 
-// otherUsers makes every fake pid from 5000 up another user's process.
+// otherUsers makes every fake pid from 5000 up another user's process, and from 9000 up root's.
 func otherUsers(t *testing.T) {
 	t.Helper()
 	restore := install.ReplaceProcessOwner(func(dir string) (int, error) {
-		if pid, _ := strconv.Atoi(filepath.Base(dir)); pid >= 5000 {
+		switch pid, _ := strconv.Atoi(filepath.Base(dir)); {
+		case pid >= 9000:
+			return 0, nil
+		case pid >= 5000:
 			return os.Getuid() + 1, nil
 		}
 		return os.Getuid(), nil
@@ -26,9 +29,12 @@ func otherUsers(t *testing.T) {
 }
 
 // A process whose command line is hidden (a procfs mounted hidepid) and whose executable is
-// another user's cannot be ruled out, so remove refuses, naming its pid and why, and so does the
-// reclaim of an abandoned staging, which shares the rule. A table that holds only a pid that is
-// gone and another user's process that names nothing inside does not stop remove.
+// another user's cannot be ruled out, so remove refuses, naming its pid, its uid and why, with
+// the recovery by hand, and so does the reclaim of an abandoned staging, which shares the rule;
+// so does root's process running a script relative to a working directory the kernel hides. A
+// table that holds only a pid that is gone, another user's process that names nothing inside,
+// and another user's running a relative script from a hidden working directory while the
+// runtime lies in a home closed to it does not stop remove.
 func TestRemoveAndReclaimRefuseAProcessTheyCannotRuleOut(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads every file, so an unreadable one cannot be made")
@@ -44,7 +50,9 @@ func TestRemoveAndReclaimRefuseAProcessTheyCannotRuleOut(t *testing.T) {
 
 	refused, code := install.Remove(context.Background(), o, old)
 	unruled := golden.List(at(refused, "unreadableProcesses"))
-	if code != install.Refused || len(unruled) != 1 || at(golden.Obj(unruled[0]), "pid") != int64(5001) || !strings.Contains(text(at(golden.Obj(unruled[0]), "why")), "command line could not be read") {
+	if code != install.Refused || len(unruled) != 1 || at(golden.Obj(unruled[0]), "pid") != int64(5001) || at(golden.Obj(unruled[0]), "uid") != int64(os.Getuid()+1) ||
+		!strings.Contains(text(at(golden.Obj(unruled[0]), "why")), "command line could not be read") ||
+		!strings.Contains(text(at(refused, "recoveryRequires")), "remove it by hand once none of the processes named in unreadableProcesses") || !strings.Contains(text(at(refused, "recoveryRequires")), "delete "+old+", then run crw install status") {
 		t.Fatalf("remove: exit %d\n%s", code, golden.Canon(refused))
 	}
 	if _, err := os.Stat(filepath.Join(old, "bin", "crw")); err != nil {
@@ -55,16 +63,31 @@ func TestRemoveAndReclaimRefuseAProcessTheyCannotRuleOut(t *testing.T) {
 	h.mustInstall(t, "update", archive(t, "0.9.2", "")) // outgoing moves on, so only the process table protects it
 	unsettle(t, old)
 	kept, code := install.Install(context.Background(), o, "update", install.Source{From: first})
-	if code != install.Refused || at(kept, "stagingDecision") != "RECLAIM" || len(golden.List(at(kept, "unreadableProcesses"))) != 1 {
+	if code != install.Refused || at(kept, "stagingDecision") != "RECLAIM" || len(golden.List(at(kept, "unreadableProcesses"))) != 1 || !strings.Contains(text(at(kept, "recoveryRequires")), "delete "+old+" by hand and rerun the install") {
 		t.Fatalf("reclaim: exit %d\n%s", code, golden.Canon(kept))
 	}
 	if _, err := os.Stat(filepath.Join(old, "bin", "crw")); err != nil {
 		t.Fatal("the reclaim refused and removed")
 	}
+	// Root's process whose working directory is hidden, running a relative script: that working
+	// directory may be inside the staging, and no directory is closed to root.
+	o.Proc = install.FakeProc(t, install.FakeProcess{Pid: 9003, Exe: "denied", Cmdline: install.Argv("python3", "-u", "bin/WALinuxAgent-2.16.0.2-py3.12.egg", "-run-exthandlers"), Cwd: "denied", Status: install.ProcStatus([]int{0})})
+	kept, code = install.Install(context.Background(), o, "update", install.Source{From: first})
+	if unruled := golden.List(at(kept, "unreadableProcesses")); code != install.Refused || at(kept, "stagingDecision") != "RECLAIM" || len(unruled) != 1 || at(golden.Obj(unruled[0]), "pid") != int64(9003) || at(golden.Obj(unruled[0]), "uid") != int64(0) {
+		t.Fatalf("reclaim, root's hidden working directory: exit %d\n%s", code, golden.Canon(kept))
+	}
+	if _, err := os.Stat(filepath.Join(old, "bin", "crw")); err != nil {
+		t.Fatal("the reclaim refused and removed")
+	}
 
+	// The home is closed to other users, as a user's home is.
+	if err := os.Chmod(h.home, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	o.Proc = install.FakeProc(t,
 		install.FakeProcess{Pid: 4000},
-		install.FakeProcess{Pid: 5002, Exe: "denied", Cmdline: install.Argv("/usr/sbin/sshd", "-D")})
+		install.FakeProcess{Pid: 5002, Exe: "denied", Cmdline: install.Argv("/usr/sbin/sshd", "-D")},
+		install.FakeProcess{Pid: 5004, Exe: "denied", Cmdline: install.Argv("python3", "-u", "bin/crw"), Cwd: "denied", Status: install.ProcStatus([]int{os.Getuid() + 1})})
 	if removed, code := install.Remove(context.Background(), o, old); code != install.OK || at(removed, "removed") != true {
 		t.Fatalf("a table with nothing unruled: exit %d\n%s", code, golden.Canon(removed))
 	}

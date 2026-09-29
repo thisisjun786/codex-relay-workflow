@@ -2,8 +2,10 @@ package doctor_test
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -842,6 +844,55 @@ func TestRetentionScanJudgesOnlyWhatItsGrammarReads(t *testing.T) {
 	}
 }
 
+// A word given to a program the scan does not model is something that program may run only if
+// it can be executed: a regular file with an execute bit (a file with no #! among them, which a
+// shell's ENOEXEC fallback runs). A socket or a FIFO cannot be, whatever its mode bits, so the
+// App Server socket a bridge record passes with --socket leaves the command judged, where it
+// made every registration naming it unreadable and every crw install remove refuse (todo 40).
+func TestRetentionScanDoesNotTakeWhatCannotBeExecutedForAProgram(t *testing.T) {
+	h := newHost(t)
+	bin := filepath.Join(h.home, "bin")
+	write(t, filepath.Join(bin, "runner"), fakeCrw+"runner", 0o755)
+	write(t, filepath.Join(bin, "no-hash-bang"), "echo hello\n", 0o755)
+	short, err := os.MkdirTemp("", "crw-sock-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(short) })
+	socket := filepath.Join(short, "app.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	fifo := filepath.Join(short, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{socket, fifo} {
+		if err := os.Chmod(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.env = scope.Env{"HOME=" + h.home, "XDG_STATE_HOME=" + h.state, "CODEX_HOME=" + h.codex, "PATH=" + bin + ":/usr/bin:/bin"}
+	cases := []struct{ command, want string }{
+		{"runner --socket " + socket, "clean"},
+		{"runner " + fifo, "clean"},
+		{"runner " + filepath.Join(bin, "no-hash-bang"), "unreadable"},
+	}
+	var commands []string
+	for _, c := range cases {
+		commands = append(commands, c.command)
+	}
+	stopHooks(t, h, commands...)
+	report := h.scan(t)
+	for i, c := range cases {
+		if got := outcome(report, 9, "hooks.Stop[0].hooks["+strconv.Itoa(i)+"].command"); got != c.want {
+			t.Errorf("%q: %s, want %s", c.command, got, c.want)
+		}
+	}
+}
+
 // An MCP server is judged as Codex starts it: command and args exec'd with no shell, a shell's
 // -c program read as a program (finding 5, a login shell's being unreadable), a relative command
 // resolved against the declared cwd and a bare one on the declared env's PATH (finding 6), a
@@ -1001,6 +1052,47 @@ func TestRetentionScanReadsEveryRelayStateDirectory(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(filepath.Join(h.home, "scopes"), 0o755) })
 	if report := h.scanProc(t, pythonProc(t)); record.Get(surfaceRow(t, report, 3), "scanned") != false || !listed(unreadable(report), filepath.Join(h.home, "scopes"), "PermissionError") {
 		t.Errorf("an unlistable scope registry: %s %v", golden.Canon(surfaceRow(t, report, 3)), unreadable(report))
+	}
+}
+
+// A caller that removes a runtime reads the relay records of its own environment: with
+// CODEX_SESSION_RELAY_SCOPE_DIR set, that registry alone, the only one a relay started there reads
+// and claims its scope in; without it, the production one. The retention scan still reads both,
+// since it looks for every daemon on this host whatever environment started it. (todo 40 review:
+// `crw install remove` in the isolated home read this machine's live registry, and one malformed
+// claim there refused the remove.)
+func TestRecordedDaemonsReadTheRegistryTheRelayResolves(t *testing.T) {
+	h := newHost(t)
+	production := filepath.Join(h.home, "scopes")
+	malformed := filepath.Join(production, "0000000000000000.json")
+	write(t, malformed, "{not json", 0o600)
+	isolated := filepath.Join(h.home, "isolated-scopes")
+	served := filepath.Join(h.home, "srv")
+	write(t, filepath.Join(served, "daemon.json"), `{"pid": 4242, "startTicks": 777}`, 0o600)
+	write(t, filepath.Join(isolated, "abcd.json"), `{"stateDir": "`+served+`"}`, 0o600)
+	proc := pythonProc(t)
+	read := func(env scope.Env) doctor.DaemonRecords {
+		return doctor.RecordedDaemons(doctor.RetentionOptions{Env: env, Proc: proc, ScopeRegistry: production})
+	}
+	got := read(h.env)
+	if strings.Join(got.Registries, "|") != production || !listed(got.Unreadable, malformed) {
+		t.Errorf("no override: registries %q, unreadable %q; want the production registry and its malformed claim", got.Registries, got.Unreadable)
+	}
+	for _, spelled := range []string{isolated, "~/isolated-scopes"} {
+		got := read(h.env.With("CODEX_SESSION_RELAY_SCOPE_DIR", spelled))
+		if strings.Join(got.Registries, "|") != isolated || len(got.Unreadable) != 0 || !slices.Contains(got.States, served) || !slices.Equal(got.Alive, []int{4242}) {
+			t.Errorf("override %q: registries %q, states %q, alive %v, unreadable %q; want %s alone and the daemon its claim names", spelled, got.Registries, got.States, got.Alive, got.Unreadable, isolated)
+		}
+	}
+	// An override that cannot be made absolute is unknown, never replaced by the production one.
+	got = read(h.env.With("CODEX_SESSION_RELAY_SCOPE_DIR", "isolated-scopes"))
+	if len(got.Registries) != 0 || !listed(got.Unreadable, "$CODEX_SESSION_RELAY_SCOPE_DIR", "rows 3 and 6") {
+		t.Errorf("a relative override: registries %q, unreadable %q", got.Registries, got.Unreadable)
+	}
+	report := doctor.RetentionScan(context.Background(), doctor.RetentionOptions{Env: h.env.With("CODEX_SESSION_RELAY_SCOPE_DIR", isolated),
+		Now: func() time.Time { return scanNow }, Proc: proc, ScopeRegistry: production})
+	if !listed(unreadable(report), malformed) || record.Get(surfaceRow(t, report, 3), "scanned") != false {
+		t.Errorf("the retention scan under an override no longer reads the production registry: %v", unreadable(report))
 	}
 }
 

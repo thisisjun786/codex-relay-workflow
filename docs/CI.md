@@ -16,7 +16,8 @@ the steps needed to activate GitHub enforcement.
 | `python3 scripts/ci/packages.py [--shard K/N]` | Install, test, run and build the two packages under `packages/` from the root lock file; CI runs each Python version as `--shard` legs that partition the collected tests |
 | `bash scripts/ci/secrets.sh` | Checksum-pinned Gitleaks scan of all fetched history |
 | `crw-dev ci gate` | Aggregate prerequisite results supplied by the workflow |
-| `make lint`, `make test-part TEST_PART=<1-5, rest>`, `CGO_ENABLED=0 make dist` per target | `go-product` job, one leg each: vet, staticcheck and gofmt; the Go tests and contract corpus as parts that together are `make test`; static `crw` binaries for linux/amd64, linux/arm64 and darwin/arm64 uploaded with `SHA256SUMS` |
+| `make lint`, `make test-part TEST_PART=<1-5, rest>`, `CGO_ENABLED=0 make dist` per target | `go-product` job, one leg each: vet (also of the `dev` and `integration` tagged packages), staticcheck and gofmt; the Go tests and contract corpus as parts that together are `make test`; static `crw` binaries for linux/amd64, linux/arm64 and darwin/arm64 uploaded with `SHA256SUMS` |
+| `CRW_TEST_BINARY=<crw> go test -tags integration ./internal/runtime/integration/...` | Install release archives of that binary (and a relinked second one) into an isolated home with `crw install`, and run the plugin's declared Stop hook and MCP server against them: install, cache replacement, a missing runtime, update, a refused archive, rollback and remove (IS-1, IS-7, IS-8). Without `CRW_TEST_BINARY` it builds `./cmd/crw` |
 
 `crw-dev` is the development binary: `go build -tags dev -o dist/crw-dev ./cmd/crw-dev`
 (or `make crw-dev`). It builds only with the `dev` tag, so `make dist` and the release
@@ -68,7 +69,11 @@ every other package, so a new package is always tested. `test_gate.py` and
 `internal/dev/ci` refuse a Makefile part without a workflow leg, and a package-shard
 list that is not every slice of one total. Its `dist` leg also checks the plugin
 payload with `crw-dev ci plugin`; the step's condition, that the native wiring launcher
-`plugins/crw/wiring/crw-bridge.sh` exists, holds since todo 34.
+`plugins/crw/wiring/crw-bridge.sh` exists, holds since todo 34. It also runs the isolated-home
+integration test against the linux/amd64 binary it built, with `CGO_ENABLED=0` and
+`-trimpath` so the test reuses the dist build's compiled packages; `test_gate.py` and
+`internal/dev/ci` pin that step, and `make lint` vets the tagged package so it cannot rot
+outside `make test`.
 
 `test_gate.py` and the Go tests in `internal/dev/ci` compare the gate's prerequisite
 inventory with the real workflow and refuse omitted/extra jobs or `continue-on-error`. Selector tests use real Git

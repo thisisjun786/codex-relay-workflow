@@ -492,9 +492,13 @@ func assignment(text string) bool {
 	return ok && validName(name)
 }
 
+// executable is whether a program handed path could execute it: a regular file with an execute
+// bit. execve(2) refuses anything else with EACCES, and no shell's ENOEXEC fallback reads it, so a
+// socket, FIFO or device named as an argument - the App Server socket a bridge record passes with
+// --socket, say - is never what the program runs, whatever its mode bits say.
 func executable(path string) bool {
 	info, err := os.Stat(path)
-	return err == nil && info.Mode()&0o111 != 0
+	return err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0
 }
 
 // shellFlags reports whether an option word sets only flags that change nothing this scan

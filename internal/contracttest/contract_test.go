@@ -18,13 +18,16 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	buildDir = dir
-	// Build once before HOME isolation, inheriting the invoking toolchain caches.
-	if _, err := crwBinary(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		if cleanupErr := testsupport.RemoveTempTree(dir); cleanupErr != nil {
-			fmt.Fprintln(os.Stderr, cleanupErr)
+	// Build both binaries before HOME isolation, inheriting the invoking toolchain caches: a build
+	// after it starts from an empty GOCACHE and would spend a scenario's deadline compiling.
+	for _, binary := range []func() (string, error){crwBinary, crwDevBinary} {
+		if _, err := binary(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			if cleanupErr := testsupport.RemoveTempTree(dir); cleanupErr != nil {
+				fmt.Fprintln(os.Stderr, cleanupErr)
+			}
+			os.Exit(1)
 		}
-		os.Exit(1)
 	}
 	for _, key := range []string{"HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "CODEX_HOME", "CODEX_SESSION_RELAY_STATE", "CODEX_SESSION_RELAY_SCOPE_DIR"} {
 		value := dir + "/" + key
