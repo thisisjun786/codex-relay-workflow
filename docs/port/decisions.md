@@ -1138,6 +1138,114 @@ hook exited without connecting) and `TestDomain/hook/...recorded_elsewhere` (CI 
 instrumented binary showed the settings cut, the input release and the skipped pre-scan
 row firing 316-381 ms after entry.
 
+## 33. The `.crw-lock` sidecar keeps Python's O_EXCL protocol until todo 44
+
+Decision: `internal/runtime/record.Lock`, the read-modify-write lock beside the host record, a
+staging claim and the settings records, takes `<target>.crw-lock` exactly as
+`hostrecord.Locked` does: `O_CREAT|O_EXCL`, the pid written into it, a file older than 300 s
+unlinked as stale, and the file unlinked on release. This is the one declared exception to the
+rule that no lock file is ever unlinked or replaced, and it ends when todo 44 deletes
+`scripts/runtime_install.py` and `scripts/crw_transition`, the last Python writers of those
+files. `.promotion-lock` and `.crw-staging-lock` are flock(2) files under decision 7: created
+once, never unlinked, released by `LOCK_UN` or by the holder's death.
+
+Why: the Python installer and `plugin_transition` still write the host record, the claims and
+`crw-bridge-mcp.json` under this lock. A flock on the same path would not exclude an O_EXCL
+holder, and an O_EXCL file would not exclude a flock holder, so switching one side alone would
+let a Go and a Python read-modify-write interleave on the same record.
+
+Evidence: scripts/crw_runtime/hostrecord.py:271-315 (`Locked`), :335-378 (`Exclusive`);
+scripts/crw_runtime/staging.py:165-209 (`Held`), :212-240 (`owner_liveness`) and :155-162 (`write_claim` under `Locked`);
+scripts/crw_transition/steps.py (nine `Locked` sites); internal/runtime/record/locks.go;
+`TestCrwLockIsExclusiveAndExpiresOnlyWhenStale`,
+`TestPromotionLockContentionAndTheFileIsNeverUnlinked` and, under the parity tag,
+`TestParity_locks_exclude_across_runtimes` (a Python holder makes Go's promotion Busy and a Go
+holder makes Python's `Exclusive` raise `Busy`).
+
+## 34. The host record stays recordVersion 1; Go install entries are additive
+
+Decision: `internal/runtime/record` reads and writes the one host record
+(`${XDG_STATE_HOME:-~/.local/state}/codex-relay-workflow/host-record.json`) as `recordVersion`
+1, byte for byte as `json.dump(indent=2, sort_keys=True)` plus a newline writes it, and never
+rewrites a Python entry or point. There is no record v2 and no "write beside, then rename". A Go
+install entry carries `location` (`<runtime>/bin`, the directory a running Go relay reports as
+its own), `entryPoint`, `environment`, `integrity` and `binaryDigest` (the binary's SHA-256),
+`target` (`<goos>/<goarch>`), `reachedVia`, `digestMatchesDefinition` and `source`, and no
+`interpreter`, `interpreterPath` or `installMode`. `source` is what both fault sweepers read as
+the installed revision: `repositoryCommit` and `workingTreeClean` come from the binary's build
+information, and `repositoryTree` and `subdirectoryTree` (equal: the Go module is the repository
+root) from the tree `make build`/`make dist` stamp with
+`-X .../internal/runtime/record.sourceTree=$(git rev-parse HEAD^{tree})`. A binary built without
+the stamp - today every GoReleaser release build, until todo 44 adds the stamp to the release
+workflow - records null trees, and both sweepers then report "this copy's install entry records
+an incomplete revision (repositoryTree, subdirectoryTree missing or malformed), which identifies
+nothing" rather than a revision nobody measured. The dead `outgoing` key and component-level
+facts are carried through when present and never written.
+
+Why: the Python installer, the developer harness and both sweepers (faultsweep.py:497 and
+internal/relay/faults/sweep.go:470) read the same file during coexistence and answer "not
+record version 1" for anything else, which would lose every fault's installed revision.
+
+Evidence: scripts/crw_runtime/hostrecord.py:77-160, :451-540; internal/runtime/record;
+internal/runtime/record/testdata/host-record-v1.json (the relay host's record, redacted and
+reduced to three installs and two points per component); `TestV1RecordRoundTripsByteForByte`,
+`TestUpdateWritesWhatPythonWrites` (seven deltas against Python's bytes in
+internal/runtime/testdata/goldens.json), `Test37_SweeperReadsTheGoInstallEntry`
+(internal/relay/faults) and, under the parity tag, `TestParity_python_faultsweep_reads_a_go_install_entry`.
+
+## 35. The components definition stays definitionVersion 1, without per-target digests
+
+Decision: scripts/crw_runtime/components.json keeps `definitionVersion` 1 and every field it has
+while the Python installer and scripts/trial_startup.py read it (until todos 44 and 48).
+`internal/runtime/definition` carries the fields a Go install uses - component, `consoleScript`
+(the compatibility link names), version, `licencePath`, `identityTool`, `exerciseCommand` and
+upstream provenance - and `TestDefinitionAgreesWithComponentsJSON` keeps it equal to the file.
+No per-target binary digest is committed and no `verify-definition` re-derives one from `dist/`:
+release digests live in the release's SHA256SUMS and in the host record (decision 34).
+
+Why: a binary digest is self-referential (the build stamps `git describe --dirty`), so a
+committed one can never describe the commit it is in, and re-deriving it would make every pull
+request cross-build three targets and regenerate a file.
+
+Evidence: scripts/crw_runtime/components.json; scripts/crw_runtime/definition.py:148-206
+(`verify`); Makefile `VERSION`/`LDFLAGS`; .goreleaser.yaml `ldflags`, `mod_timestamp`;
+.omo/ulw-execute/scope-analysis-31-46.md "# 37" (plan items to drop).
+
+## 36. The swap gate reads a store's catalog without store.Open
+
+Decision: the runtime swap gate settles store presence with an lstat of the path the relay's
+own selection rule resolves (`store.ResolveStateDir`) and reads the store's schema objects with a
+read-only SQLite connection that creates nothing beside the database: `mode=ro` when both `-wal`
+and `-shm` exist (a connection left them and its committed frames are read), `immutable=1`
+otherwise, as `store.OpenStopRead` reads the Stop path's store. It never calls `store.Open`, runs
+no schema script and takes no lock. The daemon and in-flight cells ask the SELECTED relay
+executable (`service status`, `doctor`) as a subprocess, and the candidate's schema is what the
+candidate binary prints for `crw doctor declared-schema --json`.
+
+Why: runtime_install.py asked `<interpreter> -c <program>` for all three, and a Go runtime has
+no interpreter. `store.Open` refuses the live state root before todo 42 (`ErrLiveState`) and a
+plain `mode=ro` connection creates `-wal` and `-shm` beside a checkpointed store.
+
+Evidence: scripts/runtime_install.py:470-600 (`_STORE_TABLES_PROGRAM`,
+`_CANDIDATE_TABLES_PROGRAM`, `store_presence`); internal/relay/store/hold.go:127-150
+(`OpenStopRead`); internal/runtime/swapgate/swapgate.go (`StoreSchema`, `readCatalog`,
+`DeclaredSchema`); `TestStoreReadingsCreateNothingAndAgreeWithTheDeclaredSchema` (the state
+directory's file set is unchanged, and a table committed only to a live WAL is read) and, under
+the parity tag, `TestParity_declared_schema_is_the_python_candidates`.
+
+## 37. The TOML reader is github.com/BurntSushi/toml
+
+Decision: Go reads `config.toml` with `github.com/BurntSushi/toml`, at the version go.sum already
+pins through staticcheck, now a direct requirement. Todo 37's retention scan reads
+`mcp_servers.*.command` and `args` with it; todo 38's `register-mcp` uses the same reader for its
+append-only registration and read-back.
+
+Why: codexconfig.py refuses to approximate TOML (a hand-written reader produced ten defects), and
+the retention scan must read every registered command rather than guess at text.
+
+Evidence: scripts/crw_runtime/codexconfig.py:1-25; go.mod; internal/runtime/doctor/retention.go
+(`configToml`); `TestRetentionScanReadsTheWiringSurfaces`.
+
 ## 39. A caller's cancellation claims every answer the send has not yet used
 
 Decision: once the caller of `Adapter.Send` has cancelled, the send uses no further answer

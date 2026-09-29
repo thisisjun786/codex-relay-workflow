@@ -1,0 +1,199 @@
+{
+  "components": {
+    "codex-session-relay": {
+      "installs": [
+        {
+          "digestMatchesDefinition": true,
+          "entryPoint": "/home/user/code/codex-thread-bridge/.venv/bin/codex-session-relay",
+          "environment": "/home/user/code/codex-thread-bridge/.venv",
+          "installMode": "editable",
+          "integrity": "73f552cf13be952da4a5e15d54d81de78efd6e5ae7b29cb7f57876f4a7f8b699",
+          "interpreter": "3.13.14",
+          "interpreterPath": "/home/user/code/codex-thread-bridge/.venv/bin/python",
+          "location": "/home/user/code-worktrees/codex-relay-workflow/host-install-20260918/packages/codex-session-relay/src/codex_session_relay",
+          "reachedVia": "CRW-110 authorized editable-source fast-forward after dev merge; observed from fresh interpreter imports. Not runtime_install install."
+        },
+        {
+          "digestMatchesDefinition": true,
+          "entryPoint": "/home/user/.local/share/crw-runtime/env-1-4d296fa3657c/bin/codex-session-relay",
+          "environment": "/home/user/.local/share/crw-runtime/env-1-4d296fa3657c",
+          "installMode": "copied",
+          "integrity": "6f67d57401832efc22e59f36edbb46d9038ac4d83aef458a0bc16da62d4797a4",
+          "interpreter": "3.13.14",
+          "interpreterPath": "/home/user/.local/share/crw-runtime/env-1-4d296fa3657c/bin/python",
+          "location": "/home/user/.local/share/crw-runtime/env-1-4d296fa3657c/lib/python3.13/site-packages/codex_session_relay",
+          "reachedVia": "installed by runtime_install.py into /home/user/.local/share/crw-runtime",
+          "source": {
+            "repositoryCommit": "4120e2a0763d19fd145352030fd8f4224716ceeb",
+            "repositoryTree": "fde22fbb7f76b5f34acedb693bcbd687f1541841",
+            "subdirectoryTree": "85a07a216b22b69be1db49a4b7bd387a15100759",
+            "workingTreeClean": true
+          }
+        },
+        {
+          "digestMatchesDefinition": true,
+          "entryPoint": "/home/user/.local/share/crw-runtime/env-1-0be23c258476/bin/codex-session-relay",
+          "environment": "/home/user/.local/share/crw-runtime/env-1-0be23c258476",
+          "installMode": "copied",
+          "integrity": "830f64358e8613b107fbeb621df1d0266d08d9559b94fd1e064c9574d8199bd8",
+          "interpreter": "3.13.14",
+          "interpreterPath": "/home/user/.local/share/crw-runtime/env-1-0be23c258476/bin/python",
+          "location": "/home/user/.local/share/crw-runtime/env-1-0be23c258476/lib/python3.13/site-packages/codex_session_relay",
+          "reachedVia": "installed by runtime_install.py into /home/user/.local/share/crw-runtime",
+          "source": {
+            "repositoryCommit": "20364a8e09523057b4b73b17bb67c46ba6bbafed",
+            "repositoryTree": "c3761fc865c7a7e501349bd90e1c5e4601e76ed5",
+            "subdirectoryTree": "684067f7ca8b8cb2fc0ee662f06c369c0e813baf",
+            "workingTreeClean": true
+          }
+        }
+      ],
+      "measuredPoints": [
+        {
+          "appServer": "{\"server\": {\"userAgent\": \"Codex Desktop/0.154.0 (Ubuntu 26.4.0; x86_64) unknown (codex_thread_bridge; 0.1.0)\", \"codexHome\": \"/home/user/.codex\", \"platformFamily\": \"unix\", \"platformOs\": \"linux\"}, \"transport\": \"same-host Unix WebSocket\", \"socket\": \"/home/user/.codex/app-server-control/app-server-control.sock\", \"capabilities\": {\"createThread\": true, \"sendMessage\": true, \"listReadWait\": true, \"goalRead\": true, \"goalSet\": false, \"desktopManagedWorktrees\": false, \"bridgeManagedWorktrees\": true, \"desktopProjectRegistry\": false, \"clientSideToolsAndApprovals\": false}, \"executionPolicy\": {\"mode\": \"presence_only\", \"digest\": null}, \"exposure\": {\"steerActiveTurn\": true, \"goalPause\": true, \"goalObjectiveWrite\": false, \"turnInterrupt\": false, \"turnQueue\": false, \"note\": \"Tool exposure by this bridge version. Not a probe of the connected host.\"}, \"hostSupport\": {\"testedHost\": \"codex-cli 0.154.0\", \"observedServer\": \"Codex Desktop/0.154.0 (Ubuntu 26.4.0; x86_64) unknown (codex_thread_bridge; 0.1.0)\", \"state\": \"tested\", \"steerActiveTurn\": \"turn/steer, requires expectedTurnId\", \"goalPause\": \"thread/goal/set, status paused\", \"note\": \"Generated from the tested host's protocol. No live capability probe is performed, and an unrecognised server is reported unknown rather than assumed.\"}, \"desktopVisibility\": \"Observed on Codex 0.153.4 with an existing project checkout; verify actual Desktop listing for each launch. Backend project IDs are separate.\"}",
+          "codexCli": "codex-cli 0.154.0",
+          "date": "2026-09-18T10:36:46Z",
+          "definitionDigest": "29aaee81693060ea27c215cba67bc96e598a0980f2320da0ac4a90b19f5a0487",
+          "digestMatchesDefinition": true,
+          "exerciseDigest": "none: exercised through its own installed entry point",
+          "exercised": true,
+          "host": "host",
+          "install": "/home/user/code-worktrees/codex-relay-workflow/host-install-20260918/packages/codex-session-relay/src/codex_session_relay",
+          "installDigest": "29aaee81693060ea27c215cba67bc96e598a0980f2320da0ac4a90b19f5a0487",
+          "interpreter": "3.13.14",
+          "measuredBy": "CRW-90",
+          "method": "/home/user/code/codex-thread-bridge/.venv/bin/codex-session-relay --socket /home/user/.codex/app-server-control/app-server-control.sock --state /home/user/.local/state/codex-session-relay/e4f02742e7163a2a doctor; /home/user/code/codex-thread-bridge/.venv/bin/python /home/user/code-worktrees/codex-relay-workflow/host-install-20260918/packages/codex-thread-bridge/scripts/check_connection.py --socket /home/user/.codex/app-server-control/app-server-control.sock"
+        },
+        {
+          "appServer": "{\"server\": {\"userAgent\": \"Codex Desktop/0.154.0 (Ubuntu 26.4.0; x86_64) unknown (codex_thread_bridge; 0.1.0)\", \"codexHome\": \"/home/user/.codex\", \"platformFamily\": \"unix\", \"platformOs\": \"linux\"}, \"transport\": \"same-host Unix WebSocket\", \"socket\": \"/home/user/.codex/app-server-control/app-server-control.sock\", \"capabilities\": {\"createThread\": true, \"sendMessage\": true, \"listReadWait\": true, \"goalRead\": true, \"bridgeManagedWorktrees\": true, \"projectImport\": false, \"clientSideToolsAndApprovals\": false}, \"capabilitiesNote\": \"What this bridge implements, and nothing else. Every value is true by reading this bridge's own code, so none of it was asked of the connected host and none of it is an answer about one. The two goal questions are answered precisely in exposure, as goalObjectiveWrite and goalPause. Questions about the host that nothing here asked are in hostNotProbed, which carries no values at all.\", \"executionPolicy\": {\"mode\": \"presence_only\", \"digest\": null, \"roles\": {}}, \"approvals\": {\"declarable\": [\"never\", \"on-request\", \"untrusted\"], \"transmitsApprovalPolicy\": false, \"preservation\": \"send_message_to_thread omits approvalPolicy from thread/resume, so it cannot set or change the policy of a thread it did not create. That is true by reading this bridge; what the host does with the omission was read once, and is reported as its own observation.\", \"preservationObserved\": {\"observedOn\": \"codex-cli 0.154.0\", \"observedServer\": \"Codex Desktop/0.154.0 (Ubuntu 26.4.0; x86_64) unknown (codex_thread_bridge; 0.1.0)\", \"sameVersionConnected\": true, \"observation\": \"Read in both directions: the resume reports the thread's own policy and does not inherit the CODEX_HOME config default.\", \"note\": \"A reading taken on the named host version, not a probe of the server connected now. sameVersionConnected is the only measured value here.\"}, \"servicesApprovals\": false, \"onApprovalRequest\": \"left_for_thread_approver\", \"approverRoute\": \"The host's, not this bridge's. Measured on codex-cli 0.154.0, the host sends an approval request to every client subscribed to the thread, replays a pending one to a client that resumes the thread later, and applies the first answer from any of them. This bridge therefore answers none and the thread's own client decides; that it does so on the connected server is not re-measured by this call, and how a particular client such as Desktop presents the request is not established here.\", \"limits\": \"This bridge answers no approval request: it never grants one, never denies one, and a report message never stands in for one. Measured on codex-cli 0.154.0, the host sends each approval request of a turn to every client subscribed to the thread, replays a pending one to a client that resumes the thread later, and applies the first answer from any of them, an error answer as a denial. An answer from this bridge would therefore decide for the thread's approver, so it records each request and leaves it unanswered; the thread's own client decides it, now or when it next opens the thread, and the turn waits until then. That measurement is of that release, not a reading of the connected server, and how a particular client such as Desktop presents a request it did not ask for is not established here. Delivering a report and servicing the code execution a report may provoke are separate capabilities, and only the first one is claimed.\"}, \"exposure\": {\"steerActiveTurn\": true, \"goalPause\": true, \"goalObjectiveWrite\": false, \"turnInterrupt\": false, \"turnQueue\": false, \"note\": \"Tool exposure by this bridge version. Not a probe of the connected host.\"}, \"hostSupport\": {\"testedHost\": \"codex-cli 0.154.0\", \"observedServer\": \"Codex Desktop/0.154.0 (Ubuntu 26.4.0; x86_64) unknown (codex_thread_bridge; 0.1.0)\", \"state\": \"tested\", \"steerActiveTurn\": \"turn/steer, requires expectedTurnId\", \"goalPause\": \"thread/goal/set, status paused\", \"note\": \"Generated from the tested host's protocol. No live capability probe is performed, and an unrecognised server is reported unknown rather than assumed.\"}, \"hostNotProbed\": {\"desktopManagedWorktrees\": \"Not asked. Worktrees made through this bridge are bridge-managed, which is reported as bridgeManagedWorktrees. Whether the connected host offers a Desktop-managed worktree of its own is carried by a host feature flag rather than an App Server method, so this transport never sees it, and a flag that is switched off is not a capability absent.\", \"desktopProjectRegistry\": \"Not asked. This bridge imports and creates no project, which is reported as projectImport, and it uses only a project id a caller supplies. What the connected host's project registry holds is not read here, and an empty backend listing seen once on one setup is not a statement that the registry is missing.\"}, \"hostNotProbedNote\": \"Questions this tool does not answer. No capability probe is performed, so each entry is a sentence and not a value: there is nothing here to read as true or false. hostSupport.state compares the connected server's version against the one this bridge was built against, and does not reach these questions, which are unanswered on every version including that one.\", \"desktopVisibility\": {\"observedOn\": \"codex-cli 0.153.4\", \"observedServer\": \"Codex Desktop/0.154.0 (Ubuntu 26.4.0; x86_64) unknown (codex_thread_bridge; 0.1.0)\", \"sameVersionConnected\": false, \"observation\": \"Threads created in an existing project checkout appeared in Desktop. Verify the actual Desktop listing for each launch; backend project IDs are separate.\", \"note\": \"A reading taken on the named host version, not a probe of the server connected now. sameVersionConnected is the only measured value here.\"}}",
+          "codexCli": "codex-cli 0.154.0",
+          "date": "2026-09-25T00:40:20Z",
+          "definitionDigest": "830f64358e8613b107fbeb621df1d0266d08d9559b94fd1e064c9574d8199bd8",
+          "digestMatchesDefinition": true,
+          "exerciseDigest": "none: exercised through its own installed entry point",
+          "exercised": true,
+          "host": "host",
+          "install": "/home/user/.local/share/crw-runtime/env-1-0be23c258476/lib/python3.13/site-packages/codex_session_relay",
+          "installDigest": "830f64358e8613b107fbeb621df1d0266d08d9559b94fd1e064c9574d8199bd8",
+          "interpreter": "3.13.14",
+          "measuredBy": "CRW-116",
+          "method": "/home/user/.local/share/crw-runtime/env-1-0be23c258476/bin/codex-session-relay --socket /home/user/.codex/app-server-control/app-server-control.sock --state /home/user/.local/state/codex-session-relay/e4f02742e7163a2a doctor; /home/user/.local/share/crw-runtime/env-1-0be23c258476/bin/python /home/user/code-worktrees/codex-relay-workflow/host-install-20364a8e/packages/codex-thread-bridge/scripts/check_connection.py --socket /home/user/.codex/app-server-control/app-server-control.sock"
+        }
+      ],
+      "repositoryCommit": "20364a8e09523057b4b73b17bb67c46ba6bbafed",
+      "repositoryTree": "c3761fc865c7a7e501349bd90e1c5e4601e76ed5",
+      "subdirectoryTree": "684067f7ca8b8cb2fc0ee662f06c369c0e813baf",
+      "workingTreeClean": true
+    },
+    "codex-thread-bridge": {
+      "installs": [
+        {
+          "digestMatchesDefinition": true,
+          "entryPoint": "/home/user/code/codex-thread-bridge/.venv/bin/codex-thread-bridge",
+          "environment": "/home/user/code/codex-thread-bridge/.venv",
+          "installMode": "editable",
+          "integrity": "e1e88ada9ad70ae1b9965b5344342b53d19d9140098e9c4aff4b9b5747690c9f",
+          "interpreter": "3.13.14",
+          "interpreterPath": "/home/user/code/codex-thread-bridge/.venv/bin/python",
+          "location": "/home/user/code-worktrees/codex-relay-workflow/host-install-20260918/packages/codex-thread-bridge/src/codex_thread_bridge",
+          "reachedVia": "CRW-110 authorized editable-source fast-forward after dev merge; observed from fresh interpreter imports. Not runtime_install install."
+        },
+        {
+          "digestMatchesDefinition": true,
+          "entryPoint": "/home/user/.local/share/crw-runtime/env-1-4d296fa3657c/bin/codex-thread-bridge",
+          "environment": "/home/user/.local/share/crw-runtime/env-1-4d296fa3657c",
+          "installMode": "copied",
+          "integrity": "bf0e09aa66a4f9bdaf1f7e0f993b5161ff3679e90a428c52d01cc6b55f558f93",
+          "interpreter": "3.13.14",
+          "interpreterPath": "/home/user/.local/share/crw-runtime/env-1-4d296fa3657c/bin/python",
+          "location": "/home/user/.local/share/crw-runtime/env-1-4d296fa3657c/lib/python3.13/site-packages/codex_thread_bridge",
+          "reachedVia": "installed by runtime_install.py into /home/user/.local/share/crw-runtime",
+          "source": {
+            "repositoryCommit": "4120e2a0763d19fd145352030fd8f4224716ceeb",
+            "repositoryTree": "fde22fbb7f76b5f34acedb693bcbd687f1541841",
+            "subdirectoryTree": "9500064271f6495e118394362aefaa1bf6c8651d",
+            "workingTreeClean": true
+          }
+        },
+        {
+          "digestMatchesDefinition": true,
+          "entryPoint": "/home/user/.local/share/crw-runtime/env-1-0be23c258476/bin/codex-thread-bridge",
+          "environment": "/home/user/.local/share/crw-runtime/env-1-0be23c258476",
+          "installMode": "copied",
+          "integrity": "30fd0dbf9919f7df3f505cf5ced8c4bfbdf7928b03da9db24b999d0b45476526",
+          "interpreter": "3.13.14",
+          "interpreterPath": "/home/user/.local/share/crw-runtime/env-1-0be23c258476/bin/python",
+          "location": "/home/user/.local/share/crw-runtime/env-1-0be23c258476/lib/python3.13/site-packages/codex_thread_bridge",
+          "reachedVia": "installed by runtime_install.py into /home/user/.local/share/crw-runtime",
+          "source": {
+            "repositoryCommit": "20364a8e09523057b4b73b17bb67c46ba6bbafed",
+            "repositoryTree": "c3761fc865c7a7e501349bd90e1c5e4601e76ed5",
+            "subdirectoryTree": "ae7f05a194e3ac3fb6b3893e29b1b45a3807c323",
+            "workingTreeClean": true
+          }
+        }
+      ],
+      "measuredPoints": [
+        {
+          "appServer": "{\"server\": {\"userAgent\": \"Codex Desktop/0.154.0 (Ubuntu 26.4.0; x86_64) unknown (codex_thread_bridge; 0.1.0)\", \"codexHome\": \"/home/user/.codex\", \"platformFamily\": \"unix\", \"platformOs\": \"linux\"}, \"transport\": \"same-host Unix WebSocket\", \"socket\": \"/home/user/.codex/app-server-control/app-server-control.sock\", \"capabilities\": {\"createThread\": true, \"sendMessage\": true, \"listReadWait\": true, \"goalRead\": true, \"goalSet\": false, \"desktopManagedWorktrees\": false, \"bridgeManagedWorktrees\": true, \"desktopProjectRegistry\": false, \"clientSideToolsAndApprovals\": false}, \"executionPolicy\": {\"mode\": \"presence_only\", \"digest\": null}, \"exposure\": {\"steerActiveTurn\": true, \"goalPause\": true, \"goalObjectiveWrite\": false, \"turnInterrupt\": false, \"turnQueue\": false, \"note\": \"Tool exposure by this bridge version. Not a probe of the connected host.\"}, \"hostSupport\": {\"testedHost\": \"codex-cli 0.154.0\", \"observedServer\": \"Codex Desktop/0.154.0 (Ubuntu 26.4.0; x86_64) unknown (codex_thread_bridge; 0.1.0)\", \"state\": \"tested\", \"steerActiveTurn\": \"turn/steer, requires expectedTurnId\", \"goalPause\": \"thread/goal/set, status paused\", \"note\": \"Generated from the tested host's protocol. No live capability probe is performed, and an unrecognised server is reported unknown rather than assumed.\"}, \"desktopVisibility\": \"Observed on Codex 0.153.4 with an existing project checkout; verify actual Desktop listing for each launch. Backend project IDs are separate.\"}",
+          "codexCli": "codex-cli 0.154.0",
+          "date": "2026-09-18T10:36:46Z",
+          "definitionDigest": "e1e88ada9ad70ae1b9965b5344342b53d19d9140098e9c4aff4b9b5747690c9f",
+          "digestMatchesDefinition": true,
+          "exerciseDigest": "ef144249f62e8762a3c36a22d5453155e2cbb61afd9f2f0c14eb2cace501cd90",
+          "exercised": true,
+          "host": "host",
+          "install": "/home/user/code-worktrees/codex-relay-workflow/host-install-20260918/packages/codex-thread-bridge/src/codex_thread_bridge",
+          "installDigest": "e1e88ada9ad70ae1b9965b5344342b53d19d9140098e9c4aff4b9b5747690c9f",
+          "interpreter": "3.13.14",
+          "measuredBy": "CRW-90",
+          "method": "/home/user/code/codex-thread-bridge/.venv/bin/codex-session-relay --socket /home/user/.codex/app-server-control/app-server-control.sock --state /home/user/.local/state/codex-session-relay/e4f02742e7163a2a doctor; /home/user/code/codex-thread-bridge/.venv/bin/python /home/user/code-worktrees/codex-relay-workflow/host-install-20260918/packages/codex-thread-bridge/scripts/check_connection.py --socket /home/user/.codex/app-server-control/app-server-control.sock"
+        },
+        {
+          "appServer": "{\"server\": {\"userAgent\": \"Codex Desktop/0.154.0 (Ubuntu 26.4.0; x86_64) unknown (codex_thread_bridge; 0.1.0)\", \"codexHome\": \"/home/user/.codex\", \"platformFamily\": \"unix\", \"platformOs\": \"linux\"}, \"transport\": \"same-host Unix WebSocket\", \"socket\": \"/home/user/.codex/app-server-control/app-server-control.sock\", \"capabilities\": {\"createThread\": true, \"sendMessage\": true, \"listReadWait\": true, \"goalRead\": true, \"bridgeManagedWorktrees\": true, \"projectImport\": false, \"clientSideToolsAndApprovals\": false}, \"capabilitiesNote\": \"What this bridge implements, and nothing else. Every value is true by reading this bridge's own code, so none of it was asked of the connected host and none of it is an answer about one. The two goal questions are answered precisely in exposure, as goalObjectiveWrite and goalPause. Questions about the host that nothing here asked are in hostNotProbed, which carries no values at all.\", \"executionPolicy\": {\"mode\": \"presence_only\", \"digest\": null, \"roles\": {}}, \"approvals\": {\"declarable\": [\"never\", \"on-request\", \"untrusted\"], \"transmitsApprovalPolicy\": false, \"preservation\": \"send_message_to_thread omits approvalPolicy from thread/resume, so it cannot set or change the policy of a thread it did not create. That is true by reading this bridge; what the host does with the omission was read once, and is reported as its own observation.\", \"preservationObserved\": {\"observedOn\": \"codex-cli 0.154.0\", \"observedServer\": \"Codex Desktop/0.154.0 (Ubuntu 26.4.0; x86_64) unknown (codex_thread_bridge; 0.1.0)\", \"sameVersionConnected\": true, \"observation\": \"Read in both directions: the resume reports the thread's own policy and does not inherit the CODEX_HOME config default.\", \"note\": \"A reading taken on the named host version, not a probe of the server connected now. sameVersionConnected is the only measured value here.\"}, \"servicesApprovals\": false, \"onApprovalRequest\": \"left_for_thread_approver\", \"approverRoute\": \"The host's, not this bridge's. Measured on codex-cli 0.154.0, the host sends an approval request to every client subscribed to the thread, replays a pending one to a client that resumes the thread later, and applies the first answer from any of them. This bridge therefore answers none and the thread's own client decides; that it does so on the connected server is not re-measured by this call, and how a particular client such as Desktop presents the request is not established here.\", \"limits\": \"This bridge answers no approval request: it never grants one, never denies one, and a report message never stands in for one. Measured on codex-cli 0.154.0, the host sends each approval request of a turn to every client subscribed to the thread, replays a pending one to a client that resumes the thread later, and applies the first answer from any of them, an error answer as a denial. An answer from this bridge would therefore decide for the thread's approver, so it records each request and leaves it unanswered; the thread's own client decides it, now or when it next opens the thread, and the turn waits until then. That measurement is of that release, not a reading of the connected server, and how a particular client such as Desktop presents a request it did not ask for is not established here. Delivering a report and servicing the code execution a report may provoke are separate capabilities, and only the first one is claimed.\"}, \"exposure\": {\"steerActiveTurn\": true, \"goalPause\": true, \"goalObjectiveWrite\": false, \"turnInterrupt\": false, \"turnQueue\": false, \"note\": \"Tool exposure by this bridge version. Not a probe of the connected host.\"}, \"hostSupport\": {\"testedHost\": \"codex-cli 0.154.0\", \"observedServer\": \"Codex Desktop/0.154.0 (Ubuntu 26.4.0; x86_64) unknown (codex_thread_bridge; 0.1.0)\", \"state\": \"tested\", \"steerActiveTurn\": \"turn/steer, requires expectedTurnId\", \"goalPause\": \"thread/goal/set, status paused\", \"note\": \"Generated from the tested host's protocol. No live capability probe is performed, and an unrecognised server is reported unknown rather than assumed.\"}, \"hostNotProbed\": {\"desktopManagedWorktrees\": \"Not asked. Worktrees made through this bridge are bridge-managed, which is reported as bridgeManagedWorktrees. Whether the connected host offers a Desktop-managed worktree of its own is carried by a host feature flag rather than an App Server method, so this transport never sees it, and a flag that is switched off is not a capability absent.\", \"desktopProjectRegistry\": \"Not asked. This bridge imports and creates no project, which is reported as projectImport, and it uses only a project id a caller supplies. What the connected host's project registry holds is not read here, and an empty backend listing seen once on one setup is not a statement that the registry is missing.\"}, \"hostNotProbedNote\": \"Questions this tool does not answer. No capability probe is performed, so each entry is a sentence and not a value: there is nothing here to read as true or false. hostSupport.state compares the connected server's version against the one this bridge was built against, and does not reach these questions, which are unanswered on every version including that one.\", \"desktopVisibility\": {\"observedOn\": \"codex-cli 0.153.4\", \"observedServer\": \"Codex Desktop/0.154.0 (Ubuntu 26.4.0; x86_64) unknown (codex_thread_bridge; 0.1.0)\", \"sameVersionConnected\": false, \"observation\": \"Threads created in an existing project checkout appeared in Desktop. Verify the actual Desktop listing for each launch; backend project IDs are separate.\", \"note\": \"A reading taken on the named host version, not a probe of the server connected now. sameVersionConnected is the only measured value here.\"}}",
+          "codexCli": "codex-cli 0.154.0",
+          "date": "2026-09-25T00:40:20Z",
+          "definitionDigest": "30fd0dbf9919f7df3f505cf5ced8c4bfbdf7928b03da9db24b999d0b45476526",
+          "digestMatchesDefinition": true,
+          "exerciseDigest": "6d3c13be36656d07bb3df69e6a4afddeb0361ef1ea34f2b3c5c4be964464c14d",
+          "exercised": true,
+          "host": "host",
+          "install": "/home/user/.local/share/crw-runtime/env-1-0be23c258476/lib/python3.13/site-packages/codex_thread_bridge",
+          "installDigest": "30fd0dbf9919f7df3f505cf5ced8c4bfbdf7928b03da9db24b999d0b45476526",
+          "interpreter": "3.13.14",
+          "measuredBy": "CRW-116",
+          "method": "/home/user/.local/share/crw-runtime/env-1-0be23c258476/bin/codex-session-relay --socket /home/user/.codex/app-server-control/app-server-control.sock --state /home/user/.local/state/codex-session-relay/e4f02742e7163a2a doctor; /home/user/.local/share/crw-runtime/env-1-0be23c258476/bin/python /home/user/code-worktrees/codex-relay-workflow/host-install-20364a8e/packages/codex-thread-bridge/scripts/check_connection.py --socket /home/user/.codex/app-server-control/app-server-control.sock"
+        }
+      ],
+      "repositoryCommit": "20364a8e09523057b4b73b17bb67c46ba6bbafed",
+      "repositoryTree": "c3761fc865c7a7e501349bd90e1c5e4601e76ed5",
+      "subdirectoryTree": "ae7f05a194e3ac3fb6b3893e29b1b45a3807c323",
+      "workingTreeClean": true
+    }
+  },
+  "definitionVersion": 1,
+  "host": "host",
+  "outgoing": {
+    "codex-session-relay": {
+      "digest": "ad881a1a53f8c0c78f0967d933abf6308aec482558e9bdbcc0c6fe6ccf942b40",
+      "present": true,
+      "selected": "/home/user/.local/share/crw-runtime/env-1-2c7011f3cc2d/lib/python3.13/site-packages/codex_session_relay"
+    },
+    "codex-thread-bridge": {
+      "digest": "30fd0dbf9919f7df3f505cf5ced8c4bfbdf7928b03da9db24b999d0b45476526",
+      "present": true,
+      "selected": "/home/user/.local/share/crw-runtime/env-1-2c7011f3cc2d/lib/python3.13/site-packages/codex_thread_bridge"
+    }
+  },
+  "pointer": {
+    "path": "/home/user/.local/share/crw-runtime/current",
+    "recordedAt": "2026-09-25T00:40:21Z",
+    "recordedBy": "CRW-116"
+  },
+  "recordVersion": 1,
+  "selected": {
+    "codex-session-relay": "/home/user/.local/share/crw-runtime/env-1-0be23c258476/lib/python3.13/site-packages/codex_session_relay",
+    "codex-thread-bridge": "/home/user/.local/share/crw-runtime/env-1-0be23c258476/lib/python3.13/site-packages/codex_thread_bridge"
+  },
+  "user": "user"
+}

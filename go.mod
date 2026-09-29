@@ -5,15 +5,16 @@ go 1.27
 toolchain go1.27.1
 
 require (
+	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c
 	github.com/coder/websocket v1.8.15
 	github.com/modelcontextprotocol/go-sdk v1.8.0
+	golang.org/x/sys v0.47.0
 	golang.org/x/text v0.35.0
 	honnef.co/go/tools v0.8.1
 	modernc.org/sqlite v1.59.0
 )
 
 require (
-	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
@@ -27,7 +28,6 @@ require (
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.48.0 // indirect
 	modernc.org/libc v1.75.7 // indirect

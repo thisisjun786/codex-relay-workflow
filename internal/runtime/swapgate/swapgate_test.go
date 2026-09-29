@@ -1,0 +1,286 @@
+package swapgate_test
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/swapgate"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+)
+
+func TestMain(m *testing.M) {
+	golden.Helper()
+	cleanup, err := testsupport.IsolateRelayState()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	code := m.Run()
+	if err := cleanup(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		code = 1
+	}
+	os.Exit(code)
+}
+
+func same(t *testing.T, what string, got, want any) {
+	t.Helper()
+	if golden.Canon(got) != golden.Canon(want) {
+		t.Errorf("%s\n go: %s\n py: %s", what, golden.Canon(got), golden.Canon(want))
+	}
+}
+
+// The inputs the generator used, rebuilt from its answers' sources: every envelope and
+// presence is carried in the goldens by name.
+func envelopes(t *testing.T) map[string]record.Object {
+	t.Helper()
+	out := map[string]record.Object{
+		"running":        {{Key: "ok", Value: true}, {Key: "payload", Value: record.Object{{Key: "running", Value: true}}}, {Key: "command", Value: []any{"relay", "service", "status"}}},
+		"stopped":        {{Key: "ok", Value: true}, {Key: "payload", Value: record.Object{{Key: "running", Value: false}}}, {Key: "command", Value: []any{"relay", "service", "status"}}},
+		"failed":         {{Key: "ok", Value: false}, {Key: "unreadable", Value: "no binary"}, {Key: "command", Value: []any{"relay"}}},
+		"stderr":         {{Key: "ok", Value: false}, {Key: "stderr", Value: "boom"}, {Key: "command", Value: []any{"relay"}}},
+		"bare-failure":   {{Key: "ok", Value: false}},
+		"no-payload":     {{Key: "ok", Value: true}, {Key: "payload", Value: nil}, {Key: "command", Value: []any{"relay"}}},
+		"list-payload":   {{Key: "ok", Value: true}, {Key: "payload", Value: []any{int64(1)}}, {Key: "command", Value: []any{"relay"}}},
+		"string-running": {{Key: "ok", Value: true}, {Key: "payload", Value: record.Object{{Key: "running", Value: "yes"}}}, {Key: "command", Value: []any{"relay"}}},
+	}
+	contents := func(fields ...record.Object) record.Object {
+		c := record.Object{}
+		for _, f := range fields {
+			c = append(c, f...)
+		}
+		return record.Object{{Key: "ok", Value: true}, {Key: "payload", Value: record.Object{{Key: "contents", Value: c}}}, {Key: "command", Value: []any{"relay", "doctor"}}}
+	}
+	out["open-0"] = contents(record.Object{{Key: "available", Value: true}, {Key: "openAttempts", Value: int64(0)}})
+	out["open-2"] = contents(record.Object{{Key: "available", Value: true}, {Key: "openAttempts", Value: int64(2)}})
+	out["open-bool"] = contents(record.Object{{Key: "available", Value: true}, {Key: "openAttempts", Value: true}})
+	out["open-str"] = contents(record.Object{{Key: "available", Value: true}, {Key: "openAttempts", Value: "2"}})
+	out["unavailable"] = contents(record.Object{{Key: "available", Value: false}, {Key: "detail", Value: "not readable"}})
+	out["no-contents"] = record.Object{{Key: "ok", Value: true}, {Key: "payload", Value: record.Object{}}, {Key: "command", Value: []any{"relay", "doctor"}}}
+	return out
+}
+
+var presences = map[string]record.Object{
+	"none":       nil,
+	"absent":     {{Key: "readable", Value: true}, {Key: "present", Value: false}, {Key: "dbPath", Value: "/s/relay.sqlite3"}, {Key: "command", Value: nil}},
+	"present":    {{Key: "readable", Value: true}, {Key: "present", Value: true}, {Key: "dbPath", Value: "/s/relay.sqlite3"}, {Key: "command", Value: nil}},
+	"unreadable": {{Key: "readable", Value: false}, {Key: "present", Value: nil}, {Key: "dbPath", Value: "/s/relay.sqlite3"}, {Key: "detail", Value: "PermissionError: denied"}, {Key: "command", Value: nil}},
+}
+
+func schemas() map[string]record.Object {
+	objects := func(pairs ...string) record.Object {
+		o := record.Object{}
+		for i := 0; i < len(pairs); i += 2 {
+			o = append(o, record.Object{{Key: pairs[i], Value: pairs[i+1]}}...)
+		}
+		return o
+	}
+	sameObjects := objects("table a", "CREATE TABLE a (x TEXT)", "table b", "CREATE TABLE b (y TEXT)")
+	held := func(o any) record.Object {
+		return record.Object{{Key: "readable", Value: true}, {Key: "present", Value: true}, {Key: "objects", Value: o}, {Key: "dbPath", Value: "/d"}}
+	}
+	return map[string]record.Object{
+		"same":       held(sameObjects),
+		"narrow":     held(objects("table a", "CREATE TABLE a (x TEXT)")),
+		"wide":       held(append(append(record.Object{}, sameObjects...), record.Object{{Key: "index c", Value: "CREATE INDEX c ON a (x)"}}...)),
+		"differs":    held(objects("table a", "CREATE TABLE a (x TEXT, y INT)", "table b", "CREATE TABLE b (y TEXT)")),
+		"spaced":     held(objects("table a", "CREATE  TABLE   a (x TEXT)", "table b", "CREATE TABLE b\n (y TEXT)")),
+		"absent":     {{Key: "readable", Value: true}, {Key: "present", Value: false}, {Key: "objects", Value: nil}, {Key: "dbPath", Value: "/d"}},
+		"unreadable": {{Key: "readable", Value: false}, {Key: "detail", Value: "denied"}},
+		"names-only": held([]any{"table a"}),
+		"no-detail":  {{Key: "readable", Value: false}},
+	}
+}
+
+// Every cell swapgate.py fills, and the verdict it decides, is Go's answer too: the daemon cell
+// from the service reading, the in-flight cell from presence then openAttempts, the schema cell
+// over whole CREATE statements, and the verdict over every declared cell.
+func TestCellsAndVerdictsArePythons(t *testing.T) {
+	gate := golden.Obj(golden.Section(t, "swapGate"))
+	envs := envelopes(t)
+	daemon := golden.Obj(record.Get(gate, "daemon"))
+	inflight := golden.Obj(record.Get(gate, "inflight"))
+	if len(daemon) != len(envs) {
+		t.Fatalf("the envelope table drifted: %d python, %d go", len(daemon), len(envs))
+	}
+	for name, envelope := range envs {
+		same(t, "daemon "+name, swapgate.DaemonCell(envelope), record.Get(daemon, name))
+		for presence, value := range presences {
+			want := golden.Obj(record.Get(golden.Obj(record.Get(inflight, name)), presence))
+			if _, raised := record.Lookup(want, "raises"); raised {
+				// Python raises out of inflight_cell here; Go answers, and never as a count.
+				got := swapgate.InflightCell(envelope, value)
+				if record.Get(got, "readable") == true && record.Get(got, "answer") != swapgate.NoAttempts {
+					t.Errorf("inflight %s/%s: %s", name, presence, golden.Canon(got))
+				}
+				continue
+			}
+			same(t, "inflight "+name+"/"+presence, swapgate.InflightCell(envelope, value), want)
+		}
+	}
+	all := schemas()
+	schema := golden.Obj(record.Get(gate, "schema"))
+	for _, f := range schema {
+		storeName, candidateName, _ := strings.Cut(f.Key, "|")
+		same(t, "schema "+f.Key, swapgate.SchemaCell(all[storeName], all[candidateName]), f.Value)
+	}
+	for _, raw := range golden.List(record.Get(gate, "normalised")) {
+		c := golden.Obj(raw)
+		got := swapgate.Normalised(record.Get(c, "input"))
+		var value any
+		if got != nil {
+			value = *got
+		}
+		same(t, "normalised "+golden.Canon(record.Get(c, "input")), value, record.Get(c, "output"))
+	}
+	decided := golden.List(record.Get(gate, "decide"))
+	if len(decided) != 80 {
+		t.Fatalf("%d verdicts", len(decided))
+	}
+	for _, raw := range decided {
+		c := golden.Obj(raw)
+		choice := golden.List(record.Get(c, "choice"))
+		cells := map[string]record.Object{}
+		if choice[0] != "missing" {
+			cells["daemon"] = swapgate.DaemonCell(envs[choice[0].(string)])
+		}
+		if choice[1] != "missing" {
+			cells["inFlight"] = swapgate.InflightCell(envs[choice[1].(string)], nil)
+		}
+		if choice[2] != "missing" {
+			storeName, candidateName, _ := strings.Cut(choice[2].(string), "|")
+			cells["storeSchema"] = swapgate.SchemaCell(all[storeName], all[candidateName])
+		}
+		same(t, "decide "+golden.Canon(choice), swapgate.Decide(cells), record.Get(c, "answer"))
+	}
+}
+
+func TestBlockingComesOffTheDeclaredCells(t *testing.T) {
+	if got := swapgate.Decide(nil); record.Get(got, "verdict") != swapgate.Unestablished || len(golden.List(record.Get(got, "unreadable"))) != len(swapgate.Cells) {
+		t.Fatalf("a gate nobody read: %s", golden.Canon(got))
+	}
+	if swapgate.Blocking("daemon", swapgate.Cell("RUNNING", false, "", nil, nil)) != nil {
+		t.Fatal("an unreadable cell answered")
+	}
+}
+
+// Store presence and the store's schema are read without creating anything: an absent store
+// is established absence (NO_STORE, no attempt open), and a store a Go relay created holds
+// exactly the schema this build declares, so the gate agrees, and the read leaves the state
+// directory's file set as it found it.
+func TestStoreReadingsCreateNothingAndAgreeWithTheDeclaredSchema(t *testing.T) {
+	ctx := context.Background()
+	state := filepath.Join(t.TempDir(), "state")
+	if err := os.MkdirAll(state, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	presence := swapgate.StorePresence(state, "")
+	if record.Get(presence, "present") != false || record.Get(presence, "readable") != true {
+		t.Fatalf("an absent store: %s", golden.Canon(presence))
+	}
+	cell := swapgate.InflightCell(record.Object{{Key: "ok", Value: true}, {Key: "payload", Value: record.Object{{Key: "contents", Value: record.Object{{Key: "available", Value: false}}}}}}, presence)
+	if record.Get(cell, "answer") != swapgate.NoAttempts || record.Get(cell, "readable") != true {
+		t.Fatalf("no store means no attempt open: %s", golden.Canon(cell))
+	}
+	declared := swapgate.DeclaredSchema(ctx)
+	if record.Get(declared, "readable") != true {
+		t.Fatalf("the declared schema: %s", golden.Canon(declared))
+	}
+	if got := swapgate.SchemaCell(swapgate.StoreSchema(ctx, state, ""), declared); record.Get(got, "answer") != swapgate.NoStore {
+		t.Fatalf("an absent store's schema: %s", golden.Canon(got))
+	}
+	if entries, _ := os.ReadDir(state); len(entries) != 0 {
+		t.Fatalf("reading an absent store created %v", entries)
+	}
+	s, err := store.Open(ctx, filepath.Join(state, "relay.sqlite3"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before := listing(t, state)
+	held := swapgate.StoreSchema(ctx, state, "")
+	if record.Get(held, "readable") != true {
+		t.Fatalf("a created store: %s", golden.Canon(held))
+	}
+	if got := swapgate.SchemaCell(held, declared); record.Get(got, "answer") != swapgate.Agrees {
+		t.Fatalf("a store this build created: %s", golden.Canon(got))
+	}
+	if after := listing(t, state); after != before {
+		t.Fatalf("the read changed the state directory:\n before %s\n after  %s", before, after)
+	}
+	// With a relay holding the store open, both sidecars exist and are read, not re-created.
+	live, err := store.Open(ctx, filepath.Join(state, "relay.sqlite3"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer live.Close()
+	if _, err := live.DB.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS only_in_wal (x)"); err != nil {
+		t.Fatal(err)
+	}
+	during := listing(t, state)
+	if got := swapgate.SchemaCell(swapgate.StoreSchema(ctx, state, ""), declared); record.Get(got, "answer") != swapgate.Narrows || !strings.Contains(scopeText(got), "table only_in_wal") {
+		t.Fatalf("a table committed only to the WAL was not read: %s", golden.Canon(got))
+	}
+	if after := listing(t, state); strings.Count(after, ",") != strings.Count(during, ",") {
+		t.Fatalf("the read changed the state directory's file set:\n before %s\n after  %s", during, after)
+	}
+	if count := len(golden.Obj(record.Get(declared, "objects"))); count < 100 {
+		t.Fatalf("the declared schema holds only %d objects", count)
+	}
+}
+
+func scopeText(cell record.Object) string { return golden.Canon(record.Get(cell, "detail")) }
+
+func listing(t *testing.T, dir string) string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		info, _ := e.Info()
+		names = append(names, fmt.Sprintf("%s:%d", e.Name(), info.Size()))
+	}
+	sort.Strings(names)
+	return strings.Join(names, ",")
+}
+
+// The candidate's schema is whatever the candidate binary prints for `crw doctor
+// declared-schema --json`; a candidate that cannot be run or does not answer JSON is an
+// unreadable cell, never an agreeing one.
+func TestCandidateSchemaIsAskedOfTheCandidate(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	answering := filepath.Join(dir, "crw")
+	script := "#!/bin/sh\n[ \"$1 $2 $3\" = \"doctor declared-schema --json\" ] || exit 9\nprintf '%s\\n' '{\"readable\": true, \"objects\": {\"table a\": \"CREATE TABLE a (x)\"}, \"schemaVersion\": \"1\", \"detail\": null}'\n"
+	if err := os.WriteFile(answering, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := swapgate.CandidateSchema(ctx, answering)
+	if record.Get(got, "readable") != true || golden.Canon(record.Get(got, "command")) != golden.Canon([]any{answering, "doctor", "declared-schema", "--json"}) {
+		t.Fatalf("a candidate that answers: %s", golden.Canon(got))
+	}
+	silent := filepath.Join(dir, "silent")
+	if err := os.WriteFile(silent, []byte("#!/bin/sh\necho oops >&2\nexit 3\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range []string{silent, filepath.Join(dir, "missing")} {
+		got := swapgate.CandidateSchema(ctx, candidate)
+		cell := swapgate.SchemaCell(swapgate.StoreSchema(ctx, filepath.Join(dir, "state"), ""), got)
+		if record.Get(got, "readable") != false || record.Get(cell, "readable") != false || record.Get(cell, "answer") != reading.Unreadable {
+			t.Fatalf("%s: %s / %s", candidate, golden.Canon(got), golden.Canon(cell))
+		}
+	}
+}

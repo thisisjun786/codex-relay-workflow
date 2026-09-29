@@ -953,18 +953,34 @@ the protocol.
 
 ## Retention scan surface
 
-`crw doctor retention-scan --json` (todo 37) enumerates exactly this fixed list and reports every
-reference to a Python interpreter, venv or `.py` path together with its source. Todo 43 removes
-nothing until the report's `python_references` is empty.
+`crw doctor retention-scan --json` (todo 37, `internal/runtime/doctor`) enumerates exactly this
+fixed list. It resolves every executable reference through the owned pointer and every link and
+classifies what the reference resolves to (a native binary, a Python interpreter, a `#!` script
+naming one, a `.py` file, a venv), never the text of the reference: on the relay host
+`current/bin/codex-session-relay` names no Python while `current` points at a venv. It reports:
 
-| # | Surface | What counts as a reference |
+- `pythonReferences`: every reference that resolves to Python, with its row, source file, field
+  and what it resolves to;
+- `liveHolds`: every turn that may still be running a command this scan cannot see (rows 1 and
+  2); a hold is not a Python reference, it is a reason to wait;
+- `unscanned` and `unreadable`: rows the scan did not read and files it could not read;
+- `clear`: true only when all four are empty. Todo 43 removes nothing until `clear` is true.
+
+| # | Surface | What counts |
 |---|---|---|
-| 1 | `<CODEX_HOME>/crw-completion-hook/stop-events/*` claims without an outcome file | the claim's recorded command or evaluator path |
-| 2 | `<CODEX_HOME>/crw-completion-hook/journal/<day>/*.json` rows younger than the longest configured hook timeout x 2 | the row's recorded command |
-| 3 | every alive process recorded in `S/daemon.json` (supervisor and worker pids) | the process's executable and argv |
-| 4 | `~/.codex/crw-*.json` (`crw-completion-hook.json`, `crw-bridge-mcp.json`, and any other `crw-*.json` record) | `relayExecutable`, `bridgeExecutable`, `adapterEntryPoint`, `interpreterPath`, `command` values |
-| 5 | `~/.codex/plugins/cache/crw/crw/*/wiring/*` | hook and MCP command strings (`hooks/*.json`, `mcp.json`) |
-| 6 | every alive holder of an `S/managed-start-*.lock` file (flock holder pid, resolved via /proc/locks), excluding pids already reported by row 3 | the holder's executable and argv |
-| 7 | Codex threads from `crw bridge` `list_threads` whose last turn is younger than the host's turn-command cache lifetime | the cached Stop hook command for that thread |
+| 1 | `<CODEX_HOME>/crw-completion-hook/stop-events/*.json` | a claim whose outcome `<claimedBy.journalRoot>/accepted/<eventKey>.outcome.json` is absent (or that names no journal root): a live hold |
+| 2 | `<journalRoot>/<day>/*.json` rows (journalRoot from `crw-completion-hook.json`, else `<CODEX_HOME>/crw-completion-hook/journal`) | a row younger than twice the longest configured Stop hook timeout (the settings `timeoutSeconds` and every cached or user Stop hook `timeout`, at least 10 s): a live hold |
+| 3 | every relay state directory's `daemon.json` (the state root, each scope under it, and `CODEX_SESSION_RELAY_STATE`) | a supervisor or worker pid whose start time and boot still match the record, running a Python interpreter or a `.py` program |
+| 4 | `<CODEX_HOME>/crw-*.json` (`crw-completion-hook.json`, `crw-bridge-mcp.json`, any other) | `relayExecutable`, `bridgeExecutable`, `adapterEntryPoint`, `adapterInterpreter`, `interpreterPath`, `command`, `args`, each resolved |
+| 5 | `<CODEX_HOME>/plugins/cache/crw/crw/*/wiring/hooks/*.json`, `wiring/mcp.json`, `.mcp.json` | each word of every hook and MCP command: a Python interpreter name, a `.py` path, or a path (or first word on PATH) that resolves to Python |
+| 6 | every `managed-start-*.lock` in those state directories | its `/proc/locks` flock holder, judged as in row 3, less the pids row 3 reports |
+| 7 | resumable Codex threads (`crw bridge` `list_threads`) younger than the host's turn-command cache lifetime | not read by todo 37: it needs the cache lifetime todo 43 records on codex-cli 0.154.0, so the scan reports this row unscanned and is never `clear` until todo 43 adds it |
+| 8 | `<CODEX_HOME>/crw-stop-hook.py` | the launcher copy the cached Python bootstrap falls back to, whenever it exists |
+| 9 | `<CODEX_HOME>/hooks.json` | each word of every hook command, as row 5 |
+| 10 | `<CODEX_HOME>/config.toml` `mcp_servers.*` | `command` and `args`, as row 5 |
+| 11 | the owned pointer `~/.local/share/crw-runtime/current` (or `--dest`) | its target, when that is a venv |
 
-The list is closed: adding a surface is a plan change, not a scan option.
+The list is closed: adding a surface is a plan change, not a scan option. Rows 1, 4 (the
+`adapterInterpreter`, `command` and `args` keys), 8-11 and the pointer resolution are the scope
+analysis's corrections to the list first written here (.omo/ulw-execute/scope-analysis-31-46.md
+"# 37").

@@ -173,6 +173,48 @@ AMA-6 pins oldest-first order independently in both Service.AttemptMessages and 
 `Test21_RegistrationHold_refuses_resolved_live_state` pins the registration hold's
 write admission against a symlink into a temporary live-state-shaped directory.
 
+## Todo 37 runtime property progress (2026-09-29)
+
+`scripts/ci/tests/test_runtime_install.py` (493 tests in 93 classes by AST count; the `tests`
+cell's 496 is `grep -c`) and `test_install_acceptance.py` (61) are carried by property, not by
+test (scope analysis "# 37"). Todo 37 owns the pointer, claim, lock, record-delta, swap-gate,
+reading, scope, ownership, check-record and residue properties; the install, update, rollback,
+remove, registration, hook and promotion-order classes are todo 38's and are listed there. The
+Python answers are captured once by `internal/runtime/testdata/python_goldens.py` into
+`goldens.json` (record bytes after seven update deltas, the 180-row staging table, 72
+ownership rows, every swap-gate cell and verdict, scope summaries, shapes, the OPS-1.2 walk);
+the `parity` tag regenerates them from live Python and adds cross-runtime lock, filesystem,
+declared-schema and fault-sweep checks (`internal/runtime/record/parity_test.go`).
+
+| Python class (tests) | property | Go test |
+| --- | --- | --- |
+| DefinitionTests (4) | the definition agrees with its sources; the OPS-1.2 walk | `TestDefinitionAgreesWithComponentsJSON`, `TestDigestIsTheOPS12Walk`; the digest-drift test retires with committed digests (decision 35) |
+| OwnershipTests (4) | five classes in precedence; unreadable is never agreement; only own reusable | `TestClassifyIsPythons` (72 rows); the dirty-checkout fork retires with checkout signals |
+| CheckRecordTests (4) | every result stated; untimed is "unknown"; temporary recorded | `TestCheckRecordStatesEveryResult`; `imported` retires |
+| HostRecordTests (3), RecordShapeTests (3) | points bound to their dimensions; appended; round trip; container shapes | `TestPointsForComparesEveryDimensionByItsPolicy`, `TestV1RecordRoundTripsByteForByte`, `TestShapeRefusesWhatPythonRefuses`, `TestLoadKeepsFourAnswers` |
+| UnreadableDimensionTests (3), DimensionCoverageTests (5) | a dimension's presence policy; gates are not dimensions | `TestPointsForComparesEveryDimensionByItsPolicy` (interpreter and exercise dimensions retire) |
+| InstallEntriesCarryTheirRevisionTests (1) | each install entry carries its revision | `TestGoInstallEntryIsAdditive`, `TestSourceWithoutAStampIsNull`, `Test37_SweeperReadsTheGoInstallEntry` |
+| AbsenceAnswerTests (7), SelectionRollbackTests (4), PointerOwnershipRollbackTests (3) | the record deltas that put a selection or pointer back to nothing are compare-and-remove | `TestUpdateWritesWhatPythonWrites` (deselect-and-restore, drop-pointer, drop-pointer-elsewhere); the rollback sequencing is todo 38 |
+| ReadingBoundaryTests (7), FilesystemPartitionTests (12) | four states from four observations | `TestReadJSONKeepsFourAnswers`, `TestDecodeReadsLikePythonTextMode`, `TestSameDirectoryAsksTheFilesystem`; parity `TestParity_pointer_and_reading_states`; the per-command boundary inventory retires with the Python exception lattice |
+| ScopeReadingTests (4), ServiceStateTests (4) | scope readings kept apart; the invocation first | `TestSummariseIsPythons`, `TestServiceStateIsPythons`, `TestRelayRunsTheSelectedExecutable`, `TestFilesystemCandidatesListEveryStoreFile` |
+| StagingClaimTests (8), ClaimOwnershipTests (8), StagingLeftoverTests (4) | who may remove a staging: claim, lock, decision | `TestDecideIsPythonsTable` (180 rows), `TestClaimBytesArePythons`, `TestReadClaimKeepsFourAnswersAndOwnership`, `TestLivenessIsTheAdvisoryLock`, `TestAbandonedStagingIsReclaimedAndLiveStagingIsNot`, `TestBeginCommitRenamesACompleteDirectory`, `TestClearOwnRemovesOnlyItsOwnFiles` |
+| PointerSwapTests (4) | atomic repoint; real directory untouched; unread says nothing | `TestPlaceNamesRemove`, `TestARealDirectoryIsNotAPointer`, `TestAnUnreachablePointerNamesNothingEitherWay`, `TestARelativeTargetResolvesFromTheLinkDirectory`, `TestRepointingNeverLeavesTheLinkMissing` |
+| SwapGateTests (11), GateCellCoverageTests (3), SchemaComparisonTests (4), SchemaDepthTests (7) | three cells, three verdicts, whole-statement schema comparison | `TestCellsAndVerdictsArePythons`, `TestBlockingComesOffTheDeclaredCells`, `TestStoreReadingsCreateNothingAndAgreeWithTheDeclaredSchema`, `TestCandidateSchemaIsAskedOfTheCandidate`; parity `TestParity_declared_schema_is_the_python_candidates` |
+| BusyLockTests (2), PromotionExclusionTests (6), LockSiblingTests (6) | .crw-lock and promotion-lock exclusion; Busy is its own answer | `TestCrwLockIsExclusiveAndExpiresOnlyWhenStale`, `TestPromotionLockContentionAndTheFileIsNeverUnlinked`, `TestReleaseCandidateKeepsWhatMayBeInUse`, `TestDoctorReportsAHeldPromotionLockAndPromotionRefuses`; parity `TestParity_locks_exclude_across_runtimes` |
+| DiagnosisReportsResidue (13), ResidueNeverNamesLiveWork (6), ResidueNeverGuessesAboutAPointer (18) | residue is the installer's own decision; a pointer needs placement evidence | `TestResidueIsWhatTheInstallerWouldReclaim`, `TestAPointerIsResidueOnlyWithPlacementEvidence`, `TestAnUnlistedDestinationIsReportedNotEmpty`, `TestDestinationsAreComparedByTheFilesystem`, `TestDoctorOnAPythonVenvOnlyHost` |
+| ReviewFixTests (6), IdentityComparisonTests (7), LockCoverageTests (4), RoundTripSymmetryTests (6) | AST and inspect inventories of Python source | retired: tests of Python internals |
+
+Todo 37's Go tests: 63 in `internal/runtime/...` (16 record, 3 reading, 5 pointer, 7 staging, 4
+swapgate, 4 scope, 4 residue, 1 ownership, 2 definition, 12 doctor, and 5 parity-tagged in
+record),
+`Test37_SweeperReadsTheGoInstallEntry` in `internal/relay/faults` and
+`TestRun_doctor_dispatches_to_the_host_doctor` in `cmd/crw`. New Go surface with no Python
+counterpart: `crw doctor retention-scan` (`TestRetentionScanReportsExactlyTheSeededReferences`,
+`TestRetentionScanResolvesThroughThePointer`, `TestRetentionScanReadsTheWiringSurfaces`,
+`TestRetentionScanHoldsForARecentJournalRow`, `TestRetentionScanJudgesLiveProcesses`,
+`TestShellWordsSplitsLikeSh`) and the selected runtime kind of `crw doctor`
+(`TestDoctorOnAPythonVenvOnlyHost`, `TestDoctorOnAGoBinaryHost`).
+
 ## Files
 
 | path | tests | class | family | fixtures | owner | destination | coupling |
@@ -296,7 +338,7 @@ write admission against a symlink into a temporary live-state-shaped directory.
 | `scripts/ci/tests/test_plugin_wiring.py` | 188 | C | one owner registers the Stop hook; launchers resolve | - | todo 34 / CRW-156 | go-test: plugin wiring (todo 34) + go-test: isolated Codex home integration (todo 40) | exec of plugins/crw/wiring/crw_bridge_mcp.py (:80) + ast (:2132) |
 | `scripts/ci/tests/test_relay_schema_shipped.py` | 1 | A | shipped store objects keep their CREATE text | `scripts/ci/tests/relay_schema_shipped.json` | todo 17 / CRW-152 | corpus: sqlite-ddl | - |
 | `scripts/ci/tests/test_release.py` | 10 | A | release workflow steps against fake git/gh | `scripts/ci/tests/{fake_git.sh,fake_gh.sh,release_steps.py}` | todo 12 / CRW-150 | corpus: release (domain added by todo 12) | - |
-| `scripts/ci/tests/test_runtime_install.py` | 496 | C | runtime installer and diagnosis on temporary destinations | - | todo 38 / CRW-158 | go-test: `internal/runtime` (todo 37) + go-test: `internal/runtime/install` (todo 38) + inventory-check: go/ast scan of command producers (todo 38) | ast over scripts/runtime_install.py (406 reflective sites) |
+| `scripts/ci/tests/test_runtime_install.py` | 496 | C | runtime installer and diagnosis on temporary destinations | - | todo 38 / CRW-158 | go-test: `internal/runtime/{reading,record,pointer,staging,swapgate,scope,residue,ownership,definition,doctor}` (todo 37) + go-test: `internal/runtime/install` (todo 38) + inventory-check: go/ast scan of command producers (todo 38) | ast over scripts/runtime_install.py (406 reflective sites) |
 | `scripts/ci/tests/test_scope.py` | 14 | C | CI selection evidence from real git changes incl. renames | - | todo 47 / CRW-160 | go-test: `crw-dev ci scope` (todo 47; `internal/dev/ci` Test47_SCOPE_1..7) | importlib load of scripts/ci/scope.py |
 | `scripts/ci/tests/test_stop_events.py` | 75 | A | one accepted record per Stop event through host paths (CRW-212) | `packages/codex-session-relay/tests/fixtures/stop_event_r1.json` | todo 46 / CRW-159 | corpus: hook | - |
 | `scripts/ci/tests/test_trial_startup.py` | 374 | C | live-trial preflight states asserted against runs (A/C mix) | - | todo 46 / CRW-159 | go-test: `internal/dev` trial-startup, build tag dev (todo 46) + inventory-check: go/ast scan (todo 46) | ast over scripts/trial_startup.py; subprocess runs of the harness |

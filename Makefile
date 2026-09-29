@@ -1,7 +1,10 @@
 GO ?= go
 BINARY := dist/crw
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS := -s -w -X main.version=$(VERSION)
+# The git tree the binary is built from: the fault sweepers read it from the host record as the
+# installed revision, and Go build information carries only the commit (internal/runtime/record).
+SOURCE_TREE := $(shell git rev-parse 'HEAD^{tree}' 2>/dev/null)
+LDFLAGS := -s -w -X main.version=$(VERSION) -X github.com/thisisjun786/codex-relay-workflow/internal/runtime/record.sourceTree=$(SOURCE_TREE)
 STATICCHECK := $(GO) run honnef.co/go/tools/cmd/staticcheck
 # Per-package test binary budget. internal/relay/delivery drives its Python oracle serially and
 # takes about 450-500 s on eight CPUs, most of go test's 10m default, so two gates sharing a
@@ -48,7 +51,7 @@ contract:
 # representatives so ordinary CI remains bounded on four-core runners. The cli package
 # alone runs for several minutes and more under load, past go test's default 10m timeout.
 parity:
-	$(GO) test -tags parity -count=1 -timeout 30m ./internal/relay/cli/... ./internal/relay/adapter/... ./internal/relay/hook/...
+	$(GO) test -tags parity -count=1 -timeout 30m ./internal/relay/cli/... ./internal/relay/adapter/... ./internal/relay/hook/... ./internal/runtime/...
 	$(GO) test -tags parity -count=1 -run '^TestCLI_marker_preflight_parity_with_live_python$$' ./internal/relay/delivery/
 
 # The development tooling (cmd/crw-dev, internal/dev) builds only with -tags dev, so lint and
