@@ -62,6 +62,20 @@ func repositoryRoot() string {
 	return root
 }
 
+// cpython314 is python3 when it is CPython 3.14, the interpreter the judge's parity is claimed
+// against (docs/live-trial.md), or "" when there is no such interpreter to compare with.
+func cpython314() string {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		return ""
+	}
+	out, err := exec.Command(python, "-c", "import sys; print(sys.implementation.name, *sys.version_info[:2])").Output()
+	if err != nil || strings.TrimSpace(string(out)) != "cpython 3 14" {
+		return ""
+	}
+	return python
+}
+
 type stopFixture struct {
 	TranscriptLines []string `json:"transcriptLines"`
 	Stops           []struct {

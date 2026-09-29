@@ -74,11 +74,13 @@ func sameIdentity(a, b *identity) bool {
 	return *a == *b
 }
 
-// expandUser is Path(spelled).expanduser() as Python 3.14 answers it (record.ExpandUser): a
-// leading ~ is HOME when HOME is set at all, an empty HOME the root, and an unset one this
-// user's passwd entry. Where pathlib raises, because nothing answers the ~ or ~user or what
-// answers it still starts with ~, it is that RuntimeError.
+// expandUser is Path(spelled).expanduser() as Python 3.14 answers it. Path() spells the path
+// first (pathlibForm), so "./~", ".//~/x" and "~//x" are "~", "~/x" and "~/x" before any ~ is
+// looked at; then (record.ExpandUser) a leading ~ is HOME when HOME is set at all, an empty HOME
+// the root, and an unset one this user's passwd entry. Where pathlib raises, because nothing
+// answers the ~ or ~user or what answers it still starts with ~, it is that RuntimeError.
 func expandUser(spelled string) (string, error) {
+	spelled = pathlibForm(spelled)
 	expanded, err := record.ExpandUser(spelled, os.LookupEnv)
 	if err != nil || (strings.HasPrefix(spelled, "~") && strings.HasPrefix(expanded, "~")) {
 		return "", &evidence.PythonError{Class: "RuntimeError", Detail: "Could not determine home directory."}
@@ -86,7 +88,7 @@ func expandUser(spelled string) (string, error) {
 	return expanded, nil
 }
 
-// abspath is os.path.abspath of the path after expanduser.
+// abspath is os.path.abspath(str(Path(spelled).expanduser())).
 func abspath(spelled string) (string, error) {
 	expanded, err := expandUser(spelled)
 	if err != nil {
@@ -411,6 +413,7 @@ func (r *reading) read(roots, hosts []string) {
 	}
 	var wanted []wantedLedger
 	for _, home := range hosts {
+		// Path(home).expanduser().joinpath(*HOST_LEDGER_PARTS), made absolute below.
 		expanded, err := expandUser(home)
 		if err != nil {
 			panic(err)
