@@ -4025,8 +4025,8 @@ def cmd_guard_evaluate(services, args) -> dict:
     from .stopadapter import socket_guard
 
     # Apply the same lazy receipt-store selection before contacting its owner.
-    # A read-only preflight preserves explicit/intent pins and marker-only releases
-    # without publishing an observation or reserving a hold. It judges this Stop's own
+    # A read-only preflight preserves explicit/intent pins without publishing an observation
+    # or reserving a hold. It judges this Stop's own
     # environment (its --state or CODEX_SESSION_RELAY_STATE, its discovery root); the owner
     # judges its own with the socketPath and program forwarded below (decision 24), so a
     # routed Stop is refused wherever either side's selection would refuse it.
@@ -4036,44 +4036,53 @@ def cmd_guard_evaluate(services, args) -> dict:
     # process, so the local evaluation below reuses this answer instead of reading again.
     fallback = _once(_guard_fallback(services, args))
     try:
-        guard.selected_store(_marker_root(args), stop_input, db_path=args.db_path,
-                             default_db_path=fallback)
+        receipt_store = guard.selected_store(_marker_root(args), stop_input,
+                                             db_path=args.db_path, default_db_path=fallback)
     except guard.StoreNotSelected as error:
         raise PayloadExit(error.detail, EXIT_REFUSED) from error
 
-    selected = Path(args.db_path) if args.db_path else services.selection.db_path
-    if not args.db_path and stop_input.get("cwd"):
-        _directory, facts, _unreadable = intent.select_assignment(
-            _marker_root(args), stop_input["cwd"], stop_input.get("session_id"))
-        declared = facts.get("intent") if isinstance(facts, dict) else None
-        if isinstance(declared, dict) and isinstance(declared.get("dbPath"), str):
-            selected = Path(declared["dbPath"])
-    routed = socket_guard({"relayExecutable": sys.argv[0], "markerRoot": str(_marker_root(args)),
-                           # Absolute: the owner resolves nothing against this process's cwd.
-                           "dbPath": (str(Path(args.db_path).expanduser().absolute())
-                                      if args.db_path else None),
-                           "mode": args.mode, "now": args.now, "noRecord": args.no_record,
-                           # The selection inputs the Go hook client sends (decision 24): with
-                           # them the owner applies this fallback's socket refusals and prints
-                           # its recovery lines with this program.
-                           "socketPath": services.socket_path, "program": _program()},
-                          text, state=selected.resolve().parent)
-    if routed is not None:
-        if routed["ending"] != "exited":
-            raise PayloadExit({"error": "host", "detail": routed["detail"]}, EXIT_HOST)
-        try:
-            answer = json.loads(routed["stdout"])
-        except ValueError:
-            # The owner received the request and then said nothing readable: a host failure,
-            # never a refusal or a second, local evaluation.
-            raise PayloadExit({"error": "host", "detail": "the owner closed control.sock without a"
-                               " readable guard-evaluate answer"}, EXIT_HOST) from None
-        if routed["code"] != EXIT_OK:
-            raise PayloadExit(answer, routed["code"])
-        return answer
-    # The read-only Stop path verifies the durable owner without copying the store or creating
-    # a sidecar (ownership.check_stop); it takes no fence lock and writes nothing to the store.
-    check_stop(selected)
+    # A Stop whose evaluation reads no receipt (no assignment, no declared readiness, no
+    # registered relationship) is judged on its marker alone, so no store's owner has a say in
+    # it: it is neither routed to an owner nor fenced by one, and its verdict is published here
+    # exactly as before the fence. Asking would refuse it whenever the store it does not read
+    # belongs to the other runtime and that runtime's control.sock is down (PR #185 4128954348).
+    if receipt_store is not None:
+        selected = Path(args.db_path) if args.db_path else services.selection.db_path
+        if not args.db_path and stop_input.get("cwd"):
+            _directory, facts, _unreadable = intent.select_assignment(
+                _marker_root(args), stop_input["cwd"], stop_input.get("session_id"))
+            declared = facts.get("intent") if isinstance(facts, dict) else None
+            if isinstance(declared, dict) and isinstance(declared.get("dbPath"), str):
+                selected = Path(declared["dbPath"])
+        routed = socket_guard({"relayExecutable": sys.argv[0],
+                               "markerRoot": str(_marker_root(args)),
+                               # Absolute: the owner resolves nothing against this process's cwd.
+                               "dbPath": (str(Path(args.db_path).expanduser().absolute())
+                                          if args.db_path else None),
+                               "mode": args.mode, "now": args.now, "noRecord": args.no_record,
+                               # The selection inputs the Go hook client sends (decision 24):
+                               # with them the owner applies this fallback's socket refusals
+                               # and prints its recovery lines with this program.
+                               "socketPath": services.socket_path, "program": _program()},
+                              text, state=selected.resolve().parent)
+        if routed is not None:
+            if routed["ending"] != "exited":
+                raise PayloadExit({"error": "host", "detail": routed["detail"]}, EXIT_HOST)
+            try:
+                answer = json.loads(routed["stdout"])
+            except ValueError:
+                # The owner received the request and then said nothing readable: a host
+                # failure, never a refusal or a second, local evaluation.
+                raise PayloadExit({"error": "host", "detail": "the owner closed control.sock"
+                                   " without a readable guard-evaluate answer"},
+                                  EXIT_HOST) from None
+            if routed["code"] != EXIT_OK:
+                raise PayloadExit(answer, routed["code"])
+            return answer
+        # The read-only Stop path verifies the durable owner without copying the store or
+        # creating a sidecar (ownership.check_stop); it takes no fence lock and writes nothing
+        # to the store.
+        check_stop(selected)
     try:
         return guard.evaluate(
             _marker_root(args),

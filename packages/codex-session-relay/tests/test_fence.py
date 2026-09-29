@@ -1221,7 +1221,8 @@ def test_go_owner_socket_answers_after_sending_are_never_invented_refusals(datab
 def test_guard_evaluate_cli_reports_a_silent_owner_as_a_host_error(database, tmp_path):
     stamp(database, owner="go")
     stop = tmp_path / "stop.json"
-    stop.write_text("{}")
+    # A Stop that reads its receipt, so the owner is asked: a marker-only one never is.
+    stop.write_text(json.dumps(ready_for_review(tmp_path / "markers", tmp_path / "work")))
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
         server.bind(str(database.parent / "control.sock"))
         server.listen(1)
@@ -1243,6 +1244,56 @@ def test_guard_evaluate_cli_reports_a_silent_owner_as_a_host_error(database, tmp
     assert code == 3
     assert json.loads(output.getvalue()) == {
         "error": "host", "detail": "the owner closed control.sock without a readable guard-evaluate answer"}
+
+
+def test_a_marker_only_stop_is_judged_whoever_owns_the_store_it_never_reads(database, tmp_path):
+    """PR #185 4128954348: a verdict that reads no receipt is published as before the fence.
+
+    A child that declared itself waiting for input is released on its own declaration, and no
+    store is read for it. Its default store belongs to Go and no control.sock listens, which
+    refuses any Stop that does read that store; this one is judged here, answered and recorded
+    exactly as on a store Python owns, and the Go store is left as it was.
+    """
+    from codex_session_relay import marker
+
+    stamp(database, owner="go")
+    assert not (database.parent / "control.sock").exists()
+    unfenced = tmp_path / "python-state"
+    Store(unfenced / "relay.sqlite3").close()
+    program = str(Path(sys.executable).parent / "codex-session-relay")
+    now = "2026-01-01T00:00:00.123456+00:00"
+    stop = {"cwd": None, "session_id": "s", "turn_id": "t", "stop_hook_active": False}
+    before = files(database.parent)
+    answers = {}
+    for name, state in (("go-owned", database.parent), ("python-owned", unfenced)):
+        root, work = tmp_path / name / "markers", tmp_path / name / "work"
+        work.mkdir(parents=True)
+        directory = marker.assignment_dir(root, work, marker.assignment_id("dispatch"))
+        for path, record in {
+            "intent.json": {"dispatchRequestIdHash": marker.assignment_id("dispatch")},
+            "bound.json": {"sessionId": "s"},
+            "relationship.json": {"relationshipId": "r"},
+            "claims/s/claim.json": {"sessionId": "s", "dispatchRequestId": "dispatch"},
+            "dispositions/s/t.json": {"sessionId": "s", "turnId": "t",
+                                      "outcome": "blocked_needs_input"},
+        }.items():
+            marker.publish(directory / path, record, root=root)
+        ran = subprocess.run(
+            [program, "--state", str(state), "guard-evaluate", "--marker-root", str(root),
+             "--mode", "hold", "--now", now],
+            input=json.dumps(dict(stop, cwd=str(work))).encode(), cwd=tmp_path,
+            capture_output=True, timeout=30, check=False)
+        assert ran.returncode == 0 and not ran.stderr, (name, ran)
+        answer = json.loads(ran.stdout)
+        recorded = directory / (answer["recordedAs"] + ".json")
+        assert json.loads(recorded.read_bytes()) == answer["record"], name
+        answers[name] = answer
+    verdict = answers["go-owned"]
+    assert verdict["decision"] == "release", verdict
+    assert verdict["observation"] == "declared_blocked_needs_input", verdict
+    assert verdict["recordedAs"] == "hook/s/t/0", verdict
+    assert verdict == answers["python-owned"]
+    assert files(database.parent) == before, "a marker-only Stop touched the Go-owned store"
 
 
 @pytest.mark.parametrize("case", ["wrong_socket", "override", "ambiguous", "unidentified"])
@@ -1658,14 +1709,21 @@ def test_a_stop_verifies_its_owner_without_copying_the_store_or_making_sidecars(
     """The read-only Stop path (cutover.md Lock order) reads the ownership halves in place.
 
     No temporary copy of the store (the hook comparison's writesOutsideRoot) and no SQLite
-    sidecar beside it; the verdict is still check_start's: an active Python store evaluates, a
-    draining one refuses, and an owner change committed only to the live WAL is read, not the
-    stale main file, so the mirror that disagrees with it refuses.
+    sidecar beside it; the verdict is still check_start's: a draining store refuses, and an owner
+    change committed only to the live WAL is read, not the stale main file, so the mirror that
+    disagrees with it refuses. Those Stops read their receipt from D, the store their intent
+    records, so its owner decides them; the active case's unmanaged Stop reads no receipt and
+    asks no owner (PR #185 4128954348). An active Python store admitting a Stop that reads its
+    receipt is test_a_stop_spends_one_receipt_read_and_one_evaluation[local], whose receipt read
+    is what creates the sidecars this check forbids.
     """
-    workspace = tmp_path / "unmanaged-workspace"
-    workspace.mkdir()
-    stop = {"cwd": str(workspace), "session_id": "s", "turn_id": "t", "stop_hook_active": False}
     markers = tmp_path / "markers"
+    if case == "active":
+        workspace = tmp_path / "unmanaged-workspace"
+        workspace.mkdir()
+        stop = {"cwd": str(workspace), "session_id": "s", "turn_id": "t", "stop_hook_active": False}
+    else:
+        stop = ready_for_review(markers, tmp_path / "managed-workspace", db_path=database)
     writer = None
     if case == "draining":
         stamp(database, phase="draining")
@@ -1691,7 +1749,7 @@ def test_a_stop_verifies_its_owner_without_copying_the_store_or_making_sidecars(
     if case != "live-wal-owner":
         assert files(database.parent) == before
         assert not Path(str(database) + "-wal").exists() and not Path(str(database) + "-shm").exists()
-    assert not markers.exists()
+    assert not list(markers.rglob("hook")), "an observation was recorded"
     if case == "active":
         assert code == 0 and answer["decision"] == "release", answer
         assert answer["state"] == "unmanaged", answer

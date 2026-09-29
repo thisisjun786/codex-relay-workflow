@@ -46,8 +46,8 @@ read by `hook_probe.py` through `scripts/ci/contracts.py`, not by a test file; t
 ## Totals
 
 Files: 124
-Tests: 6151
-Class A: files=16 tests=632
+Tests: 6152
+Class A: files=16 tests=633
 Class B: files=88 tests=3367
 Class C: files=20 tests=2152
 
@@ -178,7 +178,7 @@ write admission against a symlink into a temporary live-state-shaped directory.
 | path | tests | class | family | fixtures | owner | destination | coupling |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `packages/codex-session-relay/tests/test_fence_readonly.py` | 10 | B | foreign-owner read matrix, the owner's fault-next lease expiry and terminal inbox replay | takeover-inbox legacy golden; ChannelTestCase | todo 31/36 CRW-152 | go-test: internal/relay/store read-only and inbox | - |
-| `packages/codex-session-relay/tests/test_fence.py` | 60 | A | ownership fence, first-socket store binding, decision 25 ingress and inbox replay, Python control socket, one receipt read per Stop | contract/golden/takeover-inbox | todo 31/36 CRW-152 | go-test: internal/relay/store takeover protocol and socket binding + go-test: internal/relay/cli fence parity + go-test: internal/relay/hook control socket (todo 33) + go-test: internal/relay/inbox and internal/relay/cli inbox (todo 31) | - |
+| `packages/codex-session-relay/tests/test_fence.py` | 61 | A | ownership fence, first-socket store binding, decision 25 ingress and inbox replay, Python control socket, one receipt read per Stop, marker-only Stops ask no owner | contract/golden/takeover-inbox | todo 31/36 CRW-152 | go-test: internal/relay/store takeover protocol and socket binding + go-test: internal/relay/cli fence parity + go-test: internal/relay/hook control socket (todo 33) + go-test: internal/relay/inbox and internal/relay/cli inbox (todo 31) | - |
 | `packages/codex-session-relay/tests/test_takeover_candidate.py` | 14 | A | decision 28 private designation, bounded channel frames, ready only after recovery and the control socket, durable activation | isolated SQLite and inherited socketpair | todo 30/36 CRW-152 | go-test: internal/relay/service candidate protocol | - |
 | `packages/codex-session-relay/tests/test_ack_disposition_race.py` | 5 | B | two processes acknowledging one event; which may win | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
 | `packages/codex-session-relay/tests/test_ack_reconcile.py` | 40 | B | ACK, verdicts, reconciliation and restart recovery | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
