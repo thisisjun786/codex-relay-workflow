@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -187,6 +188,79 @@ func Test29D1TerminationCadence(t *testing.T) {
 	reads = 0
 	if terminationCadence(0, func() time.Time { return now }, func() bool { reads++; return true }, func(time.Duration) { t.Fatal("spent bound waited") }) || reads != 0 {
 		t.Fatal("spent bound observed after its deadline")
+	}
+}
+
+// leaderGone is a worker whose leader thread has exited while another thread keeps the
+// descriptor table the threads share, and the daemon lock in it, until stdin is written: a
+// multithreaded service process on its way out, held there. SIGTERM is blocked in every thread,
+// so only SIGKILL ends it. SYS_exit (argv[2]) ends the calling thread alone.
+const leaderGone = `import ctypes, fcntl, os, signal, sys, threading
+lock = open(sys.argv[1], "a+")
+fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+threading.Thread(target=lambda: (sys.stdin.buffer.read(1), os._exit(0))).start()
+print(os.getpid(), flush=True)
+ctypes.CDLL(None, use_errno=True).syscall(int(sys.argv[2]), 0)
+`
+
+// A zombie leader is not an exited process (decisions.md 40). Stop observes a worker's exit on
+// its pidfd, which becomes readable only after every thread has closed its descriptors, so the
+// daemon lock the remaining thread holds is free when stop probes it. The Python fence read the
+// leader's /proc state instead and answered replaced_by_new_launch here, with the thread still
+// running; tests/test_service.py holds the same case for it.
+func Test29D1StopWaitsForEveryThreadOfTheWorker(t *testing.T) {
+	home := t.TempDir()
+	if enabled := invoke(t, home, false, "service", "enable"); enabled.Code != 0 {
+		t.Fatal(enabled)
+	}
+	s, err := New(context.Background(), storeSelection(home), home+"/socket")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Scope = &ScopeRegistry{Root: home + "/scopes", Authority: "isolated"}
+	s.InstallationID = installationForBinary(t, home)
+	lock := filepath.Join(home, "state", "daemon.lock")
+	cmd := exec.Command(filepath.Join(testRoot, ".venv/bin/python"), "-c", leaderGone, lock, strconv.Itoa(unix.SYS_EXIT))
+	input, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	worker := process(t, cmd.Process.Pid)
+	t.Cleanup(func() { _ = input.Close(); _ = cmd.Wait() })
+	if line, err := bufio.NewReader(output).ReadString('\n'); err != nil || line != fmt.Sprintf("%d\n", worker.PID) {
+		t.Fatalf("worker readiness %q: %v", line, err)
+	}
+	for end := time.Now().Add(10 * time.Second); ProcessState(worker.PID) != "Z"; {
+		if time.Now().After(end) {
+			t.Fatal("the worker's leader never exited")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !existingLockHeld(lock) {
+		t.Fatal("the fixture needs the remaining thread to hold the lock")
+	}
+	record := set(s.NewRecord(os.Getpid(), "controlled-run"), "pid", nil, "workerPid", worker.PID, "workerStartTicks", StartTicks(worker.PID))
+	if err = s.WriteRecord(record); err != nil {
+		t.Fatal(err)
+	}
+	stopped, err := s.Stop("owner", 500*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := obj("ok", true, "reason", nil, "detail", nil, "supervisor", "gone", "worker", "exited")
+	if !sameObject(stopped, want) {
+		t.Fatalf("stop of a worker whose leader has exited: %v", stopped)
+	}
+	if !worker.Wait(0) || get(s.Record(), "workerPid") != nil || existingLockHeld(lock) {
+		t.Fatalf("stopped worker: exited=%v record=%v lockHeld=%v", worker.Wait(0), s.Record(), existingLockHeld(lock))
 	}
 }
 

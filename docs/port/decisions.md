@@ -772,6 +772,9 @@ A plain Python stop also reproduced the refusal with runtime-specific state and
 scope directories. Isolating directories prevents cross-iteration interference,
 but cannot remove this leader-exit race. Do not turn Python's scheduling into a
 Go test failure, add sleeps, or alter either runtime's stop contract to hide it.
+Decision 40 supersedes this paragraph: the race was the fence misreading process
+state, and the fence now reads exit from the pidfd as Go does. The rest of this
+decision stands.
 
 Evidence: `packages/codex-session-relay/src/codex_session_relay/service.py:1304-1421`
 (stop and worker re-read), `:1480-1516` (grace and process-state outcomes),
@@ -1170,3 +1173,53 @@ In the second, `heldCaller` holds it back until the worker has finished. Both ru
 compared with the live Python oracle, where each answer also arrives after the cancel. With
 the transport change reverted, the held run fails every time: `failed`, `not_attempted`,
 `accepted`, and an extra `thread/resume`.
+
+## 40. A stopped process has exited when its pidfd says so, in both runtimes
+
+Decision: `service stop` counts a supervisor or worker as exited only when its pidfd is
+readable, which the kernel reports once the leader has exited and the thread group is empty,
+after every thread has closed its descriptors. Go's `ProcessHandle.Wait` already asked this.
+The retained Python fence's `ProcessHandle.alive()` read the leader's `/proc/<pid>/stat` state
+and took `Z` for exited; it now polls the pidfd the handle already holds, and reads `/proc` only
+for a handle without one, which no caller asks. Outside the window below nothing changes: a
+stop still reports `exited` or `gone` at its 100 ms grace boundaries with the same answers,
+exit codes and records, and the worker-policy reading still refuses a `Z` leader through
+`process_state` beside `alive()`.
+
+Why: a multithreaded process killed by a signal can show its leader as `Z` while another
+thread is still exiting and still holds the descriptor table the threads share. The
+supervisor's `daemon.lock` descriptor is in that table, and the worker inherits the same open
+file description. The fence's stop reported such a process `exited`. Its final nonblocking
+acquisition then found the lock the dying thread still held. With both processes counted as
+gone, it answered `replaced_by_new_launch` ("the daemon lock was taken during this stop"),
+exit 2, and left `daemon.json` naming both processes; `restart` propagates that refusal. No
+launch existed. Decision 27 put this down to Python's scheduling, but the fence was misreading
+process state. The misreading failed `Test29GoRecordsCarryANullFenceBuildThePythonFenceReads`
+on a 4-core runner (PR #189, run 36523111203, go-product test-4) at the fence's stop of the
+service it had itself started. No Go process holds or takes the lock in that sequence: the Go
+service was stopped and waited on through its pidfds before the Python start acquired the lock.
+Fence start/stop cycles with an instrumented stop, on four CPUs shared with eight busy loops,
+answered `replaced_by_new_launch` in 4 of 90 cycles. Each time `_terminate` had returned
+`exited` for both processes with the leader in `Z` and one sibling thread still `R`. No other
+process held the lock; in one cycle the sibling still listed `daemon.lock` among its
+descriptors at the probe, and in the three that timed it the lock came free 3-5 ms later. With
+the fix, 0 of 100 cycles failed under the same load. Starving the service processes'
+non-leader threads (SCHED_IDLE beside the same busy loops, neither runtime changed) failed the
+Go test in 7 of 10 runs before the fix and 0 of 50 after it. This supersedes decision 27's
+paragraph on Python reporting `replaced_by_new_launch` without a replacement launch.
+
+Cost: in the window that used to fail, a fence stop now waits one more grace boundary for the
+slowest thread, as Go's stop does. While the fence waits for the supervisor, the worker, killed
+by its parent-death signal, is now more often reaped before stop reads it. `gone` is therefore
+more frequent than `exited`, which decision 27 already allows.
+
+Evidence: `packages/codex-session-relay/src/codex_session_relay/service.py:359-381`
+(`ProcessHandle.alive`), `:1424-1432` (the final probe),
+`internal/relay/service/process_linux.go:53-70` (`ProcessHandle.Wait`),
+`internal/relay/service/ownership.go:154` (`waitTermination`); `tests/test_service.py`
+(`Ownership.test_stop_waits_for_every_thread_of_a_worker_whose_leader_has_exited`) and
+`internal/relay/service/reap_test.go` (`Test29D1StopWaitsForEveryThreadOfTheWorker`). In both,
+the worker's leader has exited while a thread that blocks SIGTERM holds the daemon lock. Each
+runtime's stop answers ok with worker `exited` and leaves the lock free. Restoring the
+leader-state reading (the old `alive` body, or `waitTermination` asking `ProcessState`) makes
+each answer `replaced_by_new_launch` with that thread still running.
