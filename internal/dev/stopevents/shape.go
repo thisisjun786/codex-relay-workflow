@@ -4,9 +4,7 @@ package stopevents
 
 import (
 	"bytes"
-	"encoding/json"
 	"io"
-	"math/big"
 	"os"
 	"path"
 	"regexp"
@@ -106,28 +104,9 @@ func exact(v any, n int64) bool {
 	return ok && i == n
 }
 
-// count is a non-negative (zero) or positive integer of any size, never a bool.
-func count(v any, zero bool) bool {
-	var sign int
-	switch n := v.(type) {
-	case int64:
-		sign = big.NewInt(n).Sign()
-	case int:
-		sign = big.NewInt(int64(n)).Sign()
-	case json.Number:
-		i, ok := new(big.Int).SetString(n.String(), 10)
-		if !ok {
-			return false
-		}
-		sign = i.Sign()
-	default:
-		return false
-	}
-	if zero {
-		return sign >= 0
-	}
-	return sign > 0
-}
+// count is a non-negative (zero) or positive integer of any size, never a bool (the hook's own
+// predicate, which its native pre-scan row is read with too).
+func count(v any, zero bool) bool { return hook.Count(v, zero) }
 
 func fieldsExactly(v any, fields []string) bool {
 	o, ok := asObject(v)

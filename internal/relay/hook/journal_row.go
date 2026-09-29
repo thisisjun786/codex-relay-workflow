@@ -2,8 +2,10 @@ package hook
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -47,8 +49,7 @@ func NativePrescanUnreachable(row Object) bool {
 		}
 	}
 	for _, name := range []string{"elapsedMs", "guardElapsedMs"} {
-		n, ok := evidence.PyInt(get(row, name))
-		if !ok || n < 0 {
+		if !Count(get(row, name), true) {
 			return false
 		}
 	}
@@ -88,6 +89,31 @@ func NativePrescanUnreachable(row Object) bool {
 	spelled := strings.TrimPrefix(detail, prefix)
 	socket, ok := pythonQuotedPath(spelled)
 	return ok && journalAbsolutePath(socket) && filepath.Base(socket) == "control.sock" && evidence.StrRepr(socket) == spelled
+}
+
+// Count is completion._is_count: an integer of any size, never a bool, that is non-negative
+// (zero) or positive. Python's int has no width, so a count past int64 is still one: Decode
+// hands it over as the json.Number it could not narrow.
+func Count(v any, zero bool) bool {
+	var sign int
+	switch n := v.(type) {
+	case int64:
+		sign = big.NewInt(n).Sign()
+	case int:
+		sign = big.NewInt(int64(n)).Sign()
+	case json.Number:
+		i, ok := new(big.Int).SetString(n.String(), 10)
+		if !ok {
+			return false
+		}
+		sign = i.Sign()
+	default:
+		return false
+	}
+	if zero {
+		return sign >= 0
+	}
+	return sign > 0
 }
 
 func journalAbsolutePath(path string) bool {

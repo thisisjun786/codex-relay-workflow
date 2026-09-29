@@ -4,6 +4,7 @@ package stopevents
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -505,6 +506,45 @@ func TestSEV11_OnlyWhatTheWriterWritesIsVouchedFor(t *testing.T) {
 		expectVerdict(t, code, answer, 3, "UNREADABLE")
 		if got := listed(answer, "rowsUnreadable"); len(got) != 1 || got[0] != filepath.Dir(impossible) {
 			t.Fatal(got)
+		}
+	})
+	// A native dial that failed before the identity scan is judged by its row alone (decision 22),
+	// and its timings are completion._is_count: a Python int of any size. A count past int64 is
+	// still a count, so it keeps the window TRUE exactly as it did under Python; a negative one
+	// of the same width is not a count at all.
+	t.Run("a native dial's timings are counts of any size", func(t *testing.T) {
+		for _, c := range []struct {
+			field, value string
+			want         int
+		}{
+			{"elapsedMs", "9223372036854775807", 0},
+			{"elapsedMs", "9223372036854775808", 0},
+			{"elapsedMs", "18446744073709551616", 0},
+			{"elapsedMs", "1" + strings.Repeat("0", 30), 0},
+			{"guardElapsedMs", "9223372036854775808", 0},
+			{"guardElapsedMs", "1" + strings.Repeat("0", 30), 0},
+			{"elapsedMs", "-9223372036854775809", 3},
+			{"guardElapsedMs", "-1", 3},
+		} {
+			h := newHost(t, hook.Release)
+			if err := os.Remove(h.state + "/control.sock"); err != nil {
+				t.Fatal(err)
+			}
+			h.run(h.settings, h.at(loadFixture(t), 0))
+			rows := h.rowPaths(h.journal)
+			if len(rows) != 1 || valueAt(t, rows[0], "adapterOutcome") != hook.GuardUnreachable {
+				t.Fatalf("not one failed native dial: %v", rows)
+			}
+			change(t, rows[0], set(c.field, json.Number(c.value)))
+			if raw, _ := os.ReadFile(rows[0]); !bytes.Contains(raw, []byte(`"`+c.field+`": `+c.value+`,`)) {
+				t.Fatalf("the row does not carry %s %s: %s", c.field, c.value, raw)
+			}
+			code, answer := verify(t, roots(h.journal)...)
+			verdict := map[int]string{0: "TRUE", 3: "UNREADABLE"}[c.want]
+			expectVerdict(t, code, answer, c.want, verdict)
+			if unread := len(listed(answer, "rowsUnreadable")); (c.want == 0) != (unread == 0) {
+				t.Fatalf("%s %s: rowsUnreadable %v", c.field, c.value, answer["rowsUnreadable"])
+			}
 		}
 	})
 	t.Run("an unestablished row carries only what its reason had recorded", func(t *testing.T) {
