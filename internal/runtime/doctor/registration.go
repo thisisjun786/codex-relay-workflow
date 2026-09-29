@@ -1,11 +1,15 @@
 package doctor
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"golang.org/x/sys/unix"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -52,11 +56,12 @@ func ReadRegistrations(codexHome, target string, env scope.Env) Registrations {
 			j.command(relay, stop, "relayExecutable", command, nil, definition.Relay)
 		}
 		if record.Get(document, "owner") == "plugin" {
-			if entry, ok := stringField(document, "adapterEntryPoint", stop, relay); ok {
+			entry, entryOK := stringField(document, "adapterEntryPoint", stop, relay)
+			if entryOK {
 				j.command(relay, stop, "adapterEntryPoint", entry, nil, definition.HookScript)
 			}
-			if interpreter, ok := record.Get(document, "adapterInterpreter").(string); ok && interpreter != "" {
-				j.interpreter(relay, stop, interpreter)
+			if interpreter, ok := stringField(document, "adapterInterpreter", stop, relay); ok {
+				j.interpreter(relay, stop, interpreter, entry)
 			}
 		}
 	}
@@ -75,7 +80,7 @@ func ReadRegistrations(codexHome, target string, env scope.Env) Registrations {
 // readRecord reads a settings record: absent is no registration, and anything but an object is
 // a registration that cannot be established.
 func readRecord(path, what string, into *componentRegistrations) (Object, bool) {
-	read := reading.ReadJSON(path, what, nil, nil)
+	read := reading.ReadJSON(path, what, nil, jsonObject(what))
 	if read.State == reading.Absent {
 		return nil, false
 	}
@@ -157,19 +162,73 @@ func (j judge) command(into *componentRegistrations, source, field, command stri
 	}
 }
 
-// interpreter judges the Stop settings' adapterInterpreter: the packaged launcher runs
-// [adapterInterpreter, adapterEntryPoint], so a Python interpreter there (the Python-era
-// .../current/bin/python3, which a Go runtime does not hold) never reaches the Go hook.
-func (j judge) interpreter(into *componentRegistrations, source, interpreter string) {
-	e := Classify(interpreter, "", "")
-	entry := Object{{Key: "source", Value: source}, {Key: "field", Value: "adapterInterpreter"}, {Key: "command", Value: interpreter}, {Key: "resolves", Value: nullable(e.Resolves)}}
-	if e.Python {
-		detail := source + " adapterInterpreter " + interpreter + " is a Python interpreter (" + e.Detail + "), so the packaged launcher does not run the selected runtime's hook"
+// interpreter judges the Stop settings' adapterInterpreter against the launcher contract of
+// decision 18 (as todo 38 corrects it): the packaged launcher (plugins/crw/wiring/crw_stop_hook.py
+// and its <CODEX_HOME>/crw-stop-hook.py copy) declines a relative interpreter or entry point and
+// otherwise runs [adapterInterpreter, adapterEntryPoint, <settings>]. That reaches the Go hook
+// only when adapterInterpreter is an env program - it resolves to an executable regular file
+// named env and is written under that name, which a multi-call env dispatches on - so that the
+// entry point runs as crw-completion-hook with the settings path as its one argument
+// (adapterEntryPoint is judged by command). Any other interpreter (a Python interpreter, a
+// shell, the crw binary itself, which would read the entry point as its settings) is a
+// conflict naming the invocation it produces; one that cannot be examined is unreadable.
+func (j judge) interpreter(into *componentRegistrations, source, interpreter, entryPoint string) {
+	if entryPoint == "" {
+		entryPoint = "<adapterEntryPoint>"
+	}
+	invocation := "the packaged launcher runs [" + interpreter + ", " + entryPoint + ", <settings>]"
+	entry := Object{{Key: "source", Value: source}, {Key: "field", Value: "adapterInterpreter"}, {Key: "command", Value: interpreter}}
+	report := func(resolves, agrees any, detail string) {
+		into.report = append(into.report, append(entry, record.Object{{Key: "resolves", Value: resolves}, {Key: "agrees", Value: agrees}, {Key: "detail", Value: detail}}...))
+	}
+	conflict := func(resolves any, why string) {
+		detail := source + " adapterInterpreter: " + invocation + ", and " + why
 		into.conflicts = append(into.conflicts, detail)
-		into.report = append(into.report, append(entry, record.Object{{Key: "agrees", Value: false}, {Key: "detail", Value: detail}}...))
+		report(resolves, false, detail)
+	}
+	unread := func(resolves any, why string) {
+		into.unread = append(into.unread, source+" adapterInterpreter "+interpreter+" ("+why+")")
+		report(resolves, nil, why)
+	}
+	if !filepath.IsAbs(interpreter) {
+		conflict(nil, "the launcher declines an interpreter that is not an absolute path, so it runs nothing")
 		return
 	}
-	into.report = append(into.report, append(entry, record.Object{{Key: "agrees", Value: nil}, {Key: "detail", Value: "not a Python interpreter; what it runs the entry point with is not compared"}}...))
+	resolved, err := record.Resolve(interpreter)
+	if err != nil {
+		unread(nil, "the interpreter could not be resolved: "+err.Error())
+		return
+	}
+	info, err := os.Stat(resolved)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		conflict(resolved, interpreter+" does not exist, so the launcher starts nothing")
+		return
+	case err != nil:
+		unread(resolved, "the interpreter could not be examined: "+store.PythonOSError(err))
+		return
+	case !info.Mode().IsRegular():
+		conflict(resolved, interpreter+" is not a regular file, so the launcher starts nothing")
+		return
+	}
+	if err := unix.Access(resolved, unix.X_OK); errors.Is(err, unix.EACCES) {
+		conflict(resolved, interpreter+" is not executable by this user, so the launcher starts nothing")
+		return
+	} else if err != nil {
+		unread(resolved, "whether the interpreter is executable could not be read: "+err.Error())
+		return
+	}
+	e := Classify(interpreter, "", "")
+	switch {
+	case resolved == j.crw:
+		conflict(resolved, interpreter+" is the selected crw binary itself, started as "+filepath.Base(interpreter)+", which reads "+entryPoint+" as its first argument instead of running the hook with the settings path")
+	case e.Python:
+		conflict(resolved, interpreter+" is a Python interpreter ("+e.Detail+"), which runs "+entryPoint+" as a Python program rather than the selected runtime's hook")
+	case filepath.Base(resolved) != "env" || filepath.Base(interpreter) != "env":
+		conflict(resolved, interpreter+" (resolving to "+resolved+") is not env, so "+entryPoint+" is its argument rather than a program run as "+definition.HookScript+" with the settings path")
+	default:
+		report(resolved, true, "env runs "+entryPoint+" as "+definition.HookScript+" with the settings path")
+	}
 }
 
 // codexConfig judges config.toml's mcp_servers.codex-thread-bridge, the table

@@ -259,7 +259,7 @@ func selectionKind(location string) string {
 // ReadSettings reads one settings record and classifies every executable it names.
 func ReadSettings(codexHome, name string, keys []string, pointerPath string) Object {
 	path := filepath.Join(codexHome, name)
-	read := reading.ReadJSON(path, name, nil, nil)
+	read := reading.ReadJSON(path, name, nil, jsonObject(name))
 	out := Object{{Key: "path", Value: path}, {Key: "state", Value: read.State}}
 	if !read.OK() {
 		var refusal any
@@ -278,6 +278,17 @@ func ReadSettings(codexHome, name string, keys []string, pointerPath string) Obj
 		executables = append(executables, record.Object{{Key: key, Value: Classify(text, "", pointerPath).Object()}}...)
 	}
 	return append(out, record.Object{{Key: "reading", Value: nil}, {Key: "executables", Value: executables}}...)
+}
+
+// jsonObject is the shape of a settings record: valid JSON that is not an object is a record
+// that cannot be read, never one that names no executables.
+func jsonObject(what string) func(any) error {
+	return func(value any) error {
+		if _, ok := value.(Object); !ok {
+			return reading.Fail("ValueError", what+" is "+scope.TypeName(value)+", not a JSON object")
+		}
+		return nil
+	}
 }
 
 // codexVersion is hostrecord's codexCli dimension: `codex --version`, first line.
