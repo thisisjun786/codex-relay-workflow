@@ -162,6 +162,17 @@ Known limits of this wiring:
   installer always has.
 - The record's `bridgeExecutable` is checked (present and absolute) and not executed: the
   runtime behind the pointer is the bridge.
+- Nothing checks that the runtime behind the pointer can serve this payload. Both commands pass
+  `--plugin-launch`, which only a runtime built with decision 26 reads. Neither the package,
+  `crw install` nor `crw doctor` compares the two. If the pointer names a Python `env-*`
+  runtime, there is no `bin/crw`: the shell reports the missing program on stderr and the hook
+  exits 0 with no record. If the pointer names a Go runtime built before decision 26, the hook
+  releases the Stop with no output at all. That `crw hook` takes `--plugin-launch` for a
+  settings path relative to its working directory, finds none, exits 0 and writes no journal
+  row. In both cases the bridge exits 2 from argument parsing, so the server does not start and
+  no bridge runs without the recorded policy. The only guard is the order in step 1 of
+  [turning the wired surfaces on](#turning-the-wired-surfaces-on). To confirm it, end a turn and
+  read its journal row ([registration is not firing](runtime-install.md#registration-is-not-firing)).
 
 `wiring/crw_stop_hook.py` and `wiring/crw_bridge_mcp.py` still ship. The package no longer
 declares them. A turn whose Stop command was fixed before this change, or a session that loaded
@@ -227,6 +238,17 @@ not carry, and each needs a step the installation cannot take for you.
    A runtime installed anywhere else, or a pointer that still names a Python `env-*` runtime, is
    one neither command starts: the hook then releases every Stop without a word, and the server
    exits as it starts.
+
+   The runtime also has to be a build that reads `--plugin-launch`
+   ([decision 26](port/decisions.md)), and the pointer has to name it before the plugin cache
+   takes a payload that declares the native wiring (one whose `wiring/hooks/*.json` command runs
+   `crw hook --plugin-launch`). Install or update the runtime first, with `crw install install`
+   or `crw install update`. With a local marketplace, that means before the checkout the
+   marketplace names moves onto such a payload. A Go runtime built before decision 26 fails
+   silently. Its `crw hook` reads `--plugin-launch` as a relative settings path and finds no
+   settings there. It exits 0 with nothing on stdout or stderr and writes no journal row, so
+   every Stop is released unrecorded. Its bridge refuses the flag with exit 2. A rollback goes
+   in the other order ([update and roll back](#update-and-roll-back)).
 2. Write the two records the runtime reads under `--plugin-launch`. Neither registers anything
    itself: `crw install register-mcp --owner plugin` and `crw install hook --owner plugin`. Each
    refuses when the same surface is already registered the other way, because the two together
@@ -700,6 +722,16 @@ given until it ends, and a Stop whose command names the removed directory falls 
 Because the suffix follows the payload, an earlier revision reinstalls into its own directory
 rather than over the one that replaced it, and `codex plugin list` says which of the two is
 present.
+
+An update that brings in the native wiring, or a rollback that takes it out, moves the package
+and the runtime in a fixed order. Going forward, the runtime moves first. The pointer has to
+name a runtime that reads `--plugin-launch` before the cache takes a payload whose commands
+pass it. Going back, the package moves first. Reinstall a revision whose Stop declaration is the
+Python bootstrap before `crw install rollback` points at a runtime without that flag, whether a
+Python `env-*` runtime or a Go runtime built before decision 26. That bootstrap reaches either
+kind through the Stop settings `crw install` leaves for it, and a rollback to a Python runtime
+restores the Python-era settings. In the other order, every Stop in between is released
+without a record ([the native wiring](#the-native-wiring)).
 
 A rollback past the bridge record's version installs, and then its launcher refuses the record. A
 launcher that predates version 2 starts no bridge under a version-2 record: measured in isolation,

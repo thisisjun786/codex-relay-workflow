@@ -456,6 +456,13 @@ rewrite it, and a dead holder PID authorizes nothing);
 point new host registrations at the native Go Stop hook; preserve legacy settings and cached
 executable paths; release `takeover.lock`.
 
+The plugin payload that declares the native wiring (its Stop command runs `crw hook
+--plugin-launch`, decision 26) is installed only after the pointer names a Go runtime built with
+decision 26. It is never cached beside a pointer at a Go runtime built before it, which releases
+every Stop without output or a journal row, or beside one at a Python `env-*` runtime. The
+order, and the reverse one for a rollback, are in docs/plugin-packaging.md "Turning the wired
+surfaces on" and "Update and roll back".
+
 The legacy `guard-evaluate` CLI (stopadapter.py:69, command assembled at invocation time from
 settings at stopadapter.py:418-442) keeps its flags and its full verdict envelope so cached
 Python adapters keep working. The Go `guard-evaluate` must not claim the Stop event again; the

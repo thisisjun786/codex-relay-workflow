@@ -885,6 +885,17 @@ contract the Python launchers carried is enforced by the runtime in that mode.
   and hands off to this checkout's `crw_bridge_mcp.py`, the reference the Go contract is compared
   with. The probe still judges the package's declared command, arguments and working directory
   under the App Server's environment.
+- No compatibility floor between the payload and the runtime is checked. A runtime built before
+  this decision reads the flag as something else: its `crw hook` takes `--plugin-launch` for a
+  settings path relative to its working directory, finds nothing there and exits 0 with empty
+  stdout and stderr and no journal row, and its bridge refuses the flag with exit 2 from argument
+  parsing. A pointer at a Python `env-*` runtime has no `bin/crw` for the hook, and its bridge
+  refuses the flag the same way. The bridge therefore never runs without the recorded policy,
+  but every Stop is released unrecorded. The guard is an order: the pointer names a runtime
+  built with this decision before a payload declaring these commands is cached, and a rollback
+  returns the payload before the runtime (docs/plugin-packaging.md "Update and roll back").
+  The older hook answers the flag exactly as it answers a missing settings file, so its exit
+  status and output do not tell it apart.
 
 Why: the plan's launcher (`exec ... crw bridge "$@"`) read no record, so on a plugin host the
 bridge checked no role pair, lost the recorded `--socket`, and started even where the user owned
