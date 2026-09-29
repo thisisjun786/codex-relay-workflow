@@ -4,6 +4,7 @@ package skills
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -295,5 +296,80 @@ func TestTheCommandLinksThisCheckoutIntoTheCodexHome(t *testing.T) {
 	}
 	if _, err := os.Lstat(env["HOME"]); !os.IsNotExist(err) {
 		t.Fatalf("an explicit CODEX_HOME still wrote under HOME")
+	}
+}
+
+func TestATildeDestinationIsExpandedWhereverItComesFrom(t *testing.T) {
+	// install.py runs expanduser on the destination it ends up with, so a CODEX_HOME holding a
+	// literal ~ (quoted, or set by something other than a shell) names the user's home, not a
+	// directory called ~ inside the checkout. --check writes nothing, so a wrong destination shows
+	// in its MISSING lines before the one --apply below could write there.
+	scratch := t.TempDir()
+	home := filepath.Join(scratch, "home")
+	other := filepath.Join(scratch, "someone")
+	saved := lookupHome
+	defer func() { lookupHome = saved }()
+	lookupHome = func(name string) (string, error) {
+		if name == "someone" {
+			return other, nil
+		}
+		return "", errors.New("unknown user " + name)
+	}
+	run := func(env map[string]string, args ...string) result {
+		var stdout, stderr bytes.Buffer
+		code := Link(args, func(key string) string { return env[key] }, &stdout, &stderr)
+		return result{code, stdout.String(), stderr.String()}
+	}
+	for _, row := range []struct {
+		codexHome string
+		args      []string
+		want      string
+	}{
+		{"~/codex", nil, filepath.Join(home, "codex", "skills")},
+		{"~", nil, filepath.Join(home, "skills")},
+		{"~/../sibling/codex", nil, filepath.Join(scratch, "sibling", "codex", "skills")},
+		{"~someone/codex", nil, filepath.Join(other, "codex", "skills")},
+		{"", nil, filepath.Join(home, ".codex", "skills")},
+		{"~/ignored", []string{"--dest", "~/explicit"}, filepath.Join(home, "explicit")},
+		{"", []string{"--dest=~someone"}, other},
+	} {
+		got := run(map[string]string{"CODEX_HOME": row.codexHome, "HOME": home}, append([]string{"--check"}, row.args...)...)
+		lines := strings.Split(strings.TrimSuffix(got.stdout, "\n"), "\n")
+		if got.code != 1 || got.stderr != "" || got.stdout == "" {
+			t.Fatalf("CODEX_HOME=%q %q: %+v", row.codexHome, row.args, got)
+		}
+		for _, line := range lines {
+			if !strings.HasPrefix(line, "MISSING "+row.want+string(filepath.Separator)) {
+				t.Fatalf("CODEX_HOME=%q %q checks %q, want a skill under %s", row.codexHome, row.args, line, row.want)
+			}
+		}
+	}
+	for _, row := range []struct {
+		env    map[string]string
+		args   []string
+		errors string
+	}{
+		{map[string]string{"CODEX_HOME": "~/codex"}, nil, `CODEX_HOME: HOME is not set, so "~/codex" cannot be expanded`},
+		{map[string]string{"CODEX_HOME": "~nobody-here/codex", "HOME": home}, nil, `CODEX_HOME: "~nobody-here/codex" names no user`},
+		{map[string]string{"HOME": ""}, []string{"--dest", "~/explicit"}, `argument --dest: HOME is not set`},
+		{map[string]string{"HOME": home}, []string{"--dest", "~nobody-here"}, `argument --dest: "~nobody-here" names no user`},
+	} {
+		// --check, so that a destination wrongly accepted is still never written.
+		got := run(row.env, append([]string{"--check"}, row.args...)...)
+		if got.code != 2 || got.stdout != "" || !strings.Contains(got.stderr, row.errors) {
+			t.Fatalf("%v %q: %+v", row.env, row.args, got)
+		}
+	}
+	if got := run(map[string]string{"CODEX_HOME": "~/codex", "HOME": home}, "--apply"); got.code != 0 {
+		t.Fatalf("apply into CODEX_HOME=~/codex: %+v", got)
+	}
+	if _, err := os.Readlink(filepath.Join(home, "codex", "skills", "crw-run")); err != nil {
+		t.Fatalf("CODEX_HOME=~/codex did not link under HOME: %v", err)
+	}
+	if _, err := os.Lstat("~"); !os.IsNotExist(err) {
+		t.Fatalf("a ~ directory appeared in the working directory: %v", err)
+	}
+	if entries, err := os.ReadDir(scratch); err != nil || len(entries) != 1 {
+		t.Fatalf("only HOME may be written, found %v %v", entries, err)
 	}
 }

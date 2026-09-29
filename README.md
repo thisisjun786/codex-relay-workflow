@@ -120,7 +120,7 @@ operations contract before enabling delegation, hooks, or automatic reporting.
 
 ### Installation behavior
 
-The destination defaults to `$CODEX_HOME/skills`, or `~/.codex/skills`. Use `--dest /absolute/skills/path` for another Codex installation. Run it from inside the checkout: it finds the checkout with Git and links the skills directory its plugin manifest declares.
+The destination defaults to `$CODEX_HOME/skills`, or `~/.codex/skills`; a leading `~` in `CODEX_HOME` or `--dest` is expanded. Use `--dest /absolute/skills/path` for another Codex installation. Run it from inside the checkout: it finds the checkout with Git and links the skills directory its plugin manifest declares.
 
 Installation creates a symlink per skill to this checkout. Repeating it preserves correct links. Existing directories or links to other locations are reported as conflicts and left untouched; compare and back them up before deliberately replacing them. There is no automatic deletion or overwrite option.
 

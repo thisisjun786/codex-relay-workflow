@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -86,6 +87,9 @@ func Link(args []string, getenv func(string) string, stdout, stderr io.Writer) i
 		return usageError("argument --dest: expected one argument")
 	}
 	home := getenv("HOME")
+	// install.py expands a leading ~ on whichever destination it ends up with, the default built
+	// from CODEX_HOME as well as --dest. Each is expanded as given, before a join could clean a
+	// ~/.. away.
 	if !destGiven {
 		codexHome := getenv("CODEX_HOME")
 		if codexHome == "" && home == "" {
@@ -94,9 +98,17 @@ func Link(args []string, getenv func(string) string, stdout, stderr io.Writer) i
 		if codexHome == "" {
 			codexHome = filepath.Join(home, ".codex")
 		}
-		dest = filepath.Join(codexHome, "skills")
-	} else if dest == "~" || strings.HasPrefix(dest, "~/") {
-		dest = filepath.Join(home, dest[1:])
+		expanded, err := expandUser(codexHome, home)
+		if err != nil {
+			return usageError("CODEX_HOME: " + err.Error())
+		}
+		dest = filepath.Join(expanded, "skills")
+	} else {
+		expanded, err := expandUser(dest, home)
+		if err != nil {
+			return usageError("argument --dest: " + err.Error())
+		}
+		dest = expanded
 	}
 	destination, err := filepath.Abs(dest)
 	if err != nil {
@@ -167,6 +179,40 @@ func link(root, destination string, apply bool, stdout, stderr io.Writer) int {
 
 // symlink creates one link; a test replaces it to act between the preflight and the write.
 var symlink = os.Symlink
+
+// lookupHome answers a named user's home directory, for a ~name destination; a test replaces it.
+var lookupHome = func(name string) (string, error) {
+	account, err := user.Lookup(name)
+	if err != nil {
+		return "", err
+	}
+	return account.HomeDir, nil
+}
+
+// expandUser expands a leading ~ or ~name as install.py's Path.expanduser does: ~ is HOME, ~name
+// is that user's home directory, and the rest of the path follows it as given. An unknown user is
+// refused, as expanduser refuses it ("Could not determine home directory"). So is ~ with HOME
+// empty or unset, where expanduser would fall back to the password database or to /: the default
+// destination refuses a missing HOME the same way. Never is a ~ left in place, a relative path
+// that filepath.Abs would turn into a directory named ~ inside the checkout.
+func expandUser(path, home string) (string, error) {
+	if !strings.HasPrefix(path, "~") {
+		return path, nil
+	}
+	name, rest, _ := strings.Cut(path[1:], "/")
+	dir := home
+	if name == "" {
+		if home == "" {
+			return "", fmt.Errorf("HOME is not set, so %q cannot be expanded", path)
+		}
+	} else {
+		var err error
+		if dir, err = lookupHome(name); err != nil || dir == "" {
+			return "", fmt.Errorf("%q names no user with a home directory", path)
+		}
+	}
+	return filepath.Join(dir, rest), nil
+}
 
 func failed(stderr io.Writer, err error) int {
 	fmt.Fprintf(stderr, "Installation failed: %v. Completed links are retained; rerun after resolving the error.\n", err)
