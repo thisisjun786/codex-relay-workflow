@@ -1134,3 +1134,39 @@ hook exited without connecting) and `TestDomain/hook/...recorded_elsewhere` (CI 
 36445722770, observed `nothing_recorded`) were reproduced under CPU throttling. An
 instrumented binary showed the settings cut, the input release and the skipped pre-scan
 row firing 316-381 ms after entry.
+
+## 39. A caller's cancellation claims every answer the send has not yet used
+
+Decision: once the caller of `Adapter.Send` has cancelled, the send uses no further answer
+from the host or from the pre-start guard, and sends nothing more. The worker asks the
+caller's context directly after each host call and after the guard returns, before it
+reads what they answered or the error they returned, and once more before `turn/start`.
+When that check finds the cancellation, the receipt is `outcome_unknown` with no error text,
+which is what Python's `CancelledError` handler writes, and the worker gives back the
+caller's own context error instead of the transport-shutdown message. The receipt statuses
+and fields are the ones Python writes; what changes is that which one a send gets no longer
+depends on scheduling.
+
+Why: Python's `_guarded_send` takes a cancellation at the `await` it is suspended in. Its
+answer or error is never read and no later request is made, whether the answer arrived
+before or after the cancel. The Go worker only learned of the cancellation when the
+goroutine that `context.AfterFunc` starts cancelled its context. An answer that landed
+first was used, and the outcome then depended on which goroutine ran first:
+`in_progress_or_unknown` left on a finished send (CI run 36523111203, and 44 of 2,000 local
+runs of the `turn/start` stage), `accepted` after the caller had gone, `failed` from an
+`active` read, `not_attempted` from a guard refusal, and a `thread/resume` sent after the
+caller had cancelled during `thread/read`. Python writes `outcome_unknown` in each of those
+cases. The `dispatchGate` mutex that guarded the old pre-dispatch check is removed: it
+ordered that check against the propagating goroutine, which cannot change what the caller's
+own context reports.
+
+Evidence: internal/relay/adapter/transport.go:164 (`context.AfterFunc` only stops the work),
+:196 (`awaited`), :226, :252, :277, :293, :297 (the checks), :317 and :346 (the receipt and the
+returned error); packages/codex-session-relay/src/codex_session_relay/bridge_adapter.py:1314-1318;
+`Test28CallerCancellationStageParity` in internal/relay/adapter/cancellation_python_test.go.
+It runs every stage (`before`, `thread/read`, an `active` read, `thread/resume`, the
+guard, `turn/start`) twice. In the first run the caller's cancellation propagates at once.
+In the second, `heldCaller` holds it back until the worker has finished. Both runs are
+compared with the live Python oracle, where each answer also arrives after the cancel. With
+the transport change reverted, the held run fails every time: `failed`, `not_attempted`,
+`accepted`, and an extra `thread/resume`.
