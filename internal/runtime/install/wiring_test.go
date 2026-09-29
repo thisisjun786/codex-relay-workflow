@@ -86,7 +86,8 @@ func (h *host) launcherEnv(pluginRoot string) []string {
 	return []string{"HOME=" + h.home, "CODEX_HOME=" + h.codex, "PLUGIN_ROOT=" + pluginRoot, "PATH=" + os.Getenv("PATH"), "PYTHONDONTWRITEBYTECODE=1"}
 }
 
-func stopPayload(h *host, session, turn string) string {
+// stopPayloadFor is a Stop payload for session and turn whose transcript is absent under h's home.
+func stopPayloadFor(h *host, session, turn string) string {
 	return `{"session_id": "` + session + `", "turn_id": "` + turn + `", "transcript_path": "` + filepath.Join(h.home, "absent.jsonl") + `", "cwd": "` + h.home + `", "hook_event_name": "Stop", "stop_hook_active": false, "last_assistant_message": "DONE"}`
 }
 
@@ -118,7 +119,7 @@ func TestTheNativeStopCommandJournalsTheStopThroughThePointer(t *testing.T) {
 	journal := filepath.Join(h.home, "journal")
 	command := stopCommandIn(t, wiring("hooks", "stop-recording-completion.json"))
 	env := append(h.launcherEnv(filepath.Join(golden.Root(), "plugins", "crw")), "CRW_COMPLETION_HOOK_CONFIG="+filepath.Join(h.home, "elsewhere.json"))
-	stdout, stderr := runStop(t, command, env, stopPayload(h, "s-native", "t-native"))
+	stdout, stderr := runStop(t, command, env, stopPayloadFor(h, "s-native", "t-native"))
 	rows := journalRows(t, journal)
 	if stdout != "" || len(rows) != 1 {
 		t.Fatalf("stdout %q stderr %q, %d rows; want no output and one row", stdout, stderr, len(rows))
@@ -130,7 +131,7 @@ func TestTheNativeStopCommandJournalsTheStopThroughThePointer(t *testing.T) {
 	if err := os.Rename(current, current+".aside"); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr = runStop(t, command, env, stopPayload(h, "s-gone", "t-gone"))
+	stdout, stderr = runStop(t, command, env, stopPayloadFor(h, "s-gone", "t-gone"))
 	if rows := journalRows(t, journal); stdout != "" || len(rows) != 1 || !strings.Contains(stderr, filepath.Join(current, "bin", "crw")) {
 		t.Fatalf("pointer gone: stdout %q stderr %q, %d rows; want no output, the missing runtime on stderr and no new row", stdout, stderr, len(rows))
 	}
@@ -165,13 +166,13 @@ func TestLegacyStopLaunchersReachTheGoHook(t *testing.T) {
 			// which shows the row below comes from the Python launcher and not from any runtime
 			// the command could reach on its own.
 			before := len(journalRows(t, journal))
-			if stdout, stderr := runStop(t, command, h.launcherEnv(launcher.pluginRoot), stopPayload(h, session+"-uncopied", "t-1")); len(journalRows(t, journal)) != before {
+			if stdout, stderr := runStop(t, command, h.launcherEnv(launcher.pluginRoot), stopPayloadFor(h, session+"-uncopied", "t-1")); len(journalRows(t, journal)) != before {
 				t.Fatalf("%s: a row without the launcher copy; stdout %q stderr %q", launcher.name, stdout, stderr)
 			}
 			write(t, filepath.Join(h.codex, "crw-stop-hook.py"), readFile(t, wiring("crw_stop_hook.py")))
 		}
 		before := len(journalRows(t, journal))
-		stdout, stderr := runStop(t, command, h.launcherEnv(launcher.pluginRoot), stopPayload(h, session, "t-1"))
+		stdout, stderr := runStop(t, command, h.launcherEnv(launcher.pluginRoot), stopPayloadFor(h, session, "t-1"))
 		rows := journalRows(t, journal)
 		if len(rows) != before+1 {
 			t.Fatalf("%s: the Go hook journaled %d rows (from %d); stdout %q stderr %q", launcher.name, len(rows), before, stdout, stderr)

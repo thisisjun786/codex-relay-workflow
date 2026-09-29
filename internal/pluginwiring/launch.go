@@ -20,6 +20,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 )
 
 // Flag is the first argument the plugin's declared commands pass to the bridge and `crw hook`.
@@ -177,28 +178,6 @@ func canonical(path string) string {
 	return resolved
 }
 
-// fsencode is os.fsencode of a str the record decoded, which os.open and os.execve apply to every
-// path, argument and environment value: a lone surrogate in U+DC80..U+DCFF, which the decoder keeps
-// as WTF-8 and which is how runtime_install.py's json.dumps records a byte that is not UTF-8,
-// becomes that byte again (surrogateescape), and everything else stays UTF-8. ok is false where
-// Python raises UnicodeEncodeError: any other lone surrogate.
-func fsencode(s string) (string, bool) {
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		if i+2 < len(s) && s[i] == 0xed && s[i+1] >= 0xa0 && s[i+1] <= 0xbf && s[i+2] >= 0x80 && s[i+2] <= 0xbf {
-			cp := 0xd000 | rune(s[i+1]&0x3f)<<6 | rune(s[i+2]&0x3f)
-			if cp < 0xdc80 || cp > 0xdcff {
-				return "", false
-			}
-			b.WriteByte(byte(cp - 0xdc00))
-			i += 2
-			continue
-		}
-		b.WriteByte(s[i])
-	}
-	return b.String(), true
-}
-
 func repr(v any) string { return evidence.Repr(v) }
 
 // policyEnvironment is crw_bridge_mcp.py policy_environment: the two variables the bridge starts
@@ -230,7 +209,8 @@ func policyEnvironment(env map[string]string, record string, reference any) (str
 		return "", "", fail("the record at " + record + " must name the execution policy as an absolute" +
 			" path with no surrounding whitespace or control characters, found " + repr(pathValue))
 	}
-	encoded, encodable := fsencode(path)
+	// What os.open and os.execve use: the path fs-encoded, a surrogate-escaped byte that byte again.
+	encoded, encodable := reading.FSEncode(path)
 	if !encodable {
 		return "", "", fail("the record at " + record + " names an execution policy path this system" +
 			" cannot encode, found " + repr(path))
@@ -347,15 +327,17 @@ func Prepare(env map[string]string, extra []string) ([]string, map[string]string
 		environment[execution.EnvPolicy] = path
 		environment[execution.EnvDigest] = digest
 	}
-	// os.execv then encodes the executable and each argument in turn, and a lone surrogate outside
-	// the surrogateescape range or a NUL raises there: a traceback, exit 1, and no bridge. The
-	// executable is not run here, but a record Python never starts is refused all the same.
-	if _, encodable := fsencode(executable); !encodable || strings.ContainsRune(executable, 0) {
+	// os.execv then encodes the executable and each argument in turn (os.fsencode, which
+	// reading.FSEncode is: a lone surrogate in U+DC80..U+DCFF, how runtime_install.py's json.dumps
+	// records a byte that is not UTF-8, becomes that byte again), and a lone surrogate outside that
+	// range or a NUL raises there: a traceback, exit 1, and no bridge. The executable is not run
+	// here, but a record Python never starts is refused all the same.
+	if _, encodable := reading.FSEncode(executable); !encodable || strings.ContainsRune(executable, 0) {
 		return nil, nil, fail("the record at " + record + " names bridgeExecutable " + repr(executable) +
 			", which this system cannot pass to exec. Rewrite it with " + RepairCommand + ".")
 	}
 	for i, word := range arguments {
-		encoded, encodable := fsencode(word)
+		encoded, encodable := reading.FSEncode(word)
 		if !encodable || strings.ContainsRune(word, 0) {
 			return nil, nil, fail("the record at " + record + " lists the argument " + repr(word) +
 				", which this system cannot pass to exec. Rewrite it with " + RepairCommand + ".")

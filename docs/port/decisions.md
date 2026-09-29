@@ -380,8 +380,14 @@ the first Go install - under the `.superseded-<stamp>` name `steps.retire` gives
 to the same file (a copy where the filesystem refuses a link), never deleted - and replaced by its
 Go variant (the same host facts, only the two adapter keys moved) in one rename, inside the
 promotion and before the pointer moves. Both documents run while the pointer still names the
-venv, so there is no window. `crw install hook --owner plugin` replaces a Python-era document on
-a Go host only by settings that record the same host facts; other flags answer `config_differs`
+venv, so there is no window. That holds for the Stop commands that run the adapter keys, the
+legacy launchers. The native declaration (decision 26) runs `current/bin/crw hook
+--plugin-launch` and reads only the document's owner, so it evaluates this document on a Go
+runtime and reaches nothing on a venv, which has no `bin/crw`; a host rolling back to a venv holds
+the pre-native declaration first, because the payload goes back before the runtime
+(docs/plugin-packaging.md "Update and roll back"), and the rollback tests run that declaration.
+`crw install hook --owner plugin` replaces a Python-era document on a Go host only by settings that
+record the same host facts; other flags answer `config_differs`
 with the fields and the repair, because a silent rewrite of the mode changes whether turns can be
 held.
 
@@ -856,10 +862,11 @@ contract the Python launchers carried is enforced by the runtime in that mode.
   surrogate, except for the three repairs, which name `crw install register-mcp --owner plugin`,
   the record's writer since todo 38, where the Python launcher names runtime_install.py. The
   Python launcher keeps its text: runtime_install.py is the host's installer until the cutover.
-- The record's strings reach the file system and the exec as `os.fsencode` spells them. A lone
-  surrogate in U+DC80..U+DCFF, which is how runtime_install.py's `json.dumps` records a byte of a
-  path or argument that is not UTF-8, is that byte again in the policy path the launcher opens,
-  compares with an inherited variable and exports, and in every argument. Where Python's `execv`
+- The record's strings reach the file system and the exec as `os.fsencode` spells them
+  (`reading.FSEncode`, the one fs-encoding `register-mcp` and the doctor use too). A lone surrogate
+  in U+DC80..U+DCFF, which is how runtime_install.py and `crw install register-mcp` (decision 18)
+  record a byte of a path or argument that is not UTF-8, is that byte again in the policy path the
+  launcher opens, compares with an inherited variable and exports, and in every argument. Where Python's `execv`
   raises instead (a `bridgeExecutable` or argument holding any other lone surrogate, or a NUL),
   the Python launcher exits 1 with a traceback and starts nothing; the Go launcher refuses that
   record with exit 2 naming it.
@@ -883,7 +890,10 @@ contract the Python launchers carried is enforced by the runtime in that mode.
   name `owner: plugin`. The rest of `crw_stop_hook.py adapter_call` is not code here: a
   configVersion other than 1, absent included, is refused by the settings validator, in silence,
   before that point, and the adapterInterpreter and adapterEntryPoint checks named the Python
-  adapter Go replaces. Without the flag nothing changes: the legacy launchers' `[adapterInterpreter,
+  adapter Go replaces. So the one document `crw install` writes for both runtime kinds (decision
+  18: owner plugin, `/usr/bin/env`, `current/bin/crw-completion-hook`) is evaluated as it stands,
+  the Go variant an update writes over a Python-era document included; its adapter keys serve the
+  legacy launchers only. Without the flag nothing changes: the legacy launchers' `[adapterInterpreter,
   adapterEntryPoint, settings]` call through todo 38's `/usr/bin/env` settings, and a user
   hook-file entry, keep the todo-33 settings precedence. A host carrying both registrations
   evaluates each Stop once while the settings name the user as owner: the flag's stand-down is
@@ -952,7 +962,10 @@ twice under plugin-owned ones, the settings path, the status reading);
 `internal/runtime/install/wiring_test.go` (`TestTheNativeStopCommandJournalsTheStopThroughThePointer`;
 `TestTheWiringLaunchersStartTheGoBridgeUnderTheRecordedPolicy`, whose native case starts
 `crw-bridge.sh` from the cache layout with only HOME set against a record `crw install
-register-mcp` wrote; `TestLegacyStopLaunchersReachTheGoHook`); scripts/ci/tests/test_plugin_wiring.py
+register-mcp` wrote; `TestLegacyStopLaunchersReachTheGoHook`;
+`TestARollbackToAVenvNeverRewritesTheSettings`, the native declaration evaluating the Go-era
+document an update wrote and reaching nothing on a venv; `TestRegisterMCPRecordsANonUTF8PolicyPathAsPythonDoes`,
+both launchers starting under a surrogate-escaped policy path); scripts/ci/tests/test_plugin_wiring.py
 `BridgeRecordPolicyTest`; scripts/ci/tests/test_plugin_transition.py `RetiredCommandsRefuse`.
 
 ## 27. Stop parity follows process state, not round-trip distributions
@@ -1698,8 +1711,10 @@ both, since returning to `outgoing` could undo a committed choice. A claim writt
 directory runtime_install.py claimed (an `env-*` one, or one whose claim it wrote) keeps its shape,
 `writtenBy` runtime_install.py, so runtime_install.py still reads it; and a claim is never written
 into a directory that is gone, which the claim's lock would otherwise make again. No rollback
-rewrites the Stop settings (decision 18). For a Python venv target the gate's schema cell compares the store with this build's declared
-schema, which stands for the Python runtime's because the DDL is identical (decision 14) and no Go
+rewrites the Stop settings (decision 18); a Stop on a venv reaches them through the pre-native
+declaration, which a host rolling back holds because the payload goes back before the runtime
+(decision 26). For a Python venv target the gate's schema cell compares the store with this
+build's declared schema, which stands for the Python runtime's because the DDL is identical (decision 14) and no Go
 release changes it before the commit point (docs/port/cutover.md). `crw install remove <dir>`
 deletes one `env-*` or `bin-*` directory directly under the destination. It is taken by its name
 under the destination and judged by file identity (a path counts when, as written or once its links
