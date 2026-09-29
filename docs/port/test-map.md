@@ -311,7 +311,11 @@ home, not `$HOME`; the test asks the relay the swap gate asks which registry it 
 `crw install remove` reads the daemon records of the registry the relay resolves, that override
 alone when it is set (`doctor.RecordedDaemons`), and its answer names the registries and state
 directories it read (`relayRecords`); IS-8 requires that registry to be the temporary one and
-every path a remove answer names to lie under the temporary root. What the products still read
+every path a remove answer names to lie under the temporary root. A remove of the unselected
+runtime refused only for processes another uid runs that the test did not start (an Azure
+runner's root WALinuxAgent, decision 38) is logged, must have removed and written nothing and
+give the removal by hand, and skips only the success assertions; any other refusal fails
+(`TestHeldByHost` pins which refusals count as the host's). What the products still read
 of the machine is the process table (remove rules out a process running out of the runtime from
 `/proc`, and stats the paths other processes' command lines name to tell an alias of it) and the
 executables `PATH` and the installer's settings name, which are classified where they lie.

@@ -417,9 +417,16 @@ func (r *run) reclaim(standing []contract.Field) (Object, int, bool) {
 			field("outgoing", record.Get(rec, "outgoing")), field("claim", orNull(settled)))
 	}
 	if u, _ := runningOrRegistered(r.ctx, r.o, d); u != nil {
-		if u.noTable {
-			return keep("this staging's run is gone, but "+u.detail, "nothing was removed, built or written.", field("recoveryRequires",
-				"this staging was left by an install that did not finish (its run holds no lock), and it was never promoted: nothing selects it, points at it or registers it. Once no crw install run and nothing it started is still running (an interrupted run's exercise ends within "+exercise.BridgeTimeout.String()+"), delete "+r.environment+" by hand and rerun the install"))
+		if u.recovery != "" {
+			// Only a recovery by hand removes it, and a staging's is not a settled runtime's.
+			var fields []contract.Field
+			also := ""
+			if u.key != "" {
+				fields = append(fields, field(u.key, u.value))
+				also = ", and none of the processes named in " + u.key + " runs out of it"
+			}
+			return keep("this staging's run is gone, but "+u.detail, "nothing was removed, built or written.", append(fields, field("recoveryRequires",
+				"this staging was left by an install that did not finish (its run holds no lock), and it was never promoted: nothing selects it, points at it or registers it. Once no crw install run and nothing it started is still running (an interrupted run's exercise ends within "+exercise.BridgeTimeout.String()+")"+also+", delete "+r.environment+" by hand and rerun the install"))...)
 		}
 		return keep("this staging's run is gone, but it is not abandoned: "+u.detail, "nothing was removed, built or written.", u.fields()...)
 	}

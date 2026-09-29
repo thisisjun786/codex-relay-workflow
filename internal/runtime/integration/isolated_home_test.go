@@ -26,7 +26,12 @@
 // and the release files are copied from, and the Go toolchain relinking B (its caches, its
 // telemetry, and git reading the repository to stamp the build), nothing the test starts opens a
 // file under this user's home. IS-8 requires every path the remove answers name, the relay
-// records the verdict read (relayRecords) among them, to lie under the root.
+// records the verdict read (relayRecords) among them, to lie under the root. The test cannot
+// control this host's process table: when the remove of the unselected runtime refuses only for
+// processes another uid runs and the test did not start (heldByHost: an Azure runner's root
+// WALinuxAgent runs a relative script from a working directory no other user may read), it logs
+// them, requires that nothing was removed or written and that the answer gives the removal by
+// hand, and skips only the success assertions; any other refusal fails.
 //
 // Every Stop hook path exits 0, so no hook assertion rests on the exit status: each one finds
 // the journal row the hook wrote for that session and turn, or proves that none was written.
@@ -1022,26 +1027,149 @@ func (h *isolated) updateAndRollBack(t *testing.T, archiveA, archiveB string) {
 	if _, err := os.Stat(filepath.Join(h.envA, "bin", "crw")); err != nil {
 		t.Fatalf("a refused remove removed the selected runtime: %v", err)
 	}
+	listing, recordBefore = h.destination(t), readFile(t, h.record)
 	report, code = h.crw(t, crw, "remove", h.envB)
-	if code != 0 || report["removed"] != true {
-		t.Fatalf("removing the unselected runtime: exit %d\n%s", code, show(report))
-	}
-	// The remove's verdict read the relay records of this environment alone: the registry
-	// CODEX_SESSION_RELAY_SCOPE_DIR names, not the one under this user's passwd home, and the
-	// state directories under the temporary root. Nothing the answer names lies outside it.
-	registries, _ := at(report, "relayRecords", "scopeRegistries").([]any)
-	states, _ := at(report, "relayRecords", "stateDirectories").([]any)
-	if len(registries) != 1 || registries[0] != h.scopes || len(states) == 0 {
-		t.Errorf("the remove read the scope registries %v and state directories %v, want %s alone and at least the state root", registries, states, h.scopes)
-	}
-	if outside := h.outside(report); len(outside) != 0 {
-		t.Errorf("the remove names paths outside the temporary root: %q\n%s", outside, show(report))
-	}
-	if _, err := os.Lstat(h.envB); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("the removed runtime is still there: %v", err)
+	if held := heldByHost(report, code); held != nil {
+		// This host's own processes, which the test neither started nor can stop (an Azure
+		// runner's root WALinuxAgent runs a relative script from a working directory no other
+		// user may read), keep the runtime from being ruled out of use: remove refused and
+		// removed nothing, and the rest of IS-8 goes on without the removal.
+		t.Logf("remove refused for this host's own processes, which the test did not start; the success assertions are skipped:\n%s", show(held))
+		if after := h.destination(t); !slices.Equal(after, listing) || !bytes.Equal(readFile(t, h.record), recordBefore) {
+			t.Fatalf("a refused remove changed the host: destination %q -> %q\n%s", listing, after, show(report))
+		}
+		if _, err := os.Stat(filepath.Join(h.envB, "bin", "crw")); err != nil {
+			t.Fatalf("a refused remove removed the runtime: %v", err)
+		}
+		if !strings.Contains(fmt.Sprint(report["recoveryRequires"]), "delete "+h.envB) {
+			t.Errorf("the refused remove gives no removal by hand\n%s", show(report))
+		}
+		delete(report, "unreadableProcesses") // this host's, which lie where they lie
+		if outside := h.outside(report); len(outside) != 0 {
+			t.Errorf("the refused remove names paths outside the temporary root: %q\n%s", outside, show(report))
+		}
+	} else {
+		if code != 0 || report["removed"] != true {
+			t.Fatalf("removing the unselected runtime: exit %d\n%s", code, show(report))
+		}
+		// The remove's verdict read the relay records of this environment alone: the registry
+		// CODEX_SESSION_RELAY_SCOPE_DIR names, not the one under this user's passwd home, and
+		// the state directories under the temporary root. Nothing the answer names lies outside
+		// it.
+		registries, _ := at(report, "relayRecords", "scopeRegistries").([]any)
+		states, _ := at(report, "relayRecords", "stateDirectories").([]any)
+		if len(registries) != 1 || registries[0] != h.scopes || len(states) == 0 {
+			t.Errorf("the remove read the scope registries %v and state directories %v, want %s alone and at least the state root", registries, states, h.scopes)
+		}
+		if outside := h.outside(report); len(outside) != 0 {
+			t.Errorf("the remove names paths outside the temporary root: %q\n%s", outside, show(report))
+		}
+		if _, err := os.Lstat(h.envB); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("the removed runtime is still there: %v", err)
+		}
 	}
 	h.journaled(t, h.stop(t, stopCommand(t, h.payload), h.hookEnv(), "is8-removed", "t"), "is8-removed", "t")
 	h.noTripwireFired(t)
+}
+
+// unruledDetail is the refusal `crw install remove` gives when a process it could not rule out
+// may run out of the runtime, and nothing else refused.
+const unruledDetail = "what a live process runs could not be read, so it cannot be ruled out that it runs out of this directory"
+
+// heldByHost is the processes a remove answer names when it refused for them alone and every one
+// is this host's own: not this test process or a descendant of it, and another uid's. nil for
+// any other answer, which the caller judges as it would without this host.
+func heldByHost(report map[string]any, code int) []any {
+	processes, _ := report["unreadableProcesses"].([]any)
+	if code != 1 || report["applied"] != false || report["refused"] != unruledDetail || len(processes) == 0 {
+		return nil
+	}
+	for key := range report {
+		if !slices.Contains([]string{"command", "applied", "directory", "refused", "unreadableProcesses", "recoveryRequires", "note"}, key) {
+			return nil
+		}
+	}
+	for _, raw := range processes {
+		process, _ := raw.(map[string]any)
+		pid, isPid := process["pid"].(float64)
+		uid, isUid := process["uid"].(float64)
+		if !isPid || !isUid || int(uid) == os.Getuid() || startedHere(int(pid)) {
+			return nil
+		}
+	}
+	return processes
+}
+
+// A remove refused for this host's processes alone is told from every other refusal: another
+// uid's process the test did not start is the host's; this test process, a process it started,
+// one of this uid, another reason or another field is not, and neither is a remove that succeeded.
+func TestHeldByHost(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("reads /proc for the parent chain")
+	}
+	child := exec.Command("sleep", "30")
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { child.Process.Kill(); child.Wait() }()
+	stranger := float64(os.Getuid() + 1)
+	refusal := func(processes ...map[string]any) map[string]any {
+		list := []any{}
+		for _, p := range processes {
+			list = append(list, p)
+		}
+		return map[string]any{"command": "remove", "applied": false, "directory": "/d", "refused": unruledDetail,
+			"unreadableProcesses": list, "recoveryRequires": "remove it by hand", "note": "nothing was removed and nothing was written."}
+	}
+	agent := map[string]any{"pid": float64(1), "uid": stranger, "why": "its command line runs bin/WALinuxAgent.egg relative to its working directory"}
+	if held := heldByHost(refusal(agent), 1); len(held) != 1 {
+		t.Errorf("another uid's process the test did not start: %v", held)
+	}
+	withRegistration := refusal(agent)
+	withRegistration["registrations"] = []any{"/d/bin/crw"}
+	otherReason := refusal(agent)
+	otherReason["refused"] = "live processes run out of this directory"
+	for label, c := range map[string]struct {
+		report map[string]any
+		code   int
+	}{
+		"this test process":          {refusal(map[string]any{"pid": float64(os.Getpid()), "uid": stranger}), 1},
+		"a process the test started": {refusal(agent, map[string]any{"pid": float64(child.Process.Pid), "uid": stranger}), 1},
+		"a process of this uid":      {refusal(map[string]any{"pid": float64(1), "uid": float64(os.Getuid())}), 1},
+		"no process named":           {refusal(), 1},
+		"another field":              {withRegistration, 1},
+		"another reason":             {otherReason, 1},
+		"another exit":               {refusal(agent), 0},
+		"a process without its uid":  {refusal(map[string]any{"pid": float64(1)}), 1},
+	} {
+		if held := heldByHost(c.report, c.code); held != nil {
+			t.Errorf("%s: taken for this host's own: %v", label, held)
+		}
+	}
+}
+
+// startedHere is whether pid is this test process or descends from it, read up the parent chain
+// in /proc. A pid whose chain cannot be read is not taken for one the test started: heldByHost
+// asks this only of another uid's process, which nothing the test starts is.
+func startedHere(pid int) bool {
+	for steps := 0; pid > 1 && steps < 1<<12; steps++ {
+		if pid == os.Getpid() {
+			return true
+		}
+		raw, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+		if err != nil {
+			return false
+		}
+		// The command name, in parentheses, may hold spaces; the parent pid follows the state.
+		fields := strings.Fields(string(raw[bytes.LastIndexByte(raw, ')')+1:]))
+		if len(fields) < 2 {
+			return false
+		}
+		if pid, err = strconv.Atoi(fields[1]); err != nil {
+			return false
+		}
+	}
+	return pid == os.Getpid()
 }
 
 // selects requires the pointer and `crw install status` to agree on runtimeDir, and the runtime

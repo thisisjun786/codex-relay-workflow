@@ -1751,18 +1751,29 @@ process title such as sshd's is no path), the command `env` runs, and an interpr
 operand after its options (the interpreter known by argv[0] or by its executable), a relative one
 resolved against `/proc/<pid>/cwd`, with a Python's `-c` and `-m` and a shell's `-c` ending the
 options - resolving inside it; a process whose argv runs something relative to a working directory
-it cannot read is not ruled out (and a process of this user whose working directory fails for a
-reason other than a refusal is not ruled out at all), except another user's process whose working
-directory the kernel hides (EACCES, EPERM: `/proc/<pid>/cwd` needs ptrace access), which is judged
-by what its command line names, since whether it works inside the directory cannot be established:
-a relative operand counts, and leaves it not ruled out, when it names the directory by its name
-(from the destination or beside it, it enters the directory) or is there inside it (`lstat` of it
-joined to the directory or to any directory in it, walked once per reading, finds it; a spelling
-that climbs out of the directory does not count), and it is ruled out otherwise; a directory in
-it that cannot be walked or searched leaves the answer unread, which is not ruled out. So a
-host's own daemon that runs a relative script as root - every Azure VM runs WALinuxAgent as
-`python3 -u bin/WALinuxAgent-<version>.egg -run-exthandlers` - does not keep every runtime
-directory in use, as todo 40's integration test found on a GitHub-hosted runner), and no registration the host reads names a path inside it. The registrations are read by the
+it cannot read is not ruled out, whatever its uid, because that working directory may itself be
+inside the directory whatever the relative path names (and a process of this user whose working
+directory fails for a reason other than a refusal is not ruled out at all). The one exception is
+another user's process, not root's, whose working directory the kernel hides (EACCES, EPERM:
+`/proc/<pid>/cwd` needs ptrace access) and which provably cannot work inside: some directory from
+the runtime directory up to `/` (resolved) denies search (x) to every uid it holds, by that
+directory's mode, owner and group, read against the credentials `/proc/<pid>/status` shows every
+user (its real, effective, saved and filesystem uids and gids and its supplementary groups). A
+process holding root among its uids or CAP_DAC_OVERRIDE or CAP_DAC_READ_SEARCH in its permitted
+or effective set is never ruled out this way, a directory carrying an ACL (POSIX or NFSv4) or that
+cannot be read closes nothing, and a status that cannot be read or lacks any of those lines rules
+out nothing. It judges the modes and credentials as they are now through the path the directory
+resolves to here, so a process that entered it before either changed, or through a bind mount or
+a descriptor it was passed, is not seen; the answer's `processTable` says so. A runtime under a
+home closed to other users (0700, or 0750 to users outside its group) is therefore removable past other users'
+processes, but not past root's: a host whose root agents run a relative script - every Azure VM
+runs WALinuxAgent as `python3 -u bin/WALinuxAgent-<version>.egg -run-exthandlers`, which is how
+todo 40's integration test found it on a GitHub-hosted runner - sees `crw install remove` refuse
+there, naming each such pid, its uid and why (`unreadableProcesses`), and giving the removal by
+hand as `recoveryRequires` (the same as where there is no process table, below); the reclaim of an
+abandoned staging refuses the same way with its own recovery (delete the staging, rerun the
+install). Deleting a directory a process may run out of is worse than a removal left to the user),
+and no registration the host reads names a path inside it. The registrations are read by the
 retention scan's own readers (`doctor.RegisteredInside`, rows 4, 5, 8, 9 and 10: every
 `crw-*.json` record, so the Stop settings' `relayExecutable`, `adapterEntryPoint` and
 `adapterInterpreter` and the bridge record's `bridgeExecutable`; the cached plugin declarations;
@@ -1833,8 +1844,9 @@ reading rests on two assumptions, stated in every answer that depends on it (`pr
 process table is this host's, in this command's PID namespace, so a process in another PID
 namespace (a container sharing the directory) or on another host (a network home) is not seen,
 and `crw install remove` is to be run where the runtime's processes run; and another user's
-process whose working directory the kernel hides is judged by what it names, so one that works
-inside the directory while its command line names nothing there is not seen. The reclaim of an
+hidden working directory is ruled out only by a directory closed to it as modes and credentials
+now stand, so one entered before either changed, or through a bind mount or a passed descriptor,
+is not seen. The reclaim of an
 abandoned staging applies the same reading. Live
 processes are read from procfs, so on a platform without one (darwin) whether a relay or bridge still runs out of the directory
 cannot be established and `crw install remove` always refuses there (fail-closed), saying that
