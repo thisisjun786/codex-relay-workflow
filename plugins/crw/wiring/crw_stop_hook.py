@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The Stop hook the CRW plugin package declares, and the least it can possibly do.
+"""LEGACY until todo 44, for turns holding a cached bootstrap: the Stop hook, doing the least.
 
 The package cannot carry a Python runtime: the version cache is replaced wholesale on every
 install, so an executable a running process depends on must live outside it. What ships here

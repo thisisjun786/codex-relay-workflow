@@ -31,22 +31,38 @@ func needsPython(t *testing.T) {
 	}
 }
 
-// stopRecorded runs the plugin's declared Stop command as a cached turn runs it (the packaged
-// launcher, with only HOME, CODEX_HOME, the plugin root and PATH) and answers whether the
-// adapter the settings name through the pointer journaled the Stop.
+// stopRecorded runs the Stop command a host holds while a rollback to a venv runs - the
+// pre-native declaration, whose packaged launcher runs [adapterInterpreter, adapterEntryPoint,
+// settings] - as a cached turn runs it (only HOME, CODEX_HOME, the plugin root and PATH), and
+// answers whether the adapter the settings name through the pointer journaled the Stop. That is
+// the declaration such a host holds because the payload goes back before the runtime: the native
+// declaration runs current/bin/crw, which a venv does not carry (decision 26,
+// docs/plugin-packaging.md "Update and roll back"); nativeStopRecorded runs that one.
 func (h *host) stopRecorded(t *testing.T) bool {
 	t.Helper()
+	return h.stopRecordedBy(t, stopCommandIn(t, preNativeWiring("hooks", "stop-recording-completion.json")))
+}
+
+// nativeStopRecorded runs the Stop command the package declares, `crw hook --plugin-launch`
+// through the pointer, and answers whether it journaled the Stop.
+func (h *host) nativeStopRecorded(t *testing.T) bool {
+	t.Helper()
+	return h.stopRecordedBy(t, stopCommandIn(t, wiring("hooks", "stop-recording-completion.json")))
+}
+
+func (h *host) stopRecordedBy(t *testing.T, command string) bool {
+	t.Helper()
 	journal := filepath.Join(h.home, "journal")
-	before := journalRows(t, journal)
-	cmd := exec.Command("sh", "-c", declaredStopCommand(t))
+	before := len(journalRows(t, journal))
+	cmd := exec.Command("sh", "-c", command)
 	cmd.Env = h.launcherEnv(filepath.Join(golden.Root(), "plugins", "crw"))
 	cmd.Stdin = strings.NewReader(stopPayload)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("the declared Stop command: %v\n%s", err, stderr.String())
+		t.Fatalf("the Stop command %q: %v\n%s", command, err, stderr.String())
 	}
-	return journalRows(t, journal) == before+1
+	return len(journalRows(t, journal)) == before+1
 }
 
 // goEraAfterPythonEra is the relay host after its first Go install: the Python venv installed
@@ -68,6 +84,12 @@ func (h *host) goEraAfterPythonEra(t *testing.T) (string, string, string) {
 // placed (the pointer still on the Go runtime, whose hook the document reaches) and after the
 // pointer names the venv (whose crw-completion-hook is the Python Stop adapter, reading the same
 // document). The archived Python-era document is never put back.
+//
+// The Stops run the pre-native declaration a host rolling back to a venv holds (stopRecorded).
+// The native declaration, `crw hook --plugin-launch`, evaluates the same Go-era document - the one
+// the update over the Python-era host wrote, owner plugin with /usr/bin/env and
+// current/bin/crw-completion-hook - while the pointer names the Go runtime, and reaches nothing once
+// it names the venv, which has no bin/crw: that is why the payload goes back first.
 func TestARollbackToAVenvNeverRewritesTheSettings(t *testing.T) {
 	needsPython(t)
 	h := newHost(t)
@@ -77,9 +99,13 @@ func TestARollbackToAVenvNeverRewritesTheSettings(t *testing.T) {
 	if !h.stopRecorded(t) {
 		t.Fatal("a Stop on the Go runtime was not recorded")
 	}
+	if !h.nativeStopRecorded(t) {
+		t.Fatalf("the native Stop command on the Go runtime was not recorded under the Go-era settings\n%s", settings)
+	}
 	windows := map[string]bool{}
 	restoreCommit := install.ReplaceSelectionCommit(func(recordPath string, version int, delta record.Delta) (reading.Reading, error) {
 		windows["commit"] = h.stopRecorded(t)
+		windows["native commit"] = h.nativeStopRecorded(t)
 		if h.pointerTarget(t) != goRuntime || readFile(t, path) != settings {
 			t.Errorf("at the commit the pointer names %s and the settings read\n%s", h.pointerTarget(t), readFile(t, path))
 		}
@@ -87,12 +113,13 @@ func TestARollbackToAVenvNeverRewritesTheSettings(t *testing.T) {
 	})
 	restorePlace := install.ReplacePointerPlacement(func(pointerPath, target string) error {
 		windows["placement"] = h.stopRecorded(t)
+		windows["native placement"] = h.nativeStopRecorded(t)
 		return pointer.Place(pointerPath, target)
 	})
 	result, code := install.Rollback(context.Background(), h.options(), venv)
 	restorePlace()
 	restoreCommit()
-	if !windows["commit"] || !windows["placement"] {
+	if !windows["commit"] || !windows["placement"] || !windows["native commit"] || !windows["native placement"] {
 		t.Fatalf("a Stop during the rollback reached no adapter: %v", windows)
 	}
 	if code != install.OK || h.pointerTarget(t) != venv || at(result, "settings", "action") != "none" {
@@ -103,6 +130,9 @@ func TestARollbackToAVenvNeverRewritesTheSettings(t *testing.T) {
 	}
 	if !h.stopRecorded(t) {
 		t.Fatal("a Stop through the venv's Python adapter was not recorded")
+	}
+	if h.nativeStopRecorded(t) {
+		t.Fatal("the native Stop command recorded a Stop on a venv, which has no bin/crw")
 	}
 }
 

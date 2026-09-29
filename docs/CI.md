@@ -66,10 +66,9 @@ the darwin/arm64 binary it builds is not validated on a macOS host. Its legs run
 separate runners; the Makefile names the slowest packages as parts 1-5 and `rest` takes
 every other package, so a new package is always tested. `test_gate.py` and
 `internal/dev/ci` refuse a Makefile part without a workflow leg, and a package-shard
-list that is not every slice of one total. Its plugin
-payload step runs only once the native wiring launcher
-`plugins/crw/wiring/crw-bridge.sh` exists; until then `validate` covers the
-payload.
+list that is not every slice of one total. Its `dist` leg also checks the plugin
+payload with `crw-dev ci plugin`; the step's condition, that the native wiring launcher
+`plugins/crw/wiring/crw-bridge.sh` exists, holds since todo 34.
 
 `test_gate.py` and the Go tests in `internal/dev/ci` compare the gate's prerequisite
 inventory with the real workflow and refuse omitted/extra jobs or `continue-on-error`. Selector tests use real Git

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/adapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
@@ -62,7 +63,7 @@ func runAt(ctx context.Context, program string, args []string, stdout, stderr io
 	case "codex-session-relay":
 		return relay(ctx, program, args, stdout, stderr)
 	case "codex-thread-bridge":
-		return mcp.Run(ctx, args)
+		return bridge(ctx, program, args)
 	case "crw-completion-hook":
 		return hook.Run(ctx, args, os.Stdin, stdout, started)
 	}
@@ -75,7 +76,7 @@ func runAt(ctx context.Context, program string, args []string, stdout, stderr io
 	case "relay":
 		return relay(ctx, "crw relay", rest, stdout, stderr)
 	case "bridge":
-		return mcp.Run(ctx, rest)
+		return bridge(ctx, program, rest)
 	case "hook":
 		return hook.Run(ctx, rest, os.Stdin, stdout, started)
 	case "skill":
@@ -100,6 +101,16 @@ func runAt(ctx context.Context, program string, args []string, stdout, stderr io
 		fmt.Fprintf(stderr, "crw: error: argument command: invalid choice: %s (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'help', 'version')\n", store.PythonRepr(mode))
 		return parserExit
 	}
+}
+
+// bridge is the MCP bridge, or with the plugin's flag first (wiring/crw-bridge.sh execs
+// `codex-thread-bridge --plugin-launch`) the launcher that reads the bridge record and then
+// execs this binary as the bridge under it (decision 26).
+func bridge(ctx context.Context, program string, args []string) int {
+	if len(args) > 0 && args[0] == pluginwiring.Flag {
+		return pluginwiring.Bridge(program, args[1:])
+	}
+	return mcp.Run(ctx, args)
 }
 
 // relay is the relay CLI. The capacity and edit-region commands (todo 27) parse their own line

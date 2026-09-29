@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The task bridge, started the way a plugin-declared MCP server has to start it.
+"""LEGACY until todo 44, for sessions holding a cached declaration: the task bridge launcher.
 
 A plugin MCP server is spawned with none of a hook's conveniences. It gets no shell, so a
 variable in its command line arrives as literal text; it inherits neither CODEX_HOME nor the

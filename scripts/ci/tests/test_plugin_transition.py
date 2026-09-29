@@ -46,8 +46,22 @@ needs_reader = unittest.skipUnless(
 TRUST_KEY = 'crw@crw:wiring/hooks/stop-recording-completion.json:stop:0:0'
 
 
+# The commands that change a host are retired and refuse as shipped (plugin_transition.RETIRED,
+# RetiredCommandsRefuse below). The steps behind them stay until todo 39 deletes the tool, and the
+# cases here keep proving them by running the CLI with that gate emptied.
+UNGATED = ("import importlib.util, sys\n"
+           "loading = importlib.util.spec_from_file_location('plugin_transition', sys.argv.pop(1))\n"
+           "tool = importlib.util.module_from_spec(loading)\n"
+           "loading.loader.exec_module(tool)\n"
+           "tool.RETIRED = ()\n"
+           "raise SystemExit(tool.main(sys.argv[1:]))\n")
+
+
 def run(argv, **keywords):
-    return subprocess.run([sys.executable, *[str(word) for word in argv]],
+    words = [str(word) for word in argv]
+    if words and words[0] == str(CLI):
+        words = ["-c", UNGATED, *words]
+    return subprocess.run([sys.executable, *words],
                           capture_output=True, text=True, timeout=600, **keywords)
 
 
@@ -223,6 +237,54 @@ class TransitionCase(unittest.TestCase):
 
     def ready(self, **plugin):
         return self.host.manual_install().install_plugin(**plugin)
+
+
+class RetiredCommandsRefuse(TransitionCase):
+    """As shipped, the commands that change a host refuse before reading it.
+
+    The plugin payload declares the native wiring, which these steps cannot hand a host to: on
+    every host they accept, an applied transition reported each step settled and left a Stop hook
+    and a bridge that could not run. So transition, disable and remove exit 2 with one line on
+    stderr naming the retirement and leave every byte under the host as it was; the read-only
+    commands still answer.
+    """
+
+    def tree(self):
+        out = {}
+        for path in sorted(Path(self.directory).rglob("*")):
+            if path.is_symlink():
+                out[str(path)] = ("link", os.readlink(path))
+            elif path.is_file():
+                out[str(path)] = ("file", path.read_bytes())
+            else:
+                out[str(path)] = ("directory", None)
+        return out
+
+    def test_the_commands_that_change_a_host_refuse_and_change_nothing(self):
+        host = self.ready()
+        host.seal_cache()
+        before = self.tree()
+        for command in (["transition", "--apply", "--accept-hook-trust-gap"], ["transition"],
+                        ["disable", "--apply"], ["remove", "--apply"]):
+            with self.subTest(command=command):
+                done = subprocess.run([sys.executable, str(CLI), "--codex-home", str(host.home),
+                                       *command], capture_output=True, text=True, timeout=600)
+                self.assertEqual(done.returncode, 2, done.stdout[-600:] + done.stderr[-600:])
+                self.assertEqual(done.stdout, "")
+                self.assertEqual(done.stderr.count("\n"), 1, done.stderr)
+                self.assertTrue(done.stderr.startswith("plugin_transition.py: " + command[0]
+                                                       + " is retired"), done.stderr)
+                self.assertIn("docs/plugin-transition.md", done.stderr)
+                self.assertEqual(self.tree(), before)
+
+    def test_the_read_only_commands_still_answer(self):
+        host = self.ready()
+        for command in ("inspect", "swap-state"):
+            with self.subTest(command=command):
+                done = subprocess.run([sys.executable, str(CLI), "--codex-home", str(host.home),
+                                       command], capture_output=True, text=True, timeout=600)
+                self.assertEqual(done.returncode, 0, done.stdout[-600:] + done.stderr[-600:])
+                self.assertIn("policyInEffect", json.loads(done.stdout))
 
 
 class PreflightRefusesBeforeItRemovesAnything(TransitionCase):
@@ -3151,12 +3213,12 @@ class TheFindingsFromReview(TransitionCase):
                     / "wiring" / "hooks" / "stop-recording-completion.json")
         document = json.loads(declared.read_text(encoding="utf-8"))
         entry = document["hooks"]["Stop"][0]["hooks"][0]
-        entry["command"] = entry["command"].replace("python3 ", "python3-does-not-exist ", 1)
+        entry["command"] = entry["command"].replace("/bin/crw\"", "/bin/crw-does-not-exist\"", 1)
         declared.write_text(json.dumps(document), encoding="utf-8")
         before = host.hooks_document()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
-        self.assertIn("python3-does-not-exist", answer["results"][0]["detail"])
+        self.assertIn("crw-does-not-exist", answer["results"][0]["detail"])
         self.assertIn("this checkout declares", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 
@@ -3187,12 +3249,12 @@ class TheFindingsFromReview(TransitionCase):
                     / "wiring" / "hooks" / "stop-recording-completion.json")
         document = json.loads(declared.read_text(encoding="utf-8"))
         entry = document["hooks"]["Stop"][0]["hooks"][0]
-        entry["command"] = entry["command"].replace("python3 ", "python3.999999 ", 1)
+        entry["command"] = entry["command"].replace("/bin/crw\"", "/bin/crw.999999\"", 1)
         declared.write_text(json.dumps(document), encoding="utf-8")
         before = host.hooks_document()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
-        self.assertIn("python3.999999", answer["results"][0]["detail"])
+        self.assertIn("crw.999999", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 
     def test_a_trailing_newline_is_not_the_name_of_an_executable(self):
@@ -3363,12 +3425,12 @@ class TheFindingsFromReview(TransitionCase):
                     / "wiring" / "hooks" / "stop-recording-completion.json")
         document = json.loads(declared.read_text(encoding="utf-8"))
         entry = document["hooks"]["Stop"][0]["hooks"][0]
-        entry["command"] = entry["command"].replace("python3 ", "/definitely/missing/python3 ", 1)
+        entry["command"] = entry["command"].replace("$HOME/.local/share/crw-runtime", "/definitely/missing", 1)
         declared.write_text(json.dumps(document), encoding="utf-8")
         before = host.hooks_document()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
-        self.assertIn("/definitely/missing/python3", answer["results"][0]["detail"])
+        self.assertIn("/definitely/missing/current/bin/crw", answer["results"][0]["detail"])
         self.assertIn("this checkout declares", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 

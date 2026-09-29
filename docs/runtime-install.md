@@ -1171,7 +1171,10 @@ start a bridge.
 `plugin` writes no configuration entry at all; it writes `crw-bridge-mcp.json` beside the
 completion hook's settings, which is the one fact the package cannot carry: the pointer that
 names the installed runtime. The packaged launcher reads that record, and the declaration is
-what registers the server.
+what registers the server. The native launcher, `wiring/crw-bridge.sh`, execs the pointer's
+`codex-thread-bridge --plugin-launch`, and the runtime reads the record with the Python launcher's
+checks ([the native wiring](plugin-packaging.md#the-native-wiring)); `crw install register-mcp
+--owner plugin` writes the same record.
 
 Either owner can be installed first, so the refusal runs both ways. The user path is refused by
 a record naming the plugin; the plugin path is refused by an entry already in the configuration.
@@ -1217,13 +1220,14 @@ starts exactly as it always did, with the environment the launcher was given.
 The policy is part of the registration's identity, so the only rerun that succeeds is an identical
 one. Any other difference is refused like any other conflict, and nothing is written: another file,
 the same file with other contents, a rerun that drops the flag, or adding a policy to a version-1
-record. The refusal names the repair. Move the record aside by hand, or retire it with
-`plugin_transition.py disable`, which also retires the Stop settings. Then run `register-mcp`
-again. Every edit to the policy file, including adding an exception, therefore has two
-consequences. The relay picks the edit up when its daemon restarts. The bridge record has to be
-moved aside and registered again, and a thread started in between has no bridge tools. That
-differs from the relay's launch declaration, which names only the file. The digest is what lets a
-changed file fail visibly instead of being enforced unregistered.
+record. The refusal names the repair. Move the record aside by hand (`plugin_transition.py
+disable`, which retired it with the Stop settings, is retired itself; see
+[the transition](plugin-transition.md)). Then run `register-mcp` again. Every edit to the policy
+file, including adding an exception, therefore has two consequences. The relay picks the edit
+up when its daemon restarts. The bridge record has to be moved aside and registered again, and a
+thread started in between has no bridge tools. That differs from the relay's launch declaration,
+which names only the file. The digest is what lets a changed file fail visibly instead of being
+enforced unregistered.
 
 A created record is reported only after the policy file has been hashed again, following the write,
 and still matched. The digest is taken before the write, and nothing locks the policy file, so the
@@ -1548,6 +1552,13 @@ installation shares a machine.
 
 ### The fallback launcher, and why this command places it
 
+The package now declares the native Stop command,
+`"$HOME/.local/share/crw-runtime/current/bin/crw" hook --plugin-launch; exit 0`. It needs no
+fallback: it names nothing in the version cache and exits 0 when the pointer names nothing
+([the native wiring](plugin-packaging.md#the-native-wiring)). The fallback below serves turns
+whose command was fixed while the package still declared the Python bootstrap; `crw install`
+leaves an existing copy as it is.
+
 With `--owner plugin` this command also writes `crw-stop-hook.py` beside those settings, and it
 writes it **before** them. That file is the second candidate the package’s Stop declaration
 opens, and it exists because a hook command is fixed when a turn starts, with the plugin root
@@ -1562,12 +1573,12 @@ supported range; what belongs here is who writes the file and what that writer r
 
 | Question | Answer |
 | --- | --- |
-| Which command writes it | This one, with `--owner plugin`. `plugin_transition.py transition` writes it too, because it installs the same plugin-owned settings and would otherwise leave a host with the settings and no fallback |
+| Which command writes it | This one, with `--owner plugin`. `plugin_transition.py transition` wrote it too, because it installed the same plugin-owned settings and would otherwise have left a host with the settings and no fallback; it is retired and refuses ([the transition](plugin-transition.md)) |
 | In what order | Launcher first. A launcher with no settings stands down in silence; settings whose fallback was never placed look installed and are not |
 | What it refuses | A file that does not carry the launcher marker, and anything that is not a regular file. A symlink is reported by kind and never followed, because replacing through one writes to a file this command was never given |
 | What the marker proves | That CRW put a launcher at that path. Not who ran the command, and not that the bytes are intact. The digest is reported beside it for the second question |
 | How it is replaced | Temp file and `os.replace`, then read back, with the kind and the marker re-judged under the lock immediately before the write |
-| Which command removes it | `plugin_transition.py remove`, under the launcher’s own lock and only while the marker is still there |
+| Which command removes it | `plugin_transition.py remove` did, under the launcher’s own lock and only while the marker was still there; it is retired and refuses ([the transition](plugin-transition.md)) |
 | What `disable` does to it | Nothing. `disable` stops new calls by retiring the settings and deletes no bytes |
 
 The two files take separate locks and there is deliberately no lock spanning them. Widening one

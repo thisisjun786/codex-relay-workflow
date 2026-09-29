@@ -129,13 +129,20 @@ func TestRetentionScanReadsTheWiringSurfaces(t *testing.T) {
 	h := newHost(t)
 	dir, _ := h.goRuntime(t, "bin-0.3.0-aaaaaaaaaaaa")
 	link(t, dir, h.current())
-	cache := filepath.Join(h.codex, "plugins", "cache", "crw", "crw", "0.4.0+test")
-	for _, name := range []string{"wiring/mcp.json", "wiring/hooks/stop-recording-completion.json"} {
-		raw, err := os.ReadFile(filepath.Join(golden.Root(), "plugins", "crw", filepath.FromSlash(name)))
-		if err != nil {
-			t.Fatal(err)
+	// A cached version from before the native wiring (todo 34) declares the Python bootstrap and
+	// launcher; the shipped version beside it declares the native commands, which name no Python.
+	for version, source := range map[string]string{
+		"0.4.0+test":   filepath.Join(golden.Root(), "internal", "pluginwiring", "testdata", "pre-native-wiring"),
+		"0.4.1+native": filepath.Join(golden.Root(), "plugins", "crw", "wiring"),
+	} {
+		cache := filepath.Join(h.codex, "plugins", "cache", "crw", "crw", version)
+		for _, name := range []string{"mcp.json", "hooks/stop-recording-completion.json"} {
+			raw, err := os.ReadFile(filepath.Join(source, filepath.FromSlash(name)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			write(t, filepath.Join(cache, "wiring", filepath.FromSlash(name)), string(raw), 0o644)
 		}
-		write(t, filepath.Join(cache, filepath.FromSlash(name)), string(raw), 0o644)
 	}
 	write(t, filepath.Join(h.codex, "crw-stop-hook.py"), "#!/usr/bin/env python3\n", 0o600)
 	write(t, filepath.Join(h.codex, "hooks.json"), `{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "bash '/x/state.sh' session", "timeout": 10}]}],

@@ -137,10 +137,16 @@ func Session(ctx context.Context, executable, socket string, env scope.Env) Brid
 // Argv runs the same session with a command line as given (a launcher, say), and reports the
 // process's exit status and stderr when the session did not complete.
 func Argv(ctx context.Context, argv []string, env scope.Env) Bridge {
+	return ArgvIn(ctx, "", argv, env)
+}
+
+// ArgvIn is Argv started in dir, as a declared MCP server with a working directory is started.
+func ArgvIn(ctx context.Context, dir string, argv []string, env scope.Env) Bridge {
 	result := Bridge{Command: argv}
 	run, cancel := context.WithTimeout(ctx, BridgeTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(run, argv[0], argv[1:]...)
+	cmd.Dir = dir
 	if env != nil {
 		cmd.Env = env
 	}

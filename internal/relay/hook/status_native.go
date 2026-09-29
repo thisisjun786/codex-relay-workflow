@@ -40,7 +40,8 @@ func nativeRegistration(command string) (target, settings string, ok bool) {
 		}
 		target = filepath.Join(home, strings.TrimPrefix(target, "~/"))
 	}
-	if len(words) == 3 {
+	// `--plugin-launch` (decision 26) names no settings: that run reads the CODEX_HOME settings.
+	if len(words) == 3 && words[2] != PluginLaunch {
 		settings = words[2]
 	}
 	return target, settings, true

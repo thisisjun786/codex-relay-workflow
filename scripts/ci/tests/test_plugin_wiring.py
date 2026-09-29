@@ -30,6 +30,9 @@ from crw_runtime import bridgerecord, completion, hooks, hostrecord, reading
 
 import plugin
 
+sys.path.insert(0, str(ROOT / "scripts" / "ci" / "tests"))
+from legacy_wiring import LEGACY_MCP_DECLARATION, LEGACY_STOP_COMMAND  # noqa: E402
+
 RUNTIME_INSTALL = ROOT / "scripts" / "runtime_install.py"
 BRIDGE_SOURCE = ROOT / "packages" / "codex-thread-bridge" / "src"
 BRIDGE_LAUNCHER = ROOT / "plugins" / "crw" / "wiring" / "crw_bridge_mcp.py"
@@ -674,8 +677,11 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         """A cached package; the shipped crw one unless a launcher is given."""
         root = self.home.codex_home / "plugins" / "cache" / marketplace / plugin / version
         shutil.copytree(ROOT / "plugins" / "crw", root)
-        if launcher_text is not None:
-            (root / "wiring" / "crw_bridge_mcp.py").write_text(launcher_text, encoding="utf-8")
+        if launcher_text is None:
+            return root / "wiring" / "crw-bridge.sh"
+        # An older package: the Python launcher, and the declaration that started it.
+        (root / "wiring" / "crw_bridge_mcp.py").write_text(launcher_text, encoding="utf-8")
+        (root / "wiring" / "mcp.json").write_text(LEGACY_MCP_DECLARATION, encoding="utf-8")
         return root / "wiring" / "crw_bridge_mcp.py"
 
     def enable(self, *keys, enabled=True):
@@ -1345,7 +1351,8 @@ class BridgeRecordPolicyTest(unittest.TestCase):
     def test_the_launcher_is_probed_with_the_command_the_package_declares(self):
         """Run with another interpreter, a declaration Codex could not start would pass."""
         cases = {
-            "a command that cannot run it": ("sh", "launcher_predates_policy",
+            # The launcher is a shell script, so the interpreter that cannot run it is Python.
+            "a command that cannot run it": ("python3", "launcher_predates_policy",
                                              "did not start a bridge"),
             "a command that does not resolve": ("crw218-no-such-interpreter",
                                                 "launcher_not_established", "does not resolve"),
@@ -2338,7 +2345,9 @@ class DeclaredStopCommandTest(unittest.TestCase):
         self.root = Path(self.stack.enter_context(tempfile.TemporaryDirectory(prefix="crw178-")))
         document = json.loads(self.DECLARATION.read_text(encoding="utf-8"))
         entry = document["hooks"]["Stop"][0]["hooks"][0]
-        self.command = entry["command"]
+        # The package now declares the native command (internal/pluginwiring tests it). A turn
+        # whose command was fixed before that change still runs this bootstrap until todo 44.
+        self.command = LEGACY_STOP_COMMAND
         self.timeout = entry["timeout"]
         self.witness = self.root / "witness.txt"
 

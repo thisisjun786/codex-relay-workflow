@@ -37,7 +37,7 @@ LIVE_AGAIN = "live_again"
 # The launchers this package ships, named rather than globbed. Adding a launcher means adding it
 # here; adding an ordinary helper under wiring/ must not appear here, because everything in this
 # tuple is compared byte for byte and a mismatch refuses a transition.
-LAUNCHERS = ("wiring/crw_stop_hook.py", "wiring/crw_bridge_mcp.py")
+LAUNCHERS = ("wiring/crw_stop_hook.py", "wiring/crw_bridge_mcp.py", "wiring/crw-bridge.sh")
 
 # Steps that changed something are reported apart from steps that found nothing to do, because
 # "converged" and "did the work" are different answers and a rerun has to be able to say which.

@@ -54,8 +54,8 @@ sys.stdout.write(json.dumps(document, indent=2, sort_keys=True) + "\n")
 // A policy file whose name holds a byte that is not UTF-8 is recorded as runtime_install.py's
 // bridgerecord records it - the path as os.fsdecode spells it, the byte as its surrogate escape
 // written "\udc80", and the digest over the file itself - byte for byte the record
-// bridgerecord.document and json.dumps write for the same input. The packaged launcher, which
-// fs-encodes the path back, then starts the Go bridge under that policy.
+// bridgerecord.document and json.dumps write for the same input. Both packaged launchers, which
+// fs-encode the path back, then start the Go bridge under that policy.
 func TestRegisterMCPRecordsANonUTF8PolicyPathAsPythonDoes(t *testing.T) {
 	needsPython(t)
 	h := newHost(t)
@@ -83,16 +83,19 @@ func TestRegisterMCPRecordsANonUTF8PolicyPathAsPythonDoes(t *testing.T) {
 		t.Fatalf("record:\n%s\nPython's bridgerecord:\n%s", got, want)
 	}
 
-	cached := filepath.Join(h.codex, "plugins", "cache", "crw", "crw", "0.9.0", "wiring", "crw_bridge_mcp.py")
-	write(t, cached, readFile(t, wiring("crw_bridge_mcp.py")))
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	started := exercise.Argv(ctx, []string{"python3", cached}, scope.Env(homeOnly))
-	if started.Err != nil {
-		t.Fatalf("the launcher did not start the bridge: %v\n%s", started.Err, started.Stderr)
-	}
-	summary := golden.Obj(record.Get(golden.Obj(started.Connection), "executionPolicy"))
-	if record.Get(summary, "mode") != "allowlist" || record.Get(summary, "digest") != digest {
-		t.Fatalf("the bridge runs without the recorded policy: %s", golden.Canon(summary))
+	// Both launchers: the native crw-bridge.sh the package declares, whose Go launcher
+	// fs-encodes the path with the same reading.FSEncode, and the legacy crw_bridge_mcp.py.
+	for _, launcher := range bridgeLaunchers {
+		dir, argv := launcher.place(t, h)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		started := exercise.ArgvIn(ctx, dir, argv, scope.Env(homeOnly))
+		cancel()
+		if started.Err != nil {
+			t.Fatalf("%s did not start the bridge: %v\n%s", launcher.name, started.Err, started.Stderr)
+		}
+		summary := golden.Obj(record.Get(golden.Obj(started.Connection), "executionPolicy"))
+		if record.Get(summary, "mode") != "allowlist" || record.Get(summary, "digest") != digest {
+			t.Fatalf("%s: the bridge runs without the recorded policy: %s", launcher.name, golden.Canon(summary))
+		}
 	}
 }

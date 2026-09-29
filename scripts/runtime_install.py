@@ -4920,6 +4920,42 @@ def _copy_regular(source, destination):
     return destination
 
 
+# The native launcher (wiring/crw-bridge.sh) execs
+# $HOME/.local/share/crw-runtime/current/bin/codex-thread-bridge --plugin-launch, and the runtime
+# behind that pointer reads the record (decision 26 in docs/port/decisions.md). The probe's HOME
+# is scratch, so it holds a stand-in runtime there: it accepts only that exact invocation and then
+# runs this checkout's crw_bridge_mcp.py from the copied package, the reference implementation of
+# the record contract the Go runtime reproduces (internal/pluginwiring). What the probe
+# establishes about the package is that its declared command reaches that contract under the App
+# Server's environment; the runtime's own half is the runtime's tests' to establish.
+PLUGIN_LAUNCH_REFERENCE = ROOT / "plugins" / "crw" / "wiring" / "crw_bridge_mcp.py"
+_PROBE_RUNTIME = (
+    "import os, sys\n"
+    "if sys.argv[1:2] != ['--plugin-launch']:\n"
+    "    sys.stderr.write('probe runtime: not started as codex-thread-bridge --plugin-launch: %r\\n'"
+    " % (sys.argv[1:],))\n"
+    "    raise SystemExit(2)\n"
+    "os.execv(sys.executable, [sys.executable, REFERENCE, *sys.argv[2:]])\n"
+)
+
+
+def _place_probe_runtime(user_home, copy):
+    """The stand-in runtime pointer under the probe's HOME, and the reference it hands off to.
+
+    The reference sits in the copied version's wiring directory, because crw_bridge_mcp.py finds
+    the Codex home six directories above its own file, as the runtime finds it from the working
+    directory the declaration names.
+    """
+    reference = copy / "wiring" / ".plugin-launch-reference.py"
+    _write_probe_file(reference, reading.regular_text(PLUGIN_LAUNCH_REFERENCE))
+    binaries = user_home / ".local" / "share" / "crw-runtime" / "current" / "bin"
+    binaries.mkdir(parents=True)
+    stand_in = binaries / "codex-thread-bridge"
+    _write_probe_file(stand_in, "#!" + sys.executable + "\nREFERENCE = " + repr(str(reference))
+                      + "\n" + _PROBE_RUNTIME)
+    stand_in.chmod(0o755)
+
+
 def _launcher_honours_policy_records(version, entry):
     """Why a launcher cannot be trusted with a record naming a policy, or None when it can.
 
@@ -4958,6 +4994,11 @@ def _launcher_honours_policy_records(version, entry):
         declared = _declared_start(copy, entry)
         if isinstance(declared, str):
             return "its declaration cannot be started: " + declared
+        try:
+            _place_probe_runtime(user_home, copy)
+        except OSError as error:
+            return ("its runtime pointer could not be staged to probe it: " + type(error).__name__
+                    + ": " + str(error)[:300])
         argv, cwd, launcher = declared
         if not launcher.is_file():
             return "it is not a regular file"

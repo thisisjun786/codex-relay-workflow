@@ -1,10 +1,11 @@
 # Plugin packaging
 
 This repository publishes its skills as a versioned Codex plugin. The package also
-declares the task-bridge MCP server and the completion Stop hook, and ships the two
-small launchers that start them. It carries no runtime: the bridge, the session
-relay, the Python environment and the completion adapter keep their own installer,
-and the launchers only point at what that installer left behind.
+declares the task-bridge MCP server and the completion Stop hook. Both reach the Go runtime
+through the installer's pointer, `$HOME/.local/share/crw-runtime/current/bin/`: the hook
+command names `crw` there directly and the server starts a three-line `sh` launcher that execs
+its `codex-thread-bridge` link ([the native wiring](#the-native-wiring)). It carries no runtime: the runtime keeps its own
+installer, and the package only points at what that installer left behind.
 
 ## What the package is
 
@@ -14,7 +15,7 @@ and the launchers only point at what that installer left behind.
 | `plugins/crw/` | The plugin root, copied into the version cache as it stands |
 | `plugins/crw/.codex-plugin/plugin.json` | Manifest: plugin name, the version that names the payload, and the declared skills path |
 | `plugins/crw/skills/` | The registered skills, one of the two declared components |
-| `plugins/crw/wiring/` | The declared Stop hook and MCP server, and the two launchers they start |
+| `plugins/crw/wiring/` | The declared Stop hook and MCP server, the `crw-bridge.sh` launcher the server starts, and the two legacy Python launchers kept for cached commands until the Python path is removed |
 | `plugins/crw/LICENSE` | The repository license, shipped with the package |
 | `skills` | A link to `plugins/crw/skills`, kept for installations made before the move |
 
@@ -119,9 +120,73 @@ kept with the task record, outside this repository.
 Those two environments are opposites, and the wiring is built around the difference. A
 hook command can name the plugin root and the Codex home through shell variables because
 a shell expands them. An MCP command can do neither, so it sets `cwd` to `.` with a
-`./` relative argument, and the program it starts derives the Codex home from its own
-location: the cache layout is
-`$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>`.
+`./` relative argument. `HOME` is the one variable both environments carry, which is why
+the native wiring anchors the runtime pointer under it.
+
+## The native wiring
+
+| Surface | Declared as | What it runs |
+| --- | --- | --- |
+| Stop hook | `"$HOME/.local/share/crw-runtime/current/bin/crw" hook --plugin-launch; exit 0`, `timeout: 10` | `crw hook --plugin-launch` through the pointer, reading the host's payload on stdin |
+| MCP server | `command: "sh"`, `args: ["./wiring/crw-bridge.sh"]`, `cwd: "."` | `exec "$HOME/.local/share/crw-runtime/current/bin/codex-thread-bridge" --plugin-launch "$@"` |
+
+`--plugin-launch` is where the record contract the Python launchers carried now lives
+([decision 26](port/decisions.md)). `codex-thread-bridge --plugin-launch` (`crw bridge
+--plugin-launch` under the other name) reads `<CODEX_HOME>/crw-bridge-mcp.json`, finding the
+Codex home as the Python launcher did, and refuses on stderr with exit 2 where that launcher did,
+naming `crw install register-mcp --owner plugin` as the repair. That includes standing down for a
+user-owned record. It then execs itself as the bridge with the record's arguments and, for a
+version-2 record, the recorded execution policy in its environment, as the Python launcher execed
+the recorded executable. The running bridge is therefore the process Codex started: its argv
+ends in `codex-thread-bridge` and its environment carries the policy, which is what
+[the `/proc` reading below](#updating-safely) looks for. `crw hook --plugin-launch` reads only
+`<CODEX_HOME>/crw-completion-hook.json`, never `CRW_COMPLETION_HOOK_CONFIG`, and stands down in
+silence unless those settings name the plugin as owner, so a host that holds both Stop
+registrations under user-owned settings evaluates each Stop once. Under settings the plugin owns,
+both registrations evaluate it: a hook-file entry reads no owner, and cannot, because the legacy
+launchers reach `crw hook` without the flag under those same settings. The only guard there is
+that `crw install hook
+--owner plugin` and runtime_install.py each refuse to register a second owner, so the state takes
+a hand edit ([decision 26](port/decisions.md)).
+
+The hook command does not `exec` and ends in `; exit 0`. When the pointer names nothing, as
+mid-rollback or with `HOME` unset, the shell reports the missing program on stderr and the
+command still exits 0, so the turn is released rather than held. Exit 2 is the host's blocking
+code, and no status `crw hook` returns reaches the host. Neither command lives in the version
+cache that is replaced on install. The hook's own file is the runtime, which sits under the
+pointer. The server's launcher is in the cache, but `exec` replaces it with the runtime at
+start, so after that the running bridge holds nothing in the cache.
+
+The launcher is different on purpose. A server that cannot start should say why, so it `exec`s
+the runtime, and a missing pointer shows up as a nonzero exit with the missing path on stderr.
+The declaration keeps `required: false`, so the session continues regardless.
+
+Known limits of this wiring:
+
+- `XDG_DATA_HOME` is not honoured. Both commands name `$HOME/.local/share`, as the Python
+  installer's default always has, and `crw install`'s one destination is
+  `$HOME/.local/share/crw-runtime`.
+- The record's `bridgeExecutable` is checked (present and absolute) and not executed: the
+  runtime behind the pointer is the bridge.
+- Nothing checks that the runtime behind the pointer can serve this payload. Both commands pass
+  `--plugin-launch`, which only a runtime built with decision 26 reads. Neither the package,
+  `crw install` nor `crw doctor` compares the two. If the pointer names a Python `env-*`
+  runtime, there is no `bin/crw`: the shell reports the missing program on stderr and the hook
+  exits 0 with no record. If the pointer names a Go runtime built before decision 26, the hook
+  releases the Stop with no output at all. That `crw hook` takes `--plugin-launch` for a
+  settings path relative to its working directory, finds none, exits 0 and writes no journal
+  row. In both cases the bridge exits 2 from argument parsing, so the server does not start and
+  no bridge runs without the recorded policy. That bridge answer tells the three runtimes apart
+  without side effects (decision 26), but nothing runs it yet. The only guard is the order in
+  step 1 of [turning the wired surfaces on](#turning-the-wired-surfaces-on). To confirm it, end a
+  turn and read its journal row
+  ([registration is not firing](runtime-install.md#registration-is-not-firing)).
+
+`wiring/crw_stop_hook.py` and `wiring/crw_bridge_mcp.py` still ship. The package no longer
+declares them. A turn whose Stop command was fixed before this change, or a session that loaded
+the older server declaration, can still name them. They leave with the rest of the Python
+execution path once the retention scan finds no such reference
+([cutover](port/cutover.md#retention)).
 
 Hooks ship as an array with one event per file. A single file carrying several events
 works too, but a hook's identity is positional, so adding an event to a shared file
@@ -175,24 +240,36 @@ Installing the package installs the skills, and registers nothing else that work
 its own. The declared MCP server and Stop hook both reach a runtime this package does
 not carry, and each needs a step the installation cannot take for you.
 
-1. Install the runtime, if this host has none:
-   `python3 scripts/runtime_install.py install --dest <destination> --apply`.
-2. Write the two records the launchers read. Neither registers anything itself:
-   `python3 scripts/runtime_install.py register-mcp --owner plugin --bridge-command <destination>/current/bin/codex-thread-bridge --apply`
-   and
-   `python3 scripts/runtime_install.py hook --adapter completion --owner plugin --dest <destination> --apply`.
-   Each refuses when the same surface is already registered the other way, because the
-   two together would run two bridges, or two hooks on every Stop.
+1. Install the Go runtime, if this host has none, where both declared commands look for it: run
+   `crw install install --from <crw_<version>_<os>_<arch>.tar.gz>` (or `--release <tag>`) with
+   the `crw` from that release. It installs under `~/.local/share/crw-runtime`, its only
+   destination (it has no `--dest`). A runtime runtime_install.py placed under another `--dest`,
+   or a pointer that still names a Python `env-*` runtime, is one neither command starts: the hook
+   then releases every Stop without a word, and the server exits as it starts.
+
+   The runtime also has to be a build that reads `--plugin-launch`
+   ([decision 26](port/decisions.md)), and the pointer has to name it before the plugin cache
+   takes a payload that declares the native wiring (one whose `wiring/hooks/*.json` command runs
+   `crw hook --plugin-launch`). Install or update the runtime first, with `crw install install`
+   or `crw install update`. With a local marketplace, that means before the checkout the
+   marketplace names moves onto such a payload. A Go runtime built before decision 26 fails
+   silently. Its `crw hook` reads `--plugin-launch` as a relative settings path and finds no
+   settings there. It exits 0 with nothing on stdout or stderr and writes no journal row, so
+   every Stop is released unrecorded. Its bridge refuses the flag with exit 2. A rollback goes
+   in the other order ([update and roll back](#update-and-roll-back)).
+2. Write the two records the runtime reads under `--plugin-launch`. Neither registers anything
+   itself: `crw install register-mcp --owner plugin` and `crw install hook --owner plugin`. Each
+   refuses when the same surface is already registered the other way, because the two together
+   would run two bridges, or two hooks on every Stop.
 
    To have the bridge check role pairs, name the host's execution policy on the first of those two
    commands with `--execution-policy <file>`. The record then names the file and its digest, the
    launcher refuses to start the bridge when that file is gone or has changed, and the bridge reads
-   it through `CODEX_THREAD_BRIDGE_EXECUTION_POLICY`. When crw is enabled and its package is
-   already cached, register it only after that package ships a launcher reading that record and
-   Codex has loaded it: `register-mcp` refuses while the enabled package's cached launcher is
-   older, or while the cache cannot be looked at. With no crw package enabled or cached yet, the
-   record is written and waits, inert, for the package that will read it. See
+   it through `CODEX_THREAD_BRIDGE_EXECUTION_POLICY`. See
    [the execution policy the plugin bridge runs under](runtime-install.md#the-execution-policy-the-plugin-bridge-runs-under).
+   Until the cutover the host's installer is still `scripts/runtime_install.py`
+   ([runtime installation](runtime-install.md)), whose `register-mcp` also probes the enabled
+   package's cached launcher before it writes a policy record.
 3. Trust the hook. Until it is trusted nothing fires, and no command in this repository
    grants that: installing writes no trust, and a session without it runs the hook zero
    times and says so nowhere.
@@ -216,8 +293,10 @@ directory the manifest declares, and the repository root keeps `skills` as a lin
 to it so links created before the move still resolve.
 
 A host carrying both runs two of everything. [Moving a manual install to the plugin
-install](plugin-transition.md) is how one becomes the other, and it owns the update, the failed
-update, the disable and the removal that follow.
+install](plugin-transition.md) described how one became the other, and the update, the failed
+update, the disable and the removal that follow. Its commands that change a host are retired since
+the payload declares the native wiring, and refuse; todo 39's `crw install transition` replaces
+them.
 
 ## Skill names
 
@@ -268,10 +347,11 @@ each declared surface is whether its reference outlives the directory it names.
 
 | Reference | Bound to the cache | What a replacement does to it | Owner |
 | --- | --- | --- | --- |
-| Stop launcher, first candidate | Yes | Falls through to the second candidate | This package |
+| Native Stop command | No, it names the runtime pointer under `$HOME` | Nothing | `crw install install` |
+| Stop launcher, first candidate (legacy bootstrap a cached turn may still hold) | Yes | Falls through to the second candidate | This package |
 | Stop launcher, second candidate at `<CODEX_HOME>/crw-stop-hook.py` | No | Nothing | `runtime_install.py hook --owner plugin` |
-| Stop settings at `<CODEX_HOME>/crw-completion-hook.json` | No | Nothing | The same command |
-| Adapter, relay and bridge executables | No, they sit under the installer pointer | Nothing | `runtime_install.py install` |
+| Stop settings at `<CODEX_HOME>/crw-completion-hook.json` | No | Nothing | `crw install hook --owner plugin` (`runtime_install.py hook --owner plugin` until the cutover) |
+| Adapter, relay and bridge executables | No, they sit under the installer pointer | Nothing | `crw install install` |
 | Hook document path in the run identifier | Yes | Held as an identifier and never re-read | The host |
 | MCP start `cwd` and `args` | Yes | At one measured replacement the host started bridges again from the new version directory; at the other none was seen to start: the bridges already running kept running from the removed directory, and a thread that resumed was given one from the new directory. Either way a bridge started from the new directory runs under the bridge record as it stands then. Both measured on the host; what decides between the two is not | The host |
 | Skill reads | Yes | A turn already running keeps the removed directory as its skills root until it ends, and the thread's next turn is given the new one: measured on the host. A read against the removed directory was not observed | The host |
@@ -357,7 +437,10 @@ the old directory as history, so the row speaks of the root a turn is given, not
 None of the six tried to read the removed directory in the forty minutes that followed, so what such
 a read does was not observed.
 
-### Why the Stop hook is declared as a bootstrap
+### Why the Stop hook was declared as a bootstrap
+
+The package no longer declares this bootstrap ([the native wiring](#the-native-wiring)). This
+section describes the command a turn cached before that change may still run.
 
 A hook command is fixed when a turn starts, with the plugin root already resolved into it, and
 the whole turn reuses that string — including every Stop re-fire. Replace the package while a
@@ -649,6 +732,16 @@ given until it ends, and a Stop whose command names the removed directory falls 
 Because the suffix follows the payload, an earlier revision reinstalls into its own directory
 rather than over the one that replaced it, and `codex plugin list` says which of the two is
 present.
+
+An update that brings in the native wiring, or a rollback that takes it out, moves the package
+and the runtime in a fixed order. Going forward, the runtime moves first. The pointer has to
+name a runtime that reads `--plugin-launch` before the cache takes a payload whose commands
+pass it. Going back, the package moves first. Reinstall a revision whose Stop declaration is the
+Python bootstrap before `crw install rollback` points at a runtime without that flag, whether a
+Python `env-*` runtime or a Go runtime built before decision 26. That bootstrap reaches either
+kind through the Stop settings `crw install` leaves for it, and a rollback to a Python runtime
+restores the Python-era settings. In the other order, every Stop in between is released
+without a record ([the native wiring](#the-native-wiring)).
 
 A rollback past the bridge record's version installs, and then its launcher refuses the record. A
 launcher that predates version 2 starts no bridge under a version-2 record: measured in isolation,

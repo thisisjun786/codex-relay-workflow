@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -97,6 +98,30 @@ func Run(parent context.Context, args []string, input io.Reader, output io.Write
 	return runAdapter(parent, args, input, output, started, nil)
 }
 
+// PluginLaunch is the first argument the plugin's declared Stop command passes (decision 26).
+const PluginLaunch = "--plugin-launch"
+
+// pluginSettingsPath is crw_stop_hook.py settings_path: <CODEX_HOME>/crw-completion-hook.json,
+// CODEX_HOME taken as written (no expansion) or ~/.codex when unset or empty. A plugin
+// declaration carries no settings argument, so neither CRW_COMPLETION_HOOK_CONFIG nor an argv
+// path is read: an override inherited from a shell profile would send the Stop to settings the
+// installer never wrote (decision 26).
+func pluginSettingsPath() (string, error) {
+	home := os.Getenv("CODEX_HOME")
+	if home == "" {
+		base, ok := os.LookupEnv("HOME")
+		if !ok {
+			account, err := user.Current()
+			if err != nil {
+				return "", err
+			}
+			base = account.HomeDir
+		}
+		home = strings.TrimRight(base, "/") + "/.codex"
+	}
+	return filepath.Abs(filepath.Join(home, ConfigName))
+}
+
 // The evaluator seam substitutes only the guard call; routing, identity, claims,
 // deadline enforcement, validation and journalling still run in fault tests.
 func runAdapter(parent context.Context, args []string, input io.Reader, output io.Writer, started time.Time, evaluator func(context.Context, Object, GuardOptions) (Object, error)) (code int) {
@@ -108,11 +133,18 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 	absolute := started.Add(5 * time.Second)
 	ctx, cancel := context.WithDeadline(parent, absolute)
 	defer cancel()
-	named := ""
-	if len(args) > 0 {
-		named = args[0]
+	pluginLaunch := len(args) > 0 && args[0] == PluginLaunch
+	var path string
+	var err error
+	if pluginLaunch {
+		path, err = pluginSettingsPath()
+	} else {
+		named := ""
+		if len(args) > 0 {
+			named = args[0]
+		}
+		path, err = configurationPath("", nil, named)
 	}
-	path, err := configurationPath("", nil, named)
 	if err != nil {
 		return 0
 	}
@@ -136,6 +168,14 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 	if settings.failure != "" {
 		return 0
 	} // Python has no usable journal configuration on these paths.
+	// crw_stop_hook.py adapter_call's stand-down: settings the plugin does not own belong to
+	// another registration of this Stop, so nothing is journalled, claimed or asked. Its
+	// configVersion rule (absent or 1) is already the validator's, which accepts only 1 and has
+	// released anything else in silence above; its adapterInterpreter and adapterEntryPoint
+	// checks named the Python adapter this binary replaces.
+	if pluginLaunch && get(settings.config, "owner") != "plugin" {
+		return 0
+	}
 	// Keep final bookkeeping inside the caller's absolute deadline. No nested operation
 	// may buy a new end-to-end budget by starting late.
 	workDeadline := absolute.Add(-min(100*time.Millisecond, max(0, time.Until(absolute)/5)))
