@@ -117,7 +117,7 @@ later means moving that record aside by hand first
 ([the execution policy](docs/runtime-install.md#the-execution-policy-the-plugin-bridge-runs-under)).
 
 The runtime goes to `~/.local/share/crw-runtime`, the path the plugin's declared server
-and Stop hook name, so keep that default on a plugin host. Nothing puts its
+and Stop hook name, and `crw install` has no other destination. Nothing puts its
 `current/bin/` on `PATH`, which the relay commands in the skills need. The Stop hook
 then has to be trusted in Codex before it fires. [Runtime installation](docs/runtime-install.md)
 covers updating, rolling back, removing and reading an installation.
@@ -130,8 +130,9 @@ without opening it. But the relay commands the skills run are refused there, and
 whenever it has to read the store. The runtime this procedure leaves on a live host therefore
 cannot serve that host's store. Until then a live host, and any host still on the Python
 runtime, moves through [the cutover](docs/port/cutover.md). That runbook moves the store's
-ownership. Where the pointer move and the Stop settings carry (`crw install install`) fall among
-its steps is not written yet: todo 42 settles it.
+ownership. Where the pointer move (`crw install install`, which on the relay host's first Go install
+also replaces its Python-era Stop settings, once) falls among its steps is not written yet: todo 42
+settles it.
 
 ### Before using the skills
 

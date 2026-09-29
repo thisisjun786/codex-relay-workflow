@@ -36,8 +36,9 @@ release and it is the development and rollback path until the Python execution p
 [the Python fence installer](#the-python-fence-installer) is the one section of this page about it.
 Moving a host from the Python runtime to this one is [the cutover](port/cutover.md), not an install
 alone. The cutover moves the store's ownership. Where `crw install install`, which moves the pointer
-and carries the Stop settings, falls among its steps is not written yet; that order is an open item
-todo 42 settles ([the backlog](port/refactor-backlog.md#deferred-review-findings-fix-before-todo-42)).
+(and on the relay host's first Go install replaces its Python-era Stop settings, once), falls among
+its steps is not written yet; that order is an open item todo 42 settles
+([the backlog](port/refactor-backlog.md#deferred-review-findings-fix-before-todo-42)).
 
 ## What an installation is
 
@@ -54,14 +55,27 @@ An installation of it is two things under the destination:
 | `<destination>/bin-<version>-<digest12>/bin/` | The runtime: `crw` and the three links, where `<digest12>` is the start of the archive's SHA-256 |
 | `<destination>/current` | The owned pointer: a directory symlink naming the selected runtime directory |
 
-The destination is `~/.local/share/crw-runtime`, and on a plugin host it has to stay there. Both of
-the plugin's declared commands name `$HOME/.local/share/crw-runtime/current/bin/` and nothing else,
-because `HOME` is the one variable a hook and an MCP server both receive
-([how hooks and MCP servers load](plugin-packaging.md#how-hooks-and-mcp-servers-load)).
-`XDG_DATA_HOME` is not honoured by `crw install` or by the wiring. `--dest` names another destination
-and every command accepts it, but a runtime installed anywhere else is one the declared hook and
-server never start: use it for a temporary or isolated installation, never for the one a plugin
-host runs.
+The destination is `~/.local/share/crw-runtime` and nothing else. Both of the plugin's declared
+commands name `$HOME/.local/share/crw-runtime/current/bin/` and nothing else, because `HOME` is the
+one variable a hook and an MCP server both receive
+([how hooks and MCP servers load](plugin-packaging.md#how-hooks-and-mcp-servers-load)). So
+`crw install` has no `--dest`, and neither it nor the wiring honours `XDG_DATA_HOME`: every
+`crw install` command acts on `<home>/.local/share/crw-runtime`, where `<home>` is `HOME`, or this
+user's passwd entry when `HOME` is not set. A host record whose pointer names another link is
+refused by every command before it acts, naming the repair, and `crw install status` reports that
+reading as `destinationAgrees` ([decisions 11 and 38](port/decisions.md)). For a temporary or
+isolated installation, run the commands under another `HOME`. `crw doctor` and
+`crw doctor retention-scan` still take `--dest`, to read another destination, never to install into
+one.
+
+A path the commands cannot use as given is refused rather than guessed at. `HOME` has to be
+absolute, hold no `..` and not start with `//`. A relative `XDG_STATE_HOME` is a usage error (exit
+2), as it is to `crw doctor`: read against the working directory it would put the host record where
+nothing else looks. A path from `HOME`, `CODEX_HOME`, `XDG_STATE_HOME` or a path flag that holds a
+byte that is not UTF-8 is a usage error naming where it came from, because a record or settings
+document written with a replacement character names a file that does not exist. The execution
+policy path is the one exception, recorded as `os.fsdecode` spells it
+([the execution policy](#the-execution-policy-the-plugin-bridge-runs-under)).
 
 The host record, `${XDG_STATE_HOME:-~/.local/state}/codex-relay-workflow/host-record.json`, says
 which runtime is selected and records every install, its measured points and who placed the
@@ -101,8 +115,9 @@ What follows is one run, in this order, and the result lists the steps it took:
    runtime resolves by default. A run that cannot exercise the candidate records no point and
    promotes nothing.
 5. Under the host-wide promotion lock: [read whether it is safe to swap](#reading-whether-it-is-safe-to-swap),
-   establish that the pointer is this command's, refuse a second owner of the bridge, and
-   [carry the Stop settings to this runtime](#the-stop-settings-follow-the-runtime).
+   establish that the pointer is this command's, refuse a second owner of the bridge or the Stop
+   hook, and, where the Stop settings still name the Python adapter, replace them once by their Go
+   variant ([one Stop settings document](#one-stop-settings-document)).
 6. [Commit the selection, then replace the pointer](#the-order-a-swap-commits-in), and read the
    pointer back.
 7. Settle the claim.
@@ -198,27 +213,39 @@ separately: the pointer's state and target, which kind of runtime the target is 
 `current` repointed by hand at another directory is caught by that comparison rather than passing
 because the command strings are unchanged.
 
-`crw install` has no `--dest`: the destination is fixed at `<home>/.local/share/crw-runtime`, the
-directory whose `current/bin` the plugin wiring runs, and it refuses a host record whose pointer
-names another link, naming the repair ([decisions 11 and 38](port/decisions.md)).
+### One Stop settings document
 
-### The Stop settings follow the runtime
+`crw install` writes one plugin-owned Stop settings document, and it serves both runtime kinds
+through the pointer. `adapterInterpreter` `/usr/bin/env` and `adapterEntryPoint`
+`<destination>/current/bin/crw-completion-hook` run the Go hook on a Go runtime and the fence
+release's `crw-completion-hook` console script on a Python `env-*` runtime, and `relayExecutable`
+`<destination>/current/bin/codex-session-relay` is the Go link or the venv's console script. No
+promotion and no rollback rewrites it ([decision 18](port/decisions.md)).
 
-The Stop settings name an adapter, and the adapter a Python runtime had is not the one a Go runtime
-has: Python-era settings name `.../current/bin/python3` as `adapterInterpreter`, which no longer
-exists once the pointer leaves the virtual environment. So a promotion carries plugin-owned settings
-to the runtime kind the pointer is about to name, before it moves:
+The one rewrite is forward, once. The relay host's Python-era document names
+`.../current/bin/python3` as `adapterInterpreter`, a path that is gone once the pointer leaves the
+virtual environment. So the first Go install, inside its promotion and before the pointer moves,
+archives it beside the file as `crw-completion-hook.json.superseded-<time>` (a hard link to the same
+file, or a copy where the filesystem refuses one, and never deleted) and replaces it, in one rename,
+by its Go variant: the same relay, marker root, database, journal, socket, mode and budget, with only
+the two adapter keys moved. Both documents work while the pointer still names the venv, so a Stop
+always finds settings it can run. Settings a user owns, or that name an adapter this command did not
+write, are left as they are. A write lands only on the document it was decided from: one that
+changed after it was read is never written over, and a replacement never destroys another writer's
+bytes.
 
-- onto a Go runtime, Python-era settings are archived beside the file as
-  `crw-completion-hook.json.superseded-<time>` and replaced, in one rename, by their Go variant: the
-  same relay, marker root, database, journal, socket, mode and budget, with `adapterInterpreter`
-  `/usr/bin/env` and `adapterEntryPoint` `<destination>/current/bin/crw-completion-hook`;
-- onto a Python runtime ([rolling back](#rolling-back)), the newest archived Python-era document is
-  renamed back over the Go one, which is itself archived first.
+A run that fails after this step puts the Python-era document back, and says so under
+`settings.undone`, only while the path still holds exactly the bytes this run wrote, and then by an
+atomic exchange of the two names (`renameat2` `RENAME_EXCHANGE` on Linux, `renamex_np`
+`RENAME_SWAP` on darwin). Where no atomic exchange exists, nothing is renamed over the active path:
+both files stay, and the answer gives the `mv` that puts the found settings back by hand.
 
-The path holds one document or the other at every moment, so a Stop always finds settings. Settings
-a user owns, or that name an adapter this command did not write, are left as they are. A run that
-fails after this step puts the settings back as it found them and says so under `settings.undone`.
+A rollback to a Python runtime never puts the archive back; it requires the venv to serve the one
+document instead ([rolling back](#rolling-back)). To return to the Python-era document itself, do it
+by hand and only while the pointer names the venv, after `crw install rollback <venv>`: take the
+newest `<CODEX_HOME>/crw-completion-hook.json.superseded-*` whose `adapterInterpreter` ends in
+`/current/bin/python3` and `mv` it over `crw-completion-hook.json`, one rename, so a Stop never
+finds the path empty. The next `crw install` archives it again and writes its Go variant.
 
 ### The claim a run leaves behind
 
@@ -240,9 +267,11 @@ claim version and a state from the declared set. Readable JSON at that path is n
 | No claim, and the directory holds files | Somebody else's. Refused, nothing touched, even when the host record selects something inside it |
 | No claim, and the directory is empty | Taken over as it stands |
 | A claim of this command's, the lock held | Another run is building it. Refused, nothing touched |
-| A claim of this command's, the lock free, nothing selecting or naming it | An abandoned staging. Removed and built again |
+| A claim of this command's, the lock free, nothing selecting or naming it | An abandoned staging. Removed (through a tombstone, as [remove](#removing-a-runtime) removes) and built again, but only under remove's rules, read again under the promotion lock: kept, and the run refused, while a process may run out of it, a relay daemon record cannot be read, or a registration names it or cannot be read. One the record's `outgoing` names was in service, so it is kept and its claim settled. Where there is no process table (darwin) it is kept too, and the answer gives the recovery for a staging that was never promoted |
 | A claim, and whether anyone holds it could not be established | Kept, and reported with what recovery needs |
-| A settled claim, and the record selects it | Already installed. Reported, nothing rebuilt |
+| A settled claim, every component selects it and the pointer names it | Already installed. Reported, nothing rebuilt |
+| A settled claim the record selects for one component and not another | Refused, naming each component's selection; `crw install rollback <dir>` selects every component and swaps nothing |
+| A selected runtime the host cannot launch as it stands (`bin/crw` not a regular file this user may execute, or a link that does not resolve to it) | Refused, with `repair`: the commands that restore it in place (`crw` extracted from the archive the directory is named for, `chmod 755`, `ln -sfn crw` for each link), after which the same install answers already installed. Its directory is named for the archive, so it cannot be built again beside itself |
 | A settled claim, and nothing selects it any more | Kept. It is a runtime that was promoted once, and a process may still be running out of it |
 | An unsettled claim for a runtime that IS selected | An interrupted promotion. Finished rather than rebuilt |
 | A lock held with no claim written | A run between taking the lock and writing its claim. Refused, nothing touched |
@@ -256,8 +285,9 @@ moves while nobody is looking.
 Liveness is the lock and never a recorded process id: inside a container sharing a kernel the same
 process id under the same boot id is a different process. Where `flock` is unavailable the answer is
 that nobody could tell, and an owner nobody could establish is never read as an owner that is gone.
-Deciding and acting are one step, under a second lock beside the directory, so two retries that
-both find the same abandoned staging cannot both act on it.
+Deciding and acting are one step, under the directory's own `<env>.crw-lock` and then the promotion
+lock ([the lock order](#the-order-a-swap-commits-in)), so two retries that both find the same
+abandoned staging cannot both act on it.
 
 ### Reading whether it is safe to swap
 
@@ -335,7 +365,19 @@ and unsettled, which the next run recognises and finishes rather than rebuilds.
 Ownership of the pointer is established from the record before it is replaced. Renaming over an
 existing symlink succeeds whoever created it, so a `current` this host record never recorded
 placing is left alone; a real directory at that path fails the rename outright, which is the safe
-direction.
+direction. The pointer placed is then proved: it has to resolve, with no loop and nothing dangling,
+to the runtime directory itself by identity, and `<pointer>/bin/crw` has to be a regular file this
+user may execute.
+
+Every `crw install` command takes its locks in one order ([decision 33](port/decisions.md)): a
+runtime directory's `<env>.crw-lock` first, then the host-wide promotion lock, then the host
+record's own `.crw-lock` inside both. The settings records' locks, a claim's and the launcher
+copy's are leaves: nothing else is taken while one is held. It is runtime_install.py's order too.
+Every wait before a command's first write ends when the command is interrupted (SIGINT, SIGTERM,
+SIGHUP): it stops waiting, writes nothing and says so (`register-mcp` and `hook` answer the outcome
+`interrupted`). A wait inside a sequence already under way, such as the restore after a failed
+promotion or the entry drop after a directory was set aside, runs to completion, because stopping
+there would leave the host half-written.
 
 ### What a failed update restores
 
@@ -353,7 +395,8 @@ includes putting it back to absence. A restoration that cannot be read back repo
 pointer and keeps the candidate rather than claiming the rollback completed.
 
 A candidate that is selected, whose record could not be read, or that the pointer names, is kept.
-Otherwise the run removes the directory it created, and the result says whether that removal was
+Otherwise the run drops its install entries and removes the directory it created, through a
+tombstone as [remove](#removing-a-runtime) does, and the result says whether that removal was
 verified: verified means the same archive can be installed again; not verified names the residual
 path and what recovery needs, with the original failure reported beside the cleanup failure.
 
@@ -369,16 +412,24 @@ assumptions; Windows is out of scope rather than approximated.
 
 `crw install rollback` points the owned pointer back at the host record's `outgoing` selection, the
 runtime the last promotion replaced. `crw install rollback <dir>` points it at a runtime directory
-the record lists instead. It runs under the promotion lock with the same gate, ownership,
-second-owner and settings rules as a promotion, commits the selection before the link, and reads
-the pointer back. The runtime it leaves stays installed and becomes the outgoing selection, so a
-second rollback returns to it.
+the record lists exactly, as an install entry's `environment`, instead; an empty `<dir>` is a usage
+error. It takes the target's `<env>.crw-lock` and then the promotion lock
+([the lock order](#the-order-a-swap-commits-in)), finds the target again there and refuses with
+nothing written when the record moved it, and then applies a promotion's gate, ownership and
+second-owner rules, commits the selection before the link, and proves the pointer it placed. The
+runtime it leaves stays installed and becomes the outgoing selection, so a second rollback returns
+to it. Where there is no outgoing selection, a bare rollback refuses and writes nothing.
 
-The target may be a Go runtime or a Python `env-*` runtime the fence installer made. It has to carry
-a settled claim, and nobody may still be building it. A rollback onto a Python runtime restores the
-newest archived Python-era Stop settings before the pointer moves
-([the Stop settings follow the runtime](#the-stop-settings-follow-the-runtime)), and refuses when
-none is archived, because the Stop hook would then reach no adapter.
+The target may be a Go runtime or a Python `env-*` runtime the fence installer made. It has to be
+launchable as it stands, judged without running it, and its claim has to be settled, or unsettled
+with nobody holding it where the record shows a promotion committed it (an exit 3). No rollback
+rewrites the Stop settings ([one Stop settings document](#one-stop-settings-document)). Onto a
+Python runtime it requires the venv to serve that one document before the pointer moves:
+`bin/crw-completion-hook`, `bin/codex-session-relay` and `bin/codex-thread-bridge`, each one's `#!`
+interpreter and the recorded interpreter all resolve to regular files this user may execute, the
+hook script names `codex_session_relay.stopadapter`, the relay package the record lists there is the
+fence release, and every path the settings name through the pointer exists in the venv. Otherwise it
+refuses with nothing changed.
 
 The plugin's declared commands do not follow it there. The native wiring runs
 `current/bin/crw hook --plugin-launch` and execs `current/bin/codex-thread-bridge --plugin-launch`,
@@ -388,7 +439,7 @@ server from starting. Reinstall a plugin revision whose declarations are the Pyt
 then roll the runtime back ([update and roll back](plugin-packaging.md#update-and-roll-back)).
 
 Install rollback is not takeover rollback. `crw install rollback` moves which runtime the pointer
-names and which settings the hook reads. It does not move the store's ownership. After the cutover
+names, and rewrites no settings. It does not move the store's ownership. After the cutover
 the store is owned by the Go runtime, and handing it back to the Python fence release is
 `crw relay takeover rollback --to python --python-relay <path>`, which names the Python relay by
 absolute path and never through the pointer ([cutover rollback](port/cutover.md#rollback)). One does
@@ -401,11 +452,39 @@ fixed today is the plugin payload's, above: the payload goes back before the run
 ## Removing a runtime
 
 `crw install remove <dir>` deletes one `bin-*` or `env-*` runtime directory directly under the
-destination, and only when nothing may still be using it. It refuses a directory the record selects,
-one the pointer names or might name, one with no claim this command or the Python installer wrote,
-one whose claim cannot be read, a staging another run still holds, and any directory a live process
-runs out of: its `/proc/<pid>/exe`, or the interpreter or script its arguments start, resolving
-inside it. Once the directory is gone its install entries leave the host record.
+destination, and only when nothing may still be using it. The directory is judged by file identity,
+so naming it through a symlink, a bind mount or another spelling of the destination passes no check
+its own name fails. It refuses a directory the record selects, one the pointer names or might name,
+one with no claim this command or the Python installer wrote, one whose claim cannot be read, a
+staging another run still holds, any directory a live process runs out of (its `/proc/<pid>/exe`,
+its working directory, or what its arguments run, resolving inside it, and every relay daemon a
+`daemon.json` or scope claim records alive), and any directory a registration the host reads names
+a path inside: the Stop settings, the bridge record, the cached plugin declarations, the
+`crw-stop-hook.py` copy, `hooks.json` and `config.toml`. A process it cannot rule out or a
+registration it cannot read or judge refuses too, and the answer names it.
+
+The process reading is this host's process table, in this command's PID namespace, and every answer
+that rests on it says so under `processTable`: a process in a container sharing the directory, or on
+another host sharing a network home, is not seen, so run `crw install remove` where the runtime's
+processes run. Where there is no process table it can read (darwin has no procfs), whether a relay
+or a bridge still runs out of the directory cannot be established, and every remove refuses,
+fail-closed, with the recovery by hand under `recoveryRequires`: stop the relay daemon started from
+it (`<dir>/bin/codex-session-relay service stop`) and end every Codex session whose bridge it
+started, delete the directory, then run `crw install status` to see that the host record and the
+pointer still name the runtime you meant. Its install entries stay in the record, where a rollback
+naming it is refused because the directory is gone.
+
+A removal survives a kill. Under the directory's `<env>.crw-lock` and then the promotion lock, the
+directory is renamed in one step to its tombstone, `<destination>/.crw-removing-<name>`; its install
+entries leave the host record in one write, with an `outgoing` that names it; only then is the
+tombstone deleted. A drop that cannot be written renames the directory back and refuses, and a
+deletion that does not finish exits 3 naming the tombstone. A kill anywhere leaves either the whole
+directory or a tombstone. `crw install status` lists every tombstone under `interruptedRemovals`,
+and `crw install remove` of the tombstone, or of the runtime's name when only its tombstone is left,
+finishes it once no process runs out of it and no registration names it. Do not delete a tombstone
+by hand: finishing it also drops what the host record still lists under the runtime's name. A
+tombstone that carries no claim of this command's is somebody else's directory: status reports it
+`ours: false`, and nothing removes it.
 
 What remove cannot see is a command fixed before the update that will start a process later. A
 Python runtime stays while any live or resumable task can still spawn it, whatever owns the store
@@ -417,8 +496,10 @@ Python runtime stays while any live or resumable task can still spawn it, whatev
 Three read-only commands, each answering a different question:
 
 - `crw install status` answers what a replacement actually left: what the host record selects, what
-  the owned pointer names and whether they agree, every runtime directory with its claim, the
-  outgoing selection, the promotion lock and the two settings records.
+  the owned pointer names and whether they agree, whether the record's pointer is the fixed
+  destination's (`destinationAgrees`, with the repair when it is not), every runtime directory with
+  its claim, every unfinished removal (`interruptedRemovals`), the outgoing selection, the promotion
+  lock and the two settings records.
 - `crw doctor` is the host diagnosis: the host record reading, which runtime kind is selected, the
   Codex CLI version against the one the wiring was measured on, the App Server observed through the
   selected bridge, the pointer, the promotion lock, the settings records and every executable they
@@ -715,8 +796,9 @@ this adapter for Stop (the user-owned registration, refused by name, because two
 twice on every Stop), settings already there that this command cannot act on, and
 `CRW_COMPLETION_HOOK_CONFIG`, refused while it is set, because the plugin's hook reads only the
 Codex home and never that override. Settings that already say something else are refused rather
-than overwritten, because they carry the mode; Python-era settings are replaced only while the
-pointer names a Go runtime ([the Stop settings follow the runtime](#the-stop-settings-follow-the-runtime)).
+than overwritten, because they carry the mode. On a Go host, Python-era settings are replaced only
+by settings that record the same host facts; other flags answer `config_differs`, naming the
+differing fields and the repair ([one Stop settings document](#one-stop-settings-document)).
 The run registers nothing and leaves the hook file untouched. Written, registered and observed to
 have fired stay three separate claims.
 
@@ -899,14 +981,15 @@ that could not be made is unreadable, never `false`, and never the value of the 
 
 ### Running the combination against a real host
 
-A real combination is an operator action, not a check. It needs a destination, a Codex home, a host
-record and a state directory that are yours to change, and it establishes nothing until it is
-recorded. The block names the destination, the host record and the Codex home on every command,
-and the state directory wherever one is read, because none of them derives from another:
-`--codex-home` alone would move the default pointer and host record while carrying the Stop settings
-into a different Codex home. The live half reaches this runtime only through the plugin's declared
-commands, so `<destination>` has to be `.local/share/crw-runtime` under the `HOME` the Codex process
-runs with, and `<codex-home>` the Codex home that process reads. Until todo 43 the Go build cannot
+A real combination is an operator action, not a check. It needs a home, a Codex home, a host record
+and a state directory that are yours to change, and it establishes nothing until it is recorded. The
+destination is `$HOME/.local/share/crw-runtime` of the `HOME` the commands run under, and the live
+half reaches this runtime only through the plugin's declared commands, so run the block under the
+`HOME` the Codex process runs with. The block names the host record and the Codex home on every
+command, and the state directory wherever one is read, because none of them derives from another:
+the Codex home is where the settings the plugin reads are written, and the host record defaults to
+`$XDG_STATE_HOME/codex-relay-workflow/host-record.json`, whatever the Codex home. `<codex-home>` is
+the Codex home that process reads. Until todo 43 the Go build cannot
 serve a store in that `HOME`'s default relay state directory
 ([the live-state guard](port/cutover.md#the-live-state-guard-until-todo-43)), so on a host whose
 relay store is that one, or that still runs the Python runtime, the procedure waits for
@@ -933,21 +1016,21 @@ fi
 # then selects.
 # The exit status belongs IN the receipt: a receipt that kept the result and lost the status
 # cannot say whether the install refused, or that a 3 means the change landed.
-<scratch>/crw install install --release <tag> --dest <destination> --record <record> \
+<scratch>/crw install install --release <tag> --record <record> \
     --codex-home <codex-home> --state <state> --socket <socket> > <receipt>/install.json
 printf 'install exit=%s\n' "$?" > <receipt>/install.exit
 
-crw=<destination>/current/bin/crw
+crw="$HOME/.local/share/crw-runtime/current/bin/crw"
 
-"$crw" install register-mcp --owner plugin --dest <destination> --record <record> \
+"$crw" install register-mcp --owner plugin --record <record> \
     --codex-home <codex-home> --execution-policy <policy-file> > <receipt>/register-mcp.json
 printf 'register-mcp exit=%s\n' "$?" > <receipt>/register-mcp.exit
 
-"$crw" install hook --owner plugin --dest <destination> --record <record> \
+"$crw" install hook --owner plugin --record <record> \
     --codex-home <codex-home> --socket <socket> > <receipt>/hook.json
 printf 'hook exit=%s\n' "$?" > <receipt>/hook.exit
 
-"$crw" doctor --dest <destination> --record <record> --codex-home <codex-home> \
+"$crw" doctor --record <record> --codex-home <codex-home> \
     --state <state> --socket <socket> > <receipt>/doctor.json
 printf 'doctor exit=%s\n' "$?" > <receipt>/doctor.exit
 
@@ -1004,7 +1087,9 @@ runtime, the fence release that step 0 of [the cutover](port/cutover.md#step-0-d
 deploys, and it is the rollback path until the Python execution path is removed (todo 44). It
 shares the destination, the owned pointer, the host record, the promotion lock and both settings
 files with `crw install`; what it installs is a Python virtual environment,
-`<destination>/env-1-<digest>`, built from this checkout's packages.
+`<destination>/env-1-<digest>`, built from this checkout's packages. It still takes `--dest`, and on
+a host `crw install` also serves, `<destination>` has to be `~/.local/share/crw-runtime`:
+`crw install` refuses a host record whose pointer names another link.
 
 | Command | What it does |
 | --- | --- |

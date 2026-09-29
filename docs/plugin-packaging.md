@@ -248,7 +248,9 @@ not carry, and each needs a step the installation cannot take for you.
    the `crw` from that release. It installs under `~/.local/share/crw-runtime`, its only
    destination (it has no `--dest`). A runtime runtime_install.py placed under another `--dest`,
    or a pointer that still names a Python `env-*` runtime, is one neither command starts: the hook
-   then releases every Stop without a word, and the server exits as it starts.
+   then releases every Stop without a word, and the server exits as it starts. `crw install`
+   refuses a host record whose pointer names such another link, naming the repair, and
+   `crw install status` reports it as `destinationAgrees`.
 
    The runtime also has to be a build that reads `--plugin-launch`
    ([decision 26](port/decisions.md)), and the pointer has to name it before the plugin cache
@@ -354,7 +356,7 @@ each declared surface is whether its reference outlives the directory it names.
 | Native Stop command | No, it names the runtime pointer under `$HOME` | Nothing | `crw install install` |
 | Stop launcher, first candidate (legacy bootstrap a cached turn may still hold) | Yes | Falls through to the second candidate | This package |
 | Stop launcher, second candidate at `<CODEX_HOME>/crw-stop-hook.py` | No | Nothing | Placed by the Python fence installer; `crw install` leaves it as it is, and the cutover removes it once the retention scan is clear |
-| Stop settings at `<CODEX_HOME>/crw-completion-hook.json` | No | Nothing | `crw install hook --owner plugin`; a promotion carries them to the runtime kind the pointer is about to name |
+| Stop settings at `<CODEX_HOME>/crw-completion-hook.json` | No | Nothing | `crw install hook --owner plugin`; one document serves a Go and a Python runtime through the pointer, and no promotion or rollback rewrites it. The relay host's Python-era document is replaced once, by its first Go install |
 | Adapter, relay and bridge executables | No, they sit under the installer pointer | Nothing | `crw install install` |
 | Hook document path in the run identifier | Yes | Held as an identifier and never re-read | The host |
 | MCP start `cwd` and `args` | Yes | At one measured replacement the host started bridges again from the new version directory; at the other none was seen to start: the bridges already running kept running from the removed directory, and a thread that resumed was given one from the new directory. Either way a bridge started from the new directory runs under the bridge record as it stands then. Both measured on the host; what decides between the two is not | The host |
@@ -730,9 +732,11 @@ name a runtime that reads `--plugin-launch` before the cache takes a payload who
 pass it. Going back, the package moves first. Reinstall a revision whose Stop declaration is the
 Python bootstrap before `crw install rollback` points at a runtime without that flag, whether a
 Python `env-*` runtime or a Go runtime built before decision 26. That bootstrap reaches either
-kind through the Stop settings `crw install` leaves for it, and a rollback to a Python runtime
-restores the Python-era settings. In the other order, every Stop in between is released
-without a record ([the native wiring](#the-native-wiring)).
+kind through the one Stop settings document `crw install` writes: `/usr/bin/env
+<destination>/current/bin/crw-completion-hook` is the Go hook on a Go runtime and the fence
+release's console script on a venv, and no rollback rewrites it
+([one Stop settings document](runtime-install.md#one-stop-settings-document)). In the other order,
+every Stop in between is released without a record ([the native wiring](#the-native-wiring)).
 
 A rollback past the bridge record's version installs, and then its launcher refuses the record. A
 launcher that predates version 2 starts no bridge under a version-2 record: measured in isolation,
