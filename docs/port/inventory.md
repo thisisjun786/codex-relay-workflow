@@ -28,7 +28,7 @@ differ, when a line count differs from `wc -l`, when an owning issue is missing,
 
 ## Files
 
-Total non-test lines: 101442
+Total non-test lines: 101530
 
 | path | lines | invoked | runs | owner | disposition | consumer_search | removal_trigger |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -94,7 +94,7 @@ Total non-test lines: 101442
 | `packages/codex-session-relay/src/codex_session_relay/routes.py` | 287 | imported by completion, digest, intake, projects, routing | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/routing.py` | 282 | imported by cli | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/scope.py` | 418 | imported by daemon, delivery, editregion, manifest, receipts; Linux F_SETLEASE (:194-216) | relay host | CRW-154 | port | - | - |
-| `packages/codex-session-relay/src/codex_session_relay/service.py` | 2179 | imported by cli (`daemon`, `service ...`); spawns the daemon worker | relay host | CRW-155 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/service.py` | 2194 | imported by cli (`daemon`, `service ...`); spawns the daemon worker | relay host | CRW-155 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/settings.py` | 866 | imported by assignment, bridge_adapter, cli, fakehost, faultsweep, managed, packets, receiver, registry | relay host | CRW-154 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/stopadapter.py` | 1376 | console script `crw-completion-hook` (stopadapter:main); started by the plugin launcher crw_stop_hook.py via `adapterEntryPoint` at every Stop | end user + relay host | CRW-156 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/store.py` | 2954 | imported by bridge_adapter, cli, declarations, dispositions, omitted, service, supervisorchannel | relay host | CRW-152 | port | - | - |
@@ -121,7 +121,7 @@ Total non-test lines: 101442
 | `scripts/check_operations_contract.py` | 241 | CI: scripts/ci/contracts.py:12 (operations fixtures replay) | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/contracts.py` | 43 | CI: ci.yml:55 `python3 scripts/ci/contracts.py` | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/gate.py` | 45 | CI: ci.yml:122 required-checks gate | dev/CI | CRW-160 | port | - | - |
-| `scripts/ci/packages.py` | 258 | CI: ci.yml:104 per-package pytest (RELAY_CONFORMANCE_REQUIRED=1) | dev/CI | CRW-160 | port | - | - |
+| `scripts/ci/packages.py` | 331 | CI: ci.yml:104 per-package pytest (RELAY_CONFORMANCE_REQUIRED=1) | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/plugin.py` | 964 | CI: ci.yml:54; spawned by crw_transition/steps.py:562 (`--payload`) | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/scope.py` | 155 | CI: ci.yml:39 path-scope selection | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/validate.py` | 145 | CI: ci.yml:53 link/metadata validation | dev/CI | CRW-160 | port | - | - |
