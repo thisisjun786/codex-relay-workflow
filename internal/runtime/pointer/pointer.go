@@ -67,10 +67,32 @@ func Read(path string) Answer {
 	return Answer{State: Link, Target: target, Detail: "the pointer names " + target}
 }
 
+// RefusedError is Place declining a path whose state it may not place over: somebody's real
+// file or directory (NOT_A_LINK), or a path whose state could not be read (UNREACHABLE).
+type RefusedError struct {
+	Path   string
+	Answer Answer
+}
+
+func (e *RefusedError) Error() string {
+	return "no pointer is placed at " + e.Path + ": it is " + e.Answer.State + ": " + e.Answer.Detail
+}
+
 // Place points this pointer at target atomically, replacing only a link: a temporary link
-// beside it, then a rename. Renaming over a real directory fails, which is the safe direction;
-// whether this command owns an existing link is the caller's question, asked before this.
+// beside it, then a rename. Anything else at the path is refused before anything is written,
+// with a *RefusedError naming the state, because a rename replaces a regular file as readily as
+// a link (only a directory makes it fail). Whether this command owns an existing link is the
+// caller's question, asked before this. The lstat and the rename are two steps, so a caller
+// holds the promotion lock (record.Exclusive) around its check and this placement, as
+// runtime_install.py does and the installer of todo 38 does; that keeps every writer that
+// places a pointer out of the gap between them.
+//
+// pointer.place has no such check: os.replace over a regular file succeeds, and only its
+// callers' usable() check under the lock keeps it from destroying one.
 func Place(path, target string) error {
+	if answer := Read(path); !Usable(answer.State) {
+		return &RefusedError{Path: path, Answer: answer}
+	}
 	parent := filepath.Dir(path)
 	if err := os.MkdirAll(parent, 0o777); err != nil {
 		return err

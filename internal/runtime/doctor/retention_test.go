@@ -443,3 +443,100 @@ func TestRetentionScanExpandsThePluginRootInTheCacheOnly(t *testing.T) {
 		t.Fatalf("unreadable %v", got)
 	}
 }
+
+// surfaceRow is one row's entry in the report's surfaces.
+func surfaceRow(t *testing.T, report record.Object, row int64) record.Object {
+	t.Helper()
+	for _, raw := range golden.List(record.Get(report, "surfaces")) {
+		if one := golden.Obj(raw); record.Get(one, "row") == row {
+			return one
+		}
+	}
+	t.Fatalf("no surface row %d", row)
+	return nil
+}
+
+// Row 6 reads the kernel's lock table to its end or says it did not: a lock table whose read
+// fails part way (a line longer than the reader takes, or a table that cannot be read at all
+// once open) leaves row 6 unscanned and the table listed as unreadable, never scanned with no
+// holder found.
+func TestRetentionScanLeavesLockHoldersUnscannedWhenTheLockTableFailsPartWay(t *testing.T) {
+	for name, layout := range map[string]func(t *testing.T, locks string){
+		"overlong line": func(t *testing.T, locks string) {
+			write(t, locks, "1: FLOCK  ADVISORY  WRITE 1 00:00:1 0 EOF\n2: "+strings.Repeat("x", 70000)+"\n3: FLOCK  ADVISORY  WRITE 2 00:00:2 0 EOF\n", 0o644)
+		},
+		"unreadable once open": func(t *testing.T, locks string) { mkdir(t, locks) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHost(t)
+			write(t, filepath.Join(h.state, "codex-session-relay", "scope-1", "managed-start-"+strings.Repeat("c", 64)+".lock"), "", 0o600)
+			proc := t.TempDir()
+			mkdir(t, filepath.Join(proc, "self"))
+			locks := filepath.Join(proc, "locks")
+			layout(t, locks)
+			report := h.scanProc(t, proc)
+			if row := surfaceRow(t, report, 6); record.Get(row, "scanned") != false {
+				t.Errorf("row 6 scanned from a lock table read part way: %s", golden.Canon(row))
+			}
+			if got := unreadable(report); !listed(got, locks) {
+				t.Errorf("the lock table is not listed as unreadable: %v", got)
+			}
+			if record.Get(report, "clear") != false {
+				t.Error("a scan whose lock table was read part way is clear")
+			}
+		})
+	}
+}
+
+// An MCP server's command is one executable path, not a command line: Codex execs it with args
+// as a separate list. A path holding a space, here a link to a venv console script, is resolved
+// whole and reported, in config.toml (row 10) and in a cached plugin's MCP declaration (row 5).
+func TestRetentionScanResolvesAnMCPCommandAsOnePath(t *testing.T) {
+	h := newHost(t)
+	env := h.pythonVenv(t)
+	spaced := filepath.Join(h.home, "my tools", "relay")
+	link(t, filepath.Join(env, "bin", "codex-session-relay"), spaced)
+	write(t, filepath.Join(h.codex, "config.toml"), "[mcp_servers.spaced]\ncommand = \""+spaced+"\"\nargs = [\"serve\"]\n", 0o600)
+	cache := filepath.Join(h.codex, "plugins", "cache", "crw", "crw", "0.4.0+test")
+	write(t, filepath.Join(cache, "wiring", "mcp.json"), `{"mcpServers": {"spaced": {"command": "`+spaced+`", "args": ["serve"]}}}`, 0o644)
+	report := h.scan(t)
+	want := []string{
+		"5:mcpServers.spaced.command:" + spaced,
+		"10:mcp_servers.spaced.command:" + spaced,
+	}
+	if got := references(report); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("python references\n got %v\nwant %v", got, want)
+	}
+	for _, raw := range golden.List(record.Get(report, "pythonReferences")) {
+		if r := golden.Obj(raw); record.Get(r, "resolves") != filepath.Join(env, "bin", "codex-session-relay") {
+			t.Errorf("not resolved to the console script: %s", golden.Canon(r))
+		}
+	}
+	if got := unreadable(report); len(got) != 0 {
+		t.Fatalf("unreadable %v", got)
+	}
+}
+
+// A bare command word that no PATH directory holds as an executable file runs something the
+// scan cannot see (another PATH, a shell function): it is listed as unreadable with its row,
+// source and field, for a hook command (row 9) and an MCP server's command (row 10), and the
+// scan is not clear.
+func TestRetentionScanListsACommandNotFoundOnPath(t *testing.T) {
+	h := newHost(t)
+	h.env = scope.Env{"HOME=" + h.home, "XDG_STATE_HOME=" + h.state, "CODEX_HOME=" + h.codex, "PATH=" + filepath.Join(h.home, "bin")}
+	write(t, filepath.Join(h.codex, "hooks.json"), `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "crw-relay-not-installed stop", "timeout": 10}]}]}}`, 0o600)
+	write(t, filepath.Join(h.codex, "config.toml"), "[mcp_servers.gone]\ncommand = \"crw-bridge-not-installed\"\n", 0o600)
+	report := h.scan(t)
+	got := unreadable(report)
+	for _, want := range [][]string{
+		{"row 9", filepath.Join(h.codex, "hooks.json"), "hooks.Stop[0].hooks[0].command", `"crw-relay-not-installed"`, filepath.Join(h.home, "bin")},
+		{"row 10", filepath.Join(h.codex, "config.toml"), "mcp_servers.gone.command", `"crw-bridge-not-installed"`, filepath.Join(h.home, "bin")},
+	} {
+		if !listed(got, want...) {
+			t.Errorf("no unreadable entry names %v: %v", want, got)
+		}
+	}
+	if len(got) != 2 || record.Get(report, "clear") != false {
+		t.Fatalf("unreadable %v, clear %v", got, record.Get(report, "clear"))
+	}
+}

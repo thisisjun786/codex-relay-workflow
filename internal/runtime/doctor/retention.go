@@ -307,40 +307,50 @@ func globEscape(path string) string {
 	return b.String()
 }
 
-// commandWords classifies the words of one command line: a word naming a Python interpreter,
-// a .py path, or a path (or a first word found on PATH) that resolves to Python is a reference.
-// ~, $HOME, $CODEX_HOME and (for a cached plugin version, pluginRoot) ${PLUGIN_ROOT} are
-// expanded as the shell would; a word needing any other expansion is unreadable.
-func (s *scan) commandWords(row int, source, fieldName, line, base, pluginRoot string, first bool) {
+// commandWords classifies the words of one hook command, which Codex runs through a shell: the
+// line is split into words as sh splits it, and each is judged by argvWord, the first as the
+// command.
+func (s *scan) commandWords(row int, source, fieldName, line, base, pluginRoot string) {
 	for i, word := range ShellWords(line) {
-		if strings.ContainsAny(word, "\n") {
-			continue // a -c program, not something executed by name
-		}
-		expanded, missing := s.expander(pluginRoot).Expand(word)
-		var e Executable
-		switch {
-		case missing != "" || strings.Contains(expanded, "/") || strings.HasSuffix(expanded, ".py"):
-			var ok bool
-			if e, ok = s.word(row, source, fieldName, word, base, pluginRoot); !ok {
-				continue
-			}
-		case PythonName(expanded):
-			e = Executable{Value: word, Kind: KindPythonInterpreter, Python: true, Detail: "names a Python interpreter"}
-			if found, err := lookPath(expanded, s.o.Env.Get("PATH")); err == nil {
-				e.Resolves = found
-			}
-		case i == 0 && first:
-			found, err := lookPath(expanded, s.o.Env.Get("PATH"))
-			if err != nil {
-				continue
-			}
-			e = Classifier{Pointer: s.pointer, Expand: s.expander(pluginRoot)}.Classify(found, "")
-			e.Value = word
-		default:
-			continue
-		}
-		s.judge(row, source, fieldName, e)
+		s.argvWord(row, source, fieldName, word, base, pluginRoot, i == 0)
 	}
+}
+
+// argvWord classifies one word as it reaches exec: a word naming a Python interpreter, a .py
+// path, or a path (or, for the command word, the file PATH finds for a bare name) that resolves
+// to Python is a reference. ~, $HOME, $CODEX_HOME and (for a cached plugin version, pluginRoot)
+// ${PLUGIN_ROOT} are expanded as the shell would; a word needing any other expansion, and a
+// bare command word that no PATH directory holds as an executable file, are unreadable: what
+// they run is unknown.
+func (s *scan) argvWord(row int, source, fieldName, word, base, pluginRoot string, command bool) {
+	if strings.ContainsAny(word, "\n") {
+		return // a -c program, not something executed by name
+	}
+	expanded, missing := s.expander(pluginRoot).Expand(word)
+	var e Executable
+	switch {
+	case missing != "" || strings.Contains(expanded, "/") || strings.HasSuffix(expanded, ".py"):
+		var ok bool
+		if e, ok = s.word(row, source, fieldName, word, base, pluginRoot); !ok {
+			return
+		}
+	case PythonName(expanded):
+		e = Executable{Value: word, Kind: KindPythonInterpreter, Python: true, Detail: "names a Python interpreter"}
+		if found, err := lookPath(expanded, s.o.Env.Get("PATH")); err == nil {
+			e.Resolves = found
+		}
+	case command:
+		found, err := lookPath(expanded, s.o.Env.Get("PATH"))
+		if err != nil {
+			s.unresolved(row, source, fieldName, word, "names a command that no directory on the scan's PATH ("+s.o.Env.Get("PATH")+") holds as an executable file, so what it runs is unknown")
+			return
+		}
+		e = Classifier{Pointer: s.pointer, Expand: s.expander(pluginRoot)}.Classify(found, "")
+		e.Value = word
+	default:
+		return
+	}
+	s.judge(row, source, fieldName, e)
 }
 
 func lookPath(name, path string) (string, error) {
@@ -374,7 +384,7 @@ func (s *scan) hookCommands(row int, path string, document Object, base, pluginR
 				if seconds, ok := number(record.Get(one, "timeout")); ok && event.Key == "Stop" {
 					s.timeouts = append(s.timeouts, seconds)
 				}
-				s.commandWords(row, path, "hooks."+event.Key+"["+strconv.Itoa(g)+"].hooks["+strconv.Itoa(h)+"].command", command, base, pluginRoot, true)
+				s.commandWords(row, path, "hooks."+event.Key+"["+strconv.Itoa(g)+"].hooks["+strconv.Itoa(h)+"].command", command, base, pluginRoot)
 			}
 		}
 	}
@@ -386,15 +396,17 @@ func asObject(v any) Object {
 	return o
 }
 
-// mcpServers walks an MCP document ({"mcpServers": {name: {"command", "args"}}}).
+// mcpServers walks an MCP document ({"mcpServers": {name: {"command", "args"}}}). Codex starts
+// an MCP server without a shell: command is one executable path and each args entry one argv
+// word, so neither is split into words (a path holding a space is one path).
 func (s *scan) mcpServers(row int, path string, servers Object, base, pluginRoot string) int {
 	for _, server := range servers {
 		entry := asObject(server.Value)
 		if command, ok := record.Get(entry, "command").(string); ok && command != "" {
-			s.commandWords(row, path, "mcpServers."+server.Key+".command", command, base, pluginRoot, true)
+			s.argvWord(row, path, "mcpServers."+server.Key+".command", command, base, pluginRoot, true)
 		}
 		for i, arg := range words(record.Get(entry, "args")) {
-			s.commandWords(row, path, "mcpServers."+server.Key+".args["+strconv.Itoa(i)+"]", arg, base, pluginRoot, false)
+			s.argvWord(row, path, "mcpServers."+server.Key+".args["+strconv.Itoa(i)+"]", arg, base, pluginRoot, false)
 		}
 	}
 	return len(servers)
@@ -824,6 +836,12 @@ func (s *scan) lockHolders(exclude map[int]bool) {
 			holders[pid] = path
 		}
 	}
+	// A read that fails part way leaves every line after it unread, and a holder may be on one
+	// of them: the holders found so far are still judged, and the row is not scanned.
+	partial := lines.Err()
+	if partial != nil {
+		s.unread(filepath.Join(s.o.Proc, "locks"), partial)
+	}
 	pids := make([]int, 0, len(holders))
 	for pid := range holders {
 		pids = append(pids, pid)
@@ -834,6 +852,10 @@ func (s *scan) lockHolders(exclude map[int]bool) {
 			continue
 		}
 		s.inspect(6, holders[pid], "holder", pid)
+	}
+	if partial != nil {
+		s.surface(6, false, len(files), "the kernel's lock table could not be read to its end, so the holders of "+strconv.Itoa(len(files))+" managed-start locks are unknown")
+		return
 	}
 	s.surface(6, true, len(files), "the /proc/locks holders of every managed-start lock, less the pids row 3 reports")
 }
@@ -856,7 +878,8 @@ func (s *scan) launcherCopy() {
 	}
 }
 
-// configToml is row 10: the command and args of every mcp_servers table.
+// configToml is row 10: the command and args of every mcp_servers table, each one argv word as
+// Codex passes it to exec (mcpServers).
 func (s *scan) configToml(_ context.Context) {
 	path := filepath.Join(s.o.CodexHome, "config.toml")
 	read := reading.ReadText(path, "config.toml")
@@ -884,12 +907,12 @@ func (s *scan) configToml(_ context.Context) {
 	for _, name := range names {
 		entry, _ := servers[name].(map[string]any)
 		if command, ok := entry["command"].(string); ok && command != "" {
-			s.commandWords(10, path, "mcp_servers."+name+".command", command, s.o.CodexHome, "", true)
+			s.argvWord(10, path, "mcp_servers."+name+".command", command, s.o.CodexHome, "", true)
 		}
 		if args, ok := entry["args"].([]any); ok {
 			for i, arg := range args {
 				if text, ok := arg.(string); ok {
-					s.commandWords(10, path, "mcp_servers."+name+".args["+strconv.Itoa(i)+"]", text, s.o.CodexHome, "", false)
+					s.argvWord(10, path, "mcp_servers."+name+".args["+strconv.Itoa(i)+"]", text, s.o.CodexHome, "", false)
 				}
 			}
 		}

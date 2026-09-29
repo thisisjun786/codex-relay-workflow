@@ -284,3 +284,50 @@ func TestCandidateSchemaIsAskedOfTheCandidate(t *testing.T) {
 		}
 	}
 }
+
+// A candidate that failed is not asked again for what it printed on the way out: a nonzero
+// exit or a signal after a well-formed answer leaves the schema cell unread, so a gate whose
+// other cells are clear stays UNESTABLISHED rather than ALLOWED. What it printed is kept as a
+// diagnostic. An answer of readable false at exit 0 is the candidate's own answer and is kept.
+func TestAFailedCandidateIsUnreadableWhateverItPrinted(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	answer := `{"readable": true, "objects": {}, "schemaVersion": "1", "detail": null}`
+	clear := map[string]swapgate.Object{
+		"daemon":   swapgate.Cell("STOPPED", true, "not running", nil, false),
+		"inFlight": swapgate.Cell(swapgate.NoAttempts, true, "no attempt is open", nil, swapgate.NoAttempts),
+	}
+	// No store exists at this selection, so a readable candidate answer would settle the cell
+	// as NO_STORE and the gate as ALLOWED.
+	storeAnswer := swapgate.StoreSchema(ctx, filepath.Join(dir, "state"), "")
+	for _, failure := range []struct{ name, tail, ended string }{
+		{"exits-1", "echo broken >&2\nexit 1\n", "exit status 1"},
+		{"killed", "kill -KILL $$\n", "signal: killed"},
+	} {
+		candidate := filepath.Join(dir, failure.name)
+		script := "#!/bin/sh\nprintf '%s\\n' '" + answer + "'\n" + failure.tail
+		if err := os.WriteFile(candidate, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		got := swapgate.CandidateSchema(ctx, candidate)
+		detail, _ := record.Get(got, "detail").(string)
+		if record.Get(got, "readable") != false || record.Get(got, "objects") != nil || !strings.Contains(detail, failure.ended) || !strings.Contains(detail, "stdout: "+answer) {
+			t.Errorf("%s: a failed candidate's JSON was read: %s", failure.name, golden.Canon(got))
+		}
+		cells := map[string]swapgate.Object{"storeSchema": swapgate.SchemaCell(storeAnswer, got)}
+		for name, cell := range clear {
+			cells[name] = cell
+		}
+		if verdict := record.Get(swapgate.Decide(cells), "verdict"); verdict != swapgate.Unestablished {
+			t.Errorf("%s: a failed candidate made the gate %v", failure.name, verdict)
+		}
+	}
+	refusing := filepath.Join(dir, "refusing")
+	script := "#!/bin/sh\nprintf '%s\\n' '{\"readable\": false, \"objects\": null, \"schemaVersion\": \"1\", \"detail\": \"no DDL\"}'\n"
+	if err := os.WriteFile(refusing, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := swapgate.CandidateSchema(ctx, refusing); record.Get(got, "readable") != false || record.Get(got, "detail") != "no DDL" {
+		t.Fatalf("a candidate's own readable-false answer at exit 0 was not kept: %s", golden.Canon(got))
+	}
+}

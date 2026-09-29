@@ -970,8 +970,9 @@ directory. A word that needs any other expansion is listed as unreadable. It rep
   2); a hold is not a Python reference, it is a reason to wait;
 - `unscanned` and `unreadable`: the rows the scan did not read, and everything it could not
   read or resolve. That covers files, references whose target cannot be read, words it cannot
-  expand, and alive pids whose `exe` or `cmdline` cannot be read. Nothing the scan cannot judge
-  is dropped;
+  expand, a bare command word that no directory on the scan's PATH holds as an executable file,
+  and alive pids whose `exe` or `cmdline` cannot be read. Nothing the scan cannot judge is
+  dropped;
 - `clear`: true only when all four are empty. Todo 43 removes nothing until `clear` is true.
 
 | # | Surface | What counts |
@@ -980,7 +981,7 @@ directory. A word that needs any other expansion is listed as unreadable. It rep
 | 2 | `<journalRoot>/<day>/*.json` rows (journalRoot from `crw-completion-hook.json`, else `<CODEX_HOME>/crw-completion-hook/journal`) | a row younger than twice the longest configured Stop hook timeout (the settings `timeoutSeconds` and every cached or user Stop hook `timeout`, at least 10 s), read from every day directory the window reaches back into: a live hold. A window too large for a duration holds every row; a NaN timeout leaves the row unscanned |
 | 3 | every relay state directory's `daemon.json` (the state root, each scope under it, and `CODEX_SESSION_RELAY_STATE`) | a supervisor or worker pid whose start time and boot still match the record (a zombie is not alive), running a Python interpreter or a `.py` program. Where no process table can be read (darwin has no procfs), the row is unscanned |
 | 4 | `<CODEX_HOME>/crw-*.json` (`crw-completion-hook.json`, `crw-bridge-mcp.json`, any other) | `relayExecutable`, `bridgeExecutable`, `adapterEntryPoint`, `adapterInterpreter`, `interpreterPath`, `command`, `args`, each resolved |
-| 5 | `<CODEX_HOME>/plugins/cache/crw/crw/*/wiring/hooks/*.json`, `wiring/mcp.json`, `.mcp.json` | each word of every hook and MCP command: a Python interpreter name, a `.py` path, or a path (or first word on PATH) that resolves to Python |
+| 5 | `<CODEX_HOME>/plugins/cache/crw/crw/*/wiring/hooks/*.json`, `wiring/mcp.json`, `.mcp.json` | each word of every hook command (split as the shell splits it), and an MCP server's `command` and each of its `args` as one word each (Codex runs an MCP server without a shell, so a path holding a space is one path): a Python interpreter name, a `.py` path, or a path (or a command word on PATH) that resolves to Python |
 | 6 | every `managed-start-*.lock` in those state directories | its `/proc/locks` flock holder, judged as in row 3, less the pids row 3 reports |
 | 7 | resumable Codex threads (`crw bridge` `list_threads`) younger than the host's turn-command cache lifetime | not read by todo 37: it needs the cache lifetime todo 43 records on codex-cli 0.154.0, so the scan reports this row unscanned and is never `clear` until todo 43 adds it |
 | 8 | `<CODEX_HOME>/crw-stop-hook.py` | the launcher copy the cached Python bootstrap falls back to, whenever it exists |

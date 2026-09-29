@@ -471,6 +471,13 @@ func DeclaredSchema(ctx context.Context) Object {
 
 // CandidateSchema is runtime_install.candidate_tables for a Go candidate: executed as the
 // candidate's own binary, so the answer is the schema that build would install.
+//
+// Only an answer from a candidate that exited 0 is read. `crw doctor declared-schema --json`
+// exits 0 whenever it has printed its answer, including an answer of readable false, so a
+// nonzero exit or a signal means the candidate failed, and whatever it printed first is kept as
+// a diagnostic rather than read as its schema: a failed candidate must never make the gate
+// ALLOWED. runtime_install._asked parses stdout whatever the exit status, which is the same
+// defect on the Python side.
 func CandidateSchema(ctx context.Context, binary string) Object {
 	argv := []string{binary, "doctor", "declared-schema", "--json"}
 	command := strs(argv)
@@ -484,7 +491,14 @@ func CandidateSchema(ctx context.Context, binary string) Object {
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	var exit *exec.ExitError
-	if err != nil && !errors.As(err, &exit) {
+	if errors.As(err, &exit) {
+		ended := exit.ProcessState.String()
+		if run.Err() != nil {
+			ended += " after " + run.Err().Error()
+		}
+		return fail("the candidate's declared tables were not answered: the candidate ended with " + ended + ", so nothing it printed is read as its schema" + diagnostics(stderr.String(), string(out)))
+	}
+	if err != nil {
 		return fail("the candidate's declared tables could not be asked: " + store.PythonOSError(err))
 	}
 	value, decodeErr := reading.Decode(out)
@@ -494,10 +508,28 @@ func CandidateSchema(ctx context.Context, binary string) Object {
 		if said == "" {
 			said = strings.TrimSpace(string(out))
 		}
-		if len(said) > 400 {
-			said = said[len(said)-400:]
-		}
-		return fail("the candidate's declared tables did not answer with JSON: " + said)
+		return fail("the candidate's declared tables did not answer with JSON: " + tail(said))
 	}
 	return record.Set(answer, "command", command)
+}
+
+// diagnostics is what a failed candidate printed, each stream's last 400 characters.
+func diagnostics(stderr, stdout string) string {
+	var said string
+	if text := strings.TrimSpace(stderr); text != "" {
+		said += "; stderr: " + tail(text)
+	}
+	if text := strings.TrimSpace(stdout); text != "" {
+		said += "; stdout: " + tail(text)
+	}
+	return said
+}
+
+// tail is text[-400:], counted in characters as Python counts them.
+func tail(text string) string {
+	runes := []rune(text)
+	if len(runes) > 400 {
+		return string(runes[len(runes)-400:])
+	}
+	return text
 }
