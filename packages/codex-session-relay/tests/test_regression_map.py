@@ -284,7 +284,12 @@ SUMMARIES = {
     ("service.py", None, "_is_live", "function"): ((True,), (("return: False", 4),), ()),
     ("service.py", None, "_worker_identified", "function"):
         ((False,), (("return: False", 3),), ()),
-    ("service.py", None, "alive", "function"): ((False,), (), ()),
+    # Alive until the whole thread group has exited: the pidfd's readiness, a kernel reading
+    # this rule cannot reduce, with the leader's /proc state only for a handle that has no
+    # pidfd. test_service.py reaches it for a zombie leader whose remaining thread holds the
+    # daemon lock, and for supervisors that exit outright.
+    ("service.py", None, "alive", "function"):
+        ((False,), (("return: not exits.poll(0)", 1),), ()),
     # Roots are a list of text, so the false side is reachable from either input alone:
     # anything that is not a list, and any list holding a member that is not text.
     # test_supervisor_live_findings.py hands the record and the answer each shape.

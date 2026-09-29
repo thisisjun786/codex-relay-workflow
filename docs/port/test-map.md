@@ -46,10 +46,10 @@ read by `hook_probe.py` through `scripts/ci/contracts.py`, not by a test file; t
 ## Totals
 
 Files: 124
-Tests: 6152
+Tests: 6163
 Class A: files=16 tests=633
-Class B: files=88 tests=3367
-Class C: files=20 tests=2152
+Class B: files=88 tests=3368
+Class C: files=20 tests=2162
 
 ## Todo 15 bridge property progress (2026-09-25)
 
@@ -255,7 +255,7 @@ write admission against a symlink into a temporary live-state-shaped directory.
 | `packages/codex-session-relay/tests/test_revision_roundtrip.py` | 13 | B | correction lineage across a real needs_changes generation | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
 | `packages/codex-session-relay/tests/test_rolepolicy.py` | 45 | B | task role checked against recorded authorization | - | todo 25 / CRW-154 | go-test: `internal/relay/registry` (todo 25: Test25_ROL1..22, whole answers vs testdata/python_rolepolicy.json) | - |
 | `packages/codex-session-relay/tests/test_schema_conformance.py` | 15 | B | persisted records conform to the frozen schemas | `src/codex_session_relay/schema/*.json`, `codex_session_relay.fakehost` | todo 18 / CRW-152 | go-test: `internal/relay/store` (todo 18) + corpus: records | - |
-| `packages/codex-session-relay/tests/test_service.py` | 123 | B | who owns the daemon and who may stop it | - | todo 29 / CRW-155 | go-test: `internal/relay/daemon` (todo 29) | - |
+| `packages/codex-session-relay/tests/test_service.py` | 124 | B | who owns the daemon and who may stop it | - | todo 29 / CRW-155 | go-test: `internal/relay/daemon` (todo 29) | - |
 | `packages/codex-session-relay/tests/test_settings_hold_naming.py` | 31 | B | settings hold names reason and recovery (CRW-235) | - | todo 25 / CRW-154 | go-test: `internal/relay/registry` (todo 25) | - |
 | `packages/codex-session-relay/tests/test_settings_preservation.py` | 36 | B | execution settings carried; refuse to send without them | - | todo 25 / CRW-154 | go-test: `internal/relay/registry` (todo 25) + go-test: `internal/relay/store` (todo 19: typed queries, guard-index refusals and Python-store parity for the tables this file writes) | - |
 | `packages/codex-session-relay/tests/test_stop_adapter.py` | 18 | A | Stop adapter process: stdin, settings, exit, concurrency, fallback guard deadline | `packages/codex-session-relay/tests/fixtures/stop_event_r1.json` | todo 33 / CRW-156 | corpus: hook | - |
@@ -289,7 +289,7 @@ write admission against a symlink into a temporary live-state-shaped directory.
 | `scripts/ci/tests/test_hook_comparison.py` | 127 | C | off/on hook comparison harness states and its declared readings | - | todo 46 / CRW-159 | go-test: `internal/dev` hook-compare, build tag dev (todo 46) + inventory-check: go/ast scan of the harness (todo 46) | ast over scripts/hook_comparison.py |
 | `scripts/ci/tests/test_install.py` | 9 | C | skill-link install: check/apply, idempotence, foreign paths | - | todo 39 / CRW-158 | go-test: `crw install skills` (todo 39) | importlib load of scripts/install.py |
 | `scripts/ci/tests/test_install_acceptance.py` | 61 | C | new install carried through to recovery of the replaced install | - | todo 38 / CRW-158 | go-test: `internal/runtime/install` (todo 38) + inventory-check: go/ast scan of fixture switches (todo 38) | ast over the installer and its fixture (494 reflective sites) |
-| `scripts/ci/tests/test_packages.py` | 17 | C | packages check never prints success over an empty or skipped run; `--shard` splits whole modules disjointly and completely | - | todo 47 / CRW-160 | drop: packages.py only runs the Python suites and is deleted in todo 44/47; the property (no success over an empty or skipped run) is inherited by todo 9's `CRW_CONTRACT_STRICT=1` skip counting and `go test` exit status; the shard split leaves with the Python suites it divides | importlib load of scripts/ci/packages.py |
+| `scripts/ci/tests/test_packages.py` | 27 | C | packages check never prints success over an empty or skipped run; `--shard` splits whole modules disjointly and completely, balanced on recorded seconds | - | todo 47 / CRW-160 | drop: packages.py only runs the Python suites and is deleted in todo 44/47; the property (no success over an empty or skipped run) is inherited by todo 9's `CRW_CONTRACT_STRICT=1` skip counting and `go test` exit status; the shard split leaves with the Python suites it divides | importlib load of scripts/ci/packages.py |
 | `scripts/ci/tests/test_parent_title.py` | 9 | A | parent-title helper command surface and coverage guard | `plugins/crw/skills/crw-run/scripts/fixtures/titles` | todo 35 / CRW-156 | corpus: skill-scripts (domain added by todo 35) | - |
 | `scripts/ci/tests/test_plugin.py` | 62 | C | plugin package validator vs shapes that install silently wrong | - | todo 47 / CRW-160 | go-test: `crw-dev ci plugin` (todo 47; `internal/dev/ci` Test47_PLG_1..18) | importlib load of scripts/ci/plugin.py |
 | `scripts/ci/tests/test_plugin_transition.py` | 239 | C | manual-to-plugin transition on synthetic hosts | - | todo 39 / CRW-158 | go-test: `crw install transition` (todo 39) | ast/importlib over crw_transition |

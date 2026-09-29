@@ -8,7 +8,9 @@ import contextlib
 import errno
 import json
 import os
+import platform
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -77,6 +79,24 @@ with SingleInstance(service.selection.path):
     while True:
         time.sleep(0.05)
 """
+
+# A worker whose leader thread has exited while another thread still runs and holds the daemon
+# lock in the descriptor table the threads share: the state a multithreaded worker passes
+# through on its way out, held open here until stdin is written. SIGTERM is blocked in every
+# thread, so only SIGKILL ends it. SYS_exit (argv[2]) ends the calling thread alone, where
+# exit_group would end them all.
+LEADER_GONE = """
+import ctypes, fcntl, os, signal, sys, threading
+lock = open(sys.argv[1], "a+")
+fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+threading.Thread(target=lambda: (sys.stdin.buffer.read(1), os._exit(0))).start()
+print(os.getpid(), flush=True)
+ctypes.CDLL(None, use_errno=True).syscall(int(sys.argv[2]), 0)
+"""
+
+# The thread-only exit syscall where the number is known; elsewhere the case is skipped.
+SYS_EXIT = {"x86_64": 60, "aarch64": 93, "riscv64": 93}
 
 
 class _Captured(Exception):
@@ -935,6 +955,51 @@ class Ownership(ServiceTestCase):
         child.wait(timeout=10)
         self.assertIsNone(service.record()["pid"])
         self.assertFalse(service.lock_is_held())
+
+    def test_stop_waits_for_every_thread_of_a_worker_whose_leader_has_exited(self):
+        """A zombie leader is not a finished process.
+
+        A multithreaded worker dying of a signal can show its leader as Z while another thread
+        is still on its way out, holding the descriptor table the threads share and the daemon
+        lock in it. Reading the leader's state reported that worker exited, and stop's final
+        probe then found the lock the remaining thread held and answered a replacement launch
+        that did not exist, leaving the record naming the worker. The remaining thread here
+        outlives SIGTERM, so a stop that trusts the leader's state leaves it running.
+        """
+        sys_exit = SYS_EXIT.get(platform.machine())
+        if sys_exit is None:
+            self.skipTest(f"no thread-only exit syscall is known for {platform.machine()}")
+        service = self.service("z")
+        service.enable(actor="owner")
+        lock = service.selection.path / service_module.DAEMON_LOCK
+        worker = subprocess.Popen(
+            [sys.executable, "-c", LEADER_GONE, str(lock), str(sys_exit)],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+        )
+        self.children.append(worker)
+        self.addCleanup(worker.stdout.close)
+        self.addCleanup(worker.stdin.close)
+        pid = int(worker.stdout.readline())
+        deadline = time.monotonic() + 10.0
+        while service_module.process_state(pid) != "Z":
+            self.assertLess(time.monotonic(), deadline, "the worker's leader never exited")
+            time.sleep(0.01)
+        with service.daemon_lock_if_free() as held:
+            self.assertIsNone(held, "the fixture needs the remaining thread to hold the lock")
+        service.write_record(dict(
+            service.new_record(pid=os.getpid()), pid=None, workerPid=pid,
+            workerStartTicks=service_module.start_ticks(pid),
+        ))
+
+        stopped = service.stop(actor="owner", timeout=0.5)
+
+        self.assertEqual(stopped, {"ok": True, "reason": None, "detail": None,
+                                   "supervisor": "gone", "worker": "exited"})
+        self.assertEqual(worker.wait(timeout=10), -signal.SIGKILL,
+                         "the remaining thread was reached only by the escalation")
+        self.assertIsNone(service.record()["workerPid"])
+        with service.daemon_lock_if_free() as held:
+            self.assertIsNotNone(held, "the stopped worker still holds the daemon lock")
 
     def test_a_supervisor_finishing_normally_is_not_a_replacement(self):
         """Cleanup clears the supervisor's own pid while keeping its launch id.

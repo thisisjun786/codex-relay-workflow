@@ -21,6 +21,7 @@ import json
 import math
 import os
 import pwd
+import select
 import signal
 import stat
 import time
@@ -356,14 +357,28 @@ class ProcessHandle:
         return self.fd is not None
 
     def alive(self) -> bool:
-        """A zombie is not alive.
+        """Alive until every thread of the process has exited. A zombie is not alive.
 
         Its /proc entry survives until its parent reaps it, and holding a pidfd keeps the pid
         reserved, so a liveness check that only asks whether /proc/<pid> exists would wait out
         the whole grace period and then report a terminated process as still running.
+
+        But a zombie LEADER is not a finished process. A multithreaded process dying of a
+        signal can show its leader as Z while another thread is still on its way out, holding
+        the descriptor table the threads share - and with it the daemon lock a supervisor
+        holds and a worker inherits. Reading the leader's /proc state called that process
+        exited, and stop's final probe then found the lock the dying thread still held and
+        reported a replacement launch that did not exist. The pidfd becomes readable only
+        once the whole thread group has exited, after every thread has closed its
+        descriptors, so that is the question asked here: the one the Go runtime asks too.
         """
-        state = process_state(self.pid)
-        return state is not None and state != "Z"
+        if self.fd is None:
+            # Nothing to ask the kernel through. Every caller checks usable first.
+            state = process_state(self.pid)
+            return state is not None and state != "Z"
+        exits = select.poll()
+        exits.register(self.fd, select.POLLIN)
+        return not exits.poll(0)
 
     def send(self, sig) -> bool:
         if self.fd is None:

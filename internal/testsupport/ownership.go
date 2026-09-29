@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -220,7 +221,23 @@ func admitted(ctx context.Context, path string) (ownership.Record, ownership.Sta
 
 // stopped takes the controller lock and the write gate exclusively, creating either 0600 when
 // absent and never replacing one that exists. It fails at once if anything holds them.
-func stopped(dir string, createGate bool) (func() error, error) {
+//
+// The locks are flocks, which belong to the open file description, and a forked child shares
+// every description its parent has open until its exec closes the close-on-exec ones. A process
+// another test of this binary started while a helper held the locks, and that had not reached
+// its exec by the time the helper released them (a busy host delays a new child for
+// milliseconds), kept both locks held, and the next helper on that store failed at once with
+// EWOULDBLOCK against a child of its own binary. So the descriptors are open only under
+// syscall.ForkLock held for reading, which every process start takes for writing across its
+// fork: no child is forked holding them. Nothing done while they are held may start a process,
+// which would wait for this read lock forever.
+func stopped(dir string, createGate bool) (release func() error, err error) {
+	syscall.ForkLock.RLock()
+	defer func() {
+		if err != nil {
+			syscall.ForkLock.RUnlock()
+		}
+	}()
 	controller, err := ownership.Lock(filepath.Join(dir, "takeover.lock"), true, true)
 	if err != nil {
 		return nil, fmt.Errorf("takeover.lock: %w", err)
@@ -229,7 +246,10 @@ func stopped(dir string, createGate bool) (func() error, error) {
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("write-gate.lock (is the store in use?): %w", err), controller.Close())
 	}
-	return func() error { return errors.Join(gate.Close(), controller.Close()) }, nil
+	return func() error {
+		defer syscall.ForkLock.RUnlock()
+		return errors.Join(gate.Close(), controller.Close())
+	}, nil
 }
 
 // initialRecord is the mirror a stopped store's durable stamp implies. An installed takeover's

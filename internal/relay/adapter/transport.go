@@ -158,21 +158,14 @@ func (a *Adapter) Send(ctx context.Context, requestID, thread, message string, s
 	go func() {
 		work, stopWork := context.WithCancel(t.ctx)
 		defer stopWork()
-		var dispatchGate sync.Mutex
-		stopCaller := context.AfterFunc(ctx, func() {
-			dispatchGate.Lock()
-			stopWork()
-			dispatchGate.Unlock()
-		})
+		// Stops a call the caller no longer waits for. It runs on a goroutine of its own, so it
+		// decides nothing: an answer can land before it runs, and guardedSend asks the caller's
+		// ctx.Err before it uses one.
+		stopCaller := context.AfterFunc(ctx, stopWork)
 		defer stopCaller()
 		run, cancel := context.WithTimeout(work, executionBudget)
 		defer cancel()
-		beforeDispatch := func() error {
-			dispatchGate.Lock()
-			defer dispatchGate.Unlock()
-			return ctx.Err()
-		}
-		receipt, err := a.guardedSend(run, requestID, thread, message, settings, guard, beforeDispatch, stopCaller)
+		receipt, err := a.guardedSend(run, requestID, thread, message, settings, guard, ctx.Err)
 		t.mu.Lock()
 		delete(t.recipients, thread)
 		t.mu.Unlock()
@@ -191,7 +184,21 @@ func (a *Adapter) Send(ctx context.Context, requestID, thread, message string, s
 	}
 }
 
-func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message string, settings *delivery.TaskSettings, guard Guard, beforeDispatch func() error, afterDispatch func() bool) (delivery.Obj, error) {
+// guardedSend is the bridge's send sequence on the relay's ledger. callerGone reports the
+// caller's cancellation, nil while the caller still waits.
+func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message string, settings *delivery.TaskSettings, guard Guard, callerGone func() error) (delivery.Obj, error) {
+	// Python's coroutine takes a cancellation at the await it is suspended in, before it reads
+	// that await's answer or error, and sends nothing after it. awaited is that await: it runs
+	// after each call returns and before its answer is used, and asks the caller directly
+	// rather than trusting ctx, which the caller's cancellation reaches only when
+	// context.AfterFunc's goroutine gets to run. claimed keeps what it saw.
+	var claimed error
+	awaited := func(err error) error {
+		if claimed = callerGone(); claimed != nil {
+			return claimed
+		}
+		return err
+	}
 	fresh, receipt, err := a.ledger.Begin(ctx, requestID, "send_message_to_thread", map[string]any{"threadId": thread, "message": message}, nil)
 	if err != nil {
 		return nil, err
@@ -216,7 +223,7 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 	}
 	action := func() error {
 		state, err := a.HostCall(ctx, "thread/read", map[string]any{"threadId": thread})
-		if err != nil {
+		if err = awaited(err); err != nil {
 			return err
 		}
 		th, err := object(state["thread"])
@@ -242,7 +249,7 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 			params = map[string]any{"threadId": thread, "excludeTurns": true}
 		}
 		resumed, err := a.callValue(ctx, "thread/resume", params)
-		if err != nil {
+		if err = awaited(err); err != nil {
 			return err
 		}
 		receipt["resumed"] = resumed
@@ -267,7 +274,7 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 		}
 		if guard != nil {
 			decision, err := guard(ctx)
-			if err != nil {
+			if err = awaited(err); err != nil {
 				return err
 			}
 			if decision != nil {
@@ -281,15 +288,14 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 				return nil
 			}
 		}
-		if err := beforeDispatch(); err != nil {
+		// A cancellation that arrived during the checks since the last answer is taken here, so
+		// nothing is dispatched on behalf of a caller that has gone.
+		if err := awaited(nil); err != nil {
 			return err
 		}
 		turn, err := a.callValue(ctx, "turn/start", map[string]any{"threadId": thread, "input": []any{map[string]any{"type": "text", "text": message}}})
-		if err != nil {
+		if err = awaited(err); err != nil {
 			return err
-		}
-		if !afterDispatch() {
-			return ctx.Err()
 		}
 		value, err := subscript(turn, "turn")
 		if err != nil {
@@ -308,6 +314,9 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 		var rpc *appserver.RPCError
 		var phase *appserver.PhaseTimeout
 		switch {
+		case claimed != nil:
+			// Python's CancelledError handler: unknown, never non-delivery, and no error text.
+			receipt["status"] = "outcome_unknown"
 		case errors.As(err, &rpc):
 			receipt["status"] = "failed"
 			receipt["error"] = rpc.Error()
@@ -333,6 +342,10 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 	_, saveErr := a.ledger.Save(context.WithoutCancel(ctx), ledger.Receipt(receipt))
 	if saveErr != nil {
 		return nil, saveErr
+	}
+	if claimed != nil {
+		// The caller's own error, whichever of this answer and its context Send reads first.
+		return nil, claimed
 	}
 	if errors.Is(err, context.Canceled) {
 		return nil, errors.New("the relay transport was shut down while this send was in flight; outcome unknown, do not resend under a new request id")

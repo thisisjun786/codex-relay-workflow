@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -414,6 +416,61 @@ func TestHandOver_refuses_a_store_in_use_or_unfenced(t *testing.T) {
 		writeFixture(t, path)
 		requireFatal(t, "not a fenced store (0/6 ownership keys, mirror=false, write gate=false): a fixture is Fence", func(tb testing.TB) { testsupport.HandOver(tb, path, "go") })
 	})
+}
+
+// A helper's fence locks are free the moment it returns, whatever else its test binary is doing.
+// The live-Python parity tests start processes in parallel while other tests hand stores over.
+// A process started while a helper held its locks shares both lock descriptions until its exec
+// closes them, and a busy host keeps a new child short of its exec for milliseconds: the next
+// helper on that store then failed with "takeover.lock: resource temporarily unavailable",
+// held by nothing but a child of its own binary. Here processes start without pause while a
+// store is rehomed and handed over, and every helper's return is followed at once by the
+// exclusive attempt on both locks that the next helper or runtime makes.
+func TestHelpers_leave_no_fence_lock_to_a_process_their_binary_starts(t *testing.T) {
+	command, err := exec.LookPath("true")
+	if err != nil {
+		t.Skip("no true(1) to start")
+	}
+	path := filepath.Join(t.TempDir(), "relay.sqlite3")
+	testsupport.Create(t, path, "", "python")
+	stop := make(chan struct{})
+	var starters sync.WaitGroup
+	defer func() { close(stop); starters.Wait() }()
+	for range 4 {
+		starters.Add(1)
+		go func() {
+			defer starters.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				_ = exec.Command(command).Run()
+			}
+		}()
+	}
+	// The attempt holds two descriptors of its own, which a starting process could copy just as
+	// well, so it takes them under ForkLock as the helpers do: a failure is the helper's alone.
+	free := func(i int, helper string) {
+		syscall.ForkLock.RLock()
+		defer syscall.ForkLock.RUnlock()
+		for _, name := range []string{"takeover.lock", "write-gate.lock"} {
+			lock, err := ownership.Lock(filepath.Join(filepath.Dir(path), name), true, false)
+			if err != nil {
+				t.Fatalf("iteration %d: %s still held when %s returned: %v", i, name, helper, err)
+			}
+			if err = lock.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for i := range 100 {
+		testsupport.Rehome(t, path)
+		free(i, "Rehome")
+		testsupport.HandOver(t, path, []string{"go", "python"}[i%2])
+		free(i, "HandOver")
+	}
 }
 
 // A fenced store copied elsewhere names the original's inode, so both runtimes refuse the copy

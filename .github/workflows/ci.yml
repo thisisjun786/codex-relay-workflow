@@ -196,7 +196,10 @@ jobs:
       matrix:
         python-version: ['3.11', '3.13']
         # Each leg runs its slice of every suite (packages.py --shard); the slices partition
-        # the collected tests, so together they are the whole run.
+        # the collected tests, so together they are the whole run. Modules are balanced on
+        # the seconds recorded in scripts/ci/package-durations.json. Two legs, not more: the
+        # run is already at the 20 concurrent jobs a free-plan account gets, so a third
+        # leg per Python version would queue instead of running alongside.
         shard: ['1/2', '2/2']
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
