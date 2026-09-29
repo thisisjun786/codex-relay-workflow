@@ -8,6 +8,8 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
@@ -104,6 +106,12 @@ func serviceError(err error) error {
 	if errors.As(err, &refusal) {
 		return &PayloadExit{Code: 2, Payload: contract.OrderedObject{{Key: "ok", Value: false}, {Key: "reason", Value: refusal.Reason}, {Key: "detail", Value: nullableText(refusal.Detail)}}}
 	}
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		// main's f"{type(error).__name__}: {error}" for an OSError.
+		class, text, _ := strings.Cut(store.PythonOSError(err), ": ")
+		return &HostError{Class: class, Detail: text}
+	}
 	if err != nil {
 		return &HostError{Class: "RuntimeError", Detail: err.Error()}
 	}
@@ -116,19 +124,31 @@ func requireDaemonHost(s Services) error {
 	return nil
 }
 
-// ownershipPreflight is Python's check_start before a service or daemon command: an
-// absent store passes because the writable opener creates it; anything else must be
-// Go-owned and active, or starting for the designated candidate. It runs before any
-// lock, record, log line or child exists. It takes the command's App Server socket, so
-// the opener that completes a torn socket binding is let through (cutover.md Record).
+// ownershipPreflight is Python's check_start before a service or daemon command
+// (store.StartPreflight), with the command's App Server socket.
 func ownershipPreflight(ctx context.Context, services Services) error {
-	socket := ""
-	if services.SocketPath != "" {
-		// A socket that cannot be canonicalized binds nothing; the opener reports it.
-		socket, _ = store.CanonicalSocket(services.SocketPath)
+	return store.StartPreflight(ctx, services.Selection.DBPath(), services.SocketPath)
+}
+
+// applyLaunchPolicy is cli.py main's _apply_launch_policy for `service run`: before the handler
+// asks for --socket or reads a bound, a supervisor started here takes the policy its service
+// declares into this process's environment, or is refused. A run launched by `service start`
+// carries its launch's settled decision (_launch_already_settled) and is not asked again.
+func applyLaunchPolicy(s *service.Service) error {
+	settled := store.PythonStrip(os.Getenv(service.SettledEnv))
+	if settled != "" && s.LaunchID != "" && settled == s.LaunchID {
+		return nil
 	}
-	if err := ownership.CheckStart(ctx, services.Selection.DBPath(), socket); err != nil {
-		return &store.RefusedError{Reason: "store_owned_by_other", Detail: store.OwnershipRefusalDetail(err)}
+	resolution := s.ResolveLaunchPolicy()
+	if refusal := service.LaunchRefusal(resolution); refusal != nil {
+		return &PayloadExit{Payload: refusal, Code: contract.ExitRefused}
+	}
+	value, recorded, err := service.LaunchVariable(resolution)
+	if err != nil {
+		return &HostError{Class: "ValueError", Detail: err.Error()}
+	}
+	if recorded {
+		return os.Setenv(execution.EnvPolicy, value)
 	}
 	return nil
 }
@@ -177,6 +197,12 @@ func runService(ctx context.Context, services Services, args Args) (out any, err
 	if err != nil {
 		return nil, err
 	}
+	if args.Positionals[0] == "run" {
+		s.LaunchID, _ = args.String("launch-id")
+		if err = applyLaunchPolicy(s); err != nil {
+			return nil, err
+		}
+	}
 	actor, _ := args.String("actor")
 	if actor == "" {
 		actor = "cli"
@@ -216,20 +242,7 @@ func runService(ctx context.Context, services Services, args Args) (out any, err
 		case "restart":
 			payload, err = s.Restart(ctx, options)
 		case "run":
-			s.LaunchID, _ = args.String("launch-id")
 			s.Takeover = options.Takeover
-			if s.LaunchID == "" || os.Getenv(service.SettledEnv) != s.LaunchID {
-				resolution := s.ResolveLaunchPolicy()
-				if refusal := service.LaunchRefusal(resolution); refusal != nil {
-					payload = refusal
-					break
-				}
-				if get(resolution, "source") == "record" {
-					if err = os.Setenv(execution.EnvPolicy, get(resolution, "path").(string)); err != nil {
-						return nil, err
-					}
-				}
-			}
 			var db *store.Store
 			defer func() {
 				if db != nil {

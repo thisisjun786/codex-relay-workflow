@@ -53,6 +53,13 @@ func init() {
 
 func always(map[string]any) bool { return true }
 
+// fencedMarker is a marker command cli.py main runs check_start for when it is not exempt
+// (_reads_no_selected_store): every intent-* write form; intent-show is read-only.
+func fencedMarker(command string) bool {
+	_, marker := intentCommands[command]
+	return marker && command != "intent-show"
+}
+
 // payloadExit is cli.PayloadExit: a whole answer printed with its own exit code.
 type payloadExit struct {
 	payload Obj

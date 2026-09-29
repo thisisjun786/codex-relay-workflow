@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/user"
 	"path/filepath"
-	"strconv"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -14,6 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -24,28 +23,10 @@ func managedStart(services cli.Services, args cli.Args, raw []byte) (out any, er
 		return nil, err
 	}
 	policy := registry.EnvironmentRolePolicy()
-	scope, authority := os.Getenv("CODEX_SESSION_RELAY_SCOPE_DIR"), "isolated"
-	if scope == "" {
-		current, e := user.LookupId(strconv.Itoa(os.Geteuid()))
-		if e != nil {
-			return nil, e
-		}
-		scope = filepath.Join(current.HomeDir, ".codex-session-relay", "scopes")
-		authority = "production"
-	}
-	scope, err = filepath.Abs(scope)
+	observer, err := workerObserver(services)
 	if err != nil {
 		return nil, err
 	}
-	executable, err := os.Executable()
-	if err != nil {
-		return nil, err
-	}
-	executable, err = filepath.EvalSymlinks(executable)
-	if err != nil {
-		return nil, err
-	}
-	observer := WorkerObservation{State: services.Selection.Path, Socket: services.SocketPath, Scope: scope, Authority: authority, Installation: filepath.Dir(executable)}
 	readiness := func(ctx context.Context, req map[string]any) (string, error) { return observer.Ready(ctx, req, policy) }
 	reason, err := readiness(ctx, request)
 	if err != nil {
@@ -81,4 +62,22 @@ func managedStart(services cli.Services, args cli.Args, raw []byte) (out any, er
 		return nil, &cli.PayloadExit{Payload: answer, Code: contract.ExitRefused}
 	}
 	return answer, nil
+}
+
+// workerObserver is the worker-policy reader managed-start admits through, over the scope
+// registry the service itself resolves (service.ResolveScope, the scope directory as pathlib
+// spells it, as cmd_managed_start's _service_for does), and this executable's installation.
+func workerObserver(services cli.Services) (WorkerObservation, error) {
+	scope, err := service.ResolveScope()
+	if err != nil {
+		return WorkerObservation{}, err
+	}
+	executable, err := os.Executable()
+	if err == nil {
+		executable, err = filepath.EvalSymlinks(executable)
+	}
+	if err != nil {
+		return WorkerObservation{}, err
+	}
+	return WorkerObservation{State: services.Selection.Path, Socket: services.SocketPath, Scope: scope.Root, Authority: scope.Authority, Installation: filepath.Dir(executable)}, nil
 }

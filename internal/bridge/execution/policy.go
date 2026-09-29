@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -12,9 +13,11 @@ import (
 )
 
 // FromBytes is ExecutionPolicy.from_bytes: parse bytes already read from source, refusing
-// repeated keys at every depth, and record their SHA-256 as the policy digest.
+// repeated keys at every depth, and record their SHA-256 as the policy digest. json.loads reads
+// bytes that open with the UTF-8 byte order mark as utf-8-sig, so the mark is not the
+// document's first character; the digest still covers every byte read.
 func FromBytes(raw []byte, source string) (Policy, error) {
-	data, err := decode(raw)
+	data, err := decode(bytes.TrimPrefix(raw, []byte("\xef\xbb\xbf")))
 	if err != nil {
 		var policyErr *PolicyError
 		if errors.As(err, &policyErr) {

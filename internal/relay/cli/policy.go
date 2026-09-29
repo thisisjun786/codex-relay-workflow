@@ -5,8 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
-	"fmt"
 	"io"
 	"os"
 	"os/user"
@@ -17,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -45,67 +44,15 @@ func (p rolePolicy) summary() contract.OrderedObject {
 	}
 }
 
-// declaredPolicy is rolepolicy._resolve for one configured value: the bridge's own parser
-// (internal/bridge/execution, as rolepolicy imports codex_thread_bridge.execution). Only what
-// doctor reports is taken from it: the digest and the public summary.
-func declaredPolicy(configured string) (rolePolicy, error) {
-	configured = strings.TrimSpace(configured)
-	if configured == "" {
-		return rolePolicy{
-			detail:       policyVariable + " is not set in this process, so no role policy can be read",
-			publicDetail: "execution policy environment is not configured in this process",
-		}, nil
+// declaredPolicy is rolepolicy.declared for one configured value: registry.ResolveRolePolicy,
+// the relay's one reading of the policy file, taken apart into what doctor reports.
+func declaredPolicy(configured string) rolePolicy {
+	policy := registry.ResolveRolePolicy(map[string]string{policyVariable: configured})
+	if !policy.Declared {
+		return rolePolicy{detail: policy.Detail, publicDetail: policy.PublicDetail}
 	}
-	policy, err := execution.FromFile(pathlibSpelling(configured))
-	var unreadable *execution.PolicyError
-	if errors.As(err, &unreadable) {
-		return rolePolicy{detail: unreadable.Error(), publicDetail: "configured execution policy is unreadable or invalid"}, nil
-	}
-	if err != nil {
-		return rolePolicy{}, err
-	}
-	summary := policy.Summary()
-	declaredRoles, _ := summary["roles"].(map[string]any)
-	if len(declaredRoles) == 0 {
-		return rolePolicy{detail: "this host's execution policy declares no roles", publicDetail: "execution policy declares no roles"}, nil
-	}
-	digest, _ := summary["digest"].(string)
-	return rolePolicy{digest: digest, roles: orderedRoles(declaredRoles, policy.RoleOrder())}, nil
-}
-
-// orderedRoles retains the file order used by Python's role-policy summary.
-func orderedRoles(declared map[string]any, names []string) contract.OrderedObject {
-	out := contract.OrderedObject{}
-	for _, name := range names {
-		receipt, ok := declared[name].(map[string]any)
-		if !ok {
-			continue
-		}
-		out = append(out, contract.Field{Key: name, Value: contract.OrderedObject{
-			{Key: "role", Value: receipt["role"]}, {Key: "expectation", Value: receipt["expectation"]},
-			{Key: "model", Value: receipt["model"]}, {Key: "reasoningEffort", Value: receipt["reasoningEffort"]},
-		}})
-	}
-	return out
-}
-
-// pathlibSpelling is str(Path(value)).
-func pathlibSpelling(value string) string {
-	absolute := strings.HasPrefix(value, "/")
-	var parts []string
-	for _, part := range strings.Split(value, "/") {
-		if part != "" && part != "." {
-			parts = append(parts, part)
-		}
-	}
-	joined := strings.Join(parts, "/")
-	if absolute {
-		return "/" + joined
-	}
-	if joined == "" {
-		return "."
-	}
-	return joined
+	roles, _ := get(policy.Summary(), "roles").(contract.OrderedObject)
+	return rolePolicy{digest: policy.Digest(), roles: roles}
 }
 
 // rolePolicyReport is _role_policy_report.
@@ -121,118 +68,6 @@ func rolePolicyReport(policy rolePolicy) contract.OrderedObject {
 		{Key: "compareWith", Value: "codex-thread-bridge get_capabilities -> executionPolicy.digest, read " +
 			"through the MCP client that owns that connection"},
 	}
-}
-
-// launchRecord is LaunchPolicy.read().
-type launchRecord struct {
-	path, unreadable string
-	declaredAt       any
-	declaredBy       any
-}
-
-func readLaunchRecord(path string) launchRecord {
-	unreadable := func(why string) launchRecord { return launchRecord{unreadable: why} }
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if errors.Is(err, os.ErrNotExist) {
-		if _, lerr := os.Lstat(path); lerr == nil {
-			return unreadable("the launch declaration " + path + " is a link to nothing")
-		}
-		return launchRecord{}
-	}
-	if err != nil {
-		return unreadable("the launch declaration could not be read: " + store.PythonOSErrorText(err))
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return unreadable("the launch declaration could not be read: " + store.PythonOSErrorText(err))
-	}
-	if !info.Mode().IsRegular() {
-		return unreadable("the launch declaration " + path + " is not a regular file")
-	}
-	raw, err := io.ReadAll(file)
-	if err != nil {
-		return unreadable("the launch declaration could not be read: " + store.PythonOSErrorText(err))
-	}
-	data, err := decodeJSON(raw)
-	if err != nil {
-		return unreadable("the launch declaration is not readable JSON: " + jsonErrorText(raw, err))
-	}
-	declared, ok := get(data, "path").(string)
-	if !ok || strings.TrimSpace(declared) == "" {
-		return launchRecord{unreadable: "the launch declaration names no execution policy file"}
-	}
-	return launchRecord{path: declared, declaredAt: get(data, "declaredAt"), declaredBy: get(data, "declaredBy")}
-}
-
-// canonicalPolicyPath is canonical_policy_path.
-func canonicalPolicyPath(value string) string {
-	expanded, err := store.ExpandUser(value)
-	if err != nil {
-		return value
-	}
-	resolved, err := store.ResolvePath(expanded)
-	if err != nil {
-		return value
-	}
-	return resolved
-}
-
-// resolveLaunchPolicy is RelayService.resolve_launch_policy over this process's environment.
-func resolveLaunchPolicy(services Services) (contract.OrderedObject, error) {
-	stated := strings.TrimSpace(os.Getenv(policyVariable))
-	record := readLaunchRecord(filepath.Join(services.Selection.Path, "launch-policy.json"))
-	answer := contract.OrderedObject{
-		{Key: "variable", Value: policyVariable}, {Key: "path", Value: nil}, {Key: "source", Value: nil},
-		{Key: "record", Value: nullableText(record.path)}, {Key: "environment", Value: nullableText(stated)},
-		{Key: "declaredAt", Value: record.declaredAt}, {Key: "declaredBy", Value: record.declaredBy},
-		{Key: "state", Value: nil}, {Key: "digest", Value: nil}, {Key: "persisted", Value: nil},
-		{Key: "detail", Value: nil}, {Key: "hint", Value: nil},
-	}
-	set := func(key string, value any) { answer[fieldIndex(answer, key)].Value = value }
-	switch {
-	case record.unreadable != "":
-		set("source", "unreadable_record")
-		set("detail", record.unreadable)
-		set("hint", "declare the file again with service declare --execution-policy, or drop the"+
-			" record with service declare --forget-execution-policy. A launch does not"+
-			" fall back to this process's environment to cover an unreadable record")
-		return answer, nil
-	case record.path != "" && stated != "" && canonicalPolicyPath(stated) != canonicalPolicyPath(record.path):
-		set("source", "conflict")
-		set("detail", fmt.Sprintf("this service declares %s and %s in this process names %s",
-			store.PythonRepr(record.path), policyVariable, store.PythonRepr(stated)))
-		set("hint", "two files are not a preference: unset the variable to launch on the"+
-			" declaration, or declare that other file")
-		return answer, nil
-	case record.path != "":
-		set("path", record.path)
-		set("source", "record")
-		set("persisted", true)
-	case stated != "":
-		set("path", stated)
-		set("source", "environment")
-		set("persisted", false)
-		set("hint", "this launch takes the policy from this process's environment and nothing"+
-			" records it, so a restart typed anywhere else loses it. Record it with"+
-			" service declare --execution-policy")
-	default:
-		set("detail", "no execution policy is declared for this service and "+policyVariable+
-			" is not set in this process, so a daemon launched from here can read none and withholds every role-bound delivery")
-		return answer, nil
-	}
-	reading, err := declaredPolicy(get(answer, "path").(string))
-	if err != nil {
-		return nil, err
-	}
-	if reading.declared() {
-		set("state", "declared")
-		set("digest", reading.digest)
-	} else {
-		set("state", "unreadable")
-		set("detail", reading.detail)
-	}
-	return answer, nil
 }
 
 // workerReadiness is rolepolicy.worker_readiness.
@@ -410,7 +245,7 @@ func scopeRoot() (string, string) {
 			cwd, _ := os.Getwd()
 			expanded = cwd + "/" + expanded
 		}
-		return pathlibSpelling(expanded), "isolated"
+		return store.PathlibSpelling(expanded), "isolated"
 	}
 	home := ""
 	if current, err := user.LookupId(strconv.Itoa(os.Geteuid())); err == nil {

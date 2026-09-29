@@ -3,9 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"math"
 	"strconv"
 	"strings"
@@ -14,121 +12,8 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// decodeJSON is json.loads into values contract.Emit renders as Python would: objects keep
-// their key order (a repeated key keeps its first position and last value), integers stay
-// exact as json.Number and every other number becomes a float64.
-func decodeJSON(data []byte) (any, error) {
-	if message := store.PythonJSONError(string(data)); message != "" {
-		return nil, errors.New(message)
-	}
-	data, constants := jsonConstants(data)
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	value, err := decodeJSONValue(decoder, constants)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		//lint:ignore ST1005 json/decoder.py:348 caller-visible message kept byte-identical to Python
-		return nil, errors.New("Extra data")
-	}
-	return value, nil
-}
-
-// jsonConstants replaces only unquoted non-finite tokens. Offsets identify the
-// numeric tokens, so strings and ordinary zero values cannot collide with them.
-func jsonConstants(data []byte) ([]byte, map[int64]float64) {
-	out := make([]byte, 0, len(data))
-	constants := map[int64]float64{}
-	quoted, escaped := false, false
-	for i := 0; i < len(data); {
-		c := data[i]
-		if !quoted {
-			matched := false
-			for _, one := range []struct {
-				text  string
-				value float64
-			}{{"NaN", math.NaN()}, {"Infinity", math.Inf(1)}, {"-Infinity", math.Inf(-1)}} {
-				if bytes.HasPrefix(data[i:], []byte(one.text)) {
-					out = append(out, '0')
-					constants[int64(len(out))] = one.value
-					i += len(one.text)
-					matched = true
-					break
-				}
-			}
-			if matched {
-				continue
-			}
-		}
-		out = append(out, c)
-		i++
-		if escaped {
-			escaped = false
-			continue
-		}
-		if quoted && c == '\\' {
-			escaped = true
-			continue
-		}
-		if c == '"' {
-			quoted = !quoted
-		}
-	}
-	return out, constants
-}
-
-func decodeJSONValue(decoder *json.Decoder, constants map[int64]float64) (any, error) {
-	token, err := decoder.Token()
-	if err != nil {
-		return nil, err
-	}
-	switch v := token.(type) {
-	case json.Delim:
-		if v == '[' {
-			array := []any{}
-			for decoder.More() {
-				item, err := decodeJSONValue(decoder, constants)
-				if err != nil {
-					return nil, err
-				}
-				array = append(array, item)
-			}
-			_, err := decoder.Token()
-			return array, err
-		}
-		object := contract.OrderedObject{}
-		for decoder.More() {
-			key, err := decoder.Token()
-			if err != nil {
-				return nil, err
-			}
-			item, err := decodeJSONValue(decoder, constants)
-			if err != nil {
-				return nil, err
-			}
-			name, _ := key.(string)
-			if at := fieldIndex(object, name); at >= 0 {
-				object[at].Value = item
-				continue
-			}
-			object = append(object, contract.Field{Key: name, Value: item})
-		}
-		_, err := decoder.Token()
-		return object, err
-	case json.Number:
-		if f, ok := constants[decoder.InputOffset()]; ok {
-			return f, nil
-		}
-		if strings.ContainsAny(string(v), ".eE") {
-			f, _ := strconv.ParseFloat(string(v), 64)
-			return f, nil
-		}
-		return v, nil
-	default:
-		return token, nil
-	}
-}
+// decodeJSON is json.loads into Python-shaped values (store.LoadsJSON).
+func decodeJSON(data []byte) (any, error) { return store.LoadsJSON(data) }
 
 func fieldIndex(object contract.OrderedObject, key string) int {
 	for i, field := range object {

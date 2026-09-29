@@ -285,6 +285,24 @@ the venv in todos 37-38.
   `plugin_transition.py` and `completion_hook.py` all import `crw_runtime`; the package outlives
   the product Python until the last dev harness is ported (todo 46).
 
+## Functions retired with evidence
+
+Functions inside ported files that get no Go equivalent. The file itself is still `port`; only
+these definitions are not carried over. Same evidence rule as a retire row: the consumer
+search, and the trigger after which the Python definition may go.
+
+| function | why no port | consumer_search | removal_trigger |
+| --- | --- | --- | --- |
+| `packages/codex-session-relay/src/codex_session_relay/intent.py:930` `dispatch_is_registered` | collapses `dispatch_generation_state` to a boolean for a caller that never came; the detailed answer is ported (`internal/relay/delivery/intent.go`, `DispatchCurrent`) and is what the tests exercise | `grep -rn dispatch_is_registered` over packages/ (src and tests), scripts/, plugins/, docs/ and internal/ at 3684949c: the definition only, 0 callers, 0 tests | deleted with intent.py in todo 44 (CRW-141) |
+| `packages/codex-session-relay/src/codex_session_relay/marker.py:71` `_checked_segment` | a raising wrapper over `valid_segment` nothing calls; every marker path check goes through `valid_segment` directly, ported as `delivery.ValidSegment` | `grep -rn _checked_segment` over packages/ (src and tests), scripts/, plugins/, docs/ and internal/ at 3684949c: the definition only, 0 callers, 0 tests | deleted with marker.py in todo 44 (CRW-141) |
+
+Marker-root resolution exists twice in Python: the relay's (`marker.resolve_marker_root`,
+`Path.absolute`, ported as `internal/relay/delivery.ResolveMarkerRoot`) and the installer's copy
+in `scripts/crw_runtime/completion.py` (`os.path.abspath`, which folds `..`). They disagree on a
+root spelled with `..` after a symlink, so a hook could look under a different tree than the
+coordinator publishes to. Todo 38 reuses `delivery.ResolveMarkerRoot` rather than porting the
+installer's copy.
+
 ## Summary
 
 | owner | files |

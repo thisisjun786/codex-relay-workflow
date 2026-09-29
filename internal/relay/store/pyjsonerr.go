@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -44,6 +45,10 @@ type pyScan struct {
 	s                            []rune
 	integerError, recursionError string
 	depth, maxDepth              int
+	// hookDepth > 0 models an object_pairs_hook: an object closing deeper than it refuses
+	// with RecursionError, and with hookKeys a repeated key refuses it at its close.
+	hookDepth int
+	hookKeys  bool
 }
 
 func (p *pyScan) format(msg string, pos int) string {
@@ -220,8 +225,9 @@ func isHex(rs []rune) bool {
 func (p *pyScan) object(i int) (int, string, int) {
 	i = p.ws(i)
 	if p.at(i) == '}' {
-		return i + 1, "", 0
+		return p.closed(i, false)
 	}
+	keys, repeated := map[string]bool{}, false
 	for {
 		if p.at(i) != '"' {
 			return 0, "Expecting property name enclosed in double quotes", i
@@ -229,6 +235,12 @@ func (p *pyScan) object(i int) (int, string, int) {
 		end, msg, at := p.str(i + 1)
 		if msg != "" {
 			return 0, msg, at
+		}
+		if p.hookKeys {
+			var key string
+			_ = json.Unmarshal([]byte(string(p.s[i:end])), &key)
+			repeated = repeated || keys[key]
+			keys[key] = true
 		}
 		i = p.ws(end)
 		if p.at(i) != ':' {
@@ -242,7 +254,7 @@ func (p *pyScan) object(i int) (int, string, int) {
 		i = p.ws(end)
 		switch p.at(i) {
 		case '}':
-			return i + 1, "", 0
+			return p.closed(i, repeated)
 		case ',':
 		default:
 			return 0, "Expecting ',' delimiter", i
@@ -253,6 +265,19 @@ func (p *pyScan) object(i int) (int, string, int) {
 			return 0, "Illegal trailing comma before end of object", comma
 		}
 	}
+}
+
+// closed ends an object at its '}' (index i): with a hook modelled, calling it past hookDepth
+// is the RecursionError, and a repeated key is the hook's own refusal.
+func (p *pyScan) closed(i int, repeated bool) (int, string, int) {
+	if p.hookDepth > 0 && p.depth > p.hookDepth {
+		p.recursionError = "maximum recursion depth exceeded"
+		return 0, p.recursionError, i
+	}
+	if repeated {
+		return 0, "duplicate key", i
+	}
+	return i + 1, "", 0
 }
 
 func (p *pyScan) array(i int) (int, string, int) {

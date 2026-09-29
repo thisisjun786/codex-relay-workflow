@@ -179,26 +179,43 @@ func sameObject(a, b Object) bool {
 	plain := func(o Object) any { raw, _ := encoded(o); var v any; _ = json.Unmarshal(raw, &v); return v }
 	return reflect.DeepEqual(plain(a), plain(b))
 }
-func existingLockHeld(path string) bool {
+
+// existingLockHeld is _existing_lock_held: whether another open description holds path's
+// flock, found by contention alone and without creating a missing file. A lock that cannot be
+// opened, examined or tried for another reason is the OSError read_worker_policy answers
+// worker_policy_unreadable for, never "unheld".
+func existingLockHeld(path string) (bool, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return false
+		return false, err
 	}
 	defer f.Close()
 	before, err := f.Stat()
 	if err != nil {
-		return false
+		return false, err
+	}
+	if before.IsDir() {
+		// open(path, "rb") refuses a directory before any flock.
+		return false, &os.PathError{Op: "open", Path: path, Err: syscall.EISDIR}
 	}
 	err = unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 	if err == nil {
-		return false
+		return false, unix.Flock(int(f.Fd()), unix.LOCK_UN)
 	}
 	if !errors.Is(err, unix.EAGAIN) && !errors.Is(err, unix.EACCES) {
-		return false
+		return false, err
 	}
 	after, err := os.Stat(path)
-	return err == nil && os.SameFile(before, after)
+	if err != nil {
+		return false, err
+	}
+	return os.SameFile(before, after), nil
 }
+
+// beforeRecheck runs between ReadWorkerPolicy's checks and its re-reading of everything they
+// read; tests change the observation there, as Python's patch of service.record does.
+var beforeRecheck = func() {}
+
 func (s *Service) ReadWorkerPolicy(ctx context.Context) Object {
 	absent := func(reason string) Object { return obj("observed", false, "reason", reason, "policy", nil) }
 	r := s.Record()
@@ -277,10 +294,15 @@ func (s *Service) ReadWorkerPolicy(ctx context.Context) Object {
 		locks = append(locks, s.Scope.path(s.Socket, ".lock"))
 	}
 	for _, path := range locks {
-		if !existingLockHeld(path) {
+		held, err := existingLockHeld(path)
+		if err != nil {
+			return absent("worker_policy_unreadable")
+		}
+		if !held {
 			return absent("worker_policy_lock_unheld")
 		}
 	}
+	beforeRecheck()
 	after, err := os.Stat(s.Selection.DBPath())
 	if err != nil {
 		return absent("worker_policy_unreadable")

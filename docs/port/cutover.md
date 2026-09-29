@@ -145,9 +145,13 @@ other than `appServerSocket` is refused before any DDL or socket recording
 otherwise with `state_directory_serves_another_socket`), and initialization of a legacy `D`
 records the store's own `schema_meta.socket_path` in the mirror, refusing a requested socket
 that disagrees with it. Both runtimes implement the binding: Go in `store.Open`
-(`internal/relay/store/ownership.go` `bindSocket`), whose daemon and service preflight
-(`ownership.CheckStart`) takes the command's socket as `check_start` does, so the opener
-that completes a torn binding is let through. Any other disagreement between the halves has
+(`internal/relay/store/ownership.go` `bindSocket`), whose start preflight
+(`store.StartPreflight` over `ownership.CheckStart`) takes the command's socket as
+`check_start` does, so the opener that completes a torn binding is let through. Like
+`cli.py` `main`, Go runs that preflight before `daemon`, every `service` form but
+`status`, and the two marker forms that name the selected store (`intent-declare` without
+`--no-db-path`, `intent-register` without `--db-path`): a store the other runtime owns, or
+one draining or starting, refuses them before any lock, record or marker fact is written. Any other disagreement between the halves has
 no automatic repair; before todo 42, check that the chosen store's `appServerSocket` equals
 its `schema_meta.socket_path`.
 

@@ -1,0 +1,419 @@
+{
+ "cases": {
+  "absent": {
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": null,\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"no execution policy is declared for this service and CODEX_THREAD_BRIDGE_EXECUTION_POLICY is not set in this process, so a daemon launched from here can read none and withholds every role-bound delivery\",\n  \"hint\": null\n}"
+  },
+  "conflict": {
+   "environment": "<R>/other.json",
+   "launch": {
+    "text": "{\"path\": \"<R>/good.json\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"conflict\",\n  \"record\": \"<R>/good.json\",\n  \"environment\": \"<R>/other.json\",\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"this service declares '<R>/good.json' and CODEX_THREAD_BRIDGE_EXECUTION_POLICY in this process names '<R>/other.json'\",\n  \"hint\": \"two files are not a preference: unset the variable to launch on the declaration, or declare that other file\"\n}"
+  },
+  "environment": {
+   "environment": "<R>/good.json",
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/good.json\",\n  \"source\": \"environment\",\n  \"record\": null,\n  \"environment\": \"<R>/good.json\",\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"declared\",\n  \"digest\": \"fcc9ccdaf69f7fda5afbf560c5a9cb40b5bc05167aefa6511b178f701f1b1e4f\",\n  \"persisted\": false,\n  \"detail\": null,\n  \"hint\": \"this launch takes the policy from this process's environment and nothing records it, so a restart typed anywhere else loses it. Record it with service declare --execution-policy\"\n}"
+  },
+  "environment-blank": {
+   "environment": "  ",
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": null,\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"no execution policy is declared for this service and CODEX_THREAD_BRIDGE_EXECUTION_POLICY is not set in this process, so a daemon launched from here can read none and withholds every role-bound delivery\",\n  \"hint\": null\n}"
+  },
+  "environment-home": {
+   "environment": "~/p.json",
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"~/p.json\",\n  \"source\": \"environment\",\n  \"record\": null,\n  \"environment\": \"~/p.json\",\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"unreadable\",\n  \"digest\": null,\n  \"persisted\": false,\n  \"detail\": \"execution_policy_unreadable: cannot read ~/p.json: [Errno 2] No such file or directory: '~/p.json'\",\n  \"hint\": \"this launch takes the policy from this process's environment and nothing records it, so a restart typed anywhere else loses it. Record it with service declare --execution-policy\"\n}"
+  },
+  "environment-missing": {
+   "environment": "<R>/gone.json",
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/gone.json\",\n  \"source\": \"environment\",\n  \"record\": null,\n  \"environment\": \"<R>/gone.json\",\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"unreadable\",\n  \"digest\": null,\n  \"persisted\": false,\n  \"detail\": \"execution_policy_unreadable: cannot read <R>/gone.json: [Errno 2] No such file or directory: '<R>/gone.json'\",\n  \"hint\": \"this launch takes the policy from this process's environment and nothing records it, so a restart typed anywhere else loses it. Record it with service declare --execution-policy\"\n}"
+  },
+  "environment-relative": {
+   "environment": "./good.json",
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"./good.json\",\n  \"source\": \"environment\",\n  \"record\": null,\n  \"environment\": \"./good.json\",\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"declared\",\n  \"digest\": \"fcc9ccdaf69f7fda5afbf560c5a9cb40b5bc05167aefa6511b178f701f1b1e4f\",\n  \"persisted\": false,\n  \"detail\": null,\n  \"hint\": \"this launch takes the policy from this process's environment and nothing records it, so a restart typed anywhere else loses it. Record it with service declare --execution-policy\"\n}"
+  },
+  "environment-separator": {
+   "environment": "\u001f",
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": null,\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"no execution policy is declared for this service and CODEX_THREAD_BRIDGE_EXECUTION_POLICY is not set in this process, so a daemon launched from here can read none and withholds every role-bound delivery\",\n  \"hint\": null\n}"
+  },
+  "json-array-9998": {
+   "launch": {
+    "depth": 9998,
+    "generate": "array"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration names no execution policy file\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "json-array-9999": {
+   "launch": {
+    "depth": 9999,
+    "generate": "array"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration is not readable JSON: maximum recursion depth exceeded while decoding a JSON array from a unicode string\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "json-bom": {
+   "launch": {
+    "hex": "efbbbf7b7d"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration is not readable JSON: Unexpected UTF-8 BOM (decode using utf-8-sig): line 1 column 1 (char 0)\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "json-control": {
+   "launch": {
+    "text": "{\"path\": \"\u001f\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration is not readable JSON: Invalid control character at: line 1 column 11 (char 10)\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "json-empty": {
+   "launch": {
+    "text": ""
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration is not readable JSON: Expecting value: line 1 column 1 (char 0)\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "json-extra": {
+   "launch": {
+    "text": "{}x"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration is not readable JSON: Extra data: line 1 column 3 (char 2)\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "json-object-9999": {
+   "launch": {
+    "depth": 9999,
+    "generate": "object"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration is not readable JSON: maximum recursion depth exceeded while decoding a JSON object from a unicode string\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "json-open": {
+   "launch": {
+    "text": "{"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration is not readable JSON: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "names-no-file-list": {
+   "launch": {
+    "text": "[]"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration names no execution policy file\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "names-no-file-null": {
+   "launch": {
+    "text": "null"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration names no execution policy file\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "names-no-file-path-blank": {
+   "launch": {
+    "text": "{\"path\": \"  \"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration names no execution policy file\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "names-no-file-path-null": {
+   "launch": {
+    "text": "{\"path\": null}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration names no execution policy file\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "names-no-file-path-number": {
+   "launch": {
+    "text": "{\"path\": 1}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration names no execution policy file\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "names-no-file-path-separators": {
+   "launch": {
+    "text": "{\"path\": \"\\u001f \\u3000\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration names no execution policy file\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "names-no-file-string": {
+   "launch": {
+    "text": "\"x\""
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration names no execution policy file\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "policy-array-fits": {
+   "files": {
+    "policy.json": {
+     "depth": 9998,
+     "generate": "policy-array"
+    }
+   },
+   "launch": {
+    "text": "{\"path\": \"<R>/policy.json\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/policy.json\",\n  \"source\": \"record\",\n  \"record\": \"<R>/policy.json\",\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"unreadable\",\n  \"digest\": null,\n  \"persisted\": true,\n  \"detail\": \"execution_policy_unreadable: the execution policy has unknown keys ['x']; supported are ['allowed', 'exceptions', 'roles']\",\n  \"hint\": null\n}"
+  },
+  "policy-byte-order-mark": {
+   "files": {
+    "policy.json": {
+     "hex": "efbbbf7b22726f6c6573223a7b22706172656e74223a7b226d6f64656c223a226d222c22726561736f6e696e674566666f7274223a2268696768227d2c226368696c64223a7b226d6f64656c223a226d222c22726561736f6e696e674566666f7274223a2268696768227d7d7d"
+    }
+   },
+   "launch": {
+    "text": "{\"path\": \"<R>/policy.json\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/policy.json\",\n  \"source\": \"record\",\n  \"record\": \"<R>/policy.json\",\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"declared\",\n  \"digest\": \"ebd18d85dc93468c60a89b5e689763d339c672e1aac45d73f13ec6325dc07719\",\n  \"persisted\": true,\n  \"detail\": null,\n  \"hint\": null\n}"
+  },
+  "policy-deep-array": {
+   "files": {
+    "policy.json": {
+     "depth": 9999,
+     "generate": "policy-array"
+    }
+   },
+   "launch": {
+    "text": "{\"path\": \"<R>/policy.json\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/policy.json\",\n  \"source\": \"record\",\n  \"record\": \"<R>/policy.json\",\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"unreadable\",\n  \"digest\": null,\n  \"persisted\": true,\n  \"detail\": \"<R>/policy.json is nested deeper than the execution policy parser can read\",\n  \"hint\": null\n}"
+  },
+  "policy-deep-object": {
+   "files": {
+    "policy.json": {
+     "depth": 9997,
+     "generate": "policy-object"
+    }
+   },
+   "launch": {
+    "text": "{\"path\": \"<R>/policy.json\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/policy.json\",\n  \"source\": \"record\",\n  \"record\": \"<R>/policy.json\",\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"unreadable\",\n  \"digest\": null,\n  \"persisted\": true,\n  \"detail\": \"<R>/policy.json is nested deeper than the execution policy parser can read\",\n  \"hint\": null\n}"
+  },
+  "policy-duplicate-before-depth": {
+   "files": {
+    "policy.json": {
+     "depth": 10005,
+     "generate": "policy-duplicate-then-deep"
+    }
+   },
+   "launch": {
+    "text": "{\"path\": \"<R>/policy.json\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/policy.json\",\n  \"source\": \"record\",\n  \"record\": \"<R>/policy.json\",\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"unreadable\",\n  \"digest\": null,\n  \"persisted\": true,\n  \"detail\": \"execution_policy_unreadable: duplicate key 'a' in the execution policy\",\n  \"hint\": null\n}"
+  },
+  "policy-no-roles": {
+   "files": {
+    "policy.json": {
+     "text": "{\"roles\": {}}"
+    }
+   },
+   "launch": {
+    "text": "{\"path\": \"<R>/policy.json\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/policy.json\",\n  \"source\": \"record\",\n  \"record\": \"<R>/policy.json\",\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"unreadable\",\n  \"digest\": null,\n  \"persisted\": true,\n  \"detail\": \"execution_policy_unreadable: allowed must be a non-empty list of {model, efforts}\",\n  \"hint\": null\n}"
+  },
+  "policy-object-fits": {
+   "files": {
+    "policy.json": {
+     "depth": 9996,
+     "generate": "policy-object"
+    }
+   },
+   "launch": {
+    "text": "{\"path\": \"<R>/policy.json\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/policy.json\",\n  \"source\": \"record\",\n  \"record\": \"<R>/policy.json\",\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"unreadable\",\n  \"digest\": null,\n  \"persisted\": true,\n  \"detail\": \"execution_policy_unreadable: the execution policy has unknown keys ['x']; supported are ['allowed', 'exceptions', 'roles']\",\n  \"hint\": null\n}"
+  },
+  "policy-object-in-arrays": {
+   "files": {
+    "policy.json": {
+     "depth": 9997,
+     "generate": "policy-object-in-arrays"
+    }
+   },
+   "launch": {
+    "text": "{\"path\": \"<R>/policy.json\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/policy.json\",\n  \"source\": \"record\",\n  \"record\": \"<R>/policy.json\",\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"unreadable\",\n  \"digest\": null,\n  \"persisted\": true,\n  \"detail\": \"<R>/policy.json is nested deeper than the execution policy parser can read\",\n  \"hint\": null\n}"
+  },
+  "policy-object-in-arrays-fits": {
+   "files": {
+    "policy.json": {
+     "depth": 9996,
+     "generate": "policy-object-in-arrays"
+    }
+   },
+   "launch": {
+    "text": "{\"path\": \"<R>/policy.json\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/policy.json\",\n  \"source\": \"record\",\n  \"record\": \"<R>/policy.json\",\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"unreadable\",\n  \"digest\": null,\n  \"persisted\": true,\n  \"detail\": \"execution_policy_unreadable: the execution policy has unknown keys ['x']; supported are ['allowed', 'exceptions', 'roles']\",\n  \"hint\": null\n}"
+  },
+  "record": {
+   "launch": {
+    "text": "{\"path\": \"<R>/good.json\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/good.json\",\n  \"source\": \"record\",\n  \"record\": \"<R>/good.json\",\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"declared\",\n  \"digest\": \"fcc9ccdaf69f7fda5afbf560c5a9cb40b5bc05167aefa6511b178f701f1b1e4f\",\n  \"persisted\": true,\n  \"detail\": null,\n  \"hint\": null\n}"
+  },
+  "record-big-integer": {
+   "launch": {
+    "text": "{\"path\": \"<R>/good.json\", \"declaredAt\": 99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration is not readable JSON: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "record-deep-9998": {
+   "launch": {
+    "depth": 9998,
+    "generate": "declaration-array"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/good.json\",\n  \"source\": \"record\",\n  \"record\": \"<R>/good.json\",\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"declared\",\n  \"digest\": \"fcc9ccdaf69f7fda5afbf560c5a9cb40b5bc05167aefa6511b178f701f1b1e4f\",\n  \"persisted\": true,\n  \"detail\": null,\n  \"hint\": null\n}"
+  },
+  "record-deep-9999": {
+   "launch": {
+    "depth": 9999,
+    "generate": "declaration-array"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration is not readable JSON: maximum recursion depth exceeded while decoding a JSON array from a unicode string\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "record-directory-policy": {
+   "launch": {
+    "text": "{\"path\": \"<R>\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>\",\n  \"source\": \"record\",\n  \"record\": \"<R>\",\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"unreadable\",\n  \"digest\": null,\n  \"persisted\": true,\n  \"detail\": \"execution_policy_unreadable: cannot read <R>: it is not a regular file\",\n  \"hint\": null\n}"
+  },
+  "record-dotted": {
+   "launch": {
+    "text": "{\"path\": \"<R>//x/./../nope.json/\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>//x/./../nope.json/\",\n  \"source\": \"record\",\n  \"record\": \"<R>//x/./../nope.json/\",\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"unreadable\",\n  \"digest\": null,\n  \"persisted\": true,\n  \"detail\": \"execution_policy_unreadable: cannot read <R>/x/../nope.json: [Errno 2] No such file or directory: '<R>/x/../nope.json'\",\n  \"hint\": null\n}"
+  },
+  "record-duplicate-keys": {
+   "launch": {
+    "text": "{\"path\": \"/first\", \"path\": \"<R>/good.json\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/good.json\",\n  \"source\": \"record\",\n  \"record\": \"<R>/good.json\",\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"declared\",\n  \"digest\": \"fcc9ccdaf69f7fda5afbf560c5a9cb40b5bc05167aefa6511b178f701f1b1e4f\",\n  \"persisted\": true,\n  \"detail\": null,\n  \"hint\": null\n}"
+  },
+  "record-escapes": {
+   "launch": {
+    "text": "{\"path\": \"<R>/good.json\", \"declaredBy\": \"\\u00e9\\n\\\"q\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/good.json\",\n  \"source\": \"record\",\n  \"record\": \"<R>/good.json\",\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": \"\\u00e9\\n\\\"q\",\n  \"state\": \"declared\",\n  \"digest\": \"fcc9ccdaf69f7fda5afbf560c5a9cb40b5bc05167aefa6511b178f701f1b1e4f\",\n  \"persisted\": true,\n  \"detail\": null,\n  \"hint\": null\n}"
+  },
+  "record-missing-policy": {
+   "launch": {
+    "text": "{\"path\": \"<R>/nope.json\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/nope.json\",\n  \"source\": \"record\",\n  \"record\": \"<R>/nope.json\",\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"unreadable\",\n  \"digest\": null,\n  \"persisted\": true,\n  \"detail\": \"execution_policy_unreadable: cannot read <R>/nope.json: [Errno 2] No such file or directory: '<R>/nope.json'\",\n  \"hint\": null\n}"
+  },
+  "record-nan": {
+   "launch": {
+    "text": "{\"path\": \"<R>/good.json\", \"declaredAt\": NaN, \"declaredBy\": [1, {\"b\": -0.0}]}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/good.json\",\n  \"source\": \"record\",\n  \"record\": \"<R>/good.json\",\n  \"environment\": null,\n  \"declaredAt\": NaN,\n  \"declaredBy\": [\n    1,\n    {\n      \"b\": -0.0\n    }\n  ],\n  \"state\": \"declared\",\n  \"digest\": \"fcc9ccdaf69f7fda5afbf560c5a9cb40b5bc05167aefa6511b178f701f1b1e4f\",\n  \"persisted\": true,\n  \"detail\": null,\n  \"hint\": null\n}"
+  },
+  "record-negative-zero": {
+   "launch": {
+    "text": "{\"path\": \"<R>/good.json\", \"declaredAt\": -0.0, \"declaredBy\": -Infinity}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/good.json\",\n  \"source\": \"record\",\n  \"record\": \"<R>/good.json\",\n  \"environment\": null,\n  \"declaredAt\": -0.0,\n  \"declaredBy\": -Infinity,\n  \"state\": \"declared\",\n  \"digest\": \"fcc9ccdaf69f7fda5afbf560c5a9cb40b5bc05167aefa6511b178f701f1b1e4f\",\n  \"persisted\": true,\n  \"detail\": null,\n  \"hint\": null\n}"
+  },
+  "record-nul": {
+   "launch": {
+    "text": "{\"path\": \"<R>/a\\u0000b\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/a\\u0000b\",\n  \"source\": \"record\",\n  \"record\": \"<R>/a\\u0000b\",\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"unreadable\",\n  \"digest\": null,\n  \"persisted\": true,\n  \"detail\": \"execution_policy_unreadable: cannot read <R>/a\\u0000b: open: embedded null character in path\",\n  \"hint\": null\n}"
+  },
+  "record-relative": {
+   "launch": {
+    "text": "{\"path\": \"rel/./p.json\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"rel/./p.json\",\n  \"source\": \"record\",\n  \"record\": \"rel/./p.json\",\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"unreadable\",\n  \"digest\": null,\n  \"persisted\": true,\n  \"detail\": \"execution_policy_unreadable: cannot read rel/p.json: [Errno 2] No such file or directory: 'rel/p.json'\",\n  \"hint\": null\n}"
+  },
+  "record-trailing-separator": {
+   "launch": {
+    "text": "{\"path\": \"<R>/good.json\\u001f\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/good.json\\u001f\",\n  \"source\": \"record\",\n  \"record\": \"<R>/good.json\\u001f\",\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"declared\",\n  \"digest\": \"fcc9ccdaf69f7fda5afbf560c5a9cb40b5bc05167aefa6511b178f701f1b1e4f\",\n  \"persisted\": true,\n  \"detail\": null,\n  \"hint\": null\n}"
+  },
+  "record-trailing-slash": {
+   "launch": {
+    "text": "{\"path\": \"<R>/good.json/\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/good.json/\",\n  \"source\": \"record\",\n  \"record\": \"<R>/good.json/\",\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"declared\",\n  \"digest\": \"fcc9ccdaf69f7fda5afbf560c5a9cb40b5bc05167aefa6511b178f701f1b1e4f\",\n  \"persisted\": true,\n  \"detail\": null,\n  \"hint\": null\n}"
+  },
+  "record-values": {
+   "launch": {
+    "text": "{\"path\": \"<R>/good.json\", \"declaredAt\": 1e400, \"declaredBy\": 123456789012345678901234567890}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/good.json\",\n  \"source\": \"record\",\n  \"record\": \"<R>/good.json\",\n  \"environment\": null,\n  \"declaredAt\": Infinity,\n  \"declaredBy\": 123456789012345678901234567890,\n  \"state\": \"declared\",\n  \"digest\": \"fcc9ccdaf69f7fda5afbf560c5a9cb40b5bc05167aefa6511b178f701f1b1e4f\",\n  \"persisted\": true,\n  \"detail\": null,\n  \"hint\": null\n}"
+  },
+  "same-file-relative": {
+   "environment": "./good.json",
+   "launch": {
+    "text": "{\"path\": \"<R>/good.json\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/good.json\",\n  \"source\": \"record\",\n  \"record\": \"<R>/good.json\",\n  \"environment\": \"./good.json\",\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"declared\",\n  \"digest\": \"fcc9ccdaf69f7fda5afbf560c5a9cb40b5bc05167aefa6511b178f701f1b1e4f\",\n  \"persisted\": true,\n  \"detail\": null,\n  \"hint\": null\n}"
+  },
+  "same-file-through-alias": {
+   "environment": "<R>/alias.json",
+   "launch": {
+    "text": "{\"path\": \"<R>/good.json\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": \"<R>/good.json\",\n  \"source\": \"record\",\n  \"record\": \"<R>/good.json\",\n  \"environment\": \"<R>/alias.json\",\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": \"declared\",\n  \"digest\": \"fcc9ccdaf69f7fda5afbf560c5a9cb40b5bc05167aefa6511b178f701f1b1e4f\",\n  \"persisted\": true,\n  \"detail\": null,\n  \"hint\": null\n}"
+  },
+  "unreadable-dangling": {
+   "launch": {
+    "special": "dangling"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration <R>/S/launch-policy.json is a link to nothing\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "unreadable-directory": {
+   "launch": {
+    "special": "directory"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration <R>/S/launch-policy.json is not a regular file\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "unreadable-eacces": {
+   "launch": {
+    "mode": 0,
+    "text": "{\"path\": \"<R>/good.json\"}"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration could not be read: [Errno 13] Permission denied: '<R>/S/launch-policy.json'\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "unreadable-fifo": {
+   "launch": {
+    "special": "fifo"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration <R>/S/launch-policy.json is not a regular file\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "unreadable-loop": {
+   "launch": {
+    "special": "loop"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration could not be read: [Errno 40] Too many levels of symbolic links: '<R>/S/launch-policy.json'\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "unreadable-record-beats-environment": {
+   "environment": "<R>/good.json",
+   "launch": {
+    "hex": "ff"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": \"<R>/good.json\",\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration is not readable JSON: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "utf8-end-of-data": {
+   "launch": {
+    "hex": "7b2270617468223a2022e282"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration is not readable JSON: 'utf-8' codec can't decode bytes in position 10-11: unexpected end of data\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "utf8-invalid-continuation": {
+   "launch": {
+    "hex": "7b2270617468223a2022c328227d"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration is not readable JSON: 'utf-8' codec can't decode byte 0xc3 in position 10: invalid continuation byte\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "utf8-invalid-start": {
+   "launch": {
+    "hex": "ff7b7d"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration is not readable JSON: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "utf8-overlong": {
+   "launch": {
+    "hex": "c080"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration is not readable JSON: 'utf-8' codec can't decode byte 0xc0 in position 0: invalid start byte\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  },
+  "utf8-surrogate": {
+   "launch": {
+    "hex": "7b2270617468223a2022eda080227d"
+   },
+   "resolution": "{\n  \"variable\": \"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\",\n  \"path\": null,\n  \"source\": \"unreadable_record\",\n  \"record\": null,\n  \"environment\": null,\n  \"declaredAt\": null,\n  \"declaredBy\": null,\n  \"state\": null,\n  \"digest\": null,\n  \"persisted\": null,\n  \"detail\": \"the launch declaration is not readable JSON: 'utf-8' codec can't decode byte 0xed in position 10: invalid continuation byte\",\n  \"hint\": \"declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record\"\n}"
+  }
+ },
+ "other": "{\"roles\":{\"parent\":{\"model\":\"n\",\"reasoningEffort\":\"high\"},\"child\":{\"model\":\"n\",\"reasoningEffort\":\"high\"}}}",
+ "policy": "{\"roles\":{\"parent\":{\"model\":\"m\",\"reasoningEffort\":\"high\"},\"child\":{\"model\":\"m\",\"reasoningEffort\":\"high\"}}}"
+}

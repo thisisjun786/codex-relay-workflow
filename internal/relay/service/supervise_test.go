@@ -33,7 +33,7 @@ func Test29StoreOpensOnlyUnderBothLocks(t *testing.T) {
 	var scopeWhileRunning Object
 	recovery := func() error {
 		opened = true
-		if !existingLockHeld(s.path("daemon.lock")) || !existingLockHeld(s.Scope.path(s.Socket, ".lock")) {
+		if !lockHeld(s.path("daemon.lock")) || !lockHeld(s.Scope.path(s.Socket, ".lock")) {
 			t.Fatal("writable store opened without both ownership locks")
 		}
 		if get(s.Record(), "storeId") != nil && get(s.Record(), "storeId") != s.StoreID {
@@ -71,7 +71,7 @@ func Test29SupervisionBoundsAndRecoveryReadiness(t *testing.T) {
 				if end == nil || *end > deadline {
 					t.Fatal("worker outlives supervisor")
 				}
-				if !existingLockHeld(filepath.Join(s.Selection.Path, "daemon.lock")) {
+				if !lockHeld(filepath.Join(s.Selection.Path, "daemon.lock")) {
 					t.Fatal("spawn without ownership")
 				}
 				granted = append(granted, *end)
@@ -163,4 +163,10 @@ func Test29ScopePersistentConflictAndConcurrentReaders(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// lockHeld is existingLockHeld's answer, a lock it cannot examine counting as not held.
+func lockHeld(path string) bool {
+	held, err := existingLockHeld(path)
+	return err == nil && held
 }

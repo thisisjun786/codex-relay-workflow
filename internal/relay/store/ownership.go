@@ -28,6 +28,25 @@ func admitWrite(ctx context.Context, path string) (*ownership.Admission, error) 
 	return admission, nil
 }
 
+// StartPreflight is ownership.check_start as cli.py main runs it before a command that opens
+// its own admitted connection (service, daemon, and the marker commands that record or
+// confirm the selected store): an absent store passes, because the writable opener creates
+// it; anything else must be Go-owned and active, or starting for the designated candidate
+// ctx carries, or it is refused before any lock, record, marker or child exists.
+// socketPath is the command's --socket as given, so the opener that completes a torn socket
+// binding is let through (cutover.md Record); one that cannot be canonicalized binds
+// nothing, and the opener reports it.
+func StartPreflight(ctx context.Context, dbPath, socketPath string) error {
+	socket := ""
+	if socketPath != "" {
+		socket, _ = CanonicalSocket(socketPath)
+	}
+	if err := ownership.CheckStart(ctx, dbPath, socket); err != nil {
+		return &RefusedError{Reason: "store_owned_by_other", Detail: OwnershipRefusalDetail(err)}
+	}
+	return nil
+}
+
 // OwnershipRefusalDetail is the detail a refused Go admission or start preflight answers
 // with. Where the fence refuses for the same reason (ownership.py validate: another owner, a
 // draining store, a starting store without the candidate's permit) it is the fence's

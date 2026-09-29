@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
@@ -69,10 +70,7 @@ func runDoctor(ctx context.Context, services Services, args Args) (any, error) {
 	}
 	add("siblingStores", siblings)
 	add("accessReceipt", accessReceipt(ctx, services, loc, probed.Access))
-	caller, err := declaredPolicy(os.Getenv(policyVariable))
-	if err != nil {
-		return nil, err
-	}
+	caller := declaredPolicy(os.Getenv(policyVariable))
 	add("rolePolicy", rolePolicyReport(caller))
 	worker := readWorkerPolicy(services, loc)
 	add("workerPolicy", worker)
@@ -84,11 +82,7 @@ func runDoctor(ctx context.Context, services Services, args Args) (any, error) {
 	}
 	ownership = append(ownership, contract.Field{Key: "processes", Value: processes})
 	report[fieldIndex(report, "ownership")].Value = ownership
-	launch, err := resolveLaunchPolicy(services)
-	if err != nil {
-		return nil, err
-	}
-	add("launchPolicy", launch)
+	add("launchPolicy", service.ResolveLaunchPolicyAt(services.Selection.Path, os.Getenv(policyVariable)))
 	workerPolicy := get(worker, "policy")
 	callerRecord := caller.summary()
 	agreement := "unknown"
