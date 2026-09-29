@@ -1512,11 +1512,24 @@ between sessions, and runtime_install.py never faced the question because it nev
 settled runtime; a registration that cannot be read or judged refuses too. Then, in
 runtime_install.py's order (`_install_failed` has `release_candidate` drop a candidate's entries
 before it removes the directory), the directory's install entries are dropped in one write under
-the host record's lock, where the selection is read again, and only after that write lands is the
-directory removed: a drop that cannot be written refuses with nothing removed, and a removal that
+the host record's lock, where the selection is read again, and in the same write `outgoing` is
+removed when it names anything inside the directory, so a bare `crw install rollback` then refuses
+because the record carries no outgoing selection instead of being sent to a directory that is
+gone and whose entries are not in the record; only after that write lands is the directory
+removed: a drop that cannot be written refuses with nothing removed, and a removal that
 does not finish after the drop exits 3 with the entries gone, the rest of the directory named in
-`residualPaths` and its removal by hand as `recoveryRequires`. Live processes are read from procfs,
-so on a platform without one (darwin) whether a relay or bridge still runs out of the directory
+`residualPaths` and its removal by hand as `recoveryRequires`. The process table is read so that
+nothing unread passes for absent. A pid whose entries are gone (ENOENT, ESRCH: exited, a zombie, a
+kernel thread) is skipped. The kernel shows a process's exe only with ptrace access, which it
+refuses for another user's process and for this user's own when it holds capabilities the reader
+does not or is not dumpable (a desktop's `systemd --user` holds CAP_WAKE_ALARM), so a refused
+(EACCES, EPERM) exe is judged by the cmdline every user may read: its interpreter and script,
+spelled and resolved, inside the directory refuse; a cmdline that is hidden as well (procfs
+mounted hidepid) or that starts one of this runtime's executables by a bare name leaves the
+process not ruled out, which refuses too, naming the pid and why (`unreadableProcesses`). A
+process of this user whose exe fails for any other reason, or whose cmdline cannot be read, is
+not ruled out either. The reclaim of an abandoned staging applies the same reading. Live
+processes are read from procfs, so on a platform without one (darwin) whether a relay or bridge still runs out of the directory
 cannot be established and `crw install remove` always refuses there (fail-closed), saying that
 this platform has no process table it can read and giving the recovery by hand as
 `recoveryRequires`: stop the relay daemon started from it (`<dir>/bin/codex-session-relay service
@@ -1558,7 +1571,8 @@ scripts/crw_runtime/staging.py:350-352 (a finished, unselected environment is ke
 `TestRemoveDropsTheInstallEntriesBeforeTheDirectory`, `TestAnArchiveCannotPlantControlData`,
 `TestAnOversizedOrShortEntryIsRefusedBeforeAnythingIsWritten`, `TestAnOversizedOrShortEntryIsNotInstalled`,
 `TestAReleaseTagIsCheckedBeforeAnythingIsFetched`, `TestAReinstallNeverReclaimsARuntimeThatWasInService`,
-`TestReclaimKeepsAStagingThatMayStillBeInUse`, `TestOutgoingIsWrittenOnlyByAPromotion`,
+`TestReclaimKeepsAStagingThatMayStillBeInUse`, `TestLiveProcessesRuleOutOnlyWhatTheyRead`,
+`TestRemoveAndReclaimRefuseAProcessTheyCannotRuleOut`, `TestRemovingTheOutgoingRuntimeClearsOutgoing`, `TestOutgoingIsWrittenOnlyByAPromotion`,
 `TestAnUnsettledCandidatesInstallEntriesAreNeverActedOn`); internal/runtime/doctor/references.go;
 internal/runtime/exercise (`TestTheSessionClosesItsReaderAtTheDeadlineWithoutACopyingGoroutine`);
 the rollback rules (`TestARollbackReturnsToAPromotedRuntimeWhoseClaimNeverSettled`,

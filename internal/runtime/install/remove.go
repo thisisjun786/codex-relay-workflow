@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -103,7 +104,7 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 	if u := runningOrRegistered(ctx, o, directory); u != nil {
 		return refuse(u.detail, u.extra()...)
 	}
-	dropped, why := dropInstalls(o.RecordPath, directory)
+	dropped, clearedOutgoing, why := dropInstalls(o.RecordPath, directory)
 	if why != "" {
 		return refuse(why)
 	}
@@ -111,7 +112,7 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 		_, statErr := os.Lstat(directory)
 		return Object{
 			field("command", "remove"), field("applied", true), field("directory", directory), field("removed", false),
-			field("gone", errors.Is(statErr, os.ErrNotExist)), field("claim", claimValue), field("droppedInstallEntries", strs(dropped)),
+			field("gone", errors.Is(statErr, os.ErrNotExist)), field("claim", claimValue), field("droppedInstallEntries", strs(dropped)), field("clearedOutgoing", clearedOutgoing),
 			field("detail", "the directory could not be removed completely: "+store.PythonOSError(err)), field("residualPaths", []any{directory}),
 			field("recoveryRequires", "remove what is left of "+directory+" by hand: nothing uses it (every check above passed), and its install entries are already dropped from the host record. Rerunning crw install remove finishes it only while its claim is still there"),
 			field("note", "the host record no longer lists this directory's installs, and part of the directory may be gone. Its measured points stay in the host record as history."),
@@ -119,7 +120,7 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 	}
 	return Object{
 		field("command", "remove"), field("applied", true), field("directory", directory), field("removed", true),
-		field("claim", claimValue), field("droppedInstallEntries", strs(dropped)),
+		field("claim", claimValue), field("droppedInstallEntries", strs(dropped)), field("clearedOutgoing", clearedOutgoing),
 		field("note", "the directory was removed after the record, the pointer, its claim, the process table and every registration the host reads all said nothing uses it, and after its install entries were dropped from the host record. Its measured points stay in the host record as history."),
 	}, OK
 }
@@ -173,7 +174,7 @@ func selectedOrPointed(rec Object, dest, directory string) *use {
 // reads names a path inside it (doctor.RegisteredInside) or could not be read or judged. nil
 // when neither does.
 func runningOrRegistered(ctx context.Context, o Options, directory string) *use {
-	processes, err := liveProcesses(o.proc(), directory)
+	processes, unruled, err := liveProcesses(o.proc(), directory)
 	var missing *noProcessTable
 	if errors.As(err, &missing) {
 		return &use{"this platform (" + runtime.GOOS + ") has no process table this command can read (" + missing.proc + " is not a procfs), so whether a relay daemon or a bridge still runs out of this directory cannot be established, and a directory that may be in use is never removed", "recoveryRequires",
@@ -185,6 +186,9 @@ func runningOrRegistered(ctx context.Context, o Options, directory string) *use 
 	if len(processes) > 0 {
 		return &use{"live processes run out of this directory", "processes", processes}
 	}
+	if len(unruled) > 0 {
+		return &use{"what a live process runs could not be read, so it cannot be ruled out that it runs out of this directory", "unreadableProcesses", unruled}
+	}
 	registered, unreadable := doctor.RegisteredInside(ctx, doctor.RetentionOptions{Env: o.Env, CodexHome: o.CodexHome, Destination: o.Dest}, directory)
 	if len(registered) > 0 {
 		return &use{"a registration the host reads still names a path inside this directory, and each new session starts it from there", "registrations", registered}
@@ -195,26 +199,28 @@ func runningOrRegistered(ctx context.Context, o Options, directory string) *use 
 	return nil
 }
 
-// dropInstalls drops every install entry whose environment resolves to directory, in one write
+// dropInstalls drops every install entry whose environment resolves to directory, and the
+// record's outgoing selection when it names anything inside directory (a bare rollback would
+// otherwise be sent to a runtime that no longer exists and has no install entry), in one write
 // under the host record's lock, after reading again that the record does not select it. It
-// answers the environments dropped, or why nothing was written.
-func dropInstalls(recordPath, directory string) ([]string, string) {
+// answers the environments dropped, whether outgoing was cleared, or why nothing was written.
+func dropInstalls(recordPath, directory string) ([]string, bool, string) {
 	lock, err := record.Lock(recordPath, 0)
 	if err != nil {
-		return nil, "the host record's lock could not be taken, so this directory's install entries could not be dropped before it is removed: " + err.Error()
+		return nil, false, "the host record's lock could not be taken, so this directory's install entries could not be dropped before it is removed: " + err.Error()
 	}
 	defer lock.Release()
 	current := record.Load(recordPath, definition.Version)
 	if !current.Usable() {
-		return nil, "the host record could not be read to drop this directory's install entries: " + current.Detail
+		return nil, false, "the host record could not be read to drop this directory's install entries: " + current.Detail
 	}
 	rec := current.Value.(Object)
 	if selectsUnder(rec, directory) {
-		return nil, "the host record selects this runtime now, so it is in service"
+		return nil, false, "the host record selects this runtime now, so it is in service"
 	}
 	root, err := record.Resolve(directory)
 	if err != nil {
-		return nil, "the directory could not be resolved: " + err.Error()
+		return nil, false, "the directory could not be resolved: " + err.Error()
 	}
 	var dropped []string
 	components, _ := record.Get(rec, "components").(Object)
@@ -237,13 +243,20 @@ func dropInstalls(recordPath, directory string) ([]string, string) {
 		}
 	}
 	dropped = uniqueStrings(dropped...)
-	if len(dropped) == 0 {
-		return []string{}, ""
+	clearOutgoing := outgoingUnder(rec, directory)
+	if clearOutgoing {
+		rec = record.Delete(rec, "outgoing")
+	}
+	if len(dropped) == 0 && !clearOutgoing {
+		return []string{}, false, ""
 	}
 	if err := record.Save(recordPath, rec); err != nil {
-		return nil, "the host record could not be written to drop this directory's install entries: " + store.PythonOSError(err)
+		return nil, false, "the host record could not be written to drop this directory's install entries: " + store.PythonOSError(err)
 	}
-	return dropped, ""
+	if dropped == nil {
+		dropped = []string{}
+	}
+	return dropped, clearOutgoing, ""
 }
 
 func (o Options) proc() string {
@@ -272,21 +285,70 @@ type noProcessTable struct{ proc string }
 
 func (n *noProcessTable) Error() string { return "no process table (procfs) at " + n.proc }
 
+// processOwner is the uid a /proc/<pid> directory belongs to, which is the process's (a
+// variable only so that a test's fake process table can hold another user's processes).
+var processOwner = func(dir string) (int, error) {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return 0, err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, errors.New("the owner of " + dir + " could not be read")
+	}
+	return int(stat.Uid), nil
+}
+
+// vanished is whether a read of a /proc/<pid> entry failed because the process is gone (or has
+// no executable to name: a zombie, a kernel thread), not because it could not be read.
+func vanished(err error) bool {
+	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH)
+}
+
+// denied is whether reading a process's exe was refused for want of ptrace access, which the
+// kernel refuses for another user's process and for this user's own when it holds capabilities
+// this one does not (systemd --user holds CAP_WAKE_ALARM) or is not dumpable.
+func denied(err error) bool {
+	return errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM)
+}
+
+// readExe reads a /proc/<pid>/exe link (a variable only so that a test's fake process table can
+// answer as the kernel does when ptrace access is refused).
+var readExe = os.Readlink
+
+// runtimeNames are the names a runtime's own executables run under.
+func runtimeNames() map[string]bool {
+	names := map[string]bool{Binary: true}
+	for _, name := range definition.Links() {
+		names[name] = true
+	}
+	return names
+}
+
 // liveProcesses is every process (but this one) whose executable, or the interpreter or script
-// its argv starts, resolves inside directory. A Python runtime runs as <venv>/bin/python (whose
-// /proc exe is the base interpreter outside the venv) or as a console script under <venv>/bin,
-// so argv's first two words are read as spelled and as resolved; a Go runtime is its exe.
-func liveProcesses(proc, directory string) ([]any, error) {
+// its argv starts, resolves inside directory, and every process that could not be ruled out. A
+// Python runtime runs as <venv>/bin/python (whose /proc exe is the base interpreter outside the
+// venv) or as a console script under <venv>/bin, so argv's first two words are read as spelled
+// and as resolved; a Go runtime is its exe.
+//
+// A pid whose entries are gone (ENOENT, ESRCH) has exited and is skipped. Any other failure is
+// not an absence. A process whose exe the kernel will not show (readlink needs ptrace access:
+// another user's process, and this user's own when it holds capabilities or is not dumpable) is
+// judged by its cmdline, which every user may read, and is not ruled out when that is hidden
+// too (a procfs mounted hidepid) or when it starts one of this runtime's executables by a bare
+// name, which could be this runtime's. A process of this user whose exe or cmdline cannot be
+// read for any other reason is not ruled out.
+func liveProcesses(proc, directory string) (found, unruled []any, err error) {
 	if _, err := os.Stat(filepath.Join(proc, "self")); err != nil {
-		return nil, &noProcessTable{proc}
+		return nil, nil, &noProcessTable{proc}
 	}
 	entries, err := os.ReadDir(proc)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	root, err := record.Resolve(directory)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	inside := func(path string) bool {
 		if !filepath.IsAbs(path) {
@@ -298,23 +360,50 @@ func liveProcesses(proc, directory string) ([]any, error) {
 		resolved, err := record.Resolve(path)
 		return err == nil && record.Within(resolved, root)
 	}
-	self := os.Getpid()
-	var found []any
+	self, me := os.Getpid(), os.Getuid()
 	for _, entry := range entries {
 		pid, err := strconv.Atoi(entry.Name())
 		if err != nil || pid == self {
 			continue
 		}
 		base := filepath.Join(proc, entry.Name())
+		unknown := func(uid any, why string) {
+			unruled = append(unruled, Object{field("pid", int64(pid)), field("uid", uid), field("why", why)})
+		}
+		uid, err := processOwner(base)
+		switch {
+		case vanished(err):
+			continue
+		case err != nil:
+			unknown(nil, "whose process it is could not be read: "+store.PythonOSError(err))
+			continue
+		}
 		var hits []string
-		if exe, err := os.Readlink(filepath.Join(base, "exe")); err == nil {
+		exe, exeErr := readExe(filepath.Join(base, "exe"))
+		raw, cmdErr := os.ReadFile(filepath.Join(base, "cmdline"))
+		words := strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
+		switch {
+		case vanished(exeErr) || vanished(cmdErr):
+			continue
+		case exeErr != nil && !denied(exeErr) && uid == me:
+			unknown(int64(uid), "it runs as this user and its executable could not be read ("+store.PythonOSError(exeErr)+"), so what it runs is unknown")
+			continue
+		case cmdErr != nil:
+			why := "its command line could not be read (" + store.PythonOSError(cmdErr) + "; a procfs mounted hidepid hides another user's)"
+			if exeErr != nil {
+				why += ", nor its executable (" + store.PythonOSError(exeErr) + ")"
+			}
+			unknown(int64(uid), why+", so what it runs is unknown")
+			continue
+		case exeErr == nil:
 			exe = strings.TrimSuffix(exe, " (deleted)")
 			if inside(exe) {
 				hits = append(hits, exe)
 			}
+		case !strings.Contains(words[0], "/") && runtimeNames()[words[0]]:
+			unknown(int64(uid), "its executable could not be read ("+store.PythonOSError(exeErr)+") and its command line starts "+words[0]+" by a bare name, which may be this runtime's, so what it runs is unknown")
+			continue
 		}
-		raw, _ := os.ReadFile(filepath.Join(base, "cmdline"))
-		words := strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
 		for i, word := range words {
 			if i > 1 {
 				break
@@ -327,5 +416,5 @@ func liveProcesses(proc, directory string) ([]any, error) {
 			found = append(found, Object{field("pid", int64(pid)), field("runs", strs(hits))})
 		}
 	}
-	return found, nil
+	return found, unruled, nil
 }

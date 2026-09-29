@@ -34,3 +34,11 @@ func ReplaceBeforeWriteLock(between func(path string)) (restore func()) {
 	beforeWriteLock = between
 	return func() { beforeWriteLock = saved }
 }
+
+// ReplaceProcessOwner makes the process table's owner reading go through owner until restored,
+// so that a fake /proc can hold another user's processes.
+func ReplaceProcessOwner(owner func(dir string) (int, error)) (restore func()) {
+	saved := processOwner
+	processOwner = owner
+	return func() { processOwner = saved }
+}
