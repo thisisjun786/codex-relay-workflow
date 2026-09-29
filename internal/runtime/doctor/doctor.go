@@ -847,7 +847,7 @@ func Diagnose(ctx context.Context, o Options) Object {
 	}
 	fields := map[string]Object{
 		"installed":  installed,
-		"mcpExposed": field("not_verified", "no tool names were observed: only a live session can list them, and a configuration entry alone never establishes this field.", nil, measured),
+		"mcpExposed": field("not_verified", "the doctor's own session with the bridge is not Codex's: only a Codex session can show which tools it exposes, and a configuration entry alone never establishes this field.", nil, measured),
 		"connected": field(connectedValue, "doctor actorReachability.socketConnect = "+pyRepr(connect)+". A socket file existing on disk does not establish this.",
 			evidence.Dumps(record.Get(summary, "scopeCommand"), false, false, true), connectedAt),
 		"deliveryAccepted":     field("not_applicable", "no trial was requested. This field requires an attempt that recorded a returned turn id, which means creating work, and this command creates none.", nil, ""),

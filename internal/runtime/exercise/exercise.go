@@ -32,6 +32,10 @@ type Object = record.Object
 // BridgeTimeout bounds one bridge session, as check_connection's 180 s subprocess budget did.
 var BridgeTimeout = 180 * time.Second
 
+// WaitDelay bounds how long a finished or killed bridge's output may be held open by a
+// descendant before the session gives up on it.
+var WaitDelay = 5 * time.Second
+
 // protocolVersion is the MCP revision the session offers; the server answers with the one it
 // speaks, and nothing here depends on which.
 const protocolVersion = "2025-06-18"
@@ -152,6 +156,10 @@ func Argv(ctx context.Context, argv []string, env scope.Env) Bridge {
 		result.Err = err
 		return result
 	}
+	// A descendant that inherited stdout keeps the pipe open after the bridge is killed, and a
+	// read blocked on it would outlive the deadline: WaitDelay closes the pipes once the session's
+	// time is up (or the bridge has exited) and that long has passed.
+	cmd.WaitDelay = WaitDelay
 	if err := cmd.Start(); err != nil {
 		result.Err = errors.New(store.PythonOSError(err))
 		return result
