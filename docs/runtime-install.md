@@ -418,7 +418,7 @@ Three read-only commands, each answering a different question:
   It is the reading the retention rule waits on.
 
 None of them takes a lock across the whole reading, so a host changing underneath is described in
-pieces, and each says so in its `note`.
+pieces.
 
 ## How skill commands reach the relay
 
@@ -435,7 +435,8 @@ readlink -f "$(command -v codex-session-relay)"   # expect <destination>/bin-<ve
 
 A stale `codex-session-relay` earlier on `PATH`, such as a console script under `~/.local/bin` whose
 shebang names a Python virtual environment in a development checkout, runs whatever that checkout
-holds, against the same store and outside the cutover's fence. The retention scan does not read
+holds against the same store, which can be code from before the fence release and so outside the
+cutover's fence. The retention scan does not read
 `PATH`, so this reading is the one that finds it.
 
 ## The one definition
@@ -462,8 +463,8 @@ host record outside this repository and this repository never commits one.
 ## The host record
 
 The host record is the other half of the definition and is never committed. It is `recordVersion`
-1, which the Go and Python installers both read and write; the Go install adds fields and removes
-none. It holds, per component, one entry per install and the measured points, plus what is
+1, which the Go and Python installers both read and write: Go install entries carry fields of their
+own beside the Python-era entries, which keep theirs. It holds, per component, one entry per install and the measured points, plus what is
 `selected`, the `outgoing` selection a rollback returns to, and the owned `pointer` with who placed
 it and when.
 
