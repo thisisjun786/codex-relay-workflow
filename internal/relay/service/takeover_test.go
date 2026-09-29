@@ -754,17 +754,27 @@ func Test30RealCandidateControllerEOF(t *testing.T) {
 			if info, err := os.Lstat(ControlPath(home + "/state")); err != nil || info.Mode()&os.ModeSocket == 0 {
 				t.Fatalf("ready before control.sock was bound: %v", err)
 			}
+			var events *watch
 			if published {
 				r.Phase, r.Holder = "active", &ready.Identity
 				if err = ownership.Publish(path, r, nil); err != nil {
 					t.Fatal(err)
 				}
+				events = watchDir(t, home+"/state")
 			}
 			if err = conn.Close(); err != nil {
 				t.Fatal(err)
 			}
 			var worker *ProcessHandle
 			if published {
+				// Decision 30: the activated candidate releases its readiness listener, then
+				// supervises. Its recorded worker is awaited, never raced: the guard below
+				// reaches the worker's own control.sock, not a readiness listener closing
+				// under it, and the interrupt lands while that worker holds the inherited
+				// locks, as it does whenever the scheduler lets the supervisor spawn first.
+				var run Object
+				events.until(t, func() bool { run = read(home + "/state/daemon.json"); return truth(get(run, "workerPid")) })
+				worker = process(t, num(get(run, "workerPid")))
 				awaitControl(t, home+"/state")
 				client, err := net.DialTimeout("unix", ControlPath(home+"/state"), 5*time.Second)
 				if err != nil {
@@ -774,24 +784,23 @@ func Test30RealCandidateControllerEOF(t *testing.T) {
 				defer cancel()
 				answer, err := hook.RequestGuard(ctx, client, hook.Object{}, hook.GuardOptions{Root: ownerMarkers(home), Mode: hook.Observe})
 				_ = client.Close()
-				if err != nil || get(answer, "decision") != "release" || h.Wait(0) {
+				if err != nil || get(answer, "decision") != "release" || h.Wait(0) || worker.Wait(0) {
 					t.Fatal(answer, err)
 				}
-				// The activated candidate is the supervisor; its worker holds the
-				// inherited locks until the supervisor's interrupt reaches it.
-				if pid := num(get(read(home+"/state/daemon.json"), "workerPid")); pid != 0 {
-					worker = OpenProcess(pid)
-					defer worker.Close()
-				}
+				// Decision 42: the interrupt reaches the supervisor alone, which passes it on
+				// to its worker and exits only after that worker.
 				if !h.Send(unix.SIGINT) {
 					t.Fatal(h.Detail)
 				}
 			}
 			if !h.Wait(5 * time.Second) {
+				if published {
+					t.Fatal("the interrupted supervisor outlived its interrupt while its worker ran")
+				}
 				t.Fatal("candidate outlived controller EOF without active publication")
 			}
-			if worker != nil && !worker.Wait(5*time.Second) {
-				t.Fatal("worker outlived its supervisor")
+			if worker != nil && !worker.Wait(0) {
+				t.Fatal("the supervisor exited before its worker, which holds the inherited locks")
 			}
 			scope := ScopeRegistry{Root: home + "/scopes", Authority: "isolated"}
 			for _, lockPath := range []string{home + "/state/daemon.lock", scope.path(home+"/socket", ".lock"), home + "/state/write-gate.lock"} {

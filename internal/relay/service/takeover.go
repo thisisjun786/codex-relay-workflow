@@ -150,8 +150,9 @@ func (r *takeoverRuntime) Drain(ctx context.Context, record ownership.Record) er
 	if err := s.RequestStop(); err != nil {
 		return err
 	}
-	// Identify every holder first, then interrupt them together: a supervisor waits
-	// for its current worker, so stopping one at a time would only end in SIGKILL.
+	// Identify every holder first, then interrupt them together. A Go supervisor also
+	// passes its interrupt on to its current worker and waits for it, and a supervised
+	// worker absorbs the repeat (decision 42), so the pair stops on whichever lands first.
 	var holders []*ProcessHandle
 	defer func() {
 		for _, h := range holders {

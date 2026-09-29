@@ -5,6 +5,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -270,5 +271,51 @@ func Test29StopEscalatesAndRefusesForeign(t *testing.T) {
 	out, err = s.Stop("test", time.Second)
 	if err != nil || get(out, "ok") != true || !supervisor.Wait(0) || !worker.Wait(0) {
 		t.Fatalf("escalation %+v %v", out, err)
+	}
+}
+
+// Decision 42: a service supervisor interrupted by itself stops, and its worker with it, in
+// both runtimes. Python's KeyboardInterrupt ends the supervisor and PR_SET_PDEATHSIG then its
+// worker; Go passes the interrupt on and exits after its worker, clearing both identities.
+// Interrupted together, as a Go-owner drain or a terminal's process group does it, the Go
+// worker absorbs the repeat and stops through its own cleanup (control.sock unbound), not by
+// SIGINT's default disposition.
+func Test42InterruptedSupervisorStopsItsWorker(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		python, both bool
+	}{{"python", true, false}, {"go", false, false}, {"go-interrupted-together", false, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			supervisor, worker := startServing(t, home, tc.python)
+			if !supervisor.Send(unix.SIGINT) {
+				t.Fatal(supervisor.Detail)
+			}
+			if tc.both && !worker.Send(unix.SIGINT) {
+				t.Fatal(worker.Detail)
+			}
+			if !supervisor.Wait(10 * time.Second) {
+				t.Fatal("the interrupted supervisor outlived its interrupt while its worker ran")
+			}
+			if !worker.Wait(10 * time.Second) {
+				t.Fatal("the worker outlived its interrupted supervisor")
+			}
+			scope := &ScopeRegistry{Root: home + "/scopes", Authority: "isolated"}
+			for _, lock := range []string{filepath.Join(home, "state", "daemon.lock"), scope.path(home+"/socket", ".lock")} {
+				if lockHeld(lock) {
+					t.Fatalf("%s is still held", lock)
+				}
+			}
+			if tc.python {
+				return
+			}
+			r := read(filepath.Join(home, "state", "daemon.json"))
+			if get(r, "pid") != nil || get(r, "workerPid") != nil || get(r, "lastExit") == nil || num(get(r, "lastExit")) < 0 || get(r, "nextRestartAt") != nil {
+				t.Fatalf("the supervisor did not record its worker's own exit: %v", r)
+			}
+			if _, err := os.Lstat(ControlPath(filepath.Join(home, "state"))); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("the worker ended without closing control.sock: %v", err)
+			}
+		})
 	}
 }
