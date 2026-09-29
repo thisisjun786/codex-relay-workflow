@@ -55,6 +55,6 @@ func daemonFactory(ctx context.Context, services cli.Services, s *store.Store) (
 		stateHome = filepath.Join(home, ".local", "state")
 	}
 	d.Sweeper = &faults.Sweeper{Store: s, MaxAttempts: d.Delivery.Policy.MaxAttempts, Selection: services.Selection, Now: clock.ISO, SupersessionReason: d.Delivery.SupersessionReason,
-		Installation: faults.Installation{Package: "codex-session-relay", Version: "0.1.0", Location: filepath.Dir(executable)}, HostRecordPath: filepath.Join(stateHome, "codex-relay-workflow", "host-record.json")}
+		Installation: faults.Installation{Package: "codex-session-relay", Version: faults.RelayPackageVersion, Location: filepath.Dir(executable)}, HostRecordPath: filepath.Join(stateHome, "codex-relay-workflow", "host-record.json")}
 	return d, nil
 }

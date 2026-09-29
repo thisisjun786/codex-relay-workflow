@@ -41,9 +41,10 @@ contract:
 	@if [ ! -d ./internal/contracttest ] || ! $(GO) list ./internal/contracttest/... 2>/dev/null | grep -q .; then echo "no Go packages yet: contract skipped"; else $(GO) test ./internal/contracttest/...; fi
 
 # Exhaustive live-Python CLI matrices. The default suite keeps mutation-backed
-# representatives so ordinary CI remains bounded on four-core runners.
+# representatives so ordinary CI remains bounded on four-core runners. The cli package
+# alone runs for several minutes and more under load, past go test's default 10m timeout.
 parity:
-	$(GO) test -tags parity -count=1 ./internal/relay/cli/... ./internal/relay/adapter/... ./internal/relay/hook/...
+	$(GO) test -tags parity -count=1 -timeout 30m ./internal/relay/cli/... ./internal/relay/adapter/... ./internal/relay/hook/...
 
 # The development tooling (cmd/crw-dev, internal/dev) builds only with -tags dev, so lint and
 # test cover it in a second pass; dist and goreleaser never pass the tag.

@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 type supervisorRun struct {
@@ -227,10 +228,14 @@ func Test28_HOST_24_SupervisorSendRead(t *testing.T) {
 					t.Fatalf("message ids differ: %s %s", goID, pyID)
 				}
 				goRuns := runSupervisorBinary(t, mode.program, goState, goHost.SocketPath, goID)
+				// The oracle's store was seeded by Go: Python serves it after a takeover, and Go
+				// reads its tables back after one more.
+				testsupport.HandOver(t, filepath.Join(pyState, "relay.sqlite3"), "python")
 				pyRuns := runSupervisorPython(t, pyState, pyHost.SocketPath, pyID, mode.rendered)
 				if !reflect.DeepEqual(goRuns, pyRuns) {
 					t.Fatalf("CLI differs\nGo: %#v\nPython: %#v", goRuns, pyRuns)
 				}
+				testsupport.HandOver(t, filepath.Join(pyState, "relay.sqlite3"), "go")
 				goTables := normalizeSupervisorTables(supervisorTables(t, goState), goState, goHost.SocketPath)
 				pyTables := normalizeSupervisorTables(supervisorTables(t, pyState), pyState, pyHost.SocketPath)
 				if !reflect.DeepEqual(goTables, pyTables) {

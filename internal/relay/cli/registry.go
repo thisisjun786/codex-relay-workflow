@@ -101,6 +101,9 @@ func Execute(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 // ExecuteAs is cli.main: argparse first (exit 2, usage on stderr), then Services, the
 // selection refusal, the handler, and one JSON document on stdout for every other ending.
 func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr io.Writer) (code int) {
+	if code, handled := ExecuteTakeover(ctx, argv, stdout, stderr); handled {
+		return code
+	}
 	defer func() {
 		if value := recover(); value != nil {
 			if failure, ok := value.(*evidence.PythonError); ok {
@@ -161,7 +164,31 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 	}
 	kindModules := root.Values["kind-module"]
 	argv = root.RootArgs()
-	check := func(selection store.StateSelection, socket string) error {
+	ctx = readOnlyContext(ctx, remaining)
+	// cli.main's _ownership_preflight and inbox.replay: a writable command that drains opens its
+	// store once the selection refusal passed, then imports --kind-module, then replays the
+	// takeover inbox on that store, all before its handler reads its own arguments; the handler's
+	// store is that store.
+	drains := drainsBeforeHandler(remaining[0]) && !store.ReadOnlyCommand(ctx)
+	ctx, admitted := store.WithAdmitted(ctx)
+	defer func() { _ = admitted.Release() }()
+	admit := func(selection store.StateSelection, socket string) error {
+		st, err := store.Open(ctx, selection.DBPath(), socket)
+		if err != nil {
+			return err
+		}
+		if err = kindModuleRefusal(kindModules); err == nil {
+			if err = drainInbox(ctx, st, socket); err == nil {
+				admitted.Hold(st, selection.DBPath(), socket)
+				return nil
+			}
+		}
+		if e := st.Close(); e != nil {
+			err = errors.Join(err, e)
+		}
+		return err
+	}
+	refusal := func(selection store.StateSelection, socket string) error {
 		services := Services{Selection: selection, SocketPath: socket, AdapterRequested: socket != "", Program: program(argv0)}
 		refusal, err := selectionRefusal(services)
 		if err != nil {
@@ -173,18 +200,21 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 		return nil
 	}
 	if slices.Contains(faults.Names(), remaining[0]) {
-		code, _ := faults.ExecuteAs(ctx, prog, argv, stdout, stderr, check)
+		code, _ := faults.ExecuteAs(ctx, prog, argv, stdout, stderr, func(selection store.StateSelection, socket string) error {
+			if err := refusal(selection, socket); err != nil || !drains {
+				return err
+			}
+			return admit(selection, socket)
+		})
 		return code
 	}
 	if slices.Contains(registry.Names(), remaining[0]) {
 		return registry.ExecuteAs(ctx, prog, argv, stdout, stderr, func(selection store.StateSelection, socket string) error {
-			services := Services{Selection: selection, SocketPath: socket, AdapterRequested: socket != "", Program: program(argv0)}
-			refusal, err := selectionRefusal(services)
-			if err != nil {
+			if err := refusal(selection, socket); err != nil {
 				return err
 			}
-			if refusal != nil {
-				return &PayloadExit{Payload: refusal, Code: contract.ExitRefused}
+			if drains {
+				return admit(selection, socket)
 			}
 			return kindModuleRefusal(kindModules)
 		})
@@ -192,14 +222,12 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 	if slices.Contains(delivery.CommandNames(), remaining[0]) {
 		code, _ := delivery.ExecuteAs(ctx, prog, argv, stdout, stderr, func(selection store.StateSelection, socket string) error {
 			if remaining[0] != "ack-proof" {
-				services := Services{Selection: selection, SocketPath: socket, AdapterRequested: socket != "", Program: program(argv0)}
-				refusal, err := selectionRefusal(services)
-				if err != nil {
+				if err := refusal(selection, socket); err != nil {
 					return err
 				}
-				if refusal != nil {
-					return &PayloadExit{Payload: refusal, Code: contract.ExitRefused}
-				}
+			}
+			if drains && selection.Path != "" {
+				return admit(selection, socket)
 			}
 			return kindModuleRefusal(kindModules)
 		})
@@ -249,7 +277,13 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 		if done {
 			return code
 		}
-		result, err := run(ctx, command, argv0, state, socket, kindModules, Args{Flags: flags, Set: given, Positionals: positionals})
+		result, err := run(ctx, command, argv0, state, socket, kindModules, admitIf(drains, admit), Args{Flags: flags, Set: given, Positionals: positionals})
+		if err != nil && candidateRun(command, positionals, flags) {
+			// cli.py main: a failed candidate run returns its exit code and prints nothing
+			// on stdout; its controller reads the inherited channel, never stdout. The
+			// document goes to stderr, which a launched candidate shares with daemon.log.
+			return emit(stderr, stderr, nil, err)
+		}
 		return emit(stdout, stderr, result, err)
 	}
 	commandUsage := "usage: " + prog + " " + command.Name + commandSynopsis(flags)
@@ -274,11 +308,22 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 	if len(missing) > 0 {
 		return parseErrorAs(prog+" "+command.Name, commandUsage, "the following arguments are required: "+strings.Join(missing, ", "))
 	}
-	result, err := run(ctx, command, argv0, state, socket, kindModules, Args{Flags: flags, Set: given})
+	result, err := run(ctx, command, argv0, state, socket, kindModules, admitIf(drains, admit), Args{Flags: flags, Set: given})
 	return emit(stdout, stderr, result, err)
 }
 
-func run(ctx context.Context, command *Command, argv0, state, socket string, kindModules []string, args Args) (any, error) {
+// admitIf is admit for a command that drains, nil for any other.
+func admitIf(drains bool, admit func(store.StateSelection, string) error) func(store.StateSelection, string) error {
+	if drains {
+		return admit
+	}
+	return nil
+}
+
+// run is cli.main for a command of this package's table: the selection refusal, then admit (the
+// writable open, --kind-module and the inbox replay) for a command that drains, or
+// --kind-module alone, then the handler.
+func run(ctx context.Context, command *Command, argv0, state, socket string, kindModules []string, admit func(store.StateSelection, string) error, args Args) (any, error) {
 	services := Services{SocketPath: socket, AdapterRequested: socket != "", Program: program(argv0)}
 	if !command.Exempt {
 		selection, err := store.ResolveStateDir(state, socket)
@@ -305,6 +350,12 @@ func run(ctx context.Context, command *Command, argv0, state, socket string, kin
 			return nil, err
 		}
 		services.Selection = selection
+	}
+	if admit != nil && !command.Exempt {
+		if err := admit(services.Selection, socket); err != nil {
+			return nil, err
+		}
+		return command.Run(ctx, services, args)
 	}
 	// _import_kind_modules runs after the selection refusal and before the handler.
 	if err := importKindModules(kindModules); err != nil {

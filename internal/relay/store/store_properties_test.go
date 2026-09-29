@@ -116,7 +116,7 @@ func TestStore_python_durable_properties(t *testing.T) {
 		if err := s.AppendJournal(ctx, JournalEntry{At: "t", Kind: "durable", Subject: "s", Detail: "d"}); err != nil {
 			t.Fatal(err)
 		}
-		other, err := Open(ctx, s.Path, "")
+		other, err := fixtureOpen(ctx, s.Path, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -133,7 +133,7 @@ func TestStore_python_durable_properties(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		other, err := Open(ctx, s.Path, "")
+		other, err := fixtureOpen(ctx, s.Path, "")
 		if err != nil {
 			t.Fatal(err)
 		}

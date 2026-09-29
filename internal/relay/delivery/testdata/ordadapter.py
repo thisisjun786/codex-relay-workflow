@@ -1,7 +1,19 @@
 """ORD-6..ORD-9 through the real Python adapter and supervisor channel. argv: <tree> <mode>."""
 import json, sys, tempfile
 TREE, MODE = sys.argv[1], sys.argv[2]
-tempfile.mkdtemp = lambda prefix=None: TREE
+_real_mkdtemp = tempfile.mkdtemp
+
+
+def _fixture_mkdtemp(*args, **kwargs):
+    # Only the Python tests' own fixture directories are the tree Go shares. The relay package's
+    # scratch directories (the ownership fence's schema_meta snapshot) stay real temporary ones.
+    caller = sys._getframe(1).f_globals.get("__name__", "")
+    if caller == "__main__" or caller.split(".")[0] == "tests":
+        return TREE
+    return _real_mkdtemp(*args, **kwargs)
+
+
+tempfile.mkdtemp = _fixture_mkdtemp
 from tests import test_bridge_adapter as seam
 from tests.test_on_request_delivery import record_based, RealAdapterRoutes, OnRequestSupervisor
 from codex_session_relay.transport import classify_operation_receipt

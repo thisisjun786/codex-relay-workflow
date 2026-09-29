@@ -28,6 +28,9 @@ func Test33ControlDefaultStorePython(t *testing.T) {
 			if err := json.Unmarshal(raw, &fixture); err != nil {
 				t.Fatal(err)
 			}
+			// The owner evaluates only under its own marker root (ownerPaths), configured as
+			// the relay is: the root the fixture's settings and request name.
+			t.Setenv("CODEX_SESSION_RELAY_MARKER_ROOT", filepath.Join(home, "markers"))
 			listener, err := net.Listen("unix", filepath.Join(fixture.State, "control.sock"))
 			if err != nil {
 				t.Fatal(err)

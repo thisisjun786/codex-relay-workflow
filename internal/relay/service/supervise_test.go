@@ -10,35 +10,48 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func testService(t *testing.T) *Service {
 	t.Helper()
 	home := t.TempDir()
+	testsupport.Create(t, filepath.Join(home, "state/relay.sqlite3"), "", "go")
 	s := &Service{Selection: store.StateSelection{Path: home + "/state"}, Scope: &ScopeRegistry{Root: home + "/scopes", Authority: "isolated"}, InstallationID: "test-installation"}
 	if _, err := s.Enable("test"); err != nil {
 		t.Fatal(err)
 	}
 	return s
 }
+
+// The supervisor opens its store in recovery (cli.py recover), under both service locks, and
+// publishes the identity it read into its record and scope registration (publish_store_identity).
 func Test29StoreOpensOnlyUnderBothLocks(t *testing.T) {
 	s := testService(t)
 	s.Socket = filepath.Join(t.TempDir(), "socket")
 	opened := false
-	s.Prepare = func() error {
+	var scopeWhileRunning Object
+	recovery := func() error {
 		opened = true
 		if !existingLockHeld(s.path("daemon.lock")) || !existingLockHeld(s.Scope.path(s.Socket, ".lock")) {
 			t.Fatal("writable store opened without both ownership locks")
 		}
+		if get(s.Record(), "storeId") != nil && get(s.Record(), "storeId") != s.StoreID {
+			t.Fatalf("record names another store before recovery: %v", s.Record())
+		}
 		s.StoreID = "new-store"
+		if err := s.PublishStoreIdentity(); err != nil {
+			return err
+		}
+		scopeWhileRunning = s.Scope.Read(s.Socket)
 		return nil
 	}
 	zero := 0
-	if _, err := s.Supervise(context.Background(), Options{AllowIsolated: true, MaxSegments: &zero}, nil, nil); err != nil {
+	if _, err := s.Supervise(context.Background(), Options{AllowIsolated: true, MaxSegments: &zero}, recovery, nil); err != nil {
 		t.Fatal(err)
 	}
-	if !opened || get(s.Record(), "storeId") != "new-store" {
-		t.Fatal("new identity not published")
+	if !opened || get(s.Record(), "storeId") != "new-store" || get(scopeWhileRunning, "storeId") != "new-store" || get(s.Scope.Read(s.Socket), "storeId") != "new-store" {
+		t.Fatalf("new identity not published: record %v, scope %v", s.Record(), s.Scope.Read(s.Socket))
 	}
 }
 

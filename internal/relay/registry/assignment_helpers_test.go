@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // checkpoint is one recorded Python call from testdata/gen_assignment.py: the whole store as
@@ -58,23 +60,50 @@ func assignmentScenario(t *testing.T, name string) []checkpoint {
 	return points
 }
 
-// replay loads a checkpoint's rows into a fresh Go store and makes the same call. It returns
+// loadCheckpoint writes a checkpoint's whole store at path: the frozen Python-produced empty store
+// (contract/fixtures/sqlite-ddl) holding every row the checkpoint dumped, schema_meta included. It
+// is a store written by hand, so it is then fenced for Go exactly as Go's absent-store initializer
+// stamps a store (testsupport.Fence) before Go opens it.
+func loadCheckpoint(t *testing.T, path, dump string) {
+	t.Helper()
+	fixture, err := os.ReadFile(filepath.Join("..", "..", "..", "contract", "fixtures", "sqlite-ddl", "python-store.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, fixture, 0600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := ownership.OpenExisting(ctx(), path, "rw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{"DELETE FROM schema_meta", dump, "PRAGMA wal_checkpoint(TRUNCATE)"} {
+		if _, err = db.ExecContext(ctx(), statement); err != nil {
+			_ = db.Close()
+			t.Fatal(err)
+		}
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	testsupport.Fence(t, path, "go")
+}
+
+// replay loads a checkpoint's rows into a Go-owned store and makes the same call. It returns
 // Go's answer and Python's, with Python's store directory rewritten to the Go store's, and the
 // physical identity (device, inode) of the Go store substituted after asserting it is present.
 func replay(t *testing.T, point checkpoint) (got, want map[string]any) {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "state")
+	loadCheckpoint(t, filepath.Join(dir, "relay.sqlite3"), point.SQL)
 	s, err := store.Open(context.Background(), filepath.Join(dir, "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	if _, err := s.DB.ExecContext(ctx(), "DELETE FROM schema_meta"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.DB.ExecContext(ctx(), point.SQL); err != nil {
-		t.Fatal(err)
-	}
 	r := &Registry{Store: s, Now: func() string { return point.ISO }, Policy: ResolveRolePolicy(map[string]string{})}
 	view := &AssignmentView{R: r, Clock: func() float64 { return point.Now }, Policy: DefaultRetryPolicy,
 		Program: func() []string { return []string{"codex-session-relay"} }}

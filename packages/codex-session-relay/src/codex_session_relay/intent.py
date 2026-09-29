@@ -739,9 +739,10 @@ def _identity(value, what: str) -> str:
 # that takes a lock, registration_hold, all receive this value, and none can quietly choose
 # another one while still using these functions. The hook's five seconds is the only stated
 # budget among them and it is the tightest, so a bound that fits inside it is not too generous
-# for a caller that has no stated budget at all. The hook reaches read_only_connection and
-# nothing else: the hold is opened by registration, which runs in the coordinator rather than
-# in a Stop evaluation.
+# for a caller that has no stated budget at all. Of the live-store openers the hook reaches
+# read_only_connection and one more, store.store_socket, which a Stop runs when it falls back
+# to the run's own selection and which reads this constant at call time too. The hold is opened
+# by registration, which runs in the coordinator rather than in a Stop evaluation.
 SQLITE_TIMEOUT = 2.0
 
 
@@ -809,6 +810,18 @@ def registration_hold(db_path):
     except (OSError, ValueError, TypeError, AttributeError):
         yield None, "the relay store path " + repr(db_path) + " could not be read as a path"
         return
+    from .ownership import Admission, OwnershipRefused
+
+    try:
+        resolved.stat()
+    except OSError as fault:
+        yield None, "the relay store could not be opened for writing: " + str(fault)
+        return
+    try:
+        admission = Admission(resolved)
+    except OwnershipRefused as fault:
+        yield None, fault
+        return
     try:
         # isolation_level=None so the BEGIN IMMEDIATE below IS the transaction. Left at the
         # default, sqlite3 opens an implicit deferred one on the first statement, and the hold
@@ -817,16 +830,19 @@ def registration_hold(db_path):
             uri, uri=True, timeout=SQLITE_TIMEOUT, isolation_level=None
         )
     except (OSError, sqlite3.Error, ValueError, TypeError) as fault:
+        admission.close()
         yield None, "the relay store could not be opened for writing: " + str(fault)
         return
     connection.row_factory = sqlite3.Row
     try:
+        admission.revalidate(connection)
         connection.execute("BEGIN IMMEDIATE")
-    except (OSError, sqlite3.Error) as fault:
+    except (OSError, sqlite3.Error, OwnershipRefused) as fault:
         # A store somebody else is writing, or one this process may read but not write. Both are
         # answered the same way: the caller could not take the lock, so it cannot prove anything
         # it publishes is current.
         connection.close()
+        admission.close()
         yield None, "the relay store's write lock could not be taken: " + str(fault)
         return
     try:
@@ -839,6 +855,7 @@ def registration_hold(db_path):
         except sqlite3.Error:
             pass
         connection.close()
+        admission.close()
 
 
 # What the relay says about the generation a dispatch request id opened.
@@ -1187,6 +1204,10 @@ def register_relationship(
     directory = assignment_dir(root, workspace, _assignment(assignment))
     with registration_hold(db_path) as (held, unavailable):
         if held is None:
+            from .ownership import OwnershipRefused
+
+            if isinstance(unavailable, OwnershipRefused):
+                raise unavailable
             raise RegistrationError(
                 RefusalReason.UNREGISTERED_RELATIONSHIP,
                 "the relay store could not be held for this registration, so it cannot be "

@@ -476,10 +476,14 @@ class TheAnswerNamesTheStoreItCameFrom(AssignmentTestCase):
         recorded = view.for_issue(ISSUE)["relay"]["store"]["recordedSocket"]
         self.assertTrue(recorded.endswith("crw125-first.sock"))
 
-        second = Store(path, socket_path="/tmp/crw125-second.sock")
-        self.addCleanup(second.close)
+        # Under the fence a later process cannot even open the store for another socket
+        # (decision 30, Go openFenced): the ownership record names the scope it serves.
+        from codex_session_relay.ownership import OwnershipRefused
+
+        with self.assertRaises(OwnershipRefused):
+            Store(path, socket_path="/tmp/crw125-second.sock")
         again = AssignmentView(
-            second, Registry(second, self.clock), self.clock
+            first, Registry(first, self.clock), self.clock
         ).for_issue(ISSUE)["relay"]["store"]["recordedSocket"]
         self.assertEqual(again, recorded)
 

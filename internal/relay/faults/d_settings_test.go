@@ -56,36 +56,34 @@ func TestDPolicyAndLimitWholeRepliesAgainstPython(t *testing.T) {
 	}
 	journal := map[string][]store.JournalEntry{}
 	for _, dir := range []string{goDir, pyDir} {
-		s, e := store.Open(context.Background(), filepath.Join(dir, "relay.sqlite3"), "")
-		if e != nil {
-			t.Fatal(e)
-		}
-		for _, check := range []struct {
-			kind, subject string
-			count         int64
-		}{{"fault_policy_set", "crw:report_omitted:degraded", 2}, {"fault_limit_set", "crw:notification", 1}, {"fault_limit_set", "crw:extension_z", 1}} {
-			rows, e := s.Journal(context.Background(), check.kind, check.subject)
-			if e != nil || int64(len(rows)) != check.count {
-				t.Fatalf("%s journal %s: %v %v", dir, check.kind, rows, e)
-			}
-			key := check.kind + ":" + check.subject
-			if dir == goDir {
-				journal[key] = rows
-			} else {
-				for i, r := range rows {
-					var g, p any
-					if e = json.Unmarshal([]byte(journal[key][i].Detail), &g); e != nil {
-						t.Fatal(e)
-					}
-					if e = json.Unmarshal([]byte(r.Detail), &p); e != nil {
-						t.Fatal(e)
-					}
-					if !reflect.DeepEqual(g, p) {
-						t.Fatalf("%s journal detail: Go %v Python %v", key, g, p)
+		readStore(t, context.Background(), filepath.Join(dir, "relay.sqlite3"), func(ctx context.Context, s *store.Store) error {
+			for _, check := range []struct {
+				kind, subject string
+				count         int64
+			}{{"fault_policy_set", "crw:report_omitted:degraded", 2}, {"fault_limit_set", "crw:notification", 1}, {"fault_limit_set", "crw:extension_z", 1}} {
+				rows, e := s.Journal(ctx, check.kind, check.subject)
+				if e != nil || int64(len(rows)) != check.count {
+					t.Fatalf("%s journal %s: %v %v", dir, check.kind, rows, e)
+				}
+				key := check.kind + ":" + check.subject
+				if dir == goDir {
+					journal[key] = rows
+				} else {
+					for i, r := range rows {
+						var g, p any
+						if e = json.Unmarshal([]byte(journal[key][i].Detail), &g); e != nil {
+							t.Fatal(e)
+						}
+						if e = json.Unmarshal([]byte(r.Detail), &p); e != nil {
+							t.Fatal(e)
+						}
+						if !reflect.DeepEqual(g, p) {
+							t.Fatalf("%s journal detail: Go %v Python %v", key, g, p)
+						}
 					}
 				}
 			}
-		}
-		s.Close()
+			return nil
+		})
 	}
 }

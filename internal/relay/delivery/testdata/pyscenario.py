@@ -10,7 +10,19 @@ import sys
 import tempfile
 
 TREE, NAME = sys.argv[1], sys.argv[2]
-tempfile.mkdtemp = lambda prefix=None: TREE
+_real_mkdtemp = tempfile.mkdtemp
+
+
+def _fixture_mkdtemp(*args, **kwargs):
+    # Only the Python tests' own fixture directories are the tree Go shares. The relay package's
+    # scratch directories (the ownership fence's schema_meta snapshot) stay real temporary ones.
+    caller = sys._getframe(1).f_globals.get("__name__", "")
+    if caller == "__main__" or caller.split(".")[0] == "tests":
+        return TREE
+    return _real_mkdtemp(*args, **kwargs)
+
+
+tempfile.mkdtemp = _fixture_mkdtemp
 
 from tests.support import CHILD, PARENT, DeliveryTestCase  # noqa: E402
 from codex_session_relay.errors import RelayError  # noqa: E402

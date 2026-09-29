@@ -10,6 +10,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // sweepPython runs body against a VACUUM copy of f's store. body sees store, clock,
@@ -20,6 +21,7 @@ func sweepPython(t *testing.T, f *stageFixture, body string, args ...string) sup
 	if _, err := f.s.DB.ExecContext(f.ctx, "VACUUM INTO ?", copyPath); err != nil {
 		t.Fatal(err)
 	}
+	ownCopied(t, copyPath, "python")
 	repo, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatal(err)
@@ -219,6 +221,8 @@ func snapshotFixture(t *testing.T, variant string) (*stageFixture, map[string]an
 	if err := os.WriteFile(root+"/state/relay.sqlite3", data, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// The checked-in snapshots predate the fence: a fixture store, stamped for the runtime under test.
+	testsupport.Fence(t, root+"/state/relay.sqlite3", "go")
 	s, err := store.Open(context.Background(), root+"/state/relay.sqlite3", "")
 	if err != nil {
 		t.Fatal(err)
@@ -326,6 +330,7 @@ func TestSweep24_ProjectCLIUsesGraceAndDeduplicatesCallerReading(t *testing.T) {
 			if err := os.WriteFile(pythonDB, rawDB, 0600); err != nil {
 				t.Fatal(err)
 			}
+			ownCopied(t, pythonDB, "python")
 			var args []string
 			if tc.caller {
 				path := filepath.Join(t.TempDir(), "reading.json")

@@ -27,7 +27,10 @@ func Test33ControlHandler(t *testing.T) {
 		}()
 		done <- HandleControl(ctx, server, ownerState)
 	}()
-	result, err := RequestGuard(ctx, client, Object{}, GuardOptions{Root: t.TempDir(), Mode: Observe, Now: "2026-01-01T00:00:00Z"})
+	// The owner evaluates only under its own marker root (ownerPaths): configured as the relay is.
+	root := t.TempDir()
+	t.Setenv("CODEX_SESSION_RELAY_MARKER_ROOT", root)
+	result, err := RequestGuard(ctx, client, Object{}, GuardOptions{Root: root, Mode: Observe, Now: "2026-01-01T00:00:00Z"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +49,7 @@ func Test33ControlHandler(t *testing.T) {
 func Test33OwnedGuardRunsInProcess(t *testing.T) {
 	home := hookHome(t, 5)
 	ctx := context.Background()
-	db, err := store.Open(ctx, filepath.Join(home, "state/relay.sqlite3"), "")
+	db, err := fixtureStore(ctx, filepath.Join(home, "state/relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +59,6 @@ func Test33OwnedGuardRunsInProcess(t *testing.T) {
 	if err = db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	writeTest(t, filepath.Join(home, "state/takeover.json"), []byte(`{"owner":"go","phase":"active"}`))
 	done, _ := fakeControl(t, home, func(conn net.Conn) error {
 		raw, err := io.ReadAll(conn)
 		if err != nil {

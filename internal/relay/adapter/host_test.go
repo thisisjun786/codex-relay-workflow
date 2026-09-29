@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // The real binary's host-only commands must reach the same socket as Python, not
@@ -32,6 +35,12 @@ func Test28_BuiltBinaryHostRoundTrips(t *testing.T) {
 			}
 			goCmd := exec.Command(program, goArgs...)
 			goOut, goErr := goCmd.CombinedOutput()
+			// Python answers from the store Go just created, after a takeover.
+			if _, err := os.Stat(filepath.Join(state, "relay.sqlite3")); err == nil {
+				testsupport.HandOver(t, filepath.Join(state, "relay.sqlite3"), "python")
+			} else if !errors.Is(err, os.ErrNotExist) {
+				t.Fatal(err)
+			}
 			py := exec.Command("uv", append([]string{"run", "--no-sync", "python", "-m", "codex_session_relay.cli"}, argv...)...)
 			py.Dir = repo
 			pyOut, pyErr := py.CombinedOutput()

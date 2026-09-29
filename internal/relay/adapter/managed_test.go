@@ -17,11 +17,16 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func Test28_ManagedSixMethodsRealSocket(t *testing.T) {
 	root := t.TempDir()
 	state := filepath.Join(root, "state")
+	// One host, one scope registry root: the store records the scope key of the root it is
+	// created under, and the built CLI below serves it under that same root.
+	scope := filepath.Join(root, "scopes")
+	t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", scope)
 	workspace := filepath.Join(root, "work")
 	marker := filepath.Join(root, "markers")
 	if err := os.Mkdir(workspace, 0700); err != nil {
@@ -111,6 +116,9 @@ func Test28_ManagedSixMethodsRealSocket(t *testing.T) {
 	if err := contract.Emit(&got, result); err != nil {
 		t.Fatal(err)
 	}
+	// Python replays the start from the store Go wrote, after a takeover; the built CLI then
+	// replays it again after the store is taken back.
+	testsupport.HandOver(t, filepath.Join(state, "relay.sqlite3"), "python")
 	spec, err := json.Marshal(map[string]any{"state": state, "marker": marker, "socket": host.SocketPath, "request": request})
 	if err != nil {
 		t.Fatal(err)
@@ -126,8 +134,8 @@ func Test28_ManagedSixMethodsRealSocket(t *testing.T) {
 	if !bytes.Equal(got.Bytes(), out) {
 		t.Fatalf("Go %s\nPython %s", &got, out)
 	}
+	testsupport.HandOver(t, filepath.Join(state, "relay.sqlite3"), "go")
 	binary := suiteBinary
-	scope := filepath.Join(root, "scopes")
 	publishWorker(t, state, host.SocketPath, scope, filepath.Dir(binary))
 	cliCmd := exec.Command(binary, "relay", "--state", state, "--socket", host.SocketPath, "managed-start", "--request", string(raw), "--marker-root", marker)
 	cliCmd.Env = append(os.Environ(), "CODEX_SESSION_RELAY_SCOPE_DIR="+scope)

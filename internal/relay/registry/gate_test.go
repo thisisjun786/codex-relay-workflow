@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -261,20 +262,65 @@ func responseFor(row contractObject) contractObject {
 		{Key: "reasoningEffort", Value: get("reasoningEffort")}, {Key: "thread", Value: contractObject{{Key: "environments", Value: get("environments")}}}}
 }
 
-// CLI-23: a command that ends before touching the store (a usage refusal of its own arguments,
-// an unparseable command line) creates no state directory.
-func Test25_CLI23_ending_before_the_store_is_used_creates_nothing(t *testing.T) {
-	for _, argv := range [][]string{
-		{"settings-record", "--task", parent, "--settings", "{}", "--exception", "x", "--clear-exception"},
-		{"register", "--parent-task", parent},
-		{"register", "--parent-task", parent, "--parent-host", host, "--child-task", child, "--child-host", host, "--issue", issue,
-			"--artifact-root", "/w", "--allowed-recipient", parent, "--dispatch-request-id", "d", "--parent-settings", "@/nonexistent/settings.json"},
+// CLI-23: where a command's own refusal falls relative to its store, against the live Python
+// fence. A write form opens its store in cli.main's _ownership_preflight before its handler reads
+// its arguments, so a usage refusal of its own arguments (settings-record's two exception flags)
+// and a settings file that cannot be read (register's host error) leave the store it would have
+// written - initialized, as any writer initializes an absent store (decision 30). A command line
+// argparse cannot parse ends before cli.main and creates nothing. Each runtime starts from its
+// own absent store; stdout, exit code and what the state directory holds must agree.
+func Test25_CLI23_a_write_forms_own_refusal_comes_after_its_store(t *testing.T) {
+	root, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listing := func(state string) []string {
+		entries, err := os.ReadDir(state)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		names := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			names = append(names, entry.Name())
+		}
+		return names
+	}
+	for _, c := range []struct {
+		argv    []string
+		created bool
+	}{
+		{[]string{"settings-record", "--task", parent, "--settings", "{}", "--exception", "x", "--clear-exception"}, true},
+		{[]string{"register", "--parent-task", parent}, false},
+		{[]string{"register", "--parent-task", parent, "--parent-host", host, "--child-task", child, "--child-host", host, "--issue", issue,
+			"--artifact-root", "/w", "--allowed-recipient", parent, "--dispatch-request-id", "d", "--parent-settings", "@/nonexistent/settings.json"}, true},
 	} {
-		state := filepath.Join(t.TempDir(), "untouched")
-		var stdout, stderr bytes.Buffer
-		Execute(ctx(), append([]string{"--state", state}, argv...), &stdout, &stderr)
-		if _, err := os.Stat(state); !os.IsNotExist(err) {
-			t.Errorf("%v created %s", argv, state)
+		home := t.TempDir()
+		goState, pyState := filepath.Join(home, "go"), filepath.Join(home, "python")
+		var goOut, goErr bytes.Buffer
+		goCode := Execute(ctx(), append([]string{"--state", goState}, c.argv...), &goOut, &goErr)
+		oracle := exec.Command(filepath.Join(root, ".venv/bin/python"), append([]string{"-m", "codex_session_relay.cli", "--state", pyState}, c.argv...)...)
+		oracle.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xs", "XDG_CONFIG_HOME="+home+"/xc", "CODEX_HOME="+home+"/ch")
+		var pyOut bytes.Buffer
+		oracle.Stdout = &pyOut
+		pyCode := 0
+		if err := oracle.Run(); err != nil {
+			exit, ok := err.(*exec.ExitError)
+			if !ok {
+				t.Fatal(err)
+			}
+			pyCode = exit.ExitCode()
+		}
+		goStdout := strings.ReplaceAll(goOut.String(), goState, "<STATE>")
+		pyStdout := strings.ReplaceAll(pyOut.String(), pyState, "<STATE>")
+		if goCode != pyCode || goStdout != pyStdout {
+			t.Errorf("%v: go exit %d %q, python exit %d %q", c.argv[0], goCode, goStdout, pyCode, pyStdout)
+		}
+		goNames, pyNames := listing(goState), listing(pyState)
+		if !reflect.DeepEqual(goNames, pyNames) || (goNames != nil) != c.created {
+			t.Errorf("%v: go left %v, python left %v; a store expected: %t", c.argv[0], goNames, pyNames, c.created)
 		}
 	}
 }

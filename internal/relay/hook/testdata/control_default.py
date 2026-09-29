@@ -112,7 +112,10 @@ def prepare(home: Path, case: str) -> None:
         (root / name).unlink()
     (home / 'request.json').write_text(json.dumps(dict(protocol=1, method='guard-evaluate',
         params=dict(markerRoot=str(root), stopInput=stop, mode='hold', dbPath=request_db, now=NOW, noRecord=False))))
-    print(json.dumps(dict(state=str(state), decision=verdict['decision'], guardState=verdict['state'])))
+    # A pinned request is served by the owner of the pinned store, where every client routes it
+    # (the pinned dbPath's directory); an owner reads no other store (control.py owner_paths).
+    served = receipt_db.parent if case == 'request_pin' else state
+    print(json.dumps(dict(state=str(served), decision=verdict['decision'], guardState=verdict['state'])))
 
 
 def compare(home: Path) -> None:

@@ -38,6 +38,7 @@ func fixedClockRuntime(t *testing.T) func(string, bool, []string) capture {
 		t.Fatal(err)
 	}
 	return func(home string, python bool, args []string) capture {
+		prepareParityOwnership(t, home, python, args)
 		program := fixed
 		argv := append([]string{"relay", "--state", home + "/state"}, args...)
 		env := environment(home)

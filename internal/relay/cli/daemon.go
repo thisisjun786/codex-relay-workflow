@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
 // DaemonFactory is wired once at executable composition, before command execution.
@@ -43,6 +44,7 @@ var serviceCommand = Command{Name: "service", Exempt: true, Flags: func(f *flag.
 	f.Float64("deadline-monotonic", 0, "")
 	f.String("launch-id", "", "")
 	f.Bool("takeover-scope", false, "")
+	f.Bool("takeover-candidate", false, "")
 }, Run: runService}
 
 func boundValue(args Args, name string) (*float64, error) {
@@ -94,6 +96,10 @@ func integerOption(args Args, name string) *int {
 	return &i
 }
 func serviceError(err error) error {
+	var ownershipRefusal *store.RefusedError
+	if errors.As(err, &ownershipRefusal) {
+		return ownershipRefusal
+	}
 	var refusal *service.Refused
 	if errors.As(err, &refusal) {
 		return &PayloadExit{Code: 2, Payload: contract.OrderedObject{{Key: "ok", Value: false}, {Key: "reason", Value: refusal.Reason}, {Key: "detail", Value: nullableText(refusal.Detail)}}}
@@ -109,7 +115,64 @@ func requireDaemonHost(s Services) error {
 	}
 	return nil
 }
+
+// ownershipPreflight is Python's check_start before a service or daemon command: an
+// absent store passes because the writable opener creates it; anything else must be
+// Go-owned and active, or starting for the designated candidate. It runs before any
+// lock, record, log line or child exists. It takes the command's App Server socket, so
+// the opener that completes a torn socket binding is let through (cutover.md Record).
+func ownershipPreflight(ctx context.Context, services Services) error {
+	socket := ""
+	if services.SocketPath != "" {
+		// A socket that cannot be canonicalized binds nothing; the opener reports it.
+		socket, _ = store.CanonicalSocket(services.SocketPath)
+	}
+	if err := ownership.CheckStart(ctx, services.Selection.DBPath(), socket); err != nil {
+		return &store.RefusedError{Reason: "store_owned_by_other", Detail: store.OwnershipRefusalDetail(err)}
+	}
+	return nil
+}
+
+// candidateRouting requires the controller's start record to name the very store and
+// App Server scope this process was pointed at, however either was spelled.
+func candidateRouting(channel *service.CandidateChannel, services Services) error {
+	physical, err := ownership.Physical(services.Selection.DBPath())
+	socket, socketErr := store.CanonicalSocket(services.SocketPath)
+	if err != nil || socketErr != nil || physical != channel.Record.Database || channel.Record.AppServerSocket == nil || *channel.Record.AppServerSocket != socket {
+		return &UsageError{"candidate routing disagrees", 4}
+	}
+	return nil
+}
+
+// candidateRun is `service run --takeover-candidate`, the controller-launched candidate.
+func candidateRun(command *Command, positionals []string, flags *flag.FlagSet) bool {
+	candidate := flags.Lookup("takeover-candidate")
+	return command.Name == "service" && len(positionals) > 0 && positionals[0] == "run" && candidate != nil && candidate.Value.String() == "true"
+}
+
 func runService(ctx context.Context, services Services, args Args) (out any, err error) {
+	var channel *service.CandidateChannel
+	if args.Positionals[0] == "run" && args.Bool("takeover-candidate") {
+		// Decision 28: the designation is consumed before any writable open, and the
+		// permit travels only in this supervisor's context, never to its workers.
+		var candidateCtx context.Context
+		if candidateCtx, channel, err = service.ReceiveCandidate(ctx); err != nil {
+			return nil, takeoverError(err)
+		}
+		defer func() { _ = channel.Close() }()
+		if err = requireDaemonHost(services); err != nil {
+			return nil, err
+		}
+		if err = candidateRouting(channel, services); err != nil {
+			return nil, err
+		}
+		ctx = context.WithValue(candidateCtx, activationKey{}, channel)
+	}
+	if args.Positionals[0] != "status" {
+		if err = ownershipPreflight(ctx, services); err != nil {
+			return nil, err
+		}
+	}
 	s, err := service.New(ctx, services.Selection, services.SocketPath)
 	if err != nil {
 		return nil, err
@@ -173,31 +236,44 @@ func runService(ctx context.Context, services Services, args Args) (out any, err
 					err = errors.Join(err, db.Close())
 				}
 			}()
-			s.Prepare = func() error {
+			// cli.py _supervise recover(): the supervisor opens the store, under both service
+			// locks, only for a run whose bound is not already spent, so a spent run creates no
+			// store and its records keep the identity read at start (null for an absent store).
+			payload, err = s.Supervise(ctx, options, func() (recoveryErr error) {
 				var e error
-				db, e = store.Open(ctx, services.Selection.DBPath(), services.SocketPath)
-				if e != nil {
+				if db, e = store.Open(ctx, services.Selection.DBPath(), services.SocketPath); e != nil {
 					return e
 				}
 				loc, e := db.Locate(ctx)
-				if e == nil {
-					s.StoreID = loc.StoreID
+				if e != nil {
+					return e
 				}
-				return e
-			}
-			payload, err = s.Supervise(ctx, options, func() (recoveryErr error) {
+				s.StoreID = loc.StoreID
+				if e = s.PublishStoreIdentity(); e != nil {
+					return e
+				}
+				// cli.py recover(): the takeover inbox is replayed before recovery, and for the
+				// candidate under its starting permit before readiness (cutover.md Step 6).
+				if e = drainInbox(ctx, db, services.SocketPath); e != nil {
+					return e
+				}
 				d, e := DaemonFactory(ctx, services, db)
 				if e != nil {
 					return e
 				}
 				defer func() { recoveryErr = errors.Join(recoveryErr, d.Host.Close()) }()
+				defer func() { recoveryErr = errors.Join(recoveryErr, db.Close()); db = nil }()
 				if _, e = d.Reconciler.RecoverOnStart(ctx, d.Host, nil); e != nil {
 					return e
 				}
-				return db.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
+				e = db.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
 					_, e := db.Q(tx).ExecContext(tx, "UPDATE deliveries SET state='held_uncertain',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE state='sending' AND lease_until IS NOT NULL AND lease_until<=?", d.Clock.ISO(), d.Clock.Now())
 					return e
 				})
+				if e != nil || channel == nil {
+					return e
+				}
+				return readyCandidate(ctx, services.Selection.Path)
 			}, nil)
 		}
 	}
@@ -209,8 +285,25 @@ func runService(ctx context.Context, services Services, args Args) (out any, err
 	}
 	return payload, nil
 }
+
+// readyCandidate finishes the candidate supervisor's start after recovery, which drained
+// the takeover inbox (cutover Step 6): the control socket, then readiness and the
+// activation exchange. Workers are spawned only after it returns, under ordinary admission.
+func readyCandidate(ctx context.Context, state string) error {
+	control, err := service.ListenControl(ctx, state)
+	if err != nil {
+		return err
+	}
+	// Readiness follows recovery and control-socket binding (decision 30). The first
+	// worker binds control.sock for itself once this listener is closed.
+	return errors.Join(activateCandidate(ctx), control.Close())
+}
+
 func runDaemon(ctx context.Context, services Services, args Args) (out any, err error) {
 	if err = requireDaemonHost(services); err != nil {
+		return nil, err
+	}
+	if err = ownershipPreflight(ctx, services); err != nil {
 		return nil, err
 	}
 	s, err := service.New(ctx, services.Selection, services.SocketPath)
@@ -266,12 +359,8 @@ func runDaemon(ctx context.Context, services Services, args Args) (out any, err 
 		}
 		return e
 	}
-	// cli.py:_run_bounded opens services.store before _adopt_supervised and
-	// owned_service's authority refusal. Even a refused invocation initializes it.
-	if err = s.Prepare(); err != nil {
-		return nil, err
-	}
-	s.Prepare = nil
+	// Ownership supersedes the pre-fence initializer: Own calls Prepare only
+	// after both permanent service locks are held, including inherited workers.
 	var token *string
 	if args.Set["supervised-token"] {
 		v, _ := args.String("supervised-token")
@@ -285,7 +374,14 @@ func runDaemon(ctx context.Context, services Services, args Args) (out any, err 
 	if err != nil {
 		return nil, serviceError(err)
 	}
-	defer func() { err = errors.Join(err, owned.Close()) }()
+	defer func() {
+		// Connection, admission, scope, daemon: reverse acquisition order.
+		if db != nil {
+			err = errors.Join(err, db.Close())
+			db = nil
+		}
+		err = errors.Join(err, owned.Close())
+	}()
 	d, err := DaemonFactory(ctx, services, db)
 	if err != nil {
 		return nil, err
@@ -296,9 +392,18 @@ func runDaemon(ctx context.Context, services Services, args Args) (out any, err 
 			return nil, err
 		}
 	}
-	var stop func() bool
-	if bound != nil {
-		stop = func() bool { return service.Monotonic() >= *bound }
+	control, e := service.ListenControl(ctx, services.Selection.Path)
+	if e != nil {
+		return nil, e
+	}
+	defer func() { err = errors.Join(err, control.Close()) }()
+	// cmd_daemon: the takeover inbox is replayed before the first tick, including by an
+	// adopted worker (decision 25; cutover.md Wire format).
+	if err = drainInbox(ctx, db, services.SocketPath); err != nil {
+		return nil, err
+	}
+	stop := func() bool {
+		return ctx.Err() != nil || s.StopRequested() || s.Draining() || (bound != nil && service.Monotonic() >= *bound)
 	}
 	reports, err := daemon.Run(ctx, d.Tick, clock, d.Policy.PollInterval, maxTicks, deadline, stop, func(seconds float64) error { return daemon.SchedulerWait(ctx, clock, deadline, seconds) })
 	if err != nil {

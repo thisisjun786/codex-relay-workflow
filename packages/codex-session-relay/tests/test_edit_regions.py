@@ -329,7 +329,8 @@ class WorkNobodyTookIsNobodysWork(EditRegionTestCase):
 class AnAgreementIsNotPermission(EditRegionTestCase):
     def merge_answer(self, with_agreement):
         """The same claim sequence on two fresh stores, one of which has an agreement."""
-        store = Store(str(self.store.path) + ("-with" if with_agreement else "-without"))
+        store = Store(self.store.path.parent / ("with" if with_agreement else "without")
+                      / "relay.sqlite3")
         self.addCleanup(store.close)
         clock = FakeClock()
         linkage = Linkage(store, clock)

@@ -34,10 +34,12 @@ actually observed can move it.
 import json
 import re
 import secrets
+import sqlite3
 
 from . import sync
 from .errors import RefusalReason, RelayError
 from .identity import sha256_hex
+from .store import Store
 
 SCHEMA = "fault-observation/1"
 LEDGER_SCHEMA = "fault-ledger/1"
@@ -2927,6 +2929,24 @@ class FaultLedger:
                 (CLAIMED, ISSUED, moment)).fetchone() is not None
         return {"released": released, "uncertain": uncertain, "more": more}
 
+    def readonly_queue_state(self, *, limit=SHOWN_PER_PAGE, now=None) -> dict:
+        """Project lease expiry on a private snapshot, never another runtime's store."""
+        projected = Store.__new__(Store)
+        projected.path = self.store.path
+        projected.read_only = False
+        projected._admission = None
+        projected._composing = 0
+        projected.fault_hook = None
+        projected.db = sqlite3.connect(":memory:", isolation_level=None)
+        projected.db.row_factory = sqlite3.Row
+        try:
+            self.store.db.backup(projected.db)
+            ledger = FaultLedger(projected, self.clock)
+            ledger.expire_leases(now=now)
+            return ledger.queue_state(limit=limit, now=now)
+        finally:
+            projected.close()
+
     def retry(self, publication) -> dict:
         """An operator's decision to offer a failed write again. Never reaches uncertain."""
         stamp = self.clock.iso()
@@ -3099,10 +3119,27 @@ class FaultLedger:
         limit = _bounded(limit, "limit")
         moment = self.clock.now()
         with self.store.transaction() as db:
-            self._lapse_notifications(db, moment, self.clock.iso())
-            rows = db.execute(
-                "SELECT rowid AS seq, * FROM fault_notifications WHERE state = ? AND rowid > ?"
-                " ORDER BY rowid LIMIT ?", (state or PENDING, after or 0, limit + 1)).fetchall()
+            if self.store.read_only:
+                # Project the same lease/withdrawal normalization the Python
+                # writer persists, without mutating another runtime's store.
+                effective = (
+                    "CASE WHEN n.state = ? AND n.lease_until <= ? THEN ?"
+                    " WHEN n.state = ? AND n.kind = ? AND EXISTS"
+                    " (SELECT 1 FROM fault_ledger f WHERE f.fault_id = n.fault_id"
+                    " AND f.state = ?) THEN ? ELSE n.state END")
+                rows = db.execute(
+                    "SELECT n.rowid AS seq, n.*, " + effective + " AS effective_state"
+                    " FROM fault_notifications n WHERE (" + effective + ") = ? AND n.rowid > ?"
+                    " ORDER BY n.rowid LIMIT ?",
+                    (RESERVED, moment, UNCERTAIN, PENDING, BLOCKING, WITHDRAWN, WITHDRAWN,
+                     RESERVED, moment, UNCERTAIN, PENDING, BLOCKING, WITHDRAWN, WITHDRAWN,
+                     state or PENDING, after or 0, limit + 1)).fetchall()
+                rows = [dict(row, state=row["effective_state"]) for row in rows]
+            else:
+                self._lapse_notifications(db, moment, self.clock.iso())
+                rows = db.execute(
+                    "SELECT rowid AS seq, * FROM fault_notifications WHERE state = ? AND rowid > ?"
+                    " ORDER BY rowid LIMIT ?", (state or PENDING, after or 0, limit + 1)).fetchall()
             listed = []
             for row in rows[:limit]:
                 entry = _notification(row)

@@ -70,7 +70,7 @@ func TestF1WholeOutput(t *testing.T) {
 			var answer any
 			switch action {
 			case "sweep", "sweep_readings":
-				sw := &Sweeper{Store: s, HostRecordPath: testHostRecordPath(), Now: l.Clock.ISO, Installation: Installation{Package: "codex-session-relay", Version: "0.1.0", Location: filepath.Join(root, "packages", "codex-session-relay", "src", "codex_session_relay")}}
+				sw := &Sweeper{Store: s, HostRecordPath: testHostRecordPath(), Now: l.Clock.ISO, Installation: Installation{Package: "codex-session-relay", Version: RelayPackageVersion, Location: filepath.Join(root, "packages", "codex-session-relay", "src", "codex_session_relay")}}
 				var batch Batch
 				if action == "sweep_readings" {
 					batch, e = sw.SweepReadings(ctx, "crw", "", []any{map[string]any{"schema": "reporting-observation/1", "relationshipId": "rel-1", "selectors": map[string]any{"turn": "turn-1"}, "reportingState": "unreported"}}, 0)

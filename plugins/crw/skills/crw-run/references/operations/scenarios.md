@@ -113,7 +113,7 @@ problem, and it must never be resolved by recreating a database.
 ## S6 The store cannot be reached
 
 Observed: a process cannot write the state directory, or `doctor` reports a `relationships` count of
-zero where the packet says an assignment exists.
+zero, or a read-only command is refused `store_absent`, where the packet says an assignment exists.
 
 Clauses: OPS-3.3, OPS-3.4, OPS-3.5, OPS-8.1.
 
@@ -125,8 +125,9 @@ authorized host-capable process owns every store operation for it, including emi
 behalf, with the report saying so rather than implying the task reported for itself. The lasting
 repair is to grant the directory at task creation, not to widen permissions afterwards. An empty
 store is the opposite problem: the process can write, it is simply pointed somewhere else, since
-every command creates a store on open and a mistyped path therefore yields a silent empty one
-rather than an error. Confirm the resolved absolute path, and confirm both the environment variable
+a writing command creates a store on open and a mistyped path therefore yields a silent empty one
+rather than an error, while a read-only command there is refused `store_absent` and creates
+nothing. Confirm the resolved absolute path, and confirm both the environment variable
 and the flag agree, since the flag alone moves the store while leaving the adapter's ledger behind.
 
 Preserved: the real store, wherever it is. Nothing is recreated, copied over, or migrated to make a

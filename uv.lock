@@ -169,7 +169,7 @@ wheels = [
 
 [[package]]
 name = "codex-session-relay"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/codex-session-relay" }
 
 [package.optional-dependencies]
@@ -183,7 +183,7 @@ provides-extras = ["bridge"]
 
 [[package]]
 name = "codex-thread-bridge"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/codex-thread-bridge" }
 dependencies = [
     { name = "mcp" },

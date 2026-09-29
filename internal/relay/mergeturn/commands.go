@@ -56,7 +56,10 @@ func jsonShape(raw, what string, wantList bool) (any, error) {
 	return value, nil
 }
 
-func show(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
+// showSelectors is cmd_merge_turn_show's refusal of its selectors, which it raises before
+// services.merge_turn opens the store: merge-turn-show is a read-only form, so on an absent
+// store this refusal, not store_absent, is the answer.
+func showSelectors(p registry.Parsed) error {
 	var named []string
 	if p.Text("turn") != "" {
 		named = append(named, "--turn")
@@ -75,11 +78,16 @@ func show(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, er
 				which += ", " + n
 			}
 		}
-		return nil, badInvocation("merge-turn-show takes exactly one selector - --turn, --parent-task, or --repository with --base-ref - and this named " + which)
+		return badInvocation("merge-turn-show takes exactly one selector - --turn, --parent-task, or --repository with --base-ref - and this named " + which)
 	}
 	if (p.Text("repository") == "") != (p.Text("base-ref") == "") {
-		return nil, badInvocation("a target is a repository AND a base ref; --repository and --base-ref are given together or not at all")
+		return badInvocation("a target is a repository AND a base ref; --repository and --base-ref are given together or not at all")
 	}
+	return nil
+}
+
+// show is cmd_merge_turn_show after showSelectors.
+func show(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
 	m := service(r)
 	var result any
 	switch {
@@ -174,5 +182,5 @@ func init() {
 		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
 			return answer(service(r).Withdraw(ctx, p.Text("turn"), p.Text("actor")))
 		})
-	add("merge-turn-show", []opt{free("turn"), free("repository"), free("base-ref"), free("parent-task")}, nil, show)
+	registry.AddCheckedCommand("merge-turn-show", []opt{free("turn"), free("repository"), free("base-ref"), free("parent-task")}, nil, showSelectors, show)
 }

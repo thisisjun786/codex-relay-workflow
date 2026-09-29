@@ -26,7 +26,7 @@ func TestProbe_python_properties(t *testing.T) {
 	})
 	t.Run("test_reported_writability_matches_what_this_process_can_really_do", func(t *testing.T) {
 		locked := filepath.Join(t.TempDir(), "locked")
-		s, err := Open(ctx, filepath.Join(locked, "relay.sqlite3"), "")
+		s, err := fixtureOpen(ctx, filepath.Join(locked, "relay.sqlite3"), "")
 		if err != nil {
 			t.Fatal(err)
 		}

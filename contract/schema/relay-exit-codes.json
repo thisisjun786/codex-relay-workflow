@@ -120,6 +120,8 @@
     "MERGE_TARGET_UNREADABLE": "merge_target_unreadable",
     "MERGE_BASE_MISMATCH": "merge_base_mismatch",
     "MERGE_BASE_NOT_ADVANCED": "merge_base_not_advanced",
-    "MERGE_EVIDENCE_MALFORMED": "merge_evidence_malformed"
+    "MERGE_EVIDENCE_MALFORMED": "merge_evidence_malformed",
+    "STORE_OWNED_BY_OTHER": "store_owned_by_other",
+    "INBOX_CONFLICT": "inbox_conflict"
   }
 }

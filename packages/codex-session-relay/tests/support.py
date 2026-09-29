@@ -51,13 +51,20 @@ def task_settings(cwd, **overrides):
 
 
 class RelayTestCase(unittest.TestCase):
+    STORE_SOCKET = None  # relative to self.tmp, or absolute
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="relay-test-")
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.root = os.path.join(self.tmp, "work")
         os.makedirs(self.root)
         self.clock = FakeClock()
-        self.store = Store(os.path.join(self.tmp, "state", "relay.sqlite3"))
+        # A class that opens this store for an App Server socket IN THIS PROCESS while
+        # self.store stays open creates it for that socket. Binding an unbound store needs
+        # write-gate EX, which this fixture's own connection (SH) would hold off; one process
+        # holds one connection in production, where the first socketed opener binds.
+        socket = self.STORE_SOCKET and os.path.join(self.tmp, self.STORE_SOCKET)
+        self.store = Store(os.path.join(self.tmp, "state", "relay.sqlite3"), socket_path=socket)
         self.addCleanup(self.store.close)
         self.registry = Registry(self.store, self.clock)
         self.intake = ReceiptIntake(self.store, self.registry, self.clock)

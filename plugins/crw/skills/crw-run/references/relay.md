@@ -51,10 +51,16 @@ Adds an `issue` block to the doctor report: `holds`, `responsibleChild`,
 
 It exists because the proof was a conjunction split across two commands with nothing ordering
 them. `doctor` said which store this process reached; `assignment-find` said who owns the issue;
-and running the second one first against a mistyped state directory CREATES an empty store, which
-then answers "no assignment" perfectly honestly. A coordinator that believes that answer opens a
-second writer for an issue that already has one. Asking both halves of one read-only connection is
-what removes the gap, because a single read cannot disagree with itself about which file it read.
+and running the second one first against a mistyped state directory CREATED an empty store, which
+then answered "no assignment" perfectly honestly. A coordinator that believes that answer opens a
+second writer for an issue that already has one. A read-only command no longer creates a store:
+where the directory holds no `relay.sqlite3`, `takeover.json` or `write-gate.lock`, it exits 2 with
+`{"error":"refused","reason":"store_absent","detail":"no relay store exists at <D>; a read-only command never creates one"}`
+and creates nothing. That refusal is no answer about the assignment either. Check the path; the
+store appears when the relay's service or a writing command first opens it. A mistyped path that
+reaches some other store, or an empty one a writer created there, still answers "no assignment"
+honestly. Asking both halves of one read-only connection is what removes the gap, because a single
+read cannot disagree with itself about which file it read.
 
 `storeAgreement` compares the store id returned by that read, and the device and inode the read
 itself measured, against what the probe measured. `same` is the only value to act on. `changed`
@@ -89,9 +95,10 @@ than rows attributed to the wrong file.
 
 `assignment-find --issue` carries the same provenance under `relay`: `holds`, and a `store`
 block with `storeId`, `dbPath`, `realPath`, `device`, `inode` and `recordedSocket`.
-`recordedSocket` is the socket the store recorded when it was created, first write wins, and
-deliberately not the socket this process resolved — so a participant pointing somewhere else can
-see the two disagree instead of the later one quietly winning.
+`recordedSocket` is the App Server socket the store is bound to: the first one a writer opened it
+with, first write wins, and a read-only command never binds one. It is deliberately not the socket
+this process resolved — so a participant pointing somewhere else can see the two disagree instead
+of the later one quietly winning.
 
 ### The managed start sequence
 
@@ -107,7 +114,8 @@ does not make an older installed relay support it.
 The lower-level sequence below remains available for supported explicit coordination and
 documents the existing owners. Run in this order. The determination comes FIRST, because that is the
 step whose absence left the question unasked; running the lookup first against the wrong path is
-what creates an empty store and reports a real assignment as absent.
+what reports a real assignment as absent from whatever store answers there, or refuses
+`store_absent` where none does.
 
 1. `doctor --issue <issue>` — determine. Expect `holds` false or null here.
 2. `intent-declare --dispatch-request-id <id> --issue <issue>` — the management marker, published
@@ -702,8 +710,11 @@ dropped.
 
 Registration needs the task id that creation returns, so a child which finishes quickly can reach
 its completion before the parent's `register` lands. The lookup then answers honestly and
-unhelpfully: `assignments: 0` and `responsibleChild: null`. Guessing a relationship id instead is
-refused with `unregistered_relationship`.
+unhelpfully: `assignments: 0` and `responsibleChild: null`. On a host whose store does not exist
+yet, because that registration is its first write, the lookup is refused instead, exit 2
+`store_absent`, and creates nothing; the store appears when the relay's service or a writing
+command first opens it. Guessing a relationship id instead is refused with
+`unregistered_relationship`.
 
 There is nothing there for the child to fix, and two things it must not do. It preserves the
 artifact exactly as produced and records its own task id, the issue identity it was given and the
@@ -832,7 +843,7 @@ that block:
 Ask the installed command whether it has this before relying on it, the same way capability is
 discovered everywhere else here: `verdict --help` lists `--restoration` on a build that carries
 it, and a build without it rejects the flag as unknown. The package version does not answer the
-question: both stay `0.1.0` while their contents change, which is why
+question: a version string can stay the same while the contents change, which is why
 [OPS-1.2](operations.md#ops-12-the-integrity-digest) makes the integrity digest the thing that
 detects drift. An operator reading a version alone cannot tell this source from an older
 installation, and would get a usage error where the paragraph below promises a refusal before

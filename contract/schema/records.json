@@ -79,6 +79,7 @@
   "daemon": {
     "file": "daemon.json",
     "keys": [
+      "python_compatibility_build",
       "pid",
       "startTicks",
       "bootId",
@@ -103,5 +104,42 @@
       "stoppedAt",
       "stoppedBy"
     ]
+  },
+  "takeoverStatus": {
+    "command": "crw relay takeover status --json",
+    "protocol": 1,
+    "keys": [
+      "protocol",
+      "storeId",
+      "database",
+      "owner",
+      "epoch",
+      "takeoverId",
+      "phase",
+      "jsonStale",
+      "rollbackAllowed",
+      "pythonCompatibilityBuild",
+      "transition",
+      "holder"
+    ],
+    "actions": {
+      "status": [],
+      "begin": [
+        "--to go"
+      ],
+      "drain": [],
+      "transfer": [],
+      "activate": [
+        "--python-relay PATH",
+        "--ready-timeout SECONDS"
+      ],
+      "abort": [],
+      "rollback": [
+        "--to python",
+        "--python-relay PATH",
+        "--ready-timeout SECONDS"
+      ],
+      "commit": []
+    }
   }
 }

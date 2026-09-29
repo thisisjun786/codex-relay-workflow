@@ -50,16 +50,7 @@ func TestDRelinkOutstandingWriteSelectionAgainstPython(t *testing.T) {
 		}
 	}
 	s.Close()
-	raw, e := os.ReadFile(filepath.Join(goDir, "relay.sqlite3"))
-	if e != nil {
-		t.Fatal(e)
-	}
-	if e = os.MkdirAll(pyDir, 0700); e != nil {
-		t.Fatal(e)
-	}
-	if e = os.WriteFile(filepath.Join(pyDir, "relay.sqlite3"), raw, 0600); e != nil {
-		t.Fatal(e)
-	}
+	pythonCopy(t, goDir, pyDir)
 	py := func() map[string]any {
 		t.Helper()
 		cmd := exec.Command("uv", "run", "--no-sync", "codex-session-relay", "--state", pyDir, "--json", "fault-relink", "--limit", "1")
@@ -80,16 +71,16 @@ func TestDRelinkOutstandingWriteSelectionAgainstPython(t *testing.T) {
 	if gotCode != 0 || !reflect.DeepEqual(got, want) || got["relinked"] != float64(0) {
 		t.Fatalf("outstanding: Go %d %v Python %v", gotCode, got, want)
 	}
-	for _, dir := range []string{goDir, pyDir} {
-		s, e := store.Open(ctx, filepath.Join(dir, "relay.sqlite3"), "")
-		if e != nil {
-			t.Fatal(e)
-		}
-		if _, e = s.Q(ctx).ExecContext(ctx, "UPDATE fault_publications SET state='confirmed' WHERE publication_id='other-write'"); e != nil {
-			t.Fatal(e)
-		}
-		s.Close()
+	settle := "UPDATE fault_publications SET state='confirmed' WHERE publication_id='other-write'"
+	s, e = store.Open(ctx, filepath.Join(goDir, "relay.sqlite3"), "")
+	if e != nil {
+		t.Fatal(e)
 	}
+	if _, e = s.Q(ctx).ExecContext(ctx, settle); e != nil {
+		t.Fatal(e)
+	}
+	s.Close()
+	seedPython(t, filepath.Join(pyDir, "relay.sqlite3"), seedSQL(settle)...)
 	gotCode, got = cliCall(t, goDir, "fault-relink", "--limit", "1")
 	want = py()
 	if gotCode != 0 || !reflect.DeepEqual(got, want) || got["relinked"] != float64(1) {
@@ -97,23 +88,21 @@ func TestDRelinkOutstandingWriteSelectionAgainstPython(t *testing.T) {
 	}
 	var goWrite row
 	for _, dir := range []string{goDir, pyDir} {
-		s, e := store.Open(ctx, filepath.Join(dir, "relay.sqlite3"), "")
-		if e != nil {
-			t.Fatal(e)
-		}
-		r, e := s.One(ctx, "SELECT state,project_ref,revision FROM fault_links WHERE fault_id=?", id)
-		if e != nil || text(r, "state") != "unlinked" || text(r, "project_ref") != "P2" || integer(r, "revision") != 2 {
-			t.Fatalf("%s link %v %v", dir, r, e)
-		}
-		p, e := s.One(ctx, "SELECT p.state,p.summary,pp.payload FROM fault_publications p JOIN fault_publication_payloads pp ON pp.publication_id=p.publication_id WHERE p.fault_id=? AND p.trigger_key='update:set_project:P2:r2'", id)
-		if e != nil || text(p, "state") != "pending" {
-			t.Fatalf("%s write %v %v", dir, p, e)
-		}
-		if dir == goDir {
-			goWrite = p
-		} else if text(p, "summary") != text(goWrite, "summary") || text(p, "payload") != text(goWrite, "payload") {
-			t.Fatalf("relink write mismatch Go %v Python %v", goWrite, p)
-		}
-		s.Close()
+		readStore(t, ctx, filepath.Join(dir, "relay.sqlite3"), func(ctx context.Context, s *store.Store) error {
+			r, e := s.One(ctx, "SELECT state,project_ref,revision FROM fault_links WHERE fault_id=?", id)
+			if e != nil || text(r, "state") != "unlinked" || text(r, "project_ref") != "P2" || integer(r, "revision") != 2 {
+				t.Fatalf("%s link %v %v", dir, r, e)
+			}
+			p, e := s.One(ctx, "SELECT p.state,p.summary,pp.payload FROM fault_publications p JOIN fault_publication_payloads pp ON pp.publication_id=p.publication_id WHERE p.fault_id=? AND p.trigger_key='update:set_project:P2:r2'", id)
+			if e != nil || text(p, "state") != "pending" {
+				t.Fatalf("%s write %v %v", dir, p, e)
+			}
+			if dir == goDir {
+				goWrite = p
+			} else if text(p, "summary") != text(goWrite, "summary") || text(p, "payload") != text(goWrite, "payload") {
+				t.Fatalf("relink write mismatch Go %v Python %v", goWrite, p)
+			}
+			return nil
+		})
 	}
 }

@@ -4,6 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
+	"path/filepath"
+	"syscall"
+
+	"modernc.org/sqlite"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
 type NonceReading struct {
@@ -169,4 +176,85 @@ func NonceLookup(ctx context.Context, selection StateSelection, nonce string) No
 		result.WrittenBy, result.WrittenAt = actor, at
 	}
 	return result
+}
+
+// OwnershipMetadata is ownership.metadata: schema_meta read from a disposable main-plus-WAL
+// copy of the database, so no sidecar is created beside the source. An absent database, or
+// one without schema_meta, reads as empty. The error text is Python's str(error): the bare OS
+// or SQLite message.
+func OwnershipMetadata(ctx context.Context, dbPath string) (map[string]string, error) {
+	meta, err := readMetadata(ctx, dbPath)
+	if err != nil {
+		var failure *sqlite.Error
+		if errors.As(err, &failure) {
+			return nil, errors.New(PythonSQLiteMessage(err))
+		}
+		return nil, errors.New(PythonOSErrorText(err))
+	}
+	return meta, nil
+}
+
+// readMetadata is OwnershipMetadata with the underlying OS or SQLite error.
+func readMetadata(ctx context.Context, dbPath string) (map[string]string, error) {
+	meta := map[string]string{}
+	resolved, err := resolvePath(dbPath)
+	if err != nil {
+		return nil, err
+	}
+	// Path.exists(): only these errnos mean absent; anything else is raised.
+	if _, err = os.Stat(resolved); err != nil {
+		for _, absent := range []syscall.Errno{syscall.ENOENT, syscall.ENOTDIR, syscall.EBADF, syscall.ELOOP} {
+			if errors.Is(err, absent) {
+				return meta, nil
+			}
+		}
+		return nil, err
+	}
+	copied, cleanup, err := ownership.CopySnapshot(resolved)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	db, err := boundedDB(copied, "ro", 0)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	var present int
+	switch err = db.QueryRowContext(ctx, "SELECT 1 FROM sqlite_master WHERE name='schema_meta'").Scan(&present); {
+	case errors.Is(err, sql.ErrNoRows):
+		return meta, nil
+	case err != nil:
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, "SELECT key,value FROM schema_meta")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key, value string
+		if err = rows.Scan(&key, &value); err != nil {
+			return nil, err
+		}
+		meta[key] = value
+	}
+	return meta, rows.Err()
+}
+
+// OwnershipMirror is the read half of ownership.mirror: takeover.json's bytes beside the
+// resolved database, nil when it is absent. A read failure is the fence's refusal text.
+func OwnershipMirror(dbPath string) ([]byte, error) {
+	resolved, err := resolvePath(dbPath)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(resolved), "takeover.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, errors.New("store_owned_by_other: takeover record unreadable: " + PythonOSError(err))
+	}
+	return raw, nil
 }

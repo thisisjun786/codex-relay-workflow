@@ -35,8 +35,12 @@ func Test24_SCH_24_RealBinaryNeedsSocketBeforeAnyWrite(t *testing.T) {
 		if err := json.Unmarshal(output, &answer); err != nil || answer["error"] != "usage" || !strings.Contains(answer["detail"].(string), "needs --socket:") {
 			t.Fatalf("answer %v %v", answer, err)
 		}
-		if _, err := os.Stat(state); !os.IsNotExist(err) {
-			t.Fatalf("created state on missing socket: %v", err)
+		// SCH-24 is about the command's own writes: the fence's _ownership_preflight admits (and
+		// here initializes) the store before the handler refuses, and nothing is recorded in it.
+		for _, table := range []string{"recipient_lifecycle", "supervisor_readbacks", "supervisor_attempts"} {
+			if rows := snapshotQuery(t, filepath.Join(state, "relay.sqlite3"), "SELECT * FROM "+table); len(rows) != 0 {
+				t.Fatalf("%v wrote %s: %v", args, table, rows)
+			}
 		}
 	}
 }

@@ -18,7 +18,9 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
 type Object = contract.OrderedObject
@@ -178,14 +180,18 @@ func temporaryRecord(path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	return os.OpenFile(filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+"."+id), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0666)
+	// Beside path as spelled: a scope record's root may carry '..' after a symlink.
+	return os.OpenFile(lexicalJoin(ownership.LexicalDir(path), "."+filepath.Base(path)+"."+id), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0666)
 }
 func atomicWrite(path string, o Object) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
 	raw, err := encoded(o)
 	if err != nil {
+		return err
+	}
+	return atomicWriteText(path, string(raw))
+}
+func atomicWriteText(path, raw string) error {
+	if err := os.MkdirAll(ownership.LexicalDir(path), 0700); err != nil {
 		return err
 	}
 	f, err := temporaryRecord(path)
@@ -193,7 +199,7 @@ func atomicWrite(path string, o Object) error {
 		return err
 	}
 	defer os.Remove(f.Name())
-	_, err = f.Write(raw)
+	_, err = f.WriteString(raw)
 	err = errors.Join(err, f.Close())
 	if err != nil {
 		return err
@@ -220,7 +226,8 @@ type Service struct {
 	StoreUnidentified, Takeover               bool
 	Scope                                     *ScopeRegistry
 	LaunchEnvironment                         Object
-	// Prepare opens the writable store only after daemon and scope exclusion.
+	// Prepare opens the writable store only after daemon and scope exclusion (Own, for a
+	// daemon; a supervisor opens it in its recovery instead).
 	Prepare func() error
 }
 
@@ -245,9 +252,19 @@ func New(ctx context.Context, selection store.StateSelection, socket string) (*S
 		return nil, err
 	}
 	s := &Service{Selection: selection, Socket: socket, Scope: scope, InstallationID: InstallationID(selection.Path)}
-	p := store.Probe(ctx, selection)
-	s.StoreID = p.Store.StoreID
-	s.StoreUnidentified = p.Access.DBExists && s.StoreID == ""
+	// Service discovery is read-only. In particular, no diagnostic BEGIN
+	// IMMEDIATE is allowed before daemon/scope lock acquisition.
+	stamp, readErr := ownership.SnapshotMeta(ctx, selection.DBPath())
+	if readErr == nil {
+		s.StoreID = stamp.StoreID
+	} else {
+		reading := store.ReadOnlyRows(ctx, selection, "SELECT value FROM schema_meta WHERE key='store_id'", nil, func(row store.RowScanner) error { return row.Scan(&s.StoreID) })
+		if !reading.Readable || reading.Detail != "" {
+			s.StoreID = ""
+		}
+	}
+	_, statErr := os.Stat(selection.DBPath())
+	s.StoreUnidentified = statErr == nil && s.StoreID == ""
 	return s, nil
 }
 func (s *Service) path(name string) string    { return filepath.Join(s.Selection.Path, name) }
@@ -259,13 +276,40 @@ func (s *Service) note(values ...any) error {
 	}
 	return nil
 }
+
+// NewRecord is service.py new_record. Its first member is the fence's
+// python_compatibility_build, which names the Python fence build a process runs; a Go
+// process is not one, so Go writes the key in the same place with the value null
+// (decisions.md 31). The scope record copies it from here.
 func (s *Service) NewRecord(pid int, token string) Object {
-	return obj("pid", pid, "startTicks", StartTicks(pid), "bootId", BootID(), "workerPid", nil, "token", nullable(token), "launchId", nullable(s.LaunchID), "takeover", func() any {
+	return obj("python_compatibility_build", nil, "pid", pid, "startTicks", StartTicks(pid), "bootId", BootID(), "workerPid", nil, "token", nullable(token), "launchId", nullable(s.LaunchID), "takeover", func() any {
 		if s.Takeover {
 			return true
 		}
 		return nil
 	}(), "readyAt", nil, "storeId", nullable(s.StoreID), "installationId", s.InstallationID, "stateDir", s.Selection.Path, "socketPath", nullable(s.Socket), "scopeAuthority", s.Scope.Authority, "scopeRoot", s.Scope.Root, "startedAt", stamp(), "restarts", 0, "consecutiveFailures", 0, "lastExit", nil, "nextRestartAt", nil)
+}
+
+// PublishStoreIdentity is service.py publish_store_identity: once this run has opened its
+// store, s.StoreID fills the record this process wrote and, while it holds the scope, the scope
+// registration, which service.py rewrites in json.dumps' default layout (release indents it
+// again). A record another process wrote is left alone.
+func (s *Service) PublishStoreIdentity() error {
+	r := s.Record()
+	if r == nil || !truth(get(r, "pid")) || num(get(r, "pid")) != os.Getpid() {
+		return nil
+	}
+	if err := s.WriteRecord(set(r, "storeId", nullable(s.StoreID))); err != nil {
+		return err
+	}
+	if s.Socket == "" || s.Scope == nil || s.Scope.file == nil {
+		return nil
+	}
+	scope := s.Scope.Read(s.Socket)
+	if scope == nil {
+		return nil
+	}
+	return atomicWriteText(s.Scope.path(s.Socket, ".json"), evidence.Dumps(set(scope, "storeId", nullable(s.StoreID)), false, false, true))
 }
 func (s *Service) JournalNote(detail string) error {
 	// A pre-start spent bound has no state directory and Python leaves no log.

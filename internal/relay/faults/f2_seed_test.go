@@ -77,16 +77,7 @@ func TestF2SeededCLIOracle(t *testing.T) {
 				}
 			}
 			args := tc.args(id, publication)
-			if e = os.MkdirAll(pyDir, 0700); e != nil {
-				t.Fatal(e)
-			}
-			data, e := os.ReadFile(filepath.Join(goDir, "relay.sqlite3"))
-			if e != nil {
-				t.Fatal(e)
-			}
-			if e = os.WriteFile(filepath.Join(pyDir, "relay.sqlite3"), data, 0600); e != nil {
-				t.Fatal(e)
-			}
+			pythonCopy(t, goDir, pyDir)
 			py := exec.Command("uv", append([]string{"run", "--no-sync", "codex-session-relay", "--state", pyDir, "--json"}, args...)...)
 			py.Dir = root
 			py.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR=/dev/shm")
@@ -100,7 +91,7 @@ func TestF2SeededCLIOracle(t *testing.T) {
 				}
 			}
 			var got, stderr bytes.Buffer
-			goCode, handled := ExecuteAs(context.Background(), "codex-session-relay", append([]string{"--state", goDir, "--json"}, args...), &got, &stderr, nil)
+			goCode, handled := executeAsCLI(context.Background(), append([]string{"--state", goDir, "--json"}, args...), &got, &stderr)
 			if !handled || pyCode != goCode || !bytes.Equal(want, got.Bytes()) {
 				t.Errorf("python (%d): %s\ngo (%d): %s\nstderr: %s", pyCode, want, goCode, got.String(), stderr.String())
 			}

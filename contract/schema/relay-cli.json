@@ -6758,6 +6758,18 @@
               "nargs": null
             },
             {
+              "name": "takeover_candidate",
+              "flags": [
+                "--takeover-candidate"
+              ],
+              "type": null,
+              "action": "_StoreTrueAction",
+              "default": false,
+              "required": false,
+              "choices": null,
+              "nargs": 0
+            },
+            {
               "name": "deadline_monotonic",
               "flags": [
                 "--deadline-monotonic"

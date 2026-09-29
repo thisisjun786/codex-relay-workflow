@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // USL-23: an uncertain merge-turn grant is read as status reads it. The merge turn itself
@@ -59,6 +60,27 @@ func startGrantStage(t *testing.T, tree string) *grantStage {
 	return g
 }
 
+// serve opens the staged store as Go's and binds the Go side's services to it.
+func (g *grantStage) serve(h *hl) {
+	g.t.Helper()
+	s, err := store.Open(context.Background(), g.staged.Store, "")
+	mustDo(g.t, err)
+	h.store = s
+	h.delivery = NewService(s, h.clock)
+	h.ack, h.rc = NewAck(h.delivery), NewReconciler(h.delivery)
+}
+
+// write has Python write the store: Go stops writing it, Python writes after a takeover, and Go
+// serves it again after another.
+func (g *grantStage) write(h *hl, command string) {
+	g.t.Helper()
+	mustDo(g.t, h.store.Close())
+	testsupport.HandOver(g.t, g.staged.Store, "python")
+	g.do(command)
+	testsupport.HandOver(g.t, g.staged.Store, "go")
+	g.serve(h)
+}
+
 func (g *grantStage) do(command string) {
 	g.t.Helper()
 	if _, err := io.WriteString(g.in, command+"\n"); err != nil {
@@ -101,13 +123,13 @@ func runGrant(t *testing.T, name string, answer func(h *hl, g *grantStage)) {
 	}
 	tree := t.TempDir()
 	g := startGrantStage(t, tree)
-	s, err := store.Open(context.Background(), g.staged.Store, "")
-	mustDo(t, err)
-	t.Cleanup(func() { _ = s.Close() })
+	// Python staged the store and stopped writing it: Go serves it after a takeover.
+	testsupport.HandOver(t, g.staged.Store, "go")
 	clock := &FakeClock{T: g.staged.Now}
-	f := &fixture{t: t, ctx: context.Background(), tree: tree, clock: clock, store: s, host: newFakeHost(clock)}
-	f.delivery = NewService(s, clock)
-	h := &hl{fixture: f, name: name, ack: NewAck(f.delivery), rc: NewReconciler(f.delivery), adapter: f.host, policy: defaultTick()}
+	f := &fixture{t: t, ctx: context.Background(), tree: tree, clock: clock, host: newFakeHost(clock)}
+	h := &hl{fixture: f, name: name, adapter: f.host, policy: defaultTick()}
+	g.serve(h)
+	t.Cleanup(func() { _ = h.store.Close() })
 	grantHost(h, g)
 	event := g.staged.Event
 	request := g.staged.Record["requestId"].(string)
@@ -137,9 +159,9 @@ func runGrant(t *testing.T, name string, answer func(h *hl, g *grantStage)) {
 func Test21_USL23_an_uncertain_grant_is_read_as_status_reads_it(t *testing.T) {
 	const cls = "AnUncertainGrantIsReadAsStatusReadsIt."
 	t.Run("answered on its turn", func(t *testing.T) {
-		runGrant(t, cls+"test_an_uncertain_grant_answered_on_its_turn_reads_acknowledged", func(h *hl, g *grantStage) { g.do("answer") })
+		runGrant(t, cls+"test_an_uncertain_grant_answered_on_its_turn_reads_acknowledged", func(h *hl, g *grantStage) { g.write(h, "answer") })
 	})
 	t.Run("regranted meanwhile", func(t *testing.T) {
-		runGrant(t, cls+"test_an_uncertain_grant_regranted_meanwhile_reads_superseded", func(h *hl, g *grantStage) { g.do("regrant") })
+		runGrant(t, cls+"test_an_uncertain_grant_regranted_meanwhile_reads_superseded", func(h *hl, g *grantStage) { g.write(h, "regrant") })
 	})
 }

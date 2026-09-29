@@ -24,7 +24,7 @@ func recordStore(t *testing.T) *Store {
 	t.Setenv("XDG_DATA_HOME", filepath.Join(root, "data"))
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
 	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
-	store, err := Open(context.Background(), filepath.Join(root, "db", "relay.sqlite3"), "")
+	store, err := fixtureOpen(context.Background(), filepath.Join(root, "db", "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func recordStore(t *testing.T) *Store {
 func dieInsideTransaction(t *testing.T, store *Store, write func(context.Context, *Store) error) {
 	t.Helper()
 	if path := os.Getenv("CRW_CRASH_DB"); path != "" {
-		child, err := Open(context.Background(), path, "")
+		child, err := fixtureOpen(context.Background(), path, "")
 		if err != nil {
 			t.Fatal(err)
 		}

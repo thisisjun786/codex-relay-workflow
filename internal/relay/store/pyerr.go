@@ -97,6 +97,14 @@ func pythonRepr(text string) string {
 // PythonRepr is pythonRepr for callers outside the package that echo a Python !r field.
 func PythonRepr(text string) string { return pythonRepr(text) }
 
+// pythonHostError is an OS or SQLite failure Python raises out of Store() unhandled: its text is
+// Python's host envelope detail, f"{type(error).__name__}: {error}", and the failure itself
+// stays reachable through errors.As.
+type pythonHostError struct{ cause error }
+
+func (e *pythonHostError) Error() string { return PythonSQLiteError(e.cause) }
+func (e *pythonHostError) Unwrap() error { return e.cause }
+
 var sqliteCodeSuffix = regexp.MustCompile(` \(\d+\)( \(SQLITE_BUSY\))?$`)
 
 // PythonSQLiteError renders a SQLite failure as Python's f"{type(error).__name__}: {error}"

@@ -28,6 +28,20 @@ def _keep_trees(path, *args, **kwargs):
 
 
 shutil.rmtree = _keep_trees
+fixture_tree = [None]
+_real_mkdtemp = tempfile.mkdtemp
+
+
+def _fixture_mkdtemp(*args, **kwargs):
+    # Only the Python tests' own fixture directories are the tree Go shares. The relay package's
+    # scratch directories (the ownership fence's schema_meta snapshot) stay real temporary ones.
+    caller = sys._getframe(1).f_globals.get("__name__", "")
+    if caller == "__main__" or caller.split(".")[0] == "tests":
+        return fixture_tree[0]
+    return _real_mkdtemp(*args, **kwargs)
+
+
+tempfile.mkdtemp = _fixture_mkdtemp
 captures = []
 
 
@@ -78,7 +92,7 @@ for case in flatten(suite):
     name = f"{type(case).__name__}.{case._testMethodName}"
     tree = os.path.join(ROOT, name)
     os.makedirs(tree)
-    tempfile.mkdtemp = lambda prefix=None, tree=tree: tree
+    fixture_tree[0] = tree
     captures.clear()
     result = unittest.TestResult()
     case.run(result)

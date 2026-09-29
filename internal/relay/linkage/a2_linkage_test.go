@@ -4,11 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // Part A2: test_linkage_peer.py, test_linkage_queries.py, test_linkage_recovery.py.
@@ -463,7 +467,10 @@ var snapshots = []string{
 }
 
 // reopenWithoutNewTables drops the linkage tables and reopens the store, as a pre-linkage
-// store takes the schema: the DDL runs again over what it had.
+// store takes the schema: the DDL runs again over what it had. Go never repairs a store: it
+// refuses one missing a table of the frozen schema (docs/port/decisions.md 14), and the DDL runs
+// over an older store only in the retained Python fence. So that reopen is Python's, on the store
+// it owns for it (testsupport.HandOver), and Go goes on with the result after a takeover back.
 func (w *world) reopenWithoutNewTables() {
 	w.t.Helper()
 	for _, table := range newTables {
@@ -472,6 +479,24 @@ func (w *world) reopenWithoutNewTables() {
 	if err := w.s.Close(); err != nil {
 		w.t.Fatal(err)
 	}
+	var refused *ownership.Refused
+	if s, err := store.Open(context.Background(), w.path, ""); err == nil {
+		_ = s.Close()
+		w.t.Fatal("Go opened a store missing the linkage tables")
+	} else if !errors.As(err, &refused) || refused.Detail != "required table missing: "+newTables[0] {
+		w.t.Fatalf("Go's refusal of a store missing the linkage tables: %v", err)
+	}
+	testsupport.HandOver(w.t, w.path, "python")
+	repo, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	reopen := exec.Command(filepath.Join(repo, ".venv", "bin", "python"), "-c",
+		"import sys\nfrom codex_session_relay.store import Store\nStore(sys.argv[1]).close()", w.path)
+	if out, err := reopen.CombinedOutput(); err != nil {
+		w.t.Fatalf("Python reopen: %v\n%s", err, out)
+	}
+	testsupport.HandOver(w.t, w.path, "go")
 	s, err := store.Open(context.Background(), w.path, "")
 	if err != nil {
 		w.t.Fatal(err)

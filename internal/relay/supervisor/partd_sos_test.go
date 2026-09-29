@@ -22,6 +22,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 type sosOperation struct {
@@ -107,6 +108,12 @@ func sosRestore(t *testing.T, root, pre string) {
 	cmd := exec.Command("cp", "-a", pre+"/.", tree)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("restore: %v %s", err, out)
+	}
+	// The snapshot's store is a backup copy - a new file beside the mirror the Python run
+	// published - and the Go replay reads it as the host that took it over from Python would.
+	if db := sosDB(root); db != "" {
+		testsupport.Rehome(t, db)
+		testsupport.HandOver(t, db, "go")
 	}
 }
 func sosDB(root string) string {
@@ -411,6 +418,7 @@ func Test24_SOS_5_BuiltBinaryBytes(t *testing.T) {
 	env := append(os.Environ(), "HOME="+filepath.Join(root, "home"), "XDG_STATE_HOME="+filepath.Join(root, "home/state"), "CODEX_HOME="+filepath.Join(root, "home/codex"))
 	for _, args := range [][]string{{"supervisor-show", "--message", messages[0]["message_id"].(string)}, {"reporting-derive", "--relationship", messages[0]["relationship_id"].(string), "--grace", "0"}} {
 		t.Run(args[0], func(t *testing.T) {
+			testsupport.HandOver(t, sosDB(root), "go")
 			cmd := exec.Command(alias, append([]string{"--state", state}, args...)...)
 			cmd.Env = env
 			got, goErr := cmd.CombinedOutput()
@@ -425,6 +433,7 @@ clock.SystemClock.iso=lambda self: sys.argv[1]
 supervisorchannel.relay_program=lambda: (sys.argv[2],)
 raise SystemExit(cli.main(sys.argv[3:]))`, at, alias, "--state", state}, args...)...)
 			py.Env = env
+			testsupport.HandOver(t, sosDB(root), "python")
 			want, pyErr := py.CombinedOutput()
 			sosCompareBytes(t, got, want, goErr, pyErr)
 		})
@@ -502,6 +511,17 @@ func Test24_ObservationFilesBuiltBinaryBytes(t *testing.T) {
 	root := t.TempDir()
 	repo, _ := filepath.Abs("../../..")
 	env := append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+root, "CODEX_HOME="+root)
+	// Both runtimes answer on this one state directory in turn. Whichever first opens the store
+	// creates it as its own; from then on each is handed the store before it answers.
+	db := filepath.Join(root, "state", "relay.sqlite3")
+	handTo := func(t *testing.T, owner string) {
+		t.Helper()
+		if _, err := os.Stat(db); err == nil {
+			testsupport.HandOver(t, db, owner)
+		} else if !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
 	for _, tc := range []struct{ name, data string }{{"missing", ""}, {"directory", ""}, {"list", "[]"}, {"truncated", "{\"a\":"}, {"invalid", "not json"}, {"utf8", string([]byte{0xff})}} {
 		path := filepath.Join(root, tc.name)
 		if tc.name == "directory" {
@@ -519,9 +539,11 @@ func Test24_ObservationFilesBuiltBinaryBytes(t *testing.T) {
 				if command == "supervisor-standing" {
 					args = append(args, "--project", "PRJ-1")
 				}
+				handTo(t, "go")
 				goCmd := exec.Command(binary, append([]string{"relay"}, args...)...)
 				goCmd.Env = env
 				got, goErr := goCmd.CombinedOutput()
+				handTo(t, "python")
 				pyCmd := exec.Command(filepath.Join(repo, ".venv/bin/python"), append([]string{"-m", "codex_session_relay.cli"}, args...)...)
 				pyCmd.Env = env
 				want, pyErr := pyCmd.CombinedOutput()

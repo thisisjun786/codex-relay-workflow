@@ -22,9 +22,7 @@ func Test24_SCH_53_ReportCorrectionGateSentFrozen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(db, original, 0600); err != nil {
-		t.Fatal(err)
-	}
+	restoreSnapshot(t, db, original, "go")
 	s, err := store.Open(context.Background(), db, "")
 	if err != nil {
 		t.Fatal(err)
@@ -55,14 +53,7 @@ func Test24_SCH_53_ReportCorrectionGateSentFrozen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	capture := t.TempDir()
-	copy, err := os.ReadFile(db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = os.WriteFile(filepath.Join(capture, "relay.sqlite3"), copy, 0600); err != nil {
-		t.Fatal(err)
-	}
+	capture := filepath.Dir(ownedCopy(t, db, "python"))
 	cmd := exec.Command("uv", "run", "--no-sync", "python", script, "SCH-53-gate", capture, event)
 	cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
 	home := t.TempDir()

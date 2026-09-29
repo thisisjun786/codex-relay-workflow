@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 var cliSeedRoot string
@@ -22,7 +23,11 @@ var cliSeedErr error
 // The Python registry creates the seed once. Each CLI side gets its own database
 // and workspace; only the seed's two workspace fields need rebinding. Every CLI
 // operation still executes independently in Go and live Python.
-func copyCLISeed(t *testing.T, state, work string) {
+//
+// Each copy is the Python-owned seed in a directory of its own. The runtime that serves the
+// side (python or go) owns its copy and rebinds it itself: Go's copy is the seed after a
+// takeover to Go.
+func copyCLISeed(t *testing.T, state, work string, python bool) {
 	t.Helper()
 	cliSeedOnce.Do(func() {
 		command := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repoRoot(t), "internal/relay/delivery/testdata/cliseed.py"), cliSeedRoot, filepath.Join(cliSeedRoot, "work"))
@@ -43,10 +48,25 @@ func copyCLISeed(t *testing.T, state, work string) {
 	mustDo(t, os.MkdirAll(work, 0700))
 	path := filepath.Join(state, "relay.sqlite3")
 	mustDo(t, os.WriteFile(path, cliSeedBytes, 0600))
+	testsupport.Rehome(t, path)
+	roots, err := json.Marshal([]string{work})
+	mustDo(t, err)
+	if python {
+		command := exec.Command("uv", "run", "--no-sync", "python", "-c", `import sys
+from contextlib import closing
+from codex_session_relay.store import Store
+with closing(Store(sys.argv[1])) as store:
+    store.db.execute("UPDATE relationships SET child_cwd = ?, artifact_roots = ?", (sys.argv[2], sys.argv[3]))
+`, path, work, string(roots))
+		command.Dir = filepath.Join(repoRoot(t), "packages", "codex-session-relay")
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("Python seed rebinding: %v: %s", err, output)
+		}
+		return
+	}
+	testsupport.HandOver(t, path, "go")
 	ctx := context.Background()
 	s, err := store.Open(ctx, path, "")
-	mustDo(t, err)
-	roots, err := json.Marshal([]string{work})
 	mustDo(t, err)
 	_, updateErr := s.Querier(ctx).ExecContext(ctx, "UPDATE relationships SET child_cwd = ?, artifact_roots = ?", work, string(roots))
 	closeErr := s.Close()
@@ -59,7 +79,7 @@ func TestCLI_seed_copies_are_independent(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		root := t.TempDir()
 		state, work := filepath.Join(root, "state"), filepath.Join(root, "work")
-		copyCLISeed(t, state, work)
+		copyCLISeed(t, state, work, false)
 		s, err := store.Open(ctx, filepath.Join(state, "relay.sqlite3"), "")
 		mustDo(t, err)
 		t.Cleanup(func() { mustDo(t, s.Close()) })

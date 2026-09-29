@@ -63,7 +63,7 @@ func Test33UnmanagedDoesNotCreateDatabase(t *testing.T) {
 func Test33ReadOnlyCannotWrite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relay.sqlite3")
 	ctx := context.Background()
-	s, err := store.Open(ctx, path, "")
+	s, err := fixtureStore(ctx, path, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,9 +8,11 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"golang.org/x/sys/unix"
 )
 
@@ -21,12 +23,13 @@ type ScopeRegistry struct {
 
 func ResolveScope() (*ScopeRegistry, error) {
 	if override := os.Getenv(ScopeEnv); override != "" {
-		path, err := store.ExpandUser(override)
+		// Python's spelling, '..' included: K.lock and the isolated salt must name the
+		// same file and key in both runtimes (cutover.md: Go reproduces the key).
+		root, err := ownership.ScopeRoot(override)
 		if err != nil {
 			return nil, err
 		}
-		path, err = filepath.Abs(path)
-		return &ScopeRegistry{Root: path, Authority: "isolated"}, err
+		return &ScopeRegistry{Root: root, Authority: "isolated"}, nil
 	}
 	current, err := user.LookupId(strconv.Itoa(os.Geteuid()))
 	if err != nil {
@@ -47,8 +50,21 @@ func (s *ScopeRegistry) Key(socket string) string {
 	}
 	return key
 }
+
+// path is pathlib's root / f"{key}{suffix}": the root joined as spelled, never
+// cleaned, so K.lock and K.json are the files the kernel resolves for Python's same
+// spelling even when '..' follows a symlink (filepath.Join would drop the '..'
+// lexically and name another file). The controller's barrier locks this same path.
 func (s *ScopeRegistry) path(socket, suffix string) string {
-	return filepath.Join(s.Root, s.Key(socket)+suffix)
+	return lexicalJoin(s.Root, s.Key(socket)+suffix)
+}
+
+// lexicalJoin appends one name to a directory spelling without cleaning it.
+func lexicalJoin(dir, name string) string {
+	if strings.HasSuffix(dir, "/") {
+		return dir + name
+	}
+	return dir + "/" + name
 }
 func (s *ScopeRegistry) Read(socket string) Object { return read(s.path(socket, ".json")) }
 func (s *ScopeRegistry) Prepare() error {
@@ -120,9 +136,13 @@ func (s *ScopeRegistry) Release(socket string) error {
 }
 func (s *ScopeRegistry) Conflicts(socket, storeID, state string) []any {
 	out := []any{}
-	entries, _ := filepath.Glob(filepath.Join(s.Root, "*.json"))
-	for _, path := range entries {
-		r := read(path)
+	// sorted(root.glob("*.json")): listed and read through the root as spelled.
+	entries, _ := os.ReadDir(s.Root)
+	for _, entry := range entries {
+		if ok, _ := filepath.Match("*.json", entry.Name()); !ok {
+			continue
+		}
+		r := read(lexicalJoin(s.Root, entry.Name()))
 		if text(get(r, "scopeKey")) != s.Key(socket) {
 			continue
 		}
@@ -150,7 +170,7 @@ func live(r Object) bool {
 
 // Only flock contention is ownership evidence; an operational error stays an error.
 func lockIfFree(path string) (*os.File, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := os.MkdirAll(ownership.LexicalDir(path), 0700); err != nil {
 		return nil, err
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0666)

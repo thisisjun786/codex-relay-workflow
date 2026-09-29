@@ -13,7 +13,8 @@ import (
 	"testing"
 )
 
-// standingPython replays the public project answer against the same persisted store.
+// standingPython replays the public project answer against the same persisted store, read by
+// Python through a copy it owns (pythonCopy).
 // Observations are input, not a normalization of either result.
 func standingPython(t *testing.T, f *stageFixture, project string, readings []any) {
 	t.Helper()
@@ -32,7 +33,7 @@ func standingPython(t *testing.T, f *stageFixture, project string, readings []an
 	if readings == nil {
 		raw = []byte("[]")
 	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, filepath.Join(f.root, "state", "relay.sqlite3"), string(raw), project, "<none>", "standing")
+	cmd := exec.Command("uv", "run", "--no-sync", "python", script, pythonCopy(t, f), string(raw), project, "<none>", "standing")
 	cmd.Dir = filepath.Join(root, "packages/codex-session-relay")
 	home := t.TempDir()
 	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir())
@@ -78,7 +79,7 @@ func statusPython(t *testing.T, f *stageFixture, project string, readings []any)
 	if readings == nil {
 		raw = []byte("[]")
 	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, filepath.Join(f.root, "state", "relay.sqlite3"), string(raw), project, "<none>", "status")
+	cmd := exec.Command("uv", "run", "--no-sync", "python", script, pythonCopy(t, f), string(raw), project, "<none>", "status")
 	cmd.Dir = filepath.Join(root, "packages/codex-session-relay")
 	home := t.TempDir()
 	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir())
@@ -125,7 +126,7 @@ func envelopePython(t *testing.T, f *stageFixture, o Obligation, decision string
 	if decision != "" {
 		decisionArg = decision
 	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, filepath.Join(f.root, "state", "relay.sqlite3"), string(raw), decisionArg, "<none>", "envelope")
+	cmd := exec.Command("uv", "run", "--no-sync", "python", script, pythonCopy(t, f), string(raw), decisionArg, "<none>", "envelope")
 	cmd.Dir = filepath.Join(root, "packages/codex-session-relay")
 	home := t.TempDir()
 	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir())
@@ -213,7 +214,7 @@ func eventPython(t *testing.T, f *stageFixture, event string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, filepath.Join(f.root, "state", "relay.sqlite3"), "<none>", event, "<none>", "event")
+	cmd := exec.Command("uv", "run", "--no-sync", "python", script, pythonCopy(t, f), "<none>", event, "<none>", "event")
 	cmd.Dir = filepath.Join(root, "packages/codex-session-relay")
 	home := t.TempDir()
 	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir())
@@ -252,7 +253,7 @@ func selectEventPython(t *testing.T, f *stageFixture, event, recipient string, n
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, filepath.Join(f.root, "state", "relay.sqlite3"), event, recipient, strconv.FormatFloat(now, 'f', 6, 64), "select_event")
+	cmd := exec.Command("uv", "run", "--no-sync", "python", script, pythonCopy(t, f), event, recipient, strconv.FormatFloat(now, 'f', 6, 64), "select_event")
 	cmd.Dir = filepath.Join(root, "packages/codex-session-relay")
 	home := t.TempDir()
 	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir())
@@ -528,6 +529,7 @@ func supervisorBinaryPython(t *testing.T, f *stageFixture, binary string, args .
 			t.Fatal(err)
 		}
 	}
+	ownCopied(t, filepath.Join(pythonState, "relay.sqlite3"), "python")
 	goCmd := exec.Command(binary, append([]string{"relay", "--state", state}, args...)...)
 	goCmd.Env = append(os.Environ(), "HOME="+f.root, "XDG_STATE_HOME="+f.root, "CODEX_HOME="+f.root)
 	actual, goErr := goCmd.Output()
@@ -690,7 +692,7 @@ func Test24_SR_20_UsageWholeOutput(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cmd := exec.Command("uv", append([]string{"run", "--no-sync", "python", "-m", "codex_session_relay.cli", "--state", state}, tc.args...)...)
+			cmd := exec.Command("uv", append([]string{"run", "--no-sync", "python", "-m", "codex_session_relay.cli", "--state", filepath.Dir(pythonCopy(t, f))}, tc.args...)...)
 			cmd.Dir = filepath.Join(root, "packages/codex-session-relay")
 			home := t.TempDir()
 			cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+t.TempDir())

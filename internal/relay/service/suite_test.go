@@ -12,6 +12,9 @@ var testRoot, testBinary, testPython string
 var buildEnvironment []string
 
 func TestMain(m *testing.M) {
+	if os.Getenv("CRW30_CONTROLLER_CRASH_HOME") != "" {
+		os.Exit(m.Run())
+	}
 	buildEnvironment = os.Environ()
 	root, err := filepath.Abs("../../..")
 	if err != nil {
@@ -46,6 +49,10 @@ func TestMain(m *testing.M) {
 		}
 	}
 	if err = os.Setenv("PYTHONPATH", filepath.Join(home, "installation")); err != nil {
+		panic(err)
+	}
+	// Python children import the bridge from the checkout; they never write bytecode there.
+	if err = os.Setenv("PYTHONDONTWRITEBYTECODE", "1"); err != nil {
 		panic(err)
 	}
 	code := m.Run()

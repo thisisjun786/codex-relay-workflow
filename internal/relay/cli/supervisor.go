@@ -575,13 +575,17 @@ var supervisorSendCommand = Command{Name: "supervisor-send", Required: []string{
 	message, _ := args.String("message")
 	return runSupervisorHost(ctx, "supervisor-send", services, map[string]string{"message": message})
 }}
+
+// readbackNeedsHost is why supervisor-read refuses to run without --socket.
+const readbackNeedsHost = "a readback is checked against the host's own turn list and the recipient's transcript. Without a host it would record an unverified readback, which is a statement about this process and reads as one about the recipient"
+
 var supervisorReadCommand = Command{Name: "supervisor-read", Required: []string{"message", "turn", "proof", "as"}, Flags: func(f *flag.FlagSet) {
 	f.String("message", "", "")
 	f.String("turn", "", "")
 	f.String("proof", "", "")
 	f.String("as", "", "")
 }, Run: func(ctx context.Context, services Services, args Args) (any, error) {
-	if err := requireSupervisorHost(services, "supervisor-read", "a readback is checked against the host's own turn list and the recipient's transcript. Without a host it would record an unverified readback, which is a statement about this process and reads as one about the recipient"); err != nil {
+	if err := requireSupervisorHost(services, "supervisor-read", readbackNeedsHost); err != nil {
 		return nil, err
 	}
 	values := map[string]string{}

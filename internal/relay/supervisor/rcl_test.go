@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
 type rclAnswer struct {
@@ -51,7 +53,10 @@ func runRCL(t *testing.T, python bool, binary, home string, argv func(string) []
 	return rclAnswer{code: code, stdout: stdout.Bytes(), stderr: stderr.Bytes(), created: statErr == nil}
 }
 
-func compareRCLBytes(t *testing.T, argv func(string) []string, normalize func([]byte) []byte) rclAnswer {
+// compareRCLBytes runs argv through live Python and the built Go binary with one home and
+// compares exit codes, stderr, state creation and stdout after normalize, which is told which
+// runtime answered.
+func compareRCLBytes(t *testing.T, argv func(string) []string, normalize func(raw []byte, python bool) []byte) rclAnswer {
 	t.Helper()
 	built := supervisorBinary(t)
 	binary := filepath.Join(t.TempDir(), "codex-session-relay")
@@ -61,7 +66,7 @@ func compareRCLBytes(t *testing.T, argv func(string) []string, normalize func([]
 	home := t.TempDir()
 	python := runRCL(t, true, binary, home, argv)
 	golang := runRCL(t, false, binary, home, argv)
-	goOut, pyOut := normalize(golang.stdout), normalize(python.stdout)
+	goOut, pyOut := normalize(golang.stdout, false), normalize(python.stdout, true)
 	if golang.code != python.code || !bytes.Equal(goOut, pyOut) || !bytes.Equal(golang.stderr, python.stderr) || golang.created != python.created {
 		t.Fatalf("Go exit=%d created=%t\nstdout=%q\nstderr=%q\nPython exit=%d created=%t\nstdout=%q\nstderr=%q", golang.code, golang.created, goOut, golang.stderr, python.code, python.created, pyOut, python.stderr)
 	}
@@ -70,14 +75,14 @@ func compareRCLBytes(t *testing.T, argv func(string) []string, normalize func([]
 
 func Test24_RCL_1_HelpWholeStdoutBytes(t *testing.T) {
 	t.Setenv("COLUMNS", "80")
-	answer := compareRCLBytes(t, func(string) []string { return []string{"reporting-show", "--help"} }, func(raw []byte) []byte { return raw })
+	answer := compareRCLBytes(t, func(string) []string { return []string{"reporting-show", "--help"} }, func(raw []byte, _ bool) []byte { return raw })
 	if answer.code != 0 {
 		t.Fatalf("exit %d", answer.code)
 	}
 }
 
 func Test24_RCL_3_UnmanagedObservationWholeStdoutBytes(t *testing.T) {
-	normalizeObservedAt := func(raw []byte) []byte {
+	normalizeObservedAt := func(raw []byte, _ bool) []byte {
 		var value map[string]any
 		if err := json.Unmarshal(raw, &value); err != nil {
 			t.Fatal(err)
@@ -99,13 +104,34 @@ func Test24_RCL_3_UnmanagedObservationWholeStdoutBytes(t *testing.T) {
 	}
 }
 
+// doctor's whole stdout is Python's but for the two runtime-identity fields decisions.md 31
+// documents: Go's trailing runtime block, and ownership.runtime_build, which names the
+// answering runtime. Each side's runtime_build is pinned to its own build (the fence's
+// pinned build for Python, `crw version` for Go) before both become one token.
 func Test24_RCL_4_DoctorWholeStdoutBytes(t *testing.T) {
-	normalizeRuntime := func(raw []byte) []byte {
+	version, err := exec.Command(supervisorBinary(t), "version").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	goBuild := strings.TrimSpace(string(version))
+	normalizeRuntime := func(raw []byte, python bool) []byte {
 		var value map[string]any
 		if err := json.Unmarshal(raw, &value); err != nil {
 			t.Fatal(err)
 		}
-		delete(value, "runtime") // documented Go-only doctor extension
+		if _, goOnly := value["runtime"]; goOnly == python {
+			t.Fatalf("python=%t: the runtime block is Go's alone (decisions.md 31)\n%s", python, raw)
+		}
+		delete(value, "runtime")
+		block, _ := value["ownership"].(map[string]any)
+		want := goBuild
+		if python {
+			want = ownership.PythonBuild
+		}
+		if block == nil || block["runtime_build"] != want {
+			t.Fatalf("python=%t: ownership.runtime_build must name the answering runtime's build %q\n%s", python, want, raw)
+		}
+		block["runtime_build"] = "<answering runtime build>"
 		answer, err := json.MarshalIndent(value, "", "  ")
 		if err != nil {
 			t.Fatal(err)

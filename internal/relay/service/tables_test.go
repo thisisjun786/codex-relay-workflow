@@ -7,11 +7,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // Compare every table/column/value, including persisted JSON bytes. SQLite page
 // layout, freelists and WAL checkpoints are not logical table contents.
-func tables(t *testing.T, home string) string {
+// writer is the runtime that ran against home, so the one runtime-identity row, schema_meta's
+// owner, must be its own.
+func tables(t *testing.T, home string, writer testsupport.Runtime) string {
 	t.Helper()
 	path := filepath.Join(home, "state", "relay.sqlite3")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -39,6 +43,9 @@ with closing(sqlite3.connect(sys.argv[1])) as db:
 		if row[0] == "store_id" {
 			row[1] = "RANDOM_STORE_ID"
 		}
+		if key, ok := row[0].(string); ok {
+			row[1] = testsupport.OwnerNeutral(t, writer, key, row[1])
+		}
 	}
 	raw, err = json.MarshalIndent(data, "", "  ")
 	if err != nil {
@@ -50,10 +57,10 @@ func Test29EmptyTickTableParity(t *testing.T) {
 	home := t.TempDir()
 	args := []string{"--socket", home + "/socket", "daemon", "--max-ticks", "1", "--allow-isolated-scope"}
 	want := invoke(t, home, true, args...)
-	before := tables(t, home)
+	before := tables(t, home, testsupport.Python)
 	resetRuntime(t, home)
 	got := invoke(t, home, false, args...)
-	after := tables(t, home)
+	after := tables(t, home, testsupport.Go)
 	compare(t, want, got)
 	if before != after {
 		t.Fatalf("tables\nPython %s\nGo %s", before, after)
@@ -75,14 +82,14 @@ func Test29LaunchPolicyPersistence(t *testing.T) {
 			t.Fatalf("policy setup refused: %+v", result)
 		}
 		want = append(want, result)
-		wantFiles = append(wantFiles, files(t, home))
+		wantFiles = append(wantFiles, files(t, home, testsupport.Python))
 	}
 	resetRuntime(t, home)
 	for i, args := range steps {
 		got := invoke(t, home, false, args...)
 		compare(t, want[i], got)
 		wf, _ := json.Marshal(wantFiles[i])
-		gf, _ := json.Marshal(files(t, home))
+		gf, _ := json.Marshal(files(t, home, testsupport.Go))
 		if string(wf) != string(gf) {
 			t.Fatalf("%s\nPython %s\nGo %s", strings.Join(args, " "), wf, gf)
 		}

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"sort"
 	"strings"
@@ -16,12 +15,6 @@ import (
 
 var f2Names = []string{"fault-fail", "fault-adopt", "fault-move", "fault-update"}
 
-func f2Response(w io.Writer, value any, code int) int {
-	if err := contract.Emit(w, f2Ordered(value)); err != nil {
-		return 3
-	}
-	return code
-}
 func f2Ordered(value any) any {
 	m, ok := value.(map[string]any)
 	if !ok {

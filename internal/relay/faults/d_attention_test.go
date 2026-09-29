@@ -28,16 +28,7 @@ func TestDAttentionWholeOutputAgainstPython(t *testing.T) {
 	if code != 0 {
 		t.Fatal(reply)
 	}
-	raw, e := os.ReadFile(filepath.Join(goDir, "relay.sqlite3"))
-	if e != nil {
-		t.Fatal(e)
-	}
-	if e = os.MkdirAll(pyDir, 0700); e != nil {
-		t.Fatal(e)
-	}
-	if e = os.WriteFile(filepath.Join(pyDir, "relay.sqlite3"), raw, 0600); e != nil {
-		t.Fatal(e)
-	}
+	pythonCopy(t, goDir, pyDir)
 	compare := func(label string) {
 		t.Helper()
 		gc, g := cliCall(t, goDir, "fault-attention")
@@ -57,15 +48,15 @@ func TestDAttentionWholeOutputAgainstPython(t *testing.T) {
 		}
 	}
 	compare("awaiting target")
-	for _, dir := range []string{goDir, pyDir} {
-		s, e := store.Open(context.Background(), filepath.Join(dir, "relay.sqlite3"), "")
-		if e != nil {
-			t.Fatal(e)
-		}
-		if _, e = s.Q(context.Background()).ExecContext(context.Background(), "UPDATE fault_publications SET state='issued',lease_until=0"); e != nil {
-			t.Fatal(e)
-		}
-		s.Close()
+	lapse := "UPDATE fault_publications SET state='issued',lease_until=0"
+	s, e := store.Open(context.Background(), filepath.Join(goDir, "relay.sqlite3"), "")
+	if e != nil {
+		t.Fatal(e)
 	}
+	if _, e = s.Q(context.Background()).ExecContext(context.Background(), lapse); e != nil {
+		t.Fatal(e)
+	}
+	s.Close()
+	seedPython(t, filepath.Join(pyDir, "relay.sqlite3"), seedSQL(lapse)...)
 	compare("lapsed issued")
 }

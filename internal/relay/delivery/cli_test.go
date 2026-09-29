@@ -49,7 +49,7 @@ func newSide(t *testing.T, python bool, work string) *cliSide {
 		s.argv0 = []string{crwBinary(t), "relay"}
 		s.dir = root
 	}
-	copyCLISeed(t, s.state, s.work)
+	copyCLISeed(t, s.state, s.work, python)
 	return s
 }
 

@@ -382,7 +382,9 @@ def sqlite_contract(source: Path) -> str:
         finally:
             instance.close()
     tree = source_tree(source)
-    initializer = function(tree, "__init__")
+    # The fence wrapper admits before connecting; the unchanged schema and seeds
+    # now execute in _open. Inspect that implementation, not only its wrapper.
+    initializer = function(tree, "_open")
     statements = []
     for call in calls_to(initializer, "execute"):
         if (call.args and isinstance(call.args[0], (ast.Constant, ast.BinOp))):
@@ -448,6 +450,20 @@ def contracts(parser: dict[str, JSONValue], tools: dict[str, JSONValue],
                              "keys": list(staging.claim_payload(staging.STAGING, issue="", run="")),
                              "version": staging.CLAIM_VERSION, "states": list(staging.CLAIM_STATES)},
             "daemon": {"file": service.DAEMON_RECORD, "keys": daemon_keys()},
+            # Native-only protocol surface: the retained Python parser has no
+            # takeover command. Freeze its machine-consumed status keys, its actions
+            # and their options here (every action answers with this status).
+            "takeoverStatus": {"command": "crw relay takeover status --json", "protocol": 1,
+                               "keys": ["protocol", "storeId", "database", "owner", "epoch",
+                                        "takeoverId", "phase", "jsonStale", "rollbackAllowed",
+                                        "pythonCompatibilityBuild", "transition", "holder"],
+                               "actions": {"status": [], "begin": ["--to go"], "drain": [],
+                                           "transfer": [], "activate": ["--python-relay PATH",
+                                                                        "--ready-timeout SECONDS"],
+                                           "abort": [], "rollback": ["--to python",
+                                                                     "--python-relay PATH",
+                                                                     "--ready-timeout SECONDS"],
+                                           "commit": []}},
         },
     }
     rendered = {name: json.dumps(value, indent=2, ensure_ascii=False) + "\n"

@@ -138,6 +138,8 @@ class Held:
         self.commit_error = None
         if self.store is not None:
             try:
+                assert self.store._admission is not None
+                self.store._admission.revalidate(self.store.db)
                 self.store.db.execute("BEGIN IMMEDIATE")
             except sqlite3.Error as error:
                 self.store.close()

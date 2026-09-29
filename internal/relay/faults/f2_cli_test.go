@@ -54,7 +54,7 @@ func TestF2CLIOracle(t *testing.T) {
 				}
 			}
 			var got, stderr bytes.Buffer
-			code, handled := ExecuteAs(context.Background(), "codex-session-relay", append([]string{"--state", filepath.Join(home, "go"), "--json"}, args...), &got, &stderr, nil)
+			code, handled := executeAsCLI(context.Background(), append([]string{"--state", filepath.Join(home, "go"), "--json"}, args...), &got, &stderr)
 			if !handled || code != pyCode || !bytes.Equal(got.Bytes(), want) || !bytes.Equal(stderr.Bytes(), pyStderr) {
 				t.Errorf("python (%d) %s; go (%d) %s; stderr %s", pyCode, want, code, got.String(), stderr.String())
 			}

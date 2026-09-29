@@ -594,7 +594,10 @@ class RelayService:
         return payload
 
     def new_record(self, *, pid, token=None, worker_pid=None) -> dict:
+        from .ownership import BUILD
+
         return {
+            "python_compatibility_build": BUILD,
             "pid": pid, "startTicks": start_ticks(pid), "bootId": boot_id(),
             "workerPid": worker_pid, "token": token,
             "launchId": self.launch_id,
@@ -608,6 +611,17 @@ class RelayService:
             "nextRestartAt": None,
         }
 
+    def publish_store_identity(self):
+        """Fill the fresh store identity only while daemon/scope ownership is held."""
+        record = self.record()
+        if record is not None and record.get("pid") == os.getpid():
+            self.write_record(dict(record, storeId=self.store_id))
+            if self.socket_path and self.scope._handle is not None:
+                scope = self.scope.read(self.socket_path)
+                if scope is not None:
+                    scope["storeId"] = self.store_id
+                    self.scope.record_path(self.socket_path).write_text(json.dumps(scope))
+
     def publish_worker_policy(self, policy: dict) -> dict:
         """Written by the bounded worker, never by a diagnostic caller or supervisor.
 
@@ -615,6 +629,8 @@ class RelayService:
         its workerPid while it registers a newly spawned worker. Readers refuse that short
         registration race until the two records actually agree.
         """
+        from .ownership import BUILD
+
         record = self.record() or {}
         pid = os.getpid()
         if record.get("pid") not in (pid, os.getppid()) or not record.get("token"):
@@ -622,7 +638,8 @@ class RelayService:
         info = self.selection.db_path.stat()
         payload = {
             "schemaVersion": 1, "policy": policy, "observedAt": _now(),
-            "worker": {"pid": pid, "startTicks": start_ticks(pid), "bootId": boot_id()},
+            "worker": {"pid": pid, "startTicks": start_ticks(pid), "bootId": boot_id(),
+                       "python_compatibility_build": BUILD},
             "service": {
                 key: record.get(key) for key in (
                     "token", "pid", "startTicks", "installationId", "stateDir",
@@ -1556,6 +1573,12 @@ class RelayService:
         scope. So start checks what it can cheaply, launches, and then reports what the child
         actually managed to do.
         """
+        from .ownership import OwnershipRefused, check_start
+
+        try:
+            check_start(self.selection.db_path, socket=self.socket_path)
+        except OwnershipRefused as error:
+            return {"ok": False, "reason": "store_owned_by_other", "detail": error.detail}
         gate = self.authority_check(allow_isolated=allow_isolated)
         if not gate["ok"]:
             return gate
@@ -1803,7 +1826,8 @@ class RelayService:
 
     def supervise(self, *, allow_isolated=False, segment_seconds=None, max_segments=None,
                   deadline=None, deadline_monotonic=None, spawn=None, policy=None,
-                  sleeper=None, on_start=None, monotonic=None) -> dict:
+                  sleeper=None, on_start=None, monotonic=None, on_close=None,
+                  candidate=None) -> dict:
         """Replace bounded workers for as long as the owner wants this service running.
 
         RelayDaemon.run stays bounded by construction; continuation is a supervisor OVER
@@ -1878,6 +1902,12 @@ class RelayService:
                 "this service is not enabled; supervising it would ignore the owner's intent",
             )
 
+        from .ownership import OwnershipRefused, check_start
+
+        try:
+            check_start(self.selection.db_path, candidate=candidate, socket=self.socket_path)
+        except OwnershipRefused as error:
+            raise ServiceRefused("store_owned_by_other", error.detail) from error
         self.clear_stop_request()
         token = uuid.uuid4().hex
         segments, failures, degraded = [], 0, None
@@ -1947,6 +1977,10 @@ class RelayService:
                     if deadline is not None and monotonic() - started >= deadline:
                         break
                     if self.stop_requested():
+                        break
+                    try:
+                        check_start(self.selection.db_path, socket=self.socket_path)
+                    except OwnershipRefused:
                         break
                     # Re-read every cycle: an owner who disables the service while a worker
                     # was running gets no replacement, and the supervisor never writes intent.
@@ -2028,6 +2062,8 @@ class RelayService:
                     self._note(nextRestartAt=time.time() + wait)
                     sleeper(wait)
             finally:
+                if on_close is not None:
+                    on_close()
                 if self.socket_path:
                     # shared=True: this descriptor is the one every worker inherited, and
                     # LOCK_UN through it would release the scope for all of them. After an

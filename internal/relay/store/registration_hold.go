@@ -12,21 +12,34 @@ import (
 const RegistrationTimeout = 2 * time.Second
 
 // RegistrationHold is intent.registration_hold: the relay's write lock (BEGIN IMMEDIATE) held
-// across a check and the marker publication that depends on it, and never committed. It goes
-// through the store's write admission (refuseLiveState, and the ownership fence todo 30 adds to
-// the same path) before any connection is made, opens mode=rw and never rwc, so an absent store
-// stays absent, and ends in ROLLBACK so it records nothing.
+// across a check and the marker publication that depends on it, and never committed. Like the
+// fence release, it stats the store first, so a store or directory that does not exist is
+// answered in str(OSError)'s words, then goes through the store's write admission
+// (refuseLiveState, then the ownership fence) before any connection is made. It opens mode=rw
+// and never rwc, so an absent store stays absent, and ends in ROLLBACK so it records nothing.
 //
 // run receives the held connection; why is "" when the hold was taken, else the refusal text
-// Python yields beside a None connection, byte for byte.
+// Python yields beside a None connection, byte for byte. A write admission refusal is returned
+// instead, without calling run: registration_hold yields the fence's OwnershipRefused itself
+// and register_relationship raises it, reason store_owned_by_other.
 func RegistrationHold(ctx context.Context, dbPath string, run func(conn *sql.Conn, why string) error) error {
 	absolute, err := expandUser(dbPath)
 	if err != nil {
 		return run(nil, "the relay store path "+pythonRepr(dbPath)+" could not be read as a path")
 	}
+	if err = holdStat(dbPath); err != nil {
+		return run(nil, "the relay store could not be opened for writing: "+PythonOSErrorText(err))
+	}
 	if absolute, err = refuseLiveState(absolute); err != nil {
 		return run(nil, "the relay store could not be opened for writing: "+err.Error())
 	}
+	admission, err := admitWrite(ctx, absolute)
+	if err != nil {
+		// The fence does not yield its Admission's OwnershipRefused as an unheld hold:
+		// register_relationship raises it, so the caller answers store_owned_by_other.
+		return err
+	}
+	defer admission.Close()
 	u := url.URL{Scheme: "file", Path: absolute}
 	db, err := boundedDB(u.Path, "rw", RegistrationTimeout)
 	if err != nil {
@@ -38,6 +51,9 @@ func RegistrationHold(ctx context.Context, dbPath string, run func(conn *sql.Con
 		return run(nil, "the relay store could not be opened for writing: "+PythonSQLiteMessage(err))
 	}
 	defer conn.Close()
+	if err = admission.Revalidate(ctx, conn); err != nil {
+		return run(nil, "the relay store could not be opened for writing: "+err.Error())
+	}
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return run(nil, "the relay store's write lock could not be taken: "+PythonSQLiteMessage(err))
 	}

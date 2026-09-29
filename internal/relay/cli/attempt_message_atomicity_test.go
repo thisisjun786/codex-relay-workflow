@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 type amaCapture struct {
@@ -123,6 +125,8 @@ func Test21_AMA5_show_message_offers_a_preview_only_before_anything_is_prepared(
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
+	// The copy lives in its own directory: its mirror names the copy, not the original.
+	testsupport.Rehome(t, filepath.Join(before, "relay.sqlite3"))
 	home := pythonHome(t)
 	prior := golang(t, home, "--state", before, "show", "--event", event, "--message")
 	if prior.code != 0 {

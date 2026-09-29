@@ -21,6 +21,7 @@ func devinPythonStage(t *testing.T, f *stageFixture, project string, readings []
 	if _, err := f.s.DB.ExecContext(f.ctx, "VACUUM INTO ?", copyPath); err != nil {
 		t.Fatal(err)
 	}
+	ownCopied(t, copyPath, "python")
 	raw, err := json.Marshal(readings)
 	if err != nil {
 		t.Fatal(err)
@@ -146,6 +147,7 @@ func devinPythonReadback(t *testing.T, f *stageFixture, messageID string, tc dev
 	if _, err := f.s.DB.ExecContext(f.ctx, "VACUUM INTO ?", copyPath); err != nil {
 		t.Fatal(err)
 	}
+	ownCopied(t, copyPath, "python")
 	turns, err := json.Marshal(tc.turns)
 	if err != nil {
 		t.Fatal(err)
@@ -308,6 +310,7 @@ func devinPythonRestage(t *testing.T, f *stageFixture, reading map[string]any) s
 	if _, err := f.s.DB.ExecContext(f.ctx, "VACUUM INTO ?", copyPath); err != nil {
 		t.Fatal(err)
 	}
+	ownCopied(t, copyPath, "python")
 	raw, err := json.Marshal(reading)
 	if err != nil {
 		t.Fatal(err)
@@ -422,6 +425,7 @@ func devinPythonStageUnsent(t *testing.T, f *stageFixture, project string, readi
 	if _, err := f.s.DB.ExecContext(f.ctx, "VACUUM INTO ?", copyPath); err != nil {
 		t.Fatal(err)
 	}
+	ownCopied(t, copyPath, "python")
 	raw, _ := json.Marshal(readings)
 	repo, _ := filepath.Abs("../../..")
 	script := `

@@ -9,6 +9,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // Exercise every implemented numeric action beyond argparse and module loading.
@@ -29,27 +30,31 @@ func Test24NumericDownstreamBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	db := filepath.Join(home, "state", "relay.sqlite3")
+	// The setup left a store Python owns. Each run starts from a byte copy of it put back in
+	// place, whose mirror is rebuilt from the copy's own durable stamp (Rehome); the Go run then
+	// follows a takeover, as on a host (runParityProcess hands the selected store to Go).
 	baseline, err := os.ReadFile(db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	restore := func() {
+	restore := func(t *testing.T) {
 		t.Helper()
-		for _, suffix := range []string{"-wal", "-shm"} {
-			if err := os.Remove(db + suffix); err != nil && !os.IsNotExist(err) {
+		for _, name := range []string{db + "-wal", db + "-shm", filepath.Join(filepath.Dir(db), "takeover.json")} {
+			if err := os.Remove(name); err != nil && !os.IsNotExist(err) {
 				t.Fatal(err)
 			}
 		}
 		if err := os.WriteFile(db, baseline, 0600); err != nil {
 			t.Fatal(err)
 		}
+		testsupport.Rehome(t, db)
 	}
 	assert := func(t *testing.T, args []string) {
 		t.Helper()
 		args = append([]string{"--state", filepath.Join(home, "state")}, args...)
-		restore()
+		restore(t)
 		want := runParityProcess(t, env, python, append([]string{"-m", "codex_session_relay.cli"}, args...)...)
-		restore()
+		restore(t)
 		got := runParityProcess(t, env, alias, args...)
 		want.out = evidenceTimestamp.ReplaceAllString(want.out, "<time>")
 		got.out = evidenceTimestamp.ReplaceAllString(got.out, "<time>")

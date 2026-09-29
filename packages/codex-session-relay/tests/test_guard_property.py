@@ -407,6 +407,12 @@ FAILURE_SENTINEL_ALLOWED = {
     ("intent.py", "read_only_connection"): "None is the only thing a failed connection can be, and"
                                            " its callers convert it into their own reported"
                                            " readable=False rather than into an empty result",
+    ("guard.py", "selected_store"): "the failure is not lost, only not answered twice: this is the"
+                                    " selection a Stop makes before it is evaluated, and its one"
+                                    " caller then evaluates that Stop (locally, or at the owner it"
+                                    " routes to), where evaluate() classifies the same failure as"
+                                    " guard_faulted in the answer. The read-only evaluation this"
+                                    " replaced classified it and discarded the verdict",
     ("intent.py", "registration_hold"): "the failure IS reported, as the second half of the pair"
                                         " this context manager yields, and register_relationship"
                                         " puts that text in the refusal it raises. A context"

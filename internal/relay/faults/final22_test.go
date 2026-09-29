@@ -97,7 +97,7 @@ func Test22_FC_5_SweepNoProjectWholeOutput(t *testing.T) {
 	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-target", "--product", "crw", "--team", "team"})
 	s := fcOpen(t, ctx, gd)
 	l := &Ledger{Store: s, Clock: &testClock{now: 100000}}
-	sw := &Sweeper{Store: s, Now: l.Clock.ISO, HostRecordPath: testHostRecordPath(), Installation: Installation{Package: "codex-session-relay", Version: "0.1.0", Location: filepath.Join(f1Root(), "packages", "codex-session-relay", "src", "codex_session_relay")}}
+	sw := &Sweeper{Store: s, Now: l.Clock.ISO, HostRecordPath: testHostRecordPath(), Installation: Installation{Package: "codex-session-relay", Version: RelayPackageVersion, Location: filepath.Join(f1Root(), "packages", "codex-session-relay", "src", "codex_session_relay")}}
 	batch, err := sw.SweepReadings(ctx, "crw", "", []any{map[string]any{"schema": "reporting-observation/1", "relationshipId": "rel", "selectors": map[string]any{"turn": "turn"}, "reportingState": "unreported"}}, 0)
 	if err != nil {
 		t.Fatal(err)

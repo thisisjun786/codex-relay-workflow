@@ -51,6 +51,7 @@ func pythonSet2(t *testing.T, id string) (map[string]any, *store.Store) {
 	if cases, exists := typed["cases"]; exists {
 		want["cases"] = cases
 	}
+	ownCopied(t, filepath.Join(root, "relay.sqlite3"), "go")
 	s, err := store.Open(context.Background(), filepath.Join(root, "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
@@ -739,6 +740,7 @@ func Test24_RC_14_LegacyWholeMessage(t *testing.T) {
 	if got := reportVersion(false); got != want.Version {
 		t.Errorf("version Go %q Python %q", got, want.Version)
 	}
+	ownCopied(t, db, "go")
 	s, err := store.Open(context.Background(), db, "")
 	if err != nil {
 		t.Fatal(err)

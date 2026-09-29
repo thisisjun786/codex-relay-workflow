@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"modernc.org/sqlite"
 )
 
@@ -60,6 +61,8 @@ func checkSQLiteContract(t *testing.T) {
 		if err := os.WriteFile(path, fixture, 0600); err != nil {
 			t.Fatal(err)
 		}
+		// The fixture is written by hand, unfenced; the Go host owns it as its initializer would.
+		testsupport.Fence(t, path, "go")
 		before := sqliteMaster(t, path)
 		s, err := store.Open(context.Background(), path, "")
 		if err != nil {

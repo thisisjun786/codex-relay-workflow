@@ -52,6 +52,7 @@ func Test24_ReportStorageBytes(t *testing.T) {
 			pyPath := filepath.Join(f.root, "python.sqlite3")
 			recheckPython(t, f.root, `import sqlite3,sys
 s=sqlite3.connect(sys.argv[1]); d=sqlite3.connect(sys.argv[2]); s.backup(d); d.close(); s.close()`, f.s.Path, pyPath)
+			ownCopied(t, pyPath, "python")
 			stored, err := RecordWorkReport(f.ctx, f.s, &delivery.FakeClock{T: 1700000000}, f.event, input)
 			if err != nil {
 				t.Fatal(err)
@@ -120,6 +121,7 @@ func Test24_AutoFaultJournalBytes(t *testing.T) {
 	pyPath := filepath.Join(f.root, "python.sqlite3")
 	recheckPython(t, f.root, `import sqlite3,sys
 s=sqlite3.connect(sys.argv[1]); d=sqlite3.connect(sys.argv[2]); s.backup(d); d.close(); s.close()`, f.s.Path, pyPath)
+	ownCopied(t, pyPath, "python")
 	fault := "<host> & café"
 	if err := f.c.deferAutoFault(f.ctx, id, 1700000000, errors.New(fault)); err != nil {
 		t.Fatal(err)
@@ -150,9 +152,7 @@ func Test24_ObligationHTMLBuiltBinaryBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, snapshot, 0600); err != nil {
-		t.Fatal(err)
-	}
+	restoreSnapshot(t, path, snapshot, "go")
 	s, err := store.Open(context.Background(), path, "")
 	if err != nil {
 		t.Fatal(err)
@@ -190,9 +190,7 @@ func Test24_ObligationHTMLBuiltBinaryBytes(t *testing.T) {
 	if err := json.Unmarshal(got, &answer); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, before, 0600); err != nil {
-		t.Fatal(err)
-	}
+	restoreSnapshot(t, path, before, "python")
 	want := recheckPython(t, root, `import sys
 from codex_session_relay import cli,clock,supervisorchannel
 clock.SystemClock.iso=lambda self: sys.argv[1]

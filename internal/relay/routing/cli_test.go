@@ -186,7 +186,9 @@ func cliReplay(t *testing.T, mode string) {
 	if err := json.Unmarshal(raw, &records); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"relay.sqlite3", "relay.sqlite3-wal", "relay.sqlite3-shm", "events.jsonl"} {
+	// Remove Python's store whole, its fence (mirror, write gate, controller lock) included, so
+	// the directory holds an absent store and Go's first command creates its own.
+	for _, name := range []string{"relay.sqlite3", "relay.sqlite3-wal", "relay.sqlite3-shm", "events.jsonl", "takeover.json", "write-gate.lock", "takeover.lock"} {
 		if err := os.Remove(filepath.Join(pythonState, name)); err != nil && !os.IsNotExist(err) {
 			t.Fatal(err)
 		}

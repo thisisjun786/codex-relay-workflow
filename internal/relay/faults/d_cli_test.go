@@ -57,11 +57,13 @@ func TestDCLIOracle(t *testing.T) {
 					t.Fatal(e)
 				}
 			}
+			goDir = oracleState(t, pythonDir, goDir)
 			var got, stderr bytes.Buffer
-			goCode, handled := ExecuteAs(context.Background(), "codex-session-relay", append([]string{"--state", goDir, "--json"}, args...), &got, &stderr, nil)
+			goCode, handled := executeAsCLI(context.Background(), append([]string{"--state", goDir, "--json"}, args...), &got, &stderr)
 			if !handled {
 				t.Fatal("unhandled")
 			}
+			neverCreated(t, pythonDir, goDir)
 			if pyCode != goCode || !bytes.Equal(want, got.Bytes()) {
 				t.Errorf("python (%d): %s\ngo (%d): %s\nstderr: %s", pyCode, want, goCode, got.String(), stderr.String())
 			}

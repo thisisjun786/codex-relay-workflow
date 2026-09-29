@@ -74,17 +74,27 @@ def main():
         env.update(HOME=tmp, XDG_STATE_HOME=tmp+'/xdg', XDG_CONFIG_HOME=tmp+'/config', XDG_CACHE_HOME=tmp+'/cache', XDG_DATA_HOME=tmp+'/data', CODEX_HOME=tmp+'/codex', CRW_ALLOW_LIVE_STATE='1', PATH=str(root/'internal/relay/cli/testdata')+':'+env['PATH'], CRW_FORGE_SCENARIO='rich')
         state = home/'state'
         state.mkdir()
-        # Initialize once through the Python console and retain a byte-identical seed.
-        initialized = subprocess.run([str(oracle), '--state', str(state), 'status'], env=env, capture_output=True, timeout=30)
+        # Initialize once through the Python console and retain a byte-identical seed. A
+        # read-only form never creates a store (cutover.md, read-only forms), so the store is
+        # created by a writer form that records nothing on an empty store: the fence's own
+        # absent-store initializer makes it a fenced, Python-owned store, as on a host before
+        # the cutover. Every compared command is a read-only form, which the Python owner
+        # serves and Go serves reading a store it may not write (decision 31); both read the
+        # same seed and neither inherits the other's writes.
+        initialized = subprocess.run([str(oracle), '--state', str(state), 'route-reconcile'], env=env, capture_output=True, timeout=30)
         if initialized.returncode != 0:
             raise RuntimeError(initialized.stdout, initialized.stderr)
-        seed = (state/'relay.sqlite3').read_bytes()
+        database = state/'relay.sqlite3'
+        if database.with_name(database.name+'-wal').exists():
+            raise RuntimeError('the initializing writer left a WAL; the seed would miss its pages')
+        seed = database.read_bytes()
         def tables():
             with closing(sqlite3.connect(state/'relay.sqlite3')) as db:
                 return {name: db.execute('select * from "'+name+'"').fetchall() for (name,) in db.execute("select name from sqlite_master where type='table' order by name")}
         def restore(sql):
-            for path in state.iterdir(): path.unlink()
-            (state/'relay.sqlite3').write_bytes(seed)
+            for suffix in ('-wal','-shm'):
+                database.with_name(database.name+suffix).unlink(missing_ok=True)
+            database.write_bytes(seed)
             with closing(sqlite3.connect(state/'relay.sqlite3')) as db:
                 with db:
                     for statement, values in sql: db.execute(statement, values)

@@ -12,7 +12,19 @@ import sys
 import tempfile
 
 TREE = sys.argv[1]
-tempfile.mkdtemp = lambda prefix=None: TREE
+_real_mkdtemp = tempfile.mkdtemp
+
+
+def _fixture_mkdtemp(*args, **kwargs):
+    # Only the Python tests' own fixture directories are the tree Go shares. The relay package's
+    # scratch directories (the ownership fence's schema_meta snapshot) stay real temporary ones.
+    caller = sys._getframe(1).f_globals.get("__name__", "")
+    if caller == "__main__" or caller.split(".")[0] == "tests":
+        return TREE
+    return _real_mkdtemp(*args, **kwargs)
+
+
+tempfile.mkdtemp = _fixture_mkdtemp
 
 from tests.support import PARENT  # noqa: E402
 from tests.test_merge_turn_wake import MergeTurnWakeTestCase  # noqa: E402
@@ -37,6 +49,10 @@ event = c.wakes()[0]["event_id"]
 c.adapter.script("transport_unknown")
 record = c.attempt(event)
 c.store.db.commit() if c.store.db.in_transaction else None
+# One runtime writes the store at a time: Python stops writing it here, and the Go test takes
+# it over. Python writes again (answer, regrant) only once the Go test has handed it back, on
+# the same Store object reopened - every component of the case keeps holding that object.
+c.store.close()
 print(json.dumps({
     "waiting": waiting, "turn": turn, "event": event, "record": record,
     "receipt": c.adapter.ledger[record["requestId"]],
@@ -49,10 +65,14 @@ for line in sys.stdin:
         break
     if words[0] == "advance":
         c.clock.advance(float(words[1]))
-    elif words[0] == "answer":
-        c.answer_grant(turn, PARENT)
-    elif words[0] == "regrant":
-        c.turns.declare_ready(turn, actor=PARENT, ready=True, candidate_head="head-a2")
-    c.store.db.commit() if c.store.db.in_transaction else None
+    elif words[0] in ("answer", "regrant"):
+        c.store.__init__(c.store.path)
+        try:
+            if words[0] == "answer":
+                c.answer_grant(turn, PARENT)
+            else:
+                c.turns.declare_ready(turn, actor=PARENT, ready=True, candidate_head="head-a2")
+            c.store.db.commit() if c.store.db.in_transaction else None
+        finally:
+            c.store.close()
     print(json.dumps({"ok": words[0]}), flush=True)
-c.store.close()

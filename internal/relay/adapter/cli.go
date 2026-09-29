@@ -26,6 +26,7 @@ var testClock string
 func Register() {
 	delivery.HostCommand = hostCommand
 	delivery.ObserveTurn = observeTurn
+	delivery.QueuedAckHost = queuedAckHost
 	cli.SupervisorHostCommand = supervisorHostCommand
 	cli.DaemonFactory = daemonFactory
 	managed.HostStart = managedStart
@@ -52,17 +53,40 @@ func observeTurn(ctx context.Context, state, socket, thread, turn string) (statu
 	defer func() { err = errors.Join(err, a.Close()) }()
 	observed, err := a.ReadTurn(thread, turn)
 	if err != nil {
-		var unavailable *HostUnavailable
-		if errors.As(err, &unavailable) {
-			return "", &store.RefusedError{Reason: "unassigned_turn", Detail: "the host could not confirm turn " + store.PythonRepr(turn) + ": " + err.Error()}
-		}
-		return "", err
+		return "", unconfirmedTurn(turn, err)
 	}
 	if observed == nil {
 		return "", &store.RefusedError{Reason: "unassigned_turn", Detail: "turn " + store.PythonRepr(turn) + " does not exist on " + store.PythonRepr(thread)}
 	}
 	status, _ = observed.Status.(string)
 	return status, nil
+}
+
+// queuedAckHost is the host a queued ack's replay confirms through (delivery.QueuedAckHost):
+// hostCommand's adapter without the store, because the replay's transaction holds the store's
+// one connection and a store-backed adapter would wait on it for its discovery cursors.
+func queuedAckHost(ctx context.Context, socket string, clock delivery.Clock) (delivery.Adapter, func() error, error) {
+	selection, err := store.ResolveStateDir("", socket)
+	if err != nil {
+		return nil, nil, err
+	}
+	a, err := Open(socket, selection.Path, Options{Clock: clock})
+	if err != nil {
+		return nil, nil, err
+	}
+	return a, a.Close, nil
+}
+
+// unconfirmedTurn is _observed_turn_status's answer to a failed turn read: a host that could
+// not confirm the turn refuses the receipt (unassigned_turn) `from` the HostUnavailable, which
+// stays reachable, so a replayed receipt's inbox entry is retained (inbox.Retained); any other
+// failure is the read's own.
+func unconfirmedTurn(turn string, err error) error {
+	var unavailable *HostUnavailable
+	if errors.As(err, &unavailable) {
+		return store.RefusedBecause("unassigned_turn", "the host could not confirm turn "+store.PythonRepr(turn)+": "+err.Error(), err)
+	}
+	return err
 }
 
 func supervisorHostCommand(ctx context.Context, command, state, socket, program string, args map[string]string, now float64) (out any, err error) {

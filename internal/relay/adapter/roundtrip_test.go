@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func Test28_EmitDeliverClaimAckRoundTrip(t *testing.T) {
@@ -19,16 +20,20 @@ func Test28_EmitDeliverClaimAckRoundTrip(t *testing.T) {
 	repo, _ := filepath.Abs("../../..")
 	binary, alias := suiteBinary, suiteAlias
 	seed := copyDeliverySeed(t, root)
-	goState, pyState := filepath.Join(root, "go"), filepath.Join(root, "python")
-	for _, pair := range [][2]string{{"go.sqlite3", goState}, {"python.sqlite3", pyState}} {
-		if err := os.Mkdir(pair[1], 0700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Rename(filepath.Join(root, pair[0]), filepath.Join(pair[1], "relay.sqlite3")); err != nil {
-			t.Fatal(err)
-		}
-	}
 	host := fakehost.Start(t)
+	goState, pyState := filepath.Join(root, "go"), filepath.Join(root, "python")
+	// Each state is the seed as a pre-fence Python wrote it, bound to the socket both runtimes
+	// are run with (Go serves a socket only from a store created for it), with the prepared
+	// event removed so the first command proves admission, not just re-observation. Python's
+	// fence stamps both, and Go's is that store after a takeover to Go: the oracle's store
+	// reaches Go the same way before the final comparison, so the two stamps agree.
+	prepared := []string{"DELETE FROM deliveries", "DELETE FROM events", "DELETE FROM journal WHERE kind IN ('event_accepted','delivery_enqueued')"}
+	for _, state := range []string{goState, pyState} {
+		path := filepath.Join(state, "relay.sqlite3")
+		preFenceFixture(t, filepath.Join(root, "python.sqlite3"), path, host.SocketPath, prepared...)
+		testsupport.Fence(t, path, "python")
+	}
+	testsupport.HandOver(t, filepath.Join(goState, "relay.sqlite3"), "go")
 	host.Handle("thread/list", func(raw json.RawMessage) fakehost.Reply {
 		var p map[string]any
 		if err := json.Unmarshal(raw, &p); err != nil {
@@ -61,20 +66,6 @@ func Test28_EmitDeliverClaimAckRoundTrip(t *testing.T) {
 	parent["thread"].(map[string]any)["environments"] = []any{map[string]any{"environmentId": "local", "cwd": "/parent", "runtimeWorkspaceRoots": []any{"/parent"}}}
 	host.Respond("thread/resume", fakehost.Reply{Result: parent})
 	host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "delivery-turn"}}})
-	// Both stores share the same seeded identities and data. Remove the prepared
-	// event so the first command proves admission, not just re-observation.
-	for _, state := range []string{goState, pyState} {
-		s, err := store.Open(context.Background(), filepath.Join(state, "relay.sqlite3"), "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := s.Querier(context.Background()).ExecContext(context.Background(), "DELETE FROM deliveries; DELETE FROM events; DELETE FROM journal WHERE kind IN ('event_accepted','delivery_enqueued')"); err != nil {
-			t.Fatal(err)
-		}
-		if err := s.Close(); err != nil {
-			t.Fatal(err)
-		}
-	}
 	oldClock, oldHost, oldObserve := delivery.CommandClock, delivery.HostCommand, delivery.ObserveTurn
 	delivery.CommandClock = delivery.NewFakeClock()
 	delivery.HostCommand = hostCommand
@@ -171,6 +162,10 @@ func Test28_EmitDeliverClaimAckRoundTrip(t *testing.T) {
 	if ack["_verified"] != "verified" {
 		t.Fatalf("ack unverified: %v", ack)
 	}
+	// Go reads the oracle's store back after a takeover. Both stores went from python@1 to go@2
+	// with the same takeover id (their store_id is the same), so every table, schema_meta too,
+	// compares whole.
+	testsupport.HandOver(t, filepath.Join(pyState, "relay.sqlite3"), "go")
 	left, err := store.Open(context.Background(), filepath.Join(goState, "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)

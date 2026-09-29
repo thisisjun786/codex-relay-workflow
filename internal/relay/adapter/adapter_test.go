@@ -108,7 +108,9 @@ func capture(t *testing.T, s scenario) {
 	var db *store.Store
 	var err error
 	if s.store {
-		db, err = store.Open(context.Background(), filepath.Join(root, "go-store.sqlite3"), "")
+		// Python's store sits in root: Go's store gets a directory of its own, since a
+		// directory holds one store's takeover.json.
+		db, err = store.Open(context.Background(), filepath.Join(root, "go", "go-store.sqlite3"), "")
 		if err != nil {
 			t.Fatal(err)
 		}

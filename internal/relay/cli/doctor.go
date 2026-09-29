@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"syscall"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
 const policyVariable = "CODEX_THREAD_BRIDGE_EXECUTION_POLICY"
@@ -44,6 +46,7 @@ func runDoctor(ctx context.Context, services Services, args Args) (any, error) {
 		{Key: "stateSelection", Value: selectionRecord(services.Selection)},
 		{Key: "store", Value: locationRecord(loc, probed.Access.DBExists)},
 		{Key: "access", Value: accessRecord(probed.Access)},
+		{Key: "ownership", Value: ownershipReport(ctx, services)},
 	}
 	add := func(key string, value any) { report = append(report, contract.Field{Key: key, Value: value}) }
 	info, err := os.Stat("/proc/self/fd")
@@ -73,6 +76,14 @@ func runDoctor(ctx context.Context, services Services, args Args) (any, error) {
 	add("rolePolicy", rolePolicyReport(caller))
 	worker := readWorkerPolicy(services, loc)
 	add("workerPolicy", worker)
+	ownership := get(report, "ownership").(contract.OrderedObject)
+	// Echoed raw, as cli.py reads each record's python_compatibility_build.
+	processes := contract.OrderedObject{
+		{Key: "supervisor", Value: get(readJSONFile(filepath.Join(services.Selection.Path, "daemon.json")), "python_compatibility_build")},
+		{Key: "worker", Value: get(get(worker, "worker"), "python_compatibility_build")},
+	}
+	ownership = append(ownership, contract.Field{Key: "processes", Value: processes})
+	report[fieldIndex(report, "ownership")].Value = ownership
 	launch, err := resolveLaunchPolicy(services)
 	if err != nil {
 		return nil, err
@@ -130,6 +141,80 @@ func runDoctor(ctx context.Context, services Services, args Args) (any, error) {
 		return nil, &PayloadExit{Payload: report, Code: contract.ExitRefused}
 	}
 	return report, nil
+}
+
+// ownershipReport is ownership.report: the six schema_meta keys and the mirror's raw phase,
+// all or nothing. Any failure to read either half nulls every key and phase and names it in
+// detail; runtime_build is always the answering runtime's own build.
+func ownershipReport(ctx context.Context, services Services) contract.OrderedObject {
+	meta, phase, detail := readOwnership(ctx, services.Selection.DBPath())
+	report := contract.OrderedObject{}
+	// A failed reading has no meta: every key is null beside its detail. The torn stamp
+	// (below) keeps its keys, as report() prints meta.get(key) whatever detail says.
+	for _, key := range ownership.Keys {
+		value, found := meta[key]
+		if found {
+			report = append(report, contract.Field{Key: key, Value: value})
+		} else {
+			report = append(report, contract.Field{Key: key, Value: nil})
+		}
+	}
+	return append(report,
+		contract.Field{Key: "phase", Value: phase},
+		contract.Field{Key: "runtime_build", Value: runtimeBuild()},
+		contract.Field{Key: "detail", Value: detail},
+	)
+}
+
+// readOwnership reads like report(): ownership.metadata, then ownership.mirror. The phase is
+// the mirror's "phase" value of any JSON type, nil without a (non-empty) mirror; detail is
+// str(error) of the first failure (with nil meta), "takeover record missing" for the torn
+// state "initial stamp committed, mirror absent" (cutover.md Record: an ownership key in
+// schema_meta and no takeover.json), or nil.
+func readOwnership(ctx context.Context, dbPath string) (map[string]string, any, any) {
+	meta, err := store.OwnershipMetadata(ctx, dbPath)
+	if err != nil {
+		return nil, nil, err.Error()
+	}
+	raw, err := store.OwnershipMirror(dbPath)
+	if err != nil {
+		return nil, nil, err.Error()
+	}
+	if raw == nil {
+		for _, key := range ownership.Keys {
+			if _, stamped := meta[key]; stamped {
+				// Stamped but unpublished is not healthy (ownership.py report).
+				return meta, nil, "takeover record missing"
+			}
+		}
+		return meta, nil, nil
+	}
+	// The probe's preflight reads the same bytes the same way (store.MirrorRefusal).
+	if why := store.MirrorRefusal(raw); why != "" {
+		return nil, nil, "store_owned_by_other: " + why
+	}
+	value, err := decodeJSON(raw)
+	if err != nil {
+		return nil, nil, "store_owned_by_other: takeover record unreadable: JSONDecodeError: " + err.Error()
+	}
+	record, ok := value.(contract.OrderedObject)
+	if !ok {
+		return nil, nil, "store_owned_by_other: takeover record is not an object"
+	}
+	var phase any
+	if at := fieldIndex(record, "phase"); at >= 0 {
+		phase = record[at].Value
+	}
+	return meta, phase, nil
+}
+
+// runtimeBuild is the build this runtime publishes as its holder identity (takeover.json's
+// holder.build and a candidate's ready): the build cmd/crw stamped, else its version.
+func runtimeBuild() string {
+	if Build != "" {
+		return Build
+	}
+	return Version
 }
 
 func orEmpty(v any) any {

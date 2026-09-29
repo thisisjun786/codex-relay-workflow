@@ -9,6 +9,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"golang.org/x/sys/unix"
 	"os"
 	"os/exec"
@@ -112,6 +113,8 @@ func storeReplay(t *testing.T, names ...string) {
 	if len(captures) == 0 {
 		t.Fatal("scenario executed no packet-check calls")
 	}
+	// Python ran this scenario with a live Store connection; Go's replay holds its store the same way.
+	holdsLive := len(names) == 1 && names[0] == "test_the_store_backed_check_writes_nothing_in_the_state_directory"
 	for index, c := range captures {
 		if c.Library == "ladder" {
 			d := json.NewDecoder(bytes.NewReader(c.Kwargs))
@@ -190,6 +193,12 @@ func storeReplay(t *testing.T, names ...string) {
 			if e = os.WriteFile(db, data, 0600); e != nil {
 				t.Fatal(e)
 			}
+			if holdsLive {
+				// The store Go holds live is a copy of Python's: it gets its own identity and
+				// is Go's after a takeover, as a Go host holding it would have it.
+				testsupport.Rehome(t, db)
+				testsupport.HandOver(t, db, "go")
+			}
 		}
 		var beforeRows []store.Row
 		tableRows := map[string][]store.Row{}
@@ -254,7 +263,7 @@ func storeReplay(t *testing.T, names ...string) {
 		}
 		var stateBefore []os.DirEntry
 		var stateInfo os.FileInfo
-		if len(names) == 1 && names[0] == "test_the_store_backed_check_writes_nothing_in_the_state_directory" {
+		if holdsLive {
 			// Python ran with a live Store connection, so its WAL sidecars already existed.
 			// Keep that same precondition instead of charging a read-only SQLite open for
 			// sidecars the fixture backup deliberately did not copy.

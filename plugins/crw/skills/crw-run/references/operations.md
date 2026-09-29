@@ -68,7 +68,7 @@ one host. In the example the bridge exists twice: an editable install that the M
 location is the source tree itself, and a copied install inside the relay's virtual environment.
 Those are separate installs of the same version and they drift independently. Equality of their
 digests is the only thing that detects the drift, and a matching version string proves nothing,
-since both stay `0.1.0` while their contents change. An editable install's digest equals its
+since a version can stay the same while the contents change. An editable install's digest equals its
 source digest by construction, which is a property to record rather than a coincidence to discover.
 
 ### OPS-1.3 Measured points, never ranges
@@ -266,19 +266,22 @@ may assume they do.
 [codex-session-relay](relay.md) now states both selectors and carries its own measurement of the
 split, so it is the command-level owner of this rule rather than a reference to correct. What stays
 here is the consequence. A participant that cannot set both does not fall back to the default store,
-because OPS-3.4 shows that opening a path constructs it, so the fallback would quietly produce an
-empty store while the assignment stayed where it was. Such a participant proceeds only where the
-packet's recorded store already is the default, and otherwise a process that can set both acts on
-its behalf.
+because OPS-3.4 shows that a writer opening a path constructs it, so the fallback would quietly
+produce an empty store while the assignment stayed where it was. Such a participant proceeds only
+where the packet's recorded store already is the default, and otherwise a process that can set both
+acts on its behalf.
 
 ### OPS-3.4 Proving that everyone shares one store
 
-Equality of path strings is not proof. Every command constructs the store on open, creating the
-directory and an empty database when they are absent, so a mistyped path produces a silent empty
-store instead of an error. Proof is `doctor` from each participating process reporting the packet's
-`stateDirectory`, together with `assignment-find --issue` returning the expected relationship. A
-`relationships` count of zero where the packet says an assignment exists means the process is
-pointed somewhere else, not that no assignment exists.
+Equality of path strings is not proof. A writing command constructs the store on open, creating the
+directory and an empty database when they are absent, so a mistyped path given to a writer produces
+a silent empty store instead of an error. A read-only command never creates one: where no store
+exists it exits 2 refused with reason `store_absent` and creates nothing, and the store appears when
+the relay's service or a writing command first opens it. Proof is `doctor` from each participating
+process reporting the packet's `stateDirectory`, together with `assignment-find --issue` returning
+the expected relationship. A `relationships` count of zero, or a `store_absent` refusal, where the
+packet says an assignment exists means the process is pointed somewhere else, not that no
+assignment exists.
 
 ### OPS-3.5 Reaching the store from a sandboxed task
 
@@ -288,12 +291,12 @@ coordinator passes the state directory as an explicit writable root and records 
 settings record.
 
 Write access is required for every relay command, not only the ones that reach the App Server.
-Each command opens the store on construction, creating the directory and the database file
-read-write, so a task without write access cannot run even a read-only-looking command such as
-`doctor`. There is no store-only fallback for a task that cannot write the directory, and offering
-one would send that task into a failure halfway through its first command. The offline subset is
-the fallback for a task that can write the store but cannot reach the socket, which is a different
-situation.
+Each command opens the store read-write on construction, and a writing one creates the directory
+and the database file when they are absent, so a task without write access cannot run even a
+read-only-looking command such as `doctor`. There is no store-only fallback for a task that cannot
+write the directory, and offering one would send that task into a failure halfway through its first
+command. The offline subset is the fallback for a task that can write the store but cannot reach
+the socket, which is a different situation.
 
 Giving a task that directory is a trust decision, and it is worth naming what it grants. OPS-3.1
 puts one store behind an entire operating scope, so the file holds every parent's assignments,

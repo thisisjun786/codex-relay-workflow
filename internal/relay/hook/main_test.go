@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
@@ -66,6 +68,11 @@ func binary(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// fixtureStore opens a store: Open creates an absent one as owner=go at epoch 1.
+func fixtureStore(ctx context.Context, path, socket string) (*store.Store, error) {
+	return store.Open(ctx, path, socket)
 }
 func writeTest(t *testing.T, path string, raw []byte) {
 	t.Helper()

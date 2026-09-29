@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -36,17 +37,29 @@ func newDescriptorFixture(t *testing.T) *descriptorFixture {
 		t.Fatal("the interloper must be another file")
 	}
 	for _, dir := range []string{f.a, filepath.Dir(f.interloperPath)} {
-		entries, err := os.ReadDir(dir)
-		if err != nil || len(entries) != 1 {
+		if entries, err := entryNames(dir); err != nil || !slices.Equal(entries, fencedStoreEntries) {
 			t.Fatalf("a closed store left a sidecar behind in %s: %v %v", dir, entries, err)
 		}
 	}
 	return f
 }
 
+// fencedStoreEntries is all a closed store Open created leaves in its directory: the database
+// and the mirror and write gate of its fence. A -wal or -shm sidecar is anything more.
+var fencedStoreEntries = []string{"relay.sqlite3", "takeover.json", "write-gate.lock"}
+
+func entryNames(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names, err
+}
+
 func (f *descriptorFixture) makeStore(path, actor string) (string, Location) {
 	f.t.Helper()
-	s, err := Open(context.Background(), path, "")
+	s, err := fixtureOpen(context.Background(), path, "")
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -113,7 +126,7 @@ type betweenState struct {
 // restored after the leg's first statement (or its close). Every statement is recorded.
 func (f *descriptorFixture) moveBetweenTheCheckAndTheConnect(nth int) (context.Context, *betweenState) {
 	f.t.Helper()
-	writer, err := Open(context.Background(), f.path, "")
+	writer, err := fixtureOpen(context.Background(), f.path, "")
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -290,7 +303,7 @@ func TestDescriptorIdentity_python_properties(t *testing.T) {
 		if !report.Access.DBReadable || !report.Access.DBWritable || report.Access.Detail != "" || store.RealPath != real || store.Device != f.mine.Device || store.Inode != f.mine.Inode || store.StoreID != f.mine.StoreID {
 			t.Fatalf("report %+v mine %+v", report, f.mine)
 		}
-		if entries, err := os.ReadDir(f.a); err != nil || len(entries) != 1 {
+		if entries, err := entryNames(f.a); err != nil || !slices.Equal(entries, fencedStoreEntries) {
 			t.Fatalf("diagnosis left a write-ahead log behind: %v %v", entries, err)
 		}
 	})

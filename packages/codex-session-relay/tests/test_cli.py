@@ -1111,6 +1111,9 @@ class Diagnosis(unittest.TestCase):
 
     def test_a_different_store_is_refused_rather_than_reported_healthy(self):
         a, b = os.path.join(self.tmp, "a"), os.path.join(self.tmp, "b")
+        # A reader never creates a store, so each is created by a writer first.
+        self.cli("store-challenge", "--write", "--actor", "setup", state=a)
+        self.cli("store-challenge", "--write", "--actor", "setup", state=b)
         mine = self.cli("store-identity", state=a)["store"]
         theirs = self.cli("store-identity", state=b)["store"]
         self.assertNotEqual(mine["storeId"], theirs["storeId"])
@@ -1131,6 +1134,7 @@ class Diagnosis(unittest.TestCase):
         here is made BEFORE the write, which is why it lacks the nonce and is a mismatch.
         """
         a, b = os.path.join(self.tmp, "a"), os.path.join(self.tmp, "b")
+        self.cli("store-challenge", "--write", "--actor", "setup", state=a)
         mine = self.cli("store-identity", state=a)["store"]
         os.makedirs(b, exist_ok=True)
         for suffix in ("", "-wal", "-shm"):
@@ -1185,6 +1189,7 @@ class Diagnosis(unittest.TestCase):
         reason the second exists.
         """
         a, b = os.path.join(self.tmp, "one"), os.path.join(self.tmp, "two")
+        self.cli("store-challenge", "--write", "--actor", "setup", state=a)
         mine = self.cli("store-identity", state=a)["store"]
         nonce = self.cli("store-challenge", "--write", "--actor", "parent", state=a)["nonce"]
         os.makedirs(b, exist_ok=True)
@@ -1227,6 +1232,7 @@ class Diagnosis(unittest.TestCase):
         before the log location as well, so the fix is theirs too.
         """
         a = os.path.join(self.tmp, "asked")
+        self.cli("store-challenge", "--write", "--actor", "setup", state=a)
         self.cli("store-identity", state=a)
         for flag, value in (
             ("--expect-log", ""), ("--expect-log", "1:2"), ("--expect-log", "nonsense"),
@@ -1369,8 +1375,8 @@ class WorkerPolicyRequirements(CliBase):
         carried a readiness verdict and nothing else -- the aggregation gap this
         regression closes.
         """
-        mine = self.run_cli("store-identity")["store"]
         nonce = self.run_cli("store-challenge", "--write", "--actor", "parent")["nonce"]
+        mine = self.run_cli("store-identity")["store"]
         report = self.run_cli(
             "doctor", "--require-worker-policy", self.REQUIREMENTS,
             "--expect-store", mine["storeId"],
@@ -2633,7 +2639,10 @@ class ParticipantAccessReceipts(CliBase):
         # pointing it at a path that does not exist yet returns null identity and null
         # device/inode - which makes every inequality below pass for the wrong reason and
         # turns the refusal into a test of an ABSENT store rather than a different one.
-        # store-identity opens one, which is what gives this test two stores to tell apart.
+        # A writer creates one (a reader never does), which gives this test two stores to
+        # tell apart; store-identity then reads it.
+        self.participant("store-challenge", "--write", "--actor", "setup", state=elsewhere,
+                         pin=elsewhere)
         created = self.participant("store-identity", state=elsewhere, pin=elsewhere)
         self.assertIsNotNone(created["store"]["storeId"], created)
         stray = self.participant("doctor", state=elsewhere, pin=elsewhere)["accessReceipt"]

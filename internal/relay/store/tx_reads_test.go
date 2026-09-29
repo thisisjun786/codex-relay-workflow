@@ -126,9 +126,10 @@ func TestTransaction_read_with_the_body_ctx_sees_the_uncommitted_write(t *testin
 
 // Every store method that queries must choose its connection through s.q(ctx), so a read
 // inside a transaction uses the transaction's connection. Only the pool plumbing itself
-// (opening, Transaction acquiring the connection, q, Close) may touch s.DB.
+// (opening, Transaction and Projection acquiring the connection, q, Close) may touch s.DB.
 func TestStoreReaders_query_through_the_transaction_aware_querier(t *testing.T) {
-	allowed := map[string]bool{"Transaction": true, "q": true, "Close": true}
+	// Projection is pool plumbing too: the SQLite backup API needs a raw connection of its own.
+	allowed := map[string]bool{"Transaction": true, "q": true, "Close": true, "Projection": true}
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"io"
 	"math/big"
 	"slices"
 	"sort"
@@ -16,16 +15,6 @@ import (
 
 var dNames = []string{"fault-policy", "fault-limit", "fault-attention", "fault-relink", "fault-notifications", "fault-notification-raise", "fault-notification-reserve", "fault-notification-ack", "fault-notification-fail", "fault-notification-reconcile"}
 
-func dResponse(w io.Writer, value any, code int) int {
-	parent := ""
-	if code != 0 {
-		parent = "refusal"
-	}
-	if e := contract.Emit(w, dOrdered(value, parent)); e != nil {
-		return 3
-	}
-	return code
-}
 func dOrdered(value any, parent string) any {
 	if m, ok := value.(map[string]any); ok {
 		if parent == "" {

@@ -473,7 +473,9 @@ issue identity registration was given instead, which depend on nothing creation 
 the child resolves its own relationship by issue lookup when it emits, which is after the
 work rather than at startup. That lookup matches the registered string exactly, so a
 display key in the packet where registration used a stable id resolves to nothing. A child
-fast enough to reach that lookup before registration lands finds nothing,
+fast enough to reach that lookup before registration lands finds nothing, or, on a host
+where registration is the store's first write, is refused `store_absent`, since a read never
+creates the store; either way it
 reports its completion unemitted and preserves the artifact; recover it from that same task
 after registering, in a later turn carrying a continuation claim, rather than creating another
 child or writing on its behalf. The receipt it then emits is the same event the on-time one

@@ -178,8 +178,15 @@ func dNotice(r row) map[string]any {
 	}
 	return map[string]any{"notificationId": text(r, "notification_id"), "faultId": text(r, "fault_id"), "product": text(r, "product"), "kind": text(r, "kind"), "reason": reasonValue, "cycle": integer(r, "cycle"), "ref": r.Get("ref"), "state": text(r, "state"), "deliveryKey": "relay-notification:" + text(r, "notification_id"), "owner": r.Get("owner"), "attempts": integer(r, "attempts"), "lastError": r.Get("last_error"), "createdAt": text(r, "created_at"), "deliveredAt": r.Get("delivered_at"), "ackRef": r.Get("ack_ref")}
 }
+
+// dLapse is _lapse_notifications: lapsed reservations become uncertain, and a pending
+// blocking notice of a fault that withdrew is withdrawn with it (_void_withdrawn).
 func dLapse(ctx context.Context, l *Ledger) error {
-	_, e := l.exec(ctx, "UPDATE fault_notifications SET state='uncertain',token=NULL,updated_at=? WHERE state='reserved' AND lease_until<=?", l.Clock.ISO(), l.Clock.Now())
+	stamp := l.Clock.ISO()
+	if _, e := l.exec(ctx, "UPDATE fault_notifications SET state='uncertain',token=NULL,updated_at=? WHERE state='reserved' AND lease_until<=?", stamp, l.Clock.Now()); e != nil {
+		return e
+	}
+	_, e := l.exec(ctx, "UPDATE fault_notifications SET state=?,updated_at=? WHERE state=? AND kind=? AND fault_id IN (SELECT fault_id FROM fault_ledger WHERE state=?)", Withdrawn, stamp, "pending", blocking, Withdrawn)
 	return e
 }
 func dNotifications(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
@@ -198,14 +205,31 @@ func dNotifications(ctx context.Context, l *Ledger, a map[string]string) (any, e
 			return nil, e
 		}
 	}
-	if e = dLapse(ctx, l); e != nil {
-		return nil, e
-	}
 	state := a["--notification-state"]
 	if state == "" {
 		state = "pending"
 	}
-	rows, e := l.Store.All(ctx, "SELECT rowid AS seq,* FROM fault_notifications WHERE state=? AND rowid>? ORDER BY rowid LIMIT ?", state, after, limit+1)
+	var rows []row
+	if l.Store.ReadOnly() {
+		// Project the lease/withdrawal normalization the writer persists, without
+		// mutating another runtime's store (faults.py notifications, read_only).
+		effective := "CASE WHEN n.state = ? AND n.lease_until <= ? THEN ? WHEN n.state = ? AND n.kind = ? AND EXISTS (SELECT 1 FROM fault_ledger f WHERE f.fault_id = n.fault_id AND f.state = ?) THEN ? ELSE n.state END"
+		moment := l.Clock.Now()
+		params := []any{"reserved", moment, "uncertain", "pending", blocking, Withdrawn, Withdrawn}
+		rows, e = l.Store.All(ctx, "SELECT n.rowid AS seq, n.*, "+effective+" AS effective_state FROM fault_notifications n WHERE ("+effective+") = ? AND n.rowid > ? ORDER BY n.rowid LIMIT ?", append(append(append([]any{}, params...), params...), state, after, limit+1)...)
+		for _, r := range rows {
+			for i := range r {
+				if r[i].Name == "state" {
+					r[i].Value = r.Get("effective_state")
+				}
+			}
+		}
+	} else {
+		if e = dLapse(ctx, l); e != nil {
+			return nil, e
+		}
+		rows, e = l.Store.All(ctx, "SELECT rowid AS seq,* FROM fault_notifications WHERE state=? AND rowid>? ORDER BY rowid LIMIT ?", state, after, limit+1)
+	}
 	if e != nil {
 		return nil, e
 	}

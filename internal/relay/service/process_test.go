@@ -174,7 +174,7 @@ func Test29StartStopAndSecondStart(t *testing.T) {
 			stopObserved(t, worker)
 			stop := invoke(t, home, python, "--socket", home+"/socket", "service", "stop")
 			t.Logf("escalated stop: %+v supervisorExitObserved=%v workerExitObserved=%v", stop, supervisor.Wait(0), worker.Wait(0))
-			state := files(t, home)
+			state := files(t, home, writtenBy(python))
 			if python {
 				pythonStop = stop
 				pythonFiles = state

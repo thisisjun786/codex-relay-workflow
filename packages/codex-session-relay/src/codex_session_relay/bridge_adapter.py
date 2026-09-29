@@ -605,7 +605,7 @@ class _Transport:
 
     def __init__(self, socket_path, timeout, *, app_server_factory=None, bridge_factory=None,
                  ledger_factory=None, drain_seconds=None, caller_slack=None,
-                 execution_policy=None, ledger_directory=None):
+                 execution_policy=None, ledger_directory=None, candidate=None):
         import concurrent.futures
         import queue
         import threading
@@ -614,6 +614,8 @@ class _Transport:
         self.timeout = timeout
         self._execution_policy = execution_policy
         self._ledger_directory = ledger_directory
+        # The takeover candidate's explicit permit for a relay-pinned transport ledger.
+        self._candidate = candidate
         self.ledger_identity = None
         self._inbox = queue.Queue()
         self._stopping = False
@@ -875,7 +877,8 @@ class _Transport:
             from codex_thread_bridge.ledger import open_endpoint_ledger
 
             directory = self._ledger_directory if self._ledger_directory is not None else state_dir(socket_path)
-            canonical, ledger = open_endpoint_ledger(Path(socket_path), Path(directory))
+            canonical, ledger = open_endpoint_ledger(Path(socket_path), Path(directory),
+                                                     candidate=self._candidate)
         else:
             canonical, ledger = ledger_factory()
         identity = _identity_of_open_ledger(ledger)

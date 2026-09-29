@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // A real withheld delivery and its settled settings refusal: compare the complete
@@ -54,6 +55,8 @@ func testSettingsHoldWholePythonObservation(t *testing.T, held bool) {
 	defer gs.Close()
 	ps := seed(filepath.Join(home, "py"))
 	ps.Close()
+	// Go seeded Python's store as well; Python reads it after a takeover.
+	testsupport.HandOver(t, filepath.Join(home, "py", "relay.sqlite3"), "python")
 	script := `import json,sys
 from codex_session_relay.store import Store
 from codex_session_relay import faultsweep

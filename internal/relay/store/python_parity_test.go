@@ -10,6 +10,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // pythonParityScript runs named Python test cases to completion, keeps each case's store, and
@@ -404,7 +406,8 @@ func runParity(t *testing.T, tables []string, cases ...string) []parityStore {
 	stores := pythonParityStores(t, tables, cases...)
 	compared := map[string]int{}
 	for _, python := range stores {
-		s, err := Open(context.Background(), python.DB, "")
+		testsupport.HandOver(t, python.DB, "go")
+		s, err := fixtureOpen(context.Background(), python.DB, "")
 		if err != nil {
 			t.Fatalf("%s: Go cannot open the Python store: %v", python.Case, err)
 		}

@@ -39,7 +39,7 @@ func Test22_FLT_33_KindModuleWholeOutput(t *testing.T) {
 			}
 			args[3] = filepath.Join(home, "go")
 			var gotOut, gotErr bytes.Buffer
-			gotCode, handled := ExecuteAs(context.Background(), "codex-session-relay", args, &gotOut, &gotErr, nil)
+			gotCode, handled := executeAsCLI(context.Background(), args, &gotOut, &gotErr)
 			if !handled || gotCode != wantCode || !bytes.Equal(gotOut.Bytes(), wantOut) || !bytes.Equal(gotErr.Bytes(), wantErr) {
 				t.Fatalf("Python %d stdout=%q stderr=%q; Go %d stdout=%q stderr=%q", wantCode, wantOut, wantErr, gotCode, gotOut.Bytes(), gotErr.Bytes())
 			}

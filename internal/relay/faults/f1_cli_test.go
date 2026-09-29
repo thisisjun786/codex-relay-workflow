@@ -56,7 +56,7 @@ func TestF1ClaimCLIOracle(t *testing.T) {
 				}
 				var got, stderr bytes.Buffer
 				ctx := context.WithValue(context.Background(), f1InputsKey{}, f1Inputs{clock: &testClock{now: 100000}, entropy: bytes.NewReader([]byte{0, 1, 2, 3, 4, 5, 6, 7})})
-				exit, handled := ExecuteAs(ctx, "codex-session-relay", append([]string{"--state", home + "/go", "--json"}, args...), &got, &stderr, nil)
+				exit, handled := executeAsCLI(ctx, append([]string{"--state", home + "/go", "--json"}, args...), &got, &stderr)
 				if !handled {
 					t.Fatal("unhandled")
 				}

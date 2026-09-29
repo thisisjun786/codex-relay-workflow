@@ -29,7 +29,11 @@ _real_mkdtemp = tempfile.mkdtemp
 
 
 def under_tree(*args, **kwargs):
-    kwargs["dir"] = tree
+    # Only the Python tests' own fixture directories go under the tree. The relay package's
+    # scratch directories (the ownership fence's schema_meta snapshot) stay where they were.
+    caller = sys._getframe(1).f_globals.get("__name__", "")
+    if caller == "__main__" or caller.split(".")[0] == "tests":
+        kwargs["dir"] = tree
     return _real_mkdtemp(*args, **kwargs)
 
 
