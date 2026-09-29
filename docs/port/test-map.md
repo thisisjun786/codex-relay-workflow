@@ -46,8 +46,8 @@ read by `hook_probe.py` through `scripts/ci/contracts.py`, not by a test file; t
 ## Totals
 
 Files: 124
-Tests: 6151
-Class A: files=16 tests=632
+Tests: 6152
+Class A: files=16 tests=633
 Class B: files=88 tests=3367
 Class C: files=20 tests=2152
 
@@ -119,6 +119,15 @@ The eight marker commands (`intent-declare`, `intent-attempt`, `intent-bind`, `i
 `intent-claim`, `intent-disposition`, `intent-resolve`, `intent-show`), with the store records
 `intent-claim` and `intent-disposition` mirror (declarations.py), answer byte for byte like Python
 (`TestCLI_every_intent_command_answers_byte_for_byte_like_python`); `guard-evaluate` is todo 33.
+Since todo 32 the fence's ownership checks run where the fence runs them: `main`'s `check_start`
+before the two marker forms that name the selected store (`intent-declare` without `--no-db-path`,
+`intent-register` without `--db-path`), `cmd_intent_claim`'s on the store the intent names, and
+`intent-disposition`'s `declarations.Held` opening it. A store another runtime owns, or one
+draining, refuses them before any marker write; a legacy store passes; a broken one answers the
+refusal or host error the fence does. `TestCLI_marker_preflight_answers_what_python_answers`
+checks 29 such cases against Python's answers in `testdata/marker_preflight.json`, captured once by
+the parity-tagged `TestCLI_marker_preflight_parity_with_live_python` (`make parity`), so the
+default suite starts no Python for them.
 
 ## Todo 21 part B2 host-loss and unknown-send property progress (2026-09-26)
 
@@ -169,7 +178,7 @@ write admission against a symlink into a temporary live-state-shaped directory.
 | path | tests | class | family | fixtures | owner | destination | coupling |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `packages/codex-session-relay/tests/test_fence_readonly.py` | 10 | B | foreign-owner read matrix, the owner's fault-next lease expiry and terminal inbox replay | takeover-inbox legacy golden; ChannelTestCase | todo 31/36 CRW-152 | go-test: internal/relay/store read-only and inbox | - |
-| `packages/codex-session-relay/tests/test_fence.py` | 60 | A | ownership fence, first-socket store binding, decision 25 ingress and inbox replay, Python control socket, one receipt read per Stop | contract/golden/takeover-inbox | todo 31/36 CRW-152 | go-test: internal/relay/store takeover protocol and socket binding + go-test: internal/relay/cli fence parity + go-test: internal/relay/hook control socket (todo 33) + go-test: internal/relay/inbox and internal/relay/cli inbox (todo 31) | - |
+| `packages/codex-session-relay/tests/test_fence.py` | 61 | A | ownership fence, first-socket store binding, decision 25 ingress and inbox replay, Python control socket, one receipt read per Stop, marker-only Stops ask no owner | contract/golden/takeover-inbox | todo 31/36 CRW-152 | go-test: internal/relay/store takeover protocol and socket binding + go-test: internal/relay/cli fence parity + go-test: internal/relay/hook control socket (todo 33) + go-test: internal/relay/inbox and internal/relay/cli inbox (todo 31) | - |
 | `packages/codex-session-relay/tests/test_takeover_candidate.py` | 14 | A | decision 28 private designation, bounded channel frames, ready only after recovery and the control socket, durable activation | isolated SQLite and inherited socketpair | todo 30/36 CRW-152 | go-test: internal/relay/service candidate protocol | - |
 | `packages/codex-session-relay/tests/test_ack_disposition_race.py` | 5 | B | two processes acknowledging one event; which may win | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
 | `packages/codex-session-relay/tests/test_ack_reconcile.py` | 40 | B | ACK, verdicts, reconciliation and restart recovery | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
@@ -206,7 +215,7 @@ write admission against a symlink into a temporary live-state-shaped directory.
 | `packages/codex-session-relay/tests/test_host_lost_turn.py` | 98 | B | host-accepted-then-lost turn vs lost ACK (CRW-224) | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
 | `packages/codex-session-relay/tests/test_identity.py` | 13 | B | identity derivations vs frozen canonical rendering | - | todo 18 / CRW-152 | go-test: `internal/relay/store` (todo 18) + corpus: event-key | - |
 | `packages/codex-session-relay/tests/test_intent.py` | 58 | B | management intent and its state | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
-| `packages/codex-session-relay/tests/test_launch_policy.py` | 26 | B | what a service launches its daemon with and why | - | todo 32 / CRW-155 | go-test: `internal/relay/daemon` (todo 32) | - |
+| `packages/codex-session-relay/tests/test_launch_policy.py` | 26 | B | what a service launches its daemon with and why | - | todo 32 / CRW-155 | go-test: `internal/relay/service` TestLaunchPolicy_* (todo 32: ResolveLaunchPolicyAt against 78 declarations resolved once by Python in testdata/launch_policy.json, the policy file's bytes decoded and scanned as json.loads does among them; doctor, status, packet-check and `service run` reading that one resolution and refusing first; `service declare` spelling and failures; the digest the bridge parser and Python compute) + go-test: `internal/relay/service` Test29LaunchPolicyPersistence, Test29D3LaunchSnapshotTwenty (todo 29: declare/status/forget and the start/restart launch snapshot against live Python) | - |
 | `packages/codex-session-relay/tests/test_linkage.py` | 132 | B | three-level linkage: identity, role contract, refusals, handover | - | todo 26 / CRW-154 | go-test: `internal/relay/linkage` Test26_LNK1..LNK29 and Test26_LNK_literal_reasons (whole-JSON parity with testdata/python_linkage.json from gen_linkage.py; implementation in `internal/relay/registry` linkage_*.go) + go-test: `internal/contracttest` TestLinkageCommands (12 linkage-* commands, stdout bytes and exit codes vs python_cli.json) + go-test: `internal/relay/store` (todo 19: typed queries, guard-index refusals and Python-store parity for the tables this file writes) | - |
 | `packages/codex-session-relay/tests/test_linkage_peer.py` | 16 | B | peer parent links | - | todo 26 / CRW-154 | go-test: linkage package (todo 26) | - |
 | `packages/codex-session-relay/tests/test_linkage_queries.py` | 14 | B | bidirectional hierarchy queries | - | todo 26 / CRW-154 | go-test: linkage package (todo 26) | - |
@@ -263,7 +272,7 @@ write admission against a symlink into a temporary live-state-shaped directory.
 | `packages/codex-session-relay/tests/test_transfer_phases.py` | 7 | B | relay handling of an expired transfer phase | - | todo 28 / CRW-154 | go-test: internal/relay/adapter Test28_* property captures (todo 28) | - |
 | `packages/codex-session-relay/tests/test_unknown_send_lost.py` | 69 | B | uncertain send with no trace held, never resent (CRW-231) | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
 | `packages/codex-session-relay/tests/test_verification_currency.py` | 41 | B | verification currency, canonical criteria, lineage | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
-| `packages/codex-session-relay/tests/test_worker_policy.py` | 18 | A | policy read from the serving process, not the asking shell | - | todo 32 / CRW-155 | corpus: cli-shape | - |
+| `packages/codex-session-relay/tests/test_worker_policy.py` | 18 | A | policy read from the serving process, not the asking shell | - | todo 32 / CRW-155 | go-test: `internal/relay/service` TestWorkerPolicy_every_reason_is_pythons_in_every_reader, TestWorkerPolicy_managed_start_readiness_is_pythons (todo 32: a live worker fixture per case over a copy of one store, every read_worker_policy reason from the service reader, doctor and managed-start against testdata/worker_reasons.json captured once from this file's harness) + go-test: `internal/relay/cli` TestWorkerReadiness_every_reason_is_pythons (todo 32: every worker_readiness reason) | the corpus runner has no live worker process (contract/notes/test_coordination_cli.md); the two kept cases (mid-read record change, lock I/O failure) are the record-changes and lock-missing Go cases |
 | `packages/codex-session-relay/tests/test_wp1_regressions.py` | 34 | B | wp1 independent-review regressions (receipts, scope) | - | todo 18 / CRW-152 | go-test: `internal/relay/store` (todo 18) | - |
 | `packages/codex-thread-bridge/tests/test_approval_routing.py` | 8 | B | approval-class requests left for the thread's approver (CRW-225) | `tests/conftest.py` fake App Server | todo 13 / CRW-151 | go-test: `internal/bridge/appserver` (todo 13) | - |
 | `packages/codex-thread-bridge/tests/test_bridge.py` | 74 | B | create/followup/duplicate/conflict/replay through the bridge | `tests/conftest.py` fake App Server | todo 15 / CRW-151 | go-test: `internal/bridge` (todo 15) | - |

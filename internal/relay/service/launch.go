@@ -69,6 +69,13 @@ func (s *Service) launch(cmd *exec.Cmd) error {
 		return err
 	}
 	cmd.Stdout, cmd.Stderr = log, log
+	// subprocess.Popen refuses an environment value holding NUL, with the log already opened:
+	// a declaration recording such a path is os.environ's ValueError, not exec's own error.
+	for _, variable := range cmd.Env {
+		if strings.IndexByte(variable, 0) >= 0 {
+			return errors.Join(ErrEmbeddedNUL, log.Close())
+		}
+	}
 	err = cmd.Start()
 	return errors.Join(err, log.Close())
 }

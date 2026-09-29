@@ -58,19 +58,27 @@ func init() {
 					values[f.Name] = f.Value.String()
 				}
 			})
+			var policy *registry.RolePolicy
 			if name == "packet-check" && values["receiver"] != "" && values["applied"] != "true" {
 				if err := cli.CheckPacketSelection(services); err != nil {
 					return nil, err
 				}
+				// cli.py main settles the launch declaration before any handler reads the
+				// packet, so a refused declaration answers before a bad packet does.
+				resolved, err := packetPolicy(services.Selection.Path, os.Getenv(execution.EnvPolicy))
+				if err != nil {
+					return nil, err
+				}
+				policy = &resolved
 			}
-			result, err := runCommand(ctx, services, name, values)
+			result, err := runCommand(ctx, services, name, values, policy)
 			return wireValue(result), err
 		}})
 	}
 }
-func runCommand(ctx context.Context, services cli.Services, name string, args map[string]string) (any, error) {
+func runCommand(ctx context.Context, services cli.Services, name string, args map[string]string, policy *registry.RolePolicy) (any, error) {
 	if name == "packet-check" {
-		return packetCommand(ctx, services, args)
+		return packetCommand(ctx, services, args, policy)
 	}
 	s, e := store.Open(ctx, services.Selection.DBPath(), services.SocketPath)
 	if e != nil {
@@ -174,7 +182,10 @@ func readDocument(path, what string, packet bool) (any, error) {
 	}
 	return v, nil
 }
-func packetCommand(ctx context.Context, services cli.Services, args map[string]string) (any, error) {
+
+// packetCommand is cmd_packet_check; policy is the role policy the store-backed check judges
+// pairs by, settled before the handler (packetPolicy).
+func packetCommand(ctx context.Context, services cli.Services, args map[string]string, policy *registry.RolePolicy) (any, error) {
 	packet, e := readDocument(args["packet"], "relay-packet/1 message", true)
 	if e != nil {
 		return nil, e
@@ -243,11 +254,14 @@ func packetCommand(ctx context.Context, services cli.Services, args map[string]s
 			return nil, e
 		}
 	}
-	policy, e := packetPolicy(services.Selection.Path, os.Getenv(execution.EnvPolicy))
-	if e != nil {
-		return nil, e
+	if policy == nil {
+		// An empty --receiver still reads the store (args.receiver is not None) but is not
+		// the receive check main settles a declaration for (bool(args.receiver)), so the
+		// process's own snapshot judges, as rolepolicy.declared() takes it.
+		own := registry.ResolveRolePolicy(map[string]string{execution.EnvPolicy: os.Getenv(execution.EnvPolicy)})
+		policy = &own
 	}
-	reader := reception.Reader{Policy: policy}
+	reader := reception.Reader{Policy: *policy}
 	connection, openError := store.OpenReadOnly(ctx, services.Selection.DBPath(), time.Second)
 	if errors.Is(openError, store.ErrLiveState) {
 		// The live-state guard (until todo 43) is a refusal to report, never a store that

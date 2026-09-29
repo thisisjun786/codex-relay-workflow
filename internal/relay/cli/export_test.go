@@ -26,3 +26,9 @@ func AccessReceipt(ctx context.Context, state string, probed store.ProbeResult) 
 	selection, _ := store.ResolveStateDir(state, "")
 	return accessReceipt(ctx, Services{Selection: selection}, probeStore(probed), probed.Access)
 }
+
+// WorkerReadiness is rolepolicy.worker_readiness(observation, requirements,
+// policy=declared({CODEX_THREAD_BRIDGE_EXECUTION_POLICY: policyFile})); "" is no policy.
+func WorkerReadiness(observation contract.OrderedObject, requirements any, policyFile string) contract.OrderedObject {
+	return workerReadiness(observation, requirements, declaredPolicy(policyFile))
+}

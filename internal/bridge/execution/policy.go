@@ -11,8 +11,10 @@ import (
 	"strings"
 )
 
-// FromBytes is ExecutionPolicy.from_bytes: parse bytes already read from source, refusing
-// repeated keys at every depth, and record their SHA-256 as the policy digest.
+// FromBytes is ExecutionPolicy.from_bytes: parse bytes already read from source as json.loads
+// parses bytes (decode), refusing repeated keys at every depth, and record their SHA-256 as the
+// policy digest. A byte order mark is the codec's, not the document's first character; the
+// digest still covers every byte read.
 func FromBytes(raw []byte, source string) (Policy, error) {
 	data, err := decode(raw)
 	if err != nil {

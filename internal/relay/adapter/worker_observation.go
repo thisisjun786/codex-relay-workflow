@@ -61,26 +61,36 @@ func processIdentity(pid int64) (int64, string, error) {
 	ticks, err := strconv.ParseInt(parts[19], 10, 64)
 	return ticks, parts[0], err
 }
-func heldLock(path string) bool {
+
+// heldLock is service.py _existing_lock_held: contention alone is evidence that another open
+// description holds path's flock, and a lock that cannot be opened, examined or tried for any
+// other reason (a missing file included, which is never created) is an error the reader
+// answers worker_policy_unreadable for, never "unheld".
+func heldLock(path string) (bool, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return false
+		return false, err
 	}
 	defer file.Close()
 	before, err := file.Stat()
 	if err != nil {
-		return false
+		return false, err
+	}
+	if before.IsDir() {
+		return false, &os.PathError{Op: "open", Path: path, Err: syscall.EISDIR}
 	}
 	err = unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 	if err == nil {
-		_ = unix.Flock(int(file.Fd()), unix.LOCK_UN)
-		return false
+		return false, unix.Flock(int(file.Fd()), unix.LOCK_UN)
 	}
 	if !errors.Is(err, unix.EAGAIN) && !errors.Is(err, unix.EACCES) {
-		return false
+		return false, err
 	}
 	after, err := os.Stat(path)
-	return err == nil && os.SameFile(before, after)
+	if err != nil {
+		return false, err
+	}
+	return os.SameFile(before, after), nil
 }
 func (o WorkerObservation) Read(ctx context.Context) (map[string]any, string) {
 	record, err := readObject(filepath.Join(o.State, "daemon.json"))
@@ -173,7 +183,11 @@ func (o WorkerObservation) Read(ctx context.Context) (map[string]any, string) {
 		}
 	}
 	for _, lock := range []string{filepath.Join(o.State, "daemon.lock"), filepath.Join(o.Scope, key+".lock")} {
-		if !heldLock(lock) {
+		held, err := heldLock(lock)
+		if err != nil {
+			return nil, "worker_policy_unreadable"
+		}
+		if !held {
 			return nil, "worker_policy_lock_unheld"
 		}
 	}

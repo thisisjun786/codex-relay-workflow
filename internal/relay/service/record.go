@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -204,7 +205,12 @@ func atomicWriteText(path, raw string) error {
 	if err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), path)
+	// os.replace is rename(2) itself; os.Rename refuses a directory in place with EEXIST
+	// before asking the kernel, which answers EISDIR (IsADirectoryError) there.
+	if err = syscall.Rename(f.Name(), path); err != nil {
+		return &os.LinkError{Op: "rename", Old: f.Name(), New: path, Err: err}
+	}
+	return nil
 }
 
 const ScopeEnv = "CODEX_SESSION_RELAY_SCOPE_DIR"
@@ -267,7 +273,16 @@ func New(ctx context.Context, selection store.StateSelection, socket string) (*S
 	s.StoreUnidentified = statErr == nil && s.StoreID == ""
 	return s, nil
 }
-func (s *Service) path(name string) string    { return filepath.Join(s.Selection.Path, name) }
+func (s *Service) path(name string) string { return stateFile(s.Selection.Path, name) }
+
+// stateFile is selection.path / name: joined as spelled, so a '..' after a symlink in the
+// state directory names the file Python names rather than a lexically cleaned one.
+func stateFile(state, name string) string {
+	if state == "" {
+		return name
+	}
+	return lexicalJoin(state, name)
+}
 func (s *Service) Record() Object             { return read(s.path("daemon.json")) }
 func (s *Service) WriteRecord(o Object) error { return atomicWrite(s.path("daemon.json"), o) }
 func (s *Service) note(values ...any) error {

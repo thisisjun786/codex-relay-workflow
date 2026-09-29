@@ -28,7 +28,7 @@ differ, when a line count differs from `wc -l`, when an owning issue is missing,
 
 ## Files
 
-Total non-test lines: 101433
+Total non-test lines: 101442
 
 | path | lines | invoked | runs | owner | disposition | consumer_search | removal_trigger |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -41,7 +41,7 @@ Total non-test lines: 101433
 | `packages/codex-session-relay/src/codex_session_relay/assignment.py` | 1163 | imported by cli, delivery, dispositions, faultsweep, linkage, reconcile | relay host | CRW-154 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/bridge_adapter.py` | 1321 | imported by cli; imports the bridge in-process (:875-900) | relay host | CRW-154 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/capacity.py` | 594 | imported by cli | relay host | CRW-154 | port | - | - |
-| `packages/codex-session-relay/src/codex_session_relay/cli.py` | 6126 | console script `codex-session-relay` (cli:main); `python -m codex_session_relay.cli` re-exec target of service.py:1680/1779 and supervisorchannel.py:205; run by skills, stopadapter guard call, crw_runtime.scope | end user + relay host | CRW-150 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/cli.py` | 6135 | console script `codex-session-relay` (cli:main); `python -m codex_session_relay.cli` re-exec target of service.py:1680/1779 and supervisorchannel.py:205; run by skills, stopadapter guard call, crw_runtime.scope | end user + relay host | CRW-150 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/clock.py` | 34 | imported by cli | relay host | CRW-152 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/completion.py` | 518 | imported by routing | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/coordination.py` | 129 | imported by capacity, editregion, mergeturn | relay host | CRW-154 | port | - | - |
@@ -284,6 +284,24 @@ the venv in todos 37-38.
 - `scripts/runtime_install.py`, `hook_comparison.py`, `trial_startup.py`, `stop_events.py`,
   `plugin_transition.py` and `completion_hook.py` all import `crw_runtime`; the package outlives
   the product Python until the last dev harness is ported (todo 46).
+
+## Functions retired with evidence
+
+Functions inside ported files that get no Go equivalent. The file itself is still `port`; only
+these definitions are not carried over. Same evidence rule as a retire row: the consumer
+search, and the trigger after which the Python definition may go.
+
+| function | why no port | consumer_search | removal_trigger |
+| --- | --- | --- | --- |
+| `packages/codex-session-relay/src/codex_session_relay/intent.py:930` `dispatch_is_registered` | collapses `dispatch_generation_state` to a boolean for a caller that never came; the detailed answer is ported (`internal/relay/delivery/intent.go`, `DispatchCurrent`) and is what the tests exercise | `grep -rn dispatch_is_registered` over packages/ (src and tests), scripts/, plugins/, docs/ and internal/ at 3684949c: the definition only, 0 callers, 0 tests | deleted with intent.py in todo 44 (CRW-141) |
+| `packages/codex-session-relay/src/codex_session_relay/marker.py:71` `_checked_segment` | a raising wrapper over `valid_segment` nothing calls; every marker path check goes through `valid_segment` directly, ported as `delivery.ValidSegment` | `grep -rn _checked_segment` over packages/ (src and tests), scripts/, plugins/, docs/ and internal/ at 3684949c: the definition only, 0 callers, 0 tests | deleted with marker.py in todo 44 (CRW-141) |
+
+Marker-root resolution exists twice in Python: the relay's (`marker.resolve_marker_root`,
+`Path.absolute`, ported as `internal/relay/delivery.ResolveMarkerRoot`) and the installer's copy
+in `scripts/crw_runtime/completion.py` (`os.path.abspath`, which folds `..`). They disagree on a
+root spelled with `..` after a symlink, so a hook could look under a different tree than the
+coordinator publishes to. Todo 38 reuses `delivery.ResolveMarkerRoot` rather than porting the
+installer's copy.
 
 ## Summary
 

@@ -214,11 +214,11 @@ func Test29OrphanKeepsInheritedLocks(t *testing.T) {
 			if worker.Wait(0) {
 				t.Fatal("stopped worker exited")
 			}
-			if !existingLockHeld(filepath.Join(home, "state", "daemon.lock")) {
+			if !lockHeld(filepath.Join(home, "state", "daemon.lock")) {
 				t.Fatal("supervisor released worker's daemon lock")
 			}
 			scope := &ScopeRegistry{Root: home + "/scopes", Authority: "isolated"}
-			if !existingLockHeld(scope.path(home+"/socket", ".lock")) {
+			if !lockHeld(scope.path(home+"/socket", ".lock")) {
 				t.Fatal("supervisor released worker's scope lock")
 			}
 			status := invoke(t, home, python, "--socket", home+"/socket", "service", "status")

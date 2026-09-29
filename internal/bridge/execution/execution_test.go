@@ -80,6 +80,12 @@ func TestPolicy_whenPythonPolicyFileIsLoaded(t *testing.T) {
 			rows := []struct{ body, want string }{
 				{`{"allowed": [{"model": "a", "efforts": ["x"]}], "allowed": [{"model": "b", "efforts": ["y"]}]}`, "duplicate key 'allowed'"},
 				{`{"allowed": [{"model": "a", "efforts": ["x"], "model": "b"}]}`, "duplicate key 'model'"},
+				// The empty key is a key: object_pairs_hook refuses it repeated, at any depth.
+				{`{"":1,"":2,"roles":{"parent":{"model":"m","reasoningEffort":"high"}}}`, "duplicate key '' in the execution policy"},
+				{`{"roles":{"parent":{"":1,"model":"m","":2,"reasoningEffort":"high"}}}`, "duplicate key '' in the execution policy"},
+				// json.loads(bytes) strips one BOM with utf-8-sig and checks for another only on
+				// str input, so a second one is the scanner's "Expecting value" at char 0.
+				{"\xef\xbb\xbf\xef\xbb\xbf{}", "is not valid JSON: Expecting value: line 1 column 1 (char 0)"},
 			}
 			for _, row := range rows {
 				err := second(FromFile(writePolicy(t, dir, []byte(row.body))))
@@ -145,7 +151,8 @@ func TestPolicy_whenPythonPolicyFileIsLoaded(t *testing.T) {
 		{"test_without_a_digest_the_environment_reads_exactly_as_before", func(t *testing.T) {
 			dir := canonicalTemp(t)
 			path := writePolicy(t, dir, marshal(t, policyFor(dir)))
-			for _, env := range []map[string]string{{}, {EnvDigest: "  "}} {
+			// Stripped as str.strip() strips, the information separators included.
+			for _, env := range []map[string]string{{}, {EnvDigest: "  "}, {EnvPolicy: "\x1f", EnvDigest: "\x1c "}} {
 				p, err := FromEnvironment(env)
 				if err != nil || p.Mode() != "presence_only" || p.digest != "" {
 					t.Fatal(p, err)

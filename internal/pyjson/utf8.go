@@ -1,17 +1,29 @@
-package store
+package pyjson
 
 import (
 	"fmt"
+	"strings"
 	"unicode/utf8"
 )
 
 // DecodeUTF8 is Python's strict UTF-8 text-file decoding, including the byte
 // interval and reason in UnicodeDecodeError (before universal newlines).
-func DecodeUTF8(data []byte) (string, error) {
+func DecodeUTF8(data []byte) (string, error) { return decodeUTF8(data, false) }
+
+// decodeUTF8 is bytes.decode("utf-8"), with errors="surrogatepass" when surrogates is set: an
+// encoded surrogate (ED A0..BF 80..BF), which the strict decoder refuses at its first byte, is
+// then one character, a lone surrogate, which a Go string holds as U+FFFD.
+func decodeUTF8(data []byte, surrogates bool) (string, error) {
+	var passed []int
 	for i := 0; i < len(data); {
 		r, size := utf8.DecodeRune(data[i:])
 		if r != utf8.RuneError || size != 1 {
 			i += size
+			continue
+		}
+		if surrogates && i+2 < len(data) && data[i] == 0xed && data[i+1] >= 0xa0 && data[i+1] <= 0xbf && data[i+2] >= 0x80 && data[i+2] <= 0xbf {
+			passed = append(passed, i)
+			i += 3
 			continue
 		}
 		lead := data[i]
@@ -53,5 +65,16 @@ func DecodeUTF8(data []byte) (string, error) {
 		}
 		return "", fmt.Errorf("'utf-8' codec can't decode %s: %s", where, reason)
 	}
-	return string(data), nil
+	if len(passed) == 0 {
+		return string(data), nil
+	}
+	var b strings.Builder
+	last := 0
+	for _, at := range passed {
+		b.Write(data[last:at])
+		b.WriteRune(utf8.RuneError)
+		last = at + 3
+	}
+	b.Write(data[last:])
+	return b.String(), nil
 }

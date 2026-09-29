@@ -34,9 +34,24 @@ func canonicalSocket(path string) (string, error) {
 	return resolvePath(expanded)
 }
 
-func resolvePath(path string) (string, error) { return resolvePathDepth(path, 0) }
-func resolvePathDepth(path string, depth int) (string, error) {
+func resolvePath(path string) (string, error) { return resolvePathDepth(path, 0, true) }
+
+// resolveLoosely is Path.resolve() as ownership.mirror calls it (os.path.realpath with
+// strict=False): a component that cannot be examined (EACCES, ENOTDIR, an unreadable link) is
+// kept as spelled, where resolvePath fails.
+func resolveLoosely(path string) string {
+	resolved, err := resolvePathDepth(path, 0, false)
+	if err != nil {
+		return path
+	}
+	return resolved
+}
+
+func resolvePathDepth(path string, depth int, strict bool) (string, error) {
 	if depth > 40 {
+		if !strict {
+			return pathlibSpelling(path), nil
+		}
 		return "", fmt.Errorf("too many symlinks resolving %q", path)
 	}
 	absolute := path
@@ -61,7 +76,7 @@ func resolvePathDepth(path string, depth int) (string, error) {
 		}
 		candidate := filepath.Join(resolved, part)
 		info, err := os.Lstat(candidate)
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) || err != nil && !strict {
 			resolved = candidate
 			continue
 		}
@@ -73,14 +88,18 @@ func resolvePathDepth(path string, depth int) (string, error) {
 			continue
 		}
 		target, err := os.Readlink(candidate)
+		if err != nil && !strict {
+			resolved = candidate
+			continue
+		}
 		if err != nil {
 			return "", err
 		}
 		remaining := strings.Join(parts[i+1:], string(filepath.Separator))
 		if filepath.IsAbs(target) {
-			return resolvePathDepth(target+string(filepath.Separator)+remaining, depth+1)
+			return resolvePathDepth(target+string(filepath.Separator)+remaining, depth+1, strict)
 		}
-		return resolvePathDepth(resolved+string(filepath.Separator)+target+string(filepath.Separator)+remaining, depth+1)
+		return resolvePathDepth(resolved+string(filepath.Separator)+target+string(filepath.Separator)+remaining, depth+1, strict)
 	}
 	return resolved, nil
 }

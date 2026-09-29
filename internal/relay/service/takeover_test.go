@@ -123,6 +123,87 @@ func Test30ControlSocketRealSurface(t *testing.T) {
 		}
 	}
 }
+
+// PR #185 4128954449: a client that connects to control.sock and goes away before it
+// finishes a request line asked nothing, so it is no handler failure. The listener closes
+// cleanly, and a daemon segment whose work succeeded exits 0 rather than exit 3 "EOF".
+func Test30ControlDisconnectBeforeARequestIsNoFailure(t *testing.T) {
+	probe := func(t *testing.T, path string, partial []byte) {
+		t.Helper()
+		conn, err := net.Dial("unix", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(partial) > 0 {
+			if _, err = conn.Write(partial); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err = conn.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	home, err := os.MkdirTemp("", "t30-probe-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	t.Run("listener", func(t *testing.T) {
+		state := filepath.Join(home, "listener")
+		if err := os.Mkdir(state, 0700); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+		server, err := ListenControl(ctx, state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		probe(t, ControlPath(state), nil)
+		probe(t, ControlPath(state), []byte(`{"protocol":1,"method":"guard-`))
+		// The listener still serves, and the probes' handlers finish before Close answers.
+		root := t.TempDir()
+		t.Setenv("CODEX_SESSION_RELAY_MARKER_ROOT", root)
+		conn, err := net.Dial("unix", ControlPath(state))
+		if err != nil {
+			t.Fatal(err)
+		}
+		answer, err := hook.RequestGuard(ctx, conn, hook.Object{}, hook.GuardOptions{Root: root, Mode: hook.Observe, Now: "2026-01-01T00:00:00Z"})
+		_ = conn.Close()
+		if err != nil || get(answer, "decision") != "release" {
+			t.Fatal(answer, err)
+		}
+		if err = server.Close(); err != nil {
+			t.Fatalf("a disconnect before a request line failed the listener: %v", err)
+		}
+	})
+	t.Run("daemon", func(t *testing.T) {
+		daemon := exec.Command(testBinary, "relay", "--state", home+"/state", "--socket", home+"/socket", "daemon", "--deadline", "2", "--allow-isolated-scope")
+		daemon.Env = environment(home)
+		var stdout, stderr bytes.Buffer
+		daemon.Stdout, daemon.Stderr = &stdout, &stderr
+		if err := daemon.Start(); err != nil {
+			t.Fatal(err)
+		}
+		path := ControlPath(home + "/state")
+		for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+			if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSocket != 0 {
+				break
+			}
+			if time.Now().After(deadline) {
+				_ = daemon.Process.Kill()
+				_ = daemon.Wait()
+				t.Fatalf("the daemon never bound control.sock: %s %s", stdout.String(), stderr.String())
+			}
+		}
+		probe(t, path, nil)
+		err := daemon.Wait()
+		var result map[string]any
+		if err != nil || json.Unmarshal(stdout.Bytes(), &result) != nil || result["ok"] != true {
+			t.Fatalf("daemon after a probe: %v\n%s%s", err, stdout.String(), stderr.String())
+		}
+	})
+}
 func takeoverCLI(t *testing.T, home string, args ...string) (map[string]any, int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 35*time.Second)

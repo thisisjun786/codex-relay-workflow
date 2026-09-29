@@ -28,6 +28,102 @@ func admitWrite(ctx context.Context, path string) (*ownership.Admission, error) 
 	return admission, nil
 }
 
+// StartPreflight is ownership.check_start as cli.py main runs it before a command that opens
+// its own admitted connection (service, daemon, and the marker commands that record or
+// confirm the selected store): an absent store passes, because the writable opener creates
+// it; anything else must be Go-owned and active, or starting for the designated candidate
+// ctx carries, or it is refused before any lock, record, marker or child exists.
+// socketPath is the command's --socket as given, so the opener that completes a torn socket
+// binding is let through (cutover.md Record); one that cannot be canonicalized binds
+// nothing, and the opener reports it.
+func StartPreflight(ctx context.Context, dbPath, socketPath string) error {
+	socket := ""
+	if socketPath != "" {
+		socket, _ = CanonicalSocket(socketPath)
+	}
+	if err := ownership.CheckStart(ctx, dbPath, socket); err != nil {
+		return &RefusedError{Reason: "store_owned_by_other", Detail: OwnershipRefusalDetail(err)}
+	}
+	return nil
+}
+
+// CheckStartLikeFence is ownership.check_start without a candidate, read in the fence's order
+// and answered with its outcomes, for the marker commands the fence runs it for: cli.py main
+// before intent-declare recording the selected store and intent-register confirming against it,
+// cmd_intent_claim on the store an intent names, and declarations.Held's Store() on it for
+// intent-disposition. In order:
+//
+//   - ownership.mirror: an absent takeover.json (ENOENT) is no record; any other read failure,
+//     and bytes json.loads refuses or that are not an object, refuse with "takeover record
+//     unreadable: <Class>: ..." or "takeover record is not an object". The state directory is
+//     Path.resolve()'s, which never fails on an unreadable or non-directory component;
+//   - ownership.metadata: the OS or SQLite failure it raises is returned as it is, for the
+//     command's host envelope (PythonHostDetail);
+//   - a store with neither an ownership key nor a mirror (absent or legacy) passes, as
+//     check_start lets it. A command that goes on to open such a store meets the Go opener,
+//     which never initializes a legacy one (decision 30) and refuses it there, before any
+//     marker fact exists (intent-register's hold);
+//   - a fenced store is refused where StartPreflight's judgement (ownership.CheckStart, with
+//     socketPath) refuses it, in validate's words wherever validate refuses it too.
+func CheckStartLikeFence(ctx context.Context, dbPath, socketPath string) error {
+	resolved := resolveLoosely(dbPath)
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(resolved), "takeover.json"))
+	switch {
+	case errors.Is(err, unix.ENOENT):
+		raw = nil
+	case err != nil:
+		return fenceRefused("takeover record unreadable: " + PythonOSError(err))
+	default:
+		if why := MirrorRefusal(raw); why != "" {
+			return fenceRefused(why)
+		}
+	}
+	meta, err := readMetadata(ctx, dbPath)
+	if err != nil {
+		return &pythonHostError{cause: err}
+	}
+	fenced := raw != nil
+	for _, key := range ownership.Keys {
+		_, stamped := meta[key]
+		fenced = fenced || stamped
+	}
+	if !fenced {
+		return nil
+	}
+	socket := ""
+	if socketPath != "" {
+		socket, _ = CanonicalSocket(socketPath)
+	}
+	err = ownership.CheckStart(ctx, dbPath, socket)
+	var refused *ownership.Refused
+	switch {
+	case err == nil:
+		return nil
+	case !errors.As(err, &refused):
+		return &pythonHostError{cause: err}
+	}
+	if why := fenceRefusal(resolved, meta, raw); why != "" {
+		return fenceRefused(why)
+	}
+	return &RefusedError{Reason: "store_owned_by_other", Detail: OwnershipRefusalDetail(err), cause: err}
+}
+
+func fenceRefused(detail string) error {
+	refused := &ownership.Refused{Detail: detail}
+	return &RefusedError{Reason: "store_owned_by_other", Detail: detail, cause: refused}
+}
+
+// PythonHostDetail is the host envelope detail, f"{type(error).__name__}: {error}", of an OS or
+// SQLite failure the fence raises unhandled out of an ownership read (CheckStartLikeFence), and
+// whether err is one.
+func PythonHostDetail(err error) (string, bool) {
+	var host *pythonHostError
+	if errors.As(err, &host) {
+		return host.Error(), true
+	}
+	return "", false
+}
+
 // OwnershipRefusalDetail is the detail a refused Go admission or start preflight answers
 // with. Where the fence refuses for the same reason (ownership.py validate: another owner, a
 // draining store, a starting store without the candidate's permit) it is the fence's

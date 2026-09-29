@@ -4,11 +4,11 @@ import (
 	"context"
 	"os"
 	"sort"
-	"strings"
 	"sync"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -34,16 +34,28 @@ type RolePolicy struct {
 
 type roleExpectation struct{ Expectation, Model, Effort string }
 
-// ResolveRolePolicy is rolepolicy._resolve over one environment.
+// ResolveRolePolicy is rolepolicy._resolve over one environment: the configured value
+// str.strip()ped, read through the bridge's parser as from_file reads Path(value), and a
+// document nested deeper than that parser descends answered as rolepolicy's RecursionError
+// branch answers it, naming the value as configured.
 func ResolveRolePolicy(env map[string]string) RolePolicy {
-	configured := strings.TrimSpace(env[execution.EnvPolicy])
+	configured := store.PythonStrip(env[execution.EnvPolicy])
 	if configured == "" {
 		return RolePolicy{Detail: execution.EnvPolicy + " is not set in this process, so no role policy can be read",
 			PublicDetail: "execution policy environment is not configured in this process"}
 	}
-	policy, err := execution.FromFile(configured)
+	const unreadable = "configured execution policy is unreadable or invalid"
+	source := store.PathlibSpelling(configured)
+	raw, err := execution.ReadFile(source)
+	if err == nil && nestedTooDeep(raw) {
+		return RolePolicy{Detail: configured + " is nested deeper than the execution policy parser can read", PublicDetail: unreadable}
+	}
+	var policy execution.Policy
+	if err == nil {
+		policy, err = execution.FromBytes(raw, source)
+	}
 	if err != nil {
-		return RolePolicy{Detail: err.Error(), PublicDetail: "configured execution policy is unreadable or invalid"}
+		return RolePolicy{Detail: err.Error(), PublicDetail: unreadable}
 	}
 	summary := policy.Summary()
 	roles, _ := summary["roles"].(map[string]any)
@@ -52,6 +64,13 @@ func ResolveRolePolicy(env map[string]string) RolePolicy {
 	}
 	digest, _ := summary["digest"].(string)
 	return RolePolicy{Declared: true, policy: policy, digest: digest}
+}
+
+// nestedTooDeep is whether json.loads(raw, object_pairs_hook=_no_duplicates) raises
+// RecursionError before any other refusal: the bytes decoded as json.loads decodes them first.
+func nestedTooDeep(raw []byte) bool {
+	text, err := pyjson.DecodeBytes(raw)
+	return err == nil && pyjson.HookedRecursion(text, execution.PolicyDepth)
 }
 
 // EnvironmentRolePolicy is rolepolicy.declared(): the policy named by this process's

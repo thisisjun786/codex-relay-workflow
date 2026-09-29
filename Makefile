@@ -45,6 +45,7 @@ contract:
 # alone runs for several minutes and more under load, past go test's default 10m timeout.
 parity:
 	$(GO) test -tags parity -count=1 -timeout 30m ./internal/relay/cli/... ./internal/relay/adapter/... ./internal/relay/hook/...
+	$(GO) test -tags parity -count=1 -run '^TestCLI_marker_preflight_parity_with_live_python$$' ./internal/relay/delivery/
 
 # The development tooling (cmd/crw-dev, internal/dev) builds only with -tags dev, so lint and
 # test cover it in a second pass; dist and goreleaser never pass the tag.

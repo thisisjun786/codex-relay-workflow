@@ -130,11 +130,17 @@ type framedConn struct {
 func (c *framedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
 func dispatchControl(ctx context.Context, conn net.Conn, state string) error {
 	raw, err := bufio.NewReader(io.LimitReader(conn, (64<<20)+1)).ReadBytes('\n')
-	if err != nil {
-		return err
-	}
+	// Judged before the read error: the limit ends an oversized frame with io.EOF too.
 	if len(raw) > 64<<20 {
 		return fmt.Errorf("control frame too large")
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET) {
+		// The client went away before it finished a request line (a probe, or a hook that
+		// gave up): it asked nothing, so nothing failed. Python's GuardServer only closes it.
+		return nil
+	}
+	if err != nil {
+		return err
 	}
 	// control.sock serves guard-evaluate only, as Python's GuardServer does. Decision-25
 	// ingress is the queued command's own file publication, never a socket method.
