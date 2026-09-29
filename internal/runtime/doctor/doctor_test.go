@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -321,6 +322,105 @@ func TestDoctorDoesNotOwnAGoRuntimeNothingCanLaunch(t *testing.T) {
 	report = h.diagnose(t)
 	if got := golden.Canon(at(report, "components", "codex-session-relay", "reasons")); at(report, "components", "codex-session-relay", "class") != "foreign" || !strings.Contains(got, hook+" resolves to") {
 		t.Errorf("a link that does not resolve to bin/crw: %s", golden.Canon(at(report, "components", "codex-session-relay")))
+	}
+}
+
+// Every registration that starts a component is judged against the selected Go runtime: the
+// Stop settings' relayExecutable (and, plugin-owned, the adapter the packaged launcher runs),
+// the plugin-owned bridge record's bridgeExecutable and config.toml's codex-thread-bridge table.
+// One naming another executable (an old runtime's bridge, a Python interpreter, the right binary
+// under another name) makes its component conflict; one that cannot be read leaves it
+// unreadable; one that starts the selected binary under the component's name (through the
+// pointer, or crw with its mode argument) keeps it own.
+func TestDoctorJudgesEveryRegistrationAgainstTheSelectedRuntime(t *testing.T) {
+	h, dir, _ := goHost(t, true)
+	stop := filepath.Join(h.codex, "crw-completion-hook.json")
+	bridgeRecord := filepath.Join(h.codex, "crw-bridge-mcp.json")
+	config := filepath.Join(h.codex, "config.toml")
+	stale := filepath.Join(h.home, "opt", "old", "bin", "codex-thread-bridge")
+	write(t, stale, fakeCrw+"old", 0o755)
+	env := filepath.Join(h.dest, "env-1-0be23c258476")
+	current := func(name string) string { return filepath.Join(h.current(), "bin", name) }
+	goodStop := `{"relayExecutable": "` + current("codex-session-relay") + `", "owner": "plugin", "adapterInterpreter": "/usr/bin/env", "adapterEntryPoint": "` + current("crw-completion-hook") + `"}`
+	goodBridge := `{"owner": "plugin", "bridgeExecutable": "` + current("codex-thread-bridge") + `", "args": []}`
+	for _, c := range []struct {
+		name, stop, bridge, config string
+		relay, bridgeClass, want   string
+	}{
+		{"all agree", goodStop, goodBridge, "[mcp_servers.codex-thread-bridge]\ncommand = \"" + filepath.Join(dir, "bin", "crw") + "\"\nargs = [\"bridge\"]\n", "own", "own", ""},
+		{"an old runtime's bridge", goodStop, `{"owner": "plugin", "bridgeExecutable": "` + stale + `"}`, "", "own", "conflict", "crw-bridge-mcp.json bridgeExecutable names " + stale},
+		{"a Python bridge in config.toml", goodStop, goodBridge, "[mcp_servers.codex-thread-bridge]\ncommand = \"" + filepath.Join(env, "bin", "python3") + "\"\nargs = [\"-m\", \"codex_thread_bridge\"]\n", "own", "conflict", "config.toml mcp_servers.codex-thread-bridge.command names " + filepath.Join(env, "bin", "python3")},
+		{"a Python-era adapter", `{"relayExecutable": "` + current("codex-session-relay") + `", "owner": "plugin", "adapterInterpreter": "` + current("python3") + `", "adapterEntryPoint": "` + current("crw-completion-hook") + `"}`, goodBridge, "", "conflict", "own", "adapterInterpreter " + current("python3") + " is a Python interpreter"},
+		{"the relay under the bridge's name", `{"relayExecutable": "` + current("codex-thread-bridge") + `"}`, goodBridge, "", "conflict", "own", "as codex-thread-bridge rather than as codex-session-relay"},
+		{"unreadable Stop settings", `{"relayExecutable": `, goodBridge, "", "unreadable", "own", "the Stop settings " + stop},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			write(t, stop, c.stop, 0o600)
+			write(t, bridgeRecord, c.bridge, 0o600)
+			_ = os.Remove(config)
+			if c.config != "" {
+				write(t, config, c.config, 0o600)
+			}
+			report := h.diagnose(t)
+			relay, bridge := at(report, "components", "codex-session-relay"), at(report, "components", "codex-thread-bridge")
+			if record.Get(golden.Obj(relay), "class") != c.relay || record.Get(golden.Obj(bridge), "class") != c.bridgeClass {
+				t.Fatalf("relay %s\nbridge %s", golden.Canon(relay), golden.Canon(bridge))
+			}
+			if c.want != "" && !strings.Contains(golden.Canon(relay)+golden.Canon(bridge), c.want) {
+				t.Errorf("no reason names %q:\nrelay %s\nbridge %s", c.want, golden.Canon(relay), golden.Canon(bridge))
+			}
+			wantInstalled := "not_verified"
+			if c.relay == "own" && c.bridgeClass == "own" {
+				wantInstalled = "verified"
+			}
+			if got := at(report, "checks", "results", "installed", "value"); got != wantInstalled {
+				t.Errorf("installed = %v", got)
+			}
+		})
+	}
+}
+
+// Every component the definition requires must be selected by an absolute path: a selection
+// that is missing, null, not a string, empty or relative leaves the pointer's agreement
+// unestablished (agrees null, the selection listed) and the Go classification unreadable,
+// rather than letting the pointer agree over the selections that remain.
+func TestDoctorLeavesAGoRuntimeUnreadableWhenASelectionIsUnusable(t *testing.T) {
+	h, _, _ := goHost(t, true)
+	raw, err := os.ReadFile(h.record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range map[string]any{"missing": nil, "null": "null", "number": "42", "empty": `""`, "relative": `"runtime/bin"`} {
+		t.Run(name, func(t *testing.T) {
+			var document map[string]any
+			if err := json.Unmarshal(raw, &document); err != nil {
+				t.Fatal(err)
+			}
+			selected := document["selected"].(map[string]any)
+			if value == nil {
+				delete(selected, "codex-thread-bridge")
+			} else {
+				selected["codex-thread-bridge"] = json.RawMessage(value.(string))
+			}
+			changed, err := json.MarshalIndent(document, "", "  ")
+			if err != nil {
+				t.Fatal(err)
+			}
+			write(t, h.record, string(changed)+"\n", 0o600)
+			report := h.diagnose(t)
+			unusable := golden.Canon(at(report, "runtime", "unusableSelections"))
+			if at(report, "runtime", "agrees") != nil || !strings.Contains(unusable, "codex-thread-bridge") {
+				t.Errorf("agrees %v, unusable %s", at(report, "runtime", "agrees"), unusable)
+			}
+			for _, c := range []string{"codex-session-relay", "codex-thread-bridge"} {
+				if got := at(report, "components", c, "class"); got != "unreadable" {
+					t.Errorf("%s: %v %s", c, got, golden.Canon(at(report, "components", c, "reasons")))
+				}
+			}
+			if got := at(report, "checks", "results", "installed", "value"); got != "not_verified" {
+				t.Errorf("installed = %v", got)
+			}
+		})
 	}
 }
 

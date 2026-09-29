@@ -147,12 +147,34 @@ func CheckRecord(fields map[string]Object, destination string, temporary bool, s
 	}, nil
 }
 
-// Runtime is what the owned pointer selects.
+// Runtime is what the owned pointer selects. Every component the definition requires must be
+// selected by an absolute path; a selection that is missing, not a string, empty or relative is
+// listed in unusableSelections and leaves agreement unestablished (agrees null), because a
+// pointer cannot be said to contain a runtime the record does not name.
 func Runtime(pointerPath, from string, rec Object) Object {
 	out := Object{{Key: "pointer", Value: nullable(pointerPath)}, {Key: "pointerFrom", Value: from}}
-	selected, _ := record.Get(rec, "selected").(Object)
+	raw, present := record.Lookup(rec, "selected")
+	selected, isObject := raw.(Object)
 	if selected == nil {
 		selected = Object{}
+	}
+	unusable := []any{}
+	if present && !isObject {
+		unusable = append(unusable, "selected is "+scope.TypeName(raw)+", not an object")
+	}
+	for _, c := range definition.Components {
+		value, ok := record.Lookup(selected, c.Name)
+		location, isString := value.(string)
+		switch {
+		case !ok:
+			unusable = append(unusable, c.Name+": no selection is recorded")
+		case !isString:
+			unusable = append(unusable, c.Name+": the selection is "+scope.TypeName(value)+", not a path")
+		case location == "":
+			unusable = append(unusable, c.Name+": the selection is empty")
+		case !filepath.IsAbs(location):
+			unusable = append(unusable, c.Name+": the selection "+location+" is not an absolute path")
+		}
 	}
 	var selectsKind any = "none"
 	kinds := map[string]bool{}
@@ -172,7 +194,7 @@ func Runtime(pointerPath, from string, rec Object) Object {
 		selectsKind = "mixed"
 	}
 	if pointerPath == "" {
-		return append(out, record.Object{{Key: "state", Value: nil}, {Key: "kind", Value: "unknown"}, {Key: "detail", Value: "no pointer path is recorded or derivable"}, {Key: "recordSelects", Value: selected}, {Key: "recordSelectsKind", Value: selectsKind}, {Key: "agrees", Value: nil}}...)
+		return append(out, record.Object{{Key: "state", Value: nil}, {Key: "kind", Value: "unknown"}, {Key: "detail", Value: "no pointer path is recorded or derivable"}, {Key: "recordSelects", Value: selected}, {Key: "recordSelectsKind", Value: selectsKind}, {Key: "unusableSelections", Value: unusable}, {Key: "agrees", Value: nil}}...)
 	}
 	read := pointer.Read(pointerPath)
 	out = append(out, record.Object{{Key: "state", Value: read.State}, {Key: "target", Value: nullable(read.Target)}, {Key: "detail", Value: read.Detail}}...)
@@ -190,18 +212,24 @@ func Runtime(pointerPath, from string, rec Object) Object {
 		}
 		out = append(out, record.Object{{Key: "targetResolves", Value: target}}...)
 		kind = RuntimeKind(target)
-		if len(selected) > 0 {
-			for _, f := range selected {
-				location, _ := f.Value.(string)
-				if location == "" {
-					continue
-				}
-				resolved, err := record.Resolve(location)
-				if err != nil || !record.Within(resolved, target) {
-					outside = append(outside, location)
-				}
+		if rec == nil {
+			break
+		}
+		for _, f := range selected {
+			location, _ := f.Value.(string)
+			if !filepath.IsAbs(location) {
+				continue // unusable, listed above: never resolved against this process's directory
 			}
-			agrees = len(outside) == 0
+			resolved, err := record.Resolve(location)
+			if err != nil || !record.Within(resolved, target) {
+				outside = append(outside, location)
+			}
+		}
+		switch {
+		case len(outside) > 0:
+			agrees = false
+		case len(unusable) == 0:
+			agrees = true
 		}
 	}
 	return append(out, record.Object{
@@ -209,6 +237,7 @@ func Runtime(pointerPath, from string, rec Object) Object {
 		{Key: "placementRecorded", Value: record.PlacementRecorded(record.PointerEntryFor(record.Get(rec, "pointer"), pointerPath))},
 		{Key: "recordSelects", Value: selected},
 		{Key: "recordSelectsKind", Value: selectsKind},
+		{Key: "unusableSelections", Value: unusable},
 		{Key: "agrees", Value: agrees},
 		{Key: "outside", Value: outside},
 	}...)
@@ -267,7 +296,7 @@ func codexVersion(ctx context.Context) *string {
 }
 
 // classifyGo is the OPS-2.2 class of one component of a Go install reached through the pointer.
-func classifyGo(c definition.Component, target string, rec Object, recordUsable bool, pointerRead Object, version *string, host string) Object {
+func classifyGo(c definition.Component, target string, rec Object, recordUsable bool, pointerRead Object, version *string, host string, registrations Registrations) Object {
 	entry := filepath.Join(target, "bin", c.ConsoleScript)
 	resolved, err := record.Resolve(entry)
 	out := Object{{Key: "component", Value: c.Name}, {Key: "entryPoint", Value: entry}}
@@ -324,18 +353,28 @@ func classifyGo(c definition.Component, target string, rec Object, recordUsable 
 	}
 	points := record.PointsFor(rec, c.Name, wanted)
 	signals.HasPoint = len(points) > 0
-	if agrees := record.Get(pointerRead, "agrees"); agrees == false {
+	// pointer_conflict_of: a pointer the selection lies outside is a conflict, and one whose
+	// agreement could not be established (a selection missing, invalid or unresolvable) stops
+	// classification.
+	switch agrees := record.Get(pointerRead, "agrees"); {
+	case agrees == false:
 		signals.PointerConflict = "the owned pointer names " + scope.PyStr(record.Get(pointerRead, "target")) + ", which does not contain the runtime this host record selects, so the command a host reaches is not the one that was promoted"
+	case agrees == nil && recordUsable:
+		signals.Unreadable = append(signals.Unreadable, "whether the owned pointer "+scope.PyStr(record.Get(pointerRead, "target"))+" contains the runtime this host record selects ("+strings.Join(anyStrings(record.Get(pointerRead, "unusableSelections")), "; ")+")")
 	}
+	registered := registrations.of(c.Name)
+	signals.RegistrationConflict = strings.Join(registered.conflicts, "; ")
+	signals.Unreadable = append(signals.Unreadable, registered.unread...)
 	class, reasons := ownership.Classify(signals)
 	return append(out, record.Object{
+		{Key: "registrations", Value: nonNil(registered.report)},
 		{Key: "digest", Value: digestValue},
 		{Key: "recordedDigest", Value: record.Get(install, "binaryDigest")},
 		{Key: "pointsCovering", Value: int64(len(points))},
 		{Key: "launchable", Value: launchable},
 		{Key: "class", Value: class},
 		{Key: "reasons", Value: strs(reasons)},
-		{Key: "notChecked", Value: []any{"the Codex MCP registration (register-mcp, todo 38)", "the skill links (crw install skills, todo 39)", "the App Server dimension (observed by measure, todo 38)"}},
+		{Key: "notChecked", Value: []any{"the skill links (crw install skills, todo 39)", "the App Server dimension (observed by measure, todo 38)"}},
 	}...)
 }
 
@@ -376,6 +415,18 @@ func launchProblems(target string) (problems, unread []string) {
 		}
 	}
 	return problems, unread
+}
+
+// anyStrings is the strings of a decoded list.
+func anyStrings(v any) []string {
+	var out []string
+	list, _ := v.([]any)
+	for _, item := range list {
+		if text, ok := item.(string); ok {
+			out = append(out, text)
+		}
+	}
+	return out
 }
 
 func strs(values []string) []any {
@@ -457,11 +508,15 @@ func Diagnose(ctx context.Context, o Options) Object {
 	version := versionOf(ctx)
 	hostname, _ := os.Hostname()
 	target, _ := record.Get(runtime, "targetResolves").(string)
+	var registrations Registrations
+	if selected == KindGoRuntime && target != "" {
+		registrations = ReadRegistrations(codexHome, target, o.Env)
+	}
 	for _, c := range definition.Components {
 		var one Object
 		switch {
 		case selected == KindGoRuntime && target != "":
-			one = classifyGo(c, target, rec, host.Usable(), runtime, version, hostname)
+			one = classifyGo(c, target, rec, host.Usable(), runtime, version, hostname, registrations)
 			classes = append(classes, scope.PyStr(record.Get(one, "class")))
 		case selected == KindPythonVenv:
 			one = Object{{Key: "component", Value: c.Name}, {Key: "class", Value: nil}, {Key: "classifiedBy", Value: "python3 scripts/runtime_install.py diagnose"},
