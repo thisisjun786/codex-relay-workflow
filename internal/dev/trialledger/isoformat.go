@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
 // fromISOFormat is datetime.datetime.fromisoformat as CPython 3.14's C module parses it (the
@@ -16,7 +17,7 @@ import (
 // six digits, and hour 24 is the next midnight. aware is false for a time with no offset. err
 // is the ValueError's text.
 func fromISOFormat(text string) (at time.Time, aware bool, err error) {
-	invalid := newValueError("Invalid isoformat string: %s", pyRepr(text))
+	invalid := newValueError("Invalid isoformat string: %s", evidence.StrRepr(text))
 	length := byteOfRune(text, -1)
 	if length < 7 {
 		return time.Time{}, false, invalid
@@ -373,48 +374,6 @@ func timedeltaRepr(d time.Duration) string {
 		parts = []string{"0"}
 	}
 	return "datetime.timedelta(" + strings.Join(parts, ", ") + ")"
-}
-
-// pyRepr is repr() of a str: a quote the text does not hold, and every character str.isprintable
-// refuses escaped, a lone surrogate among them.
-func pyRepr(s string) string {
-	quote := "'"
-	if strings.Contains(s, "'") && !strings.Contains(s, `"`) {
-		quote = `"`
-	}
-	var b strings.Builder
-	b.WriteString(quote)
-	for i := 0; i < len(s); {
-		if surrogateAt(s, i) {
-			fmt.Fprintf(&b, `\u%04x`, rune(s[i]&0x0f)<<12|rune(s[i+1]&0x3f)<<6|rune(s[i+2]&0x3f))
-			i += 3
-			continue
-		}
-		r, size := utf8.DecodeRuneInString(s[i:])
-		i += size
-		switch {
-		case r == '\\':
-			b.WriteString(`\\`)
-		case string(r) == quote:
-			b.WriteString(`\` + quote)
-		case r == '\n':
-			b.WriteString(`\n`)
-		case r == '\r':
-			b.WriteString(`\r`)
-		case r == '\t':
-			b.WriteString(`\t`)
-		case r == ' ' || unicode.IsPrint(r):
-			b.WriteRune(r)
-		case r < 0x100:
-			fmt.Fprintf(&b, `\x%02x`, r)
-		case r < 0x10000:
-			fmt.Fprintf(&b, `\u%04x`, r)
-		default:
-			fmt.Fprintf(&b, `\U%08x`, r)
-		}
-	}
-	b.WriteString(quote)
-	return b.String()
 }
 
 // A Python str holding a lone surrogate reaches Go as WTF-8 (ED A0..BF 80..BF).

@@ -27,6 +27,7 @@ func TestPathReprIsPythonsReprOfTheDecodedFilename(t *testing.T) {
 		{"/tmp/\ue000", `'/tmp/\ue000'`},
 		{"/tmp/\u00e9\u3042", "'/tmp/\u00e9\u3042'"},
 		{"/tmp/\u0378", `'/tmp/\u0378'`},
+		{"/tmp/st\u0c5cate", `'/tmp/st\u0c5cate'`}, // unassigned in CPython 3.14's Unicode 16.0.0
 		{"/tmp/\u1680x", `'/tmp/\u1680x'`},
 	} {
 		if got := PathRepr(c.name); got != c.want {

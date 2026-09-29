@@ -20,6 +20,9 @@ func TestRepr_escapes_what_python_does_not_print(t *testing.T) {
 		{u(0x3000), "'" + esc("3000") + "'"},                                               // Zs
 		{u(0xe000), "'" + esc("e000") + "'"},                                               // Co
 		{u(0x378), "'" + esc("0378") + "'"},                                                // Cn
+		{"st" + u(0xc5c) + "ate", "'st" + esc("0c5c") + "ate'"},                            // Cn in Unicode 16, assigned in 17
+		{u(0x88f) + u(0x1acf), "'" + esc("088f") + esc("1acf") + "'"},                      // the same
+		{u(0x1c89), "'" + u(0x1c89) + "'"},                                                 // assigned in Unicode 16: prints
 		{u(0xe0001), `'\U000e0001'`},                                                       // Cf above the BMP
 		{"\xed\xa0\x80", "'" + esc("d800") + "'"},                                          // a lone surrogate kept as WTF-8
 		{"p\xed\xb2\x80.json", "'p" + esc("dc80") + ".json'"},                              // the surrogateescape range, as WTF-8

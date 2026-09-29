@@ -1867,8 +1867,8 @@ indistinguishable from success on disk.
 ### Reading it back
 
 `scripts/stop_events.py --journal-root <root>`, and its Go port `crw-dev stop-events`, which takes
-the same flags and prints the same reading (short of a record nested near where the interpreter's
-stack runs out, [a known difference](port/known-defects.md)), read the rows, the accepted records and the host
+the same flags and prints the same reading as CPython 3.14 runs it (short of a record nested near
+where the interpreter's stack runs out, [a known difference](port/known-defects.md)), read the rows, the accepted records and the host
 ledgers the claims name, and answer one verdict. The reading judges an event as a unit: `--since`,
 `--until`, `--session` and `--turn` choose the events the window reaches, which are the events
 with any record (host file, claim, outcome or row) in it, and every record of a chosen event is

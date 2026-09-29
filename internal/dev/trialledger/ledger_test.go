@@ -333,7 +333,7 @@ func TestFromISOFormatIsCPythons(t *testing.T) {
 			got = []any{"OK", at.UTC().Format("2006-01-02T15:04:05.000000"), aware}
 		}
 		if !evidence.Equal(got, want) {
-			t.Errorf("%s: %v, want %v", pyRepr(input), got, want)
+			t.Errorf("%s: %v, want %v", evidence.StrRepr(input), got, want)
 		}
 	}
 }

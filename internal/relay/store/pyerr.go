@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"unicode"
 	"unicode/utf8"
 
 	"modernc.org/sqlite"
@@ -93,7 +92,8 @@ func FSDecode(p string) string {
 // PathRepr is repr() of a filename as Python holds one: os.fsdecode of its bytes, so a byte that
 // is not UTF-8 is the lone surrogate surrogateescape makes of it (U+DC80..U+DCFF), and then every
 // character str.isprintable refuses (controls, format characters, separators but the space, lone
-// surrogates) written as \xNN, \uNNNN or \UNNNNNNNN.
+// surrogates, and what CPython 3.14's Unicode database leaves unassigned) written as \xNN,
+// \uNNNN or \UNNNNNNNN.
 func PathRepr(path string) string {
 	quote := "'"
 	if strings.Contains(path, "'") && !strings.Contains(path, `"`) {
@@ -118,7 +118,7 @@ func PathRepr(path string) string {
 			b.WriteString(`\r`)
 		case r == '\t':
 			b.WriteString(`\t`)
-		case unicode.IsPrint(r): // str.isprintable's set: L, M, N, P, S and the space (a surrogate is Cs)
+		case settings.Printable(r): // str.isprintable as CPython 3.14 answers it (a surrogate is Cs)
 			b.WriteRune(r)
 		case r < 0x100:
 			fmt.Fprintf(&b, `\x%02x`, r)

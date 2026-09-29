@@ -129,7 +129,7 @@ Linear text, verbatim (last paragraph of comment 00bfeace, 2026-09-23):
 
 Pass when: replaying one accepted Stop event more than once (`replay_stop.py --times 2` against the same eventKey) yields exit 0, empty stdout and a `duplicate_invocation` record with no guard call for every copy after the first; the per-event judge reports `eventsWithMoreThanOneAcceptance []` over the window since the pointer swap; distinct natural re-firings within one turn (stopHookActive) are allowed and each leaves exactly one accepted record.
 
-Under Python: TRUE. Comment 4632327f: 'CRW-212: 같은 사건 재생(replay_stop.py --times 2)이 시험 부모 첫 턴에서 중복 두 줄(duplicate_invocation, 가드 호출 없음, 같은 eventKey)을 냈고, 사건 단위 판정기는 08:20:47Z 이후 사건 23건에서 TRUE 입니다.' Comment 10fd303a: judge over 9 events, `eventsWithMoreThanOneAcceptance []`, `turnsWithMoreThanOneEvent 1`. Judge is `scripts/stop_events.py` under Python; its Go port, `crw-dev stop-events` (todo 46), takes the same flags and prints the same reading over Python- and Go-written journals.
+Under Python: TRUE. Comment 4632327f: 'CRW-212: 같은 사건 재생(replay_stop.py --times 2)이 시험 부모 첫 턴에서 중복 두 줄(duplicate_invocation, 가드 호출 없음, 같은 eventKey)을 냈고, 사건 단위 판정기는 08:20:47Z 이후 사건 23건에서 TRUE 입니다.' Comment 10fd303a: judge over 9 events, `eventsWithMoreThanOneAcceptance []`, `turnsWithMoreThanOneEvent 1`. Judge is `scripts/stop_events.py` under Python; its Go port, `crw-dev stop-events` (todo 46), takes the same flags and prints the same reading over Python- and Go-written journals as the judge does under CPython 3.14 ([known differences](known-defects.md)).
 
 ## CRW-124: 설치본에서 감독·부모·자식의 무개입 운영을 실증
 

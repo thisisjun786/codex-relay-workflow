@@ -6,12 +6,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/pyload"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // One test per reader property of the per-event judge (SEV-5..SEV-14). SEV-1..4, the writer's
@@ -66,6 +68,81 @@ func TestSEV05_EveryEventAcceptedOnceReadsTrue(t *testing.T) {
 		}
 		code, answer := verify(t, roots(h.journal)...)
 		expectVerdict(t, code, answer, 0, "TRUE")
+	})
+	// A Codex home and journal root under a directory whose name is not UTF-8, as the Python
+	// adapter records them: the claim's host ledger and the host file's journal root name the
+	// byte as its surrogate escape (\udcff), which is that byte again when the path is handed to
+	// the system (os.fsencode). The ledger the claim names is found and read once, whichever
+	// spellings name it, and is named as the claim spells it.
+	t.Run("a Codex home and journal root whose names are not UTF-8", func(t *testing.T) {
+		for _, c := range []struct{ name, spelled string }{
+			{"b-\xff", "b-\\udcff"},
+			{"b-\xe9x", "b-\\udce9x"},
+			{"b-\xed\xb3\xbf", "b-\\udced\\udcb3\\udcbf"},
+		} {
+			h, records := oneEvent(t)
+			dir := h.root + "/" + c.name
+			codex, journal := dir+"/codex", dir+"/journal"
+			if err := os.Mkdir(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for from, to := range map[string]string{h.codex: codex, h.journal: journal} {
+				if err := os.Rename(from, to); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ledger := codex + "/" + strings.Join(hook.HostLedgerParts, "/")
+			change(t, journal+strings.TrimPrefix(records["claim"], h.journal), set("claimedBy.hostLedger", store.FSDecode(ledger)))
+			change(t, ledger+"/"+filepath.Base(records["host"]), set("claimedBy.journalRoot", store.FSDecode(journal)))
+			for _, args := range [][]string{roots(journal), append(roots(journal), "--codex-home", codex)} {
+				var out, errs bytes.Buffer
+				code := Run(args, &out, &errs)
+				var answer map[string]any
+				if err := json.Unmarshal(out.Bytes(), &answer); err != nil {
+					t.Fatal(err, errs.String())
+				}
+				expectVerdict(t, code, answer, 0, "TRUE")
+				ledgers := listed(answer, "hostLedgers")
+				if len(ledgers) != 1 || ledgers[0].(map[string]any)["state"] != "read" || !strings.Contains(out.String(), `"ledger": "`+h.root+"/"+c.spelled+`/codex/`) {
+					t.Fatalf("%q %v: %s", c.name, args, out.String())
+				}
+			}
+		}
+	})
+	// Python keys a host ledger by the str that names it, so a claim spelling a name's bytes as
+	// surrogate escapes where they are UTF-8 (\udcc3\udca9 for \u00e9) names the ledger it reaches
+	// under its own spelling: read once, and beside the Codex home's own spelling the same ledger
+	// reached again.
+	t.Run("a claim that spells its ledger otherwise than the system does", func(t *testing.T) {
+		h, records := oneEvent(t)
+		dir := h.root + "/b-\u00e9"
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(h.codex, dir+"/codex"); err != nil {
+			t.Fatal(err)
+		}
+		ledger := "/codex/" + strings.Join(hook.HostLedgerParts, "/")
+		change(t, records["claim"], set("claimedBy.hostLedger", h.root+"/b-\xed\xb3\x83\xed\xb2\xa9"+ledger))
+		for _, c := range []struct {
+			args   []string
+			states []string
+		}{
+			{roots(h.journal), []string{"read"}},
+			{append(roots(h.journal), "--codex-home", dir+"/codex"), []string{"read", "same_ledger_as_another_spelling"}},
+		} {
+			var out, errs bytes.Buffer
+			code := Run(c.args, &out, &errs)
+			var answer map[string]any
+			if err := json.Unmarshal(out.Bytes(), &answer); err != nil {
+				t.Fatal(err, errs.String())
+			}
+			expectVerdict(t, code, answer, 0, "TRUE")
+			ledgers := listed(answer, "hostLedgers")
+			if len(ledgers) != len(c.states) || ledgers[len(ledgers)-1].(map[string]any)["state"] != c.states[len(c.states)-1] || !strings.Contains(out.String(), `"ledger": "`+h.root+`/b-\udcc3\udca9`+ledger+`"`) {
+				t.Fatalf("%v: %s", c.args, out.String())
+			}
+		}
 	})
 }
 
@@ -162,6 +239,39 @@ func TestSEV07_UnjudgedInvocationsKeepTheWindowFromTrue(t *testing.T) {
 		expectVerdict(t, code, answer, 3, "UNREADABLE")
 		if got := answer["unjudgedInvocations"].(map[string]any); len(got) != 1 || got["unestablished:answer_text_ambiguous"] != 2.0 || answer["events"] != 2.0 {
 			t.Fatal(answer)
+		}
+	})
+	// Decision 22 over a relay state directory whose name is not UTF-8, or holds a character
+	// CPython 3.14's Unicode database leaves unassigned: the failed dial's row spells the socket
+	// as repr() does, the byte as its surrogate escape and the character escaped, and that row is
+	// still the exempt one.
+	t.Run("a failed native dial under a state directory named as Python names it", func(t *testing.T) {
+		for _, c := range []struct{ name, spelled string }{
+			{"st\xffate", `st\\udcffate/control.sock`},
+			{"st\xed\xa0\x80ate", `st\\udced\\udca0\\udc80ate/control.sock`},
+			{"st\u0c5cate", `st\\u0c5cate/control.sock`},
+		} {
+			h := newHost(t, hook.Release)
+			if err := os.Remove(h.state + "/control.sock"); err != nil {
+				t.Fatal(err)
+			}
+			h.state = h.root + "/" + c.name
+			if err := os.Mkdir(h.state, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			h.run(h.settings, h.at(loadFixture(t), 0))
+			rows := h.rowPaths(h.journal)
+			if len(rows) != 1 || valueAt(t, rows[0], "adapterOutcome") != hook.GuardUnreachable {
+				t.Fatalf("%q: not one failed native dial: %v", c.name, rows)
+			}
+			if raw, _ := os.ReadFile(rows[0]); !bytes.Contains(raw, []byte(c.spelled+"'"+`"`)) {
+				t.Fatalf("%q: the row does not spell the socket as repr() does: %s", c.name, raw)
+			}
+			code, answer := verify(t, roots(h.journal)...)
+			expectVerdict(t, code, answer, 0, "TRUE")
+			if got := answer["unjudgedInvocations"].(map[string]any); len(got) != 1 || got["no_event:guard_unreachable"] != 1.0 || len(listed(answer, "rowsUnreadable")) != 0 {
+				t.Fatalf("%q: %v", c.name, answer)
+			}
 		}
 	})
 	t.Run("rows from before event identity", func(t *testing.T) {
@@ -352,6 +462,95 @@ func TestSEV08_LedgerIntegrity(t *testing.T) {
 		} {
 			if !strings.Contains(out.String(), line) {
 				t.Fatalf("no %s in\n%s", line, out.String())
+			}
+		}
+	})
+	// A root or Codex home is where os.path.abspath(Path(...).expanduser()) puts it: a ~ is HOME
+	// when HOME is set at all, the root when it is empty, and this user's passwd entry when it is
+	// unset; a relative path is joined to the directory the kernel reports, not $PWD's spelling of
+	// it through a link; and a working directory that is gone is the FileNotFoundError getcwd
+	// raises, the reader's fault.
+	t.Run("a root is read where Python reads it", func(t *testing.T) {
+		me, err := user.Current()
+		if err != nil || me.HomeDir == "" {
+			t.Skip("no passwd entry names this user's home")
+		}
+		base, err := filepath.EvalSymlinks(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Chdir(base)
+		reading := func(home *string, args ...string) map[string]any {
+			t.Helper()
+			if home == nil {
+				t.Setenv("HOME", "")
+				if err := os.Unsetenv("HOME"); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				t.Setenv("HOME", *home)
+			}
+			var out, errs bytes.Buffer
+			Run(args, &out, &errs)
+			var answer map[string]any
+			if err := json.Unmarshal(out.Bytes(), &answer); err != nil {
+				t.Fatal(err, errs.String())
+			}
+			return answer
+		}
+		empty, tilde := "", "~x"
+		missing := "nonexistent-" + filepath.Base(filepath.Dir(base))
+		described := func(home *string) string {
+			if home == nil {
+				return " unset"
+			}
+			return "=" + *home
+		}
+		for _, c := range []struct {
+			home       *string
+			args       []string
+			root, host string
+		}{
+			{&empty, roots("~"), "/", ""},
+			{&empty, roots("~/"), "/", ""},
+			{&empty, append(roots("/"+missing), "--codex-home", "~"), "/" + missing, "/crw-completion-hook/stop-events"},
+			{nil, append(roots("~/"+missing), "--codex-home", "~/"+missing), me.HomeDir + "/" + missing, me.HomeDir + "/" + missing + "/crw-completion-hook/stop-events"},
+		} {
+			answer := reading(c.home, c.args...)
+			if got := listed(answer, "roots")[0].(map[string]any)["root"]; got != c.root {
+				t.Errorf("HOME%s %v: root %v, want %s", described(c.home), c.args, got, c.root)
+			}
+			if ledgers := listed(answer, "hostLedgers"); c.host != "" && (len(ledgers) != 1 || ledgers[0].(map[string]any)["ledger"] != c.host) {
+				t.Errorf("HOME%s %v: host ledgers %v, want %s", described(c.home), c.args, ledgers, c.host)
+			}
+		}
+		for _, args := range [][]string{roots("~"), append(roots("/"+missing), "--codex-home", "~")} {
+			answer := reading(&tilde, args...)
+			if answer["readerFault"] != "RuntimeError: Could not determine home directory." || answer["verdict"] != "UNREADABLE" {
+				t.Errorf("HOME=~x %v: readerFault %v, verdict %v", args, answer["readerFault"], answer["verdict"])
+			}
+		}
+		if err := os.Mkdir(base+"/real", 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("real", base+"/link"); err != nil {
+			t.Fatal(err)
+		}
+		t.Chdir(base + "/link")
+		if got := listed(reading(&base, roots("j")...), "roots")[0].(map[string]any)["root"]; got != base+"/real/j" {
+			t.Errorf("a relative root under a linked working directory is %v", got)
+		}
+		if err := os.Mkdir(base+"/gone", 0o700); err != nil {
+			t.Fatal(err)
+		}
+		t.Chdir(base + "/gone")
+		if err := os.Remove(base + "/gone"); err != nil {
+			t.Fatal(err)
+		}
+		for _, args := range [][]string{roots("rel"), append(roots("/"+missing), "--codex-home", "rel")} {
+			answer := reading(&base, args...)
+			if answer["readerFault"] != "FileNotFoundError: [Errno 2] No such file or directory" || answer["verdict"] != "UNREADABLE" {
+				t.Errorf("%v under a removed working directory: readerFault %v, verdict %v", args, answer["readerFault"], answer["verdict"])
 			}
 		}
 	})

@@ -12,7 +12,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
@@ -116,8 +115,11 @@ func Count(v any, zero bool) bool {
 	return sign > 0
 }
 
+// journalAbsolutePath is os.path.isabs(path) and path == os.path.normpath(path) and
+// completion._path_the_system_takes(path): a lone surrogate is judged as os.fsencode encodes it,
+// so a path whose name holds a byte that is not UTF-8 (U+DC80..U+DCFF) is one the system takes.
 func journalAbsolutePath(path string) bool {
-	if !filepath.IsAbs(path) || strings.ContainsRune(path, 0) || !utf8.ValidString(path) || len(path) >= 4096 {
+	if !filepath.IsAbs(path) || !PathTheSystemTakes(path) {
 		return false
 	}
 	normalized := filepath.Clean(path)
@@ -125,16 +127,12 @@ func journalAbsolutePath(path string) bool {
 	if strings.HasPrefix(path, "//") && !strings.HasPrefix(path, "///") {
 		normalized = "/" + normalized
 	}
-	if normalized != path {
-		return false
-	}
-	for _, name := range strings.Split(path, "/") {
-		if len(name) > 255 {
-			return false
-		}
-	}
-	return true
+	return normalized == path
 }
+
+// pythonQuotedPath is ast.literal_eval of a quoted str literal. A \u or \U escape of a surrogate
+// is the lone surrogate Python makes of it (repr() writes one so), which strconv refuses; it is
+// kept as the WTF-8 a JSON string holds one in.
 func pythonQuotedPath(spelled string) (string, bool) {
 	if len(spelled) < 2 {
 		return "", false
@@ -146,6 +144,11 @@ func pythonQuotedPath(spelled string) (string, bool) {
 	source := spelled[1 : len(spelled)-1]
 	var out strings.Builder
 	for source != "" {
+		if r, rest, ok := surrogateEscape(source); ok {
+			out.Write([]byte{0xe0 | byte(r>>12), 0x80 | byte(r>>6)&0x3f, 0x80 | byte(r)&0x3f})
+			source = rest
+			continue
+		}
 		r, _, rest, err := strconv.UnquoteChar(source, quote)
 		if err != nil {
 			return "", false
@@ -154,6 +157,25 @@ func pythonQuotedPath(spelled string) (string, bool) {
 		source = rest
 	}
 	return out.String(), true
+}
+
+// surrogateEscape is the surrogate a \uXXXX or \UXXXXXXXX escape at the start of s names.
+func surrogateEscape(s string) (rune, string, bool) {
+	width := 0
+	switch {
+	case strings.HasPrefix(s, `\u`):
+		width = 4
+	case strings.HasPrefix(s, `\U`):
+		width = 8
+	}
+	if width == 0 || len(s) < 2+width {
+		return 0, s, false
+	}
+	v, err := strconv.ParseUint(s[2:2+width], 16, 32)
+	if err != nil || v < 0xd800 || v > 0xdfff {
+		return 0, s, false
+	}
+	return rune(v), s[2+width:], true
 }
 
 // ReadNativePrescanRow enforces the same regular-file, no-symlink and exact-byte
