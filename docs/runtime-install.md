@@ -482,7 +482,12 @@ its working directory, or what its arguments run, resolving inside it, and every
 `daemon.json` or scope claim records alive), and any directory a registration the host reads names
 a path inside: the Stop settings, the bridge record, the cached plugin declarations, the
 `crw-stop-hook.py` copy, `hooks.json` and `config.toml`. A process it cannot rule out or a
-registration it cannot read or judge refuses too, and the answer names it.
+registration it cannot read or judge refuses too, and the answer names it. A process whose working
+directory cannot be read and that runs something by a relative path is one it cannot rule out,
+whatever user runs it, unless that user (not root) is provably shut out of the directory by the
+permissions of the directory or a parent. So on a host where a root agent runs a relative script
+(every Azure VM's WALinuxAgent, for example) `remove` refuses, names the process, and gives the
+manual recovery below.
 
 The process reading is this host's process table, in this command's PID namespace, and every answer
 that rests on it says so under `processTable`: a process in a container sharing the directory, or on
