@@ -1,6 +1,6 @@
 {
   "_exampleOnly": true,
-  "_note": "ILLUSTRATIVE EXAMPLE, not a host measurement. The subject, timestamps and identifiers are fictional, matching the compatibility record this result reads from. It shows the shape OPS-6.1 and OPS-6.2 require. The timestamps are synthetic: no observation was recorded at those times, so they must not be read as evidence, and a real record carries the times its observations actually happened. Task identifiers are placeholders, because a session id identifies a person's working session. A live record for a host is a private receipt kept outside the repository.",
+  "_note": "ILLUSTRATIVE EXAMPLE, not a host measurement. The subject, timestamps and identifiers are fictional, matching the compatibility record this result reads from. It shows the shape OPS-6.1 and OPS-6.2 require. The timestamps are synthetic: no observation was recorded at those times, so they must not be read as evidence, and a real record carries the times its observations actually happened. Task identifiers are placeholders, because a session id identifies a person's working session. A live record for a host is a private receipt kept outside the repository. It reads the Python-era compatibility example, so its evidence speaks of interpreters and checkouts where a Go install would speak of a runtime directory and a binary digest.",
   "recordVersion": 1,
   "subject": "codex-session-relay and codex-thread-bridge on a host (fictional example)",
   "measuredFrom": "the acting child task, sandbox workspace-write, no socket",

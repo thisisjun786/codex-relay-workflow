@@ -91,6 +91,24 @@ func Test47_OperationsContractParity(t *testing.T) {
 		{"no unmeasured", "operations/compatibility-record.example.json", func(s string) string {
 			return strings.Replace(s, `"unmeasured":`, `"unmeasured_":`, 1)
 		}, "does not say what is unmeasured"},
+		// OPS-1.1: an install with no installMode is a Go install, and names its binary's digest
+		// and target; requires-python is asked only of a component with a Python-era install.
+		{"go install digest", "operations/compatibility-record.example.json", func(s string) string {
+			return strings.Replace(s, `"installMode": "editable",`, `"binaryDigest": "short", "target": "linux/amd64",`, 1)
+		}, "has a Go install without a 64 character binaryDigest"},
+		{"go install target", "operations/compatibility-record.example.json", func(s string) string {
+			return strings.Replace(s, `"installMode": "editable",`, `"binaryDigest": "`+strings.Repeat("a", 64)+`",`, 1)
+		}, "has a Go install that does not name its target"},
+		{"python-era requires-python", "operations/compatibility-record.example.json", func(s string) string {
+			return strings.Replace(s, `"requiresPython": ">=3.11",`, `"requiresPython": "",`, 1)
+		}, "is missing a non-empty requiresPython, which a Python-era install needs"},
+		// OPS-1.3: a Go point names its install and installDigest; a Python-era one its interpreter.
+		{"go point keys", "operations/compatibility-record.example.json", func(s string) string {
+			return strings.Replace(s, `"measuredPoints": []`, `"measuredPoints": [{"install": "x", "codexCli": "c"}]`, 1)
+		}, "has a measured point missing installDigest"},
+		{"python-era point keys", "operations/compatibility-record.example.json", func(s string) string {
+			return strings.Replace(s, `"measuredPoints": []`, `"measuredPoints": [{"interpreter": "3.13.0"}]`, 1)
+		}, "has a measured point missing codexCli"},
 		{"table field", "operations.md", func(s string) string {
 			i := strings.Index(s, "### OPS-6.1")
 			j := i + strings.Index(s[i:], "\n| `")
@@ -108,6 +126,39 @@ func Test47_OperationsContractParity(t *testing.T) {
 	got := opsParity(t, "missing", root)
 	if got.code != 1 || !strings.HasPrefix(got.stderr, "MISSING ") {
 		t.Errorf("missing: %+v", got)
+	}
+}
+
+// A record whose only installs are Go installs (OPS-1.1) carries no requiresPython and no
+// installMode, and its points name the install instead of an interpreter (OPS-1.3); both twins
+// accept it.
+func TestOperationsGoShapedCompatibilityRecordParity(t *testing.T) {
+	root := opsCopy(t)
+	runtimeDir := "/example/home/.local/share/crw-runtime/bin-0.5.0-aaaaaaaaaaaa"
+	digest := strings.Repeat("c", 64)
+	record := `{
+  "components": [
+    {
+      "component": "codex-session-relay",
+      "source": {"checkout": "/example/checkouts/codex-relay-workflow", "remote": "none"},
+      "revision": "` + strings.Repeat("a", 40) + `",
+      "tree": "` + strings.Repeat("b", 40) + `",
+      "workingTreeClean": true,
+      "version": "0.5.0",
+      "installs": [{"location": "` + runtimeDir + `/bin", "environment": "` + runtimeDir + `",
+        "entryPoint": "` + runtimeDir + `/bin/codex-session-relay", "integrity": "` + digest + `",
+        "binaryDigest": "` + digest + `", "target": "linux/amd64"}],
+      "measuredPoints": [{"install": "` + runtimeDir + `/bin", "installDigest": "` + digest + `",
+        "codexCli": "codex-cli 0.154.0", "appServer": "{}", "host": "example-host", "date": "2026-01-01",
+        "measuredBy": "<issue-id>", "method": "codex-session-relay doctor; an MCP session calling get_capabilities"}]
+    }
+  ],
+  "unmeasured": []
+}
+`
+	editOps(t, root, "operations/compatibility-record.example.json", func(string) string { return record })
+	if got := opsParity(t, "go-shaped record", root); got.code != 0 {
+		t.Fatalf("a Go-shaped compatibility record must pass: %+v", got)
 	}
 }
 

@@ -36,19 +36,25 @@ reported as measured installed behaviour.
 `codex-relay-workflow` owns one compatibility definition covering every component the workflow
 depends on. There is exactly one such definition; a version repeated in a second document or script
 is a copy that will go stale. Each component record carries the component name, the source checkout
-path, its remote as a URL or the literal word `none`, the full commit SHA, the full `HEAD^{tree}`
-SHA, the working-tree cleanliness from `git status --porcelain`, the distribution version from
-`pyproject.toml`, the declared `requires-python`, the install mode as `editable` or `copied`, one
-integrity digest per install location, and a list of measured points.
+path it was built from, its remote as a URL or the literal word `none`, the full commit SHA, the full
+`HEAD^{tree}` SHA, the working-tree cleanliness from `git status --porcelain`, the component's
+version, one integrity digest per install location, and a list of measured points.
 
-An install records two different paths and never conflates them. The environment is the virtual
-environment whose interpreter runs the code. The location is the package directory that
+An install records two different paths and never conflates them. The environment is the directory
+the install lives in, and the location is the directory the running component reports as its own.
+A Go install, which `crw install` makes from a release archive, is a runtime directory
+`bin-<version>-<digest12>`: that directory is its environment, its `bin/` is its location, and it
+also records the binary's digest as `binaryDigest`, the `target` the binary was built for and the
+release it came from. An install the Python fence installer made is a virtual environment instead,
+until the Python execution path is removed, and it records the declared `requires-python`, the
+interpreter and the install mode as `editable` or `copied`. Its environment is the virtual
+environment whose interpreter runs the code, and its location is the package directory that
 interpreter actually imports, which for a copied install sits inside the environment and for an
 editable install does not: an editable install leaves a path file pointing back at the source tree,
 so its location is that source directory and nothing exists under the environment's site-packages.
 Recording a site-packages path for an editable install describes a directory that is not there, and
-the re-measurement in OPS-1.4 then cannot reproduce the record. The location is read from the
-interpreter rather than assumed.
+the re-measurement in OPS-1.4 then cannot reproduce the record. Either location is read from what
+runs rather than assumed.
 
 Both the commit and the tree SHA are recorded because they fail differently. A commit SHA changes
 when history is rewritten, while the tree SHA survives that, and a component here has no remote at
@@ -57,31 +63,39 @@ installed copy, which is why the digest exists.
 
 ### OPS-1.2 The integrity digest
 
-The integrity value is a SHA-256 over the package directory, computed by walking every file except
-anything under `__pycache__`, sorting by POSIX-style relative path, and feeding the hash the relative
-path, a zero byte, then the SHA-256 digest of the file's bytes, in that order. It is defined this
-way so anyone can recompute it with the standard library alone and get the same answer for a source
-tree and for an installed copy of it.
+The integrity value of a Go install is the SHA-256 of its binary's bytes, which is the whole
+runtime. The integrity value of a Python-era install is a SHA-256 over the package directory,
+computed by walking every file except anything under `__pycache__`, sorting by POSIX-style relative
+path, and feeding the hash the relative path, a zero byte, then the SHA-256 digest of the file's
+bytes, in that order. Both are defined so anyone can recompute them with a standard library alone
+and get the same answer for what was built and for an installed copy of it.
 
 The digest is recorded once per install location, because a component can exist several times on
-one host. In the example the bridge exists twice: an editable install that the MCP server runs, whose
-location is the source tree itself, and a copied install inside the relay's virtual environment.
-Those are separate installs of the same version and they drift independently. Equality of their
+one host. Every Go runtime a host installed stays installed after an update moves the pointer off
+it, so each is a separate install of each component. In the example, a Python-era record, the
+bridge exists twice: an editable install that the MCP server runs, whose location is the source tree
+itself, and a copied install inside the relay's virtual environment. Those are separate installs of
+the same version and they drift independently. Equality of their
 digests is the only thing that detects the drift, and a matching version string proves nothing,
 since a version can stay the same while the contents change. An editable install's digest equals its
 source digest by construction, which is a property to record rather than a coincidence to discover.
 
 ### OPS-1.3 Measured points, never ranges
 
-A measured point is `{interpreter, codexCli, appServer, host, date, measuredBy, method}`. The record
-contains only points that were actually observed. It never states a compatible range, a minimum, or
-a maximum, because nobody has run the combination across a range and a range implies they did. A
-second Python version is a second point. A combination that has never been measured is
-`unmeasured`, which withholds a claim rather than asserting incompatibility.
+A measured point is `{install, installDigest, codexCli, appServer, host, date, measuredBy,
+method}`: the install it covers and the digest of the bytes that ran, the Codex CLI and App Server
+they ran against, and where, when, by whom and how. A point for a Python-era install is
+`{interpreter, codexCli, appServer, host, date, measuredBy, method}` instead, because there the
+interpreter is part of the combination; a Go binary carries its runtime with it. The record contains
+only points that were actually observed. It never states a compatible range, a minimum, or a
+maximum, because nobody has run the combination across a range and a range implies they did. A
+second Codex CLI version, or for a Python-era install a second Python version, is a second point. A
+combination that has never been measured is `unmeasured`, which withholds a claim rather than
+asserting incompatibility.
 
 A point means the combination was exercised, not that its files were counted. An install's digest is
 byte identity and lives on the install; it is not a point and never becomes one by being recorded
-next to an interpreter version. The distinction matters because OPS-1.4 and OPS-2.2 consume points
+next to a version string. The distinction matters because OPS-1.4 and OPS-2.2 consume points
 as evidence that a combination works, and neither reads a disclaimer attached to one. So an
 inventory observation of a package sitting in an environment nobody ran it under leaves that
 combination `unmeasured`, and saying so in the method field does not convert it into a point.
@@ -144,11 +158,14 @@ resolves, the checkout's commit, tree and working-tree cleanliness, whether the 
 what is installed, and what the Codex configuration registers. The third signal is read twice, once
 for the digest and once for the point, because a digest is byte identity while a point is evidence
 somebody ran the combination, and an install can match every recorded digest while no point exists
-for the interpreter it runs under. The entry point matters because a console script can carry a
-shebang into a virtual environment inside a live development checkout, which means the user-facing
-command is bound to whatever that checkout currently contains. Cleanliness is a required input
-rather than a detail, because an uncommitted change outside the package directory leaves the digest
-untouched while the checkout is no longer the revision the record names.
+for the combination it runs under. The entry point matters because the command a user or a skill
+runs can resolve somewhere unexpected: a console script can carry a shebang into a virtual
+environment inside a live development checkout, which means the user-facing command is bound to
+whatever that checkout currently contains. Cleanliness is a required input rather than a detail for
+an install built from a checkout, because an uncommitted change outside the package directory leaves
+the digest untouched while the checkout is no longer the revision the record names. A Go install
+from a release archive has no checkout on the host; the commit and tree it was built from are read
+from the install itself, so its fork is bytes that differ from the recorded digest.
 
 A signal that cannot be read is not a signal that agrees. If the commit, the tree, the cleanliness,
 a digest or the registration cannot be read, classification stops and reports which reading failed
@@ -169,7 +186,9 @@ The classes are evaluated in a fixed order and the first match wins: `conflict`,
 genuinely overlap. A recorded checkout carrying an uncommitted change outside the package directory
 still produces a matching digest, so without precedence it would read as `own` and be reused, and the
 fork handling that exists to protect the user's work would never run. `own` is therefore the residual
-class, reached only when nothing else matches.
+class, reached only when nothing else matches. A Go install has no checkout on the host, so for it the
+commit and tree are the ones its binary records, and `fork` is bytes that differ from the recorded
+digest (OPS-2.1).
 
 `unmeasured` sits immediately before `own` because it is the one difference between them. Everything
 about the installed bytes agrees, and what is missing is evidence that anybody ran them in this
@@ -181,9 +200,10 @@ the second and the rule above refuses the first.
 The evidence reading is not the property of one class. `own` carries it among its own conditions and
 `unmeasured` exists for a recorded install that fails only that reading, but a `foreign` install is
 subject to the same test, because a digest matching a recorded digest says the bytes are known and
-not that anybody ran them where they now sit. Bytes recorded at one interpreter and running under
-another are a different combination, so a foreign install with no point for the combination it
-actually runs is reported `unmeasured` and left unused, exactly as a recorded one would be.
+not that anybody ran them where they now sit. Bytes recorded under one combination and running under
+another, a different Codex CLI or App Server, or for a Python-era install another interpreter, are a
+different combination, so a foreign install with no point for the combination it actually runs is
+reported `unmeasured` and left unused, exactly as a recorded one would be.
 
 `unmeasured` and `unverified` block the same commands and are repaired differently, so a report says
 which one it is. `unverified` means a recorded expectation was contradicted, and restoring or
@@ -210,8 +230,10 @@ install, then measure again, then add the new point to the record. The second me
 repeat of the first: the first reads identity and bytes, while the second has to include actually
 exercising the new combination, because that run is the only thing that produces a point under
 OPS-1.3. An update whose second measurement only recomputes digests has installed something and
-established nothing. A copied install requires an actual reinstall for a source change to take
-effect; an editable install does not, which is why the install mode is part of the record.
+established nothing. A Go install is always a copy of a release: a source change reaches a host only
+as a new release installed into a new runtime directory, and the update moves the pointer to it. A
+Python-era copied install likewise requires an actual reinstall for a source change to take effect;
+an editable install does not, which is why a Python-era record states its install mode.
 
 A failed update leaves the entry point `unverified` and blocks a service start under OPS-4.1.
 Recovery keeps the previous runtime in place until the replacement has passed the OPS-6 checks, and
@@ -642,21 +664,23 @@ error this clause exists to stop: it reads as a value some contract defines, tha
 something else by it, and a consumer either rejects the record or acts on the wrong fact. This
 contract does not mint a record shape of its own for these; OPS-10.3 is why.
 
-### OPS-6.3 Installing a Linear hook
+### OPS-6.3 Installing a hook
 
 A hook's identity is `<source>:<event>:<matcher-index>:<hook-index>`, and Codex records a trusted
-hash against that identity. Both halves matter: installation appends at the end, never inserts,
-because inserting renumbers every later hook in the same file and detaches the trusted hash that
-was recorded against the old identity. Removing a hook has the same effect, so a hook is disabled
-rather than deleted. Changing a hook's content changes its hash, which means no installer silently
-updates a trusted hook; re-trust is a separate, visible act.
+hash against that identity. Both halves matter: a hook is added at the end of its file, never
+inserted, because inserting renumbers every later hook in the same file and detaches the trusted
+hash that was recorded against the old identity, and a plugin declares one event per hook file for
+the same reason. Removing a hook has the same effect, so a hook is disabled rather than deleted.
+Changing a hook's content changes its hash, which means no installer silently updates a trusted
+hook; re-trust is a separate, visible act, and until it happens the changed hook does not fire.
 
-An installation records the identity, the trusted hash, the hook file path with its SHA-256, and
-the issue that installed it, then reads the registration back. Installed, enabled, and observed to
-have fired are three separate claims and the check reports them separately. The surface is the user
-hook file, since the plugin this repository packages declares skills only and no hook file; a
-plugin-owned hook file is the alternative and is `proposed` rather than chosen. What the hook
-decides is owned by the managed-marking contract and is deliberately not defined here.
+The surface is the plugin's own hook file: the package this repository publishes declares its Stop
+hook, and `crw install hook --owner plugin` writes only the settings that hook reads, never a hook
+entry. The user hook file is the retired alternative, and an entry for the same adapter found there
+is refused rather than joined. The settings record the issue that installed them and are read back.
+Installed, trusted, and observed to have fired are three separate claims and the check reports them
+separately. What the hook decides is owned by the managed-marking contract and is deliberately not
+defined here.
 
 ### OPS-6.4 What makes a verification complete
 

@@ -119,8 +119,8 @@ record and exits non-zero on a value outside the set or an illegal pairing. A pr
 two lines by copying command output instead of recalling a literal, and a consumer that doubts a
 record runs the same check rather than deciding by eye what an unfamiliar value must have meant.
 Because the script reads this table rather than keeping its own copy, renaming a literal here
-cannot leave the two disagreeing, and `scripts/ci/contracts.py` runs its selftest, which carries
-the four recorded paraphrases as cases that must be rejected.
+cannot leave the two disagreeing, and `crw skill start-policy selftest` carries the four recorded
+paraphrases as cases that must be rejected; the repository's contract check runs the same selftest.
 
 The failure then stopped reproducing, and not because of that script. Four readers of this file as
 it now stands wrote `goal-free-run` with either `event-driven-idle` or `active-observation` —
