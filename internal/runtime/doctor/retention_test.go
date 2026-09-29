@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -608,5 +609,83 @@ func TestRetentionScanDoesNotResolveRelativeValuesAgainstItsOwnDirectory(t *test
 	}
 	if len(got) != 3 {
 		t.Errorf("unreadable %v", got)
+	}
+}
+
+// A journal row is judged by the at its hook wrote, never by the file's modification time: a
+// row that is not JSON, not an object, or has no valid at is listed as unreadable with its path,
+// however old the file looks, and the scan is not clear. A valid old row is still not a hold.
+func TestRetentionScanListsAJournalRowWhoseTimeCannotBeEstablished(t *testing.T) {
+	h := newHost(t)
+	journal := filepath.Join(h.codex, "crw-completion-hook", "journal", "20260929")
+	rows := map[string]string{
+		"torn.json":    `{"at": "2026-09-29T11:59:5`,
+		"list.json":    `[1, 2]`,
+		"no-at.json":   `{"configuration": "/c/crw-completion-hook.json"}`,
+		"bad-at.json":  `{"at": "yesterday"}`,
+		"valid.json":   `{"at": "2026-09-29T11:00:00Z"}`,
+		"number.json":  `{"at": 1790000000}`,
+		"offset.json":  `{"at": "2026-09-29T11:59:50+00:00"}`,
+		"spaces.json":  `{"at": " 2026-09-29T11:59:50Z"}`,
+		"control.json": `{"at": "2026-09-29T11:59:50Z", "configuration": "/c/x"}`,
+	}
+	old := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	for name, content := range rows {
+		path := filepath.Join(journal, name)
+		write(t, path, content, 0o600)
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report := h.scan(t)
+	got := unreadable(report)
+	for _, name := range []string{"torn.json", "list.json", "no-at.json", "bad-at.json", "number.json", "spaces.json"} {
+		if !listed(got, filepath.Join(journal, name)+": row 2 journal row: ") {
+			t.Errorf("%s was judged by its modification time: %v", name, got)
+		}
+	}
+	if len(got) != 6 || record.Get(report, "clear") != false {
+		t.Errorf("unreadable %v", got)
+	}
+	var held []string
+	for _, raw := range golden.List(record.Get(report, "liveHolds")) {
+		held = append(held, filepath.Base(record.Get(golden.Obj(raw), "source").(string)))
+	}
+	sort.Strings(held)
+	if strings.Join(held, ",") != "control.json,offset.json" {
+		t.Errorf("holds %v: an at within the window holds, whatever the file's modification time", held)
+	}
+}
+
+// A daemon record that names its boot is alive only in that boot, so a boot id the scan cannot
+// read leaves row 3 unscanned and the pid unreadable rather than accepting the pid and start
+// time alone. With the boot id readable, the same boot is alive (its Python process is a
+// reference) and another boot is not; a record naming no boot needs no boot id.
+func TestRetentionScanDoesNotDropTheBootCheckItCannotMake(t *testing.T) {
+	h := newHost(t)
+	proc := fakeProc(t, 4242, 777)
+	link(t, "/usr/bin/python3", filepath.Join(proc, "4242", "exe"))
+	write(t, filepath.Join(proc, "4242", "cmdline"), "python3\x00-m\x00relay\x00", 0o644)
+	path := filepath.Join(h.state, "codex-session-relay", "scope-1", "daemon.json")
+	write(t, path, `{"pid": 4242, "startTicks": 777, "bootId": "boot-1"}`, 0o600)
+	row3 := func(report record.Object) any { return record.Get(surfaceRow(t, report, 3), "scanned") }
+	report := h.scanProc(t, proc)
+	if got := unreadable(report); row3(report) != false || !listed(got, path, "row 3 pid 4242", "boot id") || len(references(report)) != 0 {
+		t.Errorf("an unreadable boot id: row 3 scanned %v, unreadable %v, references %v", row3(report), got, references(report))
+	}
+	bootID := filepath.Join(proc, "sys", "kernel", "random", "boot_id")
+	for boot, alive := range map[string]bool{"boot-1\n": true, "boot-2\n": false} {
+		write(t, bootID, boot, 0o644)
+		report := h.scanProc(t, proc)
+		if row3(report) != true || len(unreadable(report)) != 0 || (len(references(report)) == 1) != alive {
+			t.Errorf("boot id %q: row 3 scanned %v, unreadable %v, references %v", boot, row3(report), unreadable(report), references(report))
+		}
+	}
+	if err := os.Remove(bootID); err != nil {
+		t.Fatal(err)
+	}
+	write(t, path, `{"pid": 4242, "startTicks": 777}`, 0o600)
+	if report := h.scanProc(t, proc); row3(report) != true || len(unreadable(report)) != 0 || len(references(report)) != 1 {
+		t.Errorf("a record naming no boot: row 3 scanned %v, unreadable %v, references %v", row3(report), unreadable(report), references(report))
 	}
 }

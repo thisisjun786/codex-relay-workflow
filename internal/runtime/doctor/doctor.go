@@ -12,12 +12,15 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
@@ -290,6 +293,16 @@ func classifyGo(c definition.Component, target string, rec Object, recordUsable 
 		}
 	}
 	signals.EntryPointRecorded = install != nil
+	problems, unread := launchProblems(target)
+	signals.Unlaunchable = problems
+	signals.Unreadable = append(signals.Unreadable, unread...)
+	var launchable any
+	switch {
+	case len(problems) > 0:
+		launchable = false
+	case len(unread) == 0:
+		launchable = true
+	}
 	digest, digestErr := record.FileDigest(resolved)
 	var digestValue any
 	if digestErr != nil {
@@ -319,10 +332,50 @@ func classifyGo(c definition.Component, target string, rec Object, recordUsable 
 		{Key: "digest", Value: digestValue},
 		{Key: "recordedDigest", Value: record.Get(install, "binaryDigest")},
 		{Key: "pointsCovering", Value: int64(len(points))},
+		{Key: "launchable", Value: launchable},
 		{Key: "class", Value: class},
 		{Key: "reasons", Value: strs(reasons)},
 		{Key: "notChecked", Value: []any{"the Codex MCP registration (register-mcp, todo 38)", "the skill links (crw install skills, todo 39)", "the App Server dimension (observed by measure, todo 38)"}},
 	}...)
+}
+
+// launchProblems is what keeps a host from launching a Go runtime's entry points, and what
+// could not be examined: bin/crw must be a regular file the invoking user may execute (access(2)
+// X_OK, the permission check exec makes, which root passes only with an execute bit set), and
+// each compatibility link (definition.Links) must resolve to it. A digest says nothing about
+// either: chmod 0644 leaves the bytes as they were.
+func launchProblems(target string) (problems, unread []string) {
+	crw := filepath.Join(target, "bin", "crw")
+	info, err := os.Stat(crw)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		problems = append(problems, "the entry point "+crw+" does not exist")
+	case err != nil:
+		unread = append(unread, "the entry point "+crw)
+	case !info.Mode().IsRegular():
+		problems = append(problems, "the entry point "+crw+" is not a regular file")
+	default:
+		if err := unix.Access(crw, unix.X_OK); errors.Is(err, unix.EACCES) {
+			problems = append(problems, "the entry point "+crw+" is not executable by this user ("+info.Mode().Perm().String()+")")
+		} else if err != nil {
+			unread = append(unread, "whether "+crw+" is executable")
+		}
+	}
+	real, err := record.Resolve(crw)
+	if err != nil {
+		return problems, append(unread, "the entry point "+crw)
+	}
+	for _, name := range definition.Links() {
+		link := filepath.Join(target, "bin", name)
+		resolved, err := record.Resolve(link)
+		switch {
+		case err != nil:
+			unread = append(unread, "the compatibility link "+link)
+		case resolved != real:
+			problems = append(problems, "the compatibility link "+link+" resolves to "+resolved+", not to "+real)
+		}
+	}
+	return problems, unread
 }
 
 func strs(values []string) []any {

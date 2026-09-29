@@ -604,26 +604,17 @@ func (s *scan) journal(settings Object) {
 				continue
 			}
 			path := filepath.Join(directory, entry.Name())
-			info, err := entry.Info()
-			if err != nil {
-				s.unread(path, err)
-				continue
-			}
-			written := info.ModTime()
 			row := reading.ReadJSON(path, "a journal row", nil, nil)
-			if value, ok := row.Value.(Object); ok {
-				if at, ok := record.Get(value, "at").(string); ok {
-					if parsed, err := time.Parse("2006-01-02T15:04:05Z", at); err == nil {
-						written = parsed
-					}
-				}
+			if row.State == reading.Absent {
+				continue // removed since the directory was listed
 			}
 			count++
+			written, configuration, problem := journalRow(row)
+			if problem != "" {
+				s.unreadable = append(s.unreadable, path+": row 2 journal row: "+problem+", so when its Stop hook ran, and whether the turn that ran it may still hold its command, is unknown")
+				continue
+			}
 			if unbounded || now.Sub(written) < window {
-				var configuration any
-				if value, ok := row.Value.(Object); ok {
-					configuration = record.Get(value, "configuration")
-				}
 				detail := "a Stop hook ran within the last " + strconv.FormatFloat(window.Seconds(), 'f', -1, 64) + " s, so the turn that ran it may still hold its command"
 				if unbounded {
 					detail = "the longest configured Stop hook timeout (" + strconv.FormatFloat(longest, 'g', -1, 64) + " s) gives a window no row is outside of, so the turn that ran it may still hold its command"
@@ -637,6 +628,29 @@ func (s *scan) journal(settings Object) {
 		return
 	}
 	s.surface(2, true, count, "journal rows under "+root+" in every day directory from "+since.Format("20060102")+" on")
+}
+
+// journalRow is when a journal row's Stop hook ran (its at: completion.now writes
+// 2006-01-02T15:04:05Z, and any RFC 3339 time is read) and the settings it names, or why that
+// cannot be established. The file's modification time is
+// never a stand-in: a row that cannot be read or has no valid at is unreadable.
+func journalRow(row reading.Reading) (time.Time, any, string) {
+	if !row.OK() {
+		return time.Time{}, nil, row.Detail
+	}
+	value, ok := row.Value.(Object)
+	if !ok {
+		return time.Time{}, nil, "the row is not a JSON object"
+	}
+	at, ok := record.Get(value, "at").(string)
+	if !ok {
+		return time.Time{}, nil, "the row's at is " + scope.TypeName(record.Get(value, "at")) + ", not a time"
+	}
+	written, err := time.Parse(time.RFC3339, at)
+	if err != nil {
+		return time.Time{}, nil, "the row's at " + strconv.Quote(at) + " is not an RFC 3339 time"
+	}
+	return written, record.Get(value, "configuration"), ""
 }
 
 // longestTimeout is the longest configured Stop hook timeout, at least DefaultHookTimeout. A
@@ -729,8 +743,17 @@ func (s *scan) alive(pid int, ticks any, boot any) (bool, error) {
 	if ticks != nil && scope.PyStr(ticks) != scope.PyStr(now) {
 		return false, nil
 	}
-	if raw, err := os.ReadFile(filepath.Join(s.o.Proc, "sys", "kernel", "random", "boot_id")); boot != nil && err == nil && scope.PyStr(boot) != strings.TrimSpace(string(raw)) {
-		return false, nil
+	if boot != nil {
+		// A record that names its boot is alive only in that boot. A boot id that cannot be
+		// read establishes nothing: a pid and start time can repeat across boots.
+		path := filepath.Join(s.o.Proc, "sys", "kernel", "random", "boot_id")
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return false, errors.New("the current boot id could not be read to compare with the recorded one: " + store.PythonOSError(err))
+		}
+		if scope.PyStr(boot) != strings.TrimSpace(string(raw)) {
+			return false, nil
+		}
 	}
 	return true, nil
 }
@@ -817,7 +840,7 @@ func (s *scan) daemons() map[int]bool {
 		}
 	}
 	if unknown > 0 {
-		s.surface(3, false, count, "the process table at "+s.o.Proc+" could not be read for "+strconv.Itoa(unknown)+" recorded pids, so whether they are alive, and what they run, is unknown")
+		s.surface(3, false, count, "whether "+strconv.Itoa(unknown)+" recorded pids are alive could not be read from "+s.o.Proc+" (its process table, or the boot id a record names), so whether they are alive, and what they run, is unknown")
 		return pids
 	}
 	s.surface(3, true, count, "daemon.json in the relay state root and every scope under it; a pid counts only while its start time matches the record")

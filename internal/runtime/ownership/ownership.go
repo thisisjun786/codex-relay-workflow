@@ -33,7 +33,10 @@ type Signals struct {
 	RegistrationConflict string
 	LinkConflict         string
 	PointerConflict      string
-	Unreadable           []string
+	// Unlaunchable is what keeps a host from launching the entry point (a Go install's bin/crw
+	// that is not an executable regular file, a compatibility link that does not resolve to it).
+	Unlaunchable []string
+	Unreadable   []string
 }
 
 // Classify returns (class, reasons); the first matching class wins.
@@ -53,6 +56,13 @@ func Classify(s Signals) (string, []string) {
 	}
 	if len(reasons) > 0 {
 		return Conflict, reasons
+	}
+	if len(s.Unlaunchable) > 0 {
+		// runtime_install.resolve_entry_point finds an entry point with shutil.which, which
+		// answers only a file the user may execute: one nothing can launch is found nowhere,
+		// and Python classifies the component foreign. Its bytes do not change that.
+		reasons = append(reasons, s.Unlaunchable...)
+		return Foreign, append(reasons, "nothing a host starts through the entry point can run, so it is not this installation's")
 	}
 	differs := s.DigestMatches != nil && !*s.DigestMatches
 	if s.EntryPointRecorded && differs {

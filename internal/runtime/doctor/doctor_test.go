@@ -285,6 +285,45 @@ func goHost(t *testing.T, point bool) (*host, string, string) {
 	return h, dir, digest
 }
 
+// A Go runtime nothing can launch is not owned, though its bytes still match: bin/crw without
+// its execute bit (chmod 0644, digest unchanged) or a compatibility link that no longer resolves
+// to it makes both components foreign, launchable false, with the problem as the reason, and
+// installed is not verified.
+func TestDoctorDoesNotOwnAGoRuntimeNothingCanLaunch(t *testing.T) {
+	h, dir, digest := goHost(t, true)
+	if first := h.diagnose(t); at(first, "components", "codex-session-relay", "launchable") != true || at(first, "components", "codex-session-relay", "class") != "own" {
+		t.Fatalf("an executable runtime: %s", golden.Canon(at(first, "components", "codex-session-relay")))
+	}
+	crw := filepath.Join(dir, "bin", "crw")
+	if err := os.Chmod(crw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report := h.diagnose(t)
+	for _, c := range []string{"codex-session-relay", "codex-thread-bridge"} {
+		reasons := golden.Canon(at(report, "components", c, "reasons"))
+		if at(report, "components", c, "class") != "foreign" || at(report, "components", c, "launchable") != false ||
+			at(report, "components", c, "digest") != digest || !strings.Contains(reasons, crw+" is not executable by this user") {
+			t.Errorf("%s without an execute bit: %s", c, golden.Canon(at(report, "components", c)))
+		}
+	}
+	if got := at(report, "checks", "results", "installed", "value"); got != "not_verified" {
+		t.Errorf("installed = %v for a runtime nothing can launch", got)
+	}
+	if err := os.Chmod(crw, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hook := filepath.Join(dir, "bin", "crw-completion-hook")
+	if err := os.Remove(hook); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(dir, "bin", "stale-hook"), "#!/bin/sh\n", 0o755)
+	link(t, "stale-hook", hook)
+	report = h.diagnose(t)
+	if got := golden.Canon(at(report, "components", "codex-session-relay", "reasons")); at(report, "components", "codex-session-relay", "class") != "foreign" || !strings.Contains(got, hook+" resolves to") {
+		t.Errorf("a link that does not resolve to bin/crw: %s", golden.Canon(at(report, "components", "codex-session-relay")))
+	}
+}
+
 // On a Go host the pointer selects go-binary, and each component is classified from its
 // binary digest, the record's install entry and a covering point: own when all agree, and
 // unmeasured, fork, foreign or conflict when one of them does not.
