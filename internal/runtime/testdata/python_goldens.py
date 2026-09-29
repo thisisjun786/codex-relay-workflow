@@ -288,8 +288,44 @@ def scope_readings():
     }
 
 
+def settings_documents():
+    """The two settings records a Go install writes, as the Python writers write them."""
+    from crw_runtime import bridgerecord, completion
+    dest = "/home/user/.local/share/crw-runtime"
+    bridge = dest + "/current/bin/codex-thread-bridge"
+    policy = {"path": "/home/user/.config/crw/execution-policy.json", "digest": "b" * 64}
+    records = {
+        "v1": {"command": bridge, "args": [], "name": "codex-thread-bridge", "issue": "CRW-158", "policy": None},
+        "v1-args": {"command": bridge, "args": ["--socket", "/s \u00e9"], "name": "codex-thread-bridge", "issue": None, "policy": None},
+        "v2": {"command": bridge, "args": [], "name": "codex-thread-bridge", "issue": "CRW-158", "policy": policy},
+    }
+    hooks = {
+        "plugin-observe": {"destination": dest, "marker_root": "/home/user/.local/state/codex-session-marker", "database": None,
+                           "mode": "observe", "timeout": 5, "journal_root": None, "codex_home": "/home/user/.codex",
+                           "issue": "CRW-158", "isolation": None, "socket": None},
+        "plugin-hold-socket": {"destination": dest, "marker_root": "/home/user/markers", "database": "/home/user/state/relay.sqlite3",
+                               "mode": "hold", "timeout": 7, "journal_root": "/home/user/journal", "codex_home": "/home/user/.codex",
+                               "issue": None, "isolation": "CRW-9", "socket": "/home/user/.codex/app-server-control/app-server-control.sock"},
+    }
+    out = {"bridgeRecords": {}, "hookSettings": {}}
+    for name, given in records.items():
+        document = bridgerecord.document(command=given["command"], arguments=given["args"], name=given["name"],
+                                         issue=given["issue"], owner="plugin", execution_policy=given["policy"])
+        out["bridgeRecords"][name] = {"inputs": given, "bytes": json.dumps(document, indent=2, sort_keys=True) + "\n"}
+    for name, given in hooks.items():
+        document = completion.configuration(
+            destination=given["destination"], marker_root=given["marker_root"], database=given["database"],
+            mode=given["mode"], timeout=given["timeout"], journal_root=given["journal_root"], codex_home=given["codex_home"],
+            issue=given["issue"], isolation=given["isolation"], socket=given["socket"], owner="plugin", environ={},
+            adapter_interpreter="/usr/bin/env", adapter_entry_point=given["destination"] + "/current/bin/crw-completion-hook")
+        out["hookSettings"][name] = {"inputs": given, "bytes": json.dumps(document, indent=2, sort_keys=True) + "\n",
+                                     "complaints": completion.complaints(document)}
+    return out
+
+
 def main():
     json.dump({
+        "settingsDocuments": settings_documents(),
         "dumpsIndent": dumps_indent(),
         "recordUpdates": record_updates(),
         "shapes": shapes(),

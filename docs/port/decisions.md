@@ -340,17 +340,38 @@ the absent jsonrpc field, draft L36); draft D8, GAP-10.
 ## 18. Settings records
 
 Decision: `crw-completion-hook.json` keeps `configVersion = 1` and its key set;
-`crw-bridge-mcp.json` keeps `recordVersion = 2`; the host record keeps `recordVersion` and
-`definitionVersion = 1`. The Python-shaped keys (`interpreterPath`, `interpreter`,
-`adapterInterpreter`, `requiresPython`, `module`, `packageLocation`, `serverModule`,
-`exerciseScript`) are read and preserved when present and written as absent by the Go
-installer; their replacement shape is CRW-157's components definition v2, decided there and
-not here.
+`crw-bridge-mcp.json` keeps `recordVersion` 1 (no policy) and 2 (a policy named by path and
+digest); the host record keeps `recordVersion` and `definitionVersion = 1`. Both settings records
+are written byte for byte as Python writes them (`json.dumps(indent=2, sort_keys=True)` and a
+newline). A Go install writes the plugin-owned Stop settings with `relayExecutable` =
+`<destination>/current/bin/codex-session-relay`, `adapterEntryPoint` =
+`<destination>/current/bin/crw-completion-hook` and `adapterInterpreter` = `/usr/bin/env`, and the
+bridge record with `bridgeExecutable` = `<destination>/current/bin/codex-thread-bridge`. The
+Python-shaped keys of the host record and the components definition (`interpreterPath`,
+`interpreter`, `requiresPython`, `module`, `packageLocation`, `serverModule`, `exerciseScript`) are
+read and preserved when present and never written by the Go installer.
 
-Evidence: scripts/crw_runtime/completion.py:53 (`CONFIG_NAME`), :558-563 (`configVersion`
-check); scripts/crw_runtime/bridgerecord.py:79 (record home); scripts/runtime_install.py:
-725-771 (`interpreterPath` read paths); scripts/crw_runtime/components.json:3
-(`definitionVersion: 1`), :9-26 (Python-shaped fields); draft L1, L4, L5, GAP-9, D6.
+Correction (todo 38): an earlier text had `adapterInterpreter` written as absent. The Go hook's
+own reader (internal/relay/hook/settings.go `Complaints`) requires `adapterInterpreter` and
+`adapterEntryPoint` whenever `owner` is plugin, so an absent key would have every plugin-owned
+document refused. And the value cannot be the binary: the legacy launchers a cached turn still
+runs (plugins/crw/wiring/crw_stop_hook.py, its `<CODEX_HOME>/crw-stop-hook.py` copy) execute
+`[adapterInterpreter, adapterEntryPoint, <settings>]`, so the binary as interpreter would receive
+its own path as the settings argument and evaluate nothing on every Stop. `/usr/bin/env` executes
+the entry point with the settings path as its one argument, which is what the Go hook reads. The
+relay host's Python-era document (`adapterInterpreter` `.../current/bin/python3`, a path that
+vanishes when the pointer leaves the venv) is retired beside itself (`.superseded-<stamp>`, never
+deleted) and replaced by its Go variant - the same host facts, only the two adapter keys moved -
+inside the promotion that moves the pointer, before the move; a rollback to a Python runtime puts
+the newest retired Python-era document back before its move.
+
+Evidence: scripts/crw_runtime/completion.py:55 (`CONFIG_NAME`), :550 (`complaints`), :2751
+(`configuration`); scripts/crw_runtime/bridgerecord.py:77 (`record_path`), :163 (`document`);
+plugins/crw/wiring/crw_stop_hook.py:97 (`adapter_call`), :141 (the `subprocess.run` of
+`call + [settings]`); scripts/crw_transition/steps.py:59 (`retire`); internal/relay/hook/
+adapter.go (args[0] is the settings path); internal/runtime/install (`TestHookSettingsBytesArePythons`,
+`TestBridgeRecordBytesArePythons`, `TestLegacyStopLaunchersReachTheGoHook`,
+`TestPythonEraSettingsMoveWithThePointer`); draft L1, L4, L5, GAP-9, D6.
 
 ## 19. Bridge provenance
 
@@ -1182,8 +1203,10 @@ stamps nothing. A binary built without the stamp - a build from a dirty tree, an
 GoReleaser release build, until todo 44 adds the stamp to the release workflow - records null
 trees, and both sweepers then report "this copy's install entry records
 an incomplete revision (repositoryTree, subdirectoryTree missing or malformed), which identifies
-nothing" rather than a revision nobody measured. The dead `outgoing` key and component-level
-facts are carried through when present and never written.
+nothing" rather than a revision nobody measured. Component-level facts are carried through when
+present and never written. The `outgoing` key has a reader again: `crw install` writes the
+selection a promotion replaces as `outgoing`, in the same write that commits the new selection,
+and `crw install rollback` returns to it (decision 38).
 
 Why: the Python installer, the developer harness and both sweepers (faultsweep.py:497 and
 internal/relay/faults/sweep.go:470) read the same file during coexistence and answer "not
@@ -1268,9 +1291,12 @@ directory's file set is unchanged, and a table committed only to a live WAL is r
 ## 37. Two third-party readers: github.com/BurntSushi/toml and mvdan.cc/sh/v3
 
 Decision: Go reads `config.toml` with `github.com/BurntSushi/toml`, at the version go.sum already
-pins through staticcheck, now a direct requirement. Todo 37's retention scan reads
-`mcp_servers.*.command` and `args` with it; todo 38's `register-mcp` uses the same reader for its
-append-only registration and read-back.
+pins through staticcheck, now a direct requirement, for reading only. Todo 37's retention scan
+reads `mcp_servers.*.command` and `args` with it; todo 38's `crw install register-mcp --owner
+plugin` and the promotion's second-owner refusal read the same tables with it, validating each
+table's shape (a table, a string `command`, a list of strings `args`) before comparing anything and
+refusing on a file that does not parse. Nothing in Go writes `config.toml`: the user-owned
+`register-mcp` append writer is retired (docs/port/inventory.md, Functions retired with evidence).
 
 The retention scan parses hook commands, shell wrappers and the programs they hand a shell
 (`sh -c` strings) with `mvdan.cc/sh/v3/syntax` v3.14.1, the parser behind shfmt, in its Bash
@@ -1286,7 +1312,8 @@ libraries are used for reading only. Nothing is formatted, evaluated, expanded o
 them; the `interp` and `expand` packages are not imported.
 
 Why: codexconfig.py refuses to approximate TOML (a hand-written reader produced ten defects), and
-the retention scan must read every registered command rather than guess at text. The same holds
+the retention scan must read every registered command rather than guess at text; concluding a
+server is absent when it is registered is how a second bridge arrives. The same holds
 for shell: todo 43 removes Python behind the scan's answer, so a mis-parse that hides a command
 position is a safety defect, and a hand-written lexer and grammar for it is a large surface of
 exactly that. The Bash variant, because Codex runs a hook command through a shell the scan cannot
@@ -1305,10 +1332,63 @@ which keeps `clear` false until a person rewrites or removes the command, while 
 host really registers (the native Stop command, the pre-native `python3 -c` bootstrap, launcher
 invocations and `sh ./wiring/crw-bridge.sh`) are inside it and judged.
 
-Evidence: scripts/crw_runtime/codexconfig.py:1-25; go.mod; internal/runtime/doctor/retention.go
-(`configToml`, `hookCommands`, `server`); internal/runtime/doctor/shell.go;
-`TestRetentionScanReadsTheWiringSurfaces`, `TestTheGrammarRefusesEveryOtherConstruct`,
-`TestRetentionScanJudgesOnlyWhatItsGrammarReads`, `TestRetentionScanJudgesAnMCPServerAsCodexStartsIt`.
+Evidence: scripts/crw_runtime/codexconfig.py:1-25, :81 (`registration_view`), :128 (`scan`); go.mod;
+internal/runtime/doctor/retention.go (`configToml`, `hookCommands`, `server`); internal/runtime/doctor/shell.go;
+internal/runtime/install/mcp.go (`readServers`); `TestRetentionScanReadsTheWiringSurfaces`,
+`TestTheGrammarRefusesEveryOtherConstruct`, `TestRetentionScanJudgesOnlyWhatItsGrammarReads`,
+`TestRetentionScanJudgesAnMCPServerAsCodexStartsIt`, `TestRegisterMCPWritesTheRecordAndRefusesASecondOwner`,
+`TestInstallRefusesASecondOwner`.
+
+## 38. `crw install`: the release digest authorizes the unpack, the exercise earns the point
+
+Decision: `crw install install` and `crw install update` are one code path. The archive comes
+from `--from <crw_<version>_<os>_<arch>.tar.gz>` (SHA256SUMS beside it, or `--sums`) or from
+`--release <tag>` (both assets fetched), must be named for this host's target, and must hash to the
+one digest SHA256SUMS lists for it; the verified bytes are held in memory and unpacked from, so
+nothing changes between the check and the unpack, and a mismatch refuses before anything under
+the destination exists. The runtime is `<destination>/bin-<version>-<archive sha256[:12]>`, made
+with an exclusive mkdir, locked and claimed STAGING under its `.crw-lock` exactly as
+runtime_install.py claims `env-*`; the archive may carry only `crw`, the three compatibility
+links (as links to `crw` or as its bytes) and regular files at safe relative paths, and the
+installer places the three links itself. The candidate is exercised through its own executables
+(`bin/codex-session-relay doctor` with a real socket connect; a read-only MCP session with
+`bin/codex-thread-bridge` that lists its tools and calls `get_capabilities`), and only then are the
+Go install entries and one point per component (install, installDigest, codexCli, host, appServer)
+recorded. Promotion is one critical section under `.promotion-lock`: the record is read inside it,
+the swap gate (decision 36) asks the selected relay, the pointer must be absent or a link this
+record placed, one owner per surface is required (the bridge in `config.toml` or the plugin record,
+never both, and a `codex-thread-bridge` table must name the pointer; the Stop adapter in
+`hooks.json` or plugin settings, never both), the Stop settings are carried to the new runtime kind
+(decision 18), then the selection, the pointer's placement and `outgoing` are committed in one
+write, the pointer is renamed over and read back, and on any failure the pointer, the selection,
+`outgoing` and the settings are put back. The COMPLETE claim is written last. Exit statuses are
+0 (promoted and settled, or already installed), 1 (refused: nothing moved, and this run's directory
+was released unless the record or the pointer may name it), 2 (usage) and 3 (promoted and in
+service, only the claim unsettled: never a free destination). `crw install rollback` returns the
+pointer to `outgoing` (or to a directory the record lists) under the same lock and rules;
+for a Python venv target the gate's schema cell compares the store with this build's declared
+schema, which stands for the Python runtime's because the DDL is identical (decision 14) and no Go
+release changes it before the commit point (docs/port/cutover.md). `crw install remove <dir>`
+deletes one `env-*` or `bin-*` directory directly under the destination only when the record does
+not select it, the pointer does not (and is established not to) name it, it carries a readable
+claim of runtime_install.py's or crw install's whose lock nobody holds, and no live process runs
+out of it (its `/proc/<pid>/exe`, or the interpreter or script its argv starts, resolving inside
+it), then drops its install entries. `crw doctor` now makes the App Server observation decision 41
+left to this todo: with `Options.AppServer` unset it runs the same read-only session with the
+selected runtime's `bin/codex-thread-bridge` (`exercise.Session`) and compares its
+`get_capabilities` answer as a point's `appServer` dimension, so a real diagnosis of a Go host can
+reach `installed: verified`; a bridge that answers nothing leaves the dimension unread, which stops
+classification (decision 41). The report's `appServer` member names the bridge asked and whether
+it answered.
+
+Why: the plan's per-target digests in the components definition were dropped (decision 35), so
+the release's SHA256SUMS is the only digest authority a host can check; everything else carries
+runtime_install.py's install properties by behaviour rather than by code.
+
+Evidence: scripts/runtime_install.py:2610-3296 (`cmd_install`), :3297-3636 (`_settle_claim`),
+:4027-4414 (restore and release), :4472-4627 (`measure_candidate`), :5163-5617 (`register-mcp`),
+:2300-2589 (`hook`); .goreleaser.yaml (archive names, links, SHA256SUMS); internal/runtime/install
+and its tests; .omo/ulw-execute/scope-analysis-31-46.md "# 38".
 
 ## 39. A caller's cancellation claims every answer the send has not yet used
 
@@ -1436,10 +1516,13 @@ No value a consumer requires to be absolute is looked up on the doctor's own PAT
 version, the host name and the App Server identity are point dimensions
 (`runtime_install.classify_component`): an unread one stops classification, and `codex
 --version` whose output a descendant holds open past a 5 s wait delay (as `scope.WaitDelay`) is
-unread. The doctor does not observe the App Server yet, so until todo 38 wires
-`Options.AppServer` (`func(ctx, bridge string) *string`, asked through the selected runtime's
-`bin/codex-thread-bridge`) into `crw doctor`, a Go component is `unreadable` with it named and
-`notChecked` lists it. The skill links are not a signal for a Go install, unlike in
+unread. The App Server identity is asked once, through `Options.AppServer` (`func(ctx, bridge
+string) *string`, given the selected runtime's `bin/codex-thread-bridge`). Before todo 38 the
+doctor made no such observation, so a Go component was `unreadable` with it named and `notChecked`
+listed it; todo 38 wires it (decision 38): an unset `Options.AppServer` is a read-only MCP session
+with that bridge (`exercise.Session`) whose `get_capabilities` answer is the dimension, a bridge
+that answers nothing leaves it unread and the component `unreadable` with the bridge named, and
+`notChecked` is empty. The skill links are not a signal for a Go install, unlike in
 `classify_component`: an installed product takes its skills from the plugin payload the Codex
 marketplace installs, and skill links are a developer-checkout concern (`crw-dev skills link`,
 todo 39) that no release archive or installer makes. The host record's
@@ -1459,7 +1542,7 @@ that descendant exited.
 Evidence: internal/runtime/doctor/registration.go (`stopSettings`, `interpreter`, `stopHooks`,
 `stopCommand`, `hookCall`, `pluginBridge`, `policy`, `codexConfig`, `mcpCommand`);
 internal/runtime/doctor/retention.go (`readStopCommand`, `stopAdapterIn`, `settingsOf`); internal/runtime/doctor/doctor.go
-(`observe`, `classifyGo`, `codexVersion`, `Diagnose`); internal/runtime/record/home.go; internal/relay/hook/
+(`observe`, `classifyGo`, `CodexVersion`, `Diagnose`); internal/runtime/exercise (`Session`); internal/runtime/record/home.go; internal/relay/hook/
 settings.go (`Complaints`, `ReadSettings`); plugins/crw/wiring/crw_stop_hook.py (`adapter_call`);
 plugins/crw/wiring/crw_bridge_mcp.py (`main`, `policy_environment`); scripts/crw_runtime/
 codexconfig.py (`registration_view`); scripts/runtime_install.py (`classify_component`,
@@ -1468,7 +1551,8 @@ codexconfig.py (`registration_view`); scripts/runtime_install.py (`classify_comp
 `TestDoctorJudgesTheStopSettingsAsTheHookAcceptsThem`, `TestDoctorJudgesTheLauncherInvocation`,
 `TestDoctorJudgesTheStopCommandsInHooksJSON`, `TestDoctorJudgesTheBridgeRecordAsTheLauncherAcceptsIt`,
 `TestDoctorReadsTheCodexConfigurationWhole`, `TestDoctorJudgesTheBridgeUnderEveryTableName`,
-`TestDoctorStopsOnTheReadingsItDoesNotMake`, `TestDoctorKeepsAnUnreadDimensionInTheComparison`,
+`TestDoctorStopsOnTheReadingsItDoesNotMake`, `TestDoctorComparesTheAppServerDimension`,
+`TestDoctorKeepsAnUnreadDimensionInTheComparison`,
 `TestDoctorReadsTheRecordedPointerThroughPath`, `TestDoctorNeverReadsAnUnestablishedHomeAsACleanHost`,
 `TestStateHomeExpandsTheHomeAsPathlibDoes`, `TestCodexVersionIsUnreadWhenADescendantHoldsItsOutput`; under the parity tag
 `TestParity_the_bridge_record_is_refused_where_the_launcher_refuses_it` (22 records, the real

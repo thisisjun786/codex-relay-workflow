@@ -82,7 +82,18 @@ func TestRun_doctor_dispatches_to_the_host_doctor(t *testing.T) {
 		t.Fatalf("an unknown doctor form: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	stdout.Reset()
-	if code := run(context.Background(), "crw", []string{"help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "{relay,bridge,hook,skill,doctor,help,version}") {
+	if code := run(context.Background(), "crw", []string{"help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "{relay,bridge,hook,skill,doctor,install,help,version}") {
 		t.Fatalf("usage: %q", stdout.String())
+	}
+}
+
+func TestRun_install_dispatches_to_the_installer(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), "crw", []string{"install", "unpack"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "crw install: error: argument command: invalid choice: 'unpack'") {
+		t.Fatalf("an unknown install command: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	if code := run(context.Background(), "crw", []string{"install", "help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "{install,update,rollback,remove,status,register-mcp,hook}") {
+		t.Fatalf("install usage: code=%d stdout=%q", code, stdout.String())
 	}
 }

@@ -1,0 +1,82 @@
+package install
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"sort"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/pointer"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/staging"
+)
+
+// Status is `crw install status`: what the host record selects, what the owned pointer names
+// and whether they agree (the doctor's own reading), the outgoing selection a rollback returns
+// to, and every runtime directory under the destination with its claim. It writes nothing.
+func Status(_ context.Context, o Options) (Object, int) {
+	loaded := record.Load(o.RecordPath, definition.Version)
+	var rec Object
+	var refusal any
+	if loaded.Usable() {
+		rec, _ = loaded.Value.(Object)
+	} else {
+		refusal = loaded.Refusal()
+	}
+	pointerPath, from := pointer.Path(o.Dest), "dest"
+	if owned, ok := record.Get(rec, "pointer").(Object); ok {
+		if path, ok := record.Get(owned, "path").(string); ok && filepath.IsAbs(path) {
+			pointerPath, from = path, "record"
+		}
+	}
+	runtime := doctor.Runtime(pointerPath, from, rec)
+	var runtimes []any
+	entries, err := os.ReadDir(o.Dest)
+	var listing any
+	if err != nil {
+		listing = "the destination could not be listed: " + store.PythonOSError(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		if entry.IsDir() && runtimeDirectory(entry.Name()) {
+			names = append(names, entry.Name())
+		}
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		directory := filepath.Join(o.Dest, name)
+		claim := staging.ReadClaim(directory)
+		var state, writtenBy any
+		if value, ok := claim.Value.(Object); ok && claim.OK() {
+			state, writtenBy = record.Get(value, "state"), record.Get(value, "writtenBy")
+		}
+		liveness, _ := staging.OwnerLiveness(directory)
+		var selected any
+		if rec != nil {
+			selected = selectsUnder(rec, directory)
+		}
+		runtimes = append(runtimes, Object{
+			field("path", directory), field("kind", doctor.RuntimeKind(directory)),
+			field("claim", Object{field("state", claim.State), field("saying", state), field("writtenBy", writtenBy)}),
+			field("liveness", liveness), field("selected", selected), field("pointerNames", boolOrNil(pointer.Names(pointerPath, directory))),
+		})
+	}
+	if runtimes == nil {
+		runtimes = []any{}
+	}
+	lockState, lockDetail := record.Probe(o.RecordPath + record.PromotionLockSuffix)
+	settings := Object{}
+	for _, f := range doctor.SettingsFiles {
+		settings = append(settings, field(f.Name, doctor.ReadSettings(o.CodexHome, f.Name, f.Keys, pointerPath)))
+	}
+	return Object{
+		field("command", "status"), field("hostRecord", o.RecordPath), field("hostRecordState", loaded.State), field("hostRecordReading", refusal),
+		field("destination", o.Dest), field("selected", record.Get(runtime, "kind")), field("runtime", runtime),
+		field("outgoing", record.Get(rec, "outgoing")), field("runtimes", runtimes), field("destinationListing", listing),
+		field("promotionLock", Object{field("state", lockState), field("detail", lockDetail)}), field("settings", settings),
+		field("note", "read-only. 'runtime.agrees' is whether the owned pointer contains what the host record selects; a failed install or update leaves both as they were, and its directory is gone unless it is reported here."),
+	}, OK
+}

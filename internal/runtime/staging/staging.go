@@ -8,9 +8,11 @@
 // when the staging settles, which is why it cannot also be the lock. Liveness is the lock and
 // never a recorded pid. Removing anything requires a claim this command wrote.
 //
-// A Go install stages into a temporary sibling (.<name>.tmp-<random>) and renames it to its
-// final name once it is complete, so a final-named directory is complete by construction; the
-// claim and lock travel with the directory. The RECORDED decision of staging.py (a directory
+// A Go install creates its bin-<version>-<digest12> directory with an exclusive mkdir, claims
+// it STAGING, unpacks into it and settles the claim COMPLETE only after the promotion that puts
+// it into service, exactly as runtime_install.py does with its env-* directories: a run killed
+// anywhere before that leaves a STAGING claim whose lock is free, which the next run reclaims
+// (or, when the record already selects it, resumes). The RECORDED decision of staging.py (a directory
 // made before claims existed) is not ported: every Python env-* directory on the one host that
 // predates claims now carries one.
 package staging
@@ -318,58 +320,41 @@ func IsSettled(claim reading.Reading) bool {
 	return claim.OK() && ok && record.Get(value, "state") == Complete
 }
 
-// Stage is a Go staging in progress: a temporary sibling of the final directory, locked and
-// claimed STAGING, that Commit renames into place once it is complete.
-type Stage struct {
-	Directory string // the temporary directory being built
-	Final     string
-	held      *Held
-}
+// ErrNotOwned is Create's answer when the directory could not be made by this run, so nothing in
+// it is this run's to remove.
+var ErrNotOwned = errors.New("the directory was not created by this run")
 
-// Begin creates <parent>/.<basename of final>.tmp-<random> with an exclusive mkdir, takes its
-// lock and writes its STAGING claim. A final directory that already exists is the caller's to
-// decide on (Decide) before staging again.
-func Begin(final string, issue, run any) (*Stage, error) {
-	parent := filepath.Dir(final)
-	if err := os.MkdirAll(parent, 0o777); err != nil {
-		return nil, err
+// NotOwned carries the error the exclusive mkdir failed with; it is ErrNotOwned.
+type NotOwned struct{ Err error }
+
+func (n *NotOwned) Error() string        { return n.Err.Error() }
+func (n *NotOwned) Unwrap() error        { return n.Err }
+func (n *NotOwned) Is(target error) bool { return target == ErrNotOwned }
+
+// Create is the staging half of install's one step: an exclusive mkdir of directory (which
+// fails when it exists, and that failure is what proves this run owns it), its advisory lock,
+// and its STAGING claim. The caller holds directory's record.Lock across deciding, creating and
+// claiming, because between the mkdir and the claim an empty claimless directory reads as
+// adoptable to every other run. The lock is returned whenever the directory was created, even
+// when the claim could not be written: past the mkdir this run owns the directory and must
+// release it however it ends. An error that is ErrNotOwned (a *NotOwned) means the mkdir itself
+// failed.
+func Create(directory string, issue, run any) (*Held, error) {
+	if err := os.MkdirAll(filepath.Dir(directory), 0o777); err != nil {
+		return nil, &NotOwned{Err: err}
 	}
-	directory, err := os.MkdirTemp(parent, "."+filepath.Base(final)+".tmp-")
-	if err != nil {
-		return nil, err
+	if err := os.Mkdir(directory, 0o777); err != nil {
+		return nil, &NotOwned{Err: err}
 	}
 	held, err := Take(directory)
 	if err != nil {
 		return nil, err
 	}
 	if err := WriteClaim(directory, NewPayload(Staging, issue, run)); err != nil {
-		held.Release()
-		return nil, err
+		return held, err
 	}
-	return &Stage{Directory: directory, Final: final, held: held}, nil
+	return held, nil
 }
-
-// ErrFinalExists is Commit's answer when something already sits at the final name.
-var ErrFinalExists = errors.New("the final directory already exists")
-
-// Commit writes the COMPLETE claim and renames the staging into its final name. The lock stays
-// held (it moved with the directory) until Release.
-func (s *Stage) Commit(issue, run any) error {
-	if _, err := os.Lstat(s.Final); err == nil {
-		return ErrFinalExists
-	}
-	if err := WriteClaim(s.Directory, NewPayload(Complete, issue, run)); err != nil {
-		return err
-	}
-	if err := os.Rename(s.Directory, s.Final); err != nil {
-		return err
-	}
-	s.Directory = s.Final
-	return nil
-}
-
-// Release lets go of the staging lock.
-func (s *Stage) Release() { s.held.Release() }
 
 // Claim is the claim document as a report shows it.
 func Claim(claim reading.Reading) any {
