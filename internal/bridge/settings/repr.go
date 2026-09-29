@@ -3,7 +3,6 @@ package settings
 import (
 	"fmt"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 )
 
@@ -12,9 +11,8 @@ import (
 // str.isprintable() rejects (Cc, Cf, Cs, Co, Cn, Zl, Zp, and Zs other than the space) is
 // escaped, as \xNN below U+0100, \uNNNN in the rest of the BMP and \UNNNNNNNN above it. The code
 // points are read as CodePoint reads them, so a lone surrogate prints as \udXXX, as Python
-// prints it, and never as raw bytes or U+FFFD. Printability comes from Go's Unicode tables, so
-// a character assigned in a later Unicode version than the Python interpreter's prints raw here
-// where that interpreter escapes it as unassigned.
+// prints it, and never as raw bytes or U+FFFD. Printability is CPython 3.14's (Printable), so a
+// character assigned in a later Unicode version than that interpreter's is escaped as it is.
 func Repr(s string) string {
 	quote := "'"
 	if strings.Contains(s, "'") && !strings.Contains(s, `"`) {
@@ -36,7 +34,7 @@ func Repr(s string) string {
 			b.WriteString(`\r`)
 		case r == '\t':
 			b.WriteString(`\t`)
-		case unicode.IsPrint(r) && !isSurrogate(r):
+		case Printable(r):
 			b.WriteString(s[i-size : i])
 		case r < 0x100:
 			fmt.Fprintf(&b, `\x%02x`, r)
@@ -67,5 +65,3 @@ func CodePoint(s string, i int) (rune, int) {
 	}
 	return r, size
 }
-
-func isSurrogate(r rune) bool { return r >= 0xd800 && r <= 0xdfff }

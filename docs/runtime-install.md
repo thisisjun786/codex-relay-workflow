@@ -458,10 +458,6 @@ nothing it cannot complete; the root is now judged by the rule that will actuall
 it. Criterion 6 required a failed run to report whether its destination is retriable rather than
 an internal error; the hook path was the sibling still doing the latter.
 
-One residue is recorded rather than fixed: `scripts/hook_comparison.py` also walks with `rglob`.
-It is outside this change's scope and fills no judgment cell, so it is named here instead of being
-swept in.
-
 ### An answer about a state that was found has to be able to say there was nothing there
 
 Three review rounds in a row produced what read as three separate defects, and they were one
@@ -1870,8 +1866,10 @@ indistinguishable from success on disk.
 
 ### Reading it back
 
-`scripts/stop_events.py --journal-root <root>` reads the rows, the accepted records and the host
-ledgers the claims name, and answers one verdict. It judges an event as a unit: `--since`,
+`scripts/stop_events.py --journal-root <root>`, and its Go port `crw-dev stop-events`, which takes
+the same flags and prints the same reading as CPython 3.14 runs it (short of a record nested near
+where the interpreter's stack runs out, [a known difference](port/known-defects.md)), read the rows, the accepted records and the host
+ledgers the claims name, and answer one verdict. The reading judges an event as a unit: `--since`,
 `--until`, `--session` and `--turn` choose the events the window reaches, which are the events
 with any record (host file, claim, outcome or row) in it, and every record of a chosen event is
 then checked whatever its own time; rows that name no event are chosen one by one. `FALSE` (exit 1)

@@ -108,7 +108,7 @@ func Complaints(value any) []string {
 	if mode == Hold && !delivery.Named(get(o, "isolationAssertedBy")) {
 		found = append(found, "holding requires isolationAssertedBy to name who established that a held child cannot write the facts the decision reads; observing requires nothing, which is why it is the default")
 	}
-	if p := get(o, "journalPolicy"); p != nil && !slices.Contains([]string{"every_invocation", "faults_only", "no_journal"}, text(p)) {
+	if p := get(o, "journalPolicy"); p != nil && !slices.Contains(JournalPolicies, text(p)) {
 		found = append(found, "journalPolicy must be one of every_invocation, faults_only, no_journal")
 	}
 	owner := get(o, "owner")

@@ -94,7 +94,7 @@ jobs:
       - name: Installer and CI-control tests (${{ matrix.part }})
         env:
           PART: ${{ matrix.part }}
-          HEAVY: test_runtime_install test_hook_comparison
+          HEAVY: test_runtime_install test_install_acceptance
         run: |
           modules=$(cd scripts/ci/tests && ls test*.py | sed 's/\.py$//')
           if [ "$PART" = heavy ]; then

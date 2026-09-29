@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
@@ -39,7 +40,7 @@ func createOnce(ctx context.Context, path string, document Object, keepTorn bool
 	if err != nil {
 		return false, err
 	}
-	raw := []byte(evidence.Dumps(document, false, true, true) + "\n")
+	raw := RecordBytes(document)
 	write := f.Write
 	if injected, ok := ctx.Value(claimWriteKey{}).(claimWriteFunc); ok {
 		write = func(raw []byte) (int, error) { return injected(f, raw) }
@@ -53,7 +54,7 @@ func createOnce(ctx context.Context, path string, document Object, keepTorn bool
 }
 func ClaimEvent(ctx context.Context, config Object, key string, identity, stop Object, slot Slot, host string) (string, any) {
 	root := text(get(config, "journalRoot"))
-	base := Object{{Key: "ledgerVersion", Value: int64(1)}, {Key: "eventKey", Value: key}, {Key: "sessionId", Value: get(stop, "session_id")}, {Key: "turnId", Value: get(stop, "turn_id")}, {Key: "stopHookActive", Value: get(stop, "stop_hook_active")}, {Key: "answerItem", Value: get(identity, "answerItem")}, {Key: "claimedAt", Value: now()}}
+	base := Object{{Key: "ledgerVersion", Value: int64(LedgerVersion)}, {Key: "eventKey", Value: key}, {Key: "sessionId", Value: get(stop, "session_id")}, {Key: "turnId", Value: get(stop, "turn_id")}, {Key: "stopHookActive", Value: get(stop, "stop_hook_active")}, {Key: "answerItem", Value: get(identity, "answerItem")}, {Key: "claimedAt", Value: now()}}
 	if host != "" {
 		if ctx.Err() != nil {
 			return "unarbitrated", nil
@@ -68,7 +69,7 @@ func ClaimEvent(ctx context.Context, config Object, key string, identity, stop O
 		created, err := createOnce(ctx, filepath.Join(host, key+".json"), document, true)
 		if !created {
 			if errors.Is(err, os.ErrExist) {
-				return "duplicate", "crw-completion-hook/stop-events/" + key + ".json"
+				return Duplicate, strings.Join(HostLedgerParts, "/") + "/" + key + ".json"
 			}
 			return "unarbitrated", nil
 		}
@@ -76,7 +77,7 @@ func ClaimEvent(ctx context.Context, config Object, key string, identity, stop O
 	if root == "" {
 		return "unclaimable", nil
 	}
-	directory := filepath.Join(root, "accepted")
+	directory := filepath.Join(root, LedgerDirectory)
 	if ctx.Err() != nil {
 		return "claim_failed", nil
 	}
@@ -86,7 +87,7 @@ func ClaimEvent(ctx context.Context, config Object, key string, identity, stop O
 	document := set(base, "claimedBy", Object{{Key: "pid", Value: os.Getpid()}, {Key: "attemptRow", Value: slot.Name()}, {Key: "hostLedger", Value: nullable(host)}})
 	// claim_event likewise returns ACCEPTED after a failed write, never unlinking.
 	created, err := createOnce(ctx, filepath.Join(directory, key+".json"), document, true)
-	name := "accepted/" + key + ".json"
+	name := LedgerDirectory + "/" + key + ".json"
 	if !created {
 		if errors.Is(err, os.ErrExist) {
 			return "duplicate", name
@@ -128,9 +129,9 @@ func RecordOutcome(ctx context.Context, config Object, key string, record Object
 	}
 	policy := get(config, "journalPolicy")
 	if !evidence.Truthy(policy) {
-		policy = "every_invocation"
+		policy = EveryInvocation
 	}
-	out := Object{{Key: "ledgerVersion", Value: int64(1)}, {Key: "eventKey", Value: key}, {Key: "sessionId", Value: get(record, "sessionId")}, {Key: "turnId", Value: get(record, "turnId")}, {Key: "journalPolicy", Value: policy}, {Key: "adapterOutcome", Value: get(record, "adapterOutcome")}, {Key: "guardDecision", Value: get(record, "guardDecision")}, {Key: "guardState", Value: get(record, "guardState")}, {Key: "held", Value: get(record, "held")}, {Key: "attemptRow", Value: row}, {Key: "at", Value: now()}}
-	_, err := createOnce(ctx, filepath.Join(root, "accepted", key+".outcome.json"), out, false)
+	out := Object{{Key: "ledgerVersion", Value: int64(LedgerVersion)}, {Key: "eventKey", Value: key}, {Key: "sessionId", Value: get(record, "sessionId")}, {Key: "turnId", Value: get(record, "turnId")}, {Key: "journalPolicy", Value: policy}, {Key: "adapterOutcome", Value: get(record, "adapterOutcome")}, {Key: "guardDecision", Value: get(record, "guardDecision")}, {Key: "guardState", Value: get(record, "guardState")}, {Key: "held", Value: get(record, "held")}, {Key: "attemptRow", Value: row}, {Key: "at", Value: now()}}
+	_, err := createOnce(ctx, filepath.Join(root, LedgerDirectory, key+OutcomeSuffix), out, false)
 	return err
 }

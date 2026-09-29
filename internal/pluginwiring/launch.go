@@ -126,11 +126,12 @@ func pythonHome(env map[string]string) string {
 }
 
 // readRegular is crw_bridge_mcp.py read_regular: opened without blocking, judged on the descriptor.
-// path is the bytes opened; shown is the str Python opened them as, which str(OSError) names.
-func readRegular(path, shown string) ([]byte, error) {
+// path is the bytes opened, which str(OSError) names as Python holds them: os.fsdecode of them
+// (store.PathRepr), the str Python opened.
+func readRegular(path string) ([]byte, error) {
 	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
 	if err != nil {
-		return nil, &os.PathError{Op: "open", Path: shown, Err: err}
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
 	}
 	file := os.NewFile(uintptr(fd), path)
 	defer file.Close()
@@ -230,7 +231,7 @@ func policyEnvironment(env map[string]string, record string, reference any) (str
 			" and this process was started with " + execution.EnvDigest + "=" + expected +
 			". Unset the variable, or register the policy it names")
 	}
-	raw, err := readRegular(encoded, path)
+	raw, err := readRegular(encoded)
 	if err != nil {
 		return "", "", fail("the execution policy the record at " + record + " names could not be read (" +
 			path + ": " + osText(err) + "). The bridge is not started without it, because it" +
@@ -253,7 +254,7 @@ func policyEnvironment(env map[string]string, record string, reference any) (str
 func Prepare(env map[string]string, extra []string) ([]string, map[string]string, error) {
 	home, how := codexHome(env)
 	record := purePath(home + "/" + RecordName)
-	raw, err := readRegular(record, record)
+	raw, err := readRegular(record)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil, fail("no record at " + record + " (resolved from " + how + "). If the" +
 			" package is to own this server, run " + RepairCommand + " to write it. If this host" +

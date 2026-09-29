@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 func nativeJournalFixture(t *testing.T) (string, Object) {
@@ -122,6 +123,56 @@ func Test33NativeJournalDetailErrnos(t *testing.T) {
 			if !NativePrescanUnreachable(copy) {
 				t.Fatalf("detail rejected: %v", get(copy, "detail"))
 			}
+		}
+	}
+}
+
+// A socket or settings path whose name holds a byte that is not UTF-8 is spelled as Python holds
+// it, the lone surrogate surrogateescape makes of the byte, and such a path is one the system
+// takes: the native pre-scan row a relay state directory like that leaves is still the exempt
+// one. A surrogate that stands for no byte is not a path. Every row is judged by the Python
+// reader too.
+func Test33NativeJournalPathsWhoseNamesAreNotUTF8(t *testing.T) {
+	_, row := nativeJournalFixture(t)
+	prefix := "the configured runtime could not be run: [Errno 2] No such file or directory: "
+	socket := func(spelled string) Object {
+		return set(set(append(Object{}, row...), "errno", "ENOENT"), "detail", prefix+spelled)
+	}
+	configuration := func(path string) Object { return set(append(Object{}, row...), "configuration", path) }
+	cases := []struct {
+		name string
+		row  Object
+		want bool
+	}{
+		{"a state directory holding 0xff", socket(store.PathRepr("/tmp/st\xffate/control.sock")), true},
+		{"a state directory holding the bytes ED A0 80", socket(store.PathRepr("/tmp/st\xed\xa0\x80ate/control.sock")), true},
+		{"a surrogate that is no byte", socket(`'/tmp/st\ud800ate/control.sock'`), false},
+		{"a surrogate pair spelled as two escapes", socket(`'/tmp/\ud83d\ude00/control.sock'`), false},
+		{"a surrogate spelled as repr() never writes it", socket(`'/tmp/st\U0000dcffate/control.sock'`), false},
+		{"settings under a Codex home holding 0xff", configuration("/tmp/c\xed\xb3\xbf/" + ConfigName), true},
+		{"settings under a surrogate that is no byte", configuration("/tmp/c\xed\xa0\x80/" + ConfigName), false},
+	}
+	inputs := make([]any, len(cases))
+	for i, c := range cases {
+		if got := NativePrescanUnreachable(c.row); got != c.want {
+			t.Errorf("%s: %v, want %v (%v)", c.name, got, c.want, get(c.row, "detail"))
+		}
+		inputs[i] = c.row
+	}
+	script := `import json,sys;sys.path.insert(0,sys.argv[1]);from crw_runtime import completion;print(json.dumps([completion._native_prescan_unreachable(v) for v in json.load(sys.stdin)]))`
+	cmd := exec.Command(python(t), "-c", script, filepath.Join(testRoot, "scripts"))
+	cmd.Stdin = strings.NewReader(evidence.Dumps(inputs, false, false, true))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	var answers []bool
+	if err = json.Unmarshal(out, &answers); err != nil || len(answers) != len(cases) {
+		t.Fatalf("%v %s", err, out)
+	}
+	for i, c := range cases {
+		if answers[i] != c.want {
+			t.Errorf("%s: Python reads %v, want %v", c.name, answers[i], c.want)
 		}
 	}
 }
