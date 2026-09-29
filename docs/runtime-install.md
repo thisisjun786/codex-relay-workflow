@@ -703,7 +703,11 @@ predecessor: classifying through it would read the previous interpreter, digest 
 bytes, and report the new candidate as a fork of itself. Only the registration expectation uses
 the pointer, and the pointer path is read from the host record rather than rebuilt from the
 destination argument, because the registration comparison is string equality and `--dest`
-spelled differently on a later run is a different string for the same directory.
+spelled differently on a later run is a different string for the same directory. The Go
+installer that replaces this command, `crw install`, has no `--dest` at all: its destination is
+fixed at `<home>/.local/share/crw-runtime`, the directory whose `current/bin` the plugin wiring
+runs, and it refuses a host record whose pointer names another link, with the repair
+([decisions 11 and 38](port/decisions.md)).
 
 Registering the pointer widens what a registration means, and the evidence that widening would
 cost is taken back rather than lost. `LINKED` against the pointer says the configuration names

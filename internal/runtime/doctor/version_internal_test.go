@@ -33,7 +33,7 @@ func TestCodexVersionIsUnreadWhenADescendantHoldsItsOutput(t *testing.T) {
 	commandWaitDelay = 100 * time.Millisecond
 	t.Cleanup(func() { commandWaitDelay = saved })
 	answer := make(chan *string, 1)
-	go func() { answer <- codexVersion(context.Background()) }()
+	go func() { answer <- CodexVersion(context.Background()) }()
 	select {
 	case got := <-answer:
 		if got != nil {

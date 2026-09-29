@@ -397,8 +397,15 @@ func TestRetentionScanHoldsEveryRowForAnUnboundedWindow(t *testing.T) {
 			write(t, filepath.Join(journal, "20260929", "now.json"), `{"at": "2026-09-29T12:00:00Z"}`, 0o600)
 			write(t, filepath.Join(journal, "20190101", "old.json"), `{"at": "2019-01-01T00:00:00Z"}`, 0o600)
 			write(t, filepath.Join(h.codex, "hooks.json"), `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "true", "timeout": `+timeout+`}]}]}}`, 0o600)
-			if holds := golden.List(record.Get(h.scan(t), "liveHolds")); len(holds) != 2 {
+			report := h.scan(t)
+			if holds := golden.List(record.Get(report, "liveHolds")); len(holds) != 2 {
 				t.Fatalf("holds %s", golden.Canon(holds))
+			}
+			// PR190 4132061915: a timeout that is not finite is listed, naming its value and where
+			// it is configured, and row 2 is unscanned; a finite one too large for a window is not.
+			nonFinite := timeout == "Infinity"
+			if listed(unreadable(report), filepath.Join(h.codex, "hooks.json")+" hooks.Stop[0].hooks[0].timeout: row 2: a Stop hook timeout of Infinity") != nonFinite || (record.Get(surfaceRow(t, report, 2), "scanned") == false) != nonFinite {
+				t.Fatalf("row 2 %s, unreadable %v", golden.Canon(surfaceRow(t, report, 2)), unreadable(report))
 			}
 		})
 	}
@@ -409,6 +416,9 @@ func TestRetentionScanHoldsEveryRowForAnUnboundedWindow(t *testing.T) {
 	unscanned := golden.List(record.Get(report, "unscanned"))
 	if len(unscanned) != 2 || !strings.HasPrefix(unscanned[0].(string), "row 2: ") || record.Get(report, "clear") != false {
 		t.Fatalf("unscanned %s", golden.Canon(unscanned))
+	}
+	if !listed(unreadable(report), "hooks.Stop[0].hooks[0].timeout: row 2: a Stop hook timeout of NaN") {
+		t.Fatalf("unreadable %v", unreadable(report))
 	}
 }
 
@@ -1152,6 +1162,33 @@ func TestRetentionScanReadsEmptyWordsAndPrograms(t *testing.T) {
 	for i, want := range []string{"unreadable", "clean", "unreadable", "unreadable", "clean", "unreadable", "clean", "unreadable"} {
 		if got := outcome(report, 9, "hooks.Stop[0].hooks["+strconv.Itoa(i)+"].command"); got != want {
 			t.Errorf("hook %d: %s, want %s", i, got, want)
+		}
+	}
+}
+
+// A daemon.json or scope claim whose pid or workerPid is present but not a pid (a string, a
+// float, a boolean, zero, a negative or oversized number) names a process the scan cannot find:
+// the record is unreadable and row 3 unscanned (PR190 4132061740). An absent or null workerPid,
+// or a null pid, records no process and is not unreadable.
+func TestRetentionScanListsARecordWhosePidIsNotAPid(t *testing.T) {
+	for _, pid := range []string{`"4242"`, `4242.0`, `true`, `0`, `-1`, `99999999999`, `[4242]`} {
+		for _, key := range []string{"pid", "workerPid"} {
+			t.Run(key+"="+pid, func(t *testing.T) {
+				h := newHost(t)
+				path := filepath.Join(h.state, "codex-session-relay", "scope-1", "daemon.json")
+				write(t, path, `{"pid": 4242, "startTicks": 777, "`+key+`": `+pid+`}`, 0o600)
+				report := h.scanProc(t, pythonProc(t))
+				if !listed(unreadable(report), path+": row 3 "+key+": ", "is not a pid") || record.Get(surfaceRow(t, report, 3), "scanned") != false {
+					t.Fatalf("row 3 %s, unreadable %v", golden.Canon(surfaceRow(t, report, 3)), unreadable(report))
+				}
+			})
+		}
+	}
+	for _, document := range []string{`{"pid": 4242, "startTicks": 777}`, `{"pid": 4242, "startTicks": 777, "workerPid": null}`, `{"pid": null, "workerPid": null}`} {
+		h := newHost(t)
+		write(t, filepath.Join(h.state, "codex-session-relay", "scope-1", "daemon.json"), document, 0o600)
+		if report := h.scanProc(t, pythonProc(t)); len(unreadable(report)) != 0 || record.Get(surfaceRow(t, report, 3), "scanned") != true {
+			t.Errorf("%s: row 3 %s, unreadable %v", document, golden.Canon(surfaceRow(t, report, 3)), unreadable(report))
 		}
 	}
 }

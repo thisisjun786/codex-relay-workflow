@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
@@ -21,6 +22,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/sync"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
 	"github.com/thisisjun786/codex-relay-workflow/internal/skill"
 )
 
@@ -33,9 +35,21 @@ const parserExit = 2
 func main() {
 	started := time.Now()
 	adapter.Register()
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := cancelOn(context.Background(), os.Interrupt)
 	defer stop()
 	os.Exit(runAt(ctx, os.Args[0], os.Args[1:], os.Stdout, os.Stderr, started))
+}
+
+// cancelOn is a context the first of signals cancels. The signals are handled only until then:
+// a second one gets its default disposition, so an operator whose interrupt is being honoured
+// slowly can still end the process at once.
+func cancelOn(parent context.Context, signals ...os.Signal) (context.Context, context.CancelFunc) {
+	ctx, stop := signal.NotifyContext(parent, signals...)
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+	return ctx, stop
 }
 
 func run(ctx context.Context, program string, args []string, stdout, stderr io.Writer) int {
@@ -68,6 +82,13 @@ func runAt(ctx context.Context, program string, args []string, stdout, stderr io
 		return skill.Run(rest, os.Stdin, stdout, stderr)
 	case "doctor":
 		return doctor.Run(ctx, rest, stdout, stderr)
+	case "install":
+		// An install command waits on locks and then removes or replaces things, so every way an
+		// operator or a supervisor asks it to stop (SIGINT, SIGTERM, SIGHUP) cancels it: a wait
+		// ends and nothing destructive follows. Other modes keep their own signal handling.
+		ctx, stop := cancelOn(ctx, syscall.SIGTERM, syscall.SIGHUP)
+		defer stop()
+		return install.Run(ctx, rest, stdout, stderr)
 	case "help", "-h", "--help":
 		usage(stdout)
 		return 0
@@ -76,7 +97,7 @@ func runAt(ctx context.Context, program string, args []string, stdout, stderr io
 		return 0
 	default:
 		usage(stderr)
-		fmt.Fprintf(stderr, "crw: error: argument command: invalid choice: %s (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'help', 'version')\n", store.PythonRepr(mode))
+		fmt.Fprintf(stderr, "crw: error: argument command: invalid choice: %s (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'help', 'version')\n", store.PythonRepr(mode))
 		return parserExit
 	}
 }
@@ -95,5 +116,5 @@ func relay(ctx context.Context, program string, args []string, stdout, stderr io
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,help,version} ...")
+	fmt.Fprintln(w, "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,help,version} ...")
 }

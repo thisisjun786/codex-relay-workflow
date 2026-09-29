@@ -881,3 +881,16 @@ func formatNumber(n float64) string {
 	}
 	return strconv.FormatFloat(n, 'g', -1, 64)
 }
+
+// AdapterIdentities is the identity of every entry in the user hook file at path that runs this
+// adapter for event - the Python completion_hook.py entry point or a native crw hook command -
+// and whether the file could be read at all (completion.adapter_entries). An unread file is
+// not an empty one: the installer refuses a second owner on it rather than defaulting.
+func AdapterIdentities(path, event string) ([]string, bool) {
+	_, ours, readable := readRegistrations(path, event)
+	identities := make([]string, 0, len(ours))
+	for _, registration := range ours {
+		identities = append(identities, registration.Identity)
+	}
+	return identities, readable
+}

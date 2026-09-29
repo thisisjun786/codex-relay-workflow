@@ -180,6 +180,9 @@ func TestLivenessIsTheAdvisoryLock(t *testing.T) {
 func TestAbandonedStagingIsReclaimedAndLiveStagingIsNot(t *testing.T) {
 	dir := t.TempDir()
 	env := filepath.Join(dir, "env")
+	if err := os.MkdirAll(env, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := staging.WriteClaim(env, staging.NewPayload(staging.Staging, nil, nil)); err != nil {
 		t.Fatal(err)
 	}
@@ -215,46 +218,32 @@ func TestAbandonedStagingIsReclaimedAndLiveStagingIsNot(t *testing.T) {
 	}
 }
 
-// A Go staging is built beside its final name and renamed into place complete: the final name
-// never names a half-built directory, and the lock moves with it.
-func TestBeginCommitRenamesACompleteDirectory(t *testing.T) {
-	final := filepath.Join(t.TempDir(), "bin-0.3.0-aaaaaaaaaaaa")
-	stage, err := staging.Begin(final, "CRW-157", "run-1")
+// A Go staging is its final directory, made with an exclusive mkdir and claimed STAGING while
+// its lock is held; a second Create of the same name is refused as not this run's.
+func TestCreateClaimsAnExclusiveDirectory(t *testing.T) {
+	final := filepath.Join(t.TempDir(), "dest", "bin-0.3.0-aaaaaaaaaaaa")
+	held, err := staging.Create(final, "CRW-158", "run-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stage.Release()
-	if _, err := os.Lstat(final); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("the final name exists before the staging is complete")
-	}
-	claim := staging.ReadClaim(stage.Directory)
+	defer held.Release()
+	claim := staging.ReadClaim(final)
 	if claim.State != reading.Present || record.Get(claim.Value.(record.Object), "state") != staging.Staging || record.Get(claim.Value.(record.Object), "writtenBy") != staging.WrittenByGo {
 		t.Fatalf("the staging claim: %+v", claim)
 	}
-	if state, _ := staging.OwnerLiveness(stage.Directory); state != staging.Live {
+	if state, _ := staging.OwnerLiveness(final); state != staging.Live {
 		t.Fatalf("a staging in progress: %s", state)
 	}
-	write(t, filepath.Join(stage.Directory, "bin", "crw"), "binary")
-	temporary := stage.Directory
-	if err := stage.Commit("CRW-157", "run-1"); err != nil {
-		t.Fatal(err)
+	if _, err := staging.Create(final, nil, nil); !errors.Is(err, staging.ErrNotOwned) || !errors.Is(err, os.ErrExist) {
+		t.Fatalf("a second Create took an existing directory: %v", err)
 	}
-	if _, err := os.Lstat(temporary); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("the temporary directory is still there")
+	held.Release()
+	if state, _ := staging.OwnerLiveness(final); state != staging.Dead {
+		t.Fatalf("a released staging: %s", state)
 	}
-	if !staging.IsSettled(staging.ReadClaim(final)) {
-		t.Fatal("the final directory is not settled")
-	}
-	if state, _ := staging.OwnerLiveness(final); state != staging.Live {
-		t.Fatalf("the lock did not move with the directory: %s", state)
-	}
-	second, err := staging.Begin(final, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer second.Release()
-	if err := second.Commit(nil, nil); !errors.Is(err, staging.ErrFinalExists) {
-		t.Fatalf("a second staging replaced a final directory: %v", err)
+	occupied, _ := staging.DirectoryOccupied(final)
+	if decision, _ := staging.Decide(staging.ReadClaim(final), staging.Dead, occupied, false, false); decision != staging.Reclaim {
+		t.Fatalf("an abandoned Go staging: %s", decision)
 	}
 }
 
@@ -275,5 +264,18 @@ func TestClearOwnRemovesOnlyItsOwnFiles(t *testing.T) {
 	}
 	if occupied, _ := staging.DirectoryOccupied(filepath.Join(env, "missing")); occupied != nil {
 		t.Fatal("an unlistable directory is not an empty one")
+	}
+}
+
+// A claim is never written into a directory that is gone: the claim's lock would otherwise make
+// the directory again around it, and a runtime removed under a settle would come back as an empty
+// directory with a COMPLETE claim.
+func TestAClaimIsNotWrittenIntoADirectoryThatIsGone(t *testing.T) {
+	gone := filepath.Join(t.TempDir(), "bin-0.9.0-aaaaaaaaaaaa")
+	if err := staging.WriteClaim(gone, staging.NewPayload(staging.Complete, nil, nil)); !os.IsNotExist(err) {
+		t.Fatalf("a claim for a directory that is gone: %v", err)
+	}
+	if _, err := os.Lstat(gone); !os.IsNotExist(err) {
+		t.Fatal("the directory was made again around the claim")
 	}
 }

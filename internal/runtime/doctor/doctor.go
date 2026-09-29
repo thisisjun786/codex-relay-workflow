@@ -27,6 +27,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/exercise"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/pointer"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
@@ -55,9 +56,11 @@ type Options struct {
 	Hostname     func() (string, error)
 	// AppServer observes the App Server identity a measured point is compared on, through the
 	// selected runtime's bridge (bridge is its entry point, <runtime>/bin/codex-thread-bridge).
-	// This command does not make that observation yet (todo 38 wires it), so nil leaves the
-	// dimension unread, which stops Go classification exactly as
-	// runtime_install.classify_component stops on an unobserved App Server.
+	// nil is the observation itself: a read-only MCP session with that bridge
+	// (exercise.Session, the one crw install exercises a candidate with), whose get_capabilities
+	// answer is the dimension, as runtime_install.py observed it through check_connection. A
+	// bridge that answers nothing leaves the dimension unread, which stops Go classification
+	// exactly as runtime_install.classify_component stops on an unobserved App Server.
 	//
 	// The skill links are deliberately not a signal here, unlike in classify_component: an
 	// installed Go product takes its skills from the plugin payload the Codex marketplace
@@ -355,10 +358,11 @@ func jsonObject(what string) func(any) error {
 // pipe would otherwise hold the reading (and the diagnosis) until it exits.
 var commandWaitDelay = 5 * time.Second
 
-// codexVersion is hostrecord's codexCli dimension: `codex --version`, first line. A run that
+// CodexVersion is hostrecord's codexCli dimension: `codex --version`, first line. A run that
 // fails, times out, or whose output a descendant still holds open once it exits
 // (exec.ErrWaitDelay) is an unread dimension (nil), never a version read from a partial output.
-func codexVersion(ctx context.Context) *string {
+// crw install records a point's codexCli with it.
+func CodexVersion(ctx context.Context) *string {
 	run, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(run, "codex", "--version")
@@ -508,14 +512,30 @@ type observations struct {
 	hostProblem      string
 	appServer        *string
 	appServerProblem string
-	notChecked       []string
+	// appServerBridge is the bridge the App Server was asked through, "" when none was asked.
+	appServerBridge string
+	notChecked      []string
+}
+
+// appServerReport is the report's appServer member: whether the selected bridge was asked and
+// answered. The comparison itself is classifyGo's, on the same observation.
+func (seen observations) appServerReport() Object {
+	switch {
+	case seen.appServerBridge == "":
+		return Object{{Key: "observed", Value: false}, {Key: "bridge", Value: nil}, {Key: "detail", Value: "no Go runtime is selected, so no bridge was asked"}}
+	case seen.appServer == nil:
+		return Object{{Key: "observed", Value: false}, {Key: "bridge", Value: seen.appServerBridge},
+			{Key: "detail", Value: "the selected bridge did not answer get_capabilities, so the App Server dimension is unread and classification stops on it rather than comparing a point against a reading nobody took"}}
+	}
+	return Object{{Key: "observed", Value: true}, {Key: "bridge", Value: seen.appServerBridge},
+		{Key: "detail", Value: "the selected bridge answered get_capabilities, and its answer is the App Server dimension a point is compared on"}}
 }
 
 // observe makes the shared readings once; bridge is the selected runtime's bridge entry point,
 // or "" when no Go runtime is selected and nothing is classified.
 func observe(ctx context.Context, o Options, bridge string) observations {
 	var seen observations
-	versionOf := codexVersion
+	versionOf := CodexVersion
 	if o.CodexVersion != nil {
 		versionOf = o.CodexVersion
 	}
@@ -533,12 +553,15 @@ func observe(ctx context.Context, o Options, bridge string) observations {
 	default:
 		seen.host = name
 	}
-	switch {
-	case o.AppServer == nil:
-		seen.appServerProblem = "this command does not observe it yet; todo 38 wires the observation"
-		seen.notChecked = append(seen.notChecked, "the App Server dimension (todo 38)")
-	case bridge != "":
-		seen.appServer = o.AppServer(ctx, bridge)
+	if bridge != "" {
+		appServerOf := o.AppServer
+		if appServerOf == nil {
+			appServerOf = func(ctx context.Context, bridge string) *string {
+				return exercise.Session(ctx, bridge, o.Socket, o.Env).AppServer()
+			}
+		}
+		seen.appServerBridge = bridge
+		seen.appServer = appServerOf(ctx, bridge)
 		seen.appServerProblem = "the observation through " + bridge + " answered nothing"
 	}
 	return seen
@@ -824,7 +847,7 @@ func Diagnose(ctx context.Context, o Options) Object {
 	}
 	fields := map[string]Object{
 		"installed":  installed,
-		"mcpExposed": field("not_verified", "no tool names were observed: only a live session can list them, and a configuration entry alone never establishes this field.", nil, measured),
+		"mcpExposed": field("not_verified", "the doctor's own session with the bridge is not Codex's: only a Codex session can show which tools it exposes, and a configuration entry alone never establishes this field.", nil, measured),
 		"connected": field(connectedValue, "doctor actorReachability.socketConnect = "+pyRepr(connect)+". A socket file existing on disk does not establish this.",
 			evidence.Dumps(record.Get(summary, "scopeCommand"), false, false, true), connectedAt),
 		"deliveryAccepted":     field("not_applicable", "no trial was requested. This field requires an attempt that recorded a returned turn id, which means creating work, and this command creates none.", nil, ""),
@@ -853,6 +876,7 @@ func Diagnose(ctx context.Context, o Options) Object {
 		{Key: "hostRecordReading", Value: hostReading},
 		{Key: "selected", Value: selected},
 		{Key: "codexCli", Value: codexCli(seen.version)},
+		{Key: "appServer", Value: seen.appServerReport()},
 		{Key: "runtime", Value: runtime},
 		{Key: "promotionLock", Value: Object{{Key: "path", Value: promotion}, {Key: "state", Value: lockState}, {Key: "held", Value: held}, {Key: "detail", Value: lockDetail}}},
 		{Key: "settings", Value: settings},

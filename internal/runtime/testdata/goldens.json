@@ -1322,6 +1322,80 @@
    }
   }
  },
+ "settingsDocuments": {
+  "bridgeRecords": {
+   "v1": {
+    "bytes": "{\n  \"args\": [],\n  \"bridgeExecutable\": \"/home/user/.local/share/crw-runtime/current/bin/codex-thread-bridge\",\n  \"installedBy\": \"CRW-158\",\n  \"owner\": \"plugin\",\n  \"recordVersion\": 1,\n  \"serverName\": \"codex-thread-bridge\"\n}\n",
+    "inputs": {
+     "args": [],
+     "command": "/home/user/.local/share/crw-runtime/current/bin/codex-thread-bridge",
+     "issue": "CRW-158",
+     "name": "codex-thread-bridge",
+     "policy": null
+    }
+   },
+   "v1-args": {
+    "bytes": "{\n  \"args\": [\n    \"--socket\",\n    \"/s \\u00e9\"\n  ],\n  \"bridgeExecutable\": \"/home/user/.local/share/crw-runtime/current/bin/codex-thread-bridge\",\n  \"installedBy\": null,\n  \"owner\": \"plugin\",\n  \"recordVersion\": 1,\n  \"serverName\": \"codex-thread-bridge\"\n}\n",
+    "inputs": {
+     "args": [
+      "--socket",
+      "/s \u00e9"
+     ],
+     "command": "/home/user/.local/share/crw-runtime/current/bin/codex-thread-bridge",
+     "issue": null,
+     "name": "codex-thread-bridge",
+     "policy": null
+    }
+   },
+   "v2": {
+    "bytes": "{\n  \"args\": [],\n  \"bridgeExecutable\": \"/home/user/.local/share/crw-runtime/current/bin/codex-thread-bridge\",\n  \"executionPolicy\": {\n    \"digest\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\n    \"path\": \"/home/user/.config/crw/execution-policy.json\"\n  },\n  \"installedBy\": \"CRW-158\",\n  \"owner\": \"plugin\",\n  \"recordVersion\": 2,\n  \"serverName\": \"codex-thread-bridge\"\n}\n",
+    "inputs": {
+     "args": [],
+     "command": "/home/user/.local/share/crw-runtime/current/bin/codex-thread-bridge",
+     "issue": "CRW-158",
+     "name": "codex-thread-bridge",
+     "policy": {
+      "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "path": "/home/user/.config/crw/execution-policy.json"
+     }
+    }
+   }
+  },
+  "hookSettings": {
+   "plugin-hold-socket": {
+    "bytes": "{\n  \"adapterEntryPoint\": \"/home/user/.local/share/crw-runtime/current/bin/crw-completion-hook\",\n  \"adapterInterpreter\": \"/usr/bin/env\",\n  \"configVersion\": 1,\n  \"dbPath\": \"/home/user/state/relay.sqlite3\",\n  \"event\": \"Stop\",\n  \"installedBy\": null,\n  \"isolationAssertedBy\": \"CRW-9\",\n  \"journalPolicy\": \"every_invocation\",\n  \"journalRoot\": \"/home/user/journal\",\n  \"markerRoot\": \"/home/user/markers\",\n  \"mode\": \"hold\",\n  \"owner\": \"plugin\",\n  \"relayExecutable\": \"/home/user/.local/share/crw-runtime/current/bin/codex-session-relay\",\n  \"socketPath\": \"/home/user/.codex/app-server-control/app-server-control.sock\",\n  \"timeoutSeconds\": 7\n}\n",
+    "complaints": [],
+    "inputs": {
+     "codex_home": "/home/user/.codex",
+     "database": "/home/user/state/relay.sqlite3",
+     "destination": "/home/user/.local/share/crw-runtime",
+     "isolation": "CRW-9",
+     "issue": null,
+     "journal_root": "/home/user/journal",
+     "marker_root": "/home/user/markers",
+     "mode": "hold",
+     "socket": "/home/user/.codex/app-server-control/app-server-control.sock",
+     "timeout": 7
+    }
+   },
+   "plugin-observe": {
+    "bytes": "{\n  \"adapterEntryPoint\": \"/home/user/.local/share/crw-runtime/current/bin/crw-completion-hook\",\n  \"adapterInterpreter\": \"/usr/bin/env\",\n  \"configVersion\": 1,\n  \"dbPath\": null,\n  \"event\": \"Stop\",\n  \"installedBy\": \"CRW-158\",\n  \"isolationAssertedBy\": null,\n  \"journalPolicy\": \"every_invocation\",\n  \"journalRoot\": \"/home/user/.codex/crw-completion-hook/journal\",\n  \"markerRoot\": \"/home/user/.local/state/codex-session-marker\",\n  \"mode\": \"observe\",\n  \"owner\": \"plugin\",\n  \"relayExecutable\": \"/home/user/.local/share/crw-runtime/current/bin/codex-session-relay\",\n  \"timeoutSeconds\": 5\n}\n",
+    "complaints": [],
+    "inputs": {
+     "codex_home": "/home/user/.codex",
+     "database": null,
+     "destination": "/home/user/.local/share/crw-runtime",
+     "isolation": null,
+     "issue": "CRW-158",
+     "journal_root": null,
+     "marker_root": "/home/user/.local/state/codex-session-marker",
+     "mode": "observe",
+     "socket": null,
+     "timeout": 5
+    }
+   }
+  }
+ },
  "shapes": {
   "component-list": {
    "input": {

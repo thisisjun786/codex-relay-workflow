@@ -493,7 +493,14 @@ func (j judge) policy(into *componentRegistrations, path string, reference any, 
 		return false
 	}
 	entry := registrationEntry(path, "executionPolicy.path", file)
-	handle, err := os.OpenFile(file, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	// The launcher opens os.fsencode(path): a surrogate escape U+DC80..U+DCFF is the byte it
+	// stands for, and any other surrogate is a path it refuses.
+	name, encodable := reading.FSEncode(file)
+	if !encodable {
+		refuse("executionPolicy.path", "it names an execution policy path this system cannot encode, found "+evidence.Repr(file))
+		return false
+	}
+	handle, err := os.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 			refuse("executionPolicy.path", "the execution policy "+file+" does not exist")

@@ -461,3 +461,23 @@ func TestUnderIsContainmentNotAStringPrefix(t *testing.T) {
 		t.Fatal("a sibling sharing the prefix is not under it")
 	}
 }
+
+// The outgoing selection is replaced whole by the promotion that replaces a selection, and a
+// restore with no outgoing to put back removes the key rather than writing null.
+func TestOutgoingIsReplacedWholeAndRemovedWhenNothingWasThere(t *testing.T) {
+	path := filepath.Join(t.TempDir(), record.Name)
+	outgoing := record.Object{{Key: "codex-session-relay", Value: record.Object{{Key: "selected", Value: "/old/bin"}}}}
+	if _, err := record.Update(path, 1, record.Delta{Outgoing: &record.Outgoing{Value: outgoing}}); err != nil {
+		t.Fatal(err)
+	}
+	read := record.Load(path, 1)
+	if got := record.Get(read.Value.(record.Object), "outgoing"); golden.Canon(got) != golden.Canon(outgoing) {
+		t.Fatalf("outgoing: %s", golden.Canon(got))
+	}
+	if _, err := record.Update(path, 1, record.Delta{Outgoing: &record.Outgoing{}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, has := record.Lookup(record.Load(path, 1).Value.(record.Object), "outgoing"); has {
+		t.Fatal("a restore to nothing left the key")
+	}
+}

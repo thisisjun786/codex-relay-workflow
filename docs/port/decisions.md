@@ -196,7 +196,12 @@ SHA256. The existing `current` symlink is repointed by creating a temporary link
 `rename(2)`-ing it over `current`, so `current/bin/<name>` is a valid path at every instant.
 Python `env-1-<hash>` directories are left in place until todo 43's retention scan says no
 live or resumable task references them. `XDG_DATA_HOME` is not honoured on this path; this
-is a documented limitation carried over, not a new one.
+is a documented limitation carried over, not a new one. `crw install` has no `--dest` (todo 38
+review): every subcommand acts on `<home>/.local/share/crw-runtime`, the directory whose
+`current/bin` the plugin wiring runs, with the home as `pathlib` expands it, and a host record
+whose `pointer.path` (read through `Path()`) names another link - a host installed at another
+destination by `runtime_install.py --dest` - is refused by every command that would act on it,
+with the repair, and reported by `crw install status`.
 
 Why: the plugin's hook command and the MCP launcher both resolve through `current`, and the
 host record's `pointer` field records that path. Changing the root would force a record
@@ -340,17 +345,109 @@ the absent jsonrpc field, draft L36); draft D8, GAP-10.
 ## 18. Settings records
 
 Decision: `crw-completion-hook.json` keeps `configVersion = 1` and its key set;
-`crw-bridge-mcp.json` keeps `recordVersion = 2`; the host record keeps `recordVersion` and
-`definitionVersion = 1`. The Python-shaped keys (`interpreterPath`, `interpreter`,
-`adapterInterpreter`, `requiresPython`, `module`, `packageLocation`, `serverModule`,
-`exerciseScript`) are read and preserved when present and written as absent by the Go
-installer; their replacement shape is CRW-157's components definition v2, decided there and
-not here.
+`crw-bridge-mcp.json` keeps `recordVersion` 1 (no policy) and 2 (a policy named by path and
+digest); the host record keeps `recordVersion` and `definitionVersion = 1`. Both settings records
+are written byte for byte as Python writes them (`json.dumps(indent=2, sort_keys=True)` and a
+newline). A Go install writes the plugin-owned Stop settings with `relayExecutable` =
+`<destination>/current/bin/codex-session-relay`, `adapterEntryPoint` =
+`<destination>/current/bin/crw-completion-hook` and `adapterInterpreter` = `/usr/bin/env`, and the
+bridge record with `bridgeExecutable` = `<destination>/current/bin/codex-thread-bridge`. The
+Python-shaped keys of the host record and the components definition (`interpreterPath`,
+`interpreter`, `requiresPython`, `module`, `packageLocation`, `serverModule`, `exerciseScript`) are
+read and preserved when present and never written by the Go installer.
 
-Evidence: scripts/crw_runtime/completion.py:53 (`CONFIG_NAME`), :558-563 (`configVersion`
-check); scripts/crw_runtime/bridgerecord.py:79 (record home); scripts/runtime_install.py:
-725-771 (`interpreterPath` read paths); scripts/crw_runtime/components.json:3
-(`definitionVersion: 1`), :9-26 (Python-shaped fields); draft L1, L4, L5, GAP-9, D6.
+Correction (todo 38): an earlier text had `adapterInterpreter` written as absent. The Go hook's
+own reader (internal/relay/hook/settings.go `Complaints`) requires `adapterInterpreter` and
+`adapterEntryPoint` whenever `owner` is plugin, so an absent key would have every plugin-owned
+document refused. And the value cannot be the binary: the legacy launchers a cached turn still
+runs (plugins/crw/wiring/crw_stop_hook.py, its `<CODEX_HOME>/crw-stop-hook.py` copy) execute
+`[adapterInterpreter, adapterEntryPoint, <settings>]`, so the binary as interpreter would receive
+its own path as the settings argument and evaluate nothing on every Stop. `/usr/bin/env` executes
+the entry point with the settings path as its one argument, which is what the Go hook reads.
+
+One document for both runtime kinds (todo 38 review): `crw install` writes one plugin-owned Stop
+settings document, valid through the pointer for a Go runtime and for a venv alike, and no
+promotion or rollback rewrites it. `/usr/bin/env <destination>/current/bin/crw-completion-hook
+<settings>` runs the Go hook on a Go runtime and, on a venv, the fence release's
+`crw-completion-hook` console script (`codex_session_relay.stopadapter:main`, which reads
+`argv[1]` as its settings; its `complaints()` accepts `/usr/bin/env`), and `relayExecutable`
+`<destination>/current/bin/codex-session-relay` is the Go link or the venv's console script. The
+only rewrite is forward, once: the relay host's Python-era document (`adapterInterpreter`
+`.../current/bin/python3`, a path that vanishes when the pointer leaves the venv) is archived on
+the first Go install - under the `.superseded-<stamp>` name `steps.retire` gives, as a hard link
+to the same file (a copy where the filesystem refuses a link), never deleted - and replaced by its
+Go variant (the same host facts, only the two adapter keys moved) in one rename, inside the
+promotion and before the pointer moves. Both documents run while the pointer still names the
+venv, so there is no window. `crw install hook --owner plugin` replaces a Python-era document on
+a Go host only by settings that record the same host facts; other flags answer `config_differs`
+with the fields and the repair, because a silent rewrite of the mode changes whether turns can be
+held.
+
+A rollback to a venv never puts the archive back. Before it moves the pointer it requires the
+venv to serve the document: `bin/crw-completion-hook`, `bin/codex-session-relay` and
+`bin/codex-thread-bridge` resolve to regular files this user may execute, and so does each one's
+`#!` interpreter and the recorded `interpreterPath`; the hook script names
+`codex_session_relay.stopadapter`; the relay package the record lists there is the fence release
+(its `ownership.py` declares `BUILD = "codex-session-relay/0.2.0"`, `ownership.PythonBuild`); and
+every path the live document names through the pointer exists in the venv. Otherwise it refuses
+with nothing changed. An operator who wants the Python-era document back restores it by hand, and
+only while the pointer names the venv (after `crw install rollback <venv>`): take the newest
+`<CODEX_HOME>/crw-completion-hook.json.superseded-*` whose `adapterInterpreter` ends in
+`/current/bin/python3` and `mv` it over `crw-completion-hook.json` - one rename, so a Stop never
+finds the path empty. The next `crw install` archives it again and writes its Go variant.
+
+A replacement never destroys a document. A write that fails leaves the path as found and drops
+only the archive name. Bytes at the path that are not this run's - another writer's save, which
+is what a read-back mismatch after a successful atomic write means - are left where they are with
+the archive kept, and the answer names both. A transition undone after a failed commit or pointer
+move puts the archive back only while the path holds exactly the bytes this run wrote, and then by
+an atomic exchange of the two names (renameat2 `RENAME_EXCHANGE` on Linux, renamex_np
+`RENAME_SWAP` on darwin), which restores the document's own file; the displaced file is removed
+only when it holds this run's bytes, and is exchanged back otherwise. Where no atomic exchange
+exists (another platform, or a filesystem without one) nothing is renamed over the active path:
+both files stay and the answer gives the `mv` that puts the found settings back by hand. A document whose `adapterInterpreter` is `env` and whose
+`adapterEntryPoint` holds `=` is never written: GNU env reads such an argument as an assignment
+and executes the settings path instead.
+
+A write lands only on the document it was decided from (todo 38 review, PR #192). Every write of
+the Stop settings and of the bridge record looks at the file before it reads anything - device,
+inode, size, modification time and bytes, through one descriptor - and decides (and, for the
+Python-era replacement, builds the Go variant) from that document; under the lock the Python
+writers take it looks again, and anything but the same document writes nothing. A transition then
+decides again from a fresh reading, up to three times, so a cooperating writer's newer document is
+the one carried forward and archived, never overwritten by a variant of the bytes read before it;
+`crw install hook` and `register-mcp` answer `config_changed_underneath` /
+`record_changed_underneath` with the repair to rerun, as the Python writers do. The archive a
+replacement takes has to hold those same bytes, or its name is dropped and nothing is written.
+
+The bridge record names its execution policy as runtime_install.py records it,
+`Path(value).expanduser().absolute()`: `..` is kept rather than folded by text, so the record,
+its digest and the bridge all name the file the kernel opens for that spelling, a symbolic link
+before the `..` included. A name holding a byte that is not UTF-8 is recorded as `os.fsdecode`
+spells it (the byte as its surrogate escape, which the record carries as `"\udcXX"`) with the
+digest over the file itself, and every reader - the Python launcher, the Go wiring, `register-mcp`'s
+own check and the doctor - opens `os.fsencode` of it, the byte again.
+
+Evidence: scripts/crw_runtime/completion.py:55 (`CONFIG_NAME`), :550 (`complaints`), :2751
+(`configuration`); scripts/crw_runtime/bridgerecord.py:77 (`record_path`), :163 (`document`);
+plugins/crw/wiring/crw_stop_hook.py:97 (`adapter_call`), :141 (the `subprocess.run` of
+`call + [settings]`); scripts/crw_transition/steps.py:59 (`retire`); scripts/runtime_install.py:4828
+(the policy path); packages/codex-session-relay/pyproject.toml:28 (the console script),
+packages/codex-session-relay/src/codex_session_relay/stopadapter.py:259 (`complaints`), :1350
+(`main`), ownership.py:17 (`BUILD`); docs/port/cutover.md:446 (never an unfenced Python
+fallback); internal/relay/hook/adapter.go (args[0] is the settings path); internal/runtime/install
+(`TestHookSettingsBytesArePythons`, `TestBridgeRecordBytesArePythons`,
+`TestLegacyStopLaunchersReachTheGoHook`, `TestPythonEraSettingsMoveWithThePointer`,
+`TestARollbackToAVenvNeverRewritesTheSettings`, `TestARollbackKilledAtItsCommitLeavesStopsRecorded`,
+`TestARollbackToAVenvNeedsNoArchive`, `TestARollbackKeepsTheHostFactsTheSettingsRecord`,
+`TestHookKeepsThePythonEraHostFacts`, `TestAReplacementNeverDestroysAnotherWritersDocument`,
+`TestAnEntryPointEnvWouldMisreadIsRefused`, `TestTheExecutionPolicyPathIsSpelledAsPythonRecordsIt`,
+`TestATransitionNeverWritesAGoVariantBuiltFromStaleBytes`,
+`TestHookNeverWritesOverADocumentThatChangedAfterItWasRead`,
+`TestRegisterMCPNeverWritesOverARecordThatChangedAfterItWasRead`,
+`TestRegisterMCPRecordsANonUTF8PolicyPathAsPythonDoes`,
+`TestASettingsUndoWithoutAnAtomicExchangeRenamesNothing`);
+draft L1, L4, L5, GAP-9, D6.
 
 ## 19. Bridge provenance
 
@@ -1149,12 +1246,25 @@ rule that no lock file is ever unlinked or replaced, and it ends when todo 44 de
 files. `.promotion-lock` and `.crw-staging-lock` are flock(2) files under decision 7: created
 once, never unlinked, released by `LOCK_UN` or by the holder's death.
 
+Lock order (todo 38 review): a runtime directory's `<env>.crw-lock` is taken before the host-wide
+`.promotion-lock`, never after it. That is runtime_install.py's order - `cmd_install` holds the
+environment's `Locked` (`taking`) across its take/reclaim step and runs `_finish_promotion`, which
+takes `Exclusive`, inside it - and take()'s (reclaim and the already-installed reading take the
+promotion lock while the directory's is held). `crw install rollback` follows it: it finds its
+target on a first reading, takes the target's `<env>.crw-lock`, then the promotion lock, and finds
+the target again there, refusing with nothing written when the record moved it. A lock taken in
+the other order by one command and this order by another waits out the other's timeout and
+refuses. The settings records' and a claim's `.crw-lock` are leaves: nothing else is taken while
+one is held.
+
 Why: the Python installer and `plugin_transition` still write the host record, the claims and
 `crw-bridge-mcp.json` under this lock. A flock on the same path would not exclude an O_EXCL
 holder, and an O_EXCL file would not exclude a flock holder, so switching one side alone would
 let a Go and a Python read-modify-write interleave on the same record.
 
 Evidence: scripts/crw_runtime/hostrecord.py:271-315 (`Locked`), :335-378 (`Exclusive`);
+scripts/runtime_install.py:2723 (`taking`), :2775 and :2795 (`_finish_promotion` inside it);
+`TestARollbackHoldsItsTargetsDirectoryLock`;
 scripts/crw_runtime/staging.py:165-209 (`Held`), :212-240 (`owner_liveness`) and :155-162 (`write_claim` under `Locked`);
 scripts/crw_transition/steps.py (nine `Locked` sites); internal/runtime/record/locks.go;
 `TestCrwLockIsExclusiveAndExpiresOnlyWhenStale`,
@@ -1182,8 +1292,10 @@ stamps nothing. A binary built without the stamp - a build from a dirty tree, an
 GoReleaser release build, until todo 44 adds the stamp to the release workflow - records null
 trees, and both sweepers then report "this copy's install entry records
 an incomplete revision (repositoryTree, subdirectoryTree missing or malformed), which identifies
-nothing" rather than a revision nobody measured. The dead `outgoing` key and component-level
-facts are carried through when present and never written.
+nothing" rather than a revision nobody measured. Component-level facts are carried through when
+present and never written. The `outgoing` key has a reader again: `crw install` writes the
+selection a promotion replaces as `outgoing`, in the same write that commits the new selection,
+and `crw install rollback` returns to it (decision 38).
 
 Why: the Python installer, the developer harness and both sweepers (faultsweep.py:497 and
 internal/relay/faults/sweep.go:470) read the same file during coexistence and answer "not
@@ -1268,9 +1380,12 @@ directory's file set is unchanged, and a table committed only to a live WAL is r
 ## 37. Two third-party readers: github.com/BurntSushi/toml and mvdan.cc/sh/v3
 
 Decision: Go reads `config.toml` with `github.com/BurntSushi/toml`, at the version go.sum already
-pins through staticcheck, now a direct requirement. Todo 37's retention scan reads
-`mcp_servers.*.command` and `args` with it; todo 38's `register-mcp` uses the same reader for its
-append-only registration and read-back.
+pins through staticcheck, now a direct requirement, for reading only. Todo 37's retention scan
+reads `mcp_servers.*.command` and `args` with it; todo 38's `crw install register-mcp --owner
+plugin` and the promotion's second-owner refusal read the same tables with it, validating each
+table's shape (a table, a string `command`, a list of strings `args`) before comparing anything and
+refusing on a file that does not parse. Nothing in Go writes `config.toml`: the user-owned
+`register-mcp` append writer is retired (docs/port/inventory.md, Functions retired with evidence).
 
 The retention scan parses hook commands, shell wrappers and the programs they hand a shell
 (`sh -c` strings) with `mvdan.cc/sh/v3/syntax` v3.14.1, the parser behind shfmt, in its Bash
@@ -1286,7 +1401,8 @@ libraries are used for reading only. Nothing is formatted, evaluated, expanded o
 them; the `interp` and `expand` packages are not imported.
 
 Why: codexconfig.py refuses to approximate TOML (a hand-written reader produced ten defects), and
-the retention scan must read every registered command rather than guess at text. The same holds
+the retention scan must read every registered command rather than guess at text; concluding a
+server is absent when it is registered is how a second bridge arrives. The same holds
 for shell: todo 43 removes Python behind the scan's answer, so a mis-parse that hides a command
 position is a safety defect, and a hand-written lexer and grammar for it is a large surface of
 exactly that. The Bash variant, because Codex runs a hook command through a shell the scan cannot
@@ -1305,10 +1421,302 @@ which keeps `clear` false until a person rewrites or removes the command, while 
 host really registers (the native Stop command, the pre-native `python3 -c` bootstrap, launcher
 invocations and `sh ./wiring/crw-bridge.sh`) are inside it and judged.
 
-Evidence: scripts/crw_runtime/codexconfig.py:1-25; go.mod; internal/runtime/doctor/retention.go
-(`configToml`, `hookCommands`, `server`); internal/runtime/doctor/shell.go;
-`TestRetentionScanReadsTheWiringSurfaces`, `TestTheGrammarRefusesEveryOtherConstruct`,
-`TestRetentionScanJudgesOnlyWhatItsGrammarReads`, `TestRetentionScanJudgesAnMCPServerAsCodexStartsIt`.
+Evidence: scripts/crw_runtime/codexconfig.py:1-25, :81 (`registration_view`), :128 (`scan`); go.mod;
+internal/runtime/doctor/retention.go (`configToml`, `hookCommands`, `server`); internal/runtime/doctor/shell.go;
+internal/runtime/install/mcp.go (`readServers`); `TestRetentionScanReadsTheWiringSurfaces`,
+`TestTheGrammarRefusesEveryOtherConstruct`, `TestRetentionScanJudgesOnlyWhatItsGrammarReads`,
+`TestRetentionScanJudgesAnMCPServerAsCodexStartsIt`, `TestRegisterMCPWritesTheRecordAndRefusesASecondOwner`,
+`TestInstallRefusesASecondOwner`.
+
+## 38. `crw install`: the release digest authorizes the unpack, the exercise earns the point
+
+Decision: `crw install install` and `crw install update` are one code path. The archive comes
+from `--from <crw_<version>_<os>_<arch>.tar.gz>` (SHA256SUMS beside it, or `--sums`) or from
+`--release <tag>` (both assets fetched), must be named for this host's target, and must hash to the
+one digest SHA256SUMS lists for it; the verified bytes are held in memory and unpacked from, so
+nothing changes between the check and the unpack, and a mismatch refuses before anything under
+the destination exists. A `--release` tag must be `v<version>` (or `<version>`) with the version in
+the archive name's grammar, checked before anything is created or fetched, so it never holds a
+path separator or a dot segment; the two assets are written under fixed names in the run's
+scratch directory, so the tag chooses what is requested and never where anything is written. The
+runtime is `<destination>/bin-<version>-<archive sha256[:12]>`, made
+with an exclusive mkdir, locked and claimed STAGING under its `.crw-lock` exactly as
+runtime_install.py claims `env-*`; the archive may carry only `crw`, the three compatibility
+links (as links to `crw` or as its bytes) and regular files at safe relative paths that are not
+names the installer or the doctor reads as control data in a runtime directory: `bin/` (the
+installer places `crw` and the links there itself, and the doctor reads them and `bin/python*`), a
+path component beginning `.crw-` (the staging lock, the claim, the claim's `.crw-lock` sidecar and
+its atomic-write temporaries) or ending `.crw-lock` (any file's lock sidecar, decision 33), and
+`pyvenv.cfg` at any level (the doctor reads a directory holding one, and every path under it, as a
+Python venv, which a rollback's settings transition acts on), compared case-insensitively. No
+entry may declare more than `MaxArchiveBytes` (256 MiB, the bound on the compressed archive too),
+nor the entries together, and each body must be exactly the size its header declares (read
+through with `io.CopyN`, then EOF): nothing is ever truncated to a bound. Every entry is judged
+before anything is written, so a refused archive leaves nothing of itself, and the installer
+places the three links itself. The Go install entries are recorded before the
+candidate is exercised, as runtime_install.py records its entries before it measures
+(`cmd_install` writes them, then calls `measure_candidate`); the candidate is exercised through
+its own executables (`bin/codex-session-relay doctor` with a real socket connect; a read-only MCP
+session with `bin/codex-thread-bridge` that lists its tools and calls `get_capabilities`, its
+reader closed at the session's deadline whatever the bridge's descendants hold open), and only
+then is one point per component (install, installDigest, codexCli, host, appServer) recorded. An
+install entry does not make a directory a runtime: the entries of a candidate whose claim never
+settled (a run killed during its exercise leaves them) are acted on by nothing. A rollback
+requires a COMPLETE claim; a resume requires the record to select the directory, which only a
+promotion's commit writes; a failed run drops its candidate's entries (`ReleaseCandidate`) before
+it removes the directory; the next run of the same archive reclaims the directory and replaces
+them (one entry per location); and `crw install remove` drops them. Promotion is one critical section under `.promotion-lock`: the record is read inside it,
+the swap gate (decision 36) asks the selected relay, the pointer must be absent or a link this
+record placed, one owner per surface is required (the bridge in `config.toml` or the plugin record,
+never both, and a `codex-thread-bridge` table must name the pointer; the Stop adapter in
+`hooks.json` or plugin settings, never both; and no `hooks.json` registration of the adapter and no
+`config.toml` table may run through the pointer anything the runtime about to be named does not
+provide - the venv's `bin/python3` on a Go runtime - because the user-owned registrations are
+retired and such an entry is a second owner that would run nothing after the swap), the Stop
+settings are carried to the new runtime kind (decision 18), then the selection, the pointer's placement and `outgoing` are committed in one
+write (`outgoing` is the runtime the pointer leaves - the selection unless an interrupted move
+left them apart - as a moving rollback records it), the pointer is renamed over and proved - it must resolve without an error (no loop, nothing
+dangling) to the runtime directory itself by identity, and `<pointer>/bin/crw` must be a regular
+file the user may execute; comparing resolved spellings is not proof, because a pointer that loops
+resolves to the same text as a candidate spelled through it - and on any failure the pointer, the selection,
+`outgoing` and the settings are put back (the settings are replaced by copying the old document
+aside and renaming the new one over it, so the path is never empty and a write that fails or does
+not read back leaves the old document where it was). The COMPLETE claim is written last; the
+runtime the promotion replaced, selected and named by the pointer and so in service, has its claim
+settled COMPLETE too (under the lock, after the pointer is read back) when it still says STAGING
+with nobody holding it (an exit 3), so no later install of its archive reads it as abandoned
+staging. A claim runtime_install.py wrote (a venv's) is settled in runtime_install.py's own shape
+and marker, so runtime_install.py still reads the directory as its own. Finishing a promotion a
+killed run committed (a resume) moves the pointer as a promotion does, so it asks the same
+questions under the promotion lock before it moves it: the swap gate, the pointer's ownership and
+one owner per surface, on the registrations as they stand now, refusing as a promotion refuses. A destination that is
+spelled through the owned pointer, resolves inside the pointer's target, or lies inside a runtime
+directory is refused before anything is created. An existing directory of the candidate's name
+that is abandoned staging (a STAGING claim nobody holds, which the record does not select and the
+pointer does not name) is reclaimed only under the rules `crw install remove` applies, read again
+- the claim and its lock too - under the promotion lock, which `take()` takes after the directory's
+own lock (decision 33): the record selects it, a pointer (the recorded one or the default) names it
+or cannot be read, a live process runs out of it or cannot be ruled out, a relay daemon record
+cannot be read, or a registration the host reads names a path inside it or cannot be read, each
+keeps it and refuses with nothing removed or built. Where there is no process table (darwin) the
+reclaim keeps it too, fail-closed, and says so with the recovery for a staging that was never
+promoted: once no crw install run and nothing it started is still running, delete it by hand and
+rerun. One the record's `outgoing` names was put in service by a promotion, so it is never
+reclaimed either: its claim is settled COMPLETE and it is kept, which `crw install rollback`
+returns to. What the reclaim removes, and a failed run's own candidate, goes through a tombstone,
+as remove's does.
+runtime_install.py reclaims the same staging with `rmtree` and none of these readings
+(scripts/runtime_install.py:2831-2844); `crw install remove`, an operator's explicit request, still
+removes an outgoing runtime nothing else uses (the Python venv after the cutover is one). A runtime
+whose install finished is "already installed" only when, on the record read again under the
+promotion lock, every component selects it and the owned pointer names it; a split selection (one
+component on it, another elsewhere) is refused, naming each component's selection, with `crw
+install rollback <dir>` as the repair - it selects every component under the promotion rules and,
+the pointer already naming the runtime, swaps nothing. Nor is a runtime a host cannot launch as it
+stands (`doctor.LaunchProblems`: `bin/crw` a regular file this user may execute, each compatibility
+link resolving to it): its directory is named for the archive's digest, so it cannot be built again
+beside itself, and the refusal gives the commands that restore it in place (`repair`: `crw`
+extracted from the archive the directory is named for, `chmod 755`, `ln -sfn crw` for each link),
+after which the same install answers already installed. A rollback to the outgoing runtime and a
+remove is not offered, because a broken `codex-session-relay` link keeps the swap gate from asking
+the selected relay. Every command that records the pointer's
+placement (install, update and rollback) refuses a blank or whitespace `--issue` before it takes
+a lock, since `record.PlacementRecorded` rejects a placement recorded by nobody. The destination
+is fixed (decision 11): there is no `--dest`, and a record whose pointer is another link is refused
+before any command acts. Paths come from HOME, CODEX_HOME, XDG_STATE_HOME and the path flags;
+one holding a byte that is not UTF-8 is a usage error naming its source, and a document about to
+be written that still holds one (a marker root from the environment) is refused by its writer.
+runtime_install.py would record such a path surrogate-escaped; refusing it is a deliberate
+narrowing, because a record, settings document or pointer carrying U+FFFD names a file that does
+not exist. The execution policy path is the one path recorded surrogate-escaped, as
+runtime_install.py records it (decision 18). A HOME that is relative, holds `..` or starts with
+`//` is refused as well, since pathlib and a lexical join would spell the destination as two
+directories. A relative XDG_STATE_HOME is refused as a usage error, as the doctor refuses it:
+runtime_install.py reads it against the working directory and the XDG specification says to
+ignore it, and either would put the host record somewhere the doctor and the runtime's record
+readers do not look. `--execution-policy` given at all is read as a policy, so an empty value (or
+an empty last value of a repeated flag) is refused as runtime_install.py refuses it, never taken
+as no policy. Exit
+statuses are 0 (promoted and settled, or already installed), 1 (refused: nothing moved, and this
+run's directory was released unless the record or the pointer may name it), 2 (usage) and 3
+(promoted and in service, only the claim unsettled: never a free destination). `crw install
+rollback` returns the pointer to `outgoing`, or to a runtime directory the record lists exactly (an
+install entry's `environment`, never a directory that merely contains one; an empty directory
+argument is a usage error), holding the target's `<env>.crw-lock` and then the promotion lock
+(decision 33), under the same
+rules; both waits, the settings transition and the commit honour the command's context, and a
+pointer a rollback placed is proved as a promotion's is (a Go target through its `bin/crw`, a venv
+by resolving to it by identity). `outgoing` means the selection the last promotion replaced: crw install writes it only in the
+write that commits a promotion or a rollback and puts it back when that promotion is undone, so an
+install that fails before its promotion leaves it as it was. runtime_install.py writes the same key
+with another meaning, the selection current when its install starts (written right after its
+exclusive mkdir) and never put back, and has no reader of it; after a successful install of either
+the two agree. While both installers run on one host, a runtime_install.py install that fails leaves
+`outgoing` naming the runtime already selected, and a bare `crw install rollback` then refuses,
+writing nothing, because there is nothing to roll back to; `crw install rollback <dir>` naming a
+directory the record lists still returns to it. The target has to be launchable as it stands, judged
+without running it: a Go runtime as the doctor judges a selected one (`bin/crw` a regular file this
+user may execute, each link resolving to it), a venv as decision 18 requires. Its claim has to be
+COMPLETE, or STAGING with nobody holding it where the record's selection or `outgoing` proves a
+promotion committed it (an exit 3, or a run killed after its pointer moved); the rollback then
+settles it last, as resuming does, and answers 3 when it cannot. The runtime it leaves, in service
+with its claim still STAGING, is settled COMPLETE as well, so a later install of that archive keeps
+it rather than reclaiming it. Where the pointer already names the target (a run killed between its
+commit and its pointer move) no runtime is replaced, so the swap gate is not asked and only the
+selection moves; every other check still applies. The `outgoing` a rollback records is the runtime
+the host leaves - the one the pointer names, which is the selection unless an interrupted move left
+them apart - and a rollback that moves no pointer keeps `outgoing` as it was (or, where it named
+the target itself, records the one runtime the record selected instead). A bare rollback over an
+interrupted move (the pointer names a recorded runtime the record does not select) refuses and names
+both, since returning to `outgoing` could undo a committed choice. A claim written into a
+directory runtime_install.py claimed (an `env-*` one, or one whose claim it wrote) keeps its shape,
+`writtenBy` runtime_install.py, so runtime_install.py still reads it; and a claim is never written
+into a directory that is gone, which the claim's lock would otherwise make again. No rollback
+rewrites the Stop settings (decision 18). For a Python venv target the gate's schema cell compares the store with this build's declared
+schema, which stands for the Python runtime's because the DDL is identical (decision 14) and no Go
+release changes it before the commit point (docs/port/cutover.md). `crw install remove <dir>`
+deletes one `env-*` or `bin-*` directory directly under the destination. It is taken by its name
+under the destination and judged by file identity (a path counts when, as written or once its links
+are followed, it or an ancestor is the directory's own file, or is an entry of its name in the
+destination's file), so naming it through an alias of the destination - a symlink, a bind mount,
+a case-folded spelling - or a record written through another spelling cannot pass a check the
+canonical spelling fails. It deletes only when the record does
+not select it, the pointer does not (and is established not to) name it, it carries a readable
+claim of runtime_install.py's or crw install's whose lock nobody holds, no live process runs
+out of it (its `/proc/<pid>/exe`, its working directory, or what its argv runs - argv[0] when the
+executable could not be read (a readable one settles what runs) and it holds no whitespace (a
+process title such as sshd's is no path), the command `env` runs, and an interpreter's script
+operand after its options (the interpreter known by argv[0] or by its executable), a relative one
+resolved against `/proc/<pid>/cwd`, with a Python's `-c` and `-m` and a shell's `-c` ending the
+options - resolving inside it; a process whose argv runs something relative to a working
+directory it cannot read is not ruled out), and no registration the host reads names a path inside it. The registrations are read by the
+retention scan's own readers (`doctor.RegisteredInside`, rows 4, 5, 8, 9 and 10: every
+`crw-*.json` record, so the Stop settings' `relayExecutable`, `adapterEntryPoint` and
+`adapterInterpreter` and the bridge record's `bridgeExecutable`; the cached plugin declarations;
+the `crw-stop-hook.py` launcher copy; hooks.json; config.toml's `mcp_servers` commands and
+arguments; and the settings document a Stop command names), and a path counts when it lies inside
+the directory as written or once every link is followed, including each interpreter and script it
+is followed through. These are started afresh by each new session, so no process table shows them
+between sessions, and runtime_install.py never faced the question because it never removes a
+settled runtime; a registration that cannot be read or judged refuses too. Then, in
+runtime_install.py's order (`_install_failed` has `release_candidate` drop a candidate's entries
+before it removes the directory), the directory is first renamed, in one atomic step, to its
+tombstone `<destination>/.crw-removing-<name>`; its install entries are dropped in one write under
+the host record's lock, where the selection is read again, and in the same write `outgoing` is
+removed when it names anything inside the directory, so a bare `crw install rollback` then refuses
+because the record carries no outgoing selection instead of being sent to a directory that is
+gone and whose entries are not in the record; only after that write lands is the tombstone
+deleted. A drop that cannot be written renames the directory back and refuses; a deletion that
+does not finish exits 3 naming the tombstone. A kill anywhere in that sequence leaves either the
+whole directory or a tombstone - never a directory under the runtime's name with its claim gone,
+which every command would then read as somebody else's. `crw install status` lists each tombstone
+(`interruptedRemovals`), and `crw install remove` of the tombstone, or of the name when only its
+tombstone is left, finishes it, under the directory's lock and the promotion lock: the tombstone
+is finished only when it is one this command began - it carries a readable claim of crw install's
+or runtime_install.py's whose staging lock nobody holds, or it is empty - and no process runs out
+of it and no registration names it; somebody's directory of that name, holding files and no
+claim, is refused by name and left alone, by remove, by the reclaim and by a failed run's
+release (which then deletes its own candidate in place), and status reports it as not ours
+(`ours: false`). A tombstone is deleted with its claim last (everything else, then the staging
+lock, then the claim, then the empty directory), so a deletion that stops part-way leaves it
+claimed or empty, never a claimless half. A tombstone is recovery state: status lists every
+unfinished one, and it is finished with `crw install remove`, not deleted by hand, because
+finishing also drops what the record still lists under the name. What the record still lists under the name (its
+entries, an outgoing naming it) is dropped first, unless a runtime was installed under that name
+again. Remove, the reclaim and the already-installed reading take the directory's `<env>.crw-lock`
+first and the promotion lock after it, the order of decision 33, and the host record's `.crw-lock`
+inside both. Every command's lock waits before its first write honour its context
+(`record.LockContext`, `record.PromoteContext`, `record.UpdateContext`): the directory, promotion
+and ownership locks, the settings and bridge-record locks of `hook`, `register-mcp` and a
+promotion's or rollback's settings transition, a build's first record writes and the commit of a
+selection (which undoes the settings transition when it is interrupted); so a command interrupted
+(SIGINT, SIGTERM, SIGHUP) while it waits stops waiting, writes nothing, and answers so
+(`register-mcp` and `hook` with the outcome `interrupted`). A wait inside a sequence already
+under way - a restore after a failed promotion or rollback, the entry drop after a directory was
+set aside, the claim settled after a promotion, the snapshot that follows it - is bounded and runs
+to completion whatever the context says, because stopping there would leave the host
+half-written. The process table is read so that
+nothing unread passes for absent. A pid whose entries are gone (ENOENT, ESRCH: exited, a zombie, a
+kernel thread) is skipped. The kernel shows a process's exe only with ptrace access, which it
+refuses for another user's process and for this user's own when it holds capabilities the reader
+does not or is not dumpable (a desktop's `systemd --user` holds CAP_WAKE_ALARM), so a refused
+(EACCES, EPERM) exe is judged by the cmdline every user may read: its interpreter and script,
+spelled and resolved, inside the directory refuse; a cmdline that is hidden as well (procfs
+mounted hidepid) or that starts one of this runtime's executables by a bare name leaves the
+process not ruled out, which refuses too, naming the pid and why (`unreadableProcesses`). A
+process of this user whose exe fails for any other reason, or whose cmdline cannot be read, is
+not ruled out either. Relay daemons are also read from their records, as the retention scan reads
+them (`doctor.RecordedDaemons`: every daemon.json and scope registry claim; a pid counts while its
+start time and boot id match this process table), and a record that cannot be read refuses. The
+reading rests on one assumption, stated in every answer that depends on it (`processTable`): the
+process table is this host's, in this command's PID namespace, so a process in another PID
+namespace (a container sharing the directory) or on another host (a network home) is not seen,
+and `crw install remove` is to be run where the runtime's processes run. The reclaim of an
+abandoned staging applies the same reading. Live
+processes are read from procfs, so on a platform without one (darwin) whether a relay or bridge still runs out of the directory
+cannot be established and `crw install remove` always refuses there (fail-closed), saying that
+this platform has no process table it can read and giving the recovery by hand as
+`recoveryRequires`: stop the relay daemon started from it (`<dir>/bin/codex-session-relay service
+stop`) and end every Codex session whose bridge it started, delete the directory, then run `crw
+install status` to see that the record and the pointer still name the intended runtime (the
+directory's install entries stay in the record, where a rollback naming it is refused because the
+directory is gone). A darwin process reader is deferred (docs/port/refactor-backlog.md). `crw doctor` now makes the App Server observation decision 41
+left to this todo: with `Options.AppServer` unset it runs the same read-only session with the
+selected runtime's `bin/codex-thread-bridge` (`exercise.Session`) and compares its
+`get_capabilities` answer as a point's `appServer` dimension, so a real diagnosis of a Go host can
+reach `installed: verified`; a bridge that answers nothing leaves the dimension unread, which stops
+classification (decision 41). The report's `appServer` member names the bridge asked and whether
+it answered.
+
+The execution policy after the cutover is not delivered here. On this base the plugin wiring still
+starts the bridge through `plugins/crw/wiring/crw_bridge_mcp.py`, which reads the version-2 record
+`crw install register-mcp` writes and enforces its policy with only HOME set, from the plugin cache
+under the Codex home (`TestTheWiringLauncherStartsTheGoBridgeUnderTheRecordedPolicy`). The
+brief's must-hold - `crw bridge`, started by `plugins/crw/wiring/crw-bridge.sh` with no
+environment, reads that record itself - is delivered by todo 34's `pluginwiring.Prepare`, so it
+holds only once todo 34 is rebased onto this change. That rebase is gated on two things
+(docs/port/refactor-backlog.md, Deferred review findings): its refusal names the repair as
+`crw install register-mcp --owner plugin --execution-policy <file>` rather than
+`runtime_install.py register-mcp`, and a test starts `crw-bridge.sh` from a cache-layout
+directory with only HOME set against a record written by `crw install register-mcp`. The Python
+launcher keeps naming `runtime_install.py`, which is the host's installer until the cutover.
+
+Why: the plan's per-target digests in the components definition were dropped (decision 35), so
+the release's SHA256SUMS is the only digest authority a host can check; everything else carries
+runtime_install.py's install properties by behaviour rather than by code.
+
+Evidence: scripts/runtime_install.py:2610-3296 (`cmd_install`; :2898 the stage write of `outgoing`,
+:2966-2974 the install entries written before `measure_candidate`), :3297-3636 (`_settle_claim`),
+:4027-4414 (restore and release; :4326-4333 `release_candidate` before `rmtree`), :4472-4627
+(`measure_candidate`), :5163-5617 (`register-mcp`), :2300-2589 (`hook`);
+scripts/crw_runtime/staging.py:350-352 (a finished, unselected environment is kept);
+.goreleaser.yaml (archive names, links, SHA256SUMS); internal/runtime/install and its tests
+(`TestRemoveRefusesARuntimeARegistrationStillNames`,
+`TestRemoveDropsTheInstallEntriesBeforeTheDirectory`, `TestAnArchiveCannotPlantControlData`,
+`TestAnOversizedOrShortEntryIsRefusedBeforeAnythingIsWritten`, `TestAnOversizedOrShortEntryIsNotInstalled`,
+`TestAReleaseTagIsCheckedBeforeAnythingIsFetched`, `TestAReinstallNeverReclaimsARuntimeThatWasInService`,
+`TestReclaimKeepsAStagingThatMayStillBeInUse`, `TestLiveProcessesRuleOutOnlyWhatTheyRead`,
+`TestAPromotionProvesThePointerItPlaced`, `TestLandedAtIsWhatAHostReaches`,
+`TestADestinationInsideTheRuntimeIsRefused`, `TestSettlingAPythonClaimKeepsItPythons`,
+`TestRemoveKnowsARuntimeByIdentityNotSpelling` (bwrap), `TestReclaimWithoutAProcessTableSaysHowToRecover`,
+`TestRemoveReadsTheRelayDaemonRecords`, `TestAnInterruptedWaitRemovesNothing`,
+`TestAnInterruptedRemovalIsFinished`, `TestAnInstallCommandStopsWhenAsked` (cmd/crw),
+`TestRemoveTakesTheDirectoryLockBeforeThePromotionLock`, `TestAPromotionRecordsTheRuntimeThePointerLeaves`,
+`TestATombstoneNeedsItsClaim`, `TestAResumedPromotionAsksForSecondOwners`, `TestAnInterruptedRollbackMovesNothing`,
+`TestInterruptedRegistrationsWriteNothing`, `TestARollbackProvesThePointerItPlaced`,
+`TestADamagedRuntimeIsNotInstalled`, `TestRemoveSeesAScriptStartedByARelativePath`,
+`TestRemoveAndReclaimRefuseAProcessTheyCannotRuleOut`, `TestRemovingTheOutgoingRuntimeClearsOutgoing`, `TestOutgoingIsWrittenOnlyByAPromotion`,
+`TestAnUnsettledCandidatesInstallEntriesAreNeverActedOn`); internal/runtime/doctor/references.go;
+internal/runtime/exercise (`TestTheSessionClosesItsReaderAtTheDeadlineWithoutACopyingGoroutine`);
+the rollback rules (`TestARollbackReturnsToAPromotedRuntimeWhoseClaimNeverSettled`,
+`TestARollbackThatMovesNoRuntimeAsksNoGate`, `TestARollbackRefusesARuntimeThatCannotBeLaunched`,
+`TestANamedRollbackNamesARuntimeDirectory`, `TestAUserRegistrationThroughThePointerIsASecondOwner`,
+`TestARollbackNeedsAnIssue`, `TestASplitSelectionIsNotReportedInstalled`, `TestTheDestinationIsFixed`,
+`TestPathsTheInstallerCannotSpellAreRefused`, `TestAnEmptyRollbackDirectoryIsAUsageError`,
+`TestAnEmptyExecutionPolicyIsRefused`, `TestTheSecondOwnerRuleKnowsThePointerByIdentity`,
+`TestOutgoingIsTheRuntimeThePointerLeaves`, `TestARollbackHoldsItsTargetsDirectoryLock`,
+`TestAClaimRuntimeInstallPyWroteStaysOneItCanRead`, `TestAClaimIsNotWrittenIntoADirectoryThatIsGone`);
+.omo/ulw-execute/scope-analysis-31-46.md "# 38".
 
 ## 39. A caller's cancellation claims every answer the send has not yet used
 
@@ -1436,10 +1844,13 @@ No value a consumer requires to be absolute is looked up on the doctor's own PAT
 version, the host name and the App Server identity are point dimensions
 (`runtime_install.classify_component`): an unread one stops classification, and `codex
 --version` whose output a descendant holds open past a 5 s wait delay (as `scope.WaitDelay`) is
-unread. The doctor does not observe the App Server yet, so until todo 38 wires
-`Options.AppServer` (`func(ctx, bridge string) *string`, asked through the selected runtime's
-`bin/codex-thread-bridge`) into `crw doctor`, a Go component is `unreadable` with it named and
-`notChecked` lists it. The skill links are not a signal for a Go install, unlike in
+unread. The App Server identity is asked once, through `Options.AppServer` (`func(ctx, bridge
+string) *string`, given the selected runtime's `bin/codex-thread-bridge`). Before todo 38 the
+doctor made no such observation, so a Go component was `unreadable` with it named and `notChecked`
+listed it; todo 38 wires it (decision 38): an unset `Options.AppServer` is a read-only MCP session
+with that bridge (`exercise.Session`) whose `get_capabilities` answer is the dimension, a bridge
+that answers nothing leaves it unread and the component `unreadable` with the bridge named, and
+`notChecked` is empty. The skill links are not a signal for a Go install, unlike in
 `classify_component`: an installed product takes its skills from the plugin payload the Codex
 marketplace installs, and skill links are a developer-checkout concern (`crw-dev skills link`,
 todo 39) that no release archive or installer makes. The host record's
@@ -1459,7 +1870,7 @@ that descendant exited.
 Evidence: internal/runtime/doctor/registration.go (`stopSettings`, `interpreter`, `stopHooks`,
 `stopCommand`, `hookCall`, `pluginBridge`, `policy`, `codexConfig`, `mcpCommand`);
 internal/runtime/doctor/retention.go (`readStopCommand`, `stopAdapterIn`, `settingsOf`); internal/runtime/doctor/doctor.go
-(`observe`, `classifyGo`, `codexVersion`, `Diagnose`); internal/runtime/record/home.go; internal/relay/hook/
+(`observe`, `classifyGo`, `CodexVersion`, `Diagnose`); internal/runtime/exercise (`Session`); internal/runtime/record/home.go; internal/relay/hook/
 settings.go (`Complaints`, `ReadSettings`); plugins/crw/wiring/crw_stop_hook.py (`adapter_call`);
 plugins/crw/wiring/crw_bridge_mcp.py (`main`, `policy_environment`); scripts/crw_runtime/
 codexconfig.py (`registration_view`); scripts/runtime_install.py (`classify_component`,
@@ -1468,7 +1879,8 @@ codexconfig.py (`registration_view`); scripts/runtime_install.py (`classify_comp
 `TestDoctorJudgesTheStopSettingsAsTheHookAcceptsThem`, `TestDoctorJudgesTheLauncherInvocation`,
 `TestDoctorJudgesTheStopCommandsInHooksJSON`, `TestDoctorJudgesTheBridgeRecordAsTheLauncherAcceptsIt`,
 `TestDoctorReadsTheCodexConfigurationWhole`, `TestDoctorJudgesTheBridgeUnderEveryTableName`,
-`TestDoctorStopsOnTheReadingsItDoesNotMake`, `TestDoctorKeepsAnUnreadDimensionInTheComparison`,
+`TestDoctorStopsOnTheReadingsItDoesNotMake`, `TestDoctorComparesTheAppServerDimension`,
+`TestDoctorKeepsAnUnreadDimensionInTheComparison`,
 `TestDoctorReadsTheRecordedPointerThroughPath`, `TestDoctorNeverReadsAnUnestablishedHomeAsACleanHost`,
 `TestStateHomeExpandsTheHomeAsPathlibDoes`, `TestCodexVersionIsUnreadWhenADescendantHoldsItsOutput`; under the parity tag
 `TestParity_the_bridge_record_is_refused_where_the_launcher_refuses_it` (22 records, the real

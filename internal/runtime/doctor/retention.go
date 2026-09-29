@@ -75,7 +75,7 @@ type scan struct {
 	holds      []any
 	unreadable []string
 	surfaces   []any
-	timeouts   []float64
+	timeouts   []stopTimeout
 	// stopSettings are the settings documents the retained Stop registrations read (row 2),
 	// and claimRoots the journal roots Stop-event claims name.
 	stopSettings []stopSettings
@@ -87,6 +87,15 @@ type scan struct {
 	states        []string
 	scopeClaims   []scopeClaim
 	statesUnknown int
+	// observe, when set, receives every path the registration rows classify, with the row,
+	// source and field naming it (RegisteredInside).
+	observe func(row int, source, field, path string, e Executable)
+}
+
+// stopTimeout is one configured Stop hook timeout, in seconds, and where it is configured.
+type stopTimeout struct {
+	seconds float64
+	source  string
 }
 
 // stopSettings is the settings document one Stop registration reads: path, or why it cannot be
@@ -155,10 +164,20 @@ func (s *scan) expander(pluginRoot string) Expander {
 
 // judge is an argvJudge whose reports are filed under one row, source and field.
 func (s *scan) judge(row int, source, field, cwd string, x Expander) argvJudge {
-	return argvJudge{c: Classifier{Pointer: s.pointer, Expand: x}, cwd: cwd, report: func(word string, e Executable) {
+	return argvJudge{c: s.classifier(row, source, field, x), cwd: cwd, report: func(word string, e Executable) {
 		e.Value = word
 		s.verdict(row, source, field, e)
 	}}
+}
+
+// classifier is the host's Classifier for one row, source and field, passing every path it
+// classifies to observe when the scan has one.
+func (s *scan) classifier(row int, source, field string, x Expander) Classifier {
+	c := Classifier{Pointer: s.pointer, Expand: x}
+	if s.observe != nil {
+		c.Observe = func(path string, e Executable) { s.observe(row, source, field, path, e) }
+	}
+	return c
 }
 
 // absolute is a path the relay or the hook reads from its environment, made as they make it
@@ -297,45 +316,51 @@ func (s *scan) settingsRecords() {
 		return
 	}
 	for _, path := range matches {
-		value, ok := s.readJSON(path, filepath.Base(path))
+		s.settingsRecord(path)
+	}
+	s.surface(4, true, len(matches), "every crw-*.json record in "+s.o.CodexHome+", each executable resolved through links")
+}
+
+// settingsRecord reads one crw-*.json record as row 4 reads it: every value of SettingsKeys
+// resolved through links and classified.
+func (s *scan) settingsRecord(path string) {
+	value, ok := s.readJSON(path, filepath.Base(path))
+	if !ok {
+		return
+	}
+	if filepath.Base(path) == "crw-completion-hook.json" {
+		if seconds, ok := number(record.Get(value, "timeoutSeconds")); ok {
+			s.timeouts = append(s.timeouts, stopTimeout{seconds, path + " timeoutSeconds"})
+		}
+	}
+	for _, key := range SettingsKeys {
+		values, ok := texts(record.Get(value, key))
 		if !ok {
-			continue
+			s.malformed(4, path, key, "the value is "+scope.TypeName(record.Get(value, key))+", not a string or a list of strings")
 		}
-		if filepath.Base(path) == "crw-completion-hook.json" {
-			if seconds, ok := number(record.Get(value, "timeoutSeconds")); ok {
-				s.timeouts = append(s.timeouts, seconds)
+		for i, text := range values {
+			name := key
+			if _, list := record.Get(value, key).([]any); list {
+				name = key + "[" + strconv.Itoa(i) + "]"
 			}
-		}
-		for _, key := range SettingsKeys {
-			values, ok := texts(record.Get(value, key))
-			if !ok {
-				s.malformed(4, path, key, "the value is "+scope.TypeName(record.Get(value, key))+", not a string or a list of strings")
+			if text == "" {
+				continue // a launcher reads an empty value as unset
 			}
-			for i, text := range values {
-				name := key
-				if _, list := record.Get(value, key).([]any); list {
-					name = key + "[" + strconv.Itoa(i) + "]"
+			// The Stop and bridge launchers run a value as written, with no shell, and accept only
+			// an absolute path, so one that is not is never resolved against the scan's own
+			// directory (argvJudge.path); a file neither native nor #! is not this scan's to judge.
+			j := s.judge(4, path, name, "", s.expander(""))
+			if key == "args" {
+				j.argument(literal(text), false)
+			} else if target, ok := j.path(literal(text), false); ok {
+				e := j.c.classify(target, "", 0)
+				if e.Kind == KindOther {
+					e.Kind = KindUnreadable
 				}
-				if text == "" {
-					continue // a launcher reads an empty value as unset
-				}
-				// The Stop and bridge launchers run a value as written, with no shell, and accept only
-				// an absolute path, so one that is not is never resolved against the scan's own
-				// directory (argvJudge.path); a file neither native nor #! is not this scan's to judge.
-				j := s.judge(4, path, name, "", s.expander(""))
-				if key == "args" {
-					j.argument(literal(text), false)
-				} else if target, ok := j.path(literal(text), false); ok {
-					e := j.c.classify(target, "", 0)
-					if e.Kind == KindOther {
-						e.Kind = KindUnreadable
-					}
-					j.report(text, e)
-				}
+				j.report(text, e)
 			}
 		}
 	}
-	s.surface(4, true, len(matches), "every crw-*.json record in "+s.o.CodexHome+", each executable resolved through links")
 }
 
 // texts is a string value, or each item of a list of strings, and whether the value is one of
@@ -448,7 +473,7 @@ func (s *scan) hookCommands(row int, path string, document Object, pluginRoot st
 				case timed && !isNumber:
 					bad(field, "the hook's timeout is "+scope.TypeName(timeout)+", not a number", stop) // a Stop hook's window cannot be computed
 				case stop && timed:
-					s.timeouts = append(s.timeouts, seconds)
+					s.timeouts = append(s.timeouts, stopTimeout{seconds, path + " " + strings.TrimSuffix(field, ".command") + ".timeout"})
 				}
 				count++
 				j := s.judge(row, path, field, "", s.expander(pluginRoot))
@@ -668,6 +693,7 @@ func (s *scan) claims() {
 // to is scanned (journalRoots), each within the same window.
 func (s *scan) journal() {
 	roots := s.journalRoots()
+	s.nonFinite()
 	listing := strings.Join(roots, ", ")
 	longest := s.longestTimeout()
 	if math.IsNaN(longest) {
@@ -783,7 +809,7 @@ func (s *scan) journalRoots() []string {
 			continue
 		}
 		if seconds, ok := number(record.Get(value, "timeoutSeconds")); ok && one.path != defaults {
-			s.timeouts = append(s.timeouts, seconds)
+			s.timeouts = append(s.timeouts, stopTimeout{seconds, one.path + " timeoutSeconds"})
 		}
 		switch root := record.Get(value, "journalRoot").(type) {
 		case nil:
@@ -937,9 +963,25 @@ func journalRow(row reading.Reading) (time.Time, any, string) {
 func (s *scan) longestTimeout() float64 {
 	longest := DefaultHookTimeout
 	for _, t := range s.timeouts {
-		longest = max(longest, t)
+		longest = max(longest, t.seconds)
 	}
 	return longest
+}
+
+// nonFinite lists each configured Stop hook timeout that is not a finite number of seconds,
+// naming the value as JSON spells it and where it is configured: it is why row 2's window is
+// none (NaN) or unbounded (Infinity, which holds every row), so the row is not scanned.
+func (s *scan) nonFinite() {
+	for _, t := range s.timeouts {
+		spelled := map[bool]string{true: "Infinity", false: "-Infinity"}[t.seconds > 0]
+		switch {
+		case math.IsNaN(t.seconds):
+			spelled = "NaN"
+		case !math.IsInf(t.seconds, 0):
+			continue
+		}
+		s.unreadable = append(s.unreadable, t.source+": row 2: a Stop hook timeout of "+spelled+" is not a finite number of seconds, so the journal window it sets is none (NaN) or unbounded (every row is held)")
+	}
 }
 
 // scopeClaim is one record of the relay's scope registry.
@@ -1161,8 +1203,15 @@ func (s *scan) daemons() map[int]bool {
 	for _, one := range records {
 		count++
 		for _, key := range [][2]string{{"pid", "startTicks"}, {"workerPid", "workerStartTicks"}} {
-			n, ok := number(record.Get(one.document, key[0]))
-			if !ok {
+			// Absent or null records no process (a stopped daemon, no worker); anything but a
+			// positive integer pid_t names a process this scan cannot find.
+			raw := record.Get(one.document, key[0])
+			n, ok := raw.(int64)
+			if raw == nil {
+				continue
+			} else if !ok || n < 1 || n > math.MaxInt32 {
+				unknown++
+				s.unreadable = append(s.unreadable, one.path+": row 3 "+key[0]+": "+scope.TypeName(raw)+" "+scope.PyStr(raw)+" is not a pid, so the process the record names, and what it runs, is unknown")
 				continue
 			}
 			pid := int(n)
@@ -1189,7 +1238,7 @@ func (s *scan) daemons() map[int]bool {
 	case s.statesUnknown > 0:
 		s.surface(3, false, count, "the relay state directories could not all be established (see unreadable), so a daemon recorded in one this scan did not read is unknown")
 	case unknown > 0:
-		s.surface(3, false, count, "whether "+strconv.Itoa(unknown)+" recorded pids are alive could not be read from "+s.o.Proc+" (its process table, or the boot id a record names), so whether they are alive, and what they run, is unknown")
+		s.surface(3, false, count, strconv.Itoa(unknown)+" recorded pids are not pids, or whether they are alive could not be read from "+s.o.Proc+" (its process table, or the boot id a record names), so whether they are alive, and what they run, is unknown")
 	default:
 		s.surface(3, true, count, "daemon.json in the relay state root, every scope under it, $CODEX_SESSION_RELAY_STATE and each state directory the relay's scope registry records, and each registry claim; a pid counts only while its start time matches the record")
 	}
@@ -1380,7 +1429,7 @@ func (s *scan) launcherCopy() {
 	_, err := os.Lstat(path)
 	switch {
 	case err == nil:
-		e := Classify(path, "", s.pointer)
+		e := s.classifier(8, path, "file", Expander{}).Classify(path, "")
 		e.Python = true // a .py launcher by definition, whatever it now holds
 		s.verdict(8, path, "file", e)
 		s.surface(8, true, 1, "the launcher copy the cached Python Stop bootstrap falls back to")

@@ -169,8 +169,9 @@ func codex(context.Context) *string {
 	return &v
 }
 
-// appServer is the App Server identity the tests observe and the points record: the doctor makes
-// no such observation yet (todo 38), so a host whose classification is to reach own supplies one.
+// appServer is the App Server identity the tests observe and the points record: the doctor
+// observes it through a read-only MCP session with the selected bridge, which the fake runtime
+// here cannot answer, so a host whose classification is to reach own supplies one.
 const appServer = `{"codexHome": "/h/.codex", "server": "codex-app-server"}`
 
 func observedAppServer(context.Context, string) *string {
@@ -178,7 +179,8 @@ func observedAppServer(context.Context, string) *string {
 	return &v
 }
 
-// options are the diagnosis a test runs: the reading the doctor cannot make yet is supplied.
+// options are the diagnosis a test runs: the App Server reading, which the fake bridge cannot
+// answer, is supplied.
 func (h *host) options() doctor.Options {
 	return doctor.Options{Env: h.env, CodexVersion: codex, AppServer: observedAppServer, Now: func() time.Time { return time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC) }}
 }
@@ -774,15 +776,18 @@ func TestCheckRecordStatesEveryResult(t *testing.T) {
 	}
 }
 
-// Finding 26. The App Server identity is a dimension every point is compared on; this command
-// does not observe it yet (todo 38), and a reading nobody took stops classification, as
-// runtime_install.classify_component stops on an unobserved App Server, rather than letting a
-// point that recorded none carry the component to own. Supplied, it is asked through the
+// Finding 26. The App Server identity is a dimension every point is compared on, and a reading
+// nobody took stops classification, as runtime_install.classify_component stops on an
+// unobserved App Server, rather than letting a point that recorded none carry the component to
+// own. Unsupplied, the doctor makes the reading itself (todo 38): a read-only MCP session with the
+// selected runtime's bridge, which this fake runtime cannot answer, so the dimension is unread,
+// naming the bridge asked, and nothing is left not checked. Supplied, it is asked once through the
 // selected runtime's bridge, and a point measured under another App Server does not cover. The
 // skill links are not a signal for a Go install (they are a developer-checkout concern, todo
 // 39), so nothing about them keeps it from own.
 func TestDoctorStopsOnTheReadingsItDoesNotMake(t *testing.T) {
 	h, dir, _ := goHost(t, true)
+	bridge := filepath.Join(dir, "bin", "codex-thread-bridge")
 	run := func(change func(*doctor.Options)) record.Object {
 		o := h.options()
 		change(&o)
@@ -791,12 +796,15 @@ func TestDoctorStopsOnTheReadingsItDoesNotMake(t *testing.T) {
 	report := run(func(o *doctor.Options) { o.AppServer = nil })
 	for _, c := range []string{"codex-session-relay", "codex-thread-bridge"} {
 		one := golden.Canon(at(report, "components", c))
-		if at(report, "components", c, "class") != "unreadable" || !strings.Contains(one, "classification stopped: the App Server identity (") || strings.Contains(one, "skill") {
+		if at(report, "components", c, "class") != "unreadable" || !strings.Contains(one, "classification stopped: the App Server identity (the observation through "+bridge+" answered nothing)") || strings.Contains(one, "skill") {
 			t.Errorf("%s: %s", c, one)
 		}
-		if got := golden.Canon(at(report, "components", c, "notChecked")); got != `["the App Server dimension (todo 38)"]` {
+		if got := golden.Canon(at(report, "components", c, "notChecked")); got != "[]" {
 			t.Errorf("%s notChecked %s", c, got)
 		}
+	}
+	if at(report, "appServer", "observed") != false || at(report, "appServer", "bridge") != bridge {
+		t.Errorf("the default observation: %s", golden.Canon(at(report, "appServer")))
 	}
 	if got := at(report, "checks", "results", "installed", "value"); got != "not_verified" {
 		t.Errorf("installed = %v with the App Server unobserved", got)
@@ -931,5 +939,41 @@ func TestDoctorNeverReadsAnUnestablishedHomeAsACleanHost(t *testing.T) {
 		!strings.Contains(golden.Canon(record.Get(report, "hostRecordReading")), "could not determine home directory for ~no-such-user-crw-doctor") ||
 		at(report, "promotionLock", "state") != record.Unknown {
 		t.Errorf("%s", golden.Canon(report))
+	}
+}
+
+// The doctor observes the App Server through the selected bridge (as runtime_install.py's
+// diagnosis observed it through check_connection) and compares a point's appServer with that
+// observation: a point measured against another App Server does not cover the reading, and when
+// the bridge answers nothing the dimension is unread, which stops classification (finding 26).
+func TestDoctorComparesTheAppServerDimension(t *testing.T) {
+	h, dir, digest := goHost(t, false)
+	hostname, _ := os.Hostname()
+	var delta record.Delta
+	for _, c := range []string{"codex-session-relay", "codex-thread-bridge"} {
+		delta.Points = append(delta.Points, record.Named{Component: c, Entry: record.Object{{Key: "exercised", Value: true}, {Key: "install", Value: filepath.Join(dir, "bin")},
+			{Key: "installDigest", Value: digest}, {Key: "codexCli", Value: "codex-cli 0.154.0"}, {Key: "host", Value: hostname}, {Key: "appServer", Value: "app-1"}}})
+	}
+	if _, err := record.Update(h.record, 1, delta); err != nil {
+		t.Fatal(err)
+	}
+	var asked string
+	diagnose := func(observed string) record.Object {
+		return doctor.Diagnose(context.Background(), doctor.Options{Env: h.env, CodexVersion: codex, AppServer: func(_ context.Context, bridge string) *string {
+			asked = bridge
+			if observed == "" {
+				return nil
+			}
+			return &observed
+		}})
+	}
+	for observed, class := range map[string]string{"app-1": "own", "app-2": "unmeasured", "": "unreadable"} {
+		report := diagnose(observed)
+		if got := at(report, "components", "codex-thread-bridge", "class"); got != class || at(report, "appServer", "observed") != (observed != "") {
+			t.Errorf("observed %q: class %v, %s", observed, got, golden.Canon(at(report, "appServer")))
+		}
+	}
+	if asked != filepath.Join(dir, "bin", "codex-thread-bridge") {
+		t.Errorf("the bridge asked is %s, not the selected runtime's", asked)
 	}
 }

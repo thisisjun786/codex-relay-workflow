@@ -12,6 +12,7 @@
 package record
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -376,8 +377,13 @@ type Named struct {
 	Entry     Object
 }
 
+// Outgoing replaces the record's outgoing selection: the selection a promotion replaced, which
+// `crw install rollback` returns to. A nil Value removes the key.
+type Outgoing struct{ Value Object }
+
 // Delta is what a caller learned, merged by Update into the record as it stands under the
-// lock. The retired Python deltas component_facts and outgoing are not carried.
+// lock. The retired Python delta component_facts is not carried; outgoing is written by the
+// promotion that replaces a selection, in the same write that commits the new one.
 type Delta struct {
 	Installs        []Named
 	Points          []Named
@@ -387,13 +393,20 @@ type Delta struct {
 	Deselect        []contract.Field // component -> location this run wrote
 	DropPointer     *string
 	RestorePointer  *Restore
+	Outgoing        *Outgoing
 }
 
 // Update is hostrecord.update: apply narrow deltas to state this helper loads itself, inside
 // the .crw-lock, at write time. Nothing is written when the record could not be read; the
 // returned reading says why. A lock that could not be taken is a *Busy error.
 func Update(path string, definitionVersion int, delta Delta) (reading.Reading, error) {
-	lock, err := Lock(path, 0)
+	return UpdateContext(context.Background(), path, definitionVersion, delta)
+}
+
+// UpdateContext is Update whose wait for the record's lock ends, writing nothing, once ctx is
+// done.
+func UpdateContext(ctx context.Context, path string, definitionVersion int, delta Delta) (reading.Reading, error) {
+	lock, err := LockContext(ctx, path, 0)
 	if err != nil {
 		return reading.Reading{}, err
 	}
@@ -444,6 +457,13 @@ func Update(path string, definitionVersion int, delta Delta) (reading.Reading, e
 	if delta.RestorePointer != nil {
 		if owned, ok := Get(record, "pointer").(Object); ok && Get(owned, "path") == delta.RestorePointer.Wrote {
 			record = Set(record, "pointer", append(Object{}, delta.RestorePointer.Found...))
+		}
+	}
+	if delta.Outgoing != nil {
+		if delta.Outgoing.Value == nil {
+			record = Delete(record, "outgoing")
+		} else {
+			record = Set(record, "outgoing", delta.Outgoing.Value)
 		}
 	}
 	current.Value = record

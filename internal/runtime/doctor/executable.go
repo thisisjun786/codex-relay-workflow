@@ -136,10 +136,13 @@ func Classify(value, base, pointerPath string) Executable {
 }
 
 // Classifier classifies the references of one host: its owned pointer, and the expansions and
-// PATH a shell script's words are made with.
+// PATH a shell script's words are made with. Observe, when set, receives every path classified
+// (the reference as an absolute path, before any link is followed) with what it resolves to,
+// including each interpreter and script a reference is followed through.
 type Classifier struct {
 	Pointer string
 	Expand  Expander
+	Observe func(path string, e Executable)
 }
 
 // Classify is the package-level Classify with this classifier's pointer and expansions.
@@ -147,11 +150,14 @@ func (c Classifier) Classify(value, base string) Executable {
 	return c.classify(value, base, 0)
 }
 
-func (c Classifier) classify(value, base string, depth int) Executable {
-	e := Executable{Value: value}
+func (c Classifier) classify(value, base string, depth int) (e Executable) {
+	e = Executable{Value: value}
 	path := value
 	if !filepath.IsAbs(path) && base != "" {
 		path = base + "/" + path
+	}
+	if c.Observe != nil {
+		defer func() { c.Observe(path, e) }()
 	}
 	if pointerPath := c.Pointer; pointerPath != "" && (path == pointerPath || strings.HasPrefix(path, strings.TrimSuffix(pointerPath, "/")+"/")) {
 		e.ThroughPointer = true
