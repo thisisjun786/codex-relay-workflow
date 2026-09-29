@@ -2033,3 +2033,62 @@ codexconfig.py (`registration_view`); scripts/runtime_install.py (`classify_comp
 `TestStateHomeExpandsTheHomeAsPathlibDoes`, `TestCodexVersionIsUnreadWhenADescendantHoldsItsOutput`; under the parity tag
 `TestParity_the_bridge_record_is_refused_where_the_launcher_refuses_it` (22 records, the real
 launcher) and `TestParity_state_home_is_hostrecords`.
+
+## 42. An interrupted Go supervisor passes the interrupt to its worker and exits after it
+
+Decision: the Go service supervisor (`service run`, the takeover candidate included once it is
+active) waits for its worker only until its own interrupt. The first SIGINT cancels its context
+(cmd/crw `cancelOn`). If a worker is running, or has just been spawned, the supervisor sends it
+SIGINT, the signal a Go worker stops on and a Go-owner drain sends, and keeps waiting for it. It
+then records the worker's exit (`lastExit`, `workerPid` cleared), starts no successor and
+returns the interruption: exit 3, `RuntimeError: context canceled`, as an interrupt during the
+restart delay already did. Its records and scope are released only once the worker holding the
+inherited locks has exited. A supervised worker (`daemon --supervised-lock-fd`) keeps SIGINT
+caught from the start of its run until the process exits. An interrupt it receives twice for one
+request, from its process group or a drain and again from its supervisor, therefore stops it
+once, through its own cleanup, and its exit status is reported. Its hard stops stay SIGTERM,
+SIGKILL and its supervisor's death (PR_SET_PDEATHSIG). The supervisor
+keeps cmd/crw's rule that a second interrupt has the default disposition: it ends the
+supervisor, and so the worker. Python is unchanged. Its supervisor's KeyboardInterrupt ends it
+at once, and PR_SET_PDEATHSIG then ends the worker.
+
+Why: the supervisor waited on `cmd.Wait()`, which no interrupt reached. Interrupted while its
+worker ran, it swallowed the interrupt until the worker's segment ended, 3600 s by default. Only
+a second interrupt, or one aimed at both processes as a drain aims it, stopped it. So whether an
+interrupt was honoured depended on scheduling. `Test30RealCandidateControllerEOF/after-active`
+publishes active, closes the channel, probes control.sock and interrupts the activated
+candidate alone. It passed only when the interrupt landed before the supervisor spawned its
+first worker. When the spawn came first, the supervisor was still alive 5 s later, and the test
+failed with "candidate outlived controller EOF without active publication" on a 4-core runner
+(PR #194, run 36595382729, go-product test-4). Delaying the interrupt by 1.5 s failed it 3 of 3
+times, and each passing run had found no `workerPid` recorded. The same test once failed locally
+with "connection reset by peer". There, its probe dialed the candidate's readiness listener as
+activation closed it: decision 30 releases that listener before the first worker binds its own.
+The test now waits for the recorded worker, so it probes the worker's listener and always
+interrupts while a worker runs. Passing the interrupt on was not enough by itself. A worker
+already interrupted by its process group or a drain has restored SIGINT's default disposition,
+so the supervisor's copy killed it before its cleanup ran (`lastExit` -1). That happened in
+15 of 20 drain-order runs until the worker absorbed the repeat. Absorbing it only while the run
+lasted still lost 1 of 50 such runs under load: the copy arrived after the run had returned and
+killed the worker before it reported its exit. Pinned to four CPUs
+shared with eight busy loops, the previous build failed the test in 39 of 50 runs. In 32 the
+interrupt was swallowed. In the other 7 the probe was caught in the listener handoff: 3 dials
+found no socket, 3 answers were `guard_said_nothing` and 1 was a connection reset.
+
+Cost: an interrupted Go supervisor exits only when its worker has stopped, where Python's exits
+at once. A worker that never stops is ended by the second interrupt, as before. A second SIGINT
+sent to a supervised worker alone no longer ends it; SIGTERM or its supervisor's death does. Two
+interrupts that land while a worker is still starting, before its run begins, still end it, as
+before, before it has done any work.
+
+Evidence: `internal/relay/service/supervise.go` (`awaitWorker`, `Supervise`),
+`internal/relay/cli/daemon.go` (`runDaemon`), `internal/relay/service/takeover.go`
+(`takeoverRuntime.Drain`), `cmd/crw/main.go` (`cancelOn`),
+`packages/codex-session-relay/src/codex_session_relay/service.py` (`supervise`, its `finally`).
+Tests: `internal/relay/service/process_test.go` (`Test42InterruptedSupervisorStopsItsWorker`:
+python, go, go-interrupted-together) and `internal/relay/service/takeover_test.go`
+(`Test30RealCandidateControllerEOF/after-active`). Restoring the previous `supervise.go` fails
+the go subtest and after-active 3 of 3 times each. Restoring the previous `daemon.go` fails
+go-interrupted-together 15 of 20 times. Under the load that failed the previous build 39 of 50
+times, the final build passed every run: the takeover test 50 of 50,
+`Test42InterruptedSupervisorStopsItsWorker` 50 of 50, and go-interrupted-together 200 more.

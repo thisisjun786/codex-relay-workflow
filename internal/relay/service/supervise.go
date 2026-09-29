@@ -32,6 +32,28 @@ func wait(ctx context.Context, seconds float64) error {
 		return nil
 	}
 }
+
+// awaitWorker reaps the worker, bounded by the supervisor's interrupt (decision 42). An
+// interrupt that lands after the spawn, however late the scheduler lets this process see it,
+// is passed on to the worker as the interrupt a Go worker stops on, and the supervisor still
+// waits for that worker: its records and scope are released only after the process holding
+// the inherited locks has gone. A worker that cannot be signalled is left to the operator's
+// second interrupt, whose default disposition ends this supervisor and, through
+// PR_SET_PDEATHSIG, the worker.
+func awaitWorker(ctx context.Context, child *exec.Cmd, reap func(*exec.Cmd) int) int {
+	exited := make(chan int, 1)
+	go func() { exited <- reap(child) }()
+	select {
+	case code := <-exited:
+		return code
+	case <-ctx.Done():
+	}
+	// The process is this supervisor's unreaped child, signalled through its pidfd, so a
+	// worker that has just exited answers os.ErrProcessDone and never a recycled pid.
+	_ = child.Process.Signal(os.Interrupt)
+	return <-exited
+}
+
 func (s *Service) Supervise(ctx context.Context, o Options, onStart func() error, inputs *SupervisionInputs) (out Object, err error) {
 	if o.Deadline != nil && o.DeadlineMonotonic != nil {
 		return nil, fmt.Errorf("deadline and deadline_monotonic are two different bounds; pass one. A duration starts at this process's clock; an instant was decided before it existed, and silently preferring either would end the run at a time the caller did not ask for")
@@ -170,12 +192,16 @@ func (s *Service) Supervise(ctx context.Context, o Options, onStart func() error
 		if err = s.note("workerPid", child.Process.Pid, "workerStartTicks", StartTicks(child.Process.Pid)); err != nil {
 			return nil, err
 		}
-		code := waitChild(child)
+		code := awaitWorker(ctx, child, waitChild)
 		outstanding = nil
 		if err = s.note("workerPid", nil, "workerStartTicks", nil, "lastExit", code, "restarts", len(segments)+1); err != nil {
 			return nil, err
 		}
 		segments = append(segments, code)
+		if err = ctx.Err(); err != nil {
+			// The worker ended on this supervisor's interrupt: no failure, and no successor.
+			return nil, err
+		}
 		if code == ExitBoundSpent {
 			if !expired() {
 				degraded = fmt.Sprintf("a worker costs more to start than the segment it was granted (%.3fs); it served nothing", granted)

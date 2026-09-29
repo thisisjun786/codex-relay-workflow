@@ -7,6 +7,7 @@ import (
 	"flag"
 	"math"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
@@ -317,6 +318,15 @@ func readyCandidate(ctx context.Context, state string) error {
 }
 
 func runDaemon(ctx context.Context, services Services, args Args) (out any, err error) {
+	if args.Set["supervised-lock-fd"] {
+		// Decision 42: a supervised worker can be interrupted twice for one request, by its
+		// process group or a drain and again by its supervisor passing the interrupt on. The
+		// repeat is absorbed rather than meeting SIGINT's restored default disposition, which
+		// would kill the worker before its cleanup or before its exit status is reported, so
+		// the channel stays registered until the process exits. Its hard stops stay SIGTERM,
+		// SIGKILL and its supervisor's death (PR_SET_PDEATHSIG).
+		signal.Notify(make(chan os.Signal, 1), os.Interrupt)
+	}
 	if err = requireDaemonHost(services); err != nil {
 		return nil, err
 	}
