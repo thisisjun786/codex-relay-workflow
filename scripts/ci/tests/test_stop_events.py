@@ -31,6 +31,9 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from crw_runtime import completion  # noqa: E402
 
+sys.path.insert(0, str(ROOT / "scripts" / "ci" / "tests"))
+from legacy_wiring import LEGACY_STOP_COMMAND  # noqa: E402
+
 PACKAGED = ROOT / "packages" / "codex-session-relay" / "src" / "codex_session_relay" / "stopadapter.py"
 CHECKOUT = ROOT / "scripts" / "completion_hook.py"
 VERIFIER = ROOT / "scripts" / "stop_events.py"
@@ -44,8 +47,20 @@ OUTCOME = re.compile(r"^[0-9a-f]{64}\.outcome\.json$")
 
 
 def declared_command():
+    """The Stop command whose adapter these cases observe: the Python bootstrap.
+
+    Every case here counts calls to a stub guard the settings name as relayExecutable, through the
+    Python adapter the settings name as adapterEntryPoint. The package now declares the native
+    `crw hook --plugin-launch`, which runs neither (it dials the relay's control socket), and this
+    suite's CI job has no Go runtime. So the command driven is the bootstrap the package declared
+    before todo 34, which cached turns still run until todo 44 and whose launcher still ships. The
+    native path's one-evaluation-per-Stop is internal/relay/hook TestPluginLaunch_* and the
+    Domain/hook corpus. The shipped declaration is still read and checked to be the native command,
+    so this stops passing silently if the package's Stop hook changes again.
+    """
     document = json.loads(DECLARATION.read_text(encoding="utf-8"))
-    return document["hooks"]["Stop"][0]["hooks"][0]["command"]
+    assert document["hooks"]["Stop"][0]["hooks"][0]["command"].endswith(" hook --plugin-launch; exit 0")
+    return LEGACY_STOP_COMMAND
 
 
 class Host:
