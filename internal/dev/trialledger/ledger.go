@@ -26,6 +26,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/pyload"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 const (
@@ -181,20 +182,23 @@ func loadStart(value string) (object, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	// The start record's path came from the command line, which Python holds surrogateescaped:
+	// it names the path that way wherever a refusal carries it.
+	shownStart := store.FSDecode(start)
 	state, detail, body := readJSON(start, "the start record")
 	if state != present {
-		return nil, "", refuse("the start record could not be read", "path", start, "state", state, "detail", detail)
+		return nil, "", refuse("the start record could not be read", "path", shownStart, "state", state, "detail", store.FSDecode(detail))
 	}
 	record, ok := body.(object)
 	if !ok {
-		return nil, "", refuse("the start record is not a JSON object", "path", start)
+		return nil, "", refuse("the start record is not a JSON object", "path", shownStart)
 	}
 	if get(record, "source") != "live-trial-start" {
-		return nil, "", refuse("this file does not stamp itself as a live trial start record", "path", start, "source", get(record, "source"))
+		return nil, "", refuse("this file does not stamp itself as a live trial start record", "path", shownStart, "source", get(record, "source"))
 	}
 	version := get(record, "recordVersion")
 	if !slices.ContainsFunc(ledgerRecordVersions, func(v any) bool { return evidence.Equal(version, v) }) {
-		return nil, "", refuse("unsupported record version", "path", start, "recordVersion", version, "supported", ledgerRecordVersions)
+		return nil, "", refuse("unsupported record version", "path", shownStart, "recordVersion", version, "supported", ledgerRecordVersions)
 	}
 	root, err := absolute(get(record, "trialRoot"), "trialRoot")
 	if err != nil {
@@ -207,7 +211,7 @@ func loadStart(value string) (object, string, error) {
 		return nil, "", refuse("the trial root is inside a git worktree, and operational state never lives inside a repository", "trialRoot", root, "worktree", worktree)
 	}
 	if !within(start, root) {
-		return nil, "", refuse("the start record itself is outside the trial root", "path", start, "trialRoot", root)
+		return nil, "", refuse("the start record itself is outside the trial root", "path", shownStart, "trialRoot", root)
 	}
 	// The ledger is a private trial record like the captures, read by path, so it is confined
 	// the same way rather than followed wherever a link points.
@@ -217,7 +221,11 @@ func loadStart(value string) (object, string, error) {
 	}
 	for _, item := range []string{start, ledger} {
 		if nested := gitWorktreeOf(item); nested != "" {
-			return nil, "", refuse("a private trial record is inside a git worktree", "path", item, "worktree", nested)
+			path, worktree := item, nested
+			if item == start {
+				path, worktree = shownStart, store.FSDecode(nested)
+			}
+			return nil, "", refuse("a private trial record is inside a git worktree", "path", path, "worktree", worktree)
 		}
 	}
 	return record, ledger, nil
@@ -241,11 +249,15 @@ func field(value any, path ...string) (any, bool) {
 
 func absolute(value any, what string) (string, error) {
 	s, ok := value.(string)
+	shown := value
+	if ok && what == "--start" {
+		shown = store.FSDecode(s) // the command line's, which Python holds surrogateescaped
+	}
 	if !ok || !strings.HasPrefix(s, "/") {
-		return "", refuse(what+" must be an absolute path", "value", value)
+		return "", refuse(what+" must be an absolute path", "value", shown)
 	}
 	if strings.IndexByte(s, 0) >= 0 {
-		return "", refuse(what+" holds a NUL byte, which no path can carry", "value", s)
+		return "", refuse(what+" holds a NUL byte, which no path can carry", "value", shown)
 	}
 	return pathlibForm(s), nil
 }

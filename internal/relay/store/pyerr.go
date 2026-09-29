@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"unicode"
+	"unicode/utf8"
 
 	"modernc.org/sqlite"
 
@@ -57,13 +59,77 @@ func PythonOSErrorText(err error) string {
 	text := fmt.Sprintf("[Errno %d] %s", int(errno), pythonStrerror(errno))
 	var path *fs.PathError
 	if errors.As(err, &path) {
-		text += ": " + pythonRepr(path.Path)
+		text += ": " + PathRepr(path.Path)
 	}
 	var link *os.LinkError
 	if errors.As(err, &link) {
-		text += ": " + pythonRepr(link.Old) + " -> " + pythonRepr(link.New)
+		text += ": " + PathRepr(link.Old) + " -> " + PathRepr(link.New)
 	}
 	return text
+}
+
+// FSDecode is os.fsdecode as Go holds the result: the path's bytes, each byte that is not UTF-8
+// replaced by the lone surrogate surrogateescape makes of it (U+DC80..U+DCFF) in WTF-8, which
+// the JSON writers spell \udcXX as json.dumps does.
+func FSDecode(p string) string {
+	if utf8.ValidString(p) {
+		return p
+	}
+	var b strings.Builder
+	for i := 0; i < len(p); {
+		r, size := utf8.DecodeRuneInString(p[i:])
+		if r == utf8.RuneError && size == 1 {
+			v := 0xdc00 + rune(p[i])
+			b.Write([]byte{0xed, byte(0xa0 | (v>>6)&0x1f), byte(0x80 | v&0x3f)})
+			i++
+			continue
+		}
+		b.WriteString(p[i : i+size])
+		i += size
+	}
+	return b.String()
+}
+
+// PathRepr is repr() of a filename as Python holds one: os.fsdecode of its bytes, so a byte that
+// is not UTF-8 is the lone surrogate surrogateescape makes of it (U+DC80..U+DCFF), and then every
+// character str.isprintable refuses (controls, format characters, separators but the space, lone
+// surrogates) written as \xNN, \uNNNN or \UNNNNNNNN.
+func PathRepr(path string) string {
+	quote := "'"
+	if strings.Contains(path, "'") && !strings.Contains(path, `"`) {
+		quote = `"`
+	}
+	var b strings.Builder
+	b.WriteString(quote)
+	for i := 0; i < len(path); {
+		r, size := utf8.DecodeRuneInString(path[i:])
+		if r == utf8.RuneError && size == 1 {
+			r = 0xdc00 + rune(path[i]) // surrogateescape
+		}
+		i += size
+		switch {
+		case r == '\\':
+			b.WriteString(`\\`)
+		case string(r) == quote:
+			b.WriteString(`\` + quote)
+		case r == '\n':
+			b.WriteString(`\n`)
+		case r == '\r':
+			b.WriteString(`\r`)
+		case r == '\t':
+			b.WriteString(`\t`)
+		case unicode.IsPrint(r): // str.isprintable's set: L, M, N, P, S and the space (a surrogate is Cs)
+			b.WriteRune(r)
+		case r < 0x100:
+			fmt.Fprintf(&b, `\x%02x`, r)
+		case r < 0x10000:
+			fmt.Fprintf(&b, `\u%04x`, r)
+		default:
+			fmt.Fprintf(&b, `\U%08x`, r)
+		}
+	}
+	b.WriteString(quote)
+	return b.String()
 }
 
 // pythonRepr is repr() of a str (settings.Repr: Python's quote choice and its escapes of every

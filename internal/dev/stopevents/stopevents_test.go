@@ -308,6 +308,53 @@ func TestSEV08_LedgerIntegrity(t *testing.T) {
 			t.Fatal(state)
 		}
 	})
+	// A root that cannot be examined is named as str(OSError) names it: repr() of the path as
+	// Python holds it, so a character str.isprintable refuses is escaped and a byte that is not
+	// UTF-8 is the surrogate surrogateescape made of it. A root named in a message of the
+	// reader's own carries the path as str() holds it, which json.dumps writes as \udcXX.
+	t.Run("a root that cannot be examined is named as Python names it", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root is never refused a directory's search permission")
+		}
+		base, err := filepath.EvalSymlinks(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		locked, linked := base+"/locked", base+"/r\xffx"
+		for _, dir := range []string{locked, linked} {
+			if err := os.Mkdir(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Symlink(base, linked+"/accepted"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(locked, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+		var args []string
+		for _, name := range []string{"a\u00a0b", "a\u2028b", "a\xffb", "a\xed\xa0\x80b"} {
+			args = append(args, "--journal-root", locked+"/"+name)
+		}
+		var out, errs bytes.Buffer
+		if code := Run(append(args, "--journal-root", linked), &out, &errs); code != 3 {
+			t.Fatalf("exit %d: %s", code, errs.String())
+		}
+		for _, line := range []string{
+			`"detail": "[Errno 13] Permission denied: '` + locked + `/a\\xa0b'",`,
+			`"detail": "[Errno 13] Permission denied: '` + locked + `/a\\u2028b'",`,
+			`"detail": "[Errno 13] Permission denied: '` + locked + `/a\\udcffb'",`,
+			`"detail": "[Errno 13] Permission denied: '` + locked + `/a\\udced\\udca0\\udc80b'",`,
+			`"root": "` + locked + `/a\udced\udca0\udc80b",`,
+			`"detail": "` + base + `/r\udcffx/accepted is a link, which the adapter never makes",`,
+			`"root": "` + base + `/r\udcffx",`,
+		} {
+			if !strings.Contains(out.String(), line) {
+				t.Fatalf("no %s in\n%s", line, out.String())
+			}
+		}
+	})
 	t.Run("an entry in the ledger this reader does not know", func(t *testing.T) {
 		h, _ := oneEvent(t)
 		stray := h.journal + "/accepted/pending.json.tmp"

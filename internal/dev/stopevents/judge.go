@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strings"
 	"syscall"
-	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
@@ -90,24 +89,7 @@ func join(root string, names ...string) string {
 
 // shown is how Python spells a path it read from the system: an undecodable byte is the lone
 // surrogate surrogateescape gives it, which json.dumps writes as \udcXX.
-func shown(p string) string {
-	if utf8.ValidString(p) {
-		return p
-	}
-	var b strings.Builder
-	for i := 0; i < len(p); {
-		r, size := utf8.DecodeRuneInString(p[i:])
-		if r == utf8.RuneError && size == 1 {
-			v := 0xdc00 + rune(p[i])
-			b.Write([]byte{0xed, byte(0xa0 | (v>>6)&0x1f), byte(0x80 | v&0x3f)})
-			i++
-			continue
-		}
-		b.WriteString(p[i : i+size])
-		i += size
-	}
-	return b.String()
-}
+func shown(p string) string { return store.FSDecode(p) }
 
 // errorText is str(error) for what a stat or a listing raised.
 func errorText(err error, p string) string {
@@ -116,7 +98,7 @@ func errorText(err error, p string) string {
 	}
 	var plain *plainError
 	if errors.As(err, &plain) {
-		return plain.text
+		return shown(plain.text) // a path formatted into the message, as str() holds it
 	}
 	return store.PythonOSErrorText(err)
 }

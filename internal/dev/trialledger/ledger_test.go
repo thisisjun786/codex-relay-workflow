@@ -389,3 +389,49 @@ func TestLedgerReadsRecordsAsDeepAsPython(t *testing.T) {
 		t.Fatalf("exit %d %v", code, document)
 	}
 }
+
+// The start record's path comes from the command line, which Python holds surrogateescaped: a
+// refusal names it that way (a byte that is not UTF-8 is written \udcXX), and an OSError's text
+// as repr() of it, escaping every character str.isprintable refuses. Each line is what
+// trial_startup.py ledger printed for the same bytes under CPython 3.14.4.
+func TestLedgerNamesTheStartPathAsPythonHoldsIt(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root is never refused a directory's search permission")
+	}
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked := base + "/locked"
+	if err := os.Mkdir(locked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	run := func(start string, lines ...string) {
+		t.Helper()
+		var out, errs bytes.Buffer
+		if code := Run([]string{"--start", start}, &out, &errs); code != 2 {
+			t.Fatalf("exit %d: %s", code, errs.String())
+		}
+		for _, line := range lines {
+			if !strings.Contains(out.String(), line) {
+				t.Fatalf("no %s in\n%s", line, out.String())
+			}
+		}
+	}
+	for _, c := range []struct{ name, held, repr string }{
+		{"a\u00a0b", `a\u00a0b`, `a\\xa0b`},
+		{"a\u2028b", `a\u2028b`, `a\\u2028b`},
+		{"a\xffb", `a\udcffb`, `a\\udcffb`},
+		{"a\xed\xa0\x80b", `a\udced\udca0\udc80b`, `a\\udced\\udca0\\udc80b`},
+	} {
+		run(locked+"/"+c.name+"/start.json",
+			`"detail": "whether anything exists at this path could not be established (PermissionError: [Errno 13] Permission denied: '`+locked+"/"+c.repr+`/start.json')",`,
+			`"path": "`+locked+"/"+c.held+`/start.json",`)
+	}
+	run(base+"/r\xffx/start.json", `"detail": "nothing exists at `+base+`/r\udcffx/start.json",`, `"path": "`+base+`/r\udcffx/start.json",`)
+	run("r\xffx", `"value": "r\udcffx"`)
+}

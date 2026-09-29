@@ -98,7 +98,7 @@ func readRegularText(path, what string) (string, string, string) {
 	defer f.Close()
 	info, err := f.Stat()
 	if err == nil && !info.Mode().IsRegular() {
-		return accessError, "could not read " + what + " (OSError: [Errno 22] this path became a " + kindOf(info.Mode()) + " after it was looked at, and it is not read: " + store.PyRepr(path) + ")", ""
+		return accessError, "could not read " + what + " (OSError: [Errno 22] this path became a " + kindOf(info.Mode()) + " after it was looked at, and it is not read: " + store.PathRepr(path) + ")", ""
 	}
 	var raw []byte
 	if err == nil {
