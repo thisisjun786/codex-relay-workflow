@@ -160,6 +160,14 @@ jobs:
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" make dist BINARY="dist/crw_${os}_${arch}/crw"
           done
           (cd dist && sha256sum crw_*/crw > SHA256SUMS && cat SHA256SUMS)
+      # IS-1, IS-7 and IS-8: the linux/amd64 binary just built is installed into an isolated
+      # home and the plugin's declared wiring runs against it. CGO_ENABLED=0 and -trimpath are
+      # the dist build's, so the test reuses its compiled packages and only relinks.
+      - name: Install and wire the release binary in an isolated home
+        if: matrix.part == 'dist'
+        env:
+          CGO_ENABLED: '0'
+        run: CRW_TEST_BINARY="$PWD/dist/crw_linux_amd64/crw" go test -trimpath -tags integration -count=1 ./internal/runtime/integration/...
       - if: matrix.part == 'dist'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

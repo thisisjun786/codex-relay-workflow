@@ -177,6 +177,9 @@ class WorkflowTests(unittest.TestCase):
             self.assertIn(target, body)
         for artifact in ("crw_linux_amd64", "crw_linux_arm64", "crw_darwin_arm64", "SHA256SUMS"):
             self.assertRegex(body, rf"(?m)^          name: {artifact}$")
+        # The isolated-home integration test installs the binary the dist leg just built.
+        self.assertIn('CRW_TEST_BINARY="$PWD/dist/crw_linux_amd64/crw" go test -trimpath'
+                      ' -tags integration -count=1 ./internal/runtime/integration/...', body)
         for action in re.findall(r"uses: (\S+)", body):
             self.assertRegex(action, r"@[0-9a-f]{40}$")
 

@@ -287,6 +287,26 @@ adapter, the second is the Python install's preflight.
 | test_trial_startup.py preflight classes | the preflight's readings of the Python install | dropped with the preflight (todo 44) |
 | test_hook_comparison.py (127) | HKC-1..46 | retired with the harness |
 
+## Todo 40 isolated-home wiring progress (2026-09-29)
+
+`scripts/ci/tests/test_plugin_wiring.py` classes StopLauncherTest, BridgeLauncherTest,
+BridgeLauncherPolicyTest and DeclaredStopCommandTest drove the Python launchers from a
+checkout. Their per-case contracts are todo 34's (`internal/pluginwiring`,
+`internal/relay/hook` TestPluginLaunch_*) and todo 38's (`internal/runtime/install`); todo 40
+proves them end to end in one isolated home: `TestIsolatedHome` in
+`internal/runtime/integration`, behind the `integration` build tag, run by the go-product
+dist leg against the binary that leg built (`CRW_TEST_BINARY`). It installs release
+archives of that binary and a relinked second one with `crw install`, copies the working-tree
+package into the Codex home's plugin cache and runs the declared commands as the host does. A
+PATH of tripwires fails the test if anything asks for python, python3, pip or uv, and every
+Stop assertion reads the journal row, never the exit status alone.
+
+| Python class | property | Go test (subtest of `TestIsolatedHome`) |
+| --- | --- | --- |
+| StopLauncherTest | the declared hook runs the adapter under the installer's settings and journals the Stop; a missing runtime releases the turn with nothing on stdout and no row | `IS-1 install and wiring`, `IS-7 cache replacement and a missing runtime` |
+| BridgeLauncherTest, BridgeLauncherPolicyTest | the declared server, given HOME alone, finds a Codex home that is not `$HOME/.codex` from its cache location, reads the record and runs the pointer's bridge (same pid, argv[0] `codex-thread-bridge`) with exactly the 12 tools and the recorded policy digest, or presence_only when the record names none; a missing runtime fails loudly naming it | `IS-1 install and wiring`, `IS-7 cache replacement and a missing runtime`, `IS-8 update, refusal, rollback and remove` |
+| DeclaredStopCommandTest | the pre-native bootstrap fixed before the cache was replaced reaches the Go hook through the packaged launcher and, once the cache is gone, through the `<CODEX_HOME>/crw-stop-hook.py` copy; the native command holds no cache path and survives the replacement | `IS-7 cache replacement and a missing runtime/legacy bootstrap` (skipped without python3; deleted with the launchers in todo 43), `IS-7 cache replacement and a missing runtime` |
+
 ## Files
 
 | path | tests | class | family | fixtures | owner | destination | coupling |
@@ -405,7 +425,7 @@ adapter, the second is the Python install's preflight.
 | `scripts/ci/tests/test_packages.py` | 27 | C | packages check never prints success over an empty or skipped run; `--shard` splits whole modules disjointly and completely, balanced on recorded seconds | - | todo 47 / CRW-160 | drop: packages.py only runs the Python suites and is deleted in todo 44/47; the property (no success over an empty or skipped run) is inherited by todo 9's `CRW_CONTRACT_STRICT=1` skip counting and `go test` exit status; the shard split leaves with the Python suites it divides | importlib load of scripts/ci/packages.py |
 | `scripts/ci/tests/test_parent_title.py` | 9 | A | parent-title helper command surface and coverage guard | `plugins/crw/skills/crw-run/scripts/fixtures/titles` | todo 35 / CRW-156 | corpus: skill-scripts (domain added by todo 35) | - |
 | `scripts/ci/tests/test_plugin.py` | 62 | C | plugin package validator vs shapes that install silently wrong | - | todo 47 / CRW-160 | go-test: `crw-dev ci plugin` (todo 47; `internal/dev/ci` Test47_PLG_1..18) | importlib load of scripts/ci/plugin.py |
-| `scripts/ci/tests/test_plugin_wiring.py` | 178 | C | one owner registers the Stop hook; launchers resolve | - | todo 34 / CRW-156 | go-test: `internal/pluginwiring` and `internal/relay/hook` TestPluginLaunch_* for StopLauncher, BridgeLauncher*, LauncherContractVersion (todo 34) + go-test: isolated Codex home integration for those and DeclaredStopCommand (todo 40) + go-test: `internal/runtime/install` for Ownership, BridgeRecord*, RegisterMcpDoesNotShadowADeclaredServer and the legacy Stop bootstrap (todo 38) + go-test: `crw-dev ci plugin` for DeclaredComponent, TheDeclaredApprovalPolicyIsChecked (todo 47) + drop: StableLauncherPlacement (retire-dead: the Go installer places no fallback launcher); StableLauncherRemoval left this file with the transition (todo 39: `install.RemoveLauncher`, see the todo 39 table) | exec of plugins/crw/wiring/crw_bridge_mcp.py (:80) + ast (:2132) |
+| `scripts/ci/tests/test_plugin_wiring.py` | 178 | C | one owner registers the Stop hook; launchers resolve | - | todo 34 / CRW-156 | go-test: `internal/pluginwiring` and `internal/relay/hook` TestPluginLaunch_* for StopLauncher, BridgeLauncher*, LauncherContractVersion (todo 34) + go-test: `internal/runtime/integration` (build tag `integration`, `TestIsolatedHome`) for those and DeclaredStopCommand (todo 40) + go-test: `internal/runtime/install` for Ownership, BridgeRecord*, RegisterMcpDoesNotShadowADeclaredServer and the legacy Stop bootstrap (todo 38) + go-test: `crw-dev ci plugin` for DeclaredComponent, TheDeclaredApprovalPolicyIsChecked (todo 47) + drop: StableLauncherPlacement (retire-dead: the Go installer places no fallback launcher); StableLauncherRemoval left this file with the transition (todo 39: `install.RemoveLauncher`, see the todo 39 table) | exec of plugins/crw/wiring/crw_bridge_mcp.py (:80) + ast (:2132) |
 | `scripts/ci/tests/test_relay_schema_shipped.py` | 1 | A | shipped store objects keep their CREATE text | `scripts/ci/tests/relay_schema_shipped.json` | todo 17 / CRW-152 | corpus: sqlite-ddl | - |
 | `scripts/ci/tests/test_release.py` | 10 | A | release workflow steps against fake git/gh | `scripts/ci/tests/{fake_git.sh,fake_gh.sh,release_steps.py}` | todo 12 / CRW-150 | corpus: release (domain added by todo 12) | - |
 | `scripts/ci/tests/test_runtime_install.py` | 496 | C | runtime installer and diagnosis on temporary destinations | - | todo 38 / CRW-158 | go-test: `internal/runtime/{reading,record,pointer,staging,swapgate,scope,residue,ownership,definition,doctor}` (todo 37) + go-test: `internal/runtime/install` (todo 38) + drop: the reflective AST and inspect inventories of Python source and the retired trial, preflight, inherited-registration and pre-claim paths (scope analysis "# 38") | ast over scripts/runtime_install.py (406 reflective sites) |

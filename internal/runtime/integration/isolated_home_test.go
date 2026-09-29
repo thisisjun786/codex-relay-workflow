@@ -1,0 +1,976 @@
+//go:build integration
+
+// Package integration_test installs the Go runtime and runs the plugin's declared wiring in an
+// isolated home, end to end (todo 40: IS-1, IS-7, IS-8). Release archives of the real crw
+// binary are built in the release layout (docs/releases.md) and installed with `crw install`
+// into a temporary HOME whose Codex home is not $HOME/.codex. The working-tree plugin package is
+// copied into that Codex home's plugin cache, and its declared commands run the way the host
+// runs them: the Stop hook through `/bin/sh -c` with CODEX_HOME and PLUGIN_ROOT set, the MCP
+// server as `sh ./wiring/crw-bridge.sh` from the installed version directory with only HOME set.
+//
+// Every Stop hook path exits 0, so no hook assertion rests on the exit status: each one finds
+// the journal row the hook wrote for that session and turn, or proves that none was written.
+//
+// Run it with `go test -tags integration ./internal/runtime/integration/...`. CRW_TEST_BINARY
+// names the binary to install (CI passes the dist leg's dist/crw_linux_amd64/crw); without it
+// the test builds ./cmd/crw. The second binary is always relinked from source with its own
+// version, so an update can be told apart from the install it replaces.
+package integration_test
+
+import (
+	"archive/tar"
+	"bufio"
+	"bytes"
+	"compress/gzip"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+)
+
+// moduleRoot is the checkout under test. `go test` runs a test binary in its package's source
+// directory, which holds under -trimpath too, where runtime.Caller names no file on disk.
+var moduleRoot string
+
+// toolchainEnv is this process's environment before the relay state was isolated: the Go
+// toolchain that relinks the second binary keeps its own caches.
+var toolchainEnv []string
+
+func TestMain(m *testing.M) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	moduleRoot = filepath.Join(cwd, "..", "..", "..")
+	if _, err := os.Stat(filepath.Join(moduleRoot, "go.mod")); err != nil {
+		fmt.Fprintln(os.Stderr, "the module root is not three directories above the package:", err)
+		os.Exit(1)
+	}
+	toolchainEnv = os.Environ()
+	// This process's own homes and relay state roots point at a temporary tree too, so nothing
+	// the test runs in-process (the hook-status reading) can reach the machine's real ones.
+	cleanup, err := testsupport.IsolateRelayState()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	code := m.Run()
+	if err := cleanup(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		code = 1
+	}
+	os.Exit(code)
+}
+
+const (
+	// The archive versions (crw_<version>_<os>_<arch>.tar.gz). A keeps whatever version its
+	// binary was built with; B is relinked with main.version set to versionB.
+	versionA = "it-a"
+	versionB = "it-b"
+	// hookCeiling is a generous bound on one Stop hook run, never a latency claim.
+	hookCeiling = 5 * time.Second
+	// commandTimeout bounds every process this test starts; each one is waited on.
+	commandTimeout = 60 * time.Second
+	// socketLimit is the longest unix socket path the kernel takes.
+	socketLimit = 107
+)
+
+// toolNames are the 12 tools the bridge's MCP contract lists (tools/list), sorted.
+var toolNames = []string{
+	"create_thread", "create_worktree_thread", "get_active_turn", "get_capabilities", "get_goal", "get_operation",
+	"list_threads", "pause_goal", "read_thread", "send_message_to_thread", "steer_thread", "wait_thread",
+}
+
+// isolated is one temporary host: every path below lives under root, which is t.TempDir().
+type isolated struct {
+	root, home, codex, state, tmp, trip, tools, sentinel string
+	// dest is the installer's default destination and current its owned pointer.
+	dest, current, record, relayState, ledger string
+	// journal, settings and bridgeRecord are what `crw install hook` and `register-mcp` write
+	// and the declared commands read, under the Codex home.
+	journal, settings, bridgeRecord string
+	// payload is the installed plugin version directory: PLUGIN_ROOT and the MCP server's cwd.
+	payload, manifestVersion string
+	downloaded, versionA     string
+	envA, envB               string
+	fake                     *fakehost.Server
+}
+
+func TestIsolatedHome(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("reads /proc for the running bridge; CI runs this on linux/amd64")
+	}
+	h := newIsolated(t)
+	archiveA, archiveB := h.release(t)
+	if !t.Run("IS-1 install and wiring", func(t *testing.T) { h.installAndWire(t, archiveA) }) {
+		return
+	}
+	if !t.Run("IS-7 cache replacement and a missing runtime", h.cacheReplacement) {
+		return
+	}
+	t.Run("IS-8 update, refusal, rollback and remove", func(t *testing.T) { h.updateAndRollBack(t, archiveA, archiveB) })
+}
+
+func newIsolated(t *testing.T) *isolated {
+	t.Helper()
+	root := t.TempDir()
+	h := &isolated{root: root, home: filepath.Join(root, "home"), codex: filepath.Join(root, "codex"), state: filepath.Join(root, "state"),
+		tmp: filepath.Join(root, "tmp"), trip: filepath.Join(root, "trip"), tools: filepath.Join(root, "tools"),
+		sentinel: filepath.Join(root, "tripwire-fired"), relayState: filepath.Join(root, "relay-state"), ledger: filepath.Join(root, "bridge-ledger")}
+	h.dest = filepath.Join(h.home, ".local", "share", "crw-runtime")
+	h.current = filepath.Join(h.dest, "current")
+	h.record = filepath.Join(h.state, "codex-relay-workflow", "host-record.json")
+	h.journal = filepath.Join(h.codex, "crw-completion-hook", "journal")
+	h.settings = filepath.Join(h.codex, "crw-completion-hook.json")
+	h.bridgeRecord = filepath.Join(h.codex, "crw-bridge-mcp.json")
+	for _, path := range []string{h.home, h.codex, h.state, h.tmp, h.trip, h.tools, h.sentinel, h.relayState, h.ledger, h.dest, h.current, h.record, h.journal, h.settings, h.bridgeRecord} {
+		h.mustBeInside(t, path)
+	}
+	// The MCP launcher is given HOME alone, so it can find this Codex home only from the plugin
+	// cache it runs in; a Codex home at $HOME/.codex would also be its default.
+	if h.codex == filepath.Join(h.home, ".codex") {
+		t.Fatalf("CODEX_HOME %s is $HOME/.codex", h.codex)
+	}
+	for _, dir := range []string{h.home, h.codex, h.state, h.tmp, h.trip, h.tools, h.relayState} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile(t, filepath.Join(h.codex, "config.toml"), "# the isolated Codex home of the todo 40 integration test\n", 0o644)
+	// The tripwires: a command that asks PATH for Python or its package tools leaves a line in
+	// the sentinel and fails. The shebang names /bin/sh by absolute path, as PATH holds no sh.
+	for _, name := range []string{"python", "python3", "pip", "uv"} {
+		writeFile(t, filepath.Join(h.trip, name), "#!/bin/sh\nprintf '%s\\n' \"$0 $*\" >> "+shellQuote(h.sentinel)+"\nexit 97\n", 0o755)
+	}
+	// `crw install` records the Codex CLI version as one dimension of the measured point.
+	writeFile(t, filepath.Join(h.tools, "codex"), "#!/bin/sh\n[ \"$1\" = --version ] || exit 1\necho 'codex-cli 0.0.0-isolated'\n", 0o755)
+	// The fake App Server's socket, and every temporary file this process makes, land under root.
+	t.Setenv("TMPDIR", h.tmp)
+	h.fake = fakehost.Start(t)
+	h.mustBeInside(t, h.fake.SocketPath)
+	if len(h.fake.SocketPath) > socketLimit {
+		t.Fatalf("the fake App Server socket %s is longer than a unix socket path may be", h.fake.SocketPath)
+	}
+	h.manifestVersion = manifestVersion(t)
+	h.payload = h.replaceCache(t, h.manifestVersion, nil)
+	return h
+}
+
+// mustBeInside aborts the test unless path lies under the temporary root.
+func (h *isolated) mustBeInside(t *testing.T, path string) {
+	t.Helper()
+	relative, err := filepath.Rel(h.root, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, "../") || filepath.IsAbs(relative) {
+		t.Fatalf("%s is not under the test's temporary root %s", path, h.root)
+	}
+}
+
+// env is the isolated environment: the four homes and a PATH of tripwires and the Codex stub.
+// Nothing is inherited from this process. CRW_ALLOW_LIVE_STATE is not set, and need not be: the
+// relay state `crw install` exercises is named with --state outside
+// $XDG_STATE_HOME/codex-session-relay, and a Stop hook whose relay is unreachable opens no store,
+// so the live-state guard has nothing here to refuse.
+func (h *isolated) env(extra ...string) []string {
+	return append([]string{"HOME=" + h.home, "CODEX_HOME=" + h.codex, "XDG_STATE_HOME=" + h.state, "TMPDIR=" + h.tmp,
+		"PATH=" + h.trip + ":" + h.tools}, extra...)
+}
+
+// hookEnv is what the host hands the declared Stop hook of the installed package.
+func (h *isolated) hookEnv() []string { return h.env("PLUGIN_ROOT=" + h.payload) }
+
+// bin is a name under the owned pointer's bin/.
+func (h *isolated) bin(name string) string { return filepath.Join(h.current, "bin", name) }
+
+func (h *isolated) noTripwireFired(t *testing.T) {
+	t.Helper()
+	if raw, err := os.ReadFile(h.sentinel); err == nil {
+		t.Fatalf("a command asked PATH for Python or its tools:\n%s", raw)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+}
+
+// ---- binaries, archives and the plugin payload
+
+// release builds A and B and writes their archives with one SHA256SUMS beside them.
+func (h *isolated) release(t *testing.T) (string, string) {
+	t.Helper()
+	build := filepath.Join(h.root, "build")
+	// A is what an operator downloaded and runs once to install.
+	h.downloaded = filepath.Join(h.root, "downloaded", "crw")
+	if named := os.Getenv("CRW_TEST_BINARY"); named != "" {
+		abs, err := filepath.Abs(named)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := os.ReadFile(abs)
+		if err != nil {
+			t.Fatalf("CRW_TEST_BINARY: %v", err)
+		}
+		writeFile(t, h.downloaded, string(raw), 0o755)
+	} else {
+		goBuild(t, h.downloaded, versionA)
+	}
+	b := filepath.Join(build, "b", "crw")
+	goBuild(t, b, versionB)
+	h.versionA = strings.TrimSpace(h.mustRun(t, h.downloaded, "version").stdout)
+	if got := strings.TrimSpace(h.mustRun(t, b, "version").stdout); got != versionB || h.versionA == versionB || h.versionA == "" {
+		t.Fatalf("A reports %q and B %q; the update could not be told from the install", h.versionA, got)
+	}
+	dir := filepath.Join(h.root, "release")
+	archiveA := writeArchive(t, dir, versionA, h.downloaded)
+	archiveB := writeArchive(t, dir, versionB, b)
+	var sums strings.Builder
+	for _, path := range []string{archiveA, archiveB} {
+		sums.WriteString(fileDigest(t, path) + "  " + filepath.Base(path) + "\n")
+	}
+	writeFile(t, filepath.Join(dir, "SHA256SUMS"), sums.String(), 0o644)
+	h.envA = filepath.Join(h.dest, "bin-"+versionA+"-"+fileDigest(t, archiveA)[:12])
+	h.envB = filepath.Join(h.dest, "bin-"+versionB+"-"+fileDigest(t, archiveB)[:12])
+	return archiveA, archiveB
+}
+
+// goBuild links ./cmd/crw as the release does (static, trimmed) with main.version set.
+func goBuild(t *testing.T, output, version string) {
+	t.Helper()
+	// `go test` puts its own GOROOT/bin first on the PATH it runs tests with.
+	goTool, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatalf("no go command to link crw %s with: %v", version, err)
+	}
+	cmd := exec.Command(goTool, "build", "-trimpath", "-ldflags=-X main.version="+version, "-o", output, "./cmd/crw")
+	cmd.Dir = moduleRoot
+	cmd.Env = append(append([]string{}, toolchainEnv...), "CGO_ENABLED=0", "TMPDIR="+os.Getenv("TMPDIR"))
+	started := time.Now()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go build %s: %v\n%s", version, err, out)
+	}
+	t.Logf("built crw %s in %s", version, time.Since(started).Round(time.Millisecond))
+}
+
+// writeArchive writes crw_<version>_<os>_<arch>.tar.gz in the layout docs/releases.md states:
+// the binary, its three compatibility names as links to it, the repository LICENSE and the
+// bridge's MIT provenance.
+func writeArchive(t *testing.T, dir, version, binary string) string {
+	t.Helper()
+	raw, err := os.ReadFile(binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	compressed := gzip.NewWriter(&buf)
+	w := tar.NewWriter(compressed)
+	add := func(header *tar.Header, body []byte) {
+		header.ModTime = time.Unix(0, 0)
+		header.Size = int64(len(body))
+		if err := w.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write(body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add(&tar.Header{Name: "crw", Mode: 0o755, Typeflag: tar.TypeReg}, raw)
+	for _, name := range []string{"codex-session-relay", "codex-thread-bridge", "crw-completion-hook"} {
+		add(&tar.Header{Name: name, Linkname: "crw", Mode: 0o777, Typeflag: tar.TypeSymlink}, nil)
+	}
+	for _, licence := range []string{"LICENSE", "packages/codex-thread-bridge/LICENSE"} {
+		add(&tar.Header{Name: licence, Mode: 0o644, Typeflag: tar.TypeReg}, readFile(t, filepath.Join(moduleRoot, licence)))
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := compressed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "crw_"+version+"_"+runtime.GOOS+"_"+runtime.GOARCH+".tar.gz")
+	writeFile(t, path, buf.String(), 0o644)
+	return path
+}
+
+func manifestVersion(t *testing.T) string {
+	t.Helper()
+	var manifest struct{ Version string }
+	if err := json.Unmarshal(readFile(t, filepath.Join(moduleRoot, "plugins", "crw", ".codex-plugin", "plugin.json")), &manifest); err != nil || manifest.Version == "" {
+		t.Fatalf("the plugin manifest names no version: %v", err)
+	}
+	return manifest.Version
+}
+
+// replaceCache replaces the Codex home's crw plugin cache wholesale, as a plugin install does,
+// with the working-tree package at <cache>/crw/crw/<version>, whose files named in overrides are
+// replaced by the given sources. It returns that version directory.
+func (h *isolated) replaceCache(t *testing.T, version string, overrides map[string]string) string {
+	t.Helper()
+	cache := filepath.Join(h.codex, "plugins", "cache", "crw")
+	if err := os.RemoveAll(cache); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(cache, "crw", version)
+	h.mustBeInside(t, dir)
+	copyTree(t, filepath.Join(moduleRoot, "plugins", "crw"), dir)
+	for rel, source := range overrides {
+		writeFile(t, filepath.Join(dir, rel), string(readFile(t, source)), 0o644)
+	}
+	return dir
+}
+
+func copyTree(t *testing.T, from, to string) {
+	t.Helper()
+	err := filepath.WalkDir(from, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(from, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(to, rel)
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		switch {
+		case entry.IsDir():
+			return os.MkdirAll(target, 0o755)
+		case info.Mode()&os.ModeSymlink != 0:
+			link, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			return os.Symlink(link, target)
+		case info.Mode().IsRegular():
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(target, raw, info.Mode().Perm())
+		}
+		return fmt.Errorf("%s is neither a file, a directory nor a link", path)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ---- the declared commands, as the host caches them
+
+// stopCommand is the one Stop command a cached package declares.
+func stopCommand(t *testing.T, payload string) string {
+	t.Helper()
+	var declaration struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Type, Command string
+			}
+		}
+	}
+	if err := json.Unmarshal(readFile(t, filepath.Join(payload, "wiring", "hooks", "stop-recording-completion.json")), &declaration); err != nil {
+		t.Fatal(err)
+	}
+	stop := declaration.Hooks["Stop"]
+	if len(declaration.Hooks) != 1 || len(stop) != 1 || len(stop[0].Hooks) != 1 || stop[0].Hooks[0].Type != "command" {
+		t.Fatalf("expected exactly one Stop command hook in %s", payload)
+	}
+	return stop[0].Hooks[0].Command
+}
+
+// mcpServer is the bridge server a cached package declares.
+func mcpServer(t *testing.T, payload string) (string, []string, string) {
+	t.Helper()
+	var declaration struct {
+		MCPServers map[string]struct {
+			Command string
+			Args    []string
+			Cwd     string
+		}
+	}
+	if err := json.Unmarshal(readFile(t, filepath.Join(payload, "wiring", "mcp.json")), &declaration); err != nil {
+		t.Fatal(err)
+	}
+	server, ok := declaration.MCPServers["codex-thread-bridge"]
+	if !ok || len(declaration.MCPServers) != 1 {
+		t.Fatalf("expected only codex-thread-bridge in %s", payload)
+	}
+	return server.Command, server.Args, server.Cwd
+}
+
+// ---- processes
+
+type outcome struct {
+	code           int
+	stdout, stderr string
+	elapsed        time.Duration
+}
+
+// run starts argv in dir with exactly env and stdin and waits for it.
+func run(t *testing.T, dir string, env []string, stdin string, argv ...string) outcome {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Dir, cmd.Env, cmd.Stdin = dir, env, strings.NewReader(stdin)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	started := time.Now()
+	err := cmd.Run()
+	elapsed := time.Since(started)
+	if ctx.Err() != nil {
+		t.Fatalf("%q did not exit within %s", argv, commandTimeout)
+	}
+	code := 0
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		code = exit.ExitCode()
+	} else if err != nil {
+		t.Fatalf("%q: %v", argv, err)
+	}
+	return outcome{code, stdout.String(), stderr.String(), elapsed}
+}
+
+// mustRun runs a crw binary in the isolated environment and requires exit 0.
+func (h *isolated) mustRun(t *testing.T, binary string, args ...string) outcome {
+	t.Helper()
+	got := run(t, h.root, h.env(), "", append([]string{binary}, args...)...)
+	if got.code != 0 {
+		t.Fatalf("%s %q: exit %d\nstdout %s\nstderr %s", binary, args, got.code, got.stdout, got.stderr)
+	}
+	return got
+}
+
+// crw runs `<binary> install ...` in the isolated environment and decodes its JSON report.
+func (h *isolated) crw(t *testing.T, binary string, args ...string) (map[string]any, int) {
+	t.Helper()
+	got := run(t, h.root, h.env(), "", append([]string{binary, "install"}, args...)...)
+	var report map[string]any
+	if err := json.Unmarshal([]byte(got.stdout), &report); err != nil {
+		t.Fatalf("crw install %q: exit %d, no JSON report (%v)\nstdout %s\nstderr %s", args, got.code, err, got.stdout, got.stderr)
+	}
+	return report, got.code
+}
+
+// at is the value under a path of object keys.
+func at(v any, path ...string) any {
+	for _, key := range path {
+		object, _ := v.(map[string]any)
+		v = object[key]
+	}
+	return v
+}
+
+func show(v any) string {
+	raw, _ := json.MarshalIndent(v, "", "  ")
+	return string(raw)
+}
+
+// ---- the Stop hook and its journal
+
+// stop runs a declared Stop command through `/bin/sh -c`, the way the host runs it, with the
+// Stop payload inline, and records its wall time.
+func (h *isolated) stop(t *testing.T, command string, env []string, session, turn string) outcome {
+	t.Helper()
+	payload := `{"hook_event_name": "Stop", "session_id": "` + session + `", "turn_id": "` + turn + `"}`
+	got := run(t, h.root, env, payload, "/bin/sh", "-c", command)
+	t.Logf("Stop hook %s/%s: %s, exit %d", session, turn, got.elapsed.Round(time.Millisecond), got.code)
+	if got.elapsed >= hookCeiling {
+		t.Errorf("Stop hook %s/%s took %s", session, turn, got.elapsed)
+	}
+	return got
+}
+
+// rows is every journal row under the Codex home's journal.
+func (h *isolated) rows(t *testing.T) []map[string]any {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(h.journal, "[0-9]*", "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := []map[string]any{}
+	for _, path := range paths {
+		var row map[string]any
+		if err := json.Unmarshal(readFile(t, path), &row); err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+// journaled requires a released turn (exit 0, nothing on stdout) that left exactly one journal
+// row for that session and turn, with an adapter outcome, read from the installer's settings.
+func (h *isolated) journaled(t *testing.T, got outcome, session, turn string) {
+	t.Helper()
+	if got.code != 0 || got.stdout != "" {
+		t.Fatalf("Stop %s/%s: exit %d stdout %q stderr %q; want exit 0 and nothing on stdout", session, turn, got.code, got.stdout, got.stderr)
+	}
+	var found []map[string]any
+	for _, row := range h.rows(t) {
+		if row["sessionId"] == session && row["turnId"] == turn {
+			found = append(found, row)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("Stop %s/%s: %d journal rows for it (stderr %q); the hook exits 0 on every path, so only a row shows it ran", session, turn, len(found), got.stderr)
+	}
+	if outcome, _ := found[0]["adapterOutcome"].(string); outcome == "" || found[0]["configuration"] != h.settings {
+		t.Fatalf("Stop %s/%s: row %s", session, turn, show(found[0]))
+	}
+}
+
+// ---- the MCP server
+
+type bridgeAnswer struct {
+	tools  []string
+	policy map[string]any
+	// exe and argv0 are the running bridge's, read from /proc while it answered.
+	exe, argv0 string
+}
+
+// bridge starts the declared MCP server from the installed version directory with only HOME
+// set, and asks it initialize, tools/list and get_capabilities over its stdio.
+func (h *isolated) bridge(t *testing.T) bridgeAnswer {
+	t.Helper()
+	command, args, cwd := mcpServer(t, h.payload)
+	if command != "sh" || cwd != "." {
+		t.Fatalf("declared server %q %q cwd %q", command, args, cwd)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+	// The environment names no PATH, so the declared "sh" is named by absolute path.
+	cmd := exec.CommandContext(ctx, "/bin/sh", args...)
+	cmd.Dir = filepath.Join(h.payload, cwd)
+	cmd.Env = []string{"HOME=" + h.home}
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = stdin.Close()
+		_ = cmd.Wait()
+	}()
+	lines := bufio.NewReader(stdout)
+	call := func(id int, method string, params any) map[string]any {
+		t.Helper()
+		frame, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+		if _, err := stdin.Write(append(frame, '\n')); err != nil {
+			t.Fatalf("%s: %v (stderr %q)", method, err, stderr.String())
+		}
+		for {
+			line, err := lines.ReadBytes('\n')
+			if err != nil {
+				t.Fatalf("%s: the server closed its output: %v (stderr %q)", method, err, stderr.String())
+			}
+			var message map[string]any
+			if json.Unmarshal(line, &message) != nil || message["method"] != nil || message["id"] != float64(id) {
+				continue
+			}
+			if message["error"] != nil {
+				t.Fatalf("%s: %s", method, line)
+			}
+			result, _ := message["result"].(map[string]any)
+			return result
+		}
+	}
+	call(1, "initialize", map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "isolated-home", "version": "1"}})
+	if _, err := stdin.Write([]byte(`{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	var answer bridgeAnswer
+	listed, _ := at(call(2, "tools/list", map[string]any{}), "tools").([]any)
+	for _, tool := range listed {
+		name, _ := at(tool, "name").(string)
+		answer.tools = append(answer.tools, name)
+	}
+	capabilities := call(3, "tools/call", map[string]any{"name": "get_capabilities", "arguments": map[string]any{}})
+	if capabilities["isError"] == true {
+		t.Fatalf("get_capabilities: %s", show(capabilities))
+	}
+	answer.policy, _ = at(capabilities, "structuredContent", "executionPolicy").(map[string]any)
+	proc := filepath.Join("/proc", strconv.Itoa(cmd.Process.Pid))
+	if answer.exe, err = os.Readlink(filepath.Join(proc, "exe")); err != nil {
+		t.Fatal(err)
+	}
+	cmdline := readFile(t, filepath.Join(proc, "cmdline"))
+	answer.argv0, _, _ = strings.Cut(string(cmdline), "\x00")
+	return answer
+}
+
+// bridgeAnswers requires the declared server to be runtimeDir's crw running as the bridge (the
+// pid the host started, exec'd through the pointer's codex-thread-bridge), to list exactly the 12
+// tools and to report the policy the bridge record names: its digest when it names one,
+// presence_only when it names none.
+func (h *isolated) bridgeAnswers(t *testing.T, runtimeDir string) {
+	t.Helper()
+	answer := h.bridge(t)
+	listed := slices.Sorted(slices.Values(answer.tools))
+	if !slices.Equal(listed, toolNames) {
+		t.Errorf("tools/list %q, want %q", answer.tools, toolNames)
+	}
+	if want := filepath.Join(runtimeDir, "bin", "crw"); answer.exe != want || answer.argv0 != h.bin("codex-thread-bridge") {
+		t.Errorf("the running bridge is %s started as %s, want %s started as %s", answer.exe, answer.argv0, want, h.bin("codex-thread-bridge"))
+	}
+	var bridgeRecord map[string]any
+	if err := json.Unmarshal(readFile(t, h.bridgeRecord), &bridgeRecord); err != nil {
+		t.Fatal(err)
+	}
+	if digest, named := at(bridgeRecord, "executionPolicy", "digest").(string); named {
+		if answer.policy["mode"] != "allowlist" || answer.policy["digest"] != digest {
+			t.Errorf("the record names the policy digest %s and the bridge reports %s", digest, show(answer.policy))
+		}
+	} else if answer.policy["mode"] != "presence_only" || answer.policy["digest"] != nil {
+		t.Errorf("the record names no policy and the bridge reports %s", show(answer.policy))
+	}
+}
+
+// ---- IS-1
+
+func (h *isolated) installAndWire(t *testing.T, archiveA string) {
+	report, code := h.crw(t, h.downloaded, "install", "--from", archiveA, "--socket", h.fake.SocketPath, "--state", h.relayState)
+	if code != 0 || report["command"] != "install" || report["applied"] != true || report["promoted"] != true ||
+		report["claimSettled"] != true || report["inService"] != true || report["environment"] != h.envA {
+		t.Fatalf("install: exit %d\n%s", code, show(report))
+	}
+	steps, _ := report["steps"].([]any)
+	if len(steps) == 0 {
+		t.Fatalf("install reports no steps:\n%s", show(report))
+	}
+	for _, step := range steps {
+		if at(step, "ok") != true {
+			t.Errorf("install step %s", show(step))
+		}
+	}
+	envBin := filepath.Join(h.envA, "bin")
+	if at(report, "pointer", "path") != h.current || at(report, "pointer", "target") != h.envA ||
+		at(report, "selected", "codex-session-relay") != envBin || at(report, "selected", "codex-thread-bridge") != envBin {
+		t.Fatalf("install report: pointer %s selected %s", show(report["pointer"]), show(report["selected"]))
+	}
+	// The report is read back against the link and the host record it says it wrote.
+	if target := h.pointerTarget(t); target != h.envA {
+		t.Fatalf("the pointer names %s, the report %s", target, h.envA)
+	}
+	var hostRecord map[string]any
+	if err := json.Unmarshal(readFile(t, h.record), &hostRecord); err != nil {
+		t.Fatal(err)
+	}
+	if at(hostRecord, "selected", "codex-session-relay") != envBin || at(hostRecord, "selected", "codex-thread-bridge") != envBin || at(hostRecord, "pointer", "path") != h.current {
+		t.Fatalf("host record selected %s pointer %s", show(hostRecord["selected"]), show(hostRecord["pointer"]))
+	}
+
+	// The bin/ layout: the downloaded binary's bytes, and the three names beside it.
+	if fileDigest(t, filepath.Join(envBin, "crw")) != fileDigest(t, h.downloaded) {
+		t.Error("bin/crw is not the archived binary")
+	}
+	if info, err := os.Lstat(filepath.Join(envBin, "crw")); err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		t.Errorf("bin/crw: %v %v", info, err)
+	}
+	for _, name := range []string{"codex-session-relay", "codex-thread-bridge", "crw-completion-hook"} {
+		if link, err := os.Readlink(filepath.Join(envBin, name)); err != nil || link != "crw" {
+			t.Errorf("bin/%s -> %q %v, want a link to crw", name, link, err)
+		}
+	}
+	for _, licence := range []string{"LICENSE", "packages/codex-thread-bridge/LICENSE"} {
+		if !bytes.Equal(readFile(t, filepath.Join(h.envA, licence)), readFile(t, filepath.Join(moduleRoot, licence))) {
+			t.Errorf("%s was not unpacked as released", licence)
+		}
+	}
+
+	// The two records the declared commands read, written by the installed runtime itself.
+	crw := h.bin("crw")
+	if report, code := h.crw(t, crw, "hook", "--owner", "plugin"); code != 0 || at(report, "settings", "outcome") != "config_created" {
+		t.Fatalf("hook: exit %d\n%s", code, show(report))
+	}
+	bridgeArgs := []string{"--bridge-arg=--socket", "--bridge-arg=" + h.fake.SocketPath, "--bridge-arg=--state-dir", "--bridge-arg=" + h.ledger}
+	if report, code := h.crw(t, crw, append([]string{"register-mcp", "--owner", "plugin"}, bridgeArgs...)...); code != 0 || report["outcome"] != "record_created" {
+		t.Fatalf("register-mcp: exit %d\n%s", code, show(report))
+	}
+	for _, path := range []string{h.settings, h.bridgeRecord, h.record} {
+		if bytes.Contains(bytes.ToLower(readFile(t, path)), []byte("python")) {
+			t.Errorf("%s names python:\n%s", path, readFile(t, path))
+		}
+	}
+	h.settingsAccepted(t)
+
+	command := stopCommand(t, h.payload)
+	h.journaled(t, h.stop(t, command, h.hookEnv(), "is1-session", "is1-turn"), "is1-session", "is1-turn")
+	h.bridgeAnswers(t, h.envA)
+
+	// The host's execution policy: the record is moved aside, as its repair says, and written
+	// again naming the policy by path and digest; the bridge then starts under that policy.
+	if err := os.Rename(h.bridgeRecord, h.bridgeRecord+".before-policy"); err != nil {
+		t.Fatal(err)
+	}
+	policy := filepath.Join(h.root, "execution-policy.json")
+	writeFile(t, policy, `{"allowed": [{"model": "gpt-5", "efforts": ["high"]}]}`, 0o644)
+	report, code = h.crw(t, crw, append([]string{"register-mcp", "--owner", "plugin", "--execution-policy", policy}, bridgeArgs...)...)
+	if code != 0 || report["outcome"] != "record_created" || at(report, "executionPolicy", "digest") != fileDigest(t, policy) {
+		t.Fatalf("register-mcp --execution-policy: exit %d\n%s", code, show(report))
+	}
+	h.bridgeAnswers(t, h.envA)
+
+	h.mustRun(t, h.bin("codex-session-relay"), "--help")
+	h.noTripwireFired(t)
+}
+
+// settingsAccepted is hook-status's reading of the settings the installer wrote: the Go hook's
+// own validator has no complaint, and the relay and adapter they name are present through the
+// pointer, the relay offering the guard.
+func (h *isolated) settingsAccepted(t *testing.T) {
+	t.Helper()
+	document, err := hook.Decode(readFile(t, h.settings))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if complaints := hook.Complaints(document); len(complaints) != 0 {
+		t.Fatalf("the Go hook refuses the installer's settings: %q", complaints)
+	}
+	status := hook.Status(context.Background(), h.codex, map[string]string{"HOME": h.home, "CODEX_HOME": h.codex, "XDG_STATE_HOME": h.state}, "Stop")
+	for cell, want := range map[string]string{"configuration": "PRESENT", "registrationOwner": "plugin", "relayExecutable": "PRESENT",
+		"adapterEntryPoint": "PRESENT", "guardEvaluateOffered": "guard-evaluate"} {
+		if value := at(status, cell, "value"); value != want {
+			t.Errorf("hook-status %s is %v, want %s: %s", cell, value, want, show(status[cell]))
+		}
+	}
+}
+
+func (h *isolated) pointerTarget(t *testing.T) string {
+	t.Helper()
+	link, err := os.Readlink(h.current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(link) {
+		link = filepath.Join(h.dest, link)
+	}
+	return filepath.Clean(link)
+}
+
+// ---- IS-7
+
+func (h *isolated) cacheReplacement(t *testing.T) {
+	// Neither native command names the version cache, which every install replaces wholesale.
+	command := stopCommand(t, h.payload)
+	launcher := string(readFile(t, filepath.Join(h.payload, "wiring", "crw-bridge.sh")))
+	for name, text := range map[string]string{"the Stop command": command, "crw-bridge.sh": launcher} {
+		if strings.Contains(text, "PLUGIN_ROOT") || strings.Contains(text, "plugins/cache") || !strings.Contains(text, "$HOME/.local/share/crw-runtime/current/bin/") {
+			t.Errorf("%s does not reach the runtime through the pointer alone:\n%s", name, text)
+		}
+	}
+
+	// The native command a turn fixed before the cache was replaced still journals the Stop.
+	fixedEnv := h.hookEnv()
+	h.payload = h.replaceCache(t, h.manifestVersion+"-replacement", nil)
+	h.journaled(t, h.stop(t, command, fixedEnv, "is7-replaced", "t"), "is7-replaced", "t")
+	h.bridgeAnswers(t, h.envA)
+
+	t.Run("legacy bootstrap", h.legacyBootstrap)
+
+	// With the pointer's target gone the turn is released unrecorded, and the bridge refuses
+	// loudly, naming the runtime it could not start.
+	target := h.pointerTarget(t)
+	if err := os.Rename(target, target+".moved-aside"); err != nil {
+		t.Fatal(err)
+	}
+	before := len(h.rows(t))
+	got := h.stop(t, command, h.hookEnv(), "is7-gone", "t")
+	t.Logf("Stop hook with the runtime gone: stderr %q", got.stderr)
+	if got.code != 0 || got.stdout != "" || len(h.rows(t)) != before {
+		t.Errorf("runtime gone: exit %d stdout %q, %d rows from %d", got.code, got.stdout, len(h.rows(t)), before)
+	}
+	_, args, cwd := mcpServer(t, h.payload)
+	refused := run(t, filepath.Join(h.payload, cwd), []string{"HOME=" + h.home}, "", append([]string{"/bin/sh"}, args...)...)
+	t.Logf("MCP launcher with the runtime gone: exit %d stderr %q", refused.code, refused.stderr)
+	if refused.code == 0 || refused.stdout != "" || !strings.Contains(refused.stderr, h.bin("codex-thread-bridge")) {
+		t.Errorf("runtime gone: the MCP launcher exited %d stdout %q stderr %q; want nonzero, naming the runtime", refused.code, refused.stdout, refused.stderr)
+	}
+	if err := os.Rename(target+".moved-aside", target); err != nil {
+		t.Fatal(err)
+	}
+	h.journaled(t, h.stop(t, command, h.hookEnv(), "is7-back", "t"), "is7-back", "t")
+	h.noTripwireFired(t)
+}
+
+// legacyBootstrap is the pre-native declaration a turn cached before todo 34 still runs until
+// todo 43 retires it: a python3 bootstrap fixed with PLUGIN_ROOT naming the old version, opening
+// that version's packaged launcher and, once the cache was replaced, the copy the Python
+// installer left at <CODEX_HOME>/crw-stop-hook.py. Both reach the Go hook through the
+// installer's settings. It runs python3 from this machine's PATH, never the tripwires.
+func (h *isolated) legacyBootstrap(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("no python3 on PATH to run the pre-native bootstrap")
+	}
+	preNative := filepath.Join(moduleRoot, "internal", "pluginwiring", "testdata", "pre-native-wiring")
+	old := h.replaceCache(t, "0.4.0+pre-native", map[string]string{
+		"wiring/hooks/stop-recording-completion.json": filepath.Join(preNative, "hooks", "stop-recording-completion.json"),
+		"wiring/mcp.json": filepath.Join(preNative, "mcp.json"),
+	})
+	command := stopCommand(t, old)
+	if !strings.HasPrefix(command, "python3 -c") || !strings.Contains(command, "${PLUGIN_ROOT}/wiring/crw_stop_hook.py") {
+		t.Fatalf("not the pre-native bootstrap: %q", command)
+	}
+	env := []string{"HOME=" + h.home, "CODEX_HOME=" + h.codex, "XDG_STATE_HOME=" + h.state, "TMPDIR=" + h.tmp, "PLUGIN_ROOT=" + old,
+		"PATH=" + os.Getenv("PATH"), "PYTHONDONTWRITEBYTECODE=1"}
+	h.journaled(t, h.stop(t, command, env, "is7-legacy-packaged", "t"), "is7-legacy-packaged", "t")
+
+	h.payload = h.replaceCache(t, h.manifestVersion, nil)
+	// Without the copy there is nothing left to open and the Stop is released unrecorded, so
+	// the row below comes from the copy and not from anything the command reaches on its own.
+	before := len(h.rows(t))
+	if got := h.stop(t, command, env, "is7-legacy-uncopied", "t"); got.code != 0 || len(h.rows(t)) != before {
+		t.Fatalf("no launcher copy: exit %d, %d rows from %d; stderr %q", got.code, len(h.rows(t)), before, got.stderr)
+	}
+	fallback := filepath.Join(h.codex, "crw-stop-hook.py")
+	writeFile(t, fallback, string(readFile(t, filepath.Join(moduleRoot, "plugins", "crw", "wiring", "crw_stop_hook.py"))), 0o644)
+	h.journaled(t, h.stop(t, command, env, "is7-legacy-fallback", "t"), "is7-legacy-fallback", "t")
+	// The Go installer places no such copy; the rest of this test runs without it.
+	if err := os.Remove(fallback); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ---- IS-8
+
+func (h *isolated) updateAndRollBack(t *testing.T, archiveA, archiveB string) {
+	crw := h.bin("crw")
+	gate := []string{"--socket", h.fake.SocketPath, "--state", h.relayState}
+	report, code := h.crw(t, crw, append([]string{"update", "--from", archiveB}, gate...)...)
+	if code != 0 || report["promoted"] != true || report["environment"] != h.envB || at(report, "pointer", "previousTarget") != h.envA {
+		t.Fatalf("update: exit %d\n%s", code, show(report))
+	}
+	h.selects(t, h.envB, versionB)
+	h.journaled(t, h.stop(t, stopCommand(t, h.payload), h.hookEnv(), "is8-updated", "t"), "is8-updated", "t")
+	h.bridgeAnswers(t, h.envB)
+
+	// An archive that does not hash to what SHA256SUMS lists is refused before anything is
+	// unpacked: the destination, the host record and the pointer are as they were. The
+	// substitute is a whole, valid release archive (A's) under B's name, so nothing after the
+	// digest check would refuse it.
+	tampered := filepath.Join(h.root, "tampered", filepath.Base(archiveB))
+	writeFile(t, tampered, string(readFile(t, archiveA)), 0o644)
+	writeFile(t, filepath.Join(filepath.Dir(tampered), "SHA256SUMS"), string(readFile(t, filepath.Join(filepath.Dir(archiveB), "SHA256SUMS"))), 0o644)
+	listing, recordBefore := h.destination(t), readFile(t, h.record)
+	report, code = h.crw(t, crw, append([]string{"update", "--from", tampered}, gate...)...)
+	if code != 1 || report["applied"] != false {
+		t.Fatalf("a tampered archive: exit %d\n%s", code, show(report))
+	}
+	if after := h.destination(t); !slices.Equal(after, listing) || !bytes.Equal(readFile(t, h.record), recordBefore) || h.pointerTarget(t) != h.envB {
+		t.Fatalf("a refused archive changed the host: destination %q -> %q, pointer %s", listing, after, h.pointerTarget(t))
+	}
+
+	report, code = h.crw(t, crw, append([]string{"rollback"}, gate...)...)
+	if code != 0 || report["applied"] != true || report["environment"] != h.envA {
+		t.Fatalf("rollback: exit %d\n%s", code, show(report))
+	}
+	h.selects(t, h.envA, h.versionA)
+	h.journaled(t, h.stop(t, stopCommand(t, h.payload), h.hookEnv(), "is8-rolled-back", "t"), "is8-rolled-back", "t")
+	h.bridgeAnswers(t, h.envA)
+
+	if report, code := h.crw(t, crw, "remove", h.envA); code != 1 || report["applied"] != false {
+		t.Fatalf("removing the selected runtime: exit %d\n%s", code, show(report))
+	}
+	if _, err := os.Stat(filepath.Join(h.envA, "bin", "crw")); err != nil {
+		t.Fatalf("a refused remove removed the selected runtime: %v", err)
+	}
+	if report, code := h.crw(t, crw, "remove", h.envB); code != 0 || report["removed"] != true {
+		t.Fatalf("removing the unselected runtime: exit %d\n%s", code, show(report))
+	}
+	if _, err := os.Lstat(h.envB); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the removed runtime is still there: %v", err)
+	}
+	h.journaled(t, h.stop(t, stopCommand(t, h.payload), h.hookEnv(), "is8-removed", "t"), "is8-removed", "t")
+	h.noTripwireFired(t)
+}
+
+// selects requires the pointer and `crw install status` to agree on runtimeDir, and the runtime
+// reached through the pointer to report version.
+func (h *isolated) selects(t *testing.T, runtimeDir, version string) {
+	t.Helper()
+	link, err := os.Readlink(h.current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, code := h.crw(t, h.bin("crw"), "status")
+	if code != 0 || h.pointerTarget(t) != runtimeDir || at(status, "runtime", "target") != link ||
+		at(status, "runtime", "targetResolves") != runtimeDir || at(status, "runtime", "agrees") != true || status["selected"] != "go-binary" {
+		t.Fatalf("pointer %s (link %s), status: exit %d\n%s", h.pointerTarget(t), link, code, show(status["runtime"]))
+	}
+	if got := strings.TrimSpace(h.mustRun(t, h.bin("crw"), "version").stdout); got != version {
+		t.Fatalf("the runtime through the pointer is %s, want %s", got, version)
+	}
+}
+
+// destination lists the installer's destination.
+func (h *isolated) destination(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir(h.dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
+}
+
+// ---- files
+
+func readFile(t *testing.T, path string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func writeFile(t *testing.T, path, text string, mode os.FileMode) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(text), mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func fileDigest(t *testing.T, path string) string {
+	t.Helper()
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	sum := sha256.New()
+	if _, err := io.Copy(sum, file); err != nil {
+		t.Fatal(err)
+	}
+	return hex.EncodeToString(sum.Sum(nil))
+}
+
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }

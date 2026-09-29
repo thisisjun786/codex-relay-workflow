@@ -360,7 +360,10 @@ func Test47_GATE_10_ParallelLegsCoverTheWholeRun(t *testing.T) {
 	}
 	legs := matrixValues(t, jobs["go-product"], "part")
 	expectEqual(t, "go-product legs", sortedCopy(legs), sortedCopy(want))
-	for _, step := range []string{"run: make lint", "run: make test-part TEST_PART="} {
+	// The isolated-home integration test installs the binary the dist leg just built;
+	// test_gate.py pins the same step.
+	for _, step := range []string{"run: make lint", "run: make test-part TEST_PART=",
+		`CRW_TEST_BINARY="$PWD/dist/crw_linux_amd64/crw" go test -trimpath -tags integration -count=1 ./internal/runtime/integration/...`} {
 		if !strings.Contains(jobs["go-product"], step) {
 			t.Errorf("go-product lacks %q", step)
 		}
