@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -21,7 +22,7 @@ var scanNow = time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
 
 func (h *host) scan(t *testing.T) record.Object {
 	t.Helper()
-	return doctor.RetentionScan(context.Background(), doctor.RetentionOptions{Env: h.env, Now: func() time.Time { return scanNow }})
+	return doctor.RetentionScan(context.Background(), doctor.RetentionOptions{Env: h.env, Now: func() time.Time { return scanNow }, ScopeRegistry: filepath.Join(h.home, "scopes")})
 }
 
 // references is each reported reference as "row:field:value".
@@ -144,13 +145,13 @@ func TestRetentionScanReadsTheWiringSurfaces(t *testing.T) {
 	want := []string{
 		"5:hooks.Stop[0].hooks[0].command:python3",
 		"5:hooks.Stop[0].hooks[0].command:${PLUGIN_ROOT}/wiring/crw_stop_hook.py",
-		"5:mcpServers.codex-thread-bridge.command:python3",
-		"5:mcpServers.codex-thread-bridge.args[0]:./wiring/crw_bridge_mcp.py",
+		"5:mcpServers.codex-thread-bridge:python3",
+		"5:mcpServers.codex-thread-bridge:./wiring/crw_bridge_mcp.py",
 		"8:file:" + filepath.Join(h.codex, "crw-stop-hook.py"),
 		"9:hooks.Stop[0].hooks[0].command:/usr/bin/python3",
 		"9:hooks.Stop[0].hooks[0].command:/checkout/scripts/completion_hook.py",
-		"10:mcp_servers.legacy.command:python3",
-		"10:mcp_servers.legacy.args[2]:/opt/legacy/server.py",
+		"10:mcp_servers.legacy:python3",
+		"10:mcp_servers.legacy:/opt/legacy/server.py",
 	}
 	got := references(report)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
@@ -288,7 +289,7 @@ func TestRetentionScanExpandsWhatAHookCommandNames(t *testing.T) {
 	if got := references(report); strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("python references\n got %v\nwant %v", got, want)
 	}
-	if got := unreadable(report); len(got) != 1 || !listed(got, "row 9", "hooks.Stop[0].hooks[4].command", "$RELAY_HOME/bin/relay", "RELAY_HOME") {
+	if got := rowEntries(unreadable(report), 9); len(got) != 1 || !listed(got, "row 9", "hooks.Stop[0].hooks[4].command", "$RELAY_HOME/bin/relay", "RELAY_HOME") {
 		t.Fatalf("unreadable %v", got)
 	}
 }
@@ -305,7 +306,7 @@ func fakeProc(t *testing.T, pid int, ticks int64) string {
 
 func (h *host) scanProc(t *testing.T, proc string) record.Object {
 	t.Helper()
-	return doctor.RetentionScan(context.Background(), doctor.RetentionOptions{Env: h.env, Now: func() time.Time { return scanNow }, Proc: proc})
+	return doctor.RetentionScan(context.Background(), doctor.RetentionOptions{Env: h.env, Now: func() time.Time { return scanNow }, Proc: proc, ScopeRegistry: filepath.Join(h.home, "scopes")})
 }
 
 func (h *host) daemon(t *testing.T, pid int, ticks int64) string {
@@ -427,7 +428,7 @@ func TestRetentionScanExpandsThePluginRootInTheCacheOnly(t *testing.T) {
 	if got := references(report); len(got) != 1 || got[0] != "5:hooks.Stop[0].hooks[0].command:${PLUGIN_ROOT}/wiring/relay" || record.Get(golden.Obj(refs[0]), "resolves") != filepath.Join(env, "bin", "codex-session-relay") {
 		t.Fatalf("python references %s", golden.Canon(refs))
 	}
-	if got := unreadable(report); len(got) != 1 || !listed(got, "row 9", filepath.Join(h.codex, "hooks.json"), "${PLUGIN_ROOT}") {
+	if got := rowEntries(unreadable(report), 9); len(got) != 1 || !listed(got, "row 9", filepath.Join(h.codex, "hooks.json"), "${PLUGIN_ROOT}") {
 		t.Fatalf("unreadable %v", got)
 	}
 }
@@ -489,8 +490,8 @@ func TestRetentionScanResolvesAnMCPCommandAsOnePath(t *testing.T) {
 	write(t, filepath.Join(cache, "wiring", "mcp.json"), `{"mcpServers": {"spaced": {"command": "`+spaced+`", "args": ["serve"]}}}`, 0o644)
 	report := h.scan(t)
 	want := []string{
-		"5:mcpServers.spaced.command:" + spaced,
-		"10:mcp_servers.spaced.command:" + spaced,
+		"5:mcpServers.spaced:" + spaced,
+		"10:mcp_servers.spaced:" + spaced,
 	}
 	if got := references(report); strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("python references\n got %v\nwant %v", got, want)
@@ -518,60 +519,15 @@ func TestRetentionScanListsACommandNotFoundOnPath(t *testing.T) {
 	got := unreadable(report)
 	for _, want := range [][]string{
 		{"row 9", filepath.Join(h.codex, "hooks.json"), "hooks.Stop[0].hooks[0].command", `"crw-relay-not-installed"`, filepath.Join(h.home, "bin")},
-		{"row 10", filepath.Join(h.codex, "config.toml"), "mcp_servers.gone.command", `"crw-bridge-not-installed"`, filepath.Join(h.home, "bin")},
+		{"row 10", filepath.Join(h.codex, "config.toml"), "mcp_servers.gone", `"crw-bridge-not-installed"`, filepath.Join(h.home, "bin")},
+		{"row 2", filepath.Join(h.codex, "hooks.json"), "crw-relay-not-installed"},
 	} {
 		if !listed(got, want...) {
 			t.Errorf("no unreadable entry names %v: %v", want, got)
 		}
 	}
-	if len(got) != 2 || record.Get(report, "clear") != false {
+	if len(got) != 3 || record.Get(report, "clear") != false {
 		t.Fatalf("unreadable %v, clear %v", got, record.Get(report, "clear"))
-	}
-}
-
-// A hook command is read as the shell reads it: every command position is judged, not only the
-// line's first word. A bare command there that no PATH directory holds is unreadable after
-// cd ... &&, exec, env, ;, ||, |, inside sh -c and inside a function body, and a builtin (cd,
-// true), a prefix (exec, env) and a function the command defines are not themselves listed. A
-// command word PATH resolves to a venv console script after cd ... && is a reference.
-func TestRetentionScanJudgesEveryCommandPositionOfAHookCommand(t *testing.T) {
-	h := newHost(t)
-	env := h.pythonVenv(t)
-	bin := filepath.Join(h.home, "bin")
-	link(t, filepath.Join(env, "bin", "codex-session-relay"), filepath.Join(bin, "relay"))
-	h.env = scope.Env{"HOME=" + h.home, "XDG_STATE_HOME=" + h.state, "CODEX_HOME=" + h.codex, "PATH=" + bin + ":/usr/bin:/bin"}
-	commands := []string{
-		`cd /tmp && gone-a stop`,
-		`exec gone-b`,
-		`env A=1 gone-c`,
-		`true; gone-d || gone-e | gone-f`,
-		`sh -c 'gone-g'`,
-		`cd /tmp && relay hook`,
-		`f() { gone-h; }; f`,
-	}
-	var hooks []string
-	for _, command := range commands {
-		hooks = append(hooks, `{"type": "command", "command": `+strconv.Quote(command)+`, "timeout": 10}`)
-	}
-	write(t, filepath.Join(h.codex, "hooks.json"), `{"hooks": {"Stop": [{"hooks": [`+strings.Join(hooks, ", ")+`]}]}}`, 0o600)
-	report := h.scan(t)
-	got := unreadable(report)
-	for i, word := range []string{"gone-a", "gone-b", "gone-c", "gone-d", "gone-e", "gone-f", "gone-g", "gone-h"} {
-		hook := map[int]int{0: 0, 1: 1, 2: 2, 3: 3, 4: 3, 5: 3, 6: 4, 7: 6}[i]
-		if !listed(got, "row 9", "hooks.Stop[0].hooks["+strconv.Itoa(hook)+"].command", strconv.Quote(word)) {
-			t.Errorf("no unreadable entry names %s in hook %d: %v", word, hook, got)
-		}
-	}
-	for _, word := range []string{"cd", "true", "exec", "env", "sh", "f"} {
-		if listed(got, " "+strconv.Quote(word)+": ") {
-			t.Errorf("%s is listed as unreadable: %v", word, got)
-		}
-	}
-	if len(got) != 8 {
-		t.Errorf("unreadable %v", got)
-	}
-	if refs := references(report); strings.Join(refs, "|") != "9:hooks.Stop[0].hooks[5].command:relay" {
-		t.Errorf("python references %v", refs)
 	}
 }
 
@@ -579,8 +535,8 @@ func TestRetentionScanJudgesEveryCommandPositionOfAHookCommand(t *testing.T) {
 // working directory: the Stop and bridge launchers accept only absolute paths, and a relative
 // one would resolve wherever they run. It is a Python reference when it names Python
 // (adapterInterpreter python3) and unreadable otherwise, even with a console script of that name
-// in the scan's directory; plain args are arguments. A PATH directory that is relative is not
-// searched either, so a hook command only such a directory holds is unreadable.
+// in the scan's directory. A PATH whose relative directory comes first settles no bare name
+// (finding 37): a hook command, and a bare args entry a program may run, is unreadable.
 func TestRetentionScanDoesNotResolveRelativeValuesAgainstItsOwnDirectory(t *testing.T) {
 	h := newHost(t)
 	env := h.pythonVenv(t)
@@ -599,17 +555,29 @@ func TestRetentionScanDoesNotResolveRelativeValuesAgainstItsOwnDirectory(t *test
 	}
 	got := unreadable(report)
 	for _, want := range [][]string{
-		{"row 4", filepath.Join(h.codex, "crw-completion-hook.json"), "relayExecutable", `"codex-session-relay"`, "not an absolute path"},
-		{"row 4", filepath.Join(h.codex, "crw-bridge-mcp.json"), "bridgeExecutable", `"bin/codex-thread-bridge"`, "not an absolute path"},
-		{"row 9", filepath.Join(h.codex, "hooks.json"), `"cwd-relay"`},
+		{"row 4", filepath.Join(h.codex, "crw-completion-hook.json"), "relayExecutable", `"codex-session-relay"`, "a relative path"},
+		{"row 4", filepath.Join(h.codex, "crw-bridge-mcp.json"), "bridgeExecutable", `"bin/codex-thread-bridge"`, "a relative path"},
+		{"row 4", filepath.Join(h.codex, "crw-bridge-mcp.json"), "args[0]", `"serve"`, "relative or empty directory comes first"},
+		{"row 9", filepath.Join(h.codex, "hooks.json"), `"cwd-relay"`, "relative or empty directory comes first"},
 	} {
 		if !listed(got, want...) {
 			t.Errorf("no unreadable entry names %v: %v", want, got)
 		}
 	}
-	if len(got) != 3 {
+	if len(rowEntries(got, 4))+len(rowEntries(got, 9)) != 4 {
 		t.Errorf("unreadable %v", got)
 	}
+}
+
+// rowEntries is the unreadable entries that name one row.
+func rowEntries(entries []string, row int) []string {
+	var out []string
+	for _, entry := range entries {
+		if strings.Contains(entry, ": row "+strconv.Itoa(row)+" ") {
+			out = append(out, entry)
+		}
+	}
+	return out
 }
 
 // A journal row is judged by the at its hook wrote, never by the file's modification time: a
@@ -757,5 +725,346 @@ func TestRetentionScanDoesNotReadAnUnlistableDirectoryAsEmpty(t *testing.T) {
 		if record.Get(surfaceRow(t, report, row), "scanned") != false || !listed(got, directory+": PermissionError") {
 			t.Errorf("row %d with %s unlistable: %s, unreadable %v", row, directory, golden.Canon(surfaceRow(t, report, row)), got)
 		}
+	}
+}
+
+// outcome is what the scan reported for one field on one row: "ref" for a Python reference,
+// "unreadable" for an unreadable entry, both joined, or "clean" for neither.
+func outcome(report record.Object, row int, field string) string {
+	var got []string
+	for _, ref := range references(report) {
+		if strings.HasPrefix(ref, strconv.Itoa(row)+":"+field+":") {
+			got = append(got, "ref")
+			break
+		}
+	}
+	if listed(unreadable(report), "row "+strconv.Itoa(row)+" "+field+" ") {
+		got = append(got, "unreadable")
+	}
+	if got == nil {
+		return "clean"
+	}
+	return strings.Join(got, "+")
+}
+
+// stopHooks writes each command as a Stop hook of <CODEX_HOME>/hooks.json.
+func stopHooks(t *testing.T, h *host, commands ...string) {
+	t.Helper()
+	var hooks []string
+	for _, command := range commands {
+		hooks = append(hooks, `{"type": "command", "command": `+strconv.Quote(command)+`, "timeout": 10}`)
+	}
+	write(t, filepath.Join(h.codex, "hooks.json"), `{"hooks": {"Stop": [{"hooks": [`+strings.Join(hooks, ", ")+`]}]}}`, 0o600)
+}
+
+// A hook command is judged only as far as it is written in the grammar the scan reads: the
+// native Stop command and the pre-native python3 -c bootstrap are read and judged, and every
+// construct whose meaning the scan would have to emulate is unreadable rather than guessed at.
+// Each case is a finding of the todo 37 sweep that reported this row scanned with nothing found:
+// a function shadowing a PATH program (1), a PATH assignment in any form (2), a glob or brace
+// pattern (3), a runner handing a shell or program text on (4), a path holding a newline (7), a
+// file with no #! (13), a relative command or script (15), a free-threaded interpreter found by
+// its name or its image (16), and a PATH whose relative directory comes first (37).
+func TestRetentionScanJudgesOnlyWhatItsGrammarReads(t *testing.T) {
+	h := newHost(t)
+	env := h.pythonVenv(t)
+	dir, _ := h.goRuntime(t, "bin-0.3.0-aaaaaaaaaaaa")
+	link(t, dir, h.current())
+	bin := filepath.Join(h.home, "bin")
+	write(t, filepath.Join(bin, "codex-session-relay"), fakeCrw, 0o755)
+	write(t, filepath.Join(bin, "runner"), fakeCrw+"runner", 0o755)
+	link(t, "/bin/sh", filepath.Join(bin, "python3"))
+	write(t, filepath.Join(bin, "no-hash-bang"), "python3 -m codex_session_relay hook\n", 0o755)
+	odd := filepath.Join(h.home, "odd\ndir", "relay")
+	link(t, filepath.Join(env, "bin", "codex-session-relay"), odd)
+	realPython(t, bin, "python3.13t")
+	realPython(t, bin, "interp")
+	h.env = scope.Env{"HOME=" + h.home, "XDG_STATE_HOME=" + h.state, "CODEX_HOME=" + h.codex, "PATH=" + bin + ":/usr/bin:/bin"}
+	cases := []struct{ command, want string }{
+		{`"$HOME/.local/share/crw-runtime/current/bin/crw" hook --plugin-launch; exit 0`, "clean"},
+		{"python3 -c \"\nimport os, sys\nraise SystemExit(0)\n\" \"${PLUGIN_ROOT}/wiring/crw_stop_hook.py\"", "ref"},
+		{`"$CODEX_HOME/crw-stop-hook.py"`, "ref"},
+		{`codex-session-relay hook`, "clean"},
+		{`codex-session-relay() { command codex-session-relay hook stop; }; codex-session-relay`, "unreadable"},
+		{`python3() { :; }; env python3 -m codex_session_relay hook`, "ref+unreadable"},
+		{`sh -c 'python3() { :; }'; python3 -m codex_session_relay`, "ref+unreadable"},
+		{`PATH=` + env + `/bin codex-session-relay hook stop`, "unreadable"},
+		{`env PATH=` + env + `/bin codex-session-relay hook stop`, "unreadable"},
+		{`export PATH=` + env + `/bin; codex-session-relay hook stop`, "unreadable"},
+		{`PATH=` + env + `/bin; codex-session-relay hook stop`, "unreadable"},
+		{filepath.Join(h.dest, "env-1-*", "bin", "codex-session-relay") + ` hook`, "unreadable"},
+		{env + `/bin/{codex-session-relay,x} hook`, "unreadable"},
+		{`runner -c 1 sh -c 'python3 -m codex_session_relay hook'`, "unreadable"},
+		{`runner /tmp/x -c 'python3 -m codex_session_relay hook'`, "unreadable"},
+		{`runner sh -c codex-session-relay`, "unreadable"},
+		{`'` + odd + `' hook`, "ref"},
+		{`no-hash-bang`, "unreadable"},
+		{`scripts/stop-hook`, "unreadable"},
+		{`sh scripts/stop-hook.sh`, "unreadable"},
+		{`python3.13t -m codex_session_relay hook`, "ref"},
+		{`interp -m codex_session_relay hook`, "ref"},
+	}
+	var commands []string
+	for _, c := range cases {
+		commands = append(commands, c.command)
+	}
+	stopHooks(t, h, commands...)
+	report := h.scan(t)
+	for i, c := range cases {
+		if got := outcome(report, 9, "hooks.Stop[0].hooks["+strconv.Itoa(i)+"].command"); got != c.want {
+			t.Errorf("%q: %s, want %s", c.command, got, c.want)
+		}
+	}
+	if row := surfaceRow(t, report, 9); record.Get(row, "scanned") != true || record.Get(report, "clear") != false {
+		t.Fatalf("row 9 %s", golden.Canon(row))
+	}
+	h.env = scope.Env{"HOME=" + h.home, "XDG_STATE_HOME=" + h.state, "CODEX_HOME=" + h.codex, "PATH=relbin:" + bin}
+	stopHooks(t, h, `codex-session-relay hook`)
+	if got := outcome(h.scan(t), 9, "hooks.Stop[0].hooks[0].command"); got != "unreadable" {
+		t.Errorf("a PATH whose relative directory comes first: %s", got)
+	}
+}
+
+// An MCP server is judged as Codex starts it: command and args exec'd with no shell, a shell's
+// -c program read as a program (finding 5, a login shell's being unreadable), a relative command
+// resolved against the declared cwd and a bare one on the declared env's PATH (finding 6), a
+// path holding a newline resolved (finding 7), and a relative command with no cwd unreadable.
+// The todo 34 bridge launcher (sh ./wiring/crw-bridge.sh from the version directory) is read and
+// judged clean.
+func TestRetentionScanJudgesAnMCPServerAsCodexStartsIt(t *testing.T) {
+	h := newHost(t)
+	env := h.pythonVenv(t)
+	dir, _ := h.goRuntime(t, "bin-0.3.0-aaaaaaaaaaaa")
+	link(t, dir, h.current())
+	bin := filepath.Join(h.home, "bin")
+	write(t, filepath.Join(bin, "codex-session-relay"), fakeCrw, 0o755)
+	odd := filepath.Join(h.home, "odd\ndir", "relay")
+	link(t, filepath.Join(env, "bin", "codex-session-relay"), odd)
+	h.env = scope.Env{"HOME=" + h.home, "XDG_STATE_HOME=" + h.state, "CODEX_HOME=" + h.codex, "PATH=" + bin + ":/usr/bin:/bin"}
+	servers := map[string]string{
+		"login":   `command = "bash"` + "\n" + `args = ["-lc", "python3 -m codex_session_relay mcp"]`,
+		"program": `command = "sh"` + "\n" + `args = ["-c", "exec ` + env + `/bin/codex-session-relay mcp"]`,
+		"cwd":     `command = "./bin/codex-session-relay"` + "\n" + `cwd = "` + env + `"`,
+		"envpath": `command = "codex-session-relay"` + "\n" + `env = { PATH = "` + env + `/bin" }`,
+		"nocwd":   `command = "./bin/codex-session-relay"`,
+		"newline": `command = ` + strconv.Quote(odd),
+		"native":  `command = "codex-session-relay"` + "\n" + `args = ["mcp"]`,
+	}
+	var toml []string
+	for name, body := range servers {
+		toml = append(toml, "[mcp_servers."+name+"]\n"+body+"\n")
+	}
+	write(t, filepath.Join(h.codex, "config.toml"), strings.Join(toml, "\n"), 0o600)
+	cache := filepath.Join(h.codex, "plugins", "cache", "crw", "crw", "0.5.0")
+	write(t, filepath.Join(cache, "wiring", "launcher"), "#!/usr/bin/python3\n", 0o755)
+	write(t, filepath.Join(cache, "wiring", "crw-bridge.sh"), "#!/bin/sh\n# The task bridge the plugin declares.\nexec \"$HOME/.local/share/crw-runtime/current/bin/codex-thread-bridge\" --plugin-launch \"$@\"\n", 0o755)
+	write(t, filepath.Join(cache, "wiring", "mcp.json"), `{"mcpServers": {"launcher": {"command": "./launcher", "cwd": "./wiring"}, "bridge": {"command": "sh", "args": ["./wiring/crw-bridge.sh"], "cwd": "."}}}`, 0o644)
+	report := h.scan(t)
+	for field, want := range map[string]string{
+		"mcp_servers.login": "unreadable", "mcp_servers.program": "ref", "mcp_servers.cwd": "ref", "mcp_servers.envpath": "ref",
+		"mcp_servers.nocwd": "unreadable", "mcp_servers.newline": "ref", "mcp_servers.native": "clean",
+	} {
+		if got := outcome(report, 10, field); got != want {
+			t.Errorf("%s: %s, want %s", field, got, want)
+		}
+	}
+	for field, want := range map[string]string{"mcpServers.launcher": "ref", "mcpServers.bridge": "clean"} {
+		if got := outcome(report, 5, field); got != want {
+			t.Errorf("%s: %s, want %s", field, got, want)
+		}
+	}
+}
+
+// A Stop registration reads the settings CRW_COMPLETION_HOOK_CONFIG names when it names none
+// itself (finding 17): the scan's own environment's value is read for row 2, and a registration
+// that assigns one itself is outside the grammar, so its settings are unreadable for row 2 as
+// well as row 9. `crw hook --plugin-launch` reads the default settings whatever the variable says.
+func TestRetentionScanReadsTheSettingsTheHookEnvironmentNames(t *testing.T) {
+	h := newHost(t)
+	dir, _ := h.goRuntime(t, "bin-0.3.0-aaaaaaaaaaaa")
+	link(t, dir, h.current())
+	crw := filepath.Join(h.current(), "bin", "crw")
+	settings := filepath.Join(h.home, "other", "s.json")
+	journal := filepath.Join(h.home, "other", "journal")
+	write(t, settings, `{"journalRoot": "`+journal+`"}`, 0o600)
+	write(t, filepath.Join(journal, "20260929", "recent.json"), `{"at": "2026-09-29T11:59:58Z"}`, 0o600)
+	held := func(report record.Object) bool {
+		for _, raw := range golden.List(record.Get(report, "liveHolds")) {
+			if strings.HasPrefix(record.Get(golden.Obj(raw), "source").(string), journal) {
+				return true
+			}
+		}
+		return false
+	}
+	stopHooks(t, h, `CRW_COMPLETION_HOOK_CONFIG=`+settings+` `+crw+` hook`, `env CRW_COMPLETION_HOOK_CONFIG=`+settings+` `+crw+` hook`)
+	report := h.scan(t)
+	for i := range 2 {
+		field := "hooks.Stop[0].hooks[" + strconv.Itoa(i) + "].command"
+		if !listed(unreadable(report), "row 2 "+field) || outcome(report, 9, field) != "unreadable" {
+			t.Errorf("an assigned settings path: %v", unreadable(report))
+		}
+	}
+	stopHooks(t, h, crw+` hook`)
+	h.env = h.env.With("CRW_COMPLETION_HOOK_CONFIG", settings)
+	if report := h.scan(t); !held(report) || len(unreadable(report)) != 0 {
+		t.Errorf("the environment's settings: held %v, unreadable %v", held(report), unreadable(report))
+	}
+	h.env = h.env.With("CRW_COMPLETION_HOOK_CONFIG", "other/s.json")
+	if got := unreadable(h.scan(t)); !listed(got, "row 2", "CRW_COMPLETION_HOOK_CONFIG", "not an absolute path") {
+		t.Errorf("a relative settings path: %v", got)
+	}
+	stopHooks(t, h, crw+` hook --plugin-launch`)
+	h.env = h.env.With("CRW_COMPLETION_HOOK_CONFIG", settings)
+	if report := h.scan(t); held(report) || len(unreadable(report)) != 0 {
+		t.Errorf("--plugin-launch: held %v, unreadable %v", held(report), unreadable(report))
+	}
+}
+
+// pythonProc is a procfs root holding one alive Python process (pid 4242, start time 777).
+func pythonProc(t *testing.T) string {
+	t.Helper()
+	proc := fakeProc(t, 4242, 777)
+	link(t, "/bin/sh", filepath.Join(proc, "4242", "exe"))
+	write(t, filepath.Join(proc, "4242", "cmdline"), "python3\x00-m\x00codex_session_relay\x00", 0o644)
+	return proc
+}
+
+// Rows 3 and 6 read every relay state directory the relay uses, not only those the scan's own
+// environment names: CODEX_SESSION_RELAY_STATE with ~ expanded as the relay expands it (finding
+// 8), a scope directory reached through a link (finding 9), and each stateDir the relay's scope
+// registry records, whose own pids are judged too (finding 10). A state directory that cannot
+// be established (a relative CODEX_SESSION_RELAY_STATE, a registry that cannot be listed)
+// leaves both rows unscanned and is unreadable.
+func TestRetentionScanReadsEveryRelayStateDirectory(t *testing.T) {
+	daemon := `{"pid": 4242, "startTicks": 777}`
+	for name, layout := range map[string]func(h *host) string{
+		"tilde": func(h *host) string {
+			h.env = h.env.With("CODEX_SESSION_RELAY_STATE", "~/rs")
+			write(t, filepath.Join(h.home, "rs", "daemon.json"), daemon, 0o600)
+			return filepath.Join(h.home, "rs", "daemon.json")
+		},
+		"linked scope": func(h *host) string {
+			write(t, filepath.Join(h.home, "elsewhere", "scope-1", "daemon.json"), daemon, 0o600)
+			link(t, filepath.Join(h.home, "elsewhere", "scope-1"), filepath.Join(h.state, "codex-session-relay", "scope-1"))
+			return filepath.Join(h.state, "codex-session-relay", "scope-1", "daemon.json")
+		},
+		"registry": func(h *host) string {
+			write(t, filepath.Join(h.home, "srv", "daemon.json"), daemon, 0o600)
+			write(t, filepath.Join(h.home, "scopes", "abcd.json"), `{"stateDir": "`+filepath.Join(h.home, "srv")+`", "pid": 4242, "startTicks": 777}`, 0o600)
+			return filepath.Join(h.home, "srv", "daemon.json") + "|" + filepath.Join(h.home, "scopes", "abcd.json")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHost(t)
+			want := strings.Split(layout(h), "|")
+			report := h.scanProc(t, pythonProc(t))
+			var got []string
+			for _, raw := range golden.List(record.Get(report, "pythonReferences")) {
+				got = append(got, record.Get(golden.Obj(raw), "source").(string))
+			}
+			sort.Strings(got)
+			sort.Strings(want)
+			if strings.Join(got, "|") != strings.Join(want, "|") || record.Get(surfaceRow(t, report, 3), "scanned") != true {
+				t.Fatalf("row 3 references from %v, want %v; %s", got, want, golden.Canon(surfaceRow(t, report, 3)))
+			}
+		})
+	}
+	h := newHost(t)
+	h.env = h.env.With("CODEX_SESSION_RELAY_STATE", "rs")
+	report := h.scanProc(t, pythonProc(t))
+	if record.Get(surfaceRow(t, report, 3), "scanned") != false || record.Get(surfaceRow(t, report, 6), "scanned") != false || !listed(unreadable(report), "CODEX_SESSION_RELAY_STATE", "rows 3 and 6") {
+		t.Errorf("a relative state directory: %s %v", golden.Canon(surfaceRow(t, report, 3)), unreadable(report))
+	}
+	skipAsRoot(t)
+	h = newHost(t)
+	mkdir(t, filepath.Join(h.home, "scopes"))
+	if err := os.Chmod(filepath.Join(h.home, "scopes"), 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(h.home, "scopes"), 0o755) })
+	if report := h.scanProc(t, pythonProc(t)); record.Get(surfaceRow(t, report, 3), "scanned") != false || !listed(unreadable(report), filepath.Join(h.home, "scopes"), "PermissionError") {
+		t.Errorf("an unlistable scope registry: %s %v", golden.Canon(surfaceRow(t, report, 3)), unreadable(report))
+	}
+}
+
+// Row 6 matches /proc/locks lines by the device the kernel prints, its superblock's, which
+// mountinfo gives for the mount holding the lock (finding 38: on btrfs stat's st_dev differs).
+// The table names the pid that took a lock, not whoever holds it now, so a taker that is 0,
+// gone, or no longer has the file open leaves row 6 unscanned and the lock unreadable (finding
+// 11); a waiter (->) is judged as a holder.
+func TestRetentionScanDoesNotTakeAGoneLockTakerForNoHolder(t *testing.T) {
+	for _, c := range []struct{ name, line, cmdline, want string }{
+		{"python holder on another device", "1: FLOCK  ADVISORY  WRITE 4242 0c:22:%d 0 EOF", "python3.13\x00", "ref"},
+		{"python waiter", "1: FLOCK  ADVISORY  WRITE 4243 fe:00:1 0 EOF\n1: -> FLOCK  ADVISORY  WRITE 4242 0c:22:%d 0 EOF", "python3\x00", "ref"},
+		{"taker in another namespace", "1: FLOCK  ADVISORY  WRITE 0 0c:22:%d 0 EOF", "native\x00", "unreadable"},
+		{"taker gone", "1: FLOCK  ADVISORY  WRITE 4243 0c:22:%d 0 EOF", "native\x00", "unreadable"},
+		{"taker no longer holds it", "1: FLOCK  ADVISORY  WRITE 4242 0c:22:%d 0 EOF", "native\x00", "unreadable"},
+		{"taker holds it", "1: FLOCK  ADVISORY  WRITE 4242 0c:22:%d 0 EOF", "native\x00", "clean"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHost(t)
+			lock := filepath.Join(h.state, "codex-session-relay", "scope-1", "managed-start-"+strings.Repeat("c", 64)+".lock")
+			write(t, lock, "", 0o600)
+			info, err := os.Stat(lock)
+			if err != nil {
+				t.Fatal(err)
+			}
+			proc := fakeProc(t, 4242, 777)
+			link(t, "/bin/sh", filepath.Join(proc, "4242", "exe"))
+			write(t, filepath.Join(proc, "4242", "cmdline"), c.cmdline, 0o644)
+			if c.name == "taker holds it" {
+				link(t, lock, filepath.Join(proc, "4242", "fd", "3"))
+			} else {
+				mkdir(t, filepath.Join(proc, "4242", "fd"))
+			}
+			write(t, filepath.Join(proc, "self", "mountinfo"), "22 1 12:34 / / rw,relatime - btrfs /dev/x rw\n", 0o644)
+			write(t, filepath.Join(proc, "locks"), strings.ReplaceAll(c.line, "%d", strconv.FormatUint(info.Sys().(*syscall.Stat_t).Ino, 10))+"\n", 0o644)
+			report := h.scanProc(t, proc)
+			got := "clean"
+			switch {
+			case len(references(report)) == 1 && strings.HasPrefix(references(report)[0], "6:holder:"):
+				got = "ref"
+			case listed(unreadable(report), lock+": row 6: ") && record.Get(surfaceRow(t, report, 6), "scanned") == false:
+				got = "unreadable"
+			case len(unreadable(report)) != 0 || len(references(report)) != 0:
+				got = "other"
+			}
+			if got != c.want {
+				t.Fatalf("%s, want %s: references %v unreadable %v", got, c.want, references(report), unreadable(report))
+			}
+		})
+	}
+}
+
+// A stray file in the plugin cache is not a version directory: Codex loads nothing from it, so
+// it is skipped rather than leaving row 5 unscanned (finding 18).
+func TestRetentionScanSkipsAStrayFileInThePluginCache(t *testing.T) {
+	h := newHost(t)
+	write(t, filepath.Join(h.codex, "plugins", "cache", "crw", "crw", ".DS_Store"), "x", 0o644)
+	write(t, filepath.Join(h.codex, "plugins", "cache", "crw", "crw", "0.4.0", "wiring", "hooks", "stop.json"), `{"hooks": {}}`, 0o644)
+	report := h.scan(t)
+	if record.Get(surfaceRow(t, report, 5), "scanned") != true || len(unreadable(report)) != 0 {
+		t.Fatalf("row 5 %s, unreadable %v", golden.Canon(surfaceRow(t, report, 5)), unreadable(report))
+	}
+}
+
+// A claim whose journal root is not an absolute path is never looked up against the scan's own
+// working directory (finding 19): it is a row 1 hold whatever that directory holds, and its root
+// is unreadable for row 2.
+func TestRetentionScanDoesNotResolveARelativeClaimRoot(t *testing.T) {
+	h := newHost(t)
+	key := strings.Repeat("a", 64)
+	path := filepath.Join(h.codex, "crw-completion-hook", "stop-events", key+".json")
+	write(t, path, `{"eventKey": "`+key+`", "claimedBy": {"pid": 1, "journalRoot": "j"}}`, 0o600)
+	cwd := t.TempDir()
+	write(t, filepath.Join(cwd, "j", "accepted", key+".outcome.json"), `{}`, 0o600)
+	t.Chdir(cwd)
+	report := h.scan(t)
+	holds := golden.List(record.Get(report, "liveHolds"))
+	if len(holds) != 1 || record.Get(golden.Obj(holds[0]), "source") != path || record.Get(golden.Obj(holds[0]), "outcome") != nil {
+		t.Fatalf("holds %s", golden.Canon(holds))
+	}
+	if !listed(unreadable(report), path, "row 2", `"j"`) {
+		t.Fatalf("unreadable %v", unreadable(report))
 	}
 }

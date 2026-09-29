@@ -961,56 +961,86 @@ the protocol.
 
 `crw doctor retention-scan --json` (todo 37, `internal/runtime/doctor`) enumerates exactly this
 fixed list. It resolves every executable reference through the owned pointer and every link and
-classifies what the reference resolves to (a native binary, a Python interpreter, a `#!` script
-naming one, the `#!/bin/sh` then `'''exec'` launcher pip and uv write for a long or spaced
-interpreter path, any non-native file inside a venv, a shell script that runs one of these, a
-`.py` file, a venv), never the text of the reference: on the relay host
-`current/bin/codex-session-relay` names no Python while `current` points at a venv. Each word
-is first expanded as the shell would expand it: `~` and `$HOME` from the scan's environment,
-`$CODEX_HOME` as the scan reads it, and `${PLUGIN_ROOT}` (row 5 only) as the cached version's
-directory. A word that needs any other expansion is listed as unreadable.
+classifies what the reference resolves to, never the text of the reference: on the relay host
+`current/bin/codex-session-relay` names no Python while `current` points at a venv. A reference
+is Python when it resolves to a native Python interpreter (named `python*` or `pypy*`, ABI flags
+and `-dbg` included, or an ELF image that carries CPython's `.PyRuntime` section, links
+`libpython` or `libpypy`, or holds `Py_BytesMain`, `Py_Main` or `pypy_main_startup`, so a
+`python3.13t` or a copy under any name is found), a venv or any non-native file inside one, a
+`.py` file, the `#!/bin/sh` then `'''exec'` launcher pip and uv write for a long or spaced
+interpreter path, a `#!` script whose interpreter resolves to one of these, or a shell script
+that runs one. A `#!` interpreter is itself resolved and classified: `sh`, `bash` and `dash`
+scripts are read (below), `env NAME` runs the program PATH finds for `NAME`, one that does not
+exist cannot run, and any other interpreter (perl, node, busybox, a relative one) is unreadable,
+as is a non-native file with no `#!`, which a shell would run as a shell script.
 
-A hook command, and a shell script a reference reaches, is parsed as a shell program
-(`mvdan.cc/sh/v3/syntax`, Bash grammar; decisions.md 37) rather than read as its first word:
-every command position is judged, which is the first word of each command
-after `;`, `&`, `&&`, `||`, `|`, a newline, a reserved word (`if`, `then`, `do`, `{`, `!`, ...) or
-leading assignments, and the command that `exec`, `command`, `time`, `env`, `nohup`, `nice`,
-`setsid`, `stdbuf` and `timeout` run after their options. `sh -c` and `bash -c` strings, `eval`
-words, `trap` actions, here-documents fed to a shell and command substitutions are read as
-programs, and `sh FILE` and `. FILE` read FILE as a shell script whatever its `#!` line says. A
-builtin (`cd`, `true`, `set`, ...) runs nothing and a function the program defines is judged by
-its body; any other bare command word is looked up on the scan's PATH (absolute directories
-only, since a relative one resolves where the command runs) and is unreadable when no directory
-holds it. A bare argument that PATH resolves to a Python program is reported as well, because a
-runner such as `sudo`, `xargs` or `uv run` may execute it. A construct the reader does not model
-where a command could start (an unknown option of a prefix command, `env -S`, an arithmetic
-command, a shell reading its program from standard input, a program the parser rejects, nesting
-deeper than four programs) is unreadable, and so is a command word needing an expansion the scan
-does not make. It reports:
+A hook command, a shell script a reference reaches, and a program handed to `sh -c` are parsed
+with `mvdan.cc/sh/v3/syntax` (Bash grammar; decisions.md 37) and judged only as far as they are
+written in a grammar the scan reads completely. That grammar is:
+
+- simple commands joined by `;`, `&`, `&&`, `||`, `|`, `|&` and newlines, with `!`;
+- words that are literal once the scan's expansions are made: a leading `~` or `~/` and `$HOME`
+  from the scan's environment, `$CODEX_HOME` as the scan reads it, and `${PLUGIN_ROOT}` (row 5
+  only) as the cached version's directory; a word that is exactly one positional parameter
+  (`"$@"`, `$1`, ...) as an argument, standing for the arguments its caller passed, which are
+  judged where it is called;
+- redirections to such words;
+- as commands: the builtins `exit`, `true` and `:`; `exec` and the command after it; a command
+  word that is an absolute path, or a bare name found on the scan's PATH searched in order, where
+  a relative or empty directory met before the match makes the name unreadable rather than
+  skipped; `sh`, `bash` and `dash` with the flags `-e`, `-u`, `-x`, `-f` and `-c`, whose `-c`
+  program is judged the same way and whose script operand is read as a shell script whatever its
+  `#!` says; `env` with `-i` and `--` (after `-i` only a command path); a Python program, a
+  reference whatever its arguments, which are reported too when they name Python; and any other
+  program, judged by what it is, with each argument judged as something it may run (`sudo`,
+  `xargs`, `flock`, `timeout` and `uv` run theirs): one naming a Python program is a reference,
+  and one naming a shell, holding program text (whitespace or shell syntax) or an assignment,
+  needing an expansion the scan does not make, or naming a script this scan cannot read is
+  unreadable.
+
+Everything else is unreadable and listed with its row, source, field and the construct, never
+interpreted: a function definition, any assignment (a prefix, `export`, `PATH=...`, `env NAME=`),
+a compound command (`if`, `case`, a loop, a subshell, a `{ }` group, `[[ ]]`, arithmetic,
+`time`, `coproc`), a here-document or here-string, a command or process substitution, an
+unquoted glob or brace pattern, any other expansion, a relative command or script word (a hook
+runs in the session's workspace, which the scan cannot name), a command no PATH directory holds,
+any other builtin (`cd`, `set`, `.`, `eval`, `trap`, ...), a shell other than those three, a
+login or interactive shell or one reading standard input, a program the parser rejects, and
+nesting deeper than four programs. The native Stop command
+(`"$HOME/.local/share/crw-runtime/current/bin/crw" hook --plugin-launch; exit 0`), the pre-native
+`python3 -c` bootstrap, a `<CODEX_HOME>/crw-stop-hook.py` launcher invocation and the bridge
+launcher `sh ./wiring/crw-bridge.sh` are inside the grammar.
+
+An MCP server is judged as Codex starts it: its `command` and `args` exec'd with no shell and no
+expansion, in its declared `cwd` (row 5: `.`, `./...` or `${PLUGIN_ROOT}` in the version
+directory; an absolute one as it stands), with its declared `env` over the `HOME` and `PATH`
+Codex passes on (not `CODEX_HOME` or `PLUGIN_ROOT`, docs/plugin-packaging.md). A relative word
+with no `cwd` the scan can place is unreadable; a bare command is found on the declared `PATH`,
+else the scan's. It reports:
 
 - `pythonReferences`: every reference that resolves to Python, with its row, source file, field
   and what it resolves to;
 - `liveHolds`: every turn that may still be running a command this scan cannot see (rows 1 and
   2); a hold is not a Python reference, it is a reason to wait;
 - `unscanned` and `unreadable`: the rows the scan did not read, and everything it could not
-  read or resolve. That covers files, references whose target cannot be read, words it cannot
-  expand, a bare command word that no directory on the scan's PATH holds as an executable file,
-  a shell construct it does not read, a `crw-*.json` value that is not an absolute path, and
-  alive pids whose `exe` or `cmdline` cannot be read. Nothing the scan cannot judge is dropped;
+  read, resolve or judge: files, references whose target cannot be read, every construct and
+  word outside the grammar above, a `crw-*.json` value that is not an absolute path, a relay
+  state directory that cannot be established, and alive pids whose `exe` or `cmdline` cannot be
+  read. Nothing the scan cannot judge is dropped;
 - `clear`: true only when all four are empty. Todo 43 removes nothing until `clear` is true.
 
 | # | Surface | What counts |
 |---|---|---|
-| 1 | `<CODEX_HOME>/crw-completion-hook/stop-events/*.json` | a claim whose outcome `<claimedBy.journalRoot>/accepted/<eventKey>.outcome.json` is absent (or that names no journal root): a live hold |
-| 2 | `<journalRoot>/<day>/*.json` rows under every journal root a retained Stop registration can write to: the `journalRoot` of `crw-completion-hook.json` (which the packaged launcher and a registration naming no settings read), the `journalRoot` of each settings document a `hooks.json` or cached plugin Stop command names as its settings argument (the word after `completion_hook.py`, `crw-completion-hook` or `crw hook`), `<CODEX_HOME>/crw-completion-hook/journal` (always, and for settings naming none) and each root a Stop-event claim names; settings that cannot be established or read, and a relative `journalRoot`, are unreadable | a row younger than twice the longest configured Stop hook timeout (the settings `timeoutSeconds` and every cached or user Stop hook `timeout`, at least 10 s), read from every day directory the window reaches back into: a live hold. A row's time is the `at` its hook wrote, never the file's modification time, so a row that cannot be read, is not an object or has no RFC 3339 `at` is unreadable. A window too large for a duration holds every row; a NaN timeout leaves the row unscanned |
-| 3 | every relay state directory's `daemon.json` (the state root, each scope under it, and `CODEX_SESSION_RELAY_STATE`) | a supervisor or worker pid whose start time and boot still match the record (a zombie is not alive), running a Python interpreter or a `.py` program. Where no process table can be read (darwin has no procfs), or a record names a boot and the current boot id cannot be read, the row is unscanned and the pid unreadable |
-| 4 | `<CODEX_HOME>/crw-*.json` (`crw-completion-hook.json`, `crw-bridge-mcp.json`, any other) | `relayExecutable`, `bridgeExecutable`, `adapterEntryPoint`, `adapterInterpreter`, `interpreterPath`, `command`, each resolved, and each `args` entry as an argument. One of those values, or an `args` entry holding a `/`, that is not an absolute path is a reference when it names Python (`python3`, a `.py` file) and unreadable otherwise: the Stop and bridge launchers accept only absolute paths, and the scan never resolves one against its own working directory |
-| 5 | `<CODEX_HOME>/plugins/cache/crw/crw/*/wiring/hooks/*.json`, `wiring/mcp.json`, `.mcp.json` | every word of every hook command, read as a shell program (above), and an MCP server's `command` and each of its `args` as one word each (Codex runs an MCP server without a shell, so a path holding a space is one path): a Python interpreter name, a `.py` path, or a path (or a command word on PATH) that resolves to Python |
-| 6 | every `managed-start-*.lock` in those state directories | its `/proc/locks` flock holder, judged as in row 3, less the pids row 3 reports. The directories rows 4, 5 and 6 enumerate (the Codex home, a cached version's `wiring/hooks`, each state directory) are listed explicitly: one that cannot be listed leaves its row unscanned and is unreadable |
+| 1 | `<CODEX_HOME>/crw-completion-hook/stop-events/*.json` | a claim whose outcome `<claimedBy.journalRoot>/accepted/<eventKey>.outcome.json` is absent, or that names no journal root or one that is not absolute (never looked up against the scan's own directory): a live hold |
+| 2 | `<journalRoot>/<day>/*.json` rows under every journal root a retained Stop registration can write to: the `journalRoot` of `crw-completion-hook.json` (which the packaged launcher, `crw hook --plugin-launch` and a registration naming no settings read), the `journalRoot` of each settings document a `hooks.json` or cached plugin Stop command names as its settings argument (the word after `completion_hook.py`, `crw-completion-hook` or `crw hook`), or, naming none, the `CRW_COMPLETION_HOOK_CONFIG` of the scan's environment; `<CODEX_HOME>/crw-completion-hook/journal` (always, and for settings naming none) and each root a Stop-event claim names. Settings that cannot be established or read (a Stop command holding anything the scan cannot judge, or running a script other than the adapter or the launcher, which may name settings of its own) and a relative `journalRoot` are unreadable | a row younger than twice the longest configured Stop hook timeout (the settings `timeoutSeconds` and every cached or user Stop hook `timeout`, at least 10 s), read from every day directory the window reaches back into: a live hold. A row's time is the `at` its hook wrote, never the file's modification time, so a row that cannot be read, is not an object or has no RFC 3339 `at` is unreadable. A window too large for a duration holds every row; a NaN timeout leaves the row unscanned |
+| 3 | every relay state directory's `daemon.json`: the state root, each directory under it (a link to one included), `CODEX_SESSION_RELAY_STATE` with `~` expanded, and each `stateDir` the relay's scope registry (`<passwd home>/.codex-session-relay/scopes/*.json` and `CODEX_SESSION_RELAY_SCOPE_DIR`) records, whose own pids are judged too | a supervisor or worker pid whose start time and boot still match the record (a zombie is not alive), running a Python interpreter or a `.py` program. Where no process table can be read (darwin has no procfs), a record names a boot and the current boot id cannot be read, or a state directory cannot be established (a relative `CODEX_SESSION_RELAY_STATE`, a registry that cannot be listed), the row is unscanned and the cause unreadable |
+| 4 | `<CODEX_HOME>/crw-*.json` (`crw-completion-hook.json`, `crw-bridge-mcp.json`, any other) | `relayExecutable`, `bridgeExecutable`, `adapterEntryPoint`, `adapterInterpreter`, `interpreterPath`, `command`, each resolved as written (the launchers run them with no shell and no expansion), and each `args` entry as an argument (above). One of those values that is not an absolute path is a reference when it names Python (`python3`, a `.py` file) and unreadable otherwise: the Stop and bridge launchers accept only absolute paths, and the scan never resolves one against its own working directory. A file that is neither native nor `#!` is unreadable |
+| 5 | `<CODEX_HOME>/plugins/cache/crw/crw/*/wiring/hooks/*.json`, `wiring/mcp.json`, `.mcp.json` in every version directory (a stray file there declares nothing) | every hook command, judged under the grammar above, and every MCP server, judged as Codex starts it |
+| 6 | every `managed-start-*.lock` in those state directories | its `/proc/locks` flock holders and waiters, matched by the device the kernel prints (the superblock's, read from `/proc/self/mountinfo` for the mount holding the file; `stat` differs on btrfs) and inode, judged as in row 3, less the pids row 3 reports. The table names the pid that took a lock, not whoever holds it now: a taker that is 0 (not visible here), gone or no longer has the file open leaves the row unscanned and the lock unreadable. The directories rows 4, 5 and 6 enumerate (the Codex home, a cached version's `wiring/hooks`, each state directory) are listed explicitly: one that cannot be listed leaves its row unscanned and is unreadable |
 | 7 | resumable Codex threads (`crw bridge` `list_threads`) younger than the host's turn-command cache lifetime | not read by todo 37: it needs the cache lifetime todo 43 records on codex-cli 0.154.0, so the scan reports this row unscanned and is never `clear` until todo 43 adds it |
 | 8 | `<CODEX_HOME>/crw-stop-hook.py` | the launcher copy the cached Python bootstrap falls back to, whenever it exists |
-| 9 | `<CODEX_HOME>/hooks.json` | each word of every hook command, as row 5 |
-| 10 | `<CODEX_HOME>/config.toml` `mcp_servers.*` | `command` and `args`, as row 5 |
+| 9 | `<CODEX_HOME>/hooks.json` | every hook command, as row 5 |
+| 10 | `<CODEX_HOME>/config.toml` `mcp_servers.*` | every MCP server, as row 5 (a relative `cwd` is unplaced) |
 | 11 | the owned pointer `~/.local/share/crw-runtime/current` (or `--dest`) | its target, when that is a venv |
 
 The list is closed: adding a surface is a plan change, not a scan option. Rows 1, 4 (the

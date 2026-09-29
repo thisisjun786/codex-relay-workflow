@@ -1273,12 +1273,17 @@ pins through staticcheck, now a direct requirement. Todo 37's retention scan rea
 append-only registration and read-back.
 
 The retention scan parses hook commands, shell wrappers and the programs they hand a shell
-(`sh -c` strings, `eval`, `trap` actions, here-documents) with `mvdan.cc/sh/v3/syntax` v3.14.1,
-the parser behind shfmt, in its Bash variant, and walks the syntax tree itself
-(internal/runtime/doctor/shell.go): which word is a command position, which runner or shell
-hands a command on, which expansions a word may make, and what is unreadable. Both libraries
-are used for reading only. Nothing is formatted, evaluated, expanded or run through them; the
-`interp` and `expand` packages are not imported.
+(`sh -c` strings) with `mvdan.cc/sh/v3/syntax` v3.14.1, the parser behind shfmt, in its Bash
+variant, and judges the syntax tree itself (internal/runtime/doctor/shell.go) against an
+allowlisted grammar: simple commands joined by `;`, `&`, `&&`, `||`, pipes and newlines, words
+literal after the scan's own expansions (`~`, `$HOME`, `$CODEX_HOME`, `${PLUGIN_ROOT}`),
+redirections to such words, and a closed set of commands (`exit`, `true`, `:`, `exec`, `env`
+with `-i`, `sh`/`bash`/`dash` with `-c` or a script operand, a Python program, any other program
+with its arguments judged as things it may run). Every other node - a function, an assignment,
+a compound command, a here-document, a substitution, a glob or brace pattern, an expansion the
+scan does not make - is reported unreadable with the construct, never interpreted. Both
+libraries are used for reading only. Nothing is formatted, evaluated, expanded or run through
+them; the `interp` and `expand` packages are not imported.
 
 Why: codexconfig.py refuses to approximate TOML (a hand-written reader produced ten defects), and
 the retention scan must read every registered command rather than guess at text. The same holds
@@ -1287,13 +1292,23 @@ position is a safety defect, and a hand-written lexer and grammar for it is a la
 exactly that. The Bash variant, because Codex runs a hook command through a shell the scan cannot
 name (dash is /bin/sh on the relay host, bash its login shell) and a wrapper names its own
 interpreter: Bash's grammar is a superset of the POSIX grammar those shells share, so every
-command either would run is read, the Bash-only constructs only add commands to judge, and a
-program neither accepts is a parse error, which the scan reports as unreadable.
+program either would run parses, and one neither accepts is a parse error, reported unreadable.
+
+Why an allowlist rather than a fuller reading: the todo 37 sweep found one construct after
+another that a walker modelling shell semantics read as a row scanned with nothing found while the
+shell ran Python - a function shadowing a PATH program, a PATH assignment in any of its forms, a
+glob, a runner handing `sh -c` on, a relative PATH directory, a wrapper passing `"$PY"` to an
+unmodelled runner.
+Emulating shell semantics statically has no bound: every fix admits the next construct. The
+allowlist is conservative by construction: what the scan does not read completely is unreadable,
+which keeps `clear` false until a person rewrites or removes the command, while the commands the
+host really registers (the native Stop command, the pre-native `python3 -c` bootstrap, launcher
+invocations and `sh ./wiring/crw-bridge.sh`) are inside it and judged.
 
 Evidence: scripts/crw_runtime/codexconfig.py:1-25; go.mod; internal/runtime/doctor/retention.go
-(`configToml`, `commandWords`); internal/runtime/doctor/shell.go;
-`TestRetentionScanReadsTheWiringSurfaces`, `TestShellWalkerFindsEveryCommandPosition`,
-`TestRetentionScanJudgesEveryCommandPositionOfAHookCommand`.
+(`configToml`, `hookCommands`, `server`); internal/runtime/doctor/shell.go;
+`TestRetentionScanReadsTheWiringSurfaces`, `TestTheGrammarRefusesEveryOtherConstruct`,
+`TestRetentionScanJudgesOnlyWhatItsGrammarReads`, `TestRetentionScanJudgesAnMCPServerAsCodexStartsIt`.
 
 ## 39. A caller's cancellation claims every answer the send has not yet used
 

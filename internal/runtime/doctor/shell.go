@@ -1,7 +1,9 @@
 package doctor
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -10,157 +12,53 @@ import (
 )
 
 // A shell program (a hook command, a wrapper script, an sh -c string) is parsed with
-// mvdan.cc/sh/v3/syntax (docs/port/decisions.md 37) and read for the words the shell would
-// execute. The grammar is Bash's: Codex runs a hook command through a shell this scan cannot
-// name (dash is /bin/sh on the relay host, bash the login shell), and a wrapper names its own
-// interpreter. Bash's grammar is a superset of the POSIX one those shells share, so every
-// command either shell would run is read; the constructs only Bash accepts ([[ ]], process
-// substitution, arrays, `function`) only add commands to judge, and a program neither accepts
-// is a parse error, reported as unreadable.
-//
-// On top of the syntax tree this file decides the role of each word: a command position (a
-// call's first word after its assignments), an argument, or a script a shell reads (sh FILE,
-// . FILE). It follows the builtins and programs that run a command they are given (exec,
-// command, time, env, nohup, nice, setsid, stdbuf, timeout), reads sh -c strings, eval words,
-// trap actions, here-documents fed to a shell, and command and process substitutions as
-// programs, and judges a function by its body. Anything it does not model is reported to
-// unreadable rather than dropped.
+// mvdan.cc/sh/v3/syntax (docs/port/decisions.md 37) and judged only as far as it is written in
+// a small grammar this file understands completely (docs/port/cutover.md "Retention scan
+// surface"): simple commands joined by ;, &, &&, ||, |, |& and newlines; words that are literal
+// once the scan's expansions are made; redirections to such words. Every other construct - a
+// function, an assignment, a compound command, a here-document, a substitution, a glob or brace
+// pattern - is reported as unreadable, never interpreted: shell semantics read statically have
+// no bound, and todo 43 removes Python behind this scan's answer. The grammar is Bash's, a
+// superset of the POSIX one the shells that run a hook share, so a program either would run
+// parses; one the parser rejects is unreadable.
 
-// How a word of a shell program reaches exec.
-const (
-	roleArgument = iota // an argument some command receives
-	roleCommand         // a command position: a builtin, a function, else a PATH lookup
-	roleScript          // a file a shell reads as its program (sh FILE, . FILE)
-)
+// maxDepth bounds how far sh -c programs, shell scripts and #! interpreters are followed from
+// one reference.
+const maxDepth = 4
 
-// maxShellDepth bounds how far sh -c strings, eval, trap actions and command substitutions are
-// followed inside one program.
-const maxShellDepth = 4
+var nestedTooDeep = "a program nested more than " + strconv.Itoa(maxDepth) + " deep in sh -c strings, shell scripts and #! interpreters, which this scan does not follow"
 
-// shellWord is one word of a shell program as the scan judges it.
+// shellWord is one word as the scan judges it.
 type shellWord struct {
-	Written string // quotes removed, expansions as written: what a report names
-	Value   string // with the expansions the scan makes; complete only when Missing is ""
-	Missing string // the first expansion that could not be made, as written
+	Written    string // quotes removed, expansions as written: what a report names
+	Value      string // with the scan's expansions made; complete only when Missing is ""
+	Missing    string // the first part that keeps the word from being literal, as written
+	Positional bool   // exactly one positional parameter ($@, $*, $1, ...): the program's own arguments
 }
 
-// shellBuiltins are the builtins that run no program by name. A builtin is found before PATH,
-// so echo, test, true and kill here are never the files of that name.
-var shellBuiltins = setOf(": true false cd pwd echo printf test [ export readonly local declare typeset set unset shift exit return break continue read wait umask ulimit alias unalias hash type times getopts jobs bg fg kill shopt pushd popd dirs let history logout disown suspend enable help bind caller compgen complete compopt mapfile readarray fc")
+// literal is a word no shell reads (an MCP server's command or argument).
+func literal(text string) shellWord { return shellWord{Written: text, Value: text} }
 
-// prefixSpec is a command that runs the command named after its options: a builtin (exec,
-// command, builtin) or a program (env, nohup, ...). time is a reserved word the parser reads.
-type prefixSpec struct {
-	builtin     bool
-	flags       map[string]bool // options without a value
-	valued      map[string]bool // options whose value is the next word
-	joined      []string        // option prefixes with the value attached (-n10, --signal=KILL)
-	listOnly    map[string]bool // options after which nothing is run (command -v)
-	split       []string        // option prefixes whose value is a command line this reader does not split (env -S)
-	numeric     bool            // -N is an option (nice -10)
-	operands    int             // words before the command (timeout's duration)
-	assignments bool            // NAME=value words before the command (env)
+// grammar reads one parsed program: its simple commands, and every construct outside the
+// grammar as (source, what it is).
+type grammar struct {
+	src     string
+	x       Expander
+	argvs   [][]shellWord
+	refused [][2]string
 }
 
-var prefixes = map[string]prefixSpec{
-	"exec":    {builtin: true, flags: setOf("-c -l"), valued: setOf("-a")},
-	"command": {builtin: true, flags: setOf("-p"), listOnly: setOf("-v -V")},
-	"builtin": {builtin: true},
-	"env":     {flags: setOf("-i - -0 -v --ignore-environment --null --debug"), valued: setOf("-u --unset -C --chdir"), joined: strings.Fields("-u -C --unset= --chdir="), split: strings.Fields("-S --split-string"), assignments: true},
-	"nohup":   {},
-	"setsid":  {flags: setOf("-c -f -w --ctty --fork --wait")},
-	"nice":    {valued: setOf("-n --adjustment"), joined: strings.Fields("-n --adjustment="), numeric: true},
-	"stdbuf":  {valued: setOf("-i -o -e --input --output --error"), joined: strings.Fields("-i -o -e --input= --output= --error=")},
-	"timeout": {flags: setOf("--foreground --preserve-status -v --verbose"), valued: setOf("-s --signal -k --kill-after"), joined: strings.Fields("-s -k --signal= --kill-after="), operands: 1},
-}
-
-func setOf(words string) map[string]bool {
-	set := map[string]bool{}
-	for _, w := range strings.Fields(words) {
-		set[w] = true
-	}
-	return set
-}
-
-// What one option of a prefix command is.
-const (
-	optionFlag = iota
-	optionValued
-	optionListOnly
-	optionUnknown
-)
-
-func (p prefixSpec) option(word string) int {
-	switch {
-	case p.listOnly[word]:
-		return optionListOnly
-	case hasAnyPrefix(word, p.split):
-		return optionUnknown
-	case p.flags[word]:
-		return optionFlag
-	case p.valued[word]:
-		return optionValued
-	case p.numeric && len(word) > 1 && digits(word[1:]):
-		return optionFlag
-	}
-	for _, prefix := range p.joined {
-		if strings.HasPrefix(word, prefix) && len(word) > len(prefix) {
-			return optionFlag
-		}
-	}
-	return optionUnknown
-}
-
-func hasAnyPrefix(word string, prefixes []string) bool {
-	for _, prefix := range prefixes {
-		if strings.HasPrefix(word, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-func digits(text string) bool {
-	for i := 0; i < len(text); i++ {
-		if text[i] < '0' || text[i] > '9' {
-			return false
-		}
-	}
-	return text != ""
-}
-
-// shellWalker reads shell programs and reports each word the shell would pass to exec, with its
-// role, to visit (which returns false to stop), and each construct it cannot read to
-// unreadable. expand makes a word's expansions. Functions a program defines are remembered
-// across the programs it reads.
-type shellWalker struct {
-	expand     Expander
-	visit      func(word shellWord, role int) bool
-	unreadable func(value, detail string)
-	functions  map[string]bool
-	stopped    bool
-}
-
-func (w *shellWalker) walk(program string, depth int) {
-	if w.stopped {
-		return
-	}
-	if depth > maxShellDepth {
-		w.unreadable(snippet(program), nestedTooDeep)
-		return
-	}
-	if w.functions == nil {
-		w.functions = map[string]bool{}
-	}
+func parse(program string, x Expander) ([][]shellWord, [][2]string) {
 	file, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(program), "")
 	if err != nil {
-		w.unreadable(snippet(program), "a shell program this scan cannot parse ("+err.Error()+"), so its commands cannot be told apart")
-		return
+		return nil, [][2]string{{snippet(program), "a shell program this scan cannot parse (" + err.Error() + "), so its commands cannot be told apart"}}
 	}
-	(&shellReader{w: w, src: program, depth: depth}).stmts(file.Stmts)
+	g := &grammar{src: program, x: x}
+	for _, s := range file.Stmts {
+		g.stmt(s)
+	}
+	return g.argvs, g.refused
 }
-
-var nestedTooDeep = "a shell program nested more than " + strconv.Itoa(maxShellDepth) + " deep in sh -c strings, eval, trap actions or command substitutions, which this scan does not read"
 
 // snippet is a program as an unreadable entry names it: its first 80 characters.
 func snippet(program string) string {
@@ -171,486 +69,154 @@ func snippet(program string) string {
 	return string(runes)
 }
 
-// shellReader reads one parsed program; src is the text its positions index.
-type shellReader struct {
-	w     *shellWalker
-	src   string
-	depth int
-}
-
-// simple is the simple command being read.
-type simple struct {
-	name        string
-	prefix      *prefixSpec
-	prefixName  string
-	operands    int
-	optionValue bool
-	optionsDone bool
-	shell       *shellCall
-	eval        bool
-	evalWords   []string
-	trap        bool
-	trapDone    bool
-	source      bool
-}
-
-// shellCall is a shell invoked as a command: whether it was given -c or -s, and whether the
-// program it runs has been read.
-type shellCall struct {
-	c, s, operands, done, optionValue bool
-}
-
-func (r *shellReader) source(node syntax.Node) string {
-	start, end := int(node.Pos().Offset()), int(node.End().Offset())
-	end = min(end, len(r.src))
+func (g *grammar) source(node syntax.Node) string {
+	start, end := int(node.Pos().Offset()), min(int(node.End().Offset()), len(g.src))
 	if start < 0 || start > end {
 		return ""
 	}
-	return r.src[start:end]
+	return g.src[start:end]
 }
 
-func (r *shellReader) stmts(list []*syntax.Stmt) {
-	for _, s := range list {
-		if r.w.stopped {
-			return
-		}
-		r.stmt(s)
-	}
+func (g *grammar) refuse(node syntax.Node, what string) {
+	g.refused = append(g.refused, [2]string{snippet(g.source(node)), what + ", which this scan does not read"})
 }
 
-func (r *shellReader) stmt(s *syntax.Stmt) {
-	if s == nil {
-		return
-	}
-	var stdin *string
-	for _, redirect := range s.Redirs {
-		switch redirect.Op {
-		case syntax.Hdoc, syntax.DashHdoc:
-			body := r.heredoc(redirect.Hdoc)
-			stdin = &body
-		case syntax.WordHdoc:
-			text := r.word(redirect.Word).Written
-			stdin = &text
+func (g *grammar) stmt(s *syntax.Stmt) {
+	for _, r := range s.Redirs {
+		if r.Hdoc != nil || r.Op == syntax.WordHdoc {
+			g.refuse(r, "a here-document, a program's input this scan does not read")
+		} else if w := g.word(r.Word); w.Missing != "" {
+			g.refuse(r, "a redirection to "+w.Written+", which needs "+w.Missing)
 		}
 	}
-	fed := r.command(s.Cmd, stdin)
-	for _, redirect := range s.Redirs {
-		if fed && (redirect.Op == syntax.Hdoc || redirect.Op == syntax.DashHdoc || redirect.Op == syntax.WordHdoc) {
-			continue // read as the shell's program
-		}
-		r.substitutions(redirect.Word)
-		r.substitutions(redirect.Hdoc)
-	}
-}
-
-// heredoc is a here-document's text: its literal parts as they stand and its expansions as
-// written.
-func (r *shellReader) heredoc(body *syntax.Word) string {
-	if body == nil {
-		return ""
-	}
-	var text strings.Builder
-	for _, part := range body.Parts {
-		if lit, ok := part.(*syntax.Lit); ok {
-			text.WriteString(lit.Value)
-		} else {
-			text.WriteString(r.source(part))
-		}
-	}
-	return text.String()
-}
-
-// command reads one command and returns whether stdin was read as a shell's program.
-func (r *shellReader) command(cmd syntax.Command, stdin *string) bool {
-	switch c := cmd.(type) {
+	switch c := s.Cmd.(type) {
 	case nil:
 	case *syntax.CallExpr:
-		return r.call(c, stdin)
-	case *syntax.IfClause:
-		for clause := c; clause != nil; clause = clause.Else {
-			r.stmts(clause.Cond)
-			r.stmts(clause.Then)
+		if len(c.Assigns) > 0 {
+			g.refuse(c.Assigns[0], "an assignment, which changes what later words name")
+			return
 		}
-	case *syntax.WhileClause:
-		r.stmts(c.Cond)
-		r.stmts(c.Do)
-	case *syntax.ForClause:
-		if loop, ok := c.Loop.(*syntax.WordIter); ok {
-			for _, item := range loop.Items {
-				r.argument(item)
-			}
-		} else {
-			r.w.unreadable(r.source(c.Loop), "an arithmetic for loop, whose evaluation this scan does not read")
-			r.substitutions(c.Loop)
+		var argv []shellWord
+		for _, arg := range c.Args {
+			argv = append(argv, g.word(arg))
 		}
-		r.stmts(c.Do)
-	case *syntax.CaseClause:
-		r.argument(c.Word)
-		for _, item := range c.Items {
-			for _, pattern := range item.Patterns {
-				r.substitutions(pattern)
-			}
-			r.stmts(item.Stmts)
+		if argv != nil {
+			g.argvs = append(g.argvs, argv)
 		}
-	case *syntax.Block:
-		r.stmts(c.Stmts)
-	case *syntax.Subshell:
-		r.stmts(c.Stmts)
-	case *syntax.BinaryCmd:
-		r.stmt(c.X)
-		r.stmt(c.Y)
-	case *syntax.FuncDecl:
-		if c.Name != nil {
-			r.w.functions[c.Name.Value] = true
-		}
-		for _, name := range c.Names {
-			r.w.functions[name.Value] = true
-		}
-		r.stmt(c.Body)
-	case *syntax.ArithmCmd, *syntax.LetClause:
-		r.w.unreadable(r.source(c), "an arithmetic command, whose evaluation this scan does not read")
-		r.substitutions(c)
-	case *syntax.TestClause:
-		syntax.Walk(c.X, func(n syntax.Node) bool {
-			if word, ok := n.(*syntax.Word); ok {
-				r.argument(word)
-				return false
-			}
-			return true
-		})
-	case *syntax.DeclClause:
-		for _, assign := range c.Args {
-			r.assign(assign)
-		}
-	case *syntax.TimeClause:
-		r.stmt(c.Stmt)
-	case *syntax.CoprocClause:
-		r.stmt(c.Stmt)
-	default:
-		r.w.unreadable(r.source(c), fmt.Sprintf("a %T command, which this scan does not read", c))
-	}
-	return false
-}
-
-// substitutions reads the command and process substitutions anywhere under node as programs.
-func (r *shellReader) substitutions(node syntax.Node) {
-	if word, ok := node.(*syntax.Word); node == nil || (ok && word == nil) {
-		return
-	}
-	syntax.Walk(node, func(n syntax.Node) bool {
-		switch n := n.(type) {
-		case *syntax.CmdSubst:
-			r.nested(n, n.Stmts)
-			return false
-		case *syntax.ProcSubst:
-			r.nested(n, n.Stmts)
-			return false
-		}
-		return true
-	})
-}
-
-// nested reads statements parsed inside this program one level deeper.
-func (r *shellReader) nested(node syntax.Node, stmts []*syntax.Stmt) {
-	if r.w.stopped {
-		return
-	}
-	if r.depth+1 > maxShellDepth {
-		r.w.unreadable(snippet(r.source(node)), nestedTooDeep)
-		return
-	}
-	(&shellReader{w: r.w, src: r.src, depth: r.depth + 1}).stmts(stmts)
-}
-
-func (r *shellReader) visit(word shellWord, role int) {
-	if word.Written == "" || r.w.stopped {
-		return
-	}
-	if !r.w.visit(word, role) {
-		r.w.stopped = true
-	}
-}
-
-// argument reads a word some command receives.
-func (r *shellReader) argument(word *syntax.Word) {
-	if word == nil {
-		return
-	}
-	r.substitutions(word)
-	r.visit(r.word(word), roleArgument)
-}
-
-func (r *shellReader) assign(a *syntax.Assign) {
-	if a.Value != nil {
-		r.argument(a.Value)
-	}
-	if a.Array != nil {
-		for _, elem := range a.Array.Elems {
-			r.argument(elem.Value)
-		}
-	}
-	if a.Index != nil {
-		r.substitutions(a.Index)
-	}
-}
-
-// call reads a simple command and returns whether stdin was read as a shell's program.
-func (r *shellReader) call(call *syntax.CallExpr, stdin *string) bool {
-	for _, a := range call.Assigns {
-		r.assign(a)
-	}
-	c := &simple{}
-	for i, arg := range call.Args {
-		if r.w.stopped {
-			return false
-		}
-		r.substitutions(arg)
-		word := r.word(arg)
-		if i == 0 {
-			c.name = word.Written
-			r.commandWord(c, word)
-			continue
-		}
-		r.operand(c, word, assignment(arg))
-	}
-	switch {
-	case c.eval && len(c.evalWords) > 0:
-		r.w.walk(strings.Join(c.evalWords, " "), r.depth+1)
-	case c.shell != nil && !c.shell.done:
-		if stdin != nil {
-			r.w.walk(*stdin, r.depth+1)
-			return true
-		}
-		r.w.unreadable(c.name, "a shell that reads its program from its standard input, which this scan cannot see")
-	}
-	return false
-}
-
-// assignment reports whether a word is written NAME=value with an unquoted NAME.
-func assignment(word *syntax.Word) bool {
-	if len(word.Parts) == 0 {
-		return false
-	}
-	lit, ok := word.Parts[0].(*syntax.Lit)
-	if !ok {
-		return false
-	}
-	eq := strings.IndexByte(lit.Value, '=')
-	return eq > 0 && validName(lit.Value[:eq])
-}
-
-// commandWord dispatches the word the current simple command runs.
-func (r *shellReader) commandWord(c *simple, word shellWord) {
-	if word.Missing != "" {
-		r.visit(word, roleCommand) // what it names is unknown: the visitor reports it
-		return
-	}
-	name := word.Value
-	base := filepath.Base(name)
-	spec, prefixed := prefixes[name]
-	if !prefixed {
-		if spec, prefixed = prefixes[base]; prefixed && spec.builtin {
-			prefixed = false // a path names a file, never a builtin
-		}
-	}
-	switch {
-	case r.w.functions[name]:
-		// a function this program defines, read where it was defined
-	case name == "eval":
-		c.eval = true
-	case name == "trap":
-		c.trap = true
-	case name == "." || name == "source":
-		c.source = true
-	case prefixed:
-		if !spec.builtin {
-			r.visit(word, roleCommand)
-		}
-		c.prefix, c.prefixName, c.operands, c.optionsDone, c.optionValue = &spec, base, spec.operands, false, false
-	case shellBuiltins[name]:
-		// runs nothing by name
-	default:
-		r.visit(word, roleCommand)
-		if shells[base] {
-			c.name, c.shell = word.Written, &shellCall{}
-		}
-	}
-}
-
-// operand reads a word after the command word.
-func (r *shellReader) operand(c *simple, word shellWord, assign bool) {
-	switch {
-	case c.prefix != nil:
-		r.prefixWord(c, word, assign)
-	case c.eval:
-		c.evalWords = append(c.evalWords, word.Written)
-	case c.trap && !c.trapDone:
-		if word.Written == "--" || (strings.HasPrefix(word.Written, "-") && word.Written != "-") {
-			return // -p and -l list traps; -- ends the options
-		}
-		c.trapDone = true
-		if word.Written != "-" {
-			r.w.walk(word.Written, r.depth+1)
-		}
-	case c.source:
-		c.source = false
-		r.visit(word, roleScript)
-	case c.shell != nil && !c.shell.done:
-		r.shellWord(c, word)
-	default:
-		r.visit(word, roleArgument)
-	}
-}
-
-func (r *shellReader) prefixWord(c *simple, word shellWord, assign bool) {
-	spec, text := c.prefix, word.Written
-	switch {
-	case c.optionValue:
-		c.optionValue = false
-		r.visit(word, roleArgument)
-		return
-	case !c.optionsDone && text == "--":
-		c.optionsDone = true
-		return
-	case !c.optionsDone && strings.HasPrefix(text, "-") && (text != "-" || spec.flags["-"]):
-		switch spec.option(text) {
-		case optionValued:
-			c.optionValue = true
-		case optionListOnly:
-			c.prefix = nil // nothing runs; the rest are arguments
-		case optionUnknown:
-			r.w.unreadable(text, "an option of "+c.prefixName+" this scan does not read, so the command it runs cannot be told apart")
-			c.prefix = nil
-		}
-		return
-	case spec.assignments && assign:
-		_, written, _ := strings.Cut(word.Written, "=")
-		_, value, _ := strings.Cut(word.Value, "=")
-		r.visit(shellWord{Written: written, Value: value, Missing: word.Missing}, roleArgument)
-		return
-	case c.operands > 0:
-		c.operands--
-		r.visit(word, roleArgument)
-		return
-	}
-	c.prefix = nil
-	r.commandWord(c, word)
-}
-
-// shellWord reads the options and operands of a shell run as a command: with -c the first
-// operand is the program it runs; without -c or -s it is the script file it reads.
-func (r *shellReader) shellWord(c *simple, word shellWord) {
-	s, text := c.shell, word.Written
-	switch {
-	case s.optionValue:
-		s.optionValue = false
-	case !s.operands && (text == "--" || text == "-"):
-		s.operands = true
-	case !s.operands && len(text) > 1 && (text[0] == '-' || text[0] == '+'):
-		switch {
-		case text == "--rcfile" || text == "--init-file":
-			s.optionValue = true
-		case strings.HasPrefix(text, "--"):
-		default:
-			for _, letter := range text[1:] {
-				switch letter {
-				case 'c':
-					s.c = true
-				case 's':
-					s.s = true
-				case 'o', 'O':
-					s.optionValue = true
-				}
-			}
-		}
-	default:
-		s.operands = true
-		switch {
-		case s.c:
-			s.done = true
-			r.w.walk(text, r.depth+1)
-		case s.s:
-			r.visit(word, roleArgument)
-		default:
-			s.done = true
-			r.visit(word, roleScript)
-		}
+	case *syntax.BinaryCmd: // &&, ||, | and |& run commands from both sides
+		g.stmt(c.X)
+		g.stmt(c.Y)
+	default: // a function, a compound command (if, case, a loop, a subshell, a { } group), a declaration, arithmetic
+		g.refuse(c, "a "+strings.TrimPrefix(fmt.Sprintf("%T", c), "*syntax.")+", a construct outside simple commands, lists and pipelines")
 	}
 }
 
 // word renders a word: as written (quotes removed, each expansion as its source) and with the
-// expansions the scan makes: a leading ~ or ~/ (HOME), and $NAME or ${NAME} for the names the
-// expander holds. Any other expansion (a command substitution, an arithmetic expansion, a
-// parameter expansion with an operator, an unknown or empty name, $'...') is Missing.
-func (r *shellReader) word(word *syntax.Word) shellWord {
+// expansions the scan makes: a leading ~ or ~/ (HOME) and $NAME or ${NAME} for the names the
+// expander holds. Anything else (another parameter, an operator, a command, process or
+// arithmetic substitution, $'...', an unquoted glob or brace pattern) is Missing, and a
+// substitution, which runs a program, is refused besides.
+func (g *grammar) word(word *syntax.Word) shellWord {
 	var written, value strings.Builder
 	missing := ""
-	unmade := func(source string) {
-		written.WriteString(source)
+	unmade := func(text string) {
+		written.WriteString(text)
 		if missing == "" {
-			missing = source
+			missing = text
 		}
 	}
-	var part func(p syntax.WordPart, first, double bool)
-	part = func(p syntax.WordPart, first, double bool) {
+	var part func(p syntax.WordPart, first, last, quoted bool)
+	part = func(p syntax.WordPart, first, last, quoted bool) {
 		switch p := p.(type) {
 		case *syntax.Lit:
-			text := unquote(p.Value, double)
-			written.WriteString(text)
-			if first && !double && strings.HasPrefix(text, "~") {
+			text := unquote(p.Value, quoted)
+			switch {
+			case !quoted && pattern(p.Value):
+				unmade(text)
+			case first && !quoted && strings.HasPrefix(text, "~"):
 				name, rest, slash := strings.Cut(text[1:], "/")
-				home := r.w.expand.Vars["HOME"]
-				if name != "" || home == "" {
-					if missing == "" {
-						missing = "~" + name
-					}
+				home := g.x.Vars["HOME"]
+				if name != "" || home == "" || (!slash && !last) {
+					unmade(text)
 					return
 				}
+				written.WriteString(text)
 				value.WriteString(home)
 				if slash {
 					value.WriteString("/" + rest)
 				}
-				return
+			default:
+				written.WriteString(text)
+				value.WriteString(text)
 			}
-			value.WriteString(text)
 		case *syntax.SglQuoted:
 			if p.Dollar {
-				unmade(r.source(p))
+				unmade(g.source(p))
 				return
 			}
 			written.WriteString(p.Value)
 			value.WriteString(p.Value)
 		case *syntax.DblQuoted:
+			if p.Dollar {
+				unmade(g.source(p))
+				return
+			}
 			for _, inner := range p.Parts {
-				part(inner, false, true)
+				part(inner, false, false, true)
 			}
 		case *syntax.ParamExp:
-			source := r.source(p)
-			if plainParameter(p) {
-				if v := r.w.expand.Vars[p.Param.Value]; v != "" {
-					written.WriteString(source)
-					value.WriteString(v)
-					return
-				}
+			if plain(p) && validName(p.Param.Value) && g.x.Vars[p.Param.Value] != "" {
+				v := g.x.Vars[p.Param.Value]
+				written.WriteString(g.source(p))
+				value.WriteString(v)
+				return
 			}
-			unmade(source)
+			unmade(g.source(p))
+		case *syntax.CmdSubst, *syntax.ProcSubst:
+			g.refuse(p, "a command or process substitution, which runs a program")
+			unmade(g.source(p))
 		default:
-			unmade(r.source(p))
+			unmade(g.source(p))
 		}
 	}
-	if word != nil {
-		for i, p := range word.Parts {
-			part(p, i == 0, false)
-		}
+	if word == nil {
+		return shellWord{}
 	}
-	return shellWord{Written: written.String(), Value: value.String(), Missing: missing}
+	for i, p := range word.Parts {
+		part(p, i == 0, i == len(word.Parts)-1, false)
+	}
+	return shellWord{Written: written.String(), Value: value.String(), Missing: missing, Positional: positional(word)}
 }
 
-// plainParameter is $NAME or ${NAME}: a name and no operator.
-func plainParameter(p *syntax.ParamExp) bool {
-	return p.Param != nil && validName(p.Param.Value) && p.Flags == nil && !p.Excl && !p.Length &&
-		!p.Width && !p.IsSet && p.NestedParam == nil && p.Index == nil && len(p.Modifiers) == 0 &&
-		p.Slice == nil && p.Repl == nil && p.Names == 0 && p.Exp == nil
+// pattern reports whether an unquoted literal holds a glob or brace pattern character that a
+// backslash does not escape.
+func pattern(raw string) bool {
+	for i := 0; i < len(raw); i++ {
+		switch raw[i] {
+		case '\\':
+			i++
+		case '*', '?', '[', '{':
+			return true
+		}
+	}
+	return false
+}
+
+// positional reports whether a word is one positional parameter ($@, "$@", $*, $0, $1, ${1}).
+func positional(word *syntax.Word) bool {
+	parts := word.Parts
+	if q, ok := parts[0].(*syntax.DblQuoted); ok && len(parts) == 1 && !q.Dollar {
+		parts = q.Parts
+	}
+	p, ok := parts[0].(*syntax.ParamExp)
+	return len(parts) == 1 && ok && plain(p) && strings.Trim(p.Param.Value, "@*0123456789") == ""
+}
+
+// plain is $NAME or ${NAME}: a parameter and no operator.
+func plain(p *syntax.ParamExp) bool {
+	return p.Param != nil && p.Flags == nil && !p.Excl && !p.Length && !p.Width && !p.IsSet &&
+		p.NestedParam == nil && p.Index == nil && len(p.Modifiers) == 0 && p.Slice == nil &&
+		p.Repl == nil && p.Names == 0 && p.Exp == nil
 }
 
 // unquote is a literal's text as the shell reads it: outside quotes a backslash takes the next
@@ -669,25 +235,318 @@ func unquote(text string, double bool) string {
 	return out.String()
 }
 
-// shellWords is every simple command's words as written, one list per command, in the order
-// the program holds them (substitutions after the command they sit in). It is the reader's
-// view of how a program splits into words.
-func shellWords(program string) ([][]string, error) {
-	file, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(program), "")
-	if err != nil {
-		return nil, err
+// argvJudge decides what each command of a program runs. cwd is where a relative word resolves,
+// "" when that is unknown (a hook runs in the session's workspace). report receives each
+// Python reference (e.Python) and each word or construct that cannot be judged (KindUnreadable),
+// with the word it concerns. seen, when set, receives every command judged, with what its
+// first word runs.
+type argvJudge struct {
+	c      Classifier
+	cwd    string
+	depth  int
+	report func(word string, e Executable)
+	seen   func(argv []shellWord, command Executable)
+}
+
+func (j argvJudge) unreadable(word, detail string) {
+	j.report(word, Executable{Value: word, Kind: KindUnreadable, Detail: detail})
+}
+
+// program judges every simple command of a shell program.
+func (j argvJudge) program(text string) {
+	if j.depth > maxDepth {
+		j.unreadable(snippet(text), nestedTooDeep)
+		return
 	}
-	r := &shellReader{w: &shellWalker{}, src: program}
-	var out [][]string
-	syntax.Walk(file, func(n syntax.Node) bool {
-		if call, ok := n.(*syntax.CallExpr); ok {
-			var words []string
-			for _, arg := range call.Args {
-				words = append(words, r.word(arg).Written)
+	argvs, refused := parse(text, j.c.Expand)
+	for _, r := range refused {
+		j.unreadable(r[0], r[1])
+	}
+	for _, argv := range argvs {
+		j.argv(argv, true)
+	}
+}
+
+// Shells: those whose -c program or script operand is read (modelled), and those that are not.
+var (
+	modelledShells = setOf("sh bash dash")
+	otherShells    = setOf("zsh ksh mksh ash busybox fish csh tcsh yash posh")
+)
+
+func setOf(words string) map[string]bool {
+	set := map[string]bool{}
+	for _, w := range strings.Fields(words) {
+		set[w] = true
+	}
+	return set
+}
+
+// argv judges one command: argv[0] is what runs, found as a shell (shell) or exec finds it.
+// The builtins exit, true and : run nothing; exec runs the command after it; a Python program
+// is a reference whatever its arguments; sh, bash and dash run their -c program or the script
+// they read; env runs the command after its options; anything else runs what it is, and each
+// of its arguments is judged as something it may run (argument).
+func (j argvJudge) argv(argv []shellWord, shell bool) {
+	head := argv[0]
+	if shell && head.Missing == "" {
+		switch head.Value {
+		case "exit", "true", ":":
+			for _, w := range argv[1:] {
+				if w.Missing != "" {
+					j.unreadable(w.Written, "an argument of "+head.Value+" that needs "+w.Missing+", which this scan does not make")
+				}
 			}
-			out = append(out, words)
+			return
+		case "exec":
+			switch {
+			case len(argv) == 1:
+			case strings.HasPrefix(argv[1].Value, "-"):
+				j.unreadable(argv[1].Written, "an option of exec, which this scan does not read")
+			default:
+				j.argv(argv[1:], false)
+			}
+			return
 		}
-		return true
-	})
-	return out, nil
+	}
+	e, ok := j.command(head)
+	if !ok {
+		return
+	}
+	if j.seen != nil {
+		j.seen(argv, e)
+	}
+	names := []string{filepath.Base(head.Value), filepath.Base(e.Resolves)}
+	switch {
+	case e.Python:
+		j.report(head.Written, e)
+		for _, w := range argv[1:] {
+			j.argument(w, true)
+		}
+	case e.Kind == KindUnreadable:
+		j.report(head.Written, e)
+	case e.Kind == KindOther:
+		j.unreadable(head.Written, e.Detail+": exec refuses it and a shell runs it as a shell script, which this scan does not read")
+	case e.Kind == KindMissing || e.Kind == KindDirectory || e.Kind == KindGoRuntime:
+		// nothing runs
+	case e.Kind == KindNative && (modelledShells[names[0]] || modelledShells[names[1]]):
+		j.shell(head.Written, argv[1:])
+	case e.Kind == KindNative && (otherShells[names[0]] || otherShells[names[1]]):
+		j.unreadable(head.Written, "a shell whose programs this scan does not read")
+	case e.Kind == KindNative && (names[0] == "env" || names[1] == "env"):
+		j.env(argv[1:])
+	default:
+		for _, w := range argv[1:] {
+			j.argument(w, false)
+		}
+	}
+}
+
+// command is what a command word runs: a literal absolute path, a relative one where the
+// working directory is known, or a bare name found on PATH.
+func (j argvJudge) command(w shellWord) (Executable, bool) {
+	var path string
+	switch {
+	case w.Missing != "":
+		j.unreadable(w.Written, "a command word that needs "+w.Missing+", an expansion this scan does not make, so what it runs is unknown")
+		return Executable{}, false
+	case !strings.Contains(w.Value, "/"):
+		var found bool
+		if path, found = j.lookup(w); path == "" {
+			if !found {
+				j.unreadable(w.Written, "names a command that no directory on the scan's PATH ("+j.c.Expand.Path+") holds as an executable file, so what it runs is unknown")
+			}
+			return Executable{}, false
+		}
+	default:
+		var ok bool
+		if path, ok = j.path(w, false); !ok {
+			return Executable{}, false
+		}
+	}
+	e := j.c.classify(path, "", j.depth)
+	e.Value = w.Written
+	return e, true
+}
+
+// path is where a literal word naming a file resolves. A relative one with no known working
+// directory is a Python reference when it names Python and, unless quiet, unreadable.
+func (j argvJudge) path(w shellWord, quiet bool) (string, bool) {
+	switch {
+	case filepath.IsAbs(w.Value):
+		return w.Value, true
+	case j.cwd != "":
+		return filepath.Join(j.cwd, w.Value), true
+	case strings.HasSuffix(w.Value, ".py"):
+		j.report(w.Written, Executable{Value: w.Written, Kind: KindPythonScript, Python: true, Detail: "names a Python file by a relative path"})
+	case PythonName(w.Value):
+		j.report(w.Written, Executable{Value: w.Written, Kind: KindPythonInterpreter, Python: true, Detail: "names a Python interpreter by a relative path"})
+	case !quiet:
+		j.unreadable(w.Written, "a relative path, which resolves in whatever directory the program runs in, not the scan's")
+	}
+	return "", false
+}
+
+// lookup finds a bare name on PATH as the shell, exec or a runner does. A Python name PATH does
+// not settle is a reference, and a PATH whose relative or empty directory comes first leaves
+// the name unreadable; both return "" and true. A name no directory holds returns "", false.
+func (j argvJudge) lookup(w shellWord) (string, bool) {
+	found, err := lookPath(w.Value, j.c.Expand.Path)
+	switch {
+	case err == nil:
+		return found, true
+	case PythonName(w.Value):
+		j.report(w.Written, Executable{Value: w.Written, Kind: KindPythonInterpreter, Python: true, Detail: "names a Python interpreter"})
+	case errors.Is(err, errRelativePath):
+		j.unreadable(w.Written, "names a program looked up on a PATH ("+j.c.Expand.Path+") whose relative or empty directory comes first, so what it names depends on the working directory")
+	default:
+		return "", false
+	}
+	return "", true
+}
+
+// programText is what makes a word read as program text rather than a name.
+const programText = " \t\n;&|<>()$`\\\"'*?[]{}~#!"
+
+// argument judges a word a program receives as something it may run: sudo, xargs, flock,
+// timeout and uv run their arguments, and a wrapper passes "$@" on. A word naming a Python
+// program is a reference. Under a program that is not Python, one that names a shell, a
+// script this scan cannot read or an executable it cannot place, holds program text, or needs
+// an expansion the scan does not make is unreadable; a program already judged Python
+// (python) is reported and nothing about its arguments is unreadable. A positional parameter
+// is the program's own arguments, judged where the program is run; an option is skipped, the
+// value of --opt=VALUE judged.
+func (j argvJudge) argument(w shellWord, python bool) {
+	if w.Missing == "" && strings.HasPrefix(w.Value, "-") {
+		_, value, ok := strings.Cut(w.Value, "=")
+		if !ok {
+			return
+		}
+		w = shellWord{Written: w.Written, Value: value}
+	}
+	text := w.Value
+	var path string
+	switch {
+	case w.Positional:
+		return
+	case w.Missing != "":
+		if strings.HasSuffix(w.Written, ".py") || PythonName(w.Written) {
+			j.report(w.Written, Executable{Value: w.Written, Kind: KindPythonScript, Python: true, Detail: "names Python through " + w.Missing + ", an expansion this scan does not make"})
+		} else if !python {
+			j.unreadable(w.Written, "an argument that needs "+w.Missing+", an expansion this scan does not make, given to a program that may run it")
+		}
+		return
+	case !python && assignment(text):
+		j.unreadable(w.Written, "an assignment a program such as env or sudo makes, which changes what the command it runs finds")
+		return
+	case !python && strings.ContainsAny(text, programText):
+		j.unreadable(w.Written, "program text given to a program this scan does not model, which may hand it to a shell")
+		return
+	case strings.Contains(text, "/") || strings.HasSuffix(text, ".py"):
+		var ok bool
+		if path, ok = j.path(w, python); !ok {
+			return
+		}
+	case python:
+		return
+	default:
+		if path, _ = j.lookup(w); path == "" {
+			return // judged, or no program of that name
+		}
+	}
+	e := j.c.classify(path, "", j.depth)
+	e.Value = w.Written
+	names := []string{filepath.Base(text), filepath.Base(e.Resolves)}
+	switch {
+	case e.Python || (e.Kind == KindUnreadable && !python):
+		j.report(w.Written, e)
+	case python:
+	case e.Kind == KindOther && executable(e.Resolves):
+		j.unreadable(w.Written, e.Detail+", given to a program that may run it")
+	case e.Kind == KindNative && (modelledShells[names[0]] || modelledShells[names[1]] || otherShells[names[0]] || otherShells[names[1]]):
+		j.unreadable(w.Written, "a shell given to a program this scan does not model, which may hand it a program")
+	}
+}
+
+// assignment reports whether a word is NAME=value.
+func assignment(text string) bool {
+	name, _, ok := strings.Cut(text, "=")
+	return ok && validName(name)
+}
+
+func executable(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode()&0o111 != 0
+}
+
+// shellFlags reports whether an option word sets only flags that change nothing this scan
+// judges (-e, -u, -x, -f), and -c where a program operand is allowed. -l and -i read startup
+// files, -s reads standard input.
+func shellFlags(text string, c bool) bool {
+	letters := "euxf"
+	if c {
+		letters += "c"
+	}
+	return len(text) > 1 && text[0] == '-' && strings.Trim(text[1:], letters) == ""
+}
+
+// shell judges sh, bash or dash run as a command: the program after -c, or the script operand,
+// which the shell reads as its program whatever its #! line says; the words after either are
+// its positional parameters.
+func (j argvJudge) shell(name string, args []shellWord) {
+	c, i := false, 0
+	for ; i < len(args) && args[i].Missing == "" && (strings.HasPrefix(args[i].Value, "-") || strings.HasPrefix(args[i].Value, "+")); i++ {
+		if args[i].Value == "-" || args[i].Value == "--" {
+			i++
+			break
+		}
+		if !shellFlags(args[i].Value, true) {
+			j.unreadable(args[i].Written, "an option of "+name+" this scan does not read (a login or interactive shell reads startup files, -s reads standard input)")
+			return
+		}
+		c = c || strings.Contains(args[i].Value, "c")
+	}
+	operands := args[i:]
+	switch {
+	case len(operands) == 0:
+		j.unreadable(name, "a shell given no program or script, which reads its program from standard input, which this scan cannot see")
+		return
+	case operands[0].Missing != "":
+		j.unreadable(operands[0].Written, "a shell program or script that needs "+operands[0].Missing+", which this scan does not make")
+	case c:
+		next := j
+		next.depth++
+		next.program(operands[0].Value)
+	default:
+		if path, ok := j.path(operands[0], false); ok {
+			e := j.c.sourced(path, j.depth+1)
+			e.Value = operands[0].Written
+			if e.Python || e.Kind == KindUnreadable {
+				j.report(operands[0].Written, e)
+			}
+		}
+	}
+	for _, w := range operands[1:] {
+		j.argument(w, false)
+	}
+}
+
+// env judges env run as a command: after -i and -- it runs the command that follows. An
+// assignment or any other option changes what that command finds, so it is unreadable, and
+// after -i a bare command is looked up on a default PATH this scan does not model.
+func (j argvJudge) env(args []shellWord) {
+	cleared := false
+	for i, w := range args {
+		switch {
+		case w.Missing == "" && (w.Value == "-i" || w.Value == "-" || w.Value == "--ignore-environment" || w.Value == "--"):
+			cleared = cleared || w.Value != "--"
+			continue
+		case w.Missing != "" || strings.HasPrefix(w.Value, "-") || strings.Contains(w.Value, "="):
+			j.unreadable(w.Written, "an option, assignment or expansion of env, which changes or hides the command it runs")
+		case cleared && !strings.Contains(w.Value, "/"):
+			j.unreadable(w.Written, "a bare command env -i looks up on a default PATH this scan does not model")
+		default:
+			j.argv(args[i:], false)
+		}
+		return
+	}
 }

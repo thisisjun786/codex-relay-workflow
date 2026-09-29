@@ -5,131 +5,117 @@ import (
 	"testing"
 )
 
-// The parsed program splits into words as sh does: quotes removed, expansions as written, a
-// redirection or an operator not a word, and a command substitution's own command read too.
-func TestShellWordsSplitLikeSh(t *testing.T) {
-	for program, want := range map[string]string{
-		`python3 -c "a b" "${PLUGIN_ROOT}/x.py"`:                        `python3|-c|a b|${PLUGIN_ROOT}/x.py`,
-		`bash '/x/state sh' session`:                                    `bash|/x/state sh|session`,
-		`"$HOME/.local/share/crw-runtime/current/bin/crw" hook; exit 0`: `$HOME/.local/share/crw-runtime/current/bin/crw|hook / exit|0`,
-		`a\ b "c\"d" 'e'f`:                                              `a b|c"d|ef`,
-		`a&&b||c|d 2>&1 >>log # comment`:                                `a / b / c / d`,
-		"x \"$(y \"z\")\" `w`":                                          "x|$(y \"z\")|`w` / y|z / w",
-	} {
-		commands, err := shellWords(program)
-		var got []string
-		for _, words := range commands {
-			got = append(got, strings.Join(words, "|"))
+var testExpander = Expander{Vars: map[string]string{"HOME": "/h", "CODEX_HOME": "/c", "PLUGIN_ROOT": "/p"}}
+
+// parsed is each simple command as its words' values joined by |, commands by " / ", and each
+// refused construct as "source: what".
+func parsed(program string) (string, []string) {
+	argvs, refused := parse(program, testExpander)
+	var commands, constructs []string
+	for _, argv := range argvs {
+		var words []string
+		for _, w := range argv {
+			words = append(words, w.Value)
 		}
-		if strings.Join(got, " / ") != want || err != nil {
-			t.Errorf("%s: %s (%v)", program, strings.Join(got, " / "), err)
+		commands = append(commands, strings.Join(words, "|"))
+	}
+	for _, r := range refused {
+		constructs = append(constructs, r[0]+": "+r[1])
+	}
+	return strings.Join(commands, " / "), constructs
+}
+
+// The grammar the scan judges: simple commands joined by ;, &, &&, ||, |, |& and newlines, with
+// literal words and redirections to literal words. The native Stop command and the bridge
+// launcher are inside it.
+func TestTheGrammarReadsSimpleCommandsListsAndPipelines(t *testing.T) {
+	for program, want := range map[string]string{
+		`"$HOME/.local/share/crw-runtime/current/bin/crw" hook --plugin-launch; exit 0`: `/h/.local/share/crw-runtime/current/bin/crw|hook|--plugin-launch / exit|0`,
+		"#!/bin/sh\n# comment\nexec \"$HOME/b\" --plugin-launch \"$@\"\n":               `exec|/h/b|--plugin-launch|`,
+		`a && b || c | d |& e & f`:          `a / b / c / d / e / f`,
+		"a\nb; ! c":                         `a / b / c`,
+		`x >/dev/null 2>&1 <in >>"$HOME/l"`: `x`,
+		`a\ b "c\"d" 'e'f \*`:               `a b|c"d|ef|*`,
+	} {
+		got, refused := parsed(program)
+		if got != want || len(refused) != 0 {
+			t.Errorf("%q\n got %s %v\nwant %s", program, got, refused, want)
 		}
 	}
 }
 
-// A word's value makes only the expansions the scan can make (a leading ~ or ~/, $HOME,
-// $CODEX_HOME, ${PLUGIN_ROOT}); any other names the expansion that is missing, as written.
-func TestShellWordValuesMakeOnlyTheScansExpansions(t *testing.T) {
-	w := &shellWalker{expand: Expander{Vars: map[string]string{"HOME": "/h", "CODEX_HOME": "/c", "PLUGIN_ROOT": "/p"}}}
-	var got []string
-	w.visit = func(word shellWord, role int) bool {
-		got = append(got, word.Written+"="+word.Value+"|"+word.Missing)
-		return true
+// Everything else is refused with its source, never interpreted: a function (finding 1), an
+// assignment in any form (finding 2), a compound command, a here-document or here-string, a
+// command or process substitution, a redirection to a word that is not literal, and a program
+// the parser rejects. The simple commands around a refused construct are still returned.
+func TestTheGrammarRefusesEveryOtherConstruct(t *testing.T) {
+	for _, c := range []struct{ program, commands, refused string }{
+		{`relay() { command relay hook; }; relay`, `relay`, `FuncDecl`},
+		{`function g { x; }`, ``, `FuncDecl`},
+		{`PATH=/v relay hook`, ``, `an assignment`},
+		{`PATH=/v; relay hook`, `relay|hook`, `an assignment`},
+		{`export PATH=/v; relay hook`, `relay|hook`, `DeclClause`},
+		{`if true; then relay; fi`, ``, `IfClause`},
+		{`for x in a; do relay; done`, ``, `ForClause`},
+		{`while true; do relay; done`, ``, `WhileClause`},
+		{`case x in x) relay ;; esac`, ``, `CaseClause`},
+		{`(relay)`, ``, `Subshell`},
+		{`{ relay; }`, ``, `Block`},
+		{`[[ -x /r ]] && relay`, `relay`, `TestClause`},
+		{`(( i++ ))`, ``, `ArithmCmd`},
+		{`time relay`, ``, `TimeClause`},
+		{`coproc relay`, ``, `CoprocClause`},
+		{"sh <<EOF\nrelay\nEOF", `sh`, `a here-document`},
+		{`bash <<< relay`, `bash`, `a here-document`},
+		{`echo "$(relay)"`, `echo|`, `a command or process substitution`},
+		{"echo `relay`", `echo|`, `a command or process substitution`},
+		{`diff <(relay) x`, `diff||x`, `a command or process substitution`},
+		{`relay > "$LOG"`, `relay`, `a redirection to $LOG`},
+		{`echo 'unterminated`, ``, `cannot parse`},
+	} {
+		got, refused := parsed(c.program)
+		if got != c.commands || len(refused) != 1 || !strings.Contains(refused[0], c.refused) {
+			t.Errorf("%q\n got %s %v\nwant %s and %q", c.program, got, refused, c.commands, c.refused)
+		}
 	}
-	w.unreadable = func(string, string) {}
-	w.walk(`x ~/b "$HOME/y" $CODEX_HOME/z ${PLUGIN_ROOT}/w '$HOME' $OTHER ~u/x "$(true)" ${HOME:-x} $'a'`, 0)
-	want := []string{"x=x|", "~/b=/h/b|", "$HOME/y=/h/y|", "$CODEX_HOME/z=/c/z|", "${PLUGIN_ROOT}/w=/p/w|", "$HOME=$HOME|", "$OTHER=|$OTHER", "~u/x=|~u", "$(true)=|$(true)", "${HOME:-x}=|${HOME:-x}", "$'a'=|$'a'"}
+}
+
+// A word is literal only after the scan's own expansions (~ and ~/, $HOME, $CODEX_HOME,
+// ${PLUGIN_ROOT}); any other expansion, and an unquoted glob or brace pattern (finding 3), is
+// Missing. A word that is exactly one positional parameter is marked as one.
+func TestAWordIsLiteralOnlyAfterTheScansExpansions(t *testing.T) {
+	var got []string
+	for _, program := range []string{
+		`x ~/b ~ "$HOME/y" $CODEX_HOME/z ${PLUGIN_ROOT}/w '$HOME' '*' \?`,
+		`$OTHER ~u/x ~"/x" ${HOME:-x} $'a' $"a" ven* a?b a[b] {a,b} x{`,
+		`"$@" $1 "${2}" $* $0 "$@x" $#`,
+	} {
+		argvs, _ := parse(program, testExpander)
+		for _, w := range argvs[0] {
+			got = append(got, w.Written+"="+w.Value+"|"+w.Missing+map[bool]string{true: "|positional"}[w.Positional])
+		}
+	}
+	want := []string{
+		"x=x|", "~/b=/h/b|", "~=/h|", "$HOME/y=/h/y|", "$CODEX_HOME/z=/c/z|", "${PLUGIN_ROOT}/w=/p/w|", "$HOME=$HOME|", "*=*|", "?=?|",
+		"$OTHER=|$OTHER", "~u/x=|~u/x", "~/x=/x|~", "${HOME:-x}=|${HOME:-x}", "$'a'=|$'a'", `$"a"=|$"a"`, "ven*=|ven*", "a?b=|a?b", "a[b]=a|[b]", "{a,b}=|{a,b}", "x{=|x{",
+		"$@=|$@|positional", "$1=|$1|positional", "${2}=|${2}|positional", "$*=|$*|positional", "$0=|$0|positional", "$@x=x|$@", "$#=|$#",
+	}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("\n got %v\nwant %v", got, want)
 	}
 }
 
-// walked is every word the reader visits as role:word, and every construct it reports.
-func walked(program string) (string, []string) {
-	names := map[int]string{roleArgument: "arg", roleCommand: "cmd", roleScript: "script"}
-	var visits, unreadable []string
-	w := &shellWalker{
-		visit: func(word shellWord, role int) bool {
-			visits = append(visits, names[role]+":"+word.Written)
-			return true
-		},
-		unreadable: func(value, detail string) { unreadable = append(unreadable, value+": "+detail) },
-	}
-	w.walk(program, 0)
-	return strings.Join(visits, " "), unreadable
-}
-
-// Every word in a command position is visited as a command: after ;, &, &&, ||, |, a newline,
-// a reserved word or leading assignments, and the command that exec, command, env, nohup, nice,
-// timeout, time, eval, trap and a shell's -c string run; a builtin runs nothing, a function is
-// read where it is defined, and . FILE or sh FILE reads FILE as a script.
-func TestShellWalkerFindsEveryCommandPosition(t *testing.T) {
-	for _, c := range []struct{ program, want string }{
-		{`cd /x && relay stop`, `arg:/x cmd:relay arg:stop`},
-		{`exec relay --x`, `cmd:relay arg:--x`},
-		{`exec -a name relay`, `arg:name cmd:relay`},
-		{`env A=1 -u B relay`, `cmd:env arg:1 arg:B cmd:relay`},
-		{`/usr/bin/env relay`, `cmd:/usr/bin/env cmd:relay`},
-		{`true; a || b | c & d`, `cmd:a cmd:b cmd:c cmd:d`},
-		{"a\nb", `cmd:a cmd:b`},
-		{`nohup nice -n 5 timeout -s KILL 10 relay`, `cmd:nohup cmd:nice arg:5 cmd:timeout arg:KILL arg:10 cmd:relay`},
-		{`time -p relay`, `cmd:relay`},
-		{`"exec" relay`, `cmd:relay`},
-		{`if [ -x /r ]; then relay; else other; fi > /dev/null 2>&1`, `arg:-x arg:/r arg:] cmd:relay cmd:other`},
-		{`[[ -f /x && -x /y ]] && relay`, `arg:/x arg:/y cmd:relay`},
-		{`while read -r l; do relay "$l"; done < file`, `arg:-r arg:l cmd:relay arg:$l`},
-		{`(cd /x && relay) 2>/dev/null`, `arg:/x cmd:relay`},
-		{`{ relay; } >log`, `cmd:relay`},
-		{`sh -c 'cd /x && relay "$1"' sh arg`, `cmd:sh arg:/x cmd:relay arg:$1 arg:sh arg:arg`},
-		{`bash -lc relay`, `cmd:bash cmd:relay`},
-		{`bash script.sh a`, `cmd:bash script:script.sh arg:a`},
-		{`. /x/lib.sh; source lib2.sh`, `script:/x/lib.sh script:lib2.sh`},
-		{`echo "$(relay --version)"`, `cmd:relay arg:--version arg:$(relay --version)`},
-		{"A=1 B=`x` relay", "arg:1 cmd:x arg:`x` cmd:relay"},
-		{`f() { relay; }; f`, `cmd:relay`},
-		{`function g { relay; }; g x`, `cmd:relay arg:x`},
-		{`case "$1" in start) relay ;; *) other ;; esac`, `arg:$1 cmd:relay cmd:other`},
-		{`for x in a b; do relay "$x"; done`, `arg:a arg:b cmd:relay arg:$x`},
-		{`command -v relay || install`, `arg:relay cmd:install`},
-		{`eval "relay --x"`, `cmd:relay arg:--x`},
-		{`trap 'cleanup' EXIT; relay`, `cmd:cleanup arg:EXIT cmd:relay`},
-		{"sh <<EOF\nrelay\nEOF\nafter", `cmd:sh cmd:relay cmd:after`},
-		{"cat <<-EOF\n\tnot a command\n\tEOF\nafter", `cmd:cat cmd:after`},
-		{"cat <<EOF\n$(relay)\nEOF", `cmd:cat cmd:relay`},
-		{"cat <<'EOF'\n$(relay)\nEOF", `cmd:cat`},
-		{`bash <<< "relay"`, `cmd:bash cmd:relay`},
-		{`exec >/dev/null 2>&1`, ``},
-	} {
-		got, unreadable := walked(c.program)
-		if got != c.want || len(unreadable) != 0 {
-			t.Errorf("%q\n got %s %v\nwant %s", c.program, got, unreadable, c.want)
-		}
-	}
-}
-
-// A construct the reader does not model where a command could start is reported, never read
-// as nothing: the command words around it are still visited.
-func TestShellWalkerReportsWhatItCannotRead(t *testing.T) {
-	for _, c := range []struct{ program, want, unread string }{
-		{`cat x | sh`, `cmd:cat arg:x cmd:sh`, `sh: a shell that reads its program from its standard input`},
-		{`echo relay | env bash -e`, `arg:relay cmd:env cmd:bash`, `bash: a shell that reads its program from its standard input`},
-		{`env -S 'relay x'`, `cmd:env arg:relay x`, `-S: an option of env`},
-		{`echo 'unterminated`, ``, `cannot parse (1:6: reached EOF without closing quote`},
-		{`(( i++ )) && relay`, `cmd:relay`, `an arithmetic command`},
-		{nested(maxShellDepth + 1), strings.TrimSpace(strings.Repeat("cmd:sh ", maxShellDepth+1)), `nested more than`},
-	} {
-		got, unreadable := walked(c.program)
-		if got != c.want || len(unreadable) != 1 || !strings.Contains(unreadable[0], c.unread) {
-			t.Errorf("%q\n got %s %v\nwant %s and %q", c.program, got, unreadable, c.want, c.unread)
-		}
-	}
-}
-
-// nested is relay run through n shells' -c strings, each quoted for the one outside it.
-func nested(n int) string {
+// A program nested deeper than maxDepth sh -c strings is not followed.
+func TestAProgramNestedTooDeepIsUnreadable(t *testing.T) {
 	program := "relay"
-	for i := 0; i < n; i++ {
+	for i := 0; i <= maxDepth; i++ {
 		program = "sh -c '" + strings.ReplaceAll(program, "'", `'\''`) + "'"
 	}
-	return program
+	var reports []string
+	argvJudge{c: Classifier{Expand: Expander{Path: "/usr/bin:/bin"}}, report: func(word string, e Executable) {
+		reports = append(reports, e.Kind+": "+e.Detail)
+	}}.program(program)
+	if len(reports) != 1 || !strings.Contains(reports[0], "nested more than") {
+		t.Fatalf("reports %v", reports)
+	}
 }

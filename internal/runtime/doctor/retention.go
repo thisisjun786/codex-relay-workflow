@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -15,7 +17,6 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
@@ -56,6 +57,9 @@ type RetentionOptions struct {
 	Now         func() time.Time
 	// Proc is the procfs root (a seam for tests); "" is /proc.
 	Proc string
+	// ScopeRegistry is the relay's production scope registry (a seam for tests); "" is
+	// <home>/.codex-session-relay/scopes, home taken from the passwd entry as the relay takes it.
+	ScopeRegistry string
 }
 
 // DefaultHookTimeout is the plugin's declared Stop hook timeout, used when nothing configures one.
@@ -76,6 +80,11 @@ type scan struct {
 	// and claimRoots the journal roots Stop-event claims name.
 	stopSettings []stopSettings
 	claimRoots   []string
+	// states are the relay state directories rows 3 and 6 read, scopeClaims the scope registry's
+	// records row 3 judges, and statesUnknown how many sources of either could not be read.
+	states        []string
+	scopeClaims   []scopeClaim
+	statesUnknown int
 }
 
 // stopSettings is the settings document one Stop registration reads: path, or why it cannot be
@@ -112,9 +121,9 @@ func (s *scan) unresolved(row int, source, fieldName, value, detail string) {
 	s.unreadable = append(s.unreadable, source+": row "+strconv.Itoa(row)+" "+fieldName+" "+strconv.Quote(value)+": "+detail)
 }
 
-// judge files one classified reference: a Python one is a reference, and one whose target
+// verdict files one classified reference: a Python one is a reference, and one whose target
 // could not be read is unreadable (a Python one that could not be read is both).
-func (s *scan) judge(row int, source, fieldName string, e Executable, extra ...record.Object) {
+func (s *scan) verdict(row int, source, fieldName string, e Executable, extra ...record.Object) {
 	if e.Python {
 		s.reference(row, source, fieldName, e, extra...)
 	}
@@ -123,59 +132,37 @@ func (s *scan) judge(row int, source, fieldName string, e Executable, extra ...r
 	}
 }
 
-// expander is what a reference may name through the shell: ~ and $HOME from the scan's
-// environment, $CODEX_HOME as the scan reads it, and ${PLUGIN_ROOT} for a command declared by
-// a cached plugin version (that version's directory).
+// expander is what a hook command may name through the shell: ~ and $HOME from the scan's
+// environment, $CODEX_HOME as the scan reads it, and ${PLUGIN_ROOT} (${CLAUDE_PLUGIN_ROOT})
+// for a command declared by a cached plugin version (that version's directory). Its PATH is
+// the scan's.
 func (s *scan) expander(pluginRoot string) Expander {
 	vars := map[string]string{"HOME": s.o.Env.Get("HOME"), "CODEX_HOME": s.o.CodexHome}
 	if pluginRoot != "" {
-		vars["PLUGIN_ROOT"] = pluginRoot
+		vars["PLUGIN_ROOT"], vars["CLAUDE_PLUGIN_ROOT"] = pluginRoot, pluginRoot
 	}
 	return Expander{Vars: vars, Path: s.o.Env.Get("PATH")}
 }
 
-// literal is a value that no shell reads (a crw-*.json field, an MCP command or argument) as
-// a word: ~, $HOME, $CODEX_HOME and ${PLUGIN_ROOT} expanded over its text (Expander).
-func (s *scan) literal(text, pluginRoot string) shellWord {
-	value, missing := s.expander(pluginRoot).Expand(text)
-	return shellWord{Written: text, Value: value, Missing: missing}
+// judge is an argvJudge whose reports are filed under one row, source and field.
+func (s *scan) judge(row int, source, field, cwd string, x Expander) argvJudge {
+	return argvJudge{c: Classifier{Pointer: s.pointer, Expand: x}, cwd: cwd, report: func(word string, e Executable) {
+		e.Value = word
+		s.verdict(row, source, field, e)
+	}}
 }
 
-// word classifies one reference: a word whose expansions could not all be made is reported as
-// a Python reference when it names Python anyway, else as unreadable.
-// sourced judges the file as a shell's program (sh FILE, . FILE) whatever its #! line says. A
-// value that is not an absolute path with no base to resolve it against (a crw-*.json record's)
-// is never resolved against the scan's own working directory: the program that reads it runs
-// elsewhere, so it is a Python reference when it names Python and unreadable otherwise. It
-// returns false when the word is left unjudged.
-func (s *scan) word(row int, source, fieldName string, w shellWord, base, pluginRoot string, sourced bool) (Executable, bool) {
-	word, expanded, missing := w.Written, w.Value, w.Missing
-	if missing != "" {
-		if strings.HasSuffix(word, ".py") || PythonName(word) {
-			return Executable{Value: word, Kind: KindPythonScript, Python: true, Detail: "names a Python file through " + missing + ", an expansion this scan does not make"}, true
-		}
-		s.unresolved(row, source, fieldName, word, "names "+missing+", an expansion this scan does not make, so what it runs is unknown")
-		return Executable{}, false
+// absolute is a path the relay or the hook reads from its environment, made as they make it
+// (expanduser, then absolute), or why that cannot be done here: ~user, and a relative path,
+// which resolves against the working directory of the program that reads it.
+func (s *scan) absolute(value string) (string, string) {
+	if home := s.o.Env.Get("HOME"); home != "" && (value == "~" || strings.HasPrefix(value, "~/")) {
+		value = home + value[1:]
 	}
-	if base == "" && !filepath.IsAbs(expanded) {
-		switch {
-		case strings.HasSuffix(expanded, ".py"):
-			return Executable{Value: word, Kind: KindPythonScript, Python: true, Detail: "names a Python file by a relative path"}, true
-		case PythonName(expanded):
-			return Executable{Value: word, Kind: KindPythonInterpreter, Python: true, Detail: "names a Python interpreter by a relative path"}, true
-		}
-		s.unresolved(row, source, fieldName, word, "is not an absolute path: it resolves in whatever directory the program reading it runs in (the Stop and bridge launchers accept only an absolute path), so this scan does not resolve it against its own")
-		return Executable{}, false
+	if !filepath.IsAbs(value) {
+		return "", "is not an absolute path once ~ is expanded, so it resolves against the working directory of the program that reads it"
 	}
-	c := Classifier{Pointer: s.pointer, Expand: s.expander(pluginRoot)}
-	var e Executable
-	if sourced {
-		e = c.sourced(expanded, base, 0)
-	} else {
-		e = c.Classify(expanded, base)
-	}
-	e.Value = word
-	return e, true
+	return value, ""
 }
 
 // RetentionScan is `crw doctor retention-scan --json`: every reference to a Python interpreter,
@@ -205,6 +192,7 @@ func RetentionScan(ctx context.Context, o RetentionOptions) Object {
 	s.userHooks()             // row 9, likewise
 	s.claims()                // row 1
 	s.journal()               // row 2
+	s.stateDirectories()      // rows 3 and 6
 	daemonPids := s.daemons() // row 3
 	s.lockHolders(daemonPids) // row 6
 	s.surface(7, false, 0, "Codex threads are listed through the App Server (crw bridge list_threads) and judged against the host's turn-command cache lifetime, which todo 43 records on codex-cli 0.154.0; this command reads neither, so the scan is incomplete until todo 43 adds this row")
@@ -315,10 +303,18 @@ func (s *scan) settingsRecords() {
 				if _, list := record.Get(value, key).([]any); list {
 					name = key + "[" + strconv.Itoa(i) + "]"
 				}
+				// The Stop and bridge launchers run a value as written, with no shell, and accept only
+				// an absolute path, so one that is not is never resolved against the scan's own
+				// directory (argvJudge.path); a file neither native nor #! is not this scan's to judge.
+				j := s.judge(4, path, name, "", s.expander(""))
 				if key == "args" {
-					s.argvWord(4, path, name, s.literal(text, ""), "", "", roleArgument)
-				} else if e, ok := s.word(4, path, name, s.literal(text, ""), "", "", false); ok {
-					s.judge(4, path, name, e)
+					j.argument(literal(text), false)
+				} else if target, ok := j.path(literal(text), false); ok {
+					e := j.c.classify(target, "", 0)
+					if e.Kind == KindOther {
+						e.Kind = KindUnreadable
+					}
+					j.report(text, e)
 				}
 			}
 		}
@@ -357,71 +353,17 @@ func number(v any) (float64, bool) {
 	return 0, false
 }
 
-// commandWords reads one hook command, which Codex runs through a shell, as a shell program
-// (shellWalker): every word in a command position is judged as a command, every other word as
-// an argument, and every construct the reader cannot place is unreadable.
-func (s *scan) commandWords(row int, source, fieldName, line, base, pluginRoot string) {
-	w := &shellWalker{
-		expand: s.expander(pluginRoot),
-		visit: func(word shellWord, role int) bool {
-			s.argvWord(row, source, fieldName, word, base, pluginRoot, role)
-			return true
-		},
-		unreadable: func(value, detail string) { s.unresolved(row, source, fieldName, value, detail) },
-	}
-	w.walk(line, 0)
-}
+// errRelativePath is a PATH lookup that meets a relative or empty directory (the working
+// directory) before any match: what the name finds depends on where the program runs.
+var errRelativePath = errors.New("a relative or empty PATH directory comes first, so what the name finds depends on the working directory")
 
-// argvWord classifies one word as it reaches exec, in its role (roleCommand, roleArgument or
-// roleScript): a word naming a Python interpreter, a .py path, or a path that resolves to
-// Python is a reference. Its expansions are made (~, $HOME, $CODEX_HOME and, for a cached
-// plugin version, ${PLUGIN_ROOT}); a word needing any other expansion is unreadable. A bare command word is looked up on PATH, and one that no PATH directory holds as
-// an executable file is unreadable: what it runs is unknown. A bare argument is looked up too,
-// and reported when it is a Python program, because a runner (sudo, xargs, uv run) may execute
-// it.
-func (s *scan) argvWord(row int, source, fieldName string, w shellWord, base, pluginRoot string, role int) {
-	word, expanded, missing := w.Written, w.Value, w.Missing
-	if strings.ContainsAny(word, "\n") {
-		return // a -c program, not something executed by name
-	}
-	var e Executable
-	switch {
-	case role == roleScript || missing != "" || strings.Contains(expanded, "/") || strings.HasSuffix(expanded, ".py"):
-		var ok bool
-		if e, ok = s.word(row, source, fieldName, w, base, pluginRoot, role == roleScript); !ok {
-			return
-		}
-	case PythonName(expanded):
-		e = Executable{Value: word, Kind: KindPythonInterpreter, Python: true, Detail: "names a Python interpreter"}
-		if found, err := lookPath(expanded, s.o.Env.Get("PATH")); err == nil {
-			e.Resolves = found
-		}
-	default:
-		found, err := lookPath(expanded, s.o.Env.Get("PATH"))
-		switch {
-		case err == nil:
-			e = Classifier{Pointer: s.pointer, Expand: s.expander(pluginRoot)}.Classify(found, "")
-			e.Value = word
-			if role != roleCommand && !e.Python {
-				return
-			}
-		case role == roleCommand:
-			s.unresolved(row, source, fieldName, word, "names a command that no directory on the scan's PATH ("+s.o.Env.Get("PATH")+") holds as an executable file, so what it runs is unknown")
-			return
-		default:
-			return
-		}
-	}
-	s.judge(row, source, fieldName, e)
-}
-
-// lookPath is the file a PATH lookup finds for name. A relative PATH directory (or an empty
-// one, which means the current directory) resolves where the program runs, not where the scan
-// runs, so it is not searched: a name only such a directory holds is not found.
+// lookPath is the file a PATH lookup finds for name, searching as the shell and exec do, in
+// order. A relative or empty directory resolves where the program runs, not where the scan
+// runs, so meeting one before a match is errRelativePath, never a skip to a later directory.
 func lookPath(name, path string) (string, error) {
 	for _, dir := range filepath.SplitList(path) {
 		if !filepath.IsAbs(dir) {
-			continue
+			return "", errRelativePath
 		}
 		candidate := filepath.Join(dir, name)
 		if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0 {
@@ -432,7 +374,9 @@ func lookPath(name, path string) (string, error) {
 }
 
 // hookCommands walks a hooks document ({"hooks": {Event: [{"hooks": [{"command", "timeout"}]}]}}).
-func (s *scan) hookCommands(row int, path string, document Object, base, pluginRoot string) int {
+// A hook command runs through a shell in the session's workspace, so it is judged as a program
+// (argvJudge) with no working directory: a relative word in it is unreadable.
+func (s *scan) hookCommands(row int, path string, document Object, pluginRoot string) int {
 	count := 0
 	events, _ := record.Get(document, "hooks").(Object)
 	for _, event := range events {
@@ -450,10 +394,22 @@ func (s *scan) hookCommands(row int, path string, document Object, base, pluginR
 					s.timeouts = append(s.timeouts, seconds)
 				}
 				field := "hooks." + event.Key + "[" + strconv.Itoa(g) + "].hooks[" + strconv.Itoa(h) + "].command"
-				s.commandWords(row, path, field, command, base, pluginRoot)
-				if event.Key == "Stop" {
-					s.stopRegistration(path, field, command, pluginRoot)
+				j := s.judge(row, path, field, "", s.expander(pluginRoot))
+				if event.Key != "Stop" {
+					j.program(command)
+					continue
 				}
+				r := &registration{s: s, source: path, field: field}
+				report := j.report
+				j.report = func(word string, e Executable) {
+					if e.Kind == KindUnreadable && r.unknown == "" {
+						r.unknown = "it holds " + strconv.Quote(word) + ", which this scan cannot judge"
+					}
+					report(word, e)
+				}
+				j.seen = r.see
+				j.program(command)
+				r.done()
 			}
 		}
 	}
@@ -465,23 +421,60 @@ func asObject(v any) Object {
 	return o
 }
 
-// mcpServers walks an MCP document ({"mcpServers": {name: {"command", "args"}}}). Codex starts
-// an MCP server without a shell: command is one executable path and each args entry one argv
-// word, so neither is split into words (a path holding a space is one path).
-func (s *scan) mcpServers(row int, path string, servers Object, base, pluginRoot string) int {
-	for _, server := range servers {
-		entry := asObject(server.Value)
-		if command, ok := record.Get(entry, "command").(string); ok && command != "" {
-			s.argvWord(row, path, "mcpServers."+server.Key+".command", s.literal(command, pluginRoot), base, pluginRoot, roleCommand)
+// server judges one MCP server declaration (rows 5 and 10). Codex execs command with args, with
+// no shell and no expansion, in cwd, with env over the variables it passes on (HOME and PATH;
+// not CODEX_HOME or PLUGIN_ROOT, docs/plugin-packaging.md): a relative command or argument
+// resolves against cwd, and is unreadable when cwd is not one this scan can place; a bare
+// command is found on env's PATH, else the scan's. versionDir is a cached plugin version's
+// directory, which a ./ or ${PLUGIN_ROOT} cwd names.
+func (s *scan) server(row int, source, field string, get func(string) any, versionDir string) {
+	command, _ := get("command").(string)
+	if command == "" {
+		return
+	}
+	env := map[string]string{}
+	switch declared := get("env").(type) {
+	case Object:
+		for _, f := range declared {
+			if v, ok := f.Value.(string); ok {
+				env[f.Key] = v
+			}
 		}
-		for i, arg := range words(record.Get(entry, "args")) {
-			s.argvWord(row, path, "mcpServers."+server.Key+".args["+strconv.Itoa(i)+"]", s.literal(arg, pluginRoot), base, pluginRoot, roleArgument)
+	case map[string]any:
+		for k, v := range declared {
+			if v, ok := v.(string); ok {
+				env[k] = v
+			}
 		}
 	}
-	return len(servers)
+	x := Expander{Vars: map[string]string{"HOME": s.o.Env.Get("HOME")}, Path: s.o.Env.Get("PATH")}
+	for _, name := range []string{"HOME", "CODEX_HOME"} {
+		if v, ok := env[name]; ok {
+			x.Vars[name] = v
+		}
+	}
+	if v, ok := env["PATH"]; ok {
+		x.Path = v
+	}
+	cwd, _ := get("cwd").(string)
+	switch plugin := strings.TrimPrefix(cwd, "${PLUGIN_ROOT}"); {
+	case filepath.IsAbs(cwd):
+	case versionDir != "" && (cwd == "." || strings.HasPrefix(cwd, "./")):
+		cwd = filepath.Join(versionDir, cwd)
+	case versionDir != "" && plugin != cwd && (plugin == "" || strings.HasPrefix(plugin, "/")):
+		cwd = versionDir + plugin
+	default:
+		cwd = ""
+	}
+	argv := []shellWord{literal(command)}
+	for _, arg := range words(get("args")) {
+		argv = append(argv, literal(arg))
+	}
+	s.judge(row, source, field, cwd, x).argv(argv, false)
 }
 
-// pluginCache is row 5: every cached version's hook and MCP declarations.
+// pluginCache is row 5: every cached version's hook and MCP declarations. Codex loads only a
+// version directory, so an entry that is not one (a link to one included) declares nothing.
 func (s *scan) pluginCache() {
 	root := filepath.Join(s.o.CodexHome, "plugins", "cache", "crw", "crw")
 	versions, err := os.ReadDir(root)
@@ -491,12 +484,19 @@ func (s *scan) pluginCache() {
 	}
 	if err != nil {
 		s.unread(root, err)
-		s.surface(5, true, 0, "the plugin cache could not be listed")
+		s.surface(5, false, 0, "the plugin cache could not be listed")
 		return
 	}
 	count, incomplete := 0, false
 	for _, version := range versions {
 		base := filepath.Join(root, version.Name())
+		if info, err := os.Stat(base); err != nil || !info.IsDir() {
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				s.unread(base, err)
+				incomplete = true
+			}
+			continue
+		}
 		directory := filepath.Join(base, "wiring", "hooks")
 		hooks, err := listNamed(directory, func(name string) bool { return strings.HasSuffix(name, ".json") })
 		if err != nil {
@@ -505,18 +505,22 @@ func (s *scan) pluginCache() {
 		}
 		for _, path := range hooks {
 			if document, ok := s.readJSON(path, "a cached hook declaration"); ok {
-				count += s.hookCommands(5, path, document, base, base)
+				count += s.hookCommands(5, path, document, base)
 			}
 		}
 		for _, path := range []string{filepath.Join(base, "wiring", "mcp.json"), filepath.Join(base, ".mcp.json")} {
 			if document, ok := s.readJSON(path, "a cached MCP declaration"); ok {
 				servers, _ := record.Get(document, "mcpServers").(Object)
-				count += s.mcpServers(5, path, servers, base, base)
+				for _, server := range servers {
+					entry := asObject(server.Value)
+					s.server(5, path, "mcpServers."+server.Key, func(key string) any { return record.Get(entry, key) }, base)
+				}
+				count += len(servers)
 			}
 		}
 	}
 	if incomplete {
-		s.surface(5, false, count, "a cached plugin version's hook declarations under "+root+" could not be listed, so its hook commands are unknown")
+		s.surface(5, false, count, "a cached plugin version under "+root+", or its hook declarations, could not be read, so its hook commands are unknown")
 		return
 	}
 	s.surface(5, true, count, "every hook and MCP command declared by a cached plugin version under "+root)
@@ -527,7 +531,7 @@ func (s *scan) userHooks() {
 	path := filepath.Join(s.o.CodexHome, "hooks.json")
 	count := 0
 	if document, ok := s.readJSON(path, "hooks.json"); ok {
-		count = s.hookCommands(9, path, document, s.o.CodexHome, "")
+		count = s.hookCommands(9, path, document, "")
 	}
 	s.surface(9, true, count, "every command in "+path)
 }
@@ -563,12 +567,18 @@ func (s *scan) claims() {
 		}
 		claimed := asObject(record.Get(claim, "claimedBy"))
 		root, _ := record.Get(claimed, "journalRoot").(string)
-		if root != "" {
+		if filepath.IsAbs(root) {
 			s.claimRoots = append(s.claimRoots, root)
+		} else if root != "" {
+			s.unreadable = append(s.unreadable, path+": row 2: journalRoot "+strconv.Quote(root)+" is not an absolute path, so the journal root that turn wrote to is unknown")
 		}
 		fields := record.Object{{Key: "eventKey", Value: key}, {Key: "claimedAt", Value: record.Get(claim, "claimedAt")}, {Key: "pid", Value: record.Get(claimed, "pid")}}
-		if root == "" {
+		switch {
+		case root == "":
 			s.hold(1, path, append(fields, record.Object{{Key: "outcome", Value: nil}, {Key: "detail", Value: "the claim names no journal root, so its outcome cannot be looked for"}}...))
+			continue
+		case !filepath.IsAbs(root): // the hooks write only absolute roots; this one resolves nowhere the scan can name
+			s.hold(1, path, append(fields, record.Object{{Key: "outcome", Value: nil}, {Key: "detail", Value: "the claim's journal root " + strconv.Quote(root) + " is not an absolute path, so its outcome cannot be looked for"}}...))
 			continue
 		}
 		outcome := filepath.Join(root, "accepted", key+".outcome.json")
@@ -739,42 +749,64 @@ var adapterEntries = map[string]bool{"completion_hook.py": true, definition.Hook
 // launcherEntries are the packaged launcher and its copy, which read the default settings.
 var launcherEntries = map[string]bool{"crw_stop_hook.py": true, "crw-stop-hook.py": true}
 
-// stopRegistration records which settings document one Stop hook command reads: the word after
-// the adapter's entry point (or after `crw hook`), which completion.settings_path and the Go
-// hook both take first, else the default settings. A command that runs neither the adapter nor
-// the packaged launcher reads no crw settings.
-func (s *scan) stopRegistration(source, field, command, pluginRoot string) {
-	calls, err := shellWords(command)
-	if err != nil {
-		s.stopSettings = append(s.stopSettings, stopSettings{source: source, field: field, problem: "the command cannot be parsed: " + err.Error()})
+// settingsEnv is the settings override the adapter and the Go hook read when a registration
+// names no settings (completion.configuration_path, internal/relay/hook/settings.go).
+const settingsEnv = "CRW_COMPLETION_HOOK_CONFIG"
+
+// registration collects the settings documents one Stop command reads (row 2) from each command
+// it runs (argvJudge.seen): the word after the adapter's entry point or after `crw hook`, which
+// the adapter and the Go hook take first; with no such word, $CRW_COMPLETION_HOOK_CONFIG as the
+// scan's environment holds it, else the default settings; and the default settings for the
+// packaged launcher and `crw hook --plugin-launch`. A command holding anything the scan cannot
+// judge, or running a script that is neither (it may run the adapter with settings of its own),
+// leaves them unknown.
+type registration struct {
+	s             *scan
+	source, field string
+	found         []stopSettings
+	unknown       string
+}
+
+func (r *registration) see(argv []shellWord, command Executable) {
+	for i, w := range argv {
+		base := filepath.Base(w.Written)
+		if base == "crw" && i+1 < len(argv) && argv[i+1].Value == "hook" {
+			i++
+		} else if !adapterEntries[base] && !launcherEntries[base] {
+			continue
+		}
+		var named shellWord
+		if i+1 < len(argv) {
+			named = argv[i+1]
+		}
+		one := stopSettings{source: r.source, field: r.field, path: filepath.Join(r.s.o.CodexHome, "crw-completion-hook.json")}
+		switch override := r.s.o.Env.Get(settingsEnv); {
+		case launcherEntries[base] || named.Value == "--plugin-launch":
+		case named.Written == "" && override != "":
+			if one.path, one.problem = r.s.absolute(override); one.problem != "" {
+				one.problem = "$" + settingsEnv + " " + strconv.Quote(override) + " " + one.problem
+			}
+		case named.Written == "":
+		case named.Missing != "":
+			one.problem = "its settings argument " + strconv.Quote(named.Written) + " needs " + named.Missing + ", an expansion this scan does not make"
+		case !filepath.IsAbs(named.Value):
+			one.problem = "its settings argument " + strconv.Quote(named.Written) + " is a relative path, which resolves wherever the hook runs"
+		default:
+			one.path = named.Value
+		}
+		r.found = append(r.found, one)
 		return
 	}
-	for _, words := range calls {
-		for i, word := range words {
-			base := filepath.Base(word)
-			crwHook := base == "crw" && i+1 < len(words) && words[i+1] == "hook"
-			if !adapterEntries[base] && !crwHook && !launcherEntries[base] {
-				continue
-			}
-			if crwHook {
-				i++
-			}
-			if launcherEntries[base] || i+1 >= len(words) {
-				s.stopSettings = append(s.stopSettings, stopSettings{source: source, field: field, path: filepath.Join(s.o.CodexHome, "crw-completion-hook.json")})
-				return
-			}
-			named, missing := s.expander(pluginRoot).Expand(words[i+1])
-			switch {
-			case missing != "":
-				s.stopSettings = append(s.stopSettings, stopSettings{source: source, field: field, problem: "its settings argument " + strconv.Quote(words[i+1]) + " needs " + missing + ", an expansion this scan does not make"})
-			case !filepath.IsAbs(named):
-				s.stopSettings = append(s.stopSettings, stopSettings{source: source, field: field, problem: "its settings argument " + strconv.Quote(words[i+1]) + " is a relative path, which resolves wherever the hook runs"})
-			default:
-				s.stopSettings = append(s.stopSettings, stopSettings{source: source, field: field, path: named})
-			}
-			return
-		}
+	if command.Kind == KindScript || command.Kind == KindPythonScript {
+		r.unknown = "it runs " + strconv.Quote(argv[0].Written) + ", a script that may run the adapter with settings of its own"
 	}
+}
+
+func (r *registration) done() {
+	if r.unknown != "" {
+		r.found = append(r.found, stopSettings{source: r.source, field: r.field, problem: r.unknown})
+	}
+	r.s.stopSettings = append(r.s.stopSettings, r.found...)
 }
 
 // journalRow is when a journal row's Stop hook ran (its at: completion.now writes
@@ -810,23 +842,94 @@ func (s *scan) longestTimeout() float64 {
 	return longest
 }
 
-// stateDirectories are the relay state root, every directory under it, and an explicit
-// CODEX_SESSION_RELAY_STATE.
-func (s *scan) stateDirectories() []string {
-	directories := []string{s.o.StateRoot}
-	if entries, err := os.ReadDir(s.o.StateRoot); err == nil {
+// scopeClaim is one record of the relay's scope registry.
+type scopeClaim struct {
+	path     string
+	document Object
+}
+
+// stateDirectories settles every relay state directory rows 3 and 6 read: the state root and
+// each directory under it (a link to one included), CODEX_SESSION_RELAY_STATE made absolute as
+// the relay makes it, and each stateDir the relay's scope registry records. The registry (the
+// production one under the passwd entry's home, and CODEX_SESSION_RELAY_SCOPE_DIR) is where
+// every daemon claims its scope whatever environment started it, so a daemon started with
+// another --state is found there. Anything that cannot be listed, read or made absolute is
+// unreadable and leaves rows 3 and 6 unscanned.
+func (s *scan) stateDirectories() {
+	unknown := func(what, detail string) {
+		s.unreadable = append(s.unreadable, what+": rows 3 and 6: "+detail+", so the relay state directories are not all known")
+		s.statesUnknown++
+	}
+	add := func(directory string) {
+		if !contains(s.states, directory) {
+			s.states = append(s.states, directory)
+		}
+	}
+	if root := s.o.StateRoot; !filepath.IsAbs(root) {
+		unknown(root, "the state root is not an absolute path")
+	} else {
+		add(root)
+		entries, err := os.ReadDir(root)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			unknown(root, store.PythonOSError(err))
+		}
 		for _, entry := range entries {
-			if entry.IsDir() {
-				directories = append(directories, filepath.Join(s.o.StateRoot, entry.Name()))
+			directory := filepath.Join(root, entry.Name())
+			if info, err := os.Stat(directory); err == nil && info.IsDir() {
+				add(directory)
+			} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+				unknown(directory, store.PythonOSError(err))
 			}
 		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		s.unread(s.o.StateRoot, err)
 	}
-	if explicit := s.o.Env.Get(scope.StateEnv); explicit != "" && !contains(directories, explicit) {
-		directories = append(directories, explicit)
+	absolute := func(name string) string {
+		value := s.o.Env.Get(name)
+		if value == "" {
+			return ""
+		}
+		path, problem := s.absolute(value)
+		if problem != "" {
+			unknown("$"+name+" "+strconv.Quote(value), problem)
+		}
+		return path
 	}
-	return directories
+	if explicit := absolute(scope.StateEnv); explicit != "" {
+		add(explicit)
+	}
+	registries := []string{s.o.ScopeRegistry, absolute("CODEX_SESSION_RELAY_SCOPE_DIR")}
+	if registries[0] == "" {
+		if u, err := user.LookupId(strconv.Itoa(os.Geteuid())); err != nil {
+			unknown("the relay's scope registry", "the passwd entry whose home holds it could not be read: "+err.Error())
+		} else {
+			registries[0] = filepath.Join(u.HomeDir, ".codex-session-relay", "scopes")
+		}
+	}
+	for i, registry := range registries {
+		if registry == "" || (i == 1 && registry == registries[0]) {
+			continue
+		}
+		paths, err := listNamed(registry, func(name string) bool { return strings.HasSuffix(name, ".json") })
+		if err != nil {
+			unknown(registry, store.PythonOSError(err))
+		}
+		for _, path := range paths {
+			read := reading.ReadJSON(path, "a scope claim", nil, nil)
+			document, ok := read.Value.(Object)
+			switch {
+			case read.State == reading.Absent:
+				continue
+			case !read.OK() || !ok:
+				unknown(path, "the scope claim could not be read as a JSON object: "+read.Detail)
+				continue
+			}
+			s.scopeClaims = append(s.scopeClaims, scopeClaim{path, document})
+			if directory, _ := record.Get(document, "stateDir").(string); filepath.IsAbs(directory) {
+				add(directory)
+			} else if stated := record.Get(document, "stateDir"); stated != nil {
+				unknown(path, "its stateDir "+scope.PyStr(stated)+" is not an absolute path")
+			}
+		}
+	}
 }
 
 func contains(values []string, value string) bool {
@@ -933,7 +1036,7 @@ func (s *scan) process(pid int) (Executable, []any, error) {
 		}
 	}
 	e := Executable{Value: exe, Resolves: exe, Kind: KindNative, Detail: "the process's executable"}
-	if PythonName(exe) || python {
+	if PythonName(exe) || python || pythonImage(filepath.Join(base, "exe")) {
 		e.Kind, e.Python, e.Detail = KindPythonInterpreter, true, "a process running a Python interpreter or a .py program"
 		return e, argv, nil
 	}
@@ -943,131 +1046,187 @@ func (s *scan) process(pid int) (Executable, []any, error) {
 	return e, argv, nil
 }
 
-// inspect files what an alive pid runs: a Python process is a reference, one whose exe or
-// cmdline could not be read is unreadable, one that exited meanwhile is nothing.
-func (s *scan) inspect(row int, source, fieldName string, pid int) {
-	e, argv, err := s.process(pid)
-	switch {
-	case errors.Is(err, errGone):
-	case err != nil:
-		s.unreadable = append(s.unreadable, source+": row "+strconv.Itoa(row)+" "+fieldName+" "+strconv.Itoa(pid)+": what the process runs could not be read: "+store.PythonOSError(err))
-	case e.Python:
-		s.reference(row, source, fieldName, e, record.Object{{Key: "pid", Value: int64(pid)}, {Key: "argv", Value: nonNil(argv)}})
-	}
-}
-
-// daemons is row 3. It returns every alive recorded pid for row 6 to exclude.
+// daemons is row 3: daemon.json in every state directory and every scope registry claim. It
+// returns every alive recorded pid for row 6 to exclude.
 func (s *scan) daemons() map[int]bool {
 	pids := map[int]bool{}
 	count, unknown := 0, 0
-	for _, directory := range s.stateDirectories() {
+	records := append([]scopeClaim(nil), s.scopeClaims...)
+	for _, directory := range s.states {
 		path := filepath.Join(directory, "daemon.json")
-		document, ok := s.readJSON(path, "daemon.json")
-		if !ok {
-			continue
+		if document, ok := s.readJSON(path, "daemon.json"); ok {
+			records = append(records, scopeClaim{path, document})
 		}
+	}
+	for _, one := range records {
 		count++
 		for _, key := range [][2]string{{"pid", "startTicks"}, {"workerPid", "workerStartTicks"}} {
-			n, ok := number(record.Get(document, key[0]))
+			n, ok := number(record.Get(one.document, key[0]))
 			if !ok {
 				continue
 			}
 			pid := int(n)
-			alive, err := s.alive(pid, record.Get(document, key[1]), record.Get(document, "bootId"))
+			alive, err := s.alive(pid, record.Get(one.document, key[1]), record.Get(one.document, "bootId"))
 			if err != nil {
 				unknown++
-				s.unreadable = append(s.unreadable, path+": row 3 "+key[0]+" "+strconv.Itoa(pid)+": whether it is alive could not be read: "+store.PythonOSError(err))
+				s.unreadable = append(s.unreadable, one.path+": row 3 "+key[0]+" "+strconv.Itoa(pid)+": whether it is alive could not be read: "+store.PythonOSError(err))
 				continue
 			}
 			if !alive {
 				continue
 			}
 			pids[pid] = true
-			s.inspect(3, path, key[0], pid)
+			switch e, argv, err := s.process(pid); {
+			case errors.Is(err, errGone): // exited since it was found alive
+			case err != nil:
+				s.unreadable = append(s.unreadable, one.path+": row 3 "+key[0]+" "+strconv.Itoa(pid)+": what the process runs could not be read: "+store.PythonOSError(err))
+			case e.Python:
+				s.reference(3, one.path, key[0], e, record.Object{{Key: "pid", Value: int64(pid)}, {Key: "argv", Value: nonNil(argv)}})
+			}
 		}
 	}
-	if unknown > 0 {
+	switch {
+	case s.statesUnknown > 0:
+		s.surface(3, false, count, "the relay state directories could not all be established (see unreadable), so a daemon recorded in one this scan did not read is unknown")
+	case unknown > 0:
 		s.surface(3, false, count, "whether "+strconv.Itoa(unknown)+" recorded pids are alive could not be read from "+s.o.Proc+" (its process table, or the boot id a record names), so whether they are alive, and what they run, is unknown")
-		return pids
+	default:
+		s.surface(3, true, count, "daemon.json in the relay state root, every scope under it, $CODEX_SESSION_RELAY_STATE and each state directory the relay's scope registry records, and each registry claim; a pid counts only while its start time matches the record")
 	}
-	s.surface(3, true, count, "daemon.json in the relay state root and every scope under it; a pid counts only while its start time matches the record")
 	return pids
 }
 
-// lockHolders is row 6: /proc/locks holders of every managed-start lock, less row 3's pids.
-func (s *scan) lockHolders(exclude map[int]bool) {
-	type inode struct {
-		major, minor uint32
-		ino          uint64
+// mount is one line of mountinfo: a mount point and its superblock's device as /proc/locks
+// prints a device (major:minor in hex).
+type mount struct{ point, device string }
+
+// mounts reads <proc>/self/mountinfo.
+func (s *scan) mounts() ([]mount, error) {
+	raw, err := os.ReadFile(filepath.Join(s.o.Proc, "self", "mountinfo"))
+	if err != nil {
+		return nil, err
 	}
-	files := map[inode]string{}
-	unlisted := 0
-	for _, directory := range s.stateDirectories() {
+	var out []mount
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var id, parent, major, minor uint64
+		var root, point string
+		if _, err := fmt.Sscanf(line, "%d %d %d:%d %s %s", &id, &parent, &major, &minor, &root, &point); err != nil {
+			return nil, errors.New("a mountinfo line this scan cannot read: " + strconv.Quote(line))
+		}
+		point, err := strconv.Unquote(`"` + strings.ReplaceAll(point, `"`, `\"`) + `"`) // \040 and the other octal escapes
+		if err != nil {
+			return nil, errors.New("a mountinfo mount point this scan cannot read: " + strconv.Quote(line))
+		}
+		out = append(out, mount{point, fmt.Sprintf("%02x:%02x", major, minor)})
+	}
+	return out, nil
+}
+
+// device is the device /proc/locks names a file's locks by: that of the mount holding it (the
+// longest mount point containing its resolved path, the last one mounted where two share it).
+// stat's st_dev is not it on btrfs, whose subvolumes stat under devices of their own.
+func device(mounts []mount, path string) string {
+	best, found := -1, ""
+	for _, m := range mounts {
+		if (path == m.point || m.point == "/" || strings.HasPrefix(path, m.point+"/")) && len(m.point) >= best {
+			best, found = len(m.point), m.device
+		}
+	}
+	return found
+}
+
+// lockHolders is row 6: the flock holders of every managed-start lock in the state
+// directories, less row 3's pids. /proc/locks names a lock by its file's device and inode and
+// by the pid that took it, not by whoever holds it now: a lock whose taker is 0 (not visible
+// here), gone, or no longer has the file open is held by a process the table does not name, so
+// it is unreadable and the row unscanned. A waiter (->) is judged as a holder.
+func (s *scan) lockHolders(exclude map[int]bool) {
+	type lock struct {
+		path string
+		stat *syscall.Stat_t
+	}
+	locks, unknown := map[string]lock{}, s.statesUnknown
+	fail := func(what, detail string) {
+		s.unreadable = append(s.unreadable, what+": row 6: "+detail)
+		unknown++
+	}
+	var paths []string
+	for _, directory := range s.states {
 		matches, err := listNamed(directory, func(name string) bool {
 			return strings.HasPrefix(name, "managed-start-") && strings.HasSuffix(name, ".lock")
 		})
 		if err != nil {
 			s.unread(directory, err)
-			unlisted++
+			unknown++
 		}
-		for _, path := range matches {
-			info, err := os.Stat(path)
-			if err != nil {
-				s.unread(path, err)
-				continue
-			}
+		paths = append(paths, matches...)
+	}
+	mounts, err := s.mounts()
+	if err != nil && len(paths) > 0 {
+		fail(filepath.Join(s.o.Proc, "self", "mountinfo"), "the mount table could not be read, so no managed-start lock can be matched to the kernel's lock table: "+store.PythonOSError(err))
+	}
+	for _, path := range paths {
+		info, statErr := os.Stat(path)
+		resolved, resolveErr := record.Resolve(path)
+		switch {
+		case statErr != nil:
+			fail(path, store.PythonOSError(statErr))
+		case resolveErr != nil:
+			fail(path, resolveErr.Error())
+		case err == nil:
 			sys, ok := info.Sys().(*syscall.Stat_t)
-			if !ok {
+			on := device(mounts, resolved)
+			if !ok || on == "" {
+				fail(path, "the device the lock table names it by could not be established from its stat and the mount table")
 				continue
 			}
-			files[inode{unix.Major(uint64(sys.Dev)), unix.Minor(uint64(sys.Dev)), sys.Ino}] = path
+			locks[on+":"+strconv.FormatUint(uint64(sys.Ino), 10)] = lock{path, sys}
 		}
 	}
-	// The holders of locks nobody could list are unknown whatever the lock table says.
-	surface := func(scanned bool, detail string) {
-		if unlisted > 0 {
-			scanned, detail = false, strconv.Itoa(unlisted)+" relay state directories could not be listed, so the managed-start locks in them, and their holders, are unknown; "+detail
+	examined := len(paths)
+	surface := func(detail string) {
+		if unknown > 0 {
+			s.surface(6, false, examined, "the holders of the managed-start locks are not all known (see unreadable); "+detail)
+			return
 		}
-		s.surface(6, scanned, len(files), detail)
+		s.surface(6, true, examined, detail)
 	}
-	if len(files) == 0 {
-		surface(true, "no managed-start lock exists under the relay state root")
+	if examined == 0 {
+		surface("no managed-start lock exists under the relay state directories")
 		return
 	}
-	locks, err := os.Open(filepath.Join(s.o.Proc, "locks"))
+	table := filepath.Join(s.o.Proc, "locks")
+	file, err := os.Open(table)
 	if err != nil {
-		s.unread(filepath.Join(s.o.Proc, "locks"), err)
-		surface(false, "the kernel's lock table could not be read, so the holders of "+strconv.Itoa(len(files))+" managed-start locks are unknown")
+		fail(table, "the kernel's lock table could not be read: "+store.PythonOSError(err))
+		surface("the kernel's lock table could not be read")
 		return
 	}
-	defer locks.Close()
-	holders := map[int]string{}
-	lines := bufio.NewScanner(locks)
+	defer file.Close()
+	holders := map[int]lock{}
+	lines := bufio.NewScanner(file)
 	for lines.Scan() {
-		fieldsList := strings.Fields(lines.Text())
-		if len(fieldsList) < 6 || fieldsList[1] == "->" || fieldsList[1] != "FLOCK" {
+		f := strings.Fields(lines.Text())
+		if len(f) > 1 && f[1] == "->" {
+			f = append(f[:1:1], f[2:]...)
+		}
+		if len(f) < 6 || f[1] != "FLOCK" {
 			continue
 		}
-		pid, err := strconv.Atoi(fieldsList[4])
-		if err != nil {
+		held, ok := locks[f[5]]
+		if !ok {
 			continue
 		}
-		parts := strings.Split(fieldsList[5], ":")
-		if len(parts) != 3 {
+		if pid, err := strconv.Atoi(f[4]); err == nil && pid > 0 {
+			holders[pid] = held
 			continue
 		}
-		major, _ := strconv.ParseUint(parts[0], 16, 32)
-		minor, _ := strconv.ParseUint(parts[1], 16, 32)
-		ino, _ := strconv.ParseUint(parts[2], 10, 64)
-		if path, ok := files[inode{uint32(major), uint32(minor), ino}]; ok {
-			holders[pid] = path
-		}
+		fail(held.path, "the lock table names its taker as pid "+f[4]+", not visible from here, so what holds it is unknown")
 	}
 	// A read that fails part way leaves every line after it unread, and a holder may be on one
 	// of them: the holders found so far are still judged, and the row is not scanned.
-	partial := lines.Err()
-	if partial != nil {
-		s.unread(filepath.Join(s.o.Proc, "locks"), partial)
+	if err := lines.Err(); err != nil {
+		fail(table, "the kernel's lock table could not be read to its end: "+store.PythonOSError(err))
 	}
 	pids := make([]int, 0, len(holders))
 	for pid := range holders {
@@ -1075,16 +1234,44 @@ func (s *scan) lockHolders(exclude map[int]bool) {
 	}
 	sort.Ints(pids)
 	for _, pid := range pids {
+		held := holders[pid]
 		if exclude[pid] {
 			continue
 		}
-		s.inspect(6, holders[pid], "holder", pid)
+		e, argv, err := s.process(pid)
+		switch {
+		case errors.Is(err, errGone):
+			fail(held.path, "pid "+strconv.Itoa(pid)+" took this lock and has exited, so a process that inherited it holds it, which the lock table does not name")
+		case err != nil:
+			fail(held.path, "what pid "+strconv.Itoa(pid)+" runs could not be read: "+store.PythonOSError(err))
+		case e.Python:
+			s.reference(6, held.path, "holder", e, record.Object{{Key: "pid", Value: int64(pid)}, {Key: "argv", Value: nonNil(argv)}})
+		default:
+			if open, err := s.holdsOpen(pid, held.stat); err != nil {
+				fail(held.path, "whether pid "+strconv.Itoa(pid)+" still has the lock open could not be read: "+store.PythonOSError(err))
+			} else if !open {
+				fail(held.path, "pid "+strconv.Itoa(pid)+", which took this lock, no longer has it open, so the process holding it is one the lock table does not name")
+			}
+		}
 	}
-	if partial != nil {
-		surface(false, "the kernel's lock table could not be read to its end, so the holders of "+strconv.Itoa(len(files))+" managed-start locks are unknown")
-		return
+	surface("the /proc/locks holders of every managed-start lock, less the pids row 3 reports")
+}
+
+// holdsOpen reports whether pid has the file described by want open.
+func (s *scan) holdsOpen(pid int, want *syscall.Stat_t) (bool, error) {
+	directory := filepath.Join(s.o.Proc, strconv.Itoa(pid), "fd")
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return false, err
 	}
-	surface(true, "the /proc/locks holders of every managed-start lock, less the pids row 3 reports")
+	for _, entry := range entries {
+		if info, err := os.Stat(filepath.Join(directory, entry.Name())); err == nil {
+			if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Dev == want.Dev && st.Ino == want.Ino {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // launcherCopy is row 8: <CODEX_HOME>/crw-stop-hook.py is a .py launcher by definition.
@@ -1095,7 +1282,7 @@ func (s *scan) launcherCopy() {
 	case err == nil:
 		e := Classify(path, "", s.pointer)
 		e.Python = true // a .py launcher by definition, whatever it now holds
-		s.judge(8, path, "file", e)
+		s.verdict(8, path, "file", e)
 		s.surface(8, true, 1, "the launcher copy the cached Python Stop bootstrap falls back to")
 	case errors.Is(err, os.ErrNotExist):
 		s.surface(8, true, 0, "no launcher copy exists at "+path)
@@ -1105,8 +1292,7 @@ func (s *scan) launcherCopy() {
 	}
 }
 
-// configToml is row 10: the command and args of every mcp_servers table, each one argv word as
-// Codex passes it to exec (mcpServers).
+// configToml is row 10: every mcp_servers table, judged as Codex starts it (server).
 func (s *scan) configToml(_ context.Context) {
 	path := filepath.Join(s.o.CodexHome, "config.toml")
 	read := reading.ReadText(path, "config.toml")
@@ -1116,13 +1302,13 @@ func (s *scan) configToml(_ context.Context) {
 		return
 	case !read.OK():
 		s.unreadable = append(s.unreadable, path+": "+read.Detail)
-		s.surface(10, true, 0, "config.toml could not be read")
+		s.surface(10, false, 0, "config.toml could not be read")
 		return
 	}
 	var document map[string]any
 	if _, err := toml.Decode(read.Value.(string), &document); err != nil {
 		s.unreadable = append(s.unreadable, path+": "+err.Error())
-		s.surface(10, true, 0, "config.toml could not be parsed")
+		s.surface(10, false, 0, "config.toml could not be parsed")
 		return
 	}
 	servers, _ := document["mcp_servers"].(map[string]any)
@@ -1133,16 +1319,7 @@ func (s *scan) configToml(_ context.Context) {
 	sort.Strings(names)
 	for _, name := range names {
 		entry, _ := servers[name].(map[string]any)
-		if command, ok := entry["command"].(string); ok && command != "" {
-			s.argvWord(10, path, "mcp_servers."+name+".command", s.literal(command, ""), s.o.CodexHome, "", roleCommand)
-		}
-		if args, ok := entry["args"].([]any); ok {
-			for i, arg := range args {
-				if text, ok := arg.(string); ok {
-					s.argvWord(10, path, "mcp_servers."+name+".args["+strconv.Itoa(i)+"]", s.literal(text, ""), s.o.CodexHome, "", roleArgument)
-				}
-			}
-		}
+		s.server(10, path, "mcp_servers."+name, func(key string) any { return entry[key] }, "")
 	}
 	s.surface(10, true, len(names), "every mcp_servers table in "+path)
 }
@@ -1155,7 +1332,7 @@ func (s *scan) pointerTarget() {
 		s.unreadable = append(s.unreadable, s.pointer+": "+read.Detail)
 		s.surface(11, true, 0, read.Detail)
 	case pointer.Link:
-		s.judge(11, s.pointer, "target", Classify(s.pointer, "", s.pointer))
+		s.verdict(11, s.pointer, "target", Classify(s.pointer, "", s.pointer))
 		s.surface(11, true, 1, read.Detail)
 	default:
 		s.surface(11, true, 0, read.Detail)
