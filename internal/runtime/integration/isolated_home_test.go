@@ -170,9 +170,20 @@ func newIsolated(t *testing.T) *isolated {
 	}
 	writeFile(t, filepath.Join(h.codex, "config.toml"), "# the isolated Codex home of the todo 40 integration test\n", 0o644)
 	// The tripwires: a command that asks PATH for Python or its package tools leaves a line in
-	// the sentinel and fails. The shebang names /bin/sh by absolute path, as PATH holds no sh.
+	// the sentinel and fails. The shebang names /bin/sh by absolute path.
 	for _, name := range []string{"python", "python3", "pip", "uv"} {
 		writeFile(t, filepath.Join(h.trip, name), "#!/bin/sh\nprintf '%s\\n' \"$0 $*\" >> "+shellQuote(h.sentinel)+"\nexit 97\n", 0o755)
+	}
+	// The package declares its MCP server as `sh ./wiring/crw-bridge.sh`, which the host finds
+	// on its PATH, and `crw install remove` resolves that command the same way before it rules
+	// out that a registration runs from the runtime it deletes: a host PATH without sh leaves the
+	// declaration unjudged and the remove refused. PATH holds the system sh, as a host's does.
+	sh, err := filepath.EvalSymlinks("/bin/sh")
+	if err != nil {
+		t.Fatalf("this host has no /bin/sh: %v", err)
+	}
+	if err := os.Symlink(sh, filepath.Join(h.tools, "sh")); err != nil {
+		t.Fatal(err)
 	}
 	// `crw install` records the Codex CLI version as one dimension of the measured point.
 	writeFile(t, filepath.Join(h.tools, "codex"), "#!/bin/sh\n[ \"$1\" = --version ] || exit 1\necho 'codex-cli 0.0.0-isolated'\n", 0o755)

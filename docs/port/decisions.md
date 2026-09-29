@@ -1551,6 +1551,14 @@ scan does not make - is reported unreadable with the construct, never interprete
 libraries are used for reading only. Nothing is formatted, evaluated, expanded or run through
 them; the `interp` and `expand` packages are not imported.
 
+An argument is a thing such a program may run only if it could be executed: a regular file with
+an execute bit, a file with no `#!` among them because a shell's ENOEXEC fallback runs it. A
+socket, FIFO or device is not, whatever its mode bits, because execve(2) refuses it. Before todo
+40 the scan asked only for the mode bits, so the App Server socket a bridge record passes with
+`--socket` (bind(2) creates it with 0777 less the umask, so it has execute bits) made the record
+unreadable, and `crw install remove`, which refuses whatever registration it cannot judge,
+refused every runtime on such a host.
+
 Why: codexconfig.py refuses to approximate TOML (a hand-written reader produced ten defects), and
 the retention scan must read every registered command rather than guess at text; concluding a
 server is absent when it is registered is how a second bridge arrives. The same holds
@@ -1577,7 +1585,8 @@ internal/runtime/doctor/retention.go (`configToml`, `hookCommands`, `server`); i
 internal/runtime/install/mcp.go (`readServers`); `TestRetentionScanReadsTheWiringSurfaces`,
 `TestTheGrammarRefusesEveryOtherConstruct`, `TestRetentionScanJudgesOnlyWhatItsGrammarReads`,
 `TestRetentionScanJudgesAnMCPServerAsCodexStartsIt`, `TestRegisterMCPWritesTheRecordAndRefusesASecondOwner`,
-`TestInstallRefusesASecondOwner`.
+`TestInstallRefusesASecondOwner`, `TestRetentionScanDoesNotTakeWhatCannotBeExecutedForAProgram`,
+`TestIsolatedHome` (IS-8's remove, under the `integration` tag).
 
 ## 38. `crw install`: the release digest authorizes the unpack, the exercise earns the point
 

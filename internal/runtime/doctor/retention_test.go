@@ -2,6 +2,7 @@ package doctor_test
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -839,6 +840,55 @@ func TestRetentionScanJudgesOnlyWhatItsGrammarReads(t *testing.T) {
 	stopHooks(t, h, `codex-session-relay hook`)
 	if got := outcome(h.scan(t), 9, "hooks.Stop[0].hooks[0].command"); got != "unreadable" {
 		t.Errorf("a PATH whose relative directory comes first: %s", got)
+	}
+}
+
+// A word given to a program the scan does not model is something that program may run only if
+// it can be executed: a regular file with an execute bit (a file with no #! among them, which a
+// shell's ENOEXEC fallback runs). A socket or a FIFO cannot be, whatever its mode bits, so the
+// App Server socket a bridge record passes with --socket leaves the command judged, where it
+// made every registration naming it unreadable and every crw install remove refuse (todo 40).
+func TestRetentionScanDoesNotTakeWhatCannotBeExecutedForAProgram(t *testing.T) {
+	h := newHost(t)
+	bin := filepath.Join(h.home, "bin")
+	write(t, filepath.Join(bin, "runner"), fakeCrw+"runner", 0o755)
+	write(t, filepath.Join(bin, "no-hash-bang"), "echo hello\n", 0o755)
+	short, err := os.MkdirTemp("", "crw-sock-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(short) })
+	socket := filepath.Join(short, "app.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	fifo := filepath.Join(short, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{socket, fifo} {
+		if err := os.Chmod(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.env = scope.Env{"HOME=" + h.home, "XDG_STATE_HOME=" + h.state, "CODEX_HOME=" + h.codex, "PATH=" + bin + ":/usr/bin:/bin"}
+	cases := []struct{ command, want string }{
+		{"runner --socket " + socket, "clean"},
+		{"runner " + fifo, "clean"},
+		{"runner " + filepath.Join(bin, "no-hash-bang"), "unreadable"},
+	}
+	var commands []string
+	for _, c := range cases {
+		commands = append(commands, c.command)
+	}
+	stopHooks(t, h, commands...)
+	report := h.scan(t)
+	for i, c := range cases {
+		if got := outcome(report, 9, "hooks.Stop[0].hooks["+strconv.Itoa(i)+"].command"); got != c.want {
+			t.Errorf("%q: %s, want %s", c.command, got, c.want)
+		}
 	}
 }
 
