@@ -95,7 +95,7 @@ func TestReclaimKeepsAStagingThatMayStillBeInUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = process.Process.Kill(); _ = process.Wait() })
-	result, code = reinstall()
+	result, code = install.Install(context.Background(), h.realProcesses(), "update", install.Source{From: first})
 	kept("a live process", result, code, staging.Staging)
 	if len(golden.List(at(result, "processes"))) != 1 {
 		t.Fatalf("processes: %s", golden.Canon(result))

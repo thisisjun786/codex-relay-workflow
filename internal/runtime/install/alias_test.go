@@ -94,7 +94,7 @@ func TestRemoveKnowsARuntimeByIdentityNotSpelling(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = process.Process.Kill(); _ = process.Wait() })
-	if refused, code := install.Remove(context.Background(), h.options(), old); code != install.Refused || len(golden.List(at(refused, "processes"))) != 1 {
+	if refused, code := install.Remove(context.Background(), h.realProcesses(), old); code != install.Refused || len(golden.List(at(refused, "processes"))) != 1 {
 		t.Fatalf("a runtime a process runs out of through /b, asked through /a: exit %d\n%s", code, golden.Canon(refused))
 	}
 	_ = process.Process.Kill()

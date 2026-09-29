@@ -70,6 +70,9 @@ type host struct {
 	home, dest, codex, state, record, relayState string
 	fake                                         *fakehost.Server
 	env                                          scope.Env
+	// proc is an empty process table, so what remove and the reclaim read of the processes does
+	// not depend on what else runs on the host; a test that starts a process uses realProcesses.
+	proc string
 }
 
 func newHost(t *testing.T) *host {
@@ -84,6 +87,10 @@ func newHost(t *testing.T) *host {
 		}
 	}
 	h.fake = fakehost.Start(t)
+	h.proc = filepath.Join(t.TempDir(), "proc")
+	if err := os.MkdirAll(filepath.Join(h.proc, "self"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	env := scope.Env{}
 	for _, entry := range os.Environ() {
 		key, _, _ := strings.Cut(entry, "=")
@@ -103,8 +110,16 @@ func codexCli(context.Context) *string {
 	return &v
 }
 
+// realProcesses is options reading this host's own process table, for a test that starts a
+// process and asks what is found of it.
+func (h *host) realProcesses() install.Options {
+	o := h.options()
+	o.Proc = "/proc"
+	return o
+}
+
 func (h *host) options() install.Options {
-	return install.Options{Env: h.env, Dest: h.dest, CodexHome: h.codex, RecordPath: h.record, Socket: h.fake.SocketPath, State: h.relayState, ScopeRegistry: filepath.Join(h.home, "scopes"),
+	return install.Options{Env: h.env, Dest: h.dest, CodexHome: h.codex, RecordPath: h.record, Socket: h.fake.SocketPath, State: h.relayState, ScopeRegistry: filepath.Join(h.home, "scopes"), Proc: h.proc,
 		Issue: "CRW-158", CodexVersion: codexCli, Now: func() time.Time { return time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC) }}
 }
 

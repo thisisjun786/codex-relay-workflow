@@ -1512,7 +1512,14 @@ whose install finished is "already installed" only when, on the record read agai
 promotion lock, every component selects it and the owned pointer names it; a split selection (one
 component on it, another elsewhere) is refused, naming each component's selection, with `crw
 install rollback <dir>` as the repair - it selects every component under the promotion rules and,
-the pointer already naming the runtime, swaps nothing. Every command that records the pointer's
+the pointer already naming the runtime, swaps nothing. Nor is a runtime a host cannot launch as it
+stands (`doctor.LaunchProblems`: `bin/crw` a regular file this user may execute, each compatibility
+link resolving to it): its directory is named for the archive's digest, so it cannot be built again
+beside itself, and the refusal gives the commands that restore it in place (`repair`: `crw`
+extracted from the archive the directory is named for, `chmod 755`, `ln -sfn crw` for each link),
+after which the same install answers already installed. A rollback to the outgoing runtime and a
+remove is not offered, because a broken `codex-session-relay` link keeps the swap gate from asking
+the selected relay. Every command that records the pointer's
 placement (install, update and rollback) refuses a blank or whitespace `--issue` before it takes
 a lock, since `record.PlacementRecorded` rejects a placement recorded by nobody. The destination
 is fixed (decision 11): there is no `--dest`, and a record whose pointer is another link is refused
@@ -1576,8 +1583,13 @@ a case-folded spelling - or a record written through another spelling cannot pas
 canonical spelling fails. It deletes only when the record does
 not select it, the pointer does not (and is established not to) name it, it carries a readable
 claim of runtime_install.py's or crw install's whose lock nobody holds, no live process runs
-out of it (its `/proc/<pid>/exe`, or the interpreter or script its argv starts, resolving inside
-it), and no registration the host reads names a path inside it. The registrations are read by the
+out of it (its `/proc/<pid>/exe`, its working directory, or what its argv runs - argv[0] when the
+executable could not be read (a readable one settles what runs) and it holds no whitespace (a
+process title such as sshd's is no path), the command `env` runs, and an interpreter's script
+operand after its options (the interpreter known by argv[0] or by its executable), a relative one
+resolved against `/proc/<pid>/cwd`, with a Python's `-c` and `-m` and a shell's `-c` ending the
+options - resolving inside it; a process whose argv runs something relative to a working
+directory it cannot read is not ruled out), and no registration the host reads names a path inside it. The registrations are read by the
 retention scan's own readers (`doctor.RegisteredInside`, rows 4, 5, 8, 9 and 10: every
 `crw-*.json` record, so the Stop settings' `relayExecutable`, `adapterEntryPoint` and
 `adapterInterpreter` and the bridge record's `bridgeExecutable`; the cached plugin declarations;
@@ -1607,7 +1619,9 @@ claim, is refused by name and left alone, by remove, by the reclaim and by a fai
 release (which then deletes its own candidate in place), and status reports it as not ours
 (`ours: false`). A tombstone is deleted with its claim last (everything else, then the staging
 lock, then the claim, then the empty directory), so a deletion that stops part-way leaves it
-claimed or empty, never a claimless half. What the record still lists under the name (its
+claimed or empty, never a claimless half. A tombstone is recovery state: status lists every
+unfinished one, and it is finished with `crw install remove`, not deleted by hand, because
+finishing also drops what the record still lists under the name. What the record still lists under the name (its
 entries, an outgoing naming it) is dropped first, unless a runtime was installed under that name
 again. Remove, the reclaim and the already-installed reading take the directory's `<env>.crw-lock`
 first and the promotion lock after it, the order of decision 33, and the host record's `.crw-lock`
@@ -1690,6 +1704,7 @@ scripts/crw_runtime/staging.py:350-352 (a finished, unselected environment is ke
 `TestRemoveTakesTheDirectoryLockBeforeThePromotionLock`, `TestAPromotionRecordsTheRuntimeThePointerLeaves`,
 `TestATombstoneNeedsItsClaim`, `TestAResumedPromotionAsksForSecondOwners`, `TestAnInterruptedRollbackMovesNothing`,
 `TestInterruptedRegistrationsWriteNothing`, `TestARollbackProvesThePointerItPlaced`,
+`TestADamagedRuntimeIsNotInstalled`, `TestRemoveSeesAScriptStartedByARelativePath`,
 `TestRemoveAndReclaimRefuseAProcessTheyCannotRuleOut`, `TestRemovingTheOutgoingRuntimeClearsOutgoing`, `TestOutgoingIsWrittenOnlyByAPromotion`,
 `TestAnUnsettledCandidatesInstallEntriesAreNeverActedOn`); internal/runtime/doctor/references.go;
 internal/runtime/exercise (`TestTheSessionClosesItsReaderAtTheDeadlineWithoutACopyingGoroutine`);

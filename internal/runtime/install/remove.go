@@ -471,6 +471,101 @@ func denied(err error) bool {
 // answer as the kernel does when ptrace access is refused).
 var readExe = os.Readlink
 
+// readCwd reads a /proc/<pid>/cwd link (a variable only so that a test's fake process table can
+// answer as the kernel does when ptrace access is refused).
+var readCwd = os.Readlink
+
+// interpreter is whether a program reads its first operand as a script: a Python, or a shell.
+func interpreter(word string) (python, shell bool) {
+	base := filepath.Base(word)
+	switch base {
+	case "sh", "bash", "dash", "zsh", "ksh", "mksh", "ash", "busybox":
+		return false, true
+	}
+	return doctor.PythonName(base), false
+}
+
+// argvOperands is what a command line runs as its program and reads as its script, spelled as
+// the process sees them (a relative one is opened against its working directory): the program -
+// argv[0], unless the process's executable was read (exe), which settles what it runs, and never a
+// word holding whitespace, which is a process title a program wrote over its argv (sshd, nginx)
+// rather than a path; through env (its options and NAME=VALUE assignments skipped) the command env
+// runs; and for an interpreter - a Python or a shell, known by argv[0] or by the executable - the
+// script operand, the first word after its options, unless -c (an inline program) or, for a Python,
+// -m (a module found on sys.path, whose first entry is the working directory, which is judged on
+// its own) ends them. A bare program name is found on PATH, not against the working directory, so
+// it is not returned.
+func argvOperands(words []string, exe string, exeRead bool) []string {
+	var out []string
+	first := true
+	for len(words) > 0 && words[0] != "" {
+		program := words[0]
+		if strings.Contains(program, "/") && !strings.ContainsAny(program, " \t\n") && !(first && exeRead) {
+			out = append(out, program)
+		}
+		if first && exeRead {
+			if python, shell := interpreter(exe); python || shell {
+				program = exe
+			}
+		}
+		first = false
+		rest := words[1:]
+		if filepath.Base(program) == "env" {
+			i := 0
+			for ; i < len(rest); i++ {
+				word := rest[i]
+				name, _, assignment := strings.Cut(word, "=")
+				if word == "-u" || word == "-C" || word == "--unset" || word == "--chdir" {
+					i++
+				} else if !strings.HasPrefix(word, "-") && !(assignment && !strings.Contains(name, "/")) {
+					break
+				}
+			}
+			words = rest[min(i, len(rest)):]
+			continue
+		}
+		python, shell := interpreter(program)
+		if !python && !shell {
+			return out
+		}
+		for i := 0; i < len(rest); i++ {
+			word := rest[i]
+			switch {
+			case word == "--":
+				if i+1 < len(rest) {
+					out = append(out, rest[i+1])
+				}
+				return out
+			case word == "-" || word == "":
+				return out
+			case strings.HasPrefix(word, "--"):
+				if word == "--check-hash-based-pycs" || word == "--rcfile" || word == "--init-file" {
+					i++
+				}
+			case strings.HasPrefix(word, "-") || (shell && strings.HasPrefix(word, "+")):
+				flags := word[1:]
+			letters:
+				for j, flag := range flags {
+					switch {
+					case flag == 'c' || (python && flag == 'm'):
+						return out
+					case (python && (flag == 'W' || flag == 'X')) || (shell && flag == 'o'):
+						// The option's value is the rest of this word, or the next word.
+						if j == len(flags)-1 {
+							i++
+						}
+						break letters
+					}
+				}
+			default:
+				return append(out, word)
+			}
+		}
+		return out
+	}
+	return out
+}
+
 // runtimeNames are the names a runtime's own executables run under.
 func runtimeNames() map[string]bool {
 	names := map[string]bool{Binary: true}
@@ -546,14 +641,43 @@ func liveProcesses(proc string, d *runtimeDir) (found, unruled []any, err error)
 			unknown(int64(uid), "its executable could not be read ("+store.PythonOSError(exeErr)+") and its command line starts "+words[0]+" by a bare name, which may be this runtime's, so what it runs is unknown")
 			continue
 		}
-		for i, word := range words {
-			if i > 1 {
-				break
+		cwd, cwdErr := readCwd(filepath.Join(base, "cwd"))
+		cwd = strings.TrimSuffix(cwd, " (deleted)")
+		switch {
+		case vanished(cwdErr):
+			continue
+		case cwdErr != nil && !denied(cwdErr) && uid == me:
+			unknown(int64(uid), "it runs as this user and its working directory could not be read ("+store.PythonOSError(cwdErr)+"), so what it runs and where is unknown")
+			continue
+		case cwdErr == nil && inside(cwd):
+			hits = append(hits, cwd)
+		}
+		unresolved := ""
+		for _, operand := range argvOperands(words, exe, exeErr == nil) {
+			if !filepath.IsAbs(operand) {
+				if cwdErr != nil {
+					unresolved = operand
+					break
+				}
+				operand = filepath.Join(cwd, operand)
 			}
-			if inside(word) {
+			if inside(operand) {
+				hits = append(hits, operand)
+			}
+		}
+		if unresolved != "" && len(hits) == 0 {
+			unknown(int64(uid), "its command line runs "+unresolved+" relative to its working directory, which could not be read ("+store.PythonOSError(cwdErr)+"), so what it runs is unknown")
+			continue
+		}
+		for _, word := range words {
+			if _, value, ok := strings.Cut(word, "="); ok && strings.HasPrefix(word, "-") {
+				word = value
+			}
+			if filepath.IsAbs(word) && inside(word) {
 				hits = append(hits, word)
 			}
 		}
+		hits = uniqueStrings(hits...)
 		if len(hits) > 0 {
 			found = append(found, Object{field("pid", int64(pid)), field("runs", strs(hits))})
 		}

@@ -163,7 +163,7 @@ func TestRemoveRefusesWhatMayStillBeInUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = process.Process.Kill(); _ = process.Wait() })
-	refused, code := install.Remove(context.Background(), h.options(), old)
+	refused, code := install.Remove(context.Background(), h.realProcesses(), old)
 	if code != install.Refused || len(golden.List(at(refused, "processes"))) != 1 {
 		t.Fatalf("a live process: exit %d\n%s", code, golden.Canon(refused))
 	}

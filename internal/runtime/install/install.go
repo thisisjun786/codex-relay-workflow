@@ -21,6 +21,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -322,9 +324,41 @@ func (r *run) installed(standing []contract.Field) (Object, int, string) {
 		return refuse("this runtime is installed and the owned pointer names it, but the host record selects only part of it ("+strings.Join(elsewhere, "; ")+"), so reporting it as installed would hide a split host",
 			"nothing was built and nothing was written. Run crw install rollback "+r.environment+" to select every component of it under the promotion rules - the pointer already names it, so nothing is swapped - then rerun.", field("selected", record.Get(rec, "selected")))
 	}
+	if problems, unread := doctor.LaunchProblems(r.environment); len(problems)+len(unread) > 0 {
+		repair := runtimeRepair(r.environment, r.archive.Path)
+		return refuse("this runtime is selected and the owned pointer names it, but a host cannot launch it as it stands: "+strings.Join(append(problems, unread...), "; "),
+			"nothing was built and nothing was written. The directory's name is fixed by this archive's digest, so it cannot be built again beside itself: restore it in place with the commands in 'repair' (the archive is the one the directory is named for, so crw comes back byte for byte), then rerun this install, which then answers alreadyInstalled.",
+			field("launchable", Object{field("problems", strs(problems)), field("unread", strs(unread))}), field("repair", strs(repair)),
+			field("recoveryRequires", "run the commands in 'repair', then rerun this install"))
+	}
 	return append(Object{field("command", r.command), field("applied", false), field("alreadyInstalled", true)}, append(standing,
 		field("selected", record.Get(rec, "selected")), field("pointer", Object{field("path", r.pointerPath), field("target", r.environment)}),
 		field("note", "nothing was built and nothing was written."))...), OK, ""
+}
+
+// runtimeRepair is the shell commands that make a damaged Go runtime launchable again in place:
+// bin/crw extracted from archive (the archive its directory is named for) when it is missing or
+// not a regular file, made executable when it is not, and each compatibility link placed again
+// (a link to crw) where it does not resolve to it.
+func runtimeRepair(environment, archive string) []string {
+	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+	crw := filepath.Join(environment, "bin", Binary)
+	var steps []string
+	info, err := os.Lstat(crw)
+	switch {
+	case err != nil || !info.Mode().IsRegular():
+		steps = append(steps, "rm -rf "+quote(crw)+" && tar -xzf "+quote(archive)+" -O "+Binary+" > "+quote(crw)+" && chmod 755 "+quote(crw))
+	case unix.Access(crw, unix.X_OK) != nil:
+		steps = append(steps, "chmod 755 "+quote(crw))
+	}
+	real, _ := record.Resolve(crw)
+	for _, name := range definition.Links() {
+		link := filepath.Join(environment, "bin", name)
+		if resolved, err := record.Resolve(link); err != nil || resolved != real {
+			steps = append(steps, "ln -sfn "+Binary+" "+quote(link))
+		}
+	}
+	return steps
 }
 
 // reclaim removes a staging its run abandoned (a STAGING claim whose lock nobody holds, which

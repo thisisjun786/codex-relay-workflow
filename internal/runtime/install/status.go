@@ -52,7 +52,7 @@ func Status(_ context.Context, o Options) (Object, int) {
 				one = append(one, field("ours", false), field("detail", why), field("recoveryRequires", nil))
 			} else {
 				one = append(one, field("ours", true), field("detail", "a run that set the runtime aside to delete it did not live to finish"),
-					field("recoveryRequires", "crw install remove "+path+" finishes this removal, once no process runs out of it and no registration names it"))
+					field("recoveryRequires", "crw install remove "+path+" finishes this removal, once no process runs out of it and no registration names it. Do not delete it by hand: finishing it also drops what the host record still lists under the runtime's name"))
 			}
 			interrupted = append(interrupted, one)
 		}

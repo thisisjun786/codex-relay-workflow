@@ -3,6 +3,7 @@ package install_test
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -194,5 +195,35 @@ func TestRemoveDropsTheInstallEntriesBeforeTheDirectory(t *testing.T) {
 	}
 	if _, err := os.Lstat(grave); !os.IsNotExist(err) {
 		t.Fatal("the tombstone is still there")
+	}
+}
+
+// A runtime's script started by a path relative to the process's working directory - an
+// interpreter outside the runtime running bin/<script> of it, as a venv's console script runs
+// under the system Python it links to - runs out of the runtime as surely as one named absolutely:
+// its operand is resolved against /proc/<pid>/cwd, and remove refuses.
+func TestRemoveSeesAScriptStartedByARelativePath(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh")
+	}
+	h := newHost(t)
+	first := archive(t, "0.9.0", "")
+	old := runtimeDir(h, "0.9.0", first, t)
+	h.mustInstall(t, "install", first)
+	h.mustInstall(t, "update", archive(t, "0.9.1", ""))
+	write(t, filepath.Join(old, "bin", "run.sh"), "sleep 30; true\n")
+	process := exec.Command(sh, filepath.Join(filepath.Base(old), "bin", "run.sh"))
+	process.Dir = h.dest
+	if err := process.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = process.Process.Kill(); _ = process.Wait() })
+	refused, code := install.Remove(context.Background(), h.realProcesses(), old)
+	if code != install.Refused || len(golden.List(at(refused, "processes"))) == 0 {
+		t.Fatalf("exit %d\n%s", code, golden.Canon(refused))
+	}
+	if _, err := os.Stat(filepath.Join(old, "bin", "crw")); err != nil {
+		t.Fatal("the runtime was removed under a running script")
 	}
 }

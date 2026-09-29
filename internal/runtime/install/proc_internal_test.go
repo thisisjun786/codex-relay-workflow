@@ -20,20 +20,22 @@ type FakeProcess struct {
 	Exe     string
 	Cmdline []byte
 	Hidden  bool
+	Cwd     string // the working directory link: "" is "/", "denied" and "!" as for Exe
 }
 
 // FakeProc writes a process table whose processes are pids, and reads their exe as the kernel
 // does until the test ends; the caller's owner function says whose each is.
 func FakeProc(t *testing.T, processes ...FakeProcess) string {
 	t.Helper()
-	saved := readExe
-	readExe = func(path string) (string, error) {
+	savedExe, savedCwd := readExe, readCwd
+	kernel := func(path string) (string, error) {
 		if raw, err := os.ReadFile(path); err == nil && string(raw) == "denied" {
 			return "", &os.PathError{Op: "readlink", Path: path, Err: syscall.EACCES}
 		}
 		return os.Readlink(path)
 	}
-	t.Cleanup(func() { readExe = saved })
+	readExe, readCwd = kernel, kernel
+	t.Cleanup(func() { readExe, readCwd = savedExe, savedCwd })
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "self"), 0o755); err != nil {
 		t.Fatal(err)
@@ -55,6 +57,25 @@ func FakeProc(t *testing.T, processes ...FakeProcess) string {
 			}
 		default:
 			if err := os.Symlink(p.Exe, filepath.Join(dir, "exe")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		cwd := filepath.Join(dir, "cwd")
+		switch p.Cwd {
+		case "":
+			if err := os.Symlink("/", cwd); err != nil {
+				t.Fatal(err)
+			}
+		case "!", "denied":
+			body := []byte(p.Cwd)
+			if p.Cwd == "!" {
+				body = nil
+			}
+			if err := os.WriteFile(cwd, body, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			if err := os.Symlink(p.Cwd, cwd); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -134,6 +155,22 @@ func TestLiveProcessesRuleOutOnlyWhatTheyRead(t *testing.T) {
 		{"another user's kernel thread", FakeProcess{Pid: other + 3, Exe: "denied", Cmdline: []byte{}}, false, false},
 		{"another user's process under hidepid", FakeProcess{Pid: other + 4, Exe: "denied", Cmdline: Argv("x"), Hidden: true}, false, true},
 		{"a denied process starting a runtime name bare", FakeProcess{Pid: other + 6, Exe: "denied", Cmdline: Argv("codex-session-relay", "service", "run")}, false, true},
+		// Relative operands are opened against the process's working directory.
+		{"a script named relative to the working directory", FakeProcess{Pid: 400, Exe: "/usr/bin/python3", Cmdline: Argv("/usr/bin/python3", filepath.Join(filepath.Base(directory), "bin", "codex-thread-bridge")), Cwd: filepath.Dir(directory)}, true, false},
+		{"a script after interpreter options", FakeProcess{Pid: 401, Exe: "/usr/bin/python3", Cmdline: Argv("python3", "-u", "-Wignore::DeprecationWarning", "-X", "utf8", filepath.Join(filepath.Base(directory), "bin", "codex-thread-bridge")), Cwd: filepath.Dir(directory)}, true, false},
+		{"a script env runs", FakeProcess{Pid: 402, Exe: "/usr/bin/env", Cmdline: Argv("/usr/bin/env", "-i", "LANG=C", "python3", "./"+filepath.Join(filepath.Base(directory), "bin", "codex-thread-bridge")), Cwd: filepath.Dir(directory)}, true, false},
+		{"a shell script run relative", FakeProcess{Pid: 403, Exe: "/usr/bin/bash", Cmdline: Argv("bash", "-e", "-o", "pipefail", filepath.Join(filepath.Base(directory), "run.sh")), Cwd: filepath.Dir(directory)}, true, false},
+		{"a relative program whose executable and working directory are denied", FakeProcess{Pid: other + 11, Exe: "denied", Cmdline: Argv(filepath.Join(filepath.Base(directory), "bin", "codex-session-relay"), "service"), Cwd: "denied"}, false, true},
+		{"a process title another user wrote over its argv", FakeProcess{Pid: other + 10, Exe: "denied", Cmdline: Argv("sshd: /usr/sbin/sshd -D [listener] 0 of 10-100 startups"), Cwd: "denied"}, false, false},
+		{"an interpreter known by its executable", FakeProcess{Pid: 410, Exe: "/usr/bin/python3", Cmdline: Argv("my-daemon", filepath.Join(filepath.Base(directory), "bin", "codex-thread-bridge")), Cwd: filepath.Dir(directory)}, true, false},
+		{"an argument that is no operand", FakeProcess{Pid: 409, Exe: "/usr/bin/grep", Cmdline: Argv("grep", "-r", "x", filepath.Base(directory)), Cwd: filepath.Dir(directory)}, false, false},
+		{"a module run with the working directory inside", FakeProcess{Pid: 405, Exe: "/usr/bin/python3", Cmdline: Argv("python3", "-m", "codex_thread_bridge"), Cwd: directory}, true, false},
+		{"an inline program outside", FakeProcess{Pid: 406, Exe: "/usr/bin/python3", Cmdline: Argv("python3", "-c", "import bin"), Cwd: "/"}, false, false},
+		{"a relative script outside", FakeProcess{Pid: 407, Exe: "/usr/bin/python3", Cmdline: Argv("python3", "bin/codex-thread-bridge"), Cwd: "/tmp"}, false, false},
+		{"this user's process whose working directory fails otherwise", FakeProcess{Pid: 408, Exe: "/usr/bin/sleep", Cmdline: Argv("sleep", "30"), Cwd: "!"}, false, true},
+		{"another user's relative script, its working directory denied", FakeProcess{Pid: other + 7, Exe: "denied", Cmdline: Argv("/usr/bin/python3", "bin/codex-thread-bridge"), Cwd: "denied"}, false, true},
+		{"another user's absolute script, its working directory denied", FakeProcess{Pid: other + 8, Exe: "denied", Cmdline: Argv("/usr/bin/python3", "/usr/bin/networkd-dispatcher"), Cwd: "denied"}, false, false},
+		{"another user's bare program, its working directory denied", FakeProcess{Pid: other + 9, Exe: "denied", Cmdline: Argv("sshd", "-D"), Cwd: "denied"}, false, false},
 	} {
 		found, unruled, err := liveProcesses(FakeProc(t, c.process), mustIdentify(filepath.Dir(directory), filepath.Base(directory)))
 		if err != nil {
