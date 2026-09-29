@@ -42,3 +42,13 @@ func ReplaceProcessOwner(owner func(dir string) (int, error)) (restore func()) {
 	processOwner = owner
 	return func() { processOwner = saved }
 }
+
+// ReplaceExchange makes every settings exchange go through swap until restored.
+func ReplaceExchange(swap func(a, b string) error) (restore func()) {
+	saved := swapNames
+	swapNames = swap
+	return func() { swapNames = saved }
+}
+
+// ErrNoExchange is the answer of a platform or filesystem that cannot exchange two names.
+var ErrNoExchange = errNoExchange

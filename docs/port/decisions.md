@@ -396,8 +396,11 @@ only the archive name. Bytes at the path that are not this run's - another write
 is what a read-back mismatch after a successful atomic write means - are left where they are with
 the archive kept, and the answer names both. A transition undone after a failed commit or pointer
 move puts the archive back only while the path holds exactly the bytes this run wrote, and then by
-an atomic exchange of the two names (renameat2 `RENAME_EXCHANGE` on Linux, a rename elsewhere),
-which restores the document's own file. A document whose `adapterInterpreter` is `env` and whose
+an atomic exchange of the two names (renameat2 `RENAME_EXCHANGE` on Linux, renamex_np
+`RENAME_SWAP` on darwin), which restores the document's own file; the displaced file is removed
+only when it holds this run's bytes, and is exchanged back otherwise. Where no atomic exchange
+exists (another platform, or a filesystem without one) nothing is renamed over the active path:
+both files stay and the answer gives the `mv` that puts the found settings back by hand. A document whose `adapterInterpreter` is `env` and whose
 `adapterEntryPoint` holds `=` is never written: GNU env reads such an argument as an assignment
 and executes the settings path instead.
 
@@ -437,7 +440,8 @@ fallback); internal/relay/hook/adapter.go (args[0] is the settings path); intern
 `TestATransitionNeverWritesAGoVariantBuiltFromStaleBytes`,
 `TestHookNeverWritesOverADocumentThatChangedAfterItWasRead`,
 `TestRegisterMCPNeverWritesOverARecordThatChangedAfterItWasRead`,
-`TestRegisterMCPRecordsANonUTF8PolicyPathAsPythonDoes`);
+`TestRegisterMCPRecordsANonUTF8PolicyPathAsPythonDoes`,
+`TestASettingsUndoWithoutAnAtomicExchangeRenamesNothing`);
 draft L1, L4, L5, GAP-9, D6.
 
 ## 19. Bridge provenance
@@ -1469,7 +1473,14 @@ record's `outgoing` names was put in service by a promotion, so it is never recl
 claim is settled COMPLETE and it is kept, which `crw install rollback` returns to.
 runtime_install.py reclaims the same staging with `rmtree` and none of these readings
 (scripts/runtime_install.py:2831-2844); `crw install remove`, an operator's explicit request, still
-removes an outgoing runtime nothing else uses (the Python venv after the cutover is one). Exit
+removes an outgoing runtime nothing else uses (the Python venv after the cutover is one). A runtime
+whose install finished is "already installed" only when, on the record read again under the
+promotion lock, every component selects it and the owned pointer names it; a split selection (one
+component on it, another elsewhere) is refused, naming each component's selection, with `crw
+install rollback <dir>` as the repair - it selects every component under the promotion rules and,
+the pointer already naming the runtime, swaps nothing. Every command that records the pointer's
+placement (install, update and rollback) refuses a blank or whitespace `--issue` before it takes
+a lock, since `record.PlacementRecorded` rejects a placement recorded by nobody. Exit
 statuses are 0 (promoted and settled, or already installed), 1 (refused: nothing moved, and this
 run's directory was released unless the record or the pointer may name it), 2 (usage) and 3
 (promoted and in service, only the claim unsettled: never a free destination). `crw install
@@ -1577,7 +1588,8 @@ scripts/crw_runtime/staging.py:350-352 (a finished, unselected environment is ke
 internal/runtime/exercise (`TestTheSessionClosesItsReaderAtTheDeadlineWithoutACopyingGoroutine`);
 the rollback rules (`TestARollbackReturnsToAPromotedRuntimeWhoseClaimNeverSettled`,
 `TestARollbackThatMovesNoRuntimeAsksNoGate`, `TestARollbackRefusesARuntimeThatCannotBeLaunched`,
-`TestANamedRollbackNamesARuntimeDirectory`, `TestAUserRegistrationThroughThePointerIsASecondOwner`);
+`TestANamedRollbackNamesARuntimeDirectory`, `TestAUserRegistrationThroughThePointerIsASecondOwner`,
+`TestARollbackNeedsAnIssue`, `TestASplitSelectionIsNotReportedInstalled`);
 .omo/ulw-execute/scope-analysis-31-46.md "# 38".
 
 ## 39. A caller's cancellation claims every answer the send has not yet used

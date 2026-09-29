@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
@@ -207,13 +208,7 @@ func (r *run) take(rec Object) (Object, int, string) {
 		standing := []contract.Field{field("environment", r.environment), field("archive", r.archive.Object()), field("stagingDecision", decision), field("stagingReason", why)}
 		switch decision {
 		case staging.Settled:
-			if names == nil || !*names {
-				result, code := refusedResult(r.command, "this runtime is installed and selected, but the owned pointer does not name it, so the command a host reaches is not the runtime that is selected", "nothing was built and nothing was written. Run crw install rollback "+r.environment+" to point at it again, or rerun once the pointer can be read.", append(standing, field("pointer", pointerObject(r.pointerPath)))...)
-				return result, code, ""
-			}
-			return append(Object{field("command", r.command), field("applied", false), field("alreadyInstalled", true)}, append(standing,
-				field("selected", record.Get(rec, "selected")), field("pointer", Object{field("path", r.pointerPath), field("target", r.environment)}),
-				field("note", "nothing was built and nothing was written."))...), OK, ""
+			return r.installed(standing)
 		case staging.Resume:
 			r.step("resume an interrupted promotion", true, field("detail", why))
 			return nil, 0, "resume"
@@ -252,6 +247,48 @@ func (r *run) take(rec Object) (Object, int, string) {
 	}
 	r.step("claim the runtime directory", true, field("claim", staging.ClaimPath(r.environment)))
 	return nil, 0, "build"
+}
+
+// installed answers a runtime whose install finished here and which the record selects: already
+// installed only when, on the record read again under the promotion lock, every component
+// selects it and the owned pointer names it. A split selection - one component here, another
+// elsewhere - is refused, naming it, with crw install rollback as the repair: that selects every
+// component of this runtime under the promotion rules, swapping nothing while the pointer already
+// names it.
+func (r *run) installed(standing []contract.Field) (Object, int, string) {
+	refuse := func(detail, note string, extra ...contract.Field) (Object, int, string) {
+		result, code := refusedResult(r.command, detail, note, append(append([]contract.Field{}, standing...), extra...)...)
+		return result, code, ""
+	}
+	exclusive, err := record.Promote(r.o.RecordPath, 0)
+	if err != nil {
+		return refuse("another run holds the promotion lock, so whether the host selects this runtime was not read on a record nobody is changing: "+err.Error(), "nothing was built and nothing was written.")
+	}
+	defer exclusive.Release()
+	fresh := record.Load(r.o.RecordPath, definition.Version)
+	if !fresh.Usable() {
+		return refuse("the host record could not be read again, so whether it selects this runtime was not established: "+fresh.Detail, "nothing was built and nothing was written.", field("reading", fresh.Refusal()))
+	}
+	rec := fresh.Value.(Object)
+	r.pointerPath = recordedPointer(rec, r.o.Dest)
+	if names := pointer.Names(r.pointerPath, r.environment); names == nil || !*names {
+		return refuse("this runtime is installed and selected, but the owned pointer does not name it, so the command a host reaches is not the runtime that is selected", "nothing was built and nothing was written. Run crw install rollback "+r.environment+" to point at it again, or rerun once the pointer can be read.", field("pointer", pointerObject(r.pointerPath)))
+	}
+	if !selectsEvery(rec, r.environment) {
+		var elsewhere []string
+		selected, _ := record.Get(rec, "selected").(Object)
+		for _, c := range definition.Components {
+			location, _ := record.Get(selected, c.Name).(string)
+			if location == "" || !record.Under(location, r.environment) {
+				elsewhere = append(elsewhere, c.Name+" selects "+evidence.Repr(record.Get(selected, c.Name)))
+			}
+		}
+		return refuse("this runtime is installed and the owned pointer names it, but the host record selects only part of it ("+strings.Join(elsewhere, "; ")+"), so reporting it as installed would hide a split host",
+			"nothing was built and nothing was written. Run crw install rollback "+r.environment+" to select every component of it under the promotion rules - the pointer already names it, so nothing is swapped - then rerun.", field("selected", record.Get(rec, "selected")))
+	}
+	return append(Object{field("command", r.command), field("applied", false), field("alreadyInstalled", true)}, append(standing,
+		field("selected", record.Get(rec, "selected")), field("pointer", Object{field("path", r.pointerPath), field("target", r.environment)}),
+		field("note", "nothing was built and nothing was written."))...), OK, ""
 }
 
 // reclaim removes a staging its run abandoned (a STAGING claim whose lock nobody holds, which

@@ -116,6 +116,11 @@ func selectedAs(rec Object, selection []contract.Field) bool {
 // moves, so the swap gate, which guards replacing a runtime, is not asked.
 func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 	base := Object{field("command", "rollback"), field("applied", false)}
+	if !record.Stated(o.Issue) {
+		// As Install: the placement a rollback records is rejected by record.PlacementRecorded
+		// when recordedBy is blank, and every later run would refuse the pointer as unowned.
+		return append(base, field("refused", "--issue is written into the host record as the evidence that this command placed the owned pointer, so it has to say something"), field("note", "nothing was read, no lock was taken and nothing was written.")), Refused
+	}
 	if named != "" {
 		absolute, err := filepath.Abs(named)
 		if err != nil {

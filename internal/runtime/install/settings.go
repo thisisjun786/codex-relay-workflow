@@ -661,17 +661,18 @@ func settleBack(path, archived string, wrote []byte) Object {
 }
 
 // exchangeBack puts the archived document back over path, which held exactly wrote when it was
-// read. On Linux the two names are exchanged atomically (renameat2 RENAME_EXCHANGE), so a writer
-// that replaced path in between is displaced to the archive name rather than destroyed, and is
-// exchanged back when what was displaced is not this run's; elsewhere, and on filesystems
-// without the exchange, the archive is renamed over path.
+// read, by exchanging the two names in one step (renameat2 RENAME_EXCHANGE on Linux,
+// renamex_np RENAME_SWAP on darwin): a writer that replaced path in between is displaced to the
+// archive name rather than destroyed, and is exchanged back when what was displaced is not this
+// run's. Where no atomic exchange is available (another platform, or a filesystem without one)
+// nothing is renamed over the active path: both files are left, and the answer says how to put
+// the settings back by hand.
 func exchangeBack(path, archived string, wrote []byte) Object {
-	switch err := exchange(archived, path); {
+	switch err := swapNames(archived, path); {
 	case errors.Is(err, errNoExchange):
-		if err := os.Rename(archived, path); err != nil {
-			return Object{field("undone", false), field("retained", archived), field("detail", "the settings archived at "+archived+" could not be put back: "+store.PythonOSError(err))}
-		}
-		return Object{field("undone", true), field("detail", "the settings archived at "+archived+" were put back over what this run wrote")}
+		return Object{field("undone", false), field("retained", archived),
+			field("detail", "this platform or filesystem cannot exchange two names in one step, and a rename over "+path+" could destroy a document another writer saved after it was read, so nothing was renamed: "+path+" still holds the settings this run wrote and the settings it found stay at "+archived),
+			field("recoveryRequires", "put the settings this run found back by hand once nothing else writes "+path+": mv "+archived+" "+path)}
 	case err != nil:
 		return Object{field("undone", false), field("retained", archived), field("detail", "the settings archived at "+archived+" could not be put back: "+store.PythonOSError(err))}
 	}
@@ -682,11 +683,15 @@ func exchangeBack(path, archived string, wrote []byte) Object {
 		}
 		return Object{field("undone", true), field("detail", "the settings this run found were put back (the same file, exchanged for what this run wrote), and what this run wrote was removed")}
 	}
-	if err := exchange(archived, path); err != nil {
-		return Object{field("undone", false), field("retained", archived), field("detail", "another writer replaced "+path+" while the settings this run found were being put back; they are at "+path+" and that writer's document is at "+archived+", and exchanging them again failed: "+store.PythonOSError(err))}
+	if err := swapNames(archived, path); err != nil {
+		return Object{field("undone", false), field("retained", archived), field("detail", "another writer replaced "+path+" while the settings this run found were being put back; they are at "+path+" and that writer's document is at "+archived+", and exchanging them again failed: "+store.PythonOSError(err)),
+			field("recoveryRequires", "decide between "+path+" and "+archived+" by hand")}
 	}
 	return Object{field("undone", false), field("retained", archived), field("detail", "another writer replaced "+path+" while the settings this run found were being put back, so its document was left at "+path+" and the settings this run found stay at "+archived)}
 }
+
+// swapNames is exchange, a variable only so that a test can take the exchange away.
+var swapNames = exchange
 
 func scopeStr(v any) string {
 	if s, ok := v.(string); ok {
