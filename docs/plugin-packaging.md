@@ -164,7 +164,8 @@ The declaration keeps `required: false`, so the session continues regardless.
 Known limits of this wiring:
 
 - `XDG_DATA_HOME` is not honoured. Both commands name `$HOME/.local/share`, as the Python
-  installer always has.
+  installer's default always has, and `crw install`'s one destination is
+  `$HOME/.local/share/crw-runtime`.
 - The record's `bridgeExecutable` is checked (present and absolute) and not executed: the
   runtime behind the pointer is the bridge.
 - Nothing checks that the runtime behind the pointer can serve this payload. Both commands pass
@@ -241,10 +242,10 @@ not carry, and each needs a step the installation cannot take for you.
 
 1. Install the Go runtime, if this host has none, where both declared commands look for it: run
    `crw install install --from <crw_<version>_<os>_<arch>.tar.gz>` (or `--release <tag>`) with
-   the `crw` from that release, and keep the default destination, `~/.local/share/crw-runtime`.
-   A runtime installed anywhere else, or a pointer that still names a Python `env-*` runtime, is
-   one neither command starts: the hook then releases every Stop without a word, and the server
-   exits as it starts.
+   the `crw` from that release. It installs under `~/.local/share/crw-runtime`, its only
+   destination (it has no `--dest`). A runtime runtime_install.py placed under another `--dest`,
+   or a pointer that still names a Python `env-*` runtime, is one neither command starts: the hook
+   then releases every Stop without a word, and the server exits as it starts.
 
    The runtime also has to be a build that reads `--plugin-launch`
    ([decision 26](port/decisions.md)), and the pointer has to name it before the plugin cache
