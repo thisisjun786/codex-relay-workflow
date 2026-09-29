@@ -328,6 +328,7 @@ func TestATildeDestinationIsExpandedWhereverItComesFrom(t *testing.T) {
 		{"~/codex", nil, filepath.Join(home, "codex", "skills")},
 		{"~", nil, filepath.Join(home, "skills")},
 		{"~/../sibling/codex", nil, home + "/../sibling/codex/skills"}, // ".." kept, as Path.absolute() keeps it
+		{"~//codex", nil, filepath.Join(home, "codex", "skills")},      // Path() collapses "//" before expanduser
 		{"~someone/codex", nil, filepath.Join(other, "codex", "skills")},
 		{"", nil, filepath.Join(home, ".codex", "skills")},
 		{"~/ignored", []string{"--dest", "~/explicit"}, filepath.Join(home, "explicit")},

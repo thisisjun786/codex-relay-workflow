@@ -219,7 +219,8 @@ func expandUser(path, home string) (string, error) {
 			return "", fmt.Errorf("%q names no user with a home directory", path)
 		}
 	}
-	return pathlibJoin(dir, rest), nil
+	// Path() collapses repeated slashes before expanduser, so ~//codex is <home>/codex.
+	return pathlibJoin(dir, strings.TrimLeft(rest, "/")), nil
 }
 
 // pathlibJoin is str(Path(base) / rest) before Path()'s spelling rules: an absolute rest wins,
