@@ -1395,3 +1395,76 @@ the worker's leader has exited while a thread that blocks SIGTERM holds the daem
 runtime's stop answers ok with worker `exited` and leaves the lock free. Restoring the
 leader-state reading (the old `alive` body, or `waitTermination` asking `ProcessState`) makes
 each answer `replaced_by_new_launch` with that thread still running.
+
+## 41. `crw doctor` judges each registration as the program that reads it accepts it
+
+Decision: `crw doctor --json` says `own`, `agrees` or `installed: verified` for a Go runtime only
+when the host would actually run the selected runtime for that component, and a reading it did
+not or could not take is an unread signal that stops classification (`unreadable`, `installed:
+not_verified`), never a dimension dropped from the comparison. Each registration is judged as a
+whole document, by its consumer's own acceptance rule, before any field is compared with the
+selected `bin/crw`:
+
+- the Stop settings (`crw-completion-hook.json`) through `hook.ReadSettings`, the check every Go
+  Stop runs first: a document it refuses (`configVersion`, `markerRoot`, `mode`, the owner, a
+  relative `relayExecutable` or adapter path, a plugin budget over 7 s) is a relay conflict
+  naming the complaints, since the hook then runs no relay. It contains every gate of the
+  packaged launcher's `adapter_call`. A plugin owner's adapter must be the system env, recognised
+  by the path it is run under (`/usr/bin/env` or `/bin/env`, resolving to a native executable
+  regular file), and an entry point holding `=` is a conflict because env reads it as an
+  assignment;
+- every Stop command in `<CODEX_HOME>/hooks.json` that runs a Stop adapter, for every owner: the
+  selected `crw-completion-hook` (or `crw hook`) executed by path and reading these settings
+  agrees; the checkout's `completion_hook.py`, another runtime's hook and a hook handed to an
+  interpreter conflict; a bare hook, an expansion the doctor does not make, other settings or a
+  hooks.json it cannot read are unreadable;
+- a plugin-owned `crw-bridge-mcp.json` through `crw_bridge_mcp.py`'s record contract
+  (`recordVersion` 1 or 2 by Python's `==`, `serverName`, an absolute `bridgeExecutable`, `args`
+  a list of strings, no policy in version 1, a version-2 policy that exists, is regular and
+  hashes to its digest): a record the launcher refuses before exec is a bridge conflict;
+- `config.toml`'s `mcp_servers` read whole with `codexconfig.registration_view`'s shape rules (a
+  malformed table makes the configuration unreadable), then every table that starts the bridge:
+  `codex-thread-bridge`, the table a user-owned record names, and any whose command or arguments
+  run the bridge. A bare command is looked up only on the table's own `env.PATH`; without one it
+  is unreadable.
+
+No value a consumer requires to be absolute is looked up on the doctor's own PATH. The Codex CLI
+version, the host name and the App Server identity are point dimensions
+(`runtime_install.classify_component`): an unread one stops classification, and `codex
+--version` whose output a descendant holds open past a 5 s wait delay (as `scope.WaitDelay`) is
+unread. The doctor does not observe the App Server yet, so until todo 38 wires
+`Options.AppServer` (`func(ctx, bridge string) *string`, asked through the selected runtime's
+`bin/codex-thread-bridge`) into `crw doctor`, a Go component is `unreadable` with it named and
+`notChecked` lists it. The skill links are not a signal for a Go install, unlike in
+`classify_component`: an installed product takes its skills from the plugin payload the Codex
+marketplace installs, and skill links are a developer-checkout concern (`crw-dev skills link`,
+todo 39) that no release archive or installer makes. The host record's
+`pointer.path` is read through `Path()` (a trailing `/`, `//` and `/./` name the same link), and
+the state home, Codex home and default destination expand the home as `pathlib` does (HOME, else
+the passwd entry, `~user` from that user's entry); one that cannot be established, or would be
+relative, is reported (`hostRecordState: ACCESS_ERROR`), never read as a clean host.
+
+Why: a field judged on its own reported `agrees` for documents the hook, the launchers or Codex
+refuse, and for commands they never look up on PATH, and a dimension left out of `wanted` either
+let a point that recorded none cover (App Server) or reported `unmeasured` from a reading nobody
+took (Codex CLI, host name). Python's diagnose reads the Stop hook not at all and only the
+`codex-thread-bridge` table; the Go doctor judges more, so it judges what the host executes. A
+`codex --version` whose output an inherited descendant kept open held the whole diagnosis until
+that descendant exited.
+
+Evidence: internal/runtime/doctor/registration.go (`stopSettings`, `interpreter`, `stopHooks`,
+`pluginBridge`, `policy`, `codexConfig`, `mcpCommand`); internal/runtime/doctor/doctor.go
+(`observe`, `classifyGo`, `codexVersion`, `Diagnose`); internal/runtime/record/home.go; internal/relay/hook/
+settings.go (`Complaints`, `ReadSettings`); plugins/crw/wiring/crw_stop_hook.py (`adapter_call`);
+plugins/crw/wiring/crw_bridge_mcp.py (`main`, `policy_environment`); scripts/crw_runtime/
+codexconfig.py (`registration_view`); scripts/runtime_install.py (`classify_component`,
+`_starts_this_bridge`); scripts/crw_runtime/hostrecord.py (`state_home`). Tests:
+`TestDoctorNeverLooksARegisteredCommandUpOnItsOwnPATH`,
+`TestDoctorJudgesTheStopSettingsAsTheHookAcceptsThem`, `TestDoctorJudgesTheLauncherInvocation`,
+`TestDoctorJudgesTheStopCommandsInHooksJSON`, `TestDoctorJudgesTheBridgeRecordAsTheLauncherAcceptsIt`,
+`TestDoctorReadsTheCodexConfigurationWhole`, `TestDoctorJudgesTheBridgeUnderEveryTableName`,
+`TestDoctorStopsOnTheReadingsItDoesNotMake`, `TestDoctorKeepsAnUnreadDimensionInTheComparison`,
+`TestDoctorReadsTheRecordedPointerThroughPath`, `TestDoctorNeverReadsAnUnestablishedHomeAsACleanHost`,
+`TestStateHomeExpandsTheHomeAsPathlibDoes`, `TestCodexVersionIsUnreadWhenADescendantHoldsItsOutput`; under the parity tag
+`TestParity_the_bridge_record_is_refused_where_the_launcher_refuses_it` (22 records, the real
+launcher) and `TestParity_state_home_is_hostrecords`.

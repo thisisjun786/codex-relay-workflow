@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -136,13 +137,23 @@ func (h *host) fixtureRecord(t *testing.T) {
 
 func (h *host) settings(t *testing.T, completion, bridge map[string]string) {
 	t.Helper()
-	encode := func(values map[string]string) string {
-		o := record.Object{}
-		for k, v := range values {
-			o = append(o, contract.Field{Key: k, Value: v})
+	widen := func(values map[string]string) map[string]any {
+		if values == nil {
+			return nil
 		}
-		return string(record.Encode(o))
+		out := map[string]any{}
+		for k, v := range values {
+			out[k] = v
+		}
+		return out
 	}
+	h.documents(t, widen(completion), widen(bridge))
+}
+
+// documents writes the Stop settings and the bridge record (a nil one is not written).
+func (h *host) documents(t *testing.T, completion, bridge map[string]any) {
+	t.Helper()
+	encode := func(values map[string]any) string { return encodeJSON(t, values) }
 	if completion != nil {
 		write(t, filepath.Join(h.codex, "crw-completion-hook.json"), encode(completion), 0o600)
 	}
@@ -158,9 +169,75 @@ func codex(context.Context) *string {
 	return &v
 }
 
+// appServer is the App Server identity the tests observe and the points record: the doctor makes
+// no such observation yet (todo 38), so a host whose classification is to reach own supplies one.
+const appServer = `{"codexHome": "/h/.codex", "server": "codex-app-server"}`
+
+func observedAppServer(context.Context, string) *string {
+	v := appServer
+	return &v
+}
+
+// options are the diagnosis a test runs: the reading the doctor cannot make yet is supplied.
+func (h *host) options() doctor.Options {
+	return doctor.Options{Env: h.env, CodexVersion: codex, AppServer: observedAppServer, Now: func() time.Time { return time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC) }}
+}
+
 func (h *host) diagnose(t *testing.T) record.Object {
 	t.Helper()
-	return doctor.Diagnose(context.Background(), doctor.Options{Env: h.env, CodexVersion: codex, Now: func() time.Time { return time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC) }})
+	return doctor.Diagnose(context.Background(), h.options())
+}
+
+// systemEnv is the system's env program, which the packaged launcher must run the Go hook through.
+func systemEnv(t *testing.T) string {
+	t.Helper()
+	for _, candidate := range []string{"/usr/bin/env", "/bin/env"} {
+		if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() {
+			return candidate
+		}
+	}
+	t.Skip("this host has no /usr/bin/env or /bin/env")
+	return ""
+}
+
+// stopSettings is a Stop settings document the Go hook accepts, plugin-owned and run through the
+// system env, with changes applied (a nil value removes the key).
+func (h *host) stopSettings(t *testing.T, changes map[string]any) map[string]any {
+	t.Helper()
+	document := map[string]any{
+		"configVersion": 1, "mode": "observe", "markerRoot": filepath.Join(h.home, "markers"), "owner": "plugin",
+		"relayExecutable":    filepath.Join(h.current(), "bin", "codex-session-relay"),
+		"adapterEntryPoint":  filepath.Join(h.current(), "bin", "crw-completion-hook"),
+		"adapterInterpreter": systemEnv(t),
+	}
+	return changed(document, changes)
+}
+
+// bridgeRecord is a version-1 plugin-owned bridge record naming the selected bridge, with changes.
+func (h *host) bridgeRecord(changes map[string]any) map[string]any {
+	document := map[string]any{"recordVersion": 1, "owner": "plugin", "bridgeExecutable": filepath.Join(h.current(), "bin", "codex-thread-bridge"), "args": []any{}}
+	return changed(document, changes)
+}
+
+// changed is document with changes applied: a nil value removes the key.
+func changed(document, changes map[string]any) map[string]any {
+	for k, v := range changes {
+		if v == nil {
+			delete(document, k)
+		} else {
+			document[k] = v
+		}
+	}
+	return document
+}
+
+func encodeJSON(t *testing.T, v any) string {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
 }
 
 func at(o record.Object, path ...string) any {
@@ -272,17 +349,13 @@ func goHost(t *testing.T, point bool) (*host, string, string) {
 		delta.Select = append(delta.Select, contract.Field{Key: c, Value: filepath.Join(dir, "bin")})
 		if point {
 			delta.Points = append(delta.Points, record.Named{Component: c, Entry: record.Object{{Key: "exercised", Value: true}, {Key: "install", Value: filepath.Join(dir, "bin")},
-				{Key: "installDigest", Value: digest}, {Key: "codexCli", Value: "codex-cli 0.154.0"}, {Key: "host", Value: hostname}}})
+				{Key: "installDigest", Value: digest}, {Key: "codexCli", Value: "codex-cli 0.154.0"}, {Key: "host", Value: hostname}, {Key: "appServer", Value: appServer}}})
 		}
 	}
 	if _, err := record.Update(h.record, 1, delta); err != nil {
 		t.Fatal(err)
 	}
-	h.settings(t, map[string]string{
-		"relayExecutable":    filepath.Join(h.current(), "bin", "codex-session-relay"),
-		"adapterEntryPoint":  filepath.Join(h.current(), "bin", "crw-completion-hook"),
-		"adapterInterpreter": filepath.Join(h.current(), "bin", "crw-completion-hook"),
-	}, map[string]string{"bridgeExecutable": filepath.Join(h.current(), "bin", "codex-thread-bridge")})
+	h.documents(t, h.stopSettings(t, nil), h.bridgeRecord(nil))
 	return h, dir, digest
 }
 
@@ -313,6 +386,11 @@ func TestDoctorDoesNotOwnAGoRuntimeNothingCanLaunch(t *testing.T) {
 	if err := os.Chmod(crw, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// The plugin-owned settings run crw-completion-hook as the adapter, which would make the
+	// relay conflict before it is unlaunchable; without them only the link is judged.
+	if err := os.Remove(filepath.Join(h.codex, "crw-completion-hook.json")); err != nil {
+		t.Fatal(err)
+	}
 	hook := filepath.Join(dir, "bin", "crw-completion-hook")
 	if err := os.Remove(hook); err != nil {
 		t.Fatal(err)
@@ -341,19 +419,18 @@ func TestDoctorJudgesEveryRegistrationAgainstTheSelectedRuntime(t *testing.T) {
 	write(t, stale, fakeCrw+"old", 0o755)
 	venv := filepath.Join(h.dest, "env-1-0be23c258476")
 	current := func(name string) string { return filepath.Join(h.current(), "bin", name) }
-	env := filepath.Join(h.home, "tools", "env")
-	write(t, env, fakeCrw+"env", 0o755)
-	goodStop := `{"relayExecutable": "` + current("codex-session-relay") + `", "owner": "plugin", "adapterInterpreter": "` + env + `", "adapterEntryPoint": "` + current("crw-completion-hook") + `"}`
-	goodBridge := `{"owner": "plugin", "bridgeExecutable": "` + current("codex-thread-bridge") + `", "args": []}`
+	goodStop := encodeJSON(t, h.stopSettings(t, nil))
+	goodBridge := encodeJSON(t, h.bridgeRecord(nil))
 	for _, c := range []struct {
 		name, stop, bridge, config string
 		relay, bridgeClass, want   string
 	}{
 		{"all agree", goodStop, goodBridge, "[mcp_servers.codex-thread-bridge]\ncommand = \"" + filepath.Join(dir, "bin", "crw") + "\"\nargs = [\"bridge\"]\n", "own", "own", ""},
-		{"an old runtime's bridge", goodStop, `{"owner": "plugin", "bridgeExecutable": "` + stale + `"}`, "", "own", "conflict", "crw-bridge-mcp.json bridgeExecutable names " + stale},
+		{"an old runtime's bridge", goodStop, encodeJSON(t, h.bridgeRecord(map[string]any{"bridgeExecutable": stale})), "", "own", "conflict", "crw-bridge-mcp.json bridgeExecutable names " + stale},
 		{"a Python bridge in config.toml", goodStop, goodBridge, "[mcp_servers.codex-thread-bridge]\ncommand = \"" + filepath.Join(venv, "bin", "python3") + "\"\nargs = [\"-m\", \"codex_thread_bridge\"]\n", "own", "conflict", "config.toml mcp_servers.codex-thread-bridge.command names " + filepath.Join(venv, "bin", "python3")},
-		{"a Python-era adapter", `{"relayExecutable": "` + current("codex-session-relay") + `", "owner": "plugin", "adapterInterpreter": "` + current("python3") + `", "adapterEntryPoint": "` + current("crw-completion-hook") + `"}`, goodBridge, "", "conflict", "own", current("python3") + " does not exist"},
-		{"the relay under the bridge's name", `{"relayExecutable": "` + current("codex-thread-bridge") + `"}`, goodBridge, "", "conflict", "own", "as codex-thread-bridge rather than as codex-session-relay"},
+		{"a Python-era adapter", encodeJSON(t, h.stopSettings(t, map[string]any{"adapterInterpreter": current("python3")})), goodBridge, "", "conflict", "own", current("python3") + " does not exist"},
+		{"the relay under the bridge's name", encodeJSON(t, h.stopSettings(t, map[string]any{"relayExecutable": current("codex-thread-bridge")})), goodBridge, "", "conflict", "own", "as codex-thread-bridge rather than as codex-session-relay"},
+		{"a relay that does not exist", encodeJSON(t, h.stopSettings(t, map[string]any{"relayExecutable": filepath.Join(h.home, "gone", "codex-session-relay")})), goodBridge, "", "conflict", "own", "which does not exist, so the host starts nothing"},
 		{"unreadable Stop settings", `{"relayExecutable": `, goodBridge, "", "unreadable", "own", "the Stop settings " + stop},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -383,26 +460,37 @@ func TestDoctorJudgesEveryRegistrationAgainstTheSelectedRuntime(t *testing.T) {
 }
 
 // The packaged launcher runs [adapterInterpreter, adapterEntryPoint, <settings>] (the launcher
-// contract of decision 18), which reaches the Go hook only through an env program written and
-// resolving as env. A Python interpreter, a shell, the crw binary itself, env under another
-// name, a missing or relative interpreter are each a conflict naming that invocation, and one
-// that cannot be examined leaves the relay unreadable.
+// contract of decision 18), which reaches the Go hook only through the system env, recognised by
+// the path it is run under and never by a basename, and only with an entry point env does not
+// read as a NAME=VALUE assignment. A Python interpreter, a shell, the crw binary itself, another
+// file named env (a native one or a script), env under another name and a missing interpreter
+// are each a conflict naming that invocation; a relative one is refused by the hook itself; an
+// entry point holding '=' is a conflict; one that cannot be examined leaves the relay unreadable.
 func TestDoctorJudgesTheLauncherInvocation(t *testing.T) {
 	h, _, _ := goHost(t, true)
 	tools := filepath.Join(h.home, "tools")
 	write(t, filepath.Join(tools, "env"), fakeCrw+"env", 0o755)
-	link(t, "env", filepath.Join(tools, "myenv"))
+	write(t, filepath.Join(h.home, "scripts", "env"), "#!/bin/sh\nexit 0\n", 0o755)
+	link(t, systemEnv(t), filepath.Join(tools, "myenv"))
 	link(t, "/bin/sh", filepath.Join(tools, "sh"))
+	link(t, h.dest, filepath.Join(h.home, "k=v"))
 	current := func(name string) string { return filepath.Join(h.current(), "bin", name) }
 	python := filepath.Join(h.dest, "env-1-0be23c258476", "bin", "python3")
-	cases := []struct{ name, interpreter, class, want string }{
-		{"env", filepath.Join(tools, "env"), "own", ""},
-		{"a Python interpreter", python, "conflict", python + " is a Python interpreter"},
-		{"a shell", filepath.Join(tools, "sh"), "conflict", filepath.Join(tools, "sh") + " (resolving to "},
-		{"crw itself", current("crw"), "conflict", current("crw") + " is the selected crw binary itself"},
-		{"env under another name", filepath.Join(tools, "myenv"), "conflict", filepath.Join(tools, "myenv") + " (resolving to " + filepath.Join(tools, "env") + ") is not env"},
-		{"missing", filepath.Join(h.home, "nowhere", "env"), "conflict", filepath.Join(h.home, "nowhere", "env") + " does not exist"},
-		{"relative", "env", "conflict", "not an absolute path"},
+	type testCase struct {
+		name, interpreter, entry, class, want string
+		invocation                            bool
+	}
+	cases := []testCase{
+		{"the system env", systemEnv(t), "", "own", "", false},
+		{"a Python interpreter", python, "", "conflict", python + " is a Python interpreter", true},
+		{"a shell", filepath.Join(tools, "sh"), "", "conflict", filepath.Join(tools, "sh") + " (resolving to ", true},
+		{"crw itself", current("crw"), "", "conflict", current("crw") + " is the selected crw binary itself", true},
+		{"a native file named env that is not the system env", filepath.Join(tools, "env"), "", "conflict", filepath.Join(tools, "env") + " (resolving to " + filepath.Join(tools, "env") + ") is not the system env", true},
+		{"a script named env", filepath.Join(h.home, "scripts", "env"), "", "conflict", "is not the system env", true},
+		{"the system env under another name", filepath.Join(tools, "myenv"), "", "conflict", filepath.Join(tools, "myenv") + " (resolving to ", true},
+		{"missing", filepath.Join(h.home, "nowhere", "env"), "", "conflict", filepath.Join(h.home, "nowhere", "env") + " does not exist", true},
+		{"relative", "env", "", "conflict", "adapterInterpreter must be an absolute path", false},
+		{"an entry point env reads as an assignment", systemEnv(t), filepath.Join(h.home, "k=v", "current", "bin", "crw-completion-hook"), "conflict", "as a NAME=VALUE assignment", true},
 	}
 	if os.Geteuid() != 0 {
 		locked := filepath.Join(h.home, "locked")
@@ -411,16 +499,20 @@ func TestDoctorJudgesTheLauncherInvocation(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
-		cases = append(cases, struct{ name, interpreter, class, want string }{"behind a directory without search permission", filepath.Join(locked, "env"), "unreadable", filepath.Join(locked, "env")})
+		cases = append(cases, testCase{"behind a directory without search permission", filepath.Join(locked, "env"), "", "unreadable", filepath.Join(locked, "env"), false})
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			write(t, filepath.Join(h.codex, "crw-completion-hook.json"), `{"relayExecutable": "`+current("codex-session-relay")+`", "owner": "plugin", "adapterInterpreter": "`+c.interpreter+`", "adapterEntryPoint": "`+current("crw-completion-hook")+`"}`, 0o600)
+			entry := c.entry
+			if entry == "" {
+				entry = current("crw-completion-hook")
+			}
+			write(t, filepath.Join(h.codex, "crw-completion-hook.json"), encodeJSON(t, h.stopSettings(t, map[string]any{"adapterInterpreter": c.interpreter, "adapterEntryPoint": entry})), 0o600)
 			relay := golden.Obj(at(h.diagnose(t), "components", "codex-session-relay"))
 			if record.Get(relay, "class") != c.class || !strings.Contains(golden.Canon(relay), c.want) {
 				t.Errorf("%s", golden.Canon(relay))
 			}
-			if c.class == "conflict" && !strings.Contains(golden.Canon(relay), "the packaged launcher runs ["+c.interpreter+", "+current("crw-completion-hook")+", <settings>]") {
+			if c.invocation && !strings.Contains(golden.Canon(relay), "the packaged launcher runs ["+c.interpreter+", "+entry+", <settings>]") {
 				t.Errorf("the reason does not name the invocation: %s", golden.Canon(record.Get(relay, "reasons")))
 			}
 		})
@@ -679,5 +771,165 @@ func TestCheckRecordStatesEveryResult(t *testing.T) {
 	report := newHost(t).diagnose(t)
 	if at(report, "checks", "results", "alwaysActive", "measuredAt") != "unknown" || at(report, "checks", "destinationKind") != "host" {
 		t.Fatalf("an untimed observation: %s", golden.Canon(at(report, "checks")))
+	}
+}
+
+// Finding 26. The App Server identity is a dimension every point is compared on; this command
+// does not observe it yet (todo 38), and a reading nobody took stops classification, as
+// runtime_install.classify_component stops on an unobserved App Server, rather than letting a
+// point that recorded none carry the component to own. Supplied, it is asked through the
+// selected runtime's bridge, and a point measured under another App Server does not cover. The
+// skill links are not a signal for a Go install (they are a developer-checkout concern, todo
+// 39), so nothing about them keeps it from own.
+func TestDoctorStopsOnTheReadingsItDoesNotMake(t *testing.T) {
+	h, dir, _ := goHost(t, true)
+	run := func(change func(*doctor.Options)) record.Object {
+		o := h.options()
+		change(&o)
+		return doctor.Diagnose(context.Background(), o)
+	}
+	report := run(func(o *doctor.Options) { o.AppServer = nil })
+	for _, c := range []string{"codex-session-relay", "codex-thread-bridge"} {
+		one := golden.Canon(at(report, "components", c))
+		if at(report, "components", c, "class") != "unreadable" || !strings.Contains(one, "classification stopped: the App Server identity (") || strings.Contains(one, "skill") {
+			t.Errorf("%s: %s", c, one)
+		}
+		if got := golden.Canon(at(report, "components", c, "notChecked")); got != `["the App Server dimension (todo 38)"]` {
+			t.Errorf("%s notChecked %s", c, got)
+		}
+	}
+	if got := at(report, "checks", "results", "installed", "value"); got != "not_verified" {
+		t.Errorf("installed = %v with the App Server unobserved", got)
+	}
+	var asked []string
+	report = run(func(o *doctor.Options) {
+		o.AppServer = func(ctx context.Context, bridge string) *string {
+			asked = append(asked, bridge)
+			return observedAppServer(ctx, bridge)
+		}
+	})
+	if want := filepath.Join(dir, "bin", "codex-thread-bridge"); len(asked) != 1 || asked[0] != want || at(report, "checks", "results", "installed", "value") != "verified" ||
+		golden.Canon(at(report, "components", "codex-session-relay", "notChecked")) != "[]" {
+		t.Errorf("asked %v (want once, through %s): %s", asked, want, golden.Canon(at(report, "components")))
+	}
+	for name, c := range map[string]struct {
+		change      func(*doctor.Options)
+		class, want string
+	}{
+		"no App Server answer": {func(o *doctor.Options) { o.AppServer = func(context.Context, string) *string { return nil } }, "unreadable", "the App Server identity (the observation through " + filepath.Join(dir, "bin", "codex-thread-bridge") + " answered nothing)"},
+		"another App Server observed": {func(o *doctor.Options) {
+			o.AppServer = func(context.Context, string) *string { v := `{"server": "other"}`; return &v }
+		}, "unmeasured", "no recorded run covers"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			report := run(c.change)
+			one := golden.Canon(at(report, "components", "codex-session-relay"))
+			if at(report, "components", "codex-session-relay", "class") != c.class || !strings.Contains(one, c.want) {
+				t.Errorf("%s", one)
+			}
+			if got := at(report, "checks", "results", "installed", "value"); got != "not_verified" {
+				t.Errorf("installed = %v", got)
+			}
+		})
+	}
+}
+
+// Finding 28. A point dimension this command could not read (codex --version failed, the host
+// name could not be read or is empty) is kept in the comparison as an unread signal, never
+// dropped: the class is unreadable, naming it, not unmeasured, which would claim no point covers
+// a reading nobody took.
+func TestDoctorKeepsAnUnreadDimensionInTheComparison(t *testing.T) {
+	h, _, _ := goHost(t, true)
+	for name, c := range map[string]struct {
+		change func(*doctor.Options)
+		want   string
+	}{
+		"codex --version":   {func(o *doctor.Options) { o.CodexVersion = func(context.Context) *string { return nil } }, "classification stopped: the Codex CLI version could not be read"},
+		"the host name":     {func(o *doctor.Options) { o.Hostname = func() (string, error) { return "", errors.New("uname failed") } }, "classification stopped: this host's name (uname failed) could not be read"},
+		"an empty hostname": {func(o *doctor.Options) { o.Hostname = func() (string, error) { return "", nil } }, "this host's name (the name is empty)"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			o := h.options()
+			c.change(&o)
+			report := doctor.Diagnose(context.Background(), o)
+			for _, component := range []string{"codex-session-relay", "codex-thread-bridge"} {
+				one := golden.Canon(at(report, "components", component))
+				if at(report, "components", component, "class") != "unreadable" || !strings.Contains(one, c.want) || at(report, "components", component, "pointsCovering") != int64(0) {
+					t.Errorf("%s: %s", component, one)
+				}
+			}
+			if got := at(report, "checks", "results", "installed", "value"); got != "not_verified" {
+				t.Errorf("installed = %v", got)
+			}
+		})
+	}
+}
+
+// Finding 39. The recorded pointer path is read through Path(), as runtime_install.cmd_diagnose
+// reads it: with a trailing '/', '//' or '/./' it is still the link (lstat would otherwise follow
+// it and answer NOT_A_LINK), its placement is still recorded, and the residue survey still
+// covers the directory the pointer sits in, not the runtime the pointer names.
+func TestDoctorReadsTheRecordedPointerThroughPath(t *testing.T) {
+	h, dir, _ := goHost(t, true)
+	raw, err := os.ReadFile(h.record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, spelling := range map[string]string{
+		"a trailing slash": h.current() + "/",
+		"a double slash":   strings.Replace(h.current(), "/crw-runtime/", "/crw-runtime//", 1),
+		"a dot component":  strings.Replace(h.current(), "/crw-runtime/", "/crw-runtime/./", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			var document map[string]any
+			if err := json.Unmarshal(raw, &document); err != nil {
+				t.Fatal(err)
+			}
+			document["pointer"].(map[string]any)["path"] = spelling
+			changed, err := json.MarshalIndent(document, "", "  ")
+			if err != nil {
+				t.Fatal(err)
+			}
+			write(t, h.record, string(changed)+"\n", 0o600)
+			report := h.diagnose(t)
+			for path, want := range map[string]any{
+				"runtime.state": pointer.Link, "runtime.targetResolves": dir, "runtime.placementRecorded": true, "runtime.agrees": true,
+				"residue.destination": h.dest, "components.codex-session-relay.class": "own", "checks.results.installed.value": "verified",
+			} {
+				if got := at(report, strings.Split(path, ".")...); golden.Canon(got) != golden.Canon(want) {
+					t.Errorf("%s = %s, want %s", path, golden.Canon(got), golden.Canon(want))
+				}
+			}
+		})
+	}
+}
+
+// Finding 40. The home is expanded as Python expands it (HOME, else this user's passwd entry;
+// ~user), and a home nothing establishes is reported, never read as a relative path whose
+// absence would say "a clean host".
+func TestDoctorNeverReadsAnUnestablishedHomeAsACleanHost(t *testing.T) {
+	me, err := user.Current()
+	if err != nil || me.HomeDir == "" {
+		t.Skip("no passwd entry for this user")
+	}
+	env := scope.Env{"PATH=" + os.Getenv("PATH")}
+	if got, err := doctor.CodexHomeOf(env); err != nil || got != filepath.Join(me.HomeDir, ".codex") {
+		t.Errorf("CodexHomeOf without HOME = %q, %v", got, err)
+	}
+	if got, err := doctor.DefaultDestinationOf(env); err != nil || got != filepath.Join(me.HomeDir, ".local", "share", "crw-runtime") {
+		t.Errorf("DefaultDestinationOf without HOME = %q, %v", got, err)
+	}
+	if got := doctor.CodexHome(env.With("HOME", "")); got != "/.codex" {
+		t.Errorf("CodexHome with an empty HOME = %q, as Path.home() answers /", got)
+	}
+	h := newHost(t)
+	o := h.options()
+	o.Env = scope.Env{"PATH=" + os.Getenv("PATH"), "CODEX_HOME=" + h.codex, "XDG_STATE_HOME=~no-such-user-crw-doctor/state"}
+	o.Destination = &h.dest
+	report := doctor.Diagnose(context.Background(), o)
+	if record.Get(report, "hostRecordState") != "ACCESS_ERROR" || record.Get(report, "hostRecord") != nil ||
+		!strings.Contains(golden.Canon(record.Get(report, "hostRecordReading")), "could not determine home directory for ~no-such-user-crw-doctor") ||
+		at(report, "promotionLock", "state") != record.Unknown {
+		t.Errorf("%s", golden.Canon(report))
 	}
 }

@@ -1,0 +1,256 @@
+package doctor_test
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
+)
+
+// registrationCase is one host state: the files it writes into the Codex home (an empty text
+// removes the file) and the classes and reason text the doctor must answer with.
+type registrationCase struct {
+	name               string
+	stop, bridge       string
+	config, hooks      string
+	relay, bridgeClass string
+	want               []string
+}
+
+func (h *host) runRegistrationCases(t *testing.T, cases []registrationCase) {
+	t.Helper()
+	files := func(c registrationCase) map[string]string {
+		return map[string]string{"crw-completion-hook.json": c.stop, "crw-bridge-mcp.json": c.bridge, "config.toml": c.config, "hooks.json": c.hooks}
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			for name, text := range files(c) {
+				path := filepath.Join(h.codex, name)
+				_ = os.Remove(path)
+				if text != "" {
+					write(t, path, text, 0o600)
+				}
+			}
+			report := h.diagnose(t)
+			relay, bridge := golden.Canon(at(report, "components", "codex-session-relay")), golden.Canon(at(report, "components", "codex-thread-bridge"))
+			if at(report, "components", "codex-session-relay", "class") != c.relay || at(report, "components", "codex-thread-bridge", "class") != c.bridgeClass {
+				t.Fatalf("want relay %s, bridge %s\nrelay %s\nbridge %s", c.relay, c.bridgeClass, relay, bridge)
+			}
+			for _, want := range c.want {
+				if !strings.Contains(relay+bridge, want) {
+					t.Errorf("no reason names %q:\nrelay %s\nbridge %s", want, relay, bridge)
+				}
+			}
+			wantInstalled := "not_verified"
+			if c.relay == "own" && c.bridgeClass == "own" {
+				wantInstalled = "verified"
+			}
+			if got := at(report, "checks", "results", "installed", "value"); got != wantInstalled {
+				t.Errorf("installed = %v", got)
+			}
+		})
+	}
+}
+
+// Finding 20. None of the programs that read a settings record looks a command up on PATH: the
+// hook refuses a relative relayExecutable or adapterEntryPoint, and the bridge launcher execs
+// bridgeExecutable as written. So a bare name is a conflict even when this command's own PATH
+// holds the selected runtime. Codex does look a bare config.toml command up, on the PATH the
+// server gets, which this command can read only when the table sets env.PATH; a bare Stop
+// command in hooks.json is looked up on the session's PATH, which it cannot.
+func TestDoctorNeverLooksARegisteredCommandUpOnItsOwnPATH(t *testing.T) {
+	h, _, _ := goHost(t, true)
+	bin := filepath.Join(h.current(), "bin")
+	h.env = h.env.With("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	goodStop, goodBridge := encodeJSON(t, h.stopSettings(t, nil)), encodeJSON(t, h.bridgeRecord(nil))
+	userStop := encodeJSON(t, h.stopSettings(t, map[string]any{"owner": "user", "adapterInterpreter": nil, "adapterEntryPoint": nil}))
+	h.runRegistrationCases(t, []registrationCase{
+		{name: "a bare relayExecutable", stop: encodeJSON(t, h.stopSettings(t, map[string]any{"relayExecutable": "codex-session-relay"})), bridge: goodBridge, relay: "conflict", bridgeClass: "own",
+			want: []string{"relayExecutable must be an absolute path", "so a Stop runs no relay"}},
+		{name: "a bare adapterEntryPoint", stop: encodeJSON(t, h.stopSettings(t, map[string]any{"adapterEntryPoint": "crw-completion-hook"})), bridge: goodBridge, relay: "conflict", bridgeClass: "own",
+			want: []string{"adapterEntryPoint must be an absolute path"}},
+		{name: "a bare bridgeExecutable", stop: goodStop, bridge: encodeJSON(t, h.bridgeRecord(map[string]any{"bridgeExecutable": "codex-thread-bridge"})), relay: "own", bridgeClass: "conflict",
+			want: []string{"must name bridgeExecutable as an absolute path", "so it starts no bridge"}},
+		{name: "a bare config.toml command", stop: goodStop, bridge: goodBridge, config: "[mcp_servers.codex-thread-bridge]\ncommand = \"codex-thread-bridge\"\n", relay: "own", bridgeClass: "unreadable",
+			want: []string{"a bare command Codex looks up on its own PATH, which this doctor does not read"}},
+		{name: "a bare config.toml command on the table's env.PATH", stop: goodStop, bridge: goodBridge, config: "[mcp_servers.codex-thread-bridge]\ncommand = \"codex-thread-bridge\"\nenv = { PATH = \"" + bin + "\" }\n", relay: "own", bridgeClass: "own"},
+		{name: "a bare Stop command in hooks.json", stop: userStop, bridge: goodBridge, hooks: `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "crw-completion-hook"}]}]}}`, relay: "unreadable", bridgeClass: "own",
+			want: []string{"looks up on the session's PATH"}},
+	})
+}
+
+// Findings 21 and 35. The Stop settings are judged as one document, by the check the Go hook
+// runs before it asks the relay anything (hook.ReadSettings), so a document it refuses runs no
+// relay, whatever its relayExecutable names: a conflict naming the complaint. configVersion true
+// is 1 to the hook and to the launcher alike.
+func TestDoctorJudgesTheStopSettingsAsTheHookAcceptsThem(t *testing.T) {
+	h, _, _ := goHost(t, true)
+	goodBridge := encodeJSON(t, h.bridgeRecord(nil))
+	stop := func(changes map[string]any) string { return encodeJSON(t, h.stopSettings(t, changes)) }
+	h.runRegistrationCases(t, []registrationCase{
+		{name: "configVersion 2", stop: stop(map[string]any{"configVersion": 2}), bridge: goodBridge, relay: "conflict", bridgeClass: "own", want: []string{"configVersion must be 1, found 2"}},
+		{name: "no configVersion", stop: stop(map[string]any{"configVersion": nil}), bridge: goodBridge, relay: "conflict", bridgeClass: "own", want: []string{"configVersion must be 1, found None"}},
+		{name: "a plugin budget the launcher cannot outlast", stop: stop(map[string]any{"timeoutSeconds": 30}), bridge: goodBridge, relay: "conflict", bridgeClass: "own", want: []string{"timeoutSeconds must not exceed 7 when owner is plugin"}},
+		{name: "an unknown owner", stop: stop(map[string]any{"owner": "robot"}), bridge: goodBridge, relay: "conflict", bridgeClass: "own", want: []string{"owner must be one of user, plugin"}},
+		{name: "no markerRoot or mode", stop: stop(map[string]any{"markerRoot": nil, "mode": nil}), bridge: goodBridge, relay: "conflict", bridgeClass: "own",
+			want: []string{"markerRoot must be a non-empty string", "mode must be one of observe, hold"}},
+		{name: "a plugin owner without its adapter", stop: stop(map[string]any{"adapterInterpreter": nil}), bridge: goodBridge, relay: "conflict", bridgeClass: "own", want: []string{"adapterInterpreter is required when owner is plugin"}},
+		{name: "configVersion true", stop: stop(map[string]any{"configVersion": true}), bridge: goodBridge, relay: "own", bridgeClass: "own"},
+	})
+}
+
+// Findings 22 and 36. The plugin-owned bridge record is judged by the packaged launcher's
+// contract (crw_bridge_mcp.py), which exits before exec - starting no bridge - on a version other
+// than 1 or 2, a server name other than codex-thread-bridge, args that are not a list of strings,
+// a version-1 record naming a policy, and a version-2 policy that is malformed, missing, not a
+// regular file or changed since it was registered. A policy this command cannot open is
+// unreadable. recordVersion true and 1.0 are 1 to the launcher.
+func TestDoctorJudgesTheBridgeRecordAsTheLauncherAcceptsIt(t *testing.T) {
+	h, _, _ := goHost(t, true)
+	goodStop := encodeJSON(t, h.stopSettings(t, nil))
+	policy := filepath.Join(h.home, "policy.toml")
+	write(t, policy, "roles = []\n", 0o600)
+	sum := sha256.Sum256([]byte("roles = []\n"))
+	digest := hex.EncodeToString(sum[:])
+	bridge := func(changes map[string]any) string { return encodeJSON(t, h.bridgeRecord(changes)) }
+	v2 := func(reference any) string {
+		return bridge(map[string]any{"recordVersion": 2, "executionPolicy": reference})
+	}
+	mkdir(t, filepath.Join(h.home, "policy-directory"))
+	refused := func(name, record, want string) registrationCase {
+		return registrationCase{name: name, stop: goodStop, bridge: record, relay: "own", bridgeClass: "conflict", want: []string{want, "so it starts no bridge"}}
+	}
+	cases := []registrationCase{
+		refused("version 3", bridge(map[string]any{"recordVersion": 3}), "it is version 3, and the launcher reads versions 1 and 2"),
+		refused("no version", bridge(map[string]any{"recordVersion": nil}), "it is version None"),
+		refused("args that are a string", bridge(map[string]any{"args": "--x"}), "it must list args as strings"),
+		refused("args holding a number", bridge(map[string]any{"args": []any{"bridge", 5}}), "it must list args as strings"),
+		refused("args that are an object", bridge(map[string]any{"args": map[string]any{"a": 1}}), "it must list args as strings"),
+		refused("another server name", bridge(map[string]any{"serverName": "other"}), "it names the server 'other'"),
+		refused("a version-1 record naming a policy", bridge(map[string]any{"executionPolicy": map[string]any{"path": policy, "digest": digest}}), "it is version 1 and names an execution policy"),
+		refused("a version-2 record naming no policy", bridge(map[string]any{"recordVersion": 2}), "must name executionPolicy as an object with exactly digest and path"),
+		refused("a policy with another key", v2(map[string]any{"path": policy, "digest": digest, "extra": 1}), "exactly digest and path"),
+		refused("a relative policy", v2(map[string]any{"path": "policy.toml", "digest": digest}), "must name the execution policy as an absolute path"),
+		refused("a malformed digest", v2(map[string]any{"path": policy, "digest": strings.ToUpper(digest)}), "64 lowercase hexadecimal characters"),
+		refused("a missing policy", v2(map[string]any{"path": filepath.Join(h.home, "gone.toml"), "digest": digest}), "gone.toml does not exist"),
+		refused("a policy that is a directory", v2(map[string]any{"path": filepath.Join(h.home, "policy-directory"), "digest": digest}), "is not a regular file"),
+		refused("a policy that changed", v2(map[string]any{"path": policy, "digest": strings.Repeat("0", 64)}), "now hashes to "+digest),
+		{name: "a version-2 record whose policy agrees", stop: goodStop, bridge: v2(map[string]any{"path": policy, "digest": digest}), relay: "own", bridgeClass: "own"},
+		{name: "recordVersion true", stop: goodStop, bridge: bridge(map[string]any{"recordVersion": true}), relay: "own", bridgeClass: "own"},
+		{name: "recordVersion 1.0", stop: goodStop, bridge: strings.Replace(bridge(nil), `"recordVersion":1`, `"recordVersion":1.0`, 1), relay: "own", bridgeClass: "own"},
+		{name: "crw with its bridge mode", stop: goodStop, bridge: bridge(map[string]any{"bridgeExecutable": filepath.Join(h.current(), "bin", "crw"), "args": []any{"bridge"}}), relay: "own", bridgeClass: "own"},
+	}
+	if os.Geteuid() != 0 {
+		locked := filepath.Join(h.home, "locked-policy.toml")
+		write(t, locked, "roles = []\n", 0)
+		cases = append(cases, registrationCase{name: "a policy this command may not read", stop: goodStop, bridge: v2(map[string]any{"path": locked, "digest": digest}), relay: "own", bridgeClass: "unreadable", want: []string{"the execution policy " + locked}})
+	}
+	h.runRegistrationCases(t, cases)
+}
+
+// Finding 23. config.toml's mcp_servers is read whole, as codexconfig.registration_view reads
+// it: a server entry that is not a table, a command that is not a string or args that are not a
+// list of strings, in any table, make the configuration unreadable.
+func TestDoctorReadsTheCodexConfigurationWhole(t *testing.T) {
+	h, dir, _ := goHost(t, true)
+	goodStop, goodBridge := encodeJSON(t, h.stopSettings(t, nil)), encodeJSON(t, h.bridgeRecord(nil))
+	good := "[mcp_servers.codex-thread-bridge]\ncommand = \"" + filepath.Join(dir, "bin", "crw") + "\"\nargs = [\"bridge\"]\n"
+	unreadable := func(name, config, want string) registrationCase {
+		return registrationCase{name: name, stop: goodStop, bridge: goodBridge, config: config, relay: "own", bridgeClass: "unreadable", want: []string{want}}
+	}
+	h.runRegistrationCases(t, []registrationCase{
+		{name: "a good table", stop: goodStop, bridge: goodBridge, config: good, relay: "own", bridgeClass: "own"},
+		unreadable("args that are a string", "[mcp_servers.codex-thread-bridge]\ncommand = \""+filepath.Join(h.current(), "bin", "codex-thread-bridge")+"\"\nargs = \"--x\"\n",
+			"'codex-thread-bridge' has args that are not a list of strings, they are str"),
+		unreadable("mcp_servers that is not a table", "mcp_servers = 1\n", "mcp_servers is a table of servers, found int"),
+		unreadable("another server that is not a table", "[mcp_servers]\nother = \"x\"\n\n"+good, "the registration for 'other' is a table, found str"),
+		unreadable("another server's args", good+"\n[mcp_servers.other]\ncommand = \"x\"\nargs = 5\n", "'other' has args that are not a list of strings, they are int"),
+		unreadable("another server's command", good+"\n[mcp_servers.other]\ncommand = 5\n", "'other' has a command that is not a string, it is int"),
+	})
+}
+
+// Finding 24. Codex starts every mcp_servers table, and register-mcp --name lets the operator
+// name the bridge's table anything, recording that name as a user-owned record's serverName.
+// So every table that starts the bridge is judged (its command or an argument is the bridge's
+// console script, crw bridge, python -m codex_thread_bridge), and the table a user-owned record
+// names whatever it starts: one starting another bridge is a conflict.
+func TestDoctorJudgesTheBridgeUnderEveryTableName(t *testing.T) {
+	h, dir, _ := goHost(t, true)
+	goodStop := encodeJSON(t, h.stopSettings(t, nil))
+	venv := filepath.Join(h.dest, "env-1-0be23c258476")
+	old, _ := h.goRuntime(t, "bin-0.2.0-oooooooooooo")
+	userRecord := func(name string) string {
+		return encodeJSON(t, map[string]any{"recordVersion": 1, "owner": "user", "serverName": name, "bridgeExecutable": filepath.Join(venv, "bin", "codex-thread-bridge")})
+	}
+	table := func(name, command string, args ...string) string {
+		text := "[mcp_servers." + name + "]\ncommand = \"" + command + "\"\n"
+		if len(args) > 0 {
+			text += "args = [\"" + strings.Join(args, "\", \"") + "\"]\n"
+		}
+		return text
+	}
+	h.runRegistrationCases(t, []registrationCase{
+		{name: "the table a user-owned record names starts the Python bridge", stop: goodStop, bridge: userRecord("crw-bridge"), config: table("crw-bridge", filepath.Join(venv, "bin", "codex-thread-bridge")),
+			relay: "own", bridgeClass: "conflict", want: []string{"mcp_servers.crw-bridge.command names " + filepath.Join(venv, "bin", "codex-thread-bridge")}},
+		{name: "the table a user-owned record names starts something else", stop: goodStop, bridge: userRecord("named"), config: table("named", "/bin/sh"),
+			relay: "own", bridgeClass: "conflict", want: []string{"mcp_servers.named.command names /bin/sh"}},
+		{name: "an old runtime's bridge under another name", stop: goodStop, bridge: encodeJSON(t, h.bridgeRecord(nil)), config: table("anything", filepath.Join(old, "bin", "codex-thread-bridge")),
+			relay: "own", bridgeClass: "conflict", want: []string{"mcp_servers.anything.command names " + filepath.Join(old, "bin", "codex-thread-bridge")}},
+		{name: "a Python module bridge under another name", stop: goodStop, bridge: encodeJSON(t, h.bridgeRecord(nil)), config: table("py", filepath.Join(venv, "bin", "python3"), "-m", "codex_thread_bridge"),
+			relay: "own", bridgeClass: "conflict", want: []string{"mcp_servers.py.command names " + filepath.Join(venv, "bin", "python3")}},
+		{name: "the selected crw bridge under another name", stop: goodStop, bridge: userRecord("crw"), config: table("crw", filepath.Join(dir, "bin", "crw"), "bridge"),
+			relay: "own", bridgeClass: "own"},
+		{name: "a table that starts no bridge", stop: goodStop, bridge: encodeJSON(t, h.bridgeRecord(nil)), config: table("other", "/bin/sh", "-c", "true"),
+			relay: "own", bridgeClass: "own"},
+	})
+	report := h.diagnose(t)
+	if got := golden.Canon(at(report, "components", "codex-thread-bridge", "registrations")); strings.Contains(got, "mcp_servers.other") {
+		t.Errorf("a table that starts no bridge was judged: %s", got)
+	}
+}
+
+// Finding 25. For a user owner (or none, which reads as user) the registration the host runs is
+// the Stop command in <CODEX_HOME>/hooks.json, so each one that runs a Stop adapter is judged as
+// the relay's registration: the selected crw-completion-hook (or crw hook) reading these
+// settings agrees; an old runtime's hook, the checkout's Python adapter, the hook handed to an
+// interpreter or reading other settings do not; a hooks.json that cannot be read, a bare hook and
+// an expansion this command does not make are unreadable.
+func TestDoctorJudgesTheStopCommandsInHooksJSON(t *testing.T) {
+	h, dir, _ := goHost(t, true)
+	goodBridge := encodeJSON(t, h.bridgeRecord(nil))
+	settings := filepath.Join(h.codex, "crw-completion-hook.json")
+	userStop := encodeJSON(t, h.stopSettings(t, map[string]any{"owner": "user", "adapterInterpreter": nil, "adapterEntryPoint": nil}))
+	noOwner := encodeJSON(t, h.stopSettings(t, map[string]any{"owner": nil, "adapterInterpreter": nil, "adapterEntryPoint": nil}))
+	old, _ := h.goRuntime(t, "bin-0.2.0-oooooooooooo")
+	venv := filepath.Join(h.dest, "env-1-0be23c258476")
+	hooks := func(command string) string {
+		return encodeJSON(t, map[string]any{"hooks": map[string]any{"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command, "timeout": 10}}}}}})
+	}
+	current := filepath.Join(h.current(), "bin")
+	cases := []registrationCase{
+		{name: "the selected hook", stop: userStop, bridge: goodBridge, hooks: hooks(filepath.Join(current, "crw-completion-hook") + " " + settings), relay: "own", bridgeClass: "own"},
+		{name: "crw hook", stop: userStop, bridge: goodBridge, hooks: hooks(filepath.Join(dir, "bin", "crw") + " hook " + settings), relay: "own", bridgeClass: "own"},
+		{name: "the selected hook spelled with $HOME and $CODEX_HOME", stop: noOwner, bridge: goodBridge,
+			hooks: hooks(`"$HOME/.local/share/crw-runtime/current/bin/crw-completion-hook" "$CODEX_HOME/crw-completion-hook.json"`), relay: "own", bridgeClass: "own"},
+		{name: "a Stop command that runs no adapter", stop: userStop, bridge: goodBridge, hooks: hooks("echo done"), relay: "own", bridgeClass: "own"},
+		{name: "an old runtime's hook", stop: userStop, bridge: goodBridge, hooks: hooks(filepath.Join(old, "bin", "crw-completion-hook") + " " + settings), relay: "conflict", bridgeClass: "own",
+			want: []string{"names " + filepath.Join(old, "bin", "crw-completion-hook") + ", which resolves to " + filepath.Join(old, "bin", "crw")}},
+		{name: "the checkout's Python adapter", stop: noOwner, bridge: goodBridge, hooks: hooks(filepath.Join(venv, "bin", "python3") + " /checkout/scripts/completion_hook.py " + settings), relay: "conflict", bridgeClass: "own",
+			want: []string{"runs the checkout's Python Stop adapter /checkout/scripts/completion_hook.py"}},
+		{name: "the hook handed to an interpreter", stop: userStop, bridge: goodBridge, hooks: hooks("/usr/bin/python3 " + filepath.Join(current, "crw-completion-hook") + " " + settings), relay: "conflict", bridgeClass: "own",
+			want: []string{"to /usr/bin/python3 as an argument"}},
+		{name: "a hook reading other settings", stop: userStop, bridge: goodBridge, hooks: hooks(filepath.Join(current, "crw-completion-hook") + " " + filepath.Join(h.home, "other.json")), relay: "unreadable", bridgeClass: "own",
+			want: []string{"the hook reads " + filepath.Join(h.home, "other.json")}},
+		{name: "an expansion this command does not make", stop: userStop, bridge: goodBridge, hooks: hooks("$RUNTIME/bin/crw-completion-hook " + settings), relay: "unreadable", bridgeClass: "own",
+			want: []string{"an expansion this doctor does not make"}},
+		{name: "a hooks.json that is not JSON", stop: userStop, bridge: goodBridge, hooks: `{"hooks": `, relay: "unreadable", bridgeClass: "own", want: []string{"hooks.json " + filepath.Join(h.codex, "hooks.json")}},
+		{name: "a Stop list that is not a list", stop: userStop, bridge: goodBridge, hooks: `{"hooks": {"Stop": {"hooks": []}}}`, relay: "unreadable", bridgeClass: "own", want: []string{"hooks.Stop is dict, not a list"}},
+		{name: "an old runtime's hook beside a plugin owner", stop: encodeJSON(t, h.stopSettings(t, nil)), bridge: goodBridge, hooks: hooks(filepath.Join(old, "bin", "crw-completion-hook")), relay: "conflict", bridgeClass: "own",
+			want: []string{filepath.Join(old, "bin", "crw")}},
+	}
+	h.runRegistrationCases(t, cases)
+}

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -250,5 +251,46 @@ print(json.dumps(faultsweep.installed_revision(sys.argv[1]), sort_keys=True))
 	revision := golden.Obj(record.Get(value.(record.Object), "revision"))
 	if record.Get(revision, "environment") != environment || record.Get(revision, "integrity") != strings.Repeat("a", 64) || record.Get(revision, "repositoryTree") != strings.Repeat("2", 40) {
 		t.Fatalf("python read %s", out)
+	}
+}
+
+// Finding 40: StateHomeOf answers what hostrecord.state_home answers under the same environment
+// (HOME unset reads the passwd entry, ~user is that user's entry), and fails exactly where
+// pathlib raises. An empty or relative home, which Python reads against its working directory,
+// is refused here and not compared.
+func TestParity_state_home_is_hostrecords(t *testing.T) {
+	me, err := user.Current()
+	if err != nil || me.Username == "" {
+		t.Skip("no passwd entry for this user")
+	}
+	program := "from crw_runtime import hostrecord\ntry:\n    print(hostrecord.state_home())\nexcept RuntimeError as error:\n    print('RuntimeError', error)\n"
+	for _, env := range [][]string{
+		{},
+		{"HOME=/h/"},
+		{"HOME=/h", "XDG_STATE_HOME=~/s"},
+		{"HOME=/h", "XDG_STATE_HOME=~" + me.Username + "/s"},
+		{"XDG_STATE_HOME=~no-such-user-crw-parity/s"},
+		{"HOME=~no-such-user-crw-parity"},
+	} {
+		cmd := python(t, program)
+		cmd.Env = append([]string{"PATH=" + os.Getenv("PATH"), "PYTHONDONTWRITEBYTECODE=1", "PYTHONPATH=" + filepath.Join(golden.Root(), "scripts")}, env...)
+		want := strings.TrimSpace(string(output(t, cmd)))
+		lookup := func(key string) (string, bool) {
+			for _, pair := range env {
+				if k, v, ok := strings.Cut(pair, "="); ok && k == key {
+					return v, true
+				}
+			}
+			return "", false
+		}
+		got, err := record.StateHomeOf(lookup)
+		switch {
+		case strings.HasPrefix(want, "RuntimeError"):
+			if !errors.Is(err, record.ErrNoHome) {
+				t.Errorf("%v: python %q, go %q %v", env, want, got, err)
+			}
+		case err != nil || got != want:
+			t.Errorf("%v: python %q, go %q %v", env, want, got, err)
+		}
 	}
 }

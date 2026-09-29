@@ -48,31 +48,77 @@ type Options struct {
 	Socket       string
 	State        string
 	Temporary    bool
-	// Now and CodexVersion are seams; nil uses the clock and `codex --version`.
+	// Now, CodexVersion and Hostname are seams; nil uses the clock, `codex --version` and
+	// os.Hostname.
 	Now          func() time.Time
 	CodexVersion func(context.Context) *string
+	Hostname     func() (string, error)
+	// AppServer observes the App Server identity a measured point is compared on, through the
+	// selected runtime's bridge (bridge is its entry point, <runtime>/bin/codex-thread-bridge).
+	// This command does not make that observation yet (todo 38 wires it), so nil leaves the
+	// dimension unread, which stops Go classification exactly as
+	// runtime_install.classify_component stops on an unobserved App Server.
+	//
+	// The skill links are deliberately not a signal here, unlike in classify_component: an
+	// installed Go product takes its skills from the plugin payload the Codex marketplace
+	// installs, and skill links are a developer-checkout concern (crw-dev skills link, todo 39)
+	// that no release archive or installer makes, so they say nothing about this install.
+	AppServer func(ctx context.Context, bridge string) *string
 }
 
-// DefaultDestination is where the runtime lives (docs/port/decisions.md 11): XDG_DATA_HOME is
-// not honoured on this path, as before.
+// environ is env as os.environ.get reads it: the last spelling of a key wins, and a key set to
+// the empty string is set.
+func environ(env scope.Env) record.Environ {
+	return func(key string) (string, bool) {
+		for i := len(env) - 1; i >= 0; i-- {
+			if k, v, ok := strings.Cut(env[i], "="); ok && k == key {
+				return v, true
+			}
+		}
+		return "", false
+	}
+}
+
+// DefaultDestinationOf is where the runtime lives (docs/port/decisions.md 11), under
+// Path.home(): HOME, or this user's passwd entry when HOME is not set. XDG_DATA_HOME is not
+// honoured on this path, as before. A home nothing establishes is an error, never a relative
+// path read against the working directory.
+func DefaultDestinationOf(env scope.Env) (string, error) {
+	home, err := record.Home(environ(env))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".local", "share", "crw-runtime"), nil
+}
+
+// DefaultDestination is DefaultDestinationOf for a caller that cannot report the failure: the
+// spelling is left unexpanded.
 func DefaultDestination(env scope.Env) string {
-	home := env.Get("HOME")
-	if home == "" {
-		home, _ = os.UserHomeDir()
+	if destination, err := DefaultDestinationOf(env); err == nil {
+		return destination
 	}
-	return filepath.Join(home, ".local", "share", "crw-runtime")
+	return filepath.Join("~", ".local", "share", "crw-runtime")
 }
 
-// CodexHome is CODEX_HOME, or ~/.codex.
-func CodexHome(env scope.Env) string {
+// CodexHomeOf is CODEX_HOME as given (runtime_install.py never expands it), or Path.home()/.codex.
+func CodexHomeOf(env scope.Env) (string, error) {
 	if named := env.Get("CODEX_HOME"); named != "" {
-		return named
+		return named, nil
 	}
-	home := env.Get("HOME")
-	if home == "" {
-		home, _ = os.UserHomeDir()
+	home, err := record.Home(environ(env))
+	if err != nil {
+		return "", err
 	}
-	return filepath.Join(home, ".codex")
+	return filepath.Join(home, ".codex"), nil
+}
+
+// CodexHome is CodexHomeOf for a caller that cannot report the failure: the spelling is left
+// unexpanded.
+func CodexHome(env scope.Env) string {
+	if home, err := CodexHomeOf(env); err == nil {
+		return home
+	}
+	return filepath.Join("~", ".codex")
 }
 
 // SettingsFiles are the settings records the doctor reads, and the keys in each that name an
@@ -236,13 +282,24 @@ func Runtime(pointerPath, from string, rec Object) Object {
 	}
 	return append(out, record.Object{
 		{Key: "kind", Value: kind},
-		{Key: "placementRecorded", Value: record.PlacementRecorded(record.PointerEntryFor(record.Get(rec, "pointer"), pointerPath))},
+		{Key: "placementRecorded", Value: record.PlacementRecorded(pointerEntryAbout(record.Get(rec, "pointer"), pointerPath))},
 		{Key: "recordSelects", Value: selected},
 		{Key: "recordSelectsKind", Value: selectsKind},
 		{Key: "unusableSelections", Value: unusable},
 		{Key: "agrees", Value: agrees},
 		{Key: "outside", Value: outside},
 	}...)
+}
+
+// pointerEntryAbout is record.PointerEntryFor with both paths read through Path(), as the
+// Python diagnosis reads the recorded pointer: "/d/current/" and "/d/current" are one link.
+func pointerEntryAbout(entry any, path string) Object {
+	o, ok := entry.(Object)
+	recorded, _ := record.Get(o, "path").(string)
+	if ok && recorded != "" && store.PathlibSpelling(recorded) == store.PathlibSpelling(path) {
+		return o
+	}
+	return nil
 }
 
 // selectionKind is the runtime kind a recorded selection lives in: a Python selection names a
@@ -293,11 +350,20 @@ func jsonObject(what string) func(any) error {
 	}
 }
 
-// codexVersion is hostrecord's codexCli dimension: `codex --version`, first line.
+// commandWaitDelay bounds how long a subprocess's output may be held open after it has exited
+// or been killed, as scope.WaitDelay bounds the relay readings: a descendant that inherited the
+// pipe would otherwise hold the reading (and the diagnosis) until it exits.
+var commandWaitDelay = 5 * time.Second
+
+// codexVersion is hostrecord's codexCli dimension: `codex --version`, first line. A run that
+// fails, times out, or whose output a descendant still holds open once it exits
+// (exec.ErrWaitDelay) is an unread dimension (nil), never a version read from a partial output.
 func codexVersion(ctx context.Context) *string {
 	run, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(run, "codex", "--version").Output()
+	cmd := exec.CommandContext(run, "codex", "--version")
+	cmd.WaitDelay = commandWaitDelay
+	out, err := cmd.Output()
 	if err != nil {
 		return nil
 	}
@@ -309,7 +375,7 @@ func codexVersion(ctx context.Context) *string {
 }
 
 // classifyGo is the OPS-2.2 class of one component of a Go install reached through the pointer.
-func classifyGo(c definition.Component, target string, rec Object, recordUsable bool, pointerRead Object, version *string, host string, registrations Registrations) Object {
+func classifyGo(c definition.Component, target string, rec Object, recordUsable bool, pointerRead Object, seen observations, registrations Registrations) Object {
 	entry := filepath.Join(target, "bin", c.ConsoleScript)
 	resolved, err := record.Resolve(entry)
 	out := Object{{Key: "component", Value: c.Name}, {Key: "entryPoint", Value: entry}}
@@ -375,14 +441,38 @@ func classifyGo(c definition.Component, target string, rec Object, recordUsable 
 			}
 		}
 	}
-	wanted := map[string]string{"install": location, "host": host}
+	// A dimension that could not be read is not a dimension that agrees, and it is never
+	// dropped from the comparison: a point cannot be said to cover a reading nobody took, so
+	// each one stops classification (runtime_install.classify_component's judged.answer) and no
+	// point is looked up.
+	wanted := map[string]string{"install": location}
 	if digestValue != nil {
 		wanted["installDigest"] = digest
 	}
-	if version != nil {
-		wanted["codexCli"] = *version
+	dimensionsRead := true
+	unreadDimension := func(what string) {
+		signals.Unreadable = append(signals.Unreadable, what)
+		dimensionsRead = false
 	}
-	points := record.PointsFor(rec, c.Name, wanted)
+	if seen.version != nil {
+		wanted["codexCli"] = *seen.version
+	} else {
+		unreadDimension("the Codex CLI version")
+	}
+	if seen.host != "" {
+		wanted["host"] = seen.host
+	} else {
+		unreadDimension("this host's name" + seen.hostProblem)
+	}
+	if seen.appServer != nil {
+		wanted["appServer"] = *seen.appServer
+	} else {
+		unreadDimension("the App Server identity (" + seen.appServerProblem + ")")
+	}
+	var points []Object
+	if dimensionsRead {
+		points = record.PointsFor(rec, c.Name, wanted)
+	}
 	signals.HasPoint = len(points) > 0
 	// pointer_conflict_of: a pointer the selection lies outside is a conflict, and one whose
 	// agreement could not be established (a selection missing, invalid or unresolvable) stops
@@ -406,8 +496,52 @@ func classifyGo(c definition.Component, target string, rec Object, recordUsable 
 		{Key: "launchable", Value: launchable},
 		{Key: "class", Value: class},
 		{Key: "reasons", Value: strs(reasons)},
-		{Key: "notChecked", Value: []any{"the skill links (crw install skills, todo 39)", "the App Server dimension (observed by measure, todo 38)"}},
+		{Key: "notChecked", Value: strs(seen.notChecked)},
 	}...)
+}
+
+// observations are the point dimensions this host runs under, which every component's
+// classification shares. A reading that was not made carries why.
+type observations struct {
+	version          *string
+	host             string
+	hostProblem      string
+	appServer        *string
+	appServerProblem string
+	notChecked       []string
+}
+
+// observe makes the shared readings once; bridge is the selected runtime's bridge entry point,
+// or "" when no Go runtime is selected and nothing is classified.
+func observe(ctx context.Context, o Options, bridge string) observations {
+	var seen observations
+	versionOf := codexVersion
+	if o.CodexVersion != nil {
+		versionOf = o.CodexVersion
+	}
+	seen.version = versionOf(ctx)
+	hostname := os.Hostname
+	if o.Hostname != nil {
+		hostname = o.Hostname
+	}
+	name, err := hostname()
+	switch {
+	case err != nil:
+		seen.hostProblem = " (" + err.Error() + ")"
+	case name == "":
+		seen.hostProblem = " (the name is empty)"
+	default:
+		seen.host = name
+	}
+	switch {
+	case o.AppServer == nil:
+		seen.appServerProblem = "this command does not observe it yet; todo 38 wires the observation"
+		seen.notChecked = append(seen.notChecked, "the App Server dimension (todo 38)")
+	case bridge != "":
+		seen.appServer = o.AppServer(ctx, bridge)
+		seen.appServerProblem = "the observation through " + bridge + " answered nothing"
+	}
+	return seen
 }
 
 // sha256Hex is a recorded binaryDigest: a SHA-256, lowercase hex.
@@ -489,19 +623,27 @@ func Diagnose(ctx context.Context, o Options) Object {
 	if o.Now != nil {
 		now = o.Now
 	}
-	versionOf := codexVersion
-	if o.CodexVersion != nil {
-		versionOf = o.CodexVersion
-	}
 	codexHome := o.CodexHome
+	codexHomeProblem := ""
 	if codexHome == "" {
-		codexHome = CodexHome(o.Env)
+		var err error
+		if codexHome, err = CodexHomeOf(o.Env); err != nil {
+			codexHomeProblem = "the Codex home could not be established: " + err.Error()
+		}
 	}
 	recordPath := o.RecordPath
+	var host reading.Reading
 	if recordPath == "" {
-		recordPath = record.Path(o.Env.Get)
+		var err error
+		if recordPath, err = record.PathOf(environ(o.Env)); err != nil {
+			// Python's pathlib raises here; a path read against the working directory instead
+			// would answer ABSENT, a clean host, about a record nobody looked for.
+			host = reading.Reading{State: reading.AccessError, Exception: "RuntimeError", Detail: "the host record's path could not be established: " + err.Error()}
+		}
 	}
-	host := record.Load(recordPath, definition.Version)
+	if recordPath != "" {
+		host = record.Load(recordPath, definition.Version)
+	}
 	var rec Object
 	if host.Usable() {
 		rec, _ = host.Value.(Object)
@@ -526,16 +668,29 @@ func Diagnose(ctx context.Context, o Options) Object {
 	case owned != "" && !filepath.IsAbs(owned):
 		unreadableDestination = append(unreadableDestination, "the host record's pointer path is not absolute ("+owned+"), so it names no link this command can read and no destination it can survey")
 		owned, from = "", "none"
-	case owned == "" && destination != "":
+	case owned != "":
+		// Path(owned_pointer): a trailing '/' would make lstat follow the link, and the
+		// residue survey would take the pointer itself for its directory.
+		owned = store.PathlibSpelling(owned)
+	case destination != "":
 		owned, from = pointer.Path(destination), "dest"
-	case owned == "" && o.Destination == nil:
-		owned, from = pointer.Path(DefaultDestination(o.Env)), "default"
+	case o.Destination == nil:
+		if defaultDestination, err := DefaultDestinationOf(o.Env); err == nil {
+			owned, from = pointer.Path(defaultDestination), "default"
+		} else {
+			unreadableDestination = append(unreadableDestination, "the default destination could not be established: "+err.Error())
+			from = "none"
+		}
 	}
 	runtime := Runtime(owned, from, rec)
 	selected := record.Get(runtime, "kind")
 
-	promotion := recordPath + record.PromotionLockSuffix
-	lockState, lockDetail := record.Probe(promotion)
+	var promotion any
+	lockState, lockDetail := record.Unknown, "the host record's path was not established, so its promotion lock was not tested"
+	if recordPath != "" {
+		promotion = recordPath + record.PromotionLockSuffix
+		lockState, lockDetail = record.Probe(recordPath + record.PromotionLockSuffix)
+	}
 	var held any
 	switch lockState {
 	case record.Held:
@@ -546,23 +701,38 @@ func Diagnose(ctx context.Context, o Options) Object {
 
 	settings := Object{}
 	for _, f := range SettingsFiles {
-		settings = append(settings, record.Object{{Key: f.Name, Value: ReadSettings(codexHome, f.Name, f.Keys, owned)}}...)
+		one := Object{{Key: "path", Value: nil}, {Key: "state", Value: reading.AccessError}, {Key: "reading", Value: reading.Reading{State: reading.AccessError, Detail: codexHomeProblem}.Refusal()}, {Key: "executables", Value: Object{}}}
+		if codexHomeProblem == "" {
+			one = ReadSettings(codexHome, f.Name, f.Keys, owned)
+		}
+		settings = append(settings, record.Object{{Key: f.Name, Value: one}}...)
 	}
 
 	components := Object{}
 	classes := []string{}
-	version := versionOf(ctx)
-	hostname, _ := os.Hostname()
 	target, _ := record.Get(runtime, "targetResolves").(string)
-	var registrations Registrations
+	bridgeEntry := ""
 	if selected == KindGoRuntime && target != "" {
-		registrations = ReadRegistrations(codexHome, target, o.Env)
+		for _, c := range definition.Components {
+			if c.Name == definition.Bridge {
+				bridgeEntry = filepath.Join(target, "bin", c.ConsoleScript)
+			}
+		}
+	}
+	seen := observe(ctx, o, bridgeEntry)
+	var registrations Registrations
+	switch {
+	case selected != KindGoRuntime || target == "":
+	case codexHomeProblem != "":
+		registrations = Registrations{definition.Relay: {unread: []string{codexHomeProblem}}, definition.Bridge: {unread: []string{codexHomeProblem}}}
+	default:
+		registrations = ReadRegistrations(ctx, codexHome, target, o.Env)
 	}
 	for _, c := range definition.Components {
 		var one Object
 		switch {
 		case selected == KindGoRuntime && target != "":
-			one = classifyGo(c, target, rec, host.Usable(), runtime, version, hostname, registrations)
+			one = classifyGo(c, target, rec, host.Usable(), runtime, seen, registrations)
 			classes = append(classes, scope.PyStr(record.Get(one, "class")))
 		case selected == KindPythonVenv:
 			one = Object{{Key: "component", Value: c.Name}, {Key: "class", Value: nil}, {Key: "classifiedBy", Value: "python3 scripts/runtime_install.py diagnose"},
@@ -676,13 +846,13 @@ func Diagnose(ctx context.Context, o Options) Object {
 	return Object{
 		{Key: "command", Value: "doctor"},
 		{Key: "definitionVersion", Value: int64(definition.Version)},
-		{Key: "codexHome", Value: codexHome},
-		{Key: "hostRecord", Value: recordPath},
+		{Key: "codexHome", Value: nullable(codexHome)},
+		{Key: "hostRecord", Value: nullable(recordPath)},
 		{Key: "hostRecordState", Value: host.State},
 		{Key: "hostRecordStateMeaning", Value: "ABSENT is a clean host, PRESENT was read, UNREADABLE exists and its shape could not be read, ACCESS_ERROR could not be reached at all. They are four answers and none of them is inferred from another."},
 		{Key: "hostRecordReading", Value: hostReading},
 		{Key: "selected", Value: selected},
-		{Key: "codexCli", Value: codexCli(version)},
+		{Key: "codexCli", Value: codexCli(seen.version)},
 		{Key: "runtime", Value: runtime},
 		{Key: "promotionLock", Value: Object{{Key: "path", Value: promotion}, {Key: "state", Value: lockState}, {Key: "held", Value: held}, {Key: "detail", Value: lockDetail}}},
 		{Key: "settings", Value: settings},

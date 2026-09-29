@@ -32,30 +32,6 @@ const Version = 1
 // Object is a decoded JSON object in Python's insertion order.
 type Object = contract.OrderedObject
 
-// StateHome is hostrecord.state_home: $XDG_STATE_HOME, or ~/.local/state.
-func StateHome(getenv func(string) string) string {
-	if base := getenv("XDG_STATE_HOME"); base != "" {
-		return expandUser(base, getenv)
-	}
-	home := getenv("HOME")
-	if home == "" {
-		home = "~"
-	}
-	return filepath.Join(expandUser(home, getenv), ".local", "state")
-}
-
-func expandUser(path string, getenv func(string) string) string {
-	if path == "~" || strings.HasPrefix(path, "~/") {
-		if home := getenv("HOME"); home != "" {
-			return home + path[1:]
-		}
-		if home, err := os.UserHomeDir(); err == nil {
-			return home + path[1:]
-		}
-	}
-	return path
-}
-
 // Path is hostrecord.record_path.
 func Path(getenv func(string) string) string {
 	return filepath.Join(StateHome(getenv), "codex-relay-workflow", Name)
