@@ -180,6 +180,9 @@ func TestLivenessIsTheAdvisoryLock(t *testing.T) {
 func TestAbandonedStagingIsReclaimedAndLiveStagingIsNot(t *testing.T) {
 	dir := t.TempDir()
 	env := filepath.Join(dir, "env")
+	if err := os.MkdirAll(env, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := staging.WriteClaim(env, staging.NewPayload(staging.Staging, nil, nil)); err != nil {
 		t.Fatal(err)
 	}
@@ -261,5 +264,18 @@ func TestClearOwnRemovesOnlyItsOwnFiles(t *testing.T) {
 	}
 	if occupied, _ := staging.DirectoryOccupied(filepath.Join(env, "missing")); occupied != nil {
 		t.Fatal("an unlistable directory is not an empty one")
+	}
+}
+
+// A claim is never written into a directory that is gone: the claim's lock would otherwise make
+// the directory again around it, and a runtime removed under a settle would come back as an empty
+// directory with a COMPLETE claim.
+func TestAClaimIsNotWrittenIntoADirectoryThatIsGone(t *testing.T) {
+	gone := filepath.Join(t.TempDir(), "bin-0.9.0-aaaaaaaaaaaa")
+	if err := staging.WriteClaim(gone, staging.NewPayload(staging.Complete, nil, nil)); !os.IsNotExist(err) {
+		t.Fatalf("a claim for a directory that is gone: %v", err)
+	}
+	if _, err := os.Lstat(gone); !os.IsNotExist(err) {
+		t.Fatal("the directory was made again around the claim")
 	}
 }

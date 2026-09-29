@@ -221,7 +221,7 @@ func TestTheCommandLine(t *testing.T) {
 		{[]string{"status"}, install.OK, `"command": "status"`},
 	} {
 		var stdout, stderr strings.Builder
-		args := append(append([]string{}, tc.args...), "--dest", h.dest, "--codex-home", h.codex, "--record", h.record)
+		args := append(append([]string{}, tc.args...), "--codex-home", h.codex, "--record", h.record)
 		if len(tc.args) == 0 {
 			args = nil
 		}
@@ -231,7 +231,7 @@ func TestTheCommandLine(t *testing.T) {
 		}
 	}
 	var stdout strings.Builder
-	if code := install.Main(context.Background(), []string{"status", "--dest", h.dest, "--record", h.record, "--codex-home", h.codex}, h.env, &stdout, &strings.Builder{}); code != install.OK {
+	if code := install.Main(context.Background(), []string{"status", "--record", h.record, "--codex-home", h.codex}, h.env, &stdout, &strings.Builder{}); code != install.OK {
 		t.Fatal(code)
 	}
 	var buf strings.Builder

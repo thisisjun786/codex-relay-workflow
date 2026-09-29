@@ -74,9 +74,19 @@ func Status(_ context.Context, o Options) (Object, int) {
 	}
 	return Object{
 		field("command", "status"), field("hostRecord", o.RecordPath), field("hostRecordState", loaded.State), field("hostRecordReading", refusal),
-		field("destination", o.Dest), field("selected", record.Get(runtime, "kind")), field("runtime", runtime),
+		field("destination", o.Dest), field("destinationAgrees", destinationAgrees(rec, o)), field("selected", record.Get(runtime, "kind")), field("runtime", runtime),
 		field("outgoing", record.Get(rec, "outgoing")), field("runtimes", runtimes), field("destinationListing", listing),
 		field("promotionLock", Object{field("state", lockState), field("detail", lockDetail)}), field("settings", settings),
 		field("note", "read-only. 'runtime.agrees' is whether the owned pointer contains what the host record selects; a failed install or update leaves both as they were, and its directory is gone unless it is reported here."),
 	}, OK
+}
+
+// destinationAgrees is whether the host record's pointer is the fixed destination's, and when it
+// is not, why every other crw install command refuses and how to bring the host back.
+func destinationAgrees(rec Object, o Options) Object {
+	why := foreignPointer(rec, o.Dest)
+	if why == "" {
+		return Object{field("agrees", true), field("pointer", pointer.Path(o.Dest))}
+	}
+	return Object{field("agrees", false), field("pointer", pointer.Path(o.Dest)), field("detail", why), field("repair", foreignRepair(o))}
 }

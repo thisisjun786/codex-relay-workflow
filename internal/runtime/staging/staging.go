@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -162,15 +163,41 @@ func ReadClaim(directory string) reading.Reading {
 }
 
 // WriteClaim is staging.write_claim: the claim's bytes under the claim's .crw-lock, replaced
-// by rename (which is why it is not the lock file).
+// by rename (which is why it is not the lock file). A directory that is gone is not created again
+// around a claim (the lock would otherwise make it): the answer is os.ErrNotExist. A claim in a
+// directory runtime_install.py claimed - a Python env-* one, or one whose claim it wrote - is
+// written in its shape, writtenBy runtime_install.py, because runtime_install.py reads only its
+// own claims and takes any other for somebody else's directory: every claim it must read stays
+// one it can.
 func WriteClaim(directory string, payload record.Object) error {
+	info, err := os.Stat(directory)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return &os.PathError{Op: "claim", Path: directory, Err: unix.ENOTDIR}
+	}
 	target := ClaimPath(directory)
 	lock, err := record.Lock(target, 0)
 	if err != nil {
 		return err
 	}
 	defer lock.Release()
+	if PythonClaimed(directory) {
+		payload = record.Set(append(record.Object{}, payload...), "writtenBy", WrittenByPython)
+	}
 	return record.AtomicWrite(target, record.Encode(payload))
+}
+
+// PythonClaimed is whether runtime_install.py claimed directory: a Python env-* directory, or
+// one whose readable claim it wrote.
+func PythonClaimed(directory string) bool {
+	if strings.HasPrefix(filepath.Base(directory), "env-") {
+		return true
+	}
+	claim := ReadClaim(directory)
+	value, ok := claim.Value.(record.Object)
+	return claim.OK() && ok && record.Get(value, "writtenBy") == WrittenByPython
 }
 
 // NewPayload is a claim written now by the Go installer.

@@ -108,12 +108,19 @@ func selectedAs(rec Object, selection []contract.Field) bool {
 
 // Rollback is `crw install rollback [<dir>]`: point the owned pointer back at the selection
 // the last promotion replaced (the record's outgoing), or at a runtime directory the record
-// lists, under the promotion lock and with the same gate, ownership, second-owner and settings
-// rules as a promotion, reading the pointer back. The target has to be launchable as it stands
-// (nothing is run), and the one Stop settings document is never rewritten toward a venv: the
-// venv has to serve it. The runtime it leaves stays installed, and is recorded as outgoing, so a
-// second rollback returns to it. Where the pointer already names the target only the record
-// moves, so the swap gate, which guards replacing a runtime, is not asked.
+// lists, under the target's directory lock and the promotion lock and with the same gate,
+// ownership, second-owner and settings rules as a promotion, reading the pointer back. The target
+// has to be launchable as it stands (nothing is run), and the one Stop settings document is never
+// rewritten toward a venv: the venv has to serve it. The runtime the pointer leaves stays
+// installed and is recorded as outgoing, so a second rollback returns to it. Where the pointer
+// already names the target only the record moves, so the swap gate, which guards replacing a
+// runtime, is not asked, and outgoing is left as it was.
+//
+// Lock order (docs/port/decisions.md 33): the target's <env>.crw-lock, then the host-wide
+// .promotion-lock - runtime_install.py's order (its take/reclaim step holds the directory's lock,
+// and its resume runs the promotion inside it) and take()'s. The target is found on a first
+// reading, its directory lock taken, and the target found again under the promotion lock; a
+// record that moved it in between refuses with nothing written.
 func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 	base := Object{field("command", "rollback"), field("applied", false)}
 	if !record.Stated(o.Issue) {
@@ -122,30 +129,66 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 		return append(base, field("refused", "--issue is written into the host record as the evidence that this command placed the owned pointer, so it has to say something"), field("note", "nothing was read, no lock was taken and nothing was written.")), Refused
 	}
 	if named != "" {
+		if strings.TrimSpace(named) == "" {
+			return append(base, field("refused", "an empty directory names no runtime; name one, or give no directory to return to the outgoing selection")), Usage
+		}
 		absolute, err := filepath.Abs(named)
 		if err != nil {
 			return append(base, field("refused", err.Error())), Usage
 		}
 		named = absolute
 	}
+	pointerPath := pointer.Path(o.Dest)
+	find := func() (Object, []contract.Field, string, Object, int) {
+		loaded := record.Load(o.RecordPath, definition.Version)
+		if !loaded.OK() {
+			detail := loaded.Detail
+			if loaded.State == reading.Absent {
+				detail = "no host record exists, so nothing was ever promoted here and there is nothing to return to"
+			}
+			refused, code := append(append(Object{}, base...), field("refused", detail), field("hostRecordState", loaded.State), field("note", "nothing was written.")), Refused
+			return nil, nil, "", refused, code
+		}
+		rec := loaded.Value.(Object)
+		if why := foreignPointer(rec, o.Dest); why != "" {
+			refused, code := append(append(Object{}, base...), field("refused", why), field("repair", foreignRepair(o)), field("note", "nothing was written.")), Refused
+			return nil, nil, "", refused, code
+		}
+		if named == "" {
+			if target, ok := pointerTarget(pointerPath); ok && targetRecorded(rec, target) && !selectsEvery(rec, target) {
+				refused, code := append(append(Object{}, base...), field("refused", "the owned pointer names "+target+" and the host record does not select it: a promotion or a rollback was interrupted between its commit and its pointer move, so returning to the outgoing selection could undo a committed choice"),
+					field("selected", record.Get(rec, "selected")), field("repair", "name the runtime to be on: crw install rollback <the directory the record selects> finishes the interrupted move, and crw install rollback "+target+" keeps the one the pointer names"),
+					field("note", "nothing was written.")), Refused
+				return nil, nil, "", refused, code
+			}
+		}
+		selection, environment, why := rollbackTarget(rec, named)
+		if why != "" {
+			refused, code := append(append(Object{}, base...), field("refused", why), field("note", "nothing was written.")), Refused
+			return nil, nil, "", refused, code
+		}
+		return rec, selection, environment, nil, 0
+	}
+	_, _, candidate, refused, code := find()
+	if refused != nil {
+		return refused, code
+	}
+	lock, err := record.Lock(candidate, 0)
+	if err != nil {
+		return append(base, field("environment", candidate), field("refused", "another run is deciding what to do with this runtime directory ("+err.Error()+"): runtime_install.py and crw install hold "+candidate+record.LockSuffix+" while they decide about it, and one left by a run that died is removed once it is "+record.StaleLock.String()+" old"), field("note", "nothing was written.")), Refused
+	}
+	defer lock.Release()
 	exclusive, err := record.Promote(o.RecordPath, 0)
 	if err != nil {
 		return append(base, field("refused", "another run holds the promotion lock: "+err.Error()), field("note", "nothing was written.")), Refused
 	}
 	defer exclusive.Release()
-	loaded := record.Load(o.RecordPath, definition.Version)
-	if !loaded.OK() {
-		detail := loaded.Detail
-		if loaded.State == reading.Absent {
-			detail = "no host record exists, so nothing was ever promoted here and there is nothing to return to"
-		}
-		return append(base, field("refused", detail), field("hostRecordState", loaded.State), field("note", "nothing was written.")), Refused
+	rec, selection, environment, refused, code := find()
+	if refused != nil {
+		return refused, code
 	}
-	rec := loaded.Value.(Object)
-	pointerPath := recordedPointer(rec, o.Dest)
-	selection, environment, why := rollbackTarget(rec, named)
-	if why != "" {
-		return append(base, field("refused", why), field("note", "nothing was written.")), Refused
+	if !reading.SameDirectory(environment, candidate) && !sameSpelling(environment, candidate) {
+		return append(base, field("environment", environment), field("refused", "the host record changed while this run took its locks: the runtime to return to is now "+environment+", not "+candidate), field("note", "nothing was written; rerun to decide against the record as it now stands.")), Refused
 	}
 	base = append(base, field("environment", environment))
 	nothing := func(detail string, extra ...contract.Field) (Object, int) {
@@ -153,7 +196,7 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 	}
 	current, _ := record.Get(rec, "selected").(Object)
 	current = copyObject(current)
-	outgoingBefore, _ := record.Get(rec, "outgoing").(Object)
+	outgoingBefore, hadOutgoing := record.Lookup(rec, "outgoing")
 	names := pointer.Names(pointerPath, environment)
 	moving := names == nil || !*names
 	if !moving && selectsEvery(rec, environment) {
@@ -213,12 +256,27 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 	if transition.refused != "" {
 		return append(base, field("refused", transition.refused), field("settings", append(transition.report, field("undone", transition.undo()))), field("note", "nothing was written; any Stop settings this run had set aside were put back (settings.undone).")), Refused
 	}
-	outgoing := outgoingOf(current)
-	committed, err := commitSelection(o.RecordPath, definition.Version, record.Delta{
-		Select:   selection,
-		Pointer:  Object{field("path", pointerPath), field("recordedAt", o.stamp()), field("recordedBy", o.Issue)},
-		Outgoing: &record.Outgoing{Value: outgoing},
-	})
+	delta := record.Delta{Select: selection, Pointer: Object{field("path", pointerPath), field("recordedAt", o.stamp()), field("recordedBy", o.Issue)}}
+	var outgoing any = outgoingBefore
+	if !hadOutgoing {
+		outgoing = nil
+	}
+	switch baseline, _ := outgoingBefore.(Object); {
+	case moving:
+		// The baseline a second rollback returns to is the runtime the host leaves - the one the
+		// pointer names - which is the selection unless an interrupted move left them apart.
+		left := outgoingOf(leftSelection(rec, pointerPath, current))
+		delta.Outgoing, outgoing = &record.Outgoing{Value: left}, left
+	case baselineIsOnly(baseline, environment):
+		// The pointer stays where it is, so the host leaves nothing; outgoing is kept, unless it
+		// names the target itself, when the one runtime the record selected instead (committed and
+		// never reached, as an interrupted promotion leaves it) is what a second rollback returns to.
+		if other := selectedRuntime(rec); other != "" && !sameSpelling(other, environment) {
+			left := outgoingOf(current)
+			delta.Outgoing, outgoing = &record.Outgoing{Value: left}, left
+		}
+	}
+	committed, err := commitSelection(o.RecordPath, definition.Version, delta)
 	if err != nil || !committed.Usable() {
 		undone := transition.undo()
 		return append(base, field("refused", "the selection could not be committed: "+commitDetail(committed, err)), field("settings", append(transition.report, field("undone", undone))),
@@ -238,7 +296,8 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 		if moving {
 			putBack = restorePointer(o, pointerPath, before, environment, ownedBefore)
 		}
-		restored := restoreSelection(o, current, selection, outgoingBefore)
+		outgoingObject, _ := outgoingBefore.(Object)
+		restored := restoreSelection(o, current, selection, outgoingObject)
 		undone := transition.undo()
 		return append(base, field("refused", detail), field("pointerRestored", putBack), field("selectionRestored", restored), field("settings", append(transition.report, field("undone", undone))),
 			field("note", "the selection, the pointer and the Stop settings were put back to what this run found.")), Refused
@@ -246,7 +305,7 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 	left := settleLeft(o, leaving, environment)
 	exclusive.Release()
 	var claim Object
-	code := OK
+	code = OK
 	if settle {
 		claim = settleClaim(o, environment, o.Issue)
 		if record.Get(claim, "settled") != true {
@@ -264,6 +323,59 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 		field("swapGate", orNull(gate)), field("secondOwner", owners), field("settings", transition.report), field("claim", orNull(claim)), field("leftClaim", orNull(left)),
 		field("note", "the pointer names the runtime the record selects again, read back after the move. The runtime it left is still installed and is now the outgoing selection, so rolling back again returns to it. A process already started keeps the runtime it started in."),
 	}, code
+}
+
+// sameSpelling is whether two runtime directories are one by their resolved spelling, for a
+// directory that no longer exists (SameDirectory needs both to).
+func sameSpelling(one, other string) bool {
+	a, errA := record.Resolve(one)
+	b, errB := record.Resolve(other)
+	return errA == nil && errB == nil && a == b
+}
+
+// baselineIsOnly is whether an outgoing baseline selects nothing but environment.
+func baselineIsOnly(baseline Object, environment string) bool {
+	if baseline == nil {
+		return false
+	}
+	for _, c := range definition.Components {
+		entry, _ := record.Get(baseline, c.Name).(Object)
+		location, _ := record.Get(entry, "selected").(string)
+		if location == "" || !record.Under(location, environment) {
+			return false
+		}
+	}
+	return true
+}
+
+// selectedRuntime is the one runtime directory the record selects every component in, or "".
+func selectedRuntime(rec Object) string {
+	selected, _ := record.Get(rec, "selected").(Object)
+	location, _ := record.Get(selected, definition.Relay).(string)
+	if install := installAt(rec, definition.Relay, location); install != nil {
+		if environment := environmentOf(install); selectsEvery(rec, environment) {
+			return environment
+		}
+	}
+	return ""
+}
+
+// leftSelection is the selection of the runtime the pointer names - the one a moving rollback
+// leaves - when the record lists every component there; otherwise the record's selection.
+func leftSelection(rec Object, pointerPath string, current Object) Object {
+	target, ok := pointerTarget(pointerPath)
+	if !ok || selectsEvery(rec, target) {
+		return current
+	}
+	left := Object{}
+	for _, c := range definition.Components {
+		installs := installsAt(rec, c.Name, target)
+		if len(installs) == 0 {
+			return current
+		}
+		left = append(left, field(c.Name, record.Get(installs[len(installs)-1], "location")))
+	}
+	return left
 }
 
 // orNull is o, or JSON null for an object nobody wrote.

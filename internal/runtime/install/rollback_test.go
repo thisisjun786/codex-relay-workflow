@@ -135,6 +135,18 @@ func TestARollbackKilledAtItsCommitLeavesStopsRecorded(t *testing.T) {
 	if h.pointerTarget(t) != goRuntime || readFile(t, filepath.Join(h.codex, install.SettingsName)) != settings {
 		t.Fatalf("after the kill the pointer names %s and the settings changed", h.pointerTarget(t))
 	}
+	// The killed run's <venv>.crw-lock (runtime_install.py's O_EXCL protocol) is left behind: a
+	// rerun is refused naming it until it is stale, and then finishes the rollback.
+	saved := record.LockTimeout
+	record.LockTimeout = 200 * time.Millisecond
+	defer func() { record.LockTimeout = saved }()
+	if refused, code := install.Rollback(context.Background(), h.options(), venv); code != install.Refused || !strings.Contains(text(at(refused, "refused")), venv+record.LockSuffix) {
+		t.Fatalf("the rerun beside the killed run's lock: exit %d\n%s", code, golden.Canon(refused))
+	}
+	stale := time.Now().Add(-record.StaleLock - time.Minute)
+	if err := os.Chtimes(venv+record.LockSuffix, stale, stale); err != nil {
+		t.Fatal(err)
+	}
 	if result, code := install.Rollback(context.Background(), h.options(), venv); code != install.OK || h.pointerTarget(t) != venv {
 		t.Fatalf("the rerun: exit %d\n%s", code, golden.Canon(result))
 	}
@@ -289,7 +301,8 @@ func TestARollbackThatMovesNoRuntimeAsksNoGate(t *testing.T) {
 	if at(status, "runtime", "agrees") != true {
 		t.Fatalf("status: %s", golden.Canon(at(status, "runtime")))
 	}
-	// A rollback that does move the pointer is still held by the same daemon.
+	// A rollback that does move the pointer is still held by the same daemon. (The runtime the
+	// interrupted promotion committed stays the outgoing selection, so it may be returned to.)
 	if refused, code := install.Rollback(context.Background(), h.options(), next); code != install.Refused || at(refused, "swapGate", "verdict") != "BLOCKED" {
 		t.Fatalf("a move while the daemon runs: exit %d\n%s", code, golden.Canon(refused))
 	}

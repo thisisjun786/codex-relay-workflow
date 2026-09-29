@@ -196,7 +196,12 @@ SHA256. The existing `current` symlink is repointed by creating a temporary link
 `rename(2)`-ing it over `current`, so `current/bin/<name>` is a valid path at every instant.
 Python `env-1-<hash>` directories are left in place until todo 43's retention scan says no
 live or resumable task references them. `XDG_DATA_HOME` is not honoured on this path; this
-is a documented limitation carried over, not a new one.
+is a documented limitation carried over, not a new one. `crw install` has no `--dest` (todo 38
+review): every subcommand acts on `<home>/.local/share/crw-runtime`, the directory whose
+`current/bin` the plugin wiring runs, with the home as `pathlib` expands it, and a host record
+whose `pointer.path` (read through `Path()`) names another link - a host installed at another
+destination by `runtime_install.py --dest` - is refused by every command that would act on it,
+with the repair, and reported by `crw install status`.
 
 Why: the plugin's hook command and the MCP launcher both resolve through `current`, and the
 host record's `pointer` field records that path. Changing the root would force a record
@@ -1241,12 +1246,25 @@ rule that no lock file is ever unlinked or replaced, and it ends when todo 44 de
 files. `.promotion-lock` and `.crw-staging-lock` are flock(2) files under decision 7: created
 once, never unlinked, released by `LOCK_UN` or by the holder's death.
 
+Lock order (todo 38 review): a runtime directory's `<env>.crw-lock` is taken before the host-wide
+`.promotion-lock`, never after it. That is runtime_install.py's order - `cmd_install` holds the
+environment's `Locked` (`taking`) across its take/reclaim step and runs `_finish_promotion`, which
+takes `Exclusive`, inside it - and take()'s (reclaim and the already-installed reading take the
+promotion lock while the directory's is held). `crw install rollback` follows it: it finds its
+target on a first reading, takes the target's `<env>.crw-lock`, then the promotion lock, and finds
+the target again there, refusing with nothing written when the record moved it. A lock taken in
+the other order by one command and this order by another waits out the other's timeout and
+refuses. The settings records' and a claim's `.crw-lock` are leaves: nothing else is taken while
+one is held.
+
 Why: the Python installer and `plugin_transition` still write the host record, the claims and
 `crw-bridge-mcp.json` under this lock. A flock on the same path would not exclude an O_EXCL
 holder, and an O_EXCL file would not exclude a flock holder, so switching one side alone would
 let a Go and a Python read-modify-write interleave on the same record.
 
 Evidence: scripts/crw_runtime/hostrecord.py:271-315 (`Locked`), :335-378 (`Exclusive`);
+scripts/runtime_install.py:2723 (`taking`), :2775 and :2795 (`_finish_promotion` inside it);
+`TestARollbackHoldsItsTargetsDirectoryLock`;
 scripts/crw_runtime/staging.py:165-209 (`Held`), :212-240 (`owner_liveness`) and :155-162 (`write_claim` under `Locked`);
 scripts/crw_transition/steps.py (nine `Locked` sites); internal/runtime/record/locks.go;
 `TestCrwLockIsExclusiveAndExpiresOnlyWhenStale`,
@@ -1480,12 +1498,29 @@ component on it, another elsewhere) is refused, naming each component's selectio
 install rollback <dir>` as the repair - it selects every component under the promotion rules and,
 the pointer already naming the runtime, swaps nothing. Every command that records the pointer's
 placement (install, update and rollback) refuses a blank or whitespace `--issue` before it takes
-a lock, since `record.PlacementRecorded` rejects a placement recorded by nobody. Exit
+a lock, since `record.PlacementRecorded` rejects a placement recorded by nobody. The destination
+is fixed (decision 11): there is no `--dest`, and a record whose pointer is another link is refused
+before any command acts. Paths come from HOME, CODEX_HOME, XDG_STATE_HOME and the path flags;
+one holding a byte that is not UTF-8 is a usage error naming its source, and a document about to
+be written that still holds one (a marker root from the environment) is refused by its writer.
+runtime_install.py would record such a path surrogate-escaped; refusing it is a deliberate
+narrowing, because a record, settings document or pointer carrying U+FFFD names a file that does
+not exist. The execution policy path is the one path recorded surrogate-escaped, as
+runtime_install.py records it (decision 18). A HOME that is relative, holds `..` or starts with
+`//` is refused as well, since pathlib and a lexical join would spell the destination as two
+directories. A relative XDG_STATE_HOME is refused as a usage error, as the doctor refuses it:
+runtime_install.py reads it against the working directory and the XDG specification says to
+ignore it, and either would put the host record somewhere the doctor and the runtime's record
+readers do not look. `--execution-policy` given at all is read as a policy, so an empty value (or
+an empty last value of a repeated flag) is refused as runtime_install.py refuses it, never taken
+as no policy. Exit
 statuses are 0 (promoted and settled, or already installed), 1 (refused: nothing moved, and this
 run's directory was released unless the record or the pointer may name it), 2 (usage) and 3
 (promoted and in service, only the claim unsettled: never a free destination). `crw install
 rollback` returns the pointer to `outgoing`, or to a runtime directory the record lists exactly (an
-install entry's `environment`, never a directory that merely contains one), under the same lock and
+install entry's `environment`, never a directory that merely contains one; an empty directory
+argument is a usage error), holding the target's `<env>.crw-lock` and then the promotion lock
+(decision 33), under the same
 rules. `outgoing` means the selection the last promotion replaced: crw install writes it only in the
 write that commits a promotion or a rollback and puts it back when that promotion is undone, so an
 install that fails before its promotion leaves it as it was. runtime_install.py writes the same key
@@ -1503,8 +1538,16 @@ settles it last, as resuming does, and answers 3 when it cannot. The runtime it 
 with its claim still STAGING, is settled COMPLETE as well, so a later install of that archive keeps
 it rather than reclaiming it. Where the pointer already names the target (a run killed between its
 commit and its pointer move) no runtime is replaced, so the swap gate is not asked and only the
-selection moves; every other check still applies. No rollback rewrites the Stop settings (decision
-18). For a Python venv target the gate's schema cell compares the store with this build's declared
+selection moves; every other check still applies. The `outgoing` a rollback records is the runtime
+the host leaves - the one the pointer names, which is the selection unless an interrupted move left
+them apart - and a rollback that moves no pointer keeps `outgoing` as it was (or, where it named
+the target itself, records the one runtime the record selected instead). A bare rollback over an
+interrupted move (the pointer names a recorded runtime the record does not select) refuses and names
+both, since returning to `outgoing` could undo a committed choice. A claim written into a
+directory runtime_install.py claimed (an `env-*` one, or one whose claim it wrote) keeps its shape,
+`writtenBy` runtime_install.py, so runtime_install.py still reads it; and a claim is never written
+into a directory that is gone, which the claim's lock would otherwise make again. No rollback
+rewrites the Stop settings (decision 18). For a Python venv target the gate's schema cell compares the store with this build's declared
 schema, which stands for the Python runtime's because the DDL is identical (decision 14) and no Go
 release changes it before the commit point (docs/port/cutover.md). `crw install remove <dir>`
 deletes one `env-*` or `bin-*` directory directly under the destination only when the record does
@@ -1589,7 +1632,11 @@ internal/runtime/exercise (`TestTheSessionClosesItsReaderAtTheDeadlineWithoutACo
 the rollback rules (`TestARollbackReturnsToAPromotedRuntimeWhoseClaimNeverSettled`,
 `TestARollbackThatMovesNoRuntimeAsksNoGate`, `TestARollbackRefusesARuntimeThatCannotBeLaunched`,
 `TestANamedRollbackNamesARuntimeDirectory`, `TestAUserRegistrationThroughThePointerIsASecondOwner`,
-`TestARollbackNeedsAnIssue`, `TestASplitSelectionIsNotReportedInstalled`);
+`TestARollbackNeedsAnIssue`, `TestASplitSelectionIsNotReportedInstalled`, `TestTheDestinationIsFixed`,
+`TestPathsTheInstallerCannotSpellAreRefused`, `TestAnEmptyRollbackDirectoryIsAUsageError`,
+`TestAnEmptyExecutionPolicyIsRefused`, `TestTheSecondOwnerRuleKnowsThePointerByIdentity`,
+`TestOutgoingIsTheRuntimeThePointerLeaves`, `TestARollbackHoldsItsTargetsDirectoryLock`,
+`TestAClaimRuntimeInstallPyWroteStaysOneItCanRead`, `TestAClaimIsNotWrittenIntoADirectoryThatIsGone`);
 .omo/ulw-execute/scope-analysis-31-46.md "# 38".
 
 ## 39. A caller's cancellation claims every answer the send has not yet used

@@ -52,7 +52,10 @@ func providesFor(kind, environment string) provides {
 }
 
 // throughPointer is the part of an absolute path that lies beyond the pointer: "" for the
-// pointer itself, and ok false for a path the pointer does not lead to.
+// pointer itself, and ok false for a path the pointer does not lead to. The pointer is found by
+// identity, not only by spelling: an ancestor of path that is the pointer link itself (Lstat,
+// os.SameFile) - reached through a symlinked home, /tmp -> /private/tmp or a bind mount - is the
+// pointer as much as its recorded spelling is.
 func throughPointer(path, pointerPath string) (string, bool) {
 	if !filepath.IsAbs(path) {
 		return "", false
@@ -61,7 +64,28 @@ func throughPointer(path, pointerPath string) (string, bool) {
 	if path == pointerPath {
 		return "", true
 	}
-	return strings.CutPrefix(path, pointerPath+"/")
+	if rest, ok := strings.CutPrefix(path, pointerPath+"/"); ok {
+		return rest, true
+	}
+	link, err := os.Lstat(pointerPath)
+	if err != nil {
+		return "", false
+	}
+	for dir, rest := path, ""; ; {
+		if info, err := os.Lstat(dir); err == nil && os.SameFile(info, link) {
+			return rest, true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		if rest == "" {
+			rest = filepath.Base(dir)
+		} else {
+			rest = filepath.Base(dir) + "/" + rest
+		}
+		dir = parent
+	}
 }
 
 // installsAt is every install entry of component name whose runtime directory is exactly

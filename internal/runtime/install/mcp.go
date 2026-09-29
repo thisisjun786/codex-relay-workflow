@@ -237,7 +237,7 @@ const policyRepair = "move %s aside by hand, then run crw install register-mcp a
 // read, and the record is written only while a look under the lock sees that same document.
 func bridgeWrite(path string, wanted Object, apply bool) Object {
 	answer := Object{field("record", path), field("outcome", ""), field("applied", false), field("wrote", false)}
-	if wrong := bridgeComplaints(wanted); len(wrong) > 0 {
+	if wrong := append(bridgeComplaints(wanted), unspellable(wanted)...); len(wrong) > 0 {
 		return append(record.Set(answer, "outcome", RecordMalformed), field("detail", strings.Join(wrong, "; ")), field("complaints", strs(wrong)))
 	}
 	basis := lookAt(path)
@@ -483,7 +483,7 @@ func secondOwnersFor(codexHome, bridgeEntry, pointerPath string, target provides
 	case owner == OwnerPlugin && len(tables) > 0:
 		return report, "the record at " + recordPath + " names the plugin as the bridge's owner and the Codex configuration also starts it as " + strings.Join(tables, ", ") + ", so the host runs two bridges; remove one owner first"
 	}
-	if server, ok := view[ServerName]; ok && server.Command != bridgeEntry {
+	if server, ok := view[ServerName]; ok && !namesBridge(server.Command, bridgeEntry, pointerPath) {
 		return report, "the Codex configuration registers " + ServerName + " as " + evidence.Repr(server.Command) + ", not through the owned pointer (" + bridgeEntry + "), so after this promotion a host would still start a runtime this install does not select"
 	}
 	names := make([]string, 0, len(view))
@@ -515,11 +515,24 @@ func secondOwnersFor(codexHome, bridgeEntry, pointerPath string, target provides
 	return record.Set(report, "detail", "one owner per surface: no second registration of the bridge or the Stop adapter was found"), ""
 }
 
+// namesBridge is whether a configuration command starts the bridge through the owned pointer,
+// by its spelling or by the pointer's identity (throughPointer).
+func namesBridge(command, bridgeEntry, pointerPath string) bool {
+	if command == bridgeEntry {
+		return true
+	}
+	rel, through := throughPointer(command, pointerPath)
+	return through && rel == "bin/"+definition.Bridge
+}
+
 // RegisterOptions are register-mcp's inputs.
 type RegisterOptions struct {
 	Owner, Name, BridgeCommand, ExecutionPolicy string
 	BridgeArgs                                  []string
-	DryRun                                      bool
+	// PolicyGiven is whether --execution-policy was given at all: an empty value is a path the
+	// policy reading refuses (runtime_install.py tests `is not None`), never "no policy".
+	PolicyGiven bool
+	DryRun      bool
 }
 
 // executionPolicyReading is runtime_install._execution_policy_reading with the Go bridge's own
@@ -592,7 +605,7 @@ func RegisterMCP(_ context.Context, o Options, r RegisterOptions) (Object, int) 
 	}
 	defer lock.Release()
 	var policy Object
-	if r.ExecutionPolicy != "" {
+	if r.PolicyGiven || r.ExecutionPolicy != "" {
 		reading, why := executionPolicyReading(r.ExecutionPolicy)
 		if reading == nil {
 			return append(base, field("outcome", PolicyUnreadable), field("detail", why), field("applied", false), field("wrote", false), field("note", "nothing was written: a record naming a policy the bridge would refuse is a bridge that never starts")), Refused

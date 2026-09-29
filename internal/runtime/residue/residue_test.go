@@ -31,6 +31,9 @@ func TestMain(m *testing.M) {
 
 func staged(t *testing.T, dir, state string) {
 	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := staging.WriteClaim(dir, staging.Payload(state, staging.WrittenByPython, nil, nil, 1, "h", "t")); err != nil {
 		t.Fatal(err)
 	}

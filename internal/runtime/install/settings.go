@@ -319,7 +319,7 @@ func settingsWrite(path string, wanted Object, apply, replace bool) Object {
 // written: a document built from an earlier reading is never written over a newer one.
 func settingsWriteOn(path string, basis look, wanted Object, apply, replace bool) Object {
 	answer := Object{field("configuration", path), field("outcome", ""), field("applied", false), field("wrote", false)}
-	if wrong := Complaints(wanted); len(wrong) > 0 {
+	if wrong := append(Complaints(wanted), unspellable(wanted)...); len(wrong) > 0 {
 		return append(record.Set(answer, "outcome", ConfigWouldNotBeReadable), field("detail", strings.Join(wrong, "; ")), field("complaints", strs(wrong)))
 	}
 	outcome, found := settingsOutcome(path, wanted, replace)
