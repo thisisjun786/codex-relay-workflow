@@ -2,10 +2,13 @@ package install
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
@@ -60,7 +63,8 @@ func installAt(rec Object, name, location string) Object {
 }
 
 // rollbackTarget is the selection a rollback returns to and the one directory it lives in: the
-// record's outgoing selection, or the installs the record lists inside a named directory.
+// record's outgoing selection, or the newest installs the record lists for exactly the named
+// runtime directory - never for a directory that merely contains one.
 func rollbackTarget(rec Object, named string) ([]contract.Field, string, string) {
 	var selection []contract.Field
 	environments := map[string]bool{}
@@ -68,9 +72,9 @@ func rollbackTarget(rec Object, named string) ([]contract.Field, string, string)
 	for _, c := range definition.Components {
 		var install Object
 		if named != "" {
-			found := installsIn(rec, c.Name, named)
+			found := installsAt(rec, c.Name, named)
 			if len(found) == 0 {
-				return nil, "", "the host record lists no install of " + c.Name + " inside " + named + ", so it is not a runtime this host installed"
+				return nil, "", "the host record lists no install of " + c.Name + " whose runtime directory is " + named + ", so it is not a runtime this host installed; name the runtime directory itself (an env-* or bin-* directory under the destination)"
 			}
 			install = found[len(found)-1]
 		} else {
@@ -98,11 +102,40 @@ func rollbackTarget(rec Object, named string) ([]contract.Field, string, string)
 	return selection, environment, ""
 }
 
+// claimSays is what a readable claim says its run did, or "" when it could not be read.
+func claimSays(environment string) (string, bool) {
+	claim := staging.ReadClaim(environment)
+	value, ok := claim.Value.(Object)
+	if !claim.OK() || !ok {
+		return "", false
+	}
+	says, _ := record.Get(value, "state").(string)
+	return says, true
+}
+
+// selectedAs is whether the record, now or as its outgoing baseline, selects exactly selection:
+// proof that a promotion committed that runtime, so that it was exercised and put in service
+// even where its claim never settled (an exit 3, or a run killed after its pointer moved).
+func selectedAs(rec Object, selection []contract.Field) bool {
+	selected, _ := record.Get(rec, "selected").(Object)
+	outgoing, _ := record.Get(rec, "outgoing").(Object)
+	now, before := true, true
+	for _, f := range selection {
+		now = now && record.Get(selected, f.Key) == f.Value
+		entry, _ := record.Get(outgoing, f.Key).(Object)
+		before = before && record.Get(entry, "selected") == f.Value
+	}
+	return len(selection) > 0 && (now || before)
+}
+
 // Rollback is `crw install rollback [<dir>]`: point the owned pointer back at the selection
 // the last promotion replaced (the record's outgoing), or at a runtime directory the record
 // lists, under the promotion lock and with the same gate, ownership, second-owner and settings
-// rules as a promotion, reading the pointer back. The runtime it leaves stays installed, and
-// is recorded as outgoing, so a second rollback returns to it.
+// rules as a promotion, reading the pointer back. The target has to be launchable as it stands
+// (nothing is run), and the one Stop settings document is never rewritten toward a venv: the
+// venv has to serve it. The runtime it leaves stays installed, and is recorded as outgoing, so a
+// second rollback returns to it. Where the pointer already names the target only the record
+// moves, so the swap gate, which guards replacing a runtime, is not asked.
 func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 	base := Object{field("command", "rollback"), field("applied", false)}
 	if named != "" {
@@ -132,45 +165,68 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 		return append(base, field("refused", why), field("note", "nothing was written.")), Refused
 	}
 	base = append(base, field("environment", environment))
+	nothing := func(detail string, extra ...contract.Field) (Object, int) {
+		return append(append(base, field("refused", detail)), append(extra, field("note", "nothing was written; the pointer still names the runtime it named."))...), Refused
+	}
 	current, _ := record.Get(rec, "selected").(Object)
 	current = copyObject(current)
 	outgoingBefore, _ := record.Get(rec, "outgoing").(Object)
-	if names := pointer.Names(pointerPath, environment); names != nil && *names && selectsEvery(rec, environment) {
-		return append(base, field("refused", "the pointer already names "+environment+" and the record selects it, so there is nothing to roll back to it"), field("note", "nothing was written.")), Refused
+	names := pointer.Names(pointerPath, environment)
+	moving := names == nil || !*names
+	if !moving && selectsEvery(rec, environment) {
+		return nothing("the pointer already names " + environment + " and the record selects it, so there is nothing to roll back to it")
 	}
 	kind := doctor.RuntimeKind(environment)
 	if kind != doctor.KindGoRuntime && kind != doctor.KindPythonVenv {
-		return append(base, field("refused", environment+" is neither a Go runtime (bin/crw) nor a Python virtual environment, so the pointer is not moved to it"), field("note", "nothing was written.")), Refused
+		return nothing(environment + " is neither a Go runtime (bin/crw) nor a Python virtual environment, so the pointer is not moved to it")
 	}
-	claim := staging.ReadClaim(environment)
 	if liveness, detail := staging.OwnerLiveness(environment); liveness != staging.Dead {
-		return append(base, field("refused", "whether another run is still building "+environment+" is not established as no: "+detail), field("note", "nothing was written.")), Refused
+		return nothing("whether another run is still building " + environment + " is not established as no: " + detail)
 	}
-	if !staging.IsSettled(claim) {
-		return append(base, field("refused", environment+" carries no settled claim of this command's ("+claim.State+"), so it is not a runtime whose install finished"), field("note", "nothing was written.")), Refused
+	says, readable := claimSays(environment)
+	settle := false
+	switch {
+	case says == staging.Complete:
+	case readable && says == staging.Staging && selectedAs(rec, selection):
+		// Committed by a promotion whose claim never settled; returning to it finishes that
+		// bookkeeping, as resuming does.
+		settle = true
+	case readable:
+		return nothing(environment + " carries a claim that says " + evidence.Repr(says) + ", and no selection of the host record proves a promotion put it in service, so it is not a runtime whose install finished")
+	default:
+		return nothing(environment + " carries no readable claim of this command's (" + staging.ReadClaim(environment).State + "), so it is not a runtime whose install finished")
 	}
-	var candidateSchema Object
-	if kind == doctor.KindPythonVenv {
-		// This command runs no interpreter. The Go store executes the identical DDL the Python
-		// store runs (docs/port/decisions.md 14), and until the commit point no Go release
-		// changes it (docs/port/cutover.md), so this build's declared schema stands for the
-		// Python runtime's, and a store holding anything else still refuses.
-		candidateSchema = record.Set(swapgate.DeclaredSchema(ctx), "command", "this crw build's declared schema, standing for the Python runtime's identical DDL (docs/port/decisions.md 14)")
+	if problems, unread := targetProblems(rec, environment, kind); len(problems)+len(unread) > 0 {
+		return nothing("the pointer would name a runtime that cannot be launched as it stands: "+strings.Join(append(problems, unread...), "; "),
+			field("launchable", Object{field("problems", strs(problems)), field("unread", strs(unread))}))
 	}
-	gate := swapGate(ctx, o, rec, environment, candidateSchema)
-	if record.Get(gate, "verdict") != swapgate.Allowed {
-		return append(base, field("refused", "it is not established that the runtime can be replaced now: "+strings.Join(stringsOf(record.Get(gate, "blockedBy"), record.Get(gate, "unreadable")), "; ")), field("swapGate", gate), field("note", "nothing was written; the pointer still names the runtime it named.")), Refused
+	var gate Object
+	if moving {
+		var candidateSchema Object
+		if kind == doctor.KindPythonVenv {
+			// This command runs no interpreter. The Go store executes the identical DDL the Python
+			// store runs (docs/port/decisions.md 14), and until the commit point no Go release
+			// changes it (docs/port/cutover.md), so this build's declared schema stands for the
+			// Python runtime's, and a store holding anything else still refuses.
+			candidateSchema = record.Set(swapgate.DeclaredSchema(ctx), "command", "this crw build's declared schema, standing for the Python runtime's identical DDL (docs/port/decisions.md 14)")
+		}
+		gate = swapGate(ctx, o, rec, environment, candidateSchema)
+		if record.Get(gate, "verdict") != swapgate.Allowed {
+			return nothing("it is not established that the runtime can be replaced now: "+strings.Join(stringsOf(record.Get(gate, "blockedBy"), record.Get(gate, "unreadable")), "; "), field("swapGate", gate))
+		}
 	}
 	ownedBefore, _ := record.Get(rec, "pointer").(Object)
 	before := pointer.Read(pointerPath)
 	if !pointer.Usable(before.State) || (before.State == pointer.Link && !record.PlacementRecorded(ownedBefore)) {
-		return append(base, field("refused", "the owned pointer is not one this command may replace: "+before.Detail), field("pointer", pointerObject(pointerPath)), field("note", "nothing was written.")), Refused
+		return nothing("the owned pointer is not one this command may replace: "+before.Detail, field("pointer", pointerObject(pointerPath)))
 	}
-	owners, conflict := secondOwners(o.CodexHome, filepath.Join(pointerPath, "bin", definition.Bridge))
+	target := providesFor(kind, environment)
+	owners, conflict := secondOwnersFor(o.CodexHome, filepath.Join(pointerPath, "bin", definition.Bridge), pointerPath, target)
 	if conflict != "" {
-		return append(base, field("refused", conflict), field("secondOwner", owners), field("note", "nothing was written.")), Refused
+		return nothing(conflict, field("secondOwner", owners))
 	}
-	transition := transitionSettings(o.CodexHome, pointerPath, kind)
+	leaving := inService(rec, pointerPath)
+	transition := transitionSettingsFor(o.CodexHome, pointerPath, kind, target)
 	if transition.refused != "" {
 		return append(base, field("refused", transition.refused), field("settings", append(transition.report, field("undone", transition.undo()))), field("note", "nothing was written; any Stop settings this run had set aside were put back (settings.undone).")), Refused
 	}
@@ -185,30 +241,88 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 		return append(base, field("refused", "the selection could not be committed: "+commitDetail(committed, err)), field("settings", append(transition.report, field("undone", undone))),
 			field("note", "the pointer was not moved, and the Stop settings were put back as 'settings.undone' says.")), Refused
 	}
-	placeErr := placePointer(pointerPath, environment)
+	var placeErr error
+	if moving {
+		placeErr = placePointer(pointerPath, environment)
+	}
 	landed := pointer.Names(pointerPath, environment)
 	if placeErr != nil || landed == nil || !*landed {
 		detail := "the pointer does not name " + environment + " after it was placed"
 		if placeErr != nil {
 			detail = "the pointer could not be placed: " + store.PythonOSError(placeErr)
 		}
-		putBack := restorePointer(o, pointerPath, before, environment, ownedBefore)
+		var putBack any = "this run did not move the pointer"
+		if moving {
+			putBack = restorePointer(o, pointerPath, before, environment, ownedBefore)
+		}
 		restored := restoreSelection(o, current, selection, outgoingBefore)
 		undone := transition.undo()
 		return append(base, field("refused", detail), field("pointerRestored", putBack), field("selectionRestored", restored), field("settings", append(transition.report, field("undone", undone))),
 			field("note", "the selection, the pointer and the Stop settings were put back to what this run found.")), Refused
+	}
+	left := settleLeft(o, leaving, environment)
+	exclusive.Release()
+	var claim Object
+	code := OK
+	if settle {
+		claim = settleClaim(o, environment, o.Issue)
+		if record.Get(claim, "settled") != true {
+			code = Incomplete
+		}
 	}
 	var previousTarget any
 	if before.Target != "" {
 		previousTarget = before.Target
 	}
 	return Object{
-		field("command", "rollback"), field("applied", true), field("environment", environment), field("kind", kind),
+		field("command", "rollback"), field("applied", true), field("environment", environment), field("kind", kind), field("moved", moving),
 		field("pointer", Object{field("path", pointerPath), field("target", environment), field("previousTarget", previousTarget)}),
 		field("selected", record.Get(committed.Value.(Object), "selected")), field("previousSelection", current), field("outgoing", outgoing),
-		field("swapGate", gate), field("secondOwner", owners), field("settings", transition.report),
+		field("swapGate", orNull(gate)), field("secondOwner", owners), field("settings", transition.report), field("claim", orNull(claim)), field("leftClaim", orNull(left)),
 		field("note", "the pointer names the runtime the record selects again, read back after the move. The runtime it left is still installed and is now the outgoing selection, so rolling back again returns to it. A process already started keeps the runtime it started in."),
-	}, OK
+	}, code
+}
+
+// orNull is o, or JSON null for an object nobody wrote.
+func orNull(o Object) any {
+	if o == nil {
+		return nil
+	}
+	return o
+}
+
+// inService is the runtime directory the record selects entirely and the pointer names: the
+// one a rollback moves a host off.
+func inService(rec Object, pointerPath string) string {
+	target, ok := pointerTarget(pointerPath)
+	if !ok || !selectsEvery(rec, target) {
+		return ""
+	}
+	return target
+}
+
+// settleLeft writes the COMPLETE claim of the runtime a rollback moved the host off when its
+// claim still says STAGING and nobody holds it: it was selected and named by the pointer, so it
+// was promoted and in service, and a claim left STAGING would have the next install of its
+// archive read an abandoned staging and remove a directory processes may still run out of.
+func settleLeft(o Options, leaving, environment string) Object {
+	if leaving == "" || leaving == environment {
+		return nil
+	}
+	if says, readable := claimSays(leaving); !readable || says != staging.Staging {
+		return nil
+	}
+	if liveness, _ := staging.OwnerLiveness(leaving); liveness != staging.Dead {
+		return nil
+	}
+	err := staging.WriteClaim(leaving, staging.NewPayload(staging.Complete, o.Issue, strconv.Itoa(os.Getpid())))
+	says, _ := claimSays(leaving)
+	var detail any
+	if err != nil {
+		detail = err.Error()
+	}
+	return Object{field("environment", leaving), field("settled", says == staging.Complete), field("detail", detail),
+		field("why", "the runtime this rollback left was promoted and in service with its claim never settled; it is kept, and now reads as a runtime whose install finished")}
 }
 
 func stringsOf(values ...any) []string {

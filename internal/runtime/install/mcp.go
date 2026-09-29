@@ -420,13 +420,22 @@ func bridgeTables(view servers, exclude, executable string) []string {
 	return names
 }
 
-// secondOwners is the one-owner-per-surface check a promotion makes on the reading it promotes
-// on: the bridge is registered by the Codex configuration or by the plugin record, never both,
-// and a configuration entry for it names the owned pointer rather than a runtime this install
-// would not select; the Stop hook is registered by the user hook file or by plugin-owned
-// settings, never both. Any reading that failed refuses: registering on an unanswered question
-// is how a second copy arrives.
+// secondOwners is secondOwnersFor a Go runtime reached through the pointer bridgeEntry lies in
+// (<pointer>/bin/codex-thread-bridge), which is where every promotion moves it.
 func secondOwners(codexHome, bridgeEntry string) (Object, string) {
+	return secondOwnersFor(codexHome, bridgeEntry, filepath.Dir(filepath.Dir(bridgeEntry)), goProvides)
+}
+
+// secondOwnersFor is the one-owner-per-surface check a promotion makes on the reading it
+// promotes on: the bridge is registered by the Codex configuration or by the plugin record,
+// never both, and a configuration entry for it names the owned pointer rather than a runtime
+// this install would not select; the Stop hook is registered by the user hook file or by
+// plugin-owned settings, never both. A registration that reaches through the pointer something
+// the runtime about to be named does not provide (target) is refused too: the user-owned
+// registrations are retired with runtime_install.py, so such an entry is the second owner beside
+// the plugin's declaration, and the swap would leave it running nothing. Any reading that failed
+// refuses: registering on an unanswered question is how a second copy arrives.
+func secondOwnersFor(codexHome, bridgeEntry, pointerPath string, target provides) (Object, string) {
 	recordPath := filepath.Join(codexHome, BridgeRecordName)
 	found, outcome, detail := readBridgeRecord(recordPath)
 	if found == nil && outcome != RecordAbsent {
@@ -450,10 +459,15 @@ func secondOwners(codexHome, bridgeEntry string) (Object, string) {
 			settingsOwner = OwnerUser
 		}
 	}
-	registrations, readable := hook.AdapterIdentities(filepath.Join(codexHome, "hooks.json"), "Stop")
+	hookFile := filepath.Join(codexHome, "hooks.json")
+	commands, readable := hook.AdapterCommands(hookFile, "Stop")
+	registrations := make([]string, 0, len(commands))
+	for _, command := range commands {
+		registrations = append(registrations, command.Identity)
+	}
 	report := Object{
 		field("bridge", Object{field("record", recordPath), field("recordOwner", owner), field("configuration", configPath), field("tablesStartingIt", strs(tables))}),
-		field("stop", Object{field("settings", settingsPath), field("settingsOwner", settingsOwner), field("hookFile", filepath.Join(codexHome, "hooks.json")), field("registrations", strs(registrations))}),
+		field("stop", Object{field("settings", settingsPath), field("settingsOwner", settingsOwner), field("hookFile", hookFile), field("registrations", strs(registrations))}),
 	}
 	switch {
 	case owner == OwnerPlugin && len(tables) > 0:
@@ -462,11 +476,31 @@ func secondOwners(codexHome, bridgeEntry string) (Object, string) {
 	if server, ok := view[ServerName]; ok && server.Command != bridgeEntry {
 		return report, "the Codex configuration registers " + ServerName + " as " + evidence.Repr(server.Command) + ", not through the owned pointer (" + bridgeEntry + "), so after this promotion a host would still start a runtime this install does not select"
 	}
+	names := make([]string, 0, len(view))
+	for name := range view {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		server := view[name]
+		for _, word := range append([]string{server.Command}, server.Args...) {
+			if rel, through := throughPointer(word, pointerPath); through && !target(rel) {
+				return report, "the Codex configuration starts " + evidence.Repr(name) + " with " + word + ", which it reaches through the owned pointer, and the runtime about to be named provides no " + rel + ": after the swap that server would start nothing. Remove or repoint that table in " + configPath + " first"
+			}
+		}
+	}
 	if !readable {
 		return report, "the user hook file could not be read, so whether the Stop adapter is registered there as well was not established"
 	}
 	if settingsOwner == OwnerPlugin && len(registrations) > 0 {
 		return report, "the Stop settings at " + settingsPath + " name the plugin as the owner, and the user hook file also registers this adapter as " + strings.Join(registrations, ", ") + ", so every Stop runs two copies; remove the hook file entry first"
+	}
+	for _, command := range commands {
+		for _, word := range command.Words {
+			if rel, through := throughPointer(word, pointerPath); through && !target(rel) {
+				return report, "the user hook file registers the Stop adapter as " + command.Identity + " (" + evidence.Repr(command.Command) + "), which runs " + word + " through the owned pointer, and the runtime about to be named provides no " + rel + ": after the swap that registration would run nothing, and the host reads the failure as a hook error, never as a judged Stop. The user-owned registration is retired with runtime_install.py and the plugin package declares the Stop hook, so this entry is the second owner: remove it from " + hookFile + " by hand, move " + settingsPath + " aside and run crw install hook --owner plugin, then rerun"
+			}
+		}
 	}
 	return record.Set(report, "detail", "one owner per surface: no second registration of the bridge or the Stop adapter was found"), ""
 }
@@ -479,8 +513,8 @@ type RegisterOptions struct {
 }
 
 // executionPolicyReading is runtime_install._execution_policy_reading with the Go bridge's own
-// parser: the path as the record will name it (expanded and absolute, never resolved) and the
-// digest of the bytes the parser accepted.
+// parser: the path as the record will name it (Path(value).expanduser().absolute(): expanded
+// and absolute, never resolved, '..' kept) and the digest of the bytes the parser accepted.
 func executionPolicyReading(value string) (Object, string) {
 	if value == "" || value != pyStrip(value) || strings.IndexFunc(value, func(r rune) bool { return r < 32 || r == 127 }) >= 0 {
 		return nil, "the execution policy path " + evidence.Repr(value) + " is empty, padded with whitespace or contains a control character; the bridge strips the variable it reads, so such a path would be checked here as one file and opened there as another"
@@ -489,7 +523,7 @@ func executionPolicyReading(value string) (Object, string) {
 	if err != nil {
 		return nil, "the execution policy path " + evidence.Repr(value) + " could not be expanded: " + err.Error()
 	}
-	candidate, err := filepath.Abs(expanded)
+	candidate, err := pathlibAbsolute(expanded)
 	if err != nil {
 		return nil, "the execution policy path " + evidence.Repr(value) + " could not be made absolute: " + err.Error()
 	}
@@ -503,6 +537,32 @@ func executionPolicyReading(value string) (Object, string) {
 	summary := policy.Summary()
 	return Object{field("path", candidate), field("digest", summary["digest"]), field("mode", summary["mode"]), field("roles", ordered(summary["roles"])),
 		field("parsedWith", "this crw binary's bridge policy parser; the installed runtime parses the file again at every start and decides for itself")}, ""
+}
+
+// pathlibAbsolute is str(pathlib.Path(value).absolute()) on POSIX: the working directory
+// prefixed when value is relative, "." components and repeated or trailing slashes dropped, and
+// ".." KEPT. Folding ".." by text (filepath.Abs) names another file than the kernel opens when a
+// component before it is a symbolic link, and the record, the digest and the bridge have to name
+// the one file the operator named.
+func pathlibAbsolute(value string) (string, error) {
+	if !strings.HasPrefix(value, "/") {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		value = cwd + "/" + value
+	}
+	root := "/"
+	if strings.HasPrefix(value, "//") && !strings.HasPrefix(value, "///") {
+		root = "//"
+	}
+	var parts []string
+	for _, part := range strings.Split(value, "/") {
+		if part != "" && part != "." {
+			parts = append(parts, part)
+		}
+	}
+	return root + strings.Join(parts, "/"), nil
 }
 
 // RegisterMCP is `crw install register-mcp --owner plugin`: the record the packaged launcher

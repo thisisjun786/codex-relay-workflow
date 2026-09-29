@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -175,25 +177,82 @@ func (h *host) pythonEraSettings(t *testing.T) string {
 	return text
 }
 
-// pythonVenv lays out a Python install as runtime_install.py left it: a venv directory with a
-// COMPLETE claim, and install entries for both components inside it.
+// hostPython is this host's python3, resolved, or "" when there is none.
+var hostPython = sync.OnceValue(func() string {
+	found, err := exec.LookPath("python3")
+	if err != nil {
+		return ""
+	}
+	resolved, err := filepath.EvalSymlinks(found)
+	if err != nil {
+		return ""
+	}
+	return resolved
+})
+
+// pythonLib is the lib/python<X.Y> directory a venv built on hostPython uses, so the venv's own
+// interpreter finds the packages copied into it.
+var pythonLib = sync.OnceValue(func() string {
+	if hostPython() == "" {
+		return "python3.13"
+	}
+	out, err := exec.Command(hostPython(), "-c", "import sys; print('python%d.%d' % sys.version_info[:2])").Output()
+	if err != nil {
+		return "python3.13"
+	}
+	return strings.TrimSpace(string(out))
+})
+
+func sitePackages(env string) string { return filepath.Join(env, "lib", pythonLib(), "site-packages") }
+
+func executable(t *testing.T, path, text string) {
+	t.Helper()
+	write(t, path, text)
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// pythonVenv lays out a Python install as runtime_install.py left it for the fence release: a
+// venv whose bin/python3 is this host's interpreter, the codex-session-relay package (the real
+// fence source, so its stopadapter and its ownership BUILD are the fence's) copied into
+// site-packages, the crw-completion-hook console script pip writes for
+// codex_session_relay.stopadapter:main, a COMPLETE claim, and install entries for both
+// components inside it. Its relay and bridge scripts run this build's crw, so the gate can ask
+// the relay when the venv is the selected runtime.
 func (h *host) pythonVenv(t *testing.T) string {
 	t.Helper()
 	env := filepath.Join(h.dest, "env-1-0be23c258476")
-	write(t, filepath.Join(env, "pyvenv.cfg"), "home = /usr/bin\n")
-	// The venv's relay answers as the relay does; the gate asks it when it is the selected one.
+	python := hostPython()
+	if python == "" {
+		python = "/bin/sh"
+	}
+	write(t, filepath.Join(env, "pyvenv.cfg"), "home = "+filepath.Dir(python)+"\ninclude-system-site-packages = false\n")
+	if err := os.MkdirAll(filepath.Join(env, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(python, filepath.Join(env, "bin", "python3")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("python3", filepath.Join(env, "bin", "python")); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := binary(); err != nil {
 		t.Fatal(err)
 	}
-	write(t, filepath.Join(env, "bin", "codex-session-relay"), "#!/bin/sh\nexec '"+filepath.Join(buildDir, "crw")+"' relay \"$@\"\n")
-	if err := os.Chmod(filepath.Join(env, "bin", "codex-session-relay"), 0o755); err != nil {
-		t.Fatal(err)
+	crw := filepath.Join(buildDir, "crw")
+	executable(t, filepath.Join(env, "bin", "codex-session-relay"), "#!/bin/sh\nexec '"+crw+"' relay \"$@\"\n")
+	executable(t, filepath.Join(env, "bin", "codex-thread-bridge"), "#!/bin/sh\nexec '"+crw+"' bridge \"$@\"\n")
+	executable(t, filepath.Join(env, "bin", "crw-completion-hook"), "#!"+filepath.Join(env, "bin", "python3")+"\n# -*- coding: utf-8 -*-\nimport re\nimport sys\nfrom codex_session_relay.stopadapter import main\nif __name__ == \"__main__\":\n    sys.argv[0] = re.sub(r'(-script\\.pyw|\\.exe)?$', '', sys.argv[0])\n    sys.exit(main())\n")
+	source := filepath.Join(golden.Root(), "packages", "codex-session-relay", "src", "codex_session_relay")
+	for _, name := range []string{"__init__.py", "errors.py", "ownership.py", "stopadapter.py"} {
+		write(t, filepath.Join(sitePackages(env), "codex_session_relay", name), readFile(t, filepath.Join(source, name)))
 	}
 	claim := staging.Payload(staging.Complete, staging.WrittenByPython, "CRW-116", "1", 1, "host", "2026-09-25T00:40:21Z")
 	write(t, staging.ClaimPath(env), string(record.Encode(claim)))
 	var delta record.Delta
 	for _, c := range []struct{ name, module string }{{"codex-session-relay", "codex_session_relay"}, {"codex-thread-bridge", "codex_thread_bridge"}} {
-		location := filepath.Join(env, "lib", "python3.13", "site-packages", c.module)
+		location := filepath.Join(sitePackages(env), c.module)
 		if err := os.MkdirAll(location, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -208,10 +267,13 @@ func (h *host) pythonVenv(t *testing.T) string {
 }
 
 // The host's Python-era settings name current/bin/python3, which vanishes when the pointer
-// leaves the venv. install retires them and writes their Go variant - the same host facts, only
-// the adapter moved - BEFORE it moves the pointer, and a rollback to the Python runtime puts
-// them back before it moves the pointer again. hook refuses to replace them while the pointer
-// still reaches the Python adapter.
+// leaves the venv. install retires them (archived, never deleted) and writes their Go variant -
+// the same host facts, only the adapter moved - BEFORE it moves the pointer. That one document
+// serves both runtime kinds (/usr/bin/env <pointer>/bin/crw-completion-hook is the Go hook on a
+// Go runtime and the Python Stop adapter's console script on a venv), so a rollback to the
+// Python runtime and a roll forward again leave it exactly as it is, and the archive is never
+// put back. hook refuses to replace the Python-era document while the pointer still reaches the
+// Python adapter.
 func TestPythonEraSettingsMoveWithThePointer(t *testing.T) {
 	h := newHost(t)
 	original := h.pythonEraSettings(t)
@@ -236,14 +298,17 @@ func TestPythonEraSettingsMoveWithThePointer(t *testing.T) {
 		}
 	}
 	back, code := install.Rollback(context.Background(), h.options(), venv)
-	if code != install.OK || h.pointerTarget(t) != venv || at(back, "settings", "action") != "restored" {
+	if code != install.OK || h.pointerTarget(t) != venv || at(back, "settings", "action") != "none" {
 		t.Fatalf("rollback to the Python runtime: exit %d\n%s", code, golden.Canon(back))
 	}
-	if readFile(t, path) != original {
-		t.Fatal("the Python-era document was not put back")
+	if readFile(t, path) != now {
+		t.Fatal("a rollback to the Python runtime rewrote the settings")
 	}
-	if again, code := install.Rollback(context.Background(), h.options(), ""); code != install.OK || at(again, "settings", "action") != "replaced" || readFile(t, path) != now {
+	if again, code := install.Rollback(context.Background(), h.options(), ""); code != install.OK || at(again, "settings", "action") != "none" || readFile(t, path) != now {
 		t.Fatalf("rolling forward again: exit %d\n%s", code, golden.Canon(again))
+	}
+	if archives := must(filepath.Glob(path + ".superseded-*")); len(archives) != 1 || readFile(t, archives[0]) != original {
+		t.Fatalf("the Python-era document is archived once and stays archived: %v", archives)
 	}
 }
 

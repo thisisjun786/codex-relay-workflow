@@ -48,8 +48,11 @@ func budgetComplaints(guard, registered int64) []string {
 // (and every legacy launcher a cached turn still runs) reads, with the relay and the Go adapter
 // named through the owned pointer and adapterInterpreter /usr/bin/env. It registers nothing:
 // the plugin package declares the registration. It places no launcher file. A Python-era
-// document is replaced only while the pointer already names a Go runtime; before that,
-// `crw install install` replaces it immediately before it moves the pointer.
+// document is replaced only while the pointer already names a Go runtime (before that,
+// `crw install install` replaces it immediately before it moves the pointer), and only by
+// settings that record every host fact it records - mode, isolation, roots, database, socket,
+// relay and budget - so that only the adapter and installedBy move; settings built from other
+// flags answer config_differs with the fields and the repair, and nothing is written.
 func Hook(_ context.Context, o Options, h HookOptions) (Object, int) {
 	hookFile := filepath.Join(o.CodexHome, "hooks.json")
 	base := Object{field("command", "hook"), field("adapter", "completion"), field("owner", h.Owner), field("hookFile", hookFile)}

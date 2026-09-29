@@ -358,24 +358,69 @@ document refused. And the value cannot be the binary: the legacy launchers a cac
 runs (plugins/crw/wiring/crw_stop_hook.py, its `<CODEX_HOME>/crw-stop-hook.py` copy) execute
 `[adapterInterpreter, adapterEntryPoint, <settings>]`, so the binary as interpreter would receive
 its own path as the settings argument and evaluate nothing on every Stop. `/usr/bin/env` executes
-the entry point with the settings path as its one argument, which is what the Go hook reads. The
-relay host's Python-era document (`adapterInterpreter` `.../current/bin/python3`, a path that
-vanishes when the pointer leaves the venv) is copied aside (`.superseded-<stamp>`, the name
-`steps.retire` gives, never deleted) and replaced by its Go variant - the same host facts, only the
-two adapter keys moved - in one rename, inside the promotion that moves the pointer and before the
-move; a rollback to a Python runtime renames the newest archived Python-era document back over the
-Go one before its move. Neither replacement removes the document first, as `steps.retire` does:
-between a move and the write that follows it a Stop finds no settings and is released without a
-journal row, and a write that fails there leaves none at all. A replacement that fails or does not
-read back as written leaves the document it found in place.
+the entry point with the settings path as its one argument, which is what the Go hook reads.
+
+One document for both runtime kinds (todo 38 review): `crw install` writes one plugin-owned Stop
+settings document, valid through the pointer for a Go runtime and for a venv alike, and no
+promotion or rollback rewrites it. `/usr/bin/env <destination>/current/bin/crw-completion-hook
+<settings>` runs the Go hook on a Go runtime and, on a venv, the fence release's
+`crw-completion-hook` console script (`codex_session_relay.stopadapter:main`, which reads
+`argv[1]` as its settings; its `complaints()` accepts `/usr/bin/env`), and `relayExecutable`
+`<destination>/current/bin/codex-session-relay` is the Go link or the venv's console script. The
+only rewrite is forward, once: the relay host's Python-era document (`adapterInterpreter`
+`.../current/bin/python3`, a path that vanishes when the pointer leaves the venv) is archived on
+the first Go install - under the `.superseded-<stamp>` name `steps.retire` gives, as a hard link
+to the same file (a copy where the filesystem refuses a link), never deleted - and replaced by its
+Go variant (the same host facts, only the two adapter keys moved) in one rename, inside the
+promotion and before the pointer moves. Both documents run while the pointer still names the
+venv, so there is no window. `crw install hook --owner plugin` replaces a Python-era document on
+a Go host only by settings that record the same host facts; other flags answer `config_differs`
+with the fields and the repair, because a silent rewrite of the mode changes whether turns can be
+held.
+
+A rollback to a venv never puts the archive back. Before it moves the pointer it requires the
+venv to serve the document: `bin/crw-completion-hook`, `bin/codex-session-relay` and
+`bin/codex-thread-bridge` resolve to regular files this user may execute, and so does each one's
+`#!` interpreter and the recorded `interpreterPath`; the hook script names
+`codex_session_relay.stopadapter`; the relay package the record lists there is the fence release
+(its `ownership.py` declares `BUILD = "codex-session-relay/0.2.0"`, `ownership.PythonBuild`); and
+every path the live document names through the pointer exists in the venv. Otherwise it refuses
+with nothing changed. An operator who wants the Python-era document back restores it by hand, and
+only while the pointer names the venv (after `crw install rollback <venv>`): take the newest
+`<CODEX_HOME>/crw-completion-hook.json.superseded-*` whose `adapterInterpreter` ends in
+`/current/bin/python3` and `mv` it over `crw-completion-hook.json` - one rename, so a Stop never
+finds the path empty. The next `crw install` archives it again and writes its Go variant.
+
+A replacement never destroys a document. A write that fails leaves the path as found and drops
+only the archive name. Bytes at the path that are not this run's - another writer's save, which
+is what a read-back mismatch after a successful atomic write means - are left where they are with
+the archive kept, and the answer names both. A transition undone after a failed commit or pointer
+move puts the archive back only while the path holds exactly the bytes this run wrote, and then by
+an atomic exchange of the two names (renameat2 `RENAME_EXCHANGE` on Linux, a rename elsewhere),
+which restores the document's own file. A document whose `adapterInterpreter` is `env` and whose
+`adapterEntryPoint` holds `=` is never written: GNU env reads such an argument as an assignment
+and executes the settings path instead.
+
+The bridge record names its execution policy as runtime_install.py records it,
+`Path(value).expanduser().absolute()`: `..` is kept rather than folded by text, so the record,
+its digest and the bridge all name the file the kernel opens for that spelling, a symbolic link
+before the `..` included.
 
 Evidence: scripts/crw_runtime/completion.py:55 (`CONFIG_NAME`), :550 (`complaints`), :2751
 (`configuration`); scripts/crw_runtime/bridgerecord.py:77 (`record_path`), :163 (`document`);
 plugins/crw/wiring/crw_stop_hook.py:97 (`adapter_call`), :141 (the `subprocess.run` of
-`call + [settings]`); scripts/crw_transition/steps.py:59 (`retire`); internal/relay/hook/
-adapter.go (args[0] is the settings path); internal/runtime/install (`TestHookSettingsBytesArePythons`,
-`TestBridgeRecordBytesArePythons`, `TestLegacyStopLaunchersReachTheGoHook`,
-`TestPythonEraSettingsMoveWithThePointer`); draft L1, L4, L5, GAP-9, D6.
+`call + [settings]`); scripts/crw_transition/steps.py:59 (`retire`); scripts/runtime_install.py:4828
+(the policy path); packages/codex-session-relay/pyproject.toml:28 (the console script),
+packages/codex-session-relay/src/codex_session_relay/stopadapter.py:259 (`complaints`), :1350
+(`main`), ownership.py:17 (`BUILD`); docs/port/cutover.md:446 (never an unfenced Python
+fallback); internal/relay/hook/adapter.go (args[0] is the settings path); internal/runtime/install
+(`TestHookSettingsBytesArePythons`, `TestBridgeRecordBytesArePythons`,
+`TestLegacyStopLaunchersReachTheGoHook`, `TestPythonEraSettingsMoveWithThePointer`,
+`TestARollbackToAVenvNeverRewritesTheSettings`, `TestARollbackKilledAtItsCommitLeavesStopsRecorded`,
+`TestARollbackToAVenvNeedsNoArchive`, `TestARollbackKeepsTheHostFactsTheSettingsRecord`,
+`TestHookKeepsThePythonEraHostFacts`, `TestAReplacementNeverDestroysAnotherWritersDocument`,
+`TestAnEntryPointEnvWouldMisreadIsRefused`, `TestTheExecutionPolicyPathIsSpelledAsPythonRecordsIt`);
+draft L1, L4, L5, GAP-9, D6.
 
 ## 19. Bridge provenance
 
@@ -1362,8 +1407,11 @@ recorded. Promotion is one critical section under `.promotion-lock`: the record 
 the swap gate (decision 36) asks the selected relay, the pointer must be absent or a link this
 record placed, one owner per surface is required (the bridge in `config.toml` or the plugin record,
 never both, and a `codex-thread-bridge` table must name the pointer; the Stop adapter in
-`hooks.json` or plugin settings, never both), the Stop settings are carried to the new runtime kind
-(decision 18), then the selection, the pointer's placement and `outgoing` are committed in one
+`hooks.json` or plugin settings, never both; and no `hooks.json` registration of the adapter and no
+`config.toml` table may run through the pointer anything the runtime about to be named does not
+provide - the venv's `bin/python3` on a Go runtime - because the user-owned registrations are
+retired and such an entry is a second owner that would run nothing after the swap), the Stop
+settings are carried to the new runtime kind (decision 18), then the selection, the pointer's placement and `outgoing` are committed in one
 write, the pointer is renamed over and read back, and on any failure the pointer, the selection,
 `outgoing` and the settings are put back (the settings are replaced by copying the old document
 aside and renaming the new one over it, so the path is never empty and a write that fails or does
@@ -1371,11 +1419,21 @@ not read back leaves the old document where it was). The COMPLETE claim is writt
 statuses are 0 (promoted and settled, or already installed), 1 (refused: nothing moved, and this
 run's directory was released unless the record or the pointer may name it), 2 (usage) and 3
 (promoted and in service, only the claim unsettled: never a free destination). `crw install
-rollback` returns the pointer to `outgoing` (or to a directory the record lists) under the same
-lock and rules;
-for a Python venv target the gate's schema cell compares the store with this build's declared
-schema, which stands for the Python runtime's because the DDL is identical (decision 14) and no Go
-release changes it before the commit point (docs/port/cutover.md). `crw install remove <dir>`
+rollback` returns the pointer to `outgoing`, or to a runtime directory the record lists exactly (an
+install entry's `environment`, never a directory that merely contains one), under the same lock
+and rules. The target has to be launchable as it stands, judged without running it: a Go runtime
+as the doctor judges a selected one (`bin/crw` a regular file this user may execute, each link
+resolving to it), a venv as decision 18 requires. Its claim has to be COMPLETE, or STAGING with
+nobody holding it where the record's selection or `outgoing` proves a promotion committed it (an
+exit 3, or a run killed after its pointer moved); the rollback then settles it last, as resuming
+does, and answers 3 when it cannot. The runtime it leaves, in service with its claim still
+STAGING, is settled COMPLETE as well, so a later install of that archive keeps it rather than
+reclaiming it. Where the pointer already names the target (a run killed between its commit and its
+pointer move) no runtime is replaced, so the swap gate is not asked and only the selection moves;
+every other check still applies. No rollback rewrites the Stop settings (decision 18). For a Python
+venv target the gate's schema cell compares the store with this build's declared schema, which
+stands for the Python runtime's because the DDL is identical (decision 14) and no Go release
+changes it before the commit point (docs/port/cutover.md). `crw install remove <dir>`
 deletes one `env-*` or `bin-*` directory directly under the destination only when the record does
 not select it, the pointer does not (and is established not to) name it, it carries a readable
 claim of runtime_install.py's or crw install's whose lock nobody holds, and no live process runs
@@ -1408,7 +1466,10 @@ runtime_install.py's install properties by behaviour rather than by code.
 Evidence: scripts/runtime_install.py:2610-3296 (`cmd_install`), :3297-3636 (`_settle_claim`),
 :4027-4414 (restore and release), :4472-4627 (`measure_candidate`), :5163-5617 (`register-mcp`),
 :2300-2589 (`hook`); .goreleaser.yaml (archive names, links, SHA256SUMS); internal/runtime/install
-and its tests; .omo/ulw-execute/scope-analysis-31-46.md "# 38".
+and its tests (the rollback rules: `TestARollbackReturnsToAPromotedRuntimeWhoseClaimNeverSettled`,
+`TestARollbackThatMovesNoRuntimeAsksNoGate`, `TestARollbackRefusesARuntimeThatCannotBeLaunched`,
+`TestANamedRollbackNamesARuntimeDirectory`, `TestAUserRegistrationThroughThePointerIsASecondOwner`);
+.omo/ulw-execute/scope-analysis-31-46.md "# 38".
 
 ## 39. A caller's cancellation claims every answer the send has not yet used
 

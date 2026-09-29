@@ -29,7 +29,7 @@ func (h *host) pythonEraHost(t *testing.T) (string, string) {
 	venv := h.pythonVenv(t)
 	var selection []contract.Field
 	for _, c := range []struct{ name, module string }{{"codex-session-relay", "codex_session_relay"}, {"codex-thread-bridge", "codex_thread_bridge"}} {
-		selection = append(selection, contract.Field{Key: c.name, Value: filepath.Join(venv, "lib", "python3.13", "site-packages", c.module)})
+		selection = append(selection, contract.Field{Key: c.name, Value: filepath.Join(sitePackages(venv), c.module)})
 	}
 	placed := record.Object{{Key: "path", Value: pointer.Path(h.dest)}, {Key: "recordedAt", Value: "2026-09-25T00:40:21Z"}, {Key: "recordedBy", Value: "CRW-116"}}
 	if _, err := record.Update(h.record, 1, record.Delta{Select: selection, Pointer: placed}); err != nil {
@@ -74,14 +74,21 @@ var errNoSpace = &os.PathError{Op: "write", Path: "injected", Err: syscall.ENOSP
 // A settings write that fails after the Python-era document was set aside - a full disk, an I/O
 // error, a quota - leaves that document in place: the install refuses at the settings step,
 // the pointer and the selection are untouched, and the settings path holds the Python-era bytes
-// with no archive left behind. The document is copied aside rather than moved, so at the moment
-// the Go document is written the path still holds the Python-era one; a write that lands and
-// does not read back as written is renamed back over. `crw install hook`, the other writer of
-// that replacement, refuses on the same failures instead of answering success.
+// with no archive left behind. The archive is a second name for the document rather than a
+// move, so at the moment the Go document is written the path still holds the Python-era one.
+// A write that lands and does not read back as written means the path now holds bytes this run
+// did not write - another writer's save - and those are never removed or overwritten: they stay
+// at the path, the Python-era document stays at its archive name, and the answer names both.
+// `crw install hook`, the other writer of that replacement, refuses on the same failures
+// instead of answering success.
 func TestAFailedSettingsWriteKeepsThePythonEraSettings(t *testing.T) {
 	settingsPath := func(h *host) string { return filepath.Join(h.codex, install.SettingsName) }
-	for name, fault := range map[string]func(h *host, t *testing.T, original string) func(string, []byte) error{
-		"the write fails": func(h *host, t *testing.T, original string) func(string, []byte) error {
+	for name, tc := range map[string]struct {
+		fault func(h *host, t *testing.T, original string) func(string, []byte) error
+		// landed is what the path holds afterwards when the write landed as another's bytes.
+		landed bool
+	}{
+		"the write fails": {fault: func(h *host, t *testing.T, original string) func(string, []byte) error {
 			return func(path string, text []byte) error {
 				if path != settingsPath(h) {
 					return record.AtomicWrite(path, text)
@@ -91,35 +98,49 @@ func TestAFailedSettingsWriteKeepsThePythonEraSettings(t *testing.T) {
 				}
 				return errNoSpace
 			}
-		},
-		"the write does not read back": func(h *host, t *testing.T, original string) func(string, []byte) error {
+		}},
+		"the write does not read back": {landed: true, fault: func(h *host, t *testing.T, original string) func(string, []byte) error {
 			return func(path string, text []byte) error {
 				if path == settingsPath(h) {
 					text = bytes.Replace(text, []byte(`"observe"`), []byte(`"hold"`), 1)
 				}
 				return record.AtomicWrite(path, text)
 			}
-		},
+		}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHost(t)
 			venv, original := h.pythonEraHost(t)
 			before := h.hostState(t)
-			restore := install.ReplaceSettingsWriter(fault(h, t, original))
+			restore := install.ReplaceSettingsWriter(tc.fault(h, t, original))
 			result, code := install.Install(context.Background(), h.options(), "update", install.Source{From: archive(t, "0.9.0", "")})
 			restore()
 			if code != install.Refused || at(result, "failedStep") != "carry the Stop settings to this runtime" {
 				t.Fatalf("exit %d\n%s", code, golden.Canon(result))
 			}
-			if after := h.hostState(t); after != before {
-				t.Fatalf("a failed settings write changed the host:\n%s\nwas\n%s", after, before)
-			}
 			if h.pointerTarget(t) != venv {
 				t.Fatal("the pointer moved")
 			}
+			archives := must(filepath.Glob(settingsPath(h) + ".superseded-*"))
+			if tc.landed {
+				// The bytes that landed are not this run's, so they are left, and the document
+				// the run found is where the answer says it is.
+				if got := readFile(t, settingsPath(h)); !strings.Contains(got, `"hold"`) || len(archives) != 1 || readFile(t, archives[0]) != original ||
+					at(result, "settings", "write", "outcome") != install.ConfigAppliedUnverified || at(result, "settings", "write", "retired") != archives[0] {
+					t.Fatalf("settings %q archives %v\n%s", got, archives, golden.Canon(at(result, "settings")))
+				}
+			} else if after := h.hostState(t); after != before {
+				t.Fatalf("a failed settings write changed the host:\n%s\nwas\n%s", after, before)
+			}
 
 			// The same failure through `crw install hook`, once a Go runtime is what the pointer
-			// names: refused, and the Python-era document still in place.
+			// names: refused, and the Python-era document not lost.
+			for _, archived := range archives {
+				if err := os.Remove(archived); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write(t, settingsPath(h), original)
 			h.mustInstall(t, "update", archive(t, "0.9.1", ""))
 			write(t, settingsPath(h), original)
 			for _, archived := range must(filepath.Glob(settingsPath(h) + ".superseded-*")) {
@@ -127,16 +148,21 @@ func TestAFailedSettingsWriteKeepsThePythonEraSettings(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			restore = install.ReplaceSettingsWriter(fault(h, t, original))
+			restore = install.ReplaceSettingsWriter(tc.fault(h, t, original))
 			refused, code := install.Hook(context.Background(), h.options(), h.hookOptions())
 			restore()
-			if code != install.Refused || at(refused, "settings", "outcome") != install.ConfigNotWritten {
+			archives = must(filepath.Glob(settingsPath(h) + ".superseded-*"))
+			switch {
+			case tc.landed:
+				if code != install.Refused || at(refused, "settings", "outcome") != install.ConfigAppliedUnverified || len(archives) != 1 || readFile(t, archives[0]) != original || !strings.Contains(readFile(t, settingsPath(h)), `"hold"`) {
+					t.Fatalf("hook: exit %d\n%s", code, golden.Canon(refused))
+				}
+			case code != install.Refused || at(refused, "settings", "outcome") != install.ConfigNotWritten:
 				t.Fatalf("hook: exit %d\n%s", code, golden.Canon(refused))
-			}
-			if readFile(t, settingsPath(h)) != original || len(must(filepath.Glob(settingsPath(h)+".superseded-*"))) != 0 {
+			case readFile(t, settingsPath(h)) != original || len(archives) != 0:
 				t.Fatal("hook: the Python-era settings were not kept as they were")
 			}
-			if name == "the write fails" {
+			if !tc.landed {
 				// And a first write that fails is a refusal too, never an answer that they were created.
 				if err := os.Remove(settingsPath(h)); err != nil {
 					t.Fatal(err)
@@ -163,8 +189,9 @@ func must[T any](v T, err error) T {
 // cannot be committed, the pointer cannot be placed, or it is placed and does not read back as
 // naming the candidate - puts back everything it changed: the pointer target, the selection,
 // the pointer's ownership entry, outgoing and the settings bytes all equal what the run found,
-// and no archive is left beside the settings. Checked for an update away from a Python-era host
-// and for a rollback from a Go runtime back to that Python runtime.
+// the settings path is the very file it found (the archive is exchanged back, not copied), and
+// no archive is left beside the settings. Checked for an update away from a Python-era host and
+// for a rollback from a Go runtime back to that Python runtime, which changes no settings.
 func TestAFailedPromotionPutsBackEverythingItChanged(t *testing.T) {
 	commitFails := func(t *testing.T) func() {
 		return install.ReplaceSelectionCommit(func(string, int, record.Delta) (reading.Reading, error) {
@@ -192,6 +219,7 @@ func TestAFailedPromotionPutsBackEverythingItChanged(t *testing.T) {
 			venv, _ := h.pythonEraHost(t)
 			candidate := archive(t, "0.9.0", "")
 			before := h.hostState(t)
+			found := must(os.Stat(filepath.Join(h.codex, install.SettingsName)))
 			restore := tc.inject(t)
 			result, code := install.Install(context.Background(), h.options(), "update", install.Source{From: candidate})
 			restore()
@@ -200,6 +228,9 @@ func TestAFailedPromotionPutsBackEverythingItChanged(t *testing.T) {
 			}
 			if after := h.hostState(t); after != before {
 				t.Fatalf("the failed promotion left the host changed:\n%s\nwas\n%s\n%s", after, before, golden.Canon(result))
+			}
+			if now := must(os.Stat(filepath.Join(h.codex, install.SettingsName))); !os.SameFile(found, now) {
+				t.Fatal("the settings path holds a copy of the document it held, not the document itself")
 			}
 			if h.pointerTarget(t) != venv || at(result, "settings", "undone", "undone") != true {
 				t.Fatalf("pointer %s, settings %s", h.pointerTarget(t), golden.Canon(at(result, "settings")))
@@ -216,7 +247,7 @@ func TestAFailedPromotionPutsBackEverythingItChanged(t *testing.T) {
 			restore := tc.inject(t)
 			result, code := install.Rollback(context.Background(), h.options(), venv)
 			restore()
-			if code != install.Refused || at(result, "applied") != false || at(result, "settings", "undone", "undone") != true {
+			if code != install.Refused || at(result, "applied") != false || at(result, "settings", "action") != "none" {
 				t.Fatalf("exit %d\n%s", code, golden.Canon(result))
 			}
 			if after := h.hostState(t); after != before {
