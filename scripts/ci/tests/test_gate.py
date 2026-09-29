@@ -177,11 +177,40 @@ class WorkflowTests(unittest.TestCase):
             self.assertIn(target, body)
         for artifact in ("crw_linux_amd64", "crw_linux_arm64", "crw_darwin_arm64", "SHA256SUMS"):
             self.assertRegex(body, rf"(?m)^          name: {artifact}$")
-        # The isolated-home integration test installs the binary the dist leg just built.
-        self.assertIn('CRW_TEST_BINARY="$PWD/dist/crw_linux_amd64/crw" go test -trimpath'
-                      ' -tags integration -count=1 ./internal/runtime/integration/...', body)
         for action in re.findall(r"uses: (\S+)", body):
             self.assertRegex(action, r"@[0-9a-f]{40}$")
+        # The isolated-home integration test runs in the dist leg, after the build, against the
+        # binary it built; internal/dev/ci Test47_GATE_10 pins the same step.
+        steps = self.steps("go-product")
+        names = [step.get("name") for step in steps]
+        build = "Build the static binaries for every published target"
+        wired = "Install and wire the release binary in an isolated home"
+        for name in (build, wired):
+            self.assertEqual(names.count(name), 1, f"go-product must have one step named {name!r}")
+            self.assertEqual(steps[names.index(name)].get("if"), "matrix.part == 'dist'", name)
+        self.assertGreater(names.index(wired), names.index(build))
+        step = steps[names.index(wired)]
+        self.assertEqual(step.get("run"), 'CRW_TEST_BINARY="$PWD/dist/crw_linux_amd64/crw" go test -trimpath'
+                         ' -tags integration -count=1 ./internal/runtime/integration/...')
+        self.assertNotIn("continue-on-error", step)
+
+    def steps(self, job):
+        """The job's steps in order, each as its own top-level keys (key -> the rest of the line).
+
+        As small as workflow_jobs: a step starts at `      - ` and its keys sit eight spaces in.
+        """
+        _, found, body = workflow_jobs()[job].partition("\n    steps:\n")
+        self.assertTrue(found, f"{job} has no steps")
+        steps = []
+        for block in re.split(r"(?m)^      - ", body)[1:]:
+            first, *rest = block.splitlines()
+            keys = {}
+            for line in ["        " + first, *rest]:
+                key = re.fullmatch(r"        ([a-z][a-z-]*):(?: (.*))?", line)
+                if key:
+                    keys[key[1]] = key[2] or ""
+            steps.append(keys)
+        return steps
 
     def matrix(self, job, key):
         found = re.search(rf"(?m)^        {key}: \[([^\]]+)\]$", workflow_jobs()[job])

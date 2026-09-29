@@ -297,14 +297,22 @@ proves them end to end in one isolated home: `TestIsolatedHome` in
 `internal/runtime/integration`, behind the `integration` build tag, run by the go-product
 dist leg against the binary that leg built (`CRW_TEST_BINARY`). It installs release
 archives of that binary and a relinked second one with `crw install`, copies the working-tree
-package into the Codex home's plugin cache and runs the declared commands as the host does. A
-PATH of tripwires fails the test if anything asks for python, python3, pip or uv, and every
-Stop assertion reads the journal row, never the exit status alone.
+package into the Codex home's plugin cache and runs the declared commands as the host does.
+The Stop hook, `crw install` and every MCP server start after the first run with a PATH that
+names only tripwires for python, python3, pip and uv and a Codex stub, so a PATH lookup of any of
+them fails the test. That covers PATH lookups only: an absolute interpreter such as
+`/usr/bin/python3` would go unseen, and so would anything the first MCP start runs, since that
+start has no PATH and `/bin/sh` searches its built-in default; the legacy bootstrap runs this
+machine's python3 on purpose, with PATH naming that interpreter's directory alone. Every Stop assertion reads the journal row, never the exit status alone, and
+requires the one healthy outcome with no relay running: `guard_unreachable`, the guard invoked,
+at the default socket the installer's settings name. `CODEX_SESSION_RELAY_SCOPE_DIR` is set
+under the temporary root because the relay resolves its scope registry from the passwd entry's
+home, not `$HOME`; the test asks the relay the swap gate asks which registry it reads.
 
 | Python class | property | Go test (subtest of `TestIsolatedHome`) |
 | --- | --- | --- |
-| StopLauncherTest | the declared hook runs the adapter under the installer's settings and journals the Stop; a missing runtime releases the turn with nothing on stdout and no row | `IS-1 install and wiring`, `IS-7 cache replacement and a missing runtime` |
-| BridgeLauncherTest, BridgeLauncherPolicyTest | the declared server, given HOME alone, finds a Codex home that is not `$HOME/.codex` from its cache location, reads the record and runs the pointer's bridge (same pid, argv[0] `codex-thread-bridge`) with exactly the 12 tools and the recorded policy digest, or presence_only when the record names none; a missing runtime fails loudly naming it | `IS-1 install and wiring`, `IS-7 cache replacement and a missing runtime`, `IS-8 update, refusal, rollback and remove` |
+| StopLauncherTest | the declared hook runs the adapter under the installer's settings and journals the Stop as `guard_unreachable` at the default socket; a missing runtime releases the turn with nothing on stdout and no row | `IS-1 install and wiring`, `IS-7 cache replacement and a missing runtime` |
+| BridgeLauncherTest, BridgeLauncherPolicyTest | the declared server, given HOME alone and then HOME with the tripwire PATH but never CODEX_HOME, finds a Codex home that is not `$HOME/.codex` from its cache location, reads the record and runs the pointer's bridge (same pid, argv[0] `codex-thread-bridge`) with exactly the 12 tools and the recorded policy digest, or presence_only when the record names none; a missing runtime fails loudly naming it | `IS-1 install and wiring`, `IS-7 cache replacement and a missing runtime`, `IS-8 update, refusal, rollback and remove` |
 | DeclaredStopCommandTest | the pre-native bootstrap fixed before the cache was replaced reaches the Go hook through the packaged launcher and, once the cache is gone, through the `<CODEX_HOME>/crw-stop-hook.py` copy; the native command holds no cache path and survives the replacement | `IS-7 cache replacement and a missing runtime/legacy bootstrap` (skipped without python3; deleted with the launchers in todo 43), `IS-7 cache replacement and a missing runtime` |
 
 ## Files

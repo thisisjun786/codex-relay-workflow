@@ -6,7 +6,15 @@
 // into a temporary HOME whose Codex home is not $HOME/.codex. The working-tree plugin package is
 // copied into that Codex home's plugin cache, and its declared commands run the way the host
 // runs them: the Stop hook through `/bin/sh -c` with CODEX_HOME and PLUGIN_ROOT set, the MCP
-// server as `sh ./wiring/crw-bridge.sh` from the installed version directory with only HOME set.
+// server as `sh ./wiring/crw-bridge.sh` from the installed version directory without CODEX_HOME,
+// the first time with only HOME set.
+//
+// The Stop hook, `crw install` and every MCP start after the first run with a PATH of tripwires
+// (python, python3, pip, uv) and a Codex stub, so a PATH lookup of Python or its package tools
+// fails the test. That covers PATH lookups only: an absolute /usr/bin/python3 would go unseen,
+// and so would anything the first MCP start runs, since with no PATH at all /bin/sh searches its
+// built-in default and finds the real one. The legacy bootstrap runs this machine's python3 on
+// purpose.
 //
 // Every Stop hook path exits 0, so no hook assertion rests on the exit status: each one finds
 // the journal row the hook wrote for that session and turn, or proves that none was written.
@@ -101,6 +109,11 @@ var toolNames = []string{
 // isolated is one temporary host: every path below lives under root, which is t.TempDir().
 type isolated struct {
 	root, home, codex, state, tmp, trip, tools, sentinel string
+	// scopes and markers are the relay scope registry and marker root; see isolation.
+	scopes, markers string
+	// socket is the relay socket the installer's settings default to. No relay runs here, so
+	// every Stop the hook records finds nothing listening there.
+	socket string
 	// dest is the installer's default destination and current its owned pointer.
 	dest, current, record, relayState, ledger string
 	// journal, settings and bridgeRecord are what `crw install hook` and `register-mcp` write
@@ -133,18 +146,20 @@ func newIsolated(t *testing.T) *isolated {
 	root := t.TempDir()
 	h := &isolated{root: root, home: filepath.Join(root, "home"), codex: filepath.Join(root, "codex"), state: filepath.Join(root, "state"),
 		tmp: filepath.Join(root, "tmp"), trip: filepath.Join(root, "trip"), tools: filepath.Join(root, "tools"),
-		sentinel: filepath.Join(root, "tripwire-fired"), relayState: filepath.Join(root, "relay-state"), ledger: filepath.Join(root, "bridge-ledger")}
+		sentinel: filepath.Join(root, "tripwire-fired"), relayState: filepath.Join(root, "relay-state"), ledger: filepath.Join(root, "bridge-ledger"),
+		scopes: filepath.Join(root, "scopes"), markers: filepath.Join(root, "markers")}
+	h.socket = filepath.Join(h.state, "codex-session-relay", "default", "control.sock")
 	h.dest = filepath.Join(h.home, ".local", "share", "crw-runtime")
 	h.current = filepath.Join(h.dest, "current")
 	h.record = filepath.Join(h.state, "codex-relay-workflow", "host-record.json")
 	h.journal = filepath.Join(h.codex, "crw-completion-hook", "journal")
 	h.settings = filepath.Join(h.codex, "crw-completion-hook.json")
 	h.bridgeRecord = filepath.Join(h.codex, "crw-bridge-mcp.json")
-	for _, path := range []string{h.home, h.codex, h.state, h.tmp, h.trip, h.tools, h.sentinel, h.relayState, h.ledger, h.dest, h.current, h.record, h.journal, h.settings, h.bridgeRecord} {
+	for _, path := range []string{h.home, h.codex, h.state, h.tmp, h.trip, h.tools, h.sentinel, h.relayState, h.ledger, h.dest, h.current, h.record, h.journal, h.settings, h.bridgeRecord, h.scopes, h.markers, h.socket} {
 		h.mustBeInside(t, path)
 	}
-	// The MCP launcher is given HOME alone, so it can find this Codex home only from the plugin
-	// cache it runs in; a Codex home at $HOME/.codex would also be its default.
+	// The MCP launcher is never given CODEX_HOME, so it can find this Codex home only from the
+	// plugin cache it runs in; a Codex home at $HOME/.codex would also be its default.
 	if h.codex == filepath.Join(h.home, ".codex") {
 		t.Fatalf("CODEX_HOME %s is $HOME/.codex", h.codex)
 	}
@@ -182,14 +197,34 @@ func (h *isolated) mustBeInside(t *testing.T, path string) {
 	}
 }
 
-// env is the isolated environment: the four homes and a PATH of tripwires and the Codex stub.
-// Nothing is inherited from this process. CRW_ALLOW_LIVE_STATE is not set, and need not be: the
-// relay state `crw install` exercises is named with --state outside
+// env is the isolated environment: the four homes, a PATH of tripwires and the Codex stub, and
+// isolation. Nothing is inherited from this process. CRW_ALLOW_LIVE_STATE is not set, and need
+// not be: the relay state `crw install` exercises is named with --state outside
 // $XDG_STATE_HOME/codex-session-relay, and a Stop hook whose relay is unreachable opens no store,
 // so the live-state guard has nothing here to refuse.
 func (h *isolated) env(extra ...string) []string {
-	return append([]string{"HOME=" + h.home, "CODEX_HOME=" + h.codex, "XDG_STATE_HOME=" + h.state, "TMPDIR=" + h.tmp,
-		"PATH=" + h.trip + ":" + h.tools}, extra...)
+	env := append([]string{"HOME=" + h.home, "CODEX_HOME=" + h.codex, "XDG_STATE_HOME=" + h.state, "TMPDIR=" + h.tmp,
+		"PATH=" + h.trip + ":" + h.tools}, h.isolation()...)
+	return append(env, extra...)
+}
+
+// isolation names the relay roots HOME does not move. The scope registry is resolved from the
+// passwd entry's home (service.ResolveScope, as Python's pwd.getpwuid), never from $HOME, so
+// without CODEX_SESSION_RELAY_SCOPE_DIR the relay `crw install`'s swap gate asks
+// (`codex-session-relay service status`) would read this machine's live registry. The marker
+// root follows $HOME already and is named here too, as testsupport.IsolateRelayState names both.
+func (h *isolated) isolation() []string {
+	return []string{"CODEX_SESSION_RELAY_SCOPE_DIR=" + h.scopes, "CODEX_SESSION_RELAY_MARKER_ROOT=" + h.markers}
+}
+
+// bareBridgeEnv is the least a host can start the MCP server with: HOME and nothing else, no
+// PATH either.
+func (h *isolated) bareBridgeEnv() []string { return []string{"HOME=" + h.home} }
+
+// bridgeEnv adds the tripwire PATH and isolation to HOME, and still no CODEX_HOME: a PATH lookup
+// of Python from the launcher or the Go bridge fires a tripwire.
+func (h *isolated) bridgeEnv() []string {
+	return append([]string{"HOME=" + h.home, "PATH=" + h.trip + ":" + h.tools}, h.isolation()...)
 }
 
 // hookEnv is what the host hands the declared Stop hook of the installed package.
@@ -514,7 +549,10 @@ func (h *isolated) rows(t *testing.T) []map[string]any {
 }
 
 // journaled requires a released turn (exit 0, nothing on stdout) that left exactly one journal
-// row for that session and turn, with an adapter outcome, read from the installer's settings.
+// row for that session and turn, read from the installer's settings, whose outcome is the only
+// healthy one here: no relay runs in this test, so the hook asked the guard at the default
+// socket the settings name and found nothing there. Any other outcome, adapter_faulted above
+// all, is a hook that failed on this install.
 func (h *isolated) journaled(t *testing.T, got outcome, session, turn string) {
 	t.Helper()
 	if got.code != 0 || got.stdout != "" {
@@ -529,8 +567,10 @@ func (h *isolated) journaled(t *testing.T, got outcome, session, turn string) {
 	if len(found) != 1 {
 		t.Fatalf("Stop %s/%s: %d journal rows for it (stderr %q); the hook exits 0 on every path, so only a row shows it ran", session, turn, len(found), got.stderr)
 	}
-	if outcome, _ := found[0]["adapterOutcome"].(string); outcome == "" || found[0]["configuration"] != h.settings {
-		t.Fatalf("Stop %s/%s: row %s", session, turn, show(found[0]))
+	row := found[0]
+	if detail, _ := row["detail"].(string); row["adapterOutcome"] != "guard_unreachable" || row["guardInvoked"] != true ||
+		!strings.Contains(detail, h.socket) || row["configuration"] != h.settings {
+		t.Fatalf("Stop %s/%s: want guard_unreachable at %s with the guard invoked, read from %s; row %s", session, turn, h.socket, h.settings, show(row))
 	}
 }
 
@@ -543,9 +583,9 @@ type bridgeAnswer struct {
 	exe, argv0 string
 }
 
-// bridge starts the declared MCP server from the installed version directory with only HOME
-// set, and asks it initialize, tools/list and get_capabilities over its stdio.
-func (h *isolated) bridge(t *testing.T) bridgeAnswer {
+// bridge starts the declared MCP server from the installed version directory with exactly env,
+// and asks it initialize, tools/list and get_capabilities over its stdio.
+func (h *isolated) bridge(t *testing.T, env []string) bridgeAnswer {
 	t.Helper()
 	command, args, cwd := mcpServer(t, h.payload)
 	if command != "sh" || cwd != "." {
@@ -553,10 +593,11 @@ func (h *isolated) bridge(t *testing.T) bridgeAnswer {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
-	// The environment names no PATH, so the declared "sh" is named by absolute path.
+	// The declared "sh" is named by absolute path: the environment names no PATH, or only
+	// tripwires and the Codex stub.
 	cmd := exec.CommandContext(ctx, "/bin/sh", args...)
 	cmd.Dir = filepath.Join(h.payload, cwd)
-	cmd.Env = []string{"HOME=" + h.home}
+	cmd.Env = env
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -621,13 +662,14 @@ func (h *isolated) bridge(t *testing.T) bridgeAnswer {
 	return answer
 }
 
-// bridgeAnswers requires the declared server to be runtimeDir's crw running as the bridge (the
-// pid the host started, exec'd through the pointer's codex-thread-bridge), to list exactly the 12
-// tools and to report the policy the bridge record names: its digest when it names one,
-// presence_only when it names none.
-func (h *isolated) bridgeAnswers(t *testing.T, runtimeDir string) {
+// bridgeAnswers requires the declared server, started with env, to be runtimeDir's crw running
+// as the bridge (the pid the host started, exec'd through the pointer's codex-thread-bridge), to
+// list exactly the 12 tools and to report the policy the bridge record names: its digest when it
+// names one, presence_only when it names none. No tripwire may have fired by then.
+func (h *isolated) bridgeAnswers(t *testing.T, runtimeDir string, env []string) {
 	t.Helper()
-	answer := h.bridge(t)
+	answer := h.bridge(t, env)
+	h.noTripwireFired(t)
 	listed := slices.Sorted(slices.Values(answer.tools))
 	if !slices.Equal(listed, toolNames) {
 		t.Errorf("tools/list %q, want %q", answer.tools, toolNames)
@@ -718,7 +760,8 @@ func (h *isolated) installAndWire(t *testing.T, archiveA string) {
 
 	command := stopCommand(t, h.payload)
 	h.journaled(t, h.stop(t, command, h.hookEnv(), "is1-session", "is1-turn"), "is1-session", "is1-turn")
-	h.bridgeAnswers(t, h.envA)
+	// HOME alone first, as the least a host passes; every later start adds the tripwire PATH.
+	h.bridgeAnswers(t, h.envA, h.bareBridgeEnv())
 
 	// The host's execution policy: the record is moved aside, as its repair says, and written
 	// again naming the policy by path and digest; the bridge then starts under that policy.
@@ -731,10 +774,26 @@ func (h *isolated) installAndWire(t *testing.T, archiveA string) {
 	if code != 0 || report["outcome"] != "record_created" || at(report, "executionPolicy", "digest") != fileDigest(t, policy) {
 		t.Fatalf("register-mcp --execution-policy: exit %d\n%s", code, show(report))
 	}
-	h.bridgeAnswers(t, h.envA)
+	h.bridgeAnswers(t, h.envA, h.bridgeEnv())
 
 	h.mustRun(t, h.bin("codex-session-relay"), "--help")
+	h.relayScope(t)
 	h.noTripwireFired(t)
+}
+
+// relayScope asks the selected relay what `crw install`'s swap gate asks it, `service status`
+// with the gate's --socket and --state, in the isolated environment: it must read the scope
+// registry under the temporary root, not the one under this user's passwd home.
+func (h *isolated) relayScope(t *testing.T) {
+	t.Helper()
+	got := run(t, h.root, h.env("CODEX_SESSION_RELAY_STATE="+h.relayState), "", h.bin("codex-session-relay"), "--socket", h.fake.SocketPath, "--state", h.relayState, "service", "status")
+	var status map[string]any
+	if err := json.Unmarshal([]byte(got.stdout), &status); err != nil {
+		t.Fatalf("service status: exit %d, no JSON (%v)\nstdout %s\nstderr %s", got.code, err, got.stdout, got.stderr)
+	}
+	if status["scopeRoot"] != h.scopes || status["scopeAuthority"] != "isolated" {
+		t.Fatalf("the relay the swap gate asks reads the scope registry %v (%v), want %s (isolated)", status["scopeRoot"], status["scopeAuthority"], h.scopes)
+	}
 }
 
 // settingsAccepted is hook-status's reading of the settings the installer wrote: the Go hook's
@@ -786,7 +845,7 @@ func (h *isolated) cacheReplacement(t *testing.T) {
 	fixedEnv := h.hookEnv()
 	h.payload = h.replaceCache(t, h.manifestVersion+"-replacement", nil)
 	h.journaled(t, h.stop(t, command, fixedEnv, "is7-replaced", "t"), "is7-replaced", "t")
-	h.bridgeAnswers(t, h.envA)
+	h.bridgeAnswers(t, h.envA, h.bridgeEnv())
 
 	t.Run("legacy bootstrap", h.legacyBootstrap)
 
@@ -803,7 +862,7 @@ func (h *isolated) cacheReplacement(t *testing.T) {
 		t.Errorf("runtime gone: exit %d stdout %q, %d rows from %d", got.code, got.stdout, len(h.rows(t)), before)
 	}
 	_, args, cwd := mcpServer(t, h.payload)
-	refused := run(t, filepath.Join(h.payload, cwd), []string{"HOME=" + h.home}, "", append([]string{"/bin/sh"}, args...)...)
+	refused := run(t, filepath.Join(h.payload, cwd), h.bridgeEnv(), "", append([]string{"/bin/sh"}, args...)...)
 	t.Logf("MCP launcher with the runtime gone: exit %d stderr %q", refused.code, refused.stderr)
 	if refused.code == 0 || refused.stdout != "" || !strings.Contains(refused.stderr, h.bin("codex-thread-bridge")) {
 		t.Errorf("runtime gone: the MCP launcher exited %d stdout %q stderr %q; want nonzero, naming the runtime", refused.code, refused.stdout, refused.stderr)
@@ -819,9 +878,11 @@ func (h *isolated) cacheReplacement(t *testing.T) {
 // todo 43 retires it: a python3 bootstrap fixed with PLUGIN_ROOT naming the old version, opening
 // that version's packaged launcher and, once the cache was replaced, the copy the Python
 // installer left at <CODEX_HOME>/crw-stop-hook.py. Both reach the Go hook through the
-// installer's settings. It runs python3 from this machine's PATH, never the tripwires.
+// installer's settings. It runs the python3 this machine's PATH names, never the tripwires, with
+// a PATH of that interpreter's directory alone.
 func (h *isolated) legacyBootstrap(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
+	python, err := exec.LookPath("python3")
+	if err != nil {
 		t.Skip("no python3 on PATH to run the pre-native bootstrap")
 	}
 	preNative := filepath.Join(moduleRoot, "internal", "pluginwiring", "testdata", "pre-native-wiring")
@@ -833,8 +894,8 @@ func (h *isolated) legacyBootstrap(t *testing.T) {
 	if !strings.HasPrefix(command, "python3 -c") || !strings.Contains(command, "${PLUGIN_ROOT}/wiring/crw_stop_hook.py") {
 		t.Fatalf("not the pre-native bootstrap: %q", command)
 	}
-	env := []string{"HOME=" + h.home, "CODEX_HOME=" + h.codex, "XDG_STATE_HOME=" + h.state, "TMPDIR=" + h.tmp, "PLUGIN_ROOT=" + old,
-		"PATH=" + os.Getenv("PATH"), "PYTHONDONTWRITEBYTECODE=1"}
+	env := append([]string{"HOME=" + h.home, "CODEX_HOME=" + h.codex, "XDG_STATE_HOME=" + h.state, "TMPDIR=" + h.tmp, "PLUGIN_ROOT=" + old,
+		"PATH=" + filepath.Dir(python), "PYTHONDONTWRITEBYTECODE=1"}, h.isolation()...)
 	h.journaled(t, h.stop(t, command, env, "is7-legacy-packaged", "t"), "is7-legacy-packaged", "t")
 
 	h.payload = h.replaceCache(t, h.manifestVersion, nil)
@@ -864,7 +925,7 @@ func (h *isolated) updateAndRollBack(t *testing.T, archiveA, archiveB string) {
 	}
 	h.selects(t, h.envB, versionB)
 	h.journaled(t, h.stop(t, stopCommand(t, h.payload), h.hookEnv(), "is8-updated", "t"), "is8-updated", "t")
-	h.bridgeAnswers(t, h.envB)
+	h.bridgeAnswers(t, h.envB, h.bridgeEnv())
 
 	// An archive that does not hash to what SHA256SUMS lists is refused before anything is
 	// unpacked: the destination, the host record and the pointer are as they were. The
@@ -875,8 +936,13 @@ func (h *isolated) updateAndRollBack(t *testing.T, archiveA, archiveB string) {
 	writeFile(t, filepath.Join(filepath.Dir(tampered), "SHA256SUMS"), string(readFile(t, filepath.Join(filepath.Dir(archiveB), "SHA256SUMS"))), 0o644)
 	listing, recordBefore := h.destination(t), readFile(t, h.record)
 	report, code = h.crw(t, crw, append([]string{"update", "--from", tampered}, gate...)...)
-	if code != 1 || report["applied"] != false {
-		t.Fatalf("a tampered archive: exit %d\n%s", code, show(report))
+	// Refused for the digest and nothing else: the archive's own digest and the one SHA256SUMS
+	// lists for B are both named.
+	refusal, _ := report["refused"].(string)
+	note, _ := report["note"].(string)
+	if code != 1 || report["applied"] != false || !strings.Contains(refusal, " hashes to "+fileDigest(t, archiveA)) ||
+		!strings.Contains(refusal, " lists "+fileDigest(t, archiveB)) || !strings.HasPrefix(note, "nothing was unpacked") {
+		t.Fatalf("a tampered archive: exit %d, want a refusal naming the digest mismatch before unpacking\n%s", code, show(report))
 	}
 	if after := h.destination(t); !slices.Equal(after, listing) || !bytes.Equal(readFile(t, h.record), recordBefore) || h.pointerTarget(t) != h.envB {
 		t.Fatalf("a refused archive changed the host: destination %q -> %q, pointer %s", listing, after, h.pointerTarget(t))
@@ -888,10 +954,11 @@ func (h *isolated) updateAndRollBack(t *testing.T, archiveA, archiveB string) {
 	}
 	h.selects(t, h.envA, h.versionA)
 	h.journaled(t, h.stop(t, stopCommand(t, h.payload), h.hookEnv(), "is8-rolled-back", "t"), "is8-rolled-back", "t")
-	h.bridgeAnswers(t, h.envA)
+	h.bridgeAnswers(t, h.envA, h.bridgeEnv())
 
-	if report, code := h.crw(t, crw, "remove", h.envA); code != 1 || report["applied"] != false {
-		t.Fatalf("removing the selected runtime: exit %d\n%s", code, show(report))
+	if report, code := h.crw(t, crw, "remove", h.envA); code != 1 || report["applied"] != false ||
+		!strings.Contains(fmt.Sprint(report["refused"]), "the host record selects this runtime") {
+		t.Fatalf("removing the selected runtime: exit %d, want a refusal naming the selection\n%s", code, show(report))
 	}
 	if _, err := os.Stat(filepath.Join(h.envA, "bin", "crw")); err != nil {
 		t.Fatalf("a refused remove removed the selected runtime: %v", err)

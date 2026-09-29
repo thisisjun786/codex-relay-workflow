@@ -337,6 +337,31 @@ func matrixValues(t *testing.T, body, key string) []string {
 	return values
 }
 
+// workflowSteps is test_gate.py's steps: a job's steps in order, each as its own top-level keys
+// (key -> the rest of the line). A step starts at `      - ` and its keys sit eight spaces in.
+func workflowSteps(t *testing.T, body string) []map[string]string {
+	t.Helper()
+	_, rest, found := strings.Cut(body, "\n    steps:\n")
+	if !found {
+		t.Fatal("the job has no steps")
+	}
+	key := regexp.MustCompile(`^        ([a-z][a-z-]*):(?: (.*))?$`)
+	var steps []map[string]string
+	for _, block := range regexp.MustCompile(`(?m)^      - `).Split(rest, -1)[1:] {
+		keys := map[string]string{}
+		for i, line := range strings.Split(block, "\n") {
+			if i == 0 {
+				line = "        " + line
+			}
+			if m := key.FindStringSubmatch(line); m != nil {
+				keys[m[1]] = m[2]
+			}
+		}
+		steps = append(steps, keys)
+	}
+	return steps
+}
+
 // The Go suite runs in CI as `make test-part` legs. A Makefile part without a leg would
 // never run; test_gate.py pins the same shape.
 func Test47_GATE_10_ParallelLegsCoverTheWholeRun(t *testing.T) {
@@ -360,13 +385,36 @@ func Test47_GATE_10_ParallelLegsCoverTheWholeRun(t *testing.T) {
 	}
 	legs := matrixValues(t, jobs["go-product"], "part")
 	expectEqual(t, "go-product legs", sortedCopy(legs), sortedCopy(want))
-	// The isolated-home integration test installs the binary the dist leg just built;
-	// test_gate.py pins the same step.
-	for _, step := range []string{"run: make lint", "run: make test-part TEST_PART=",
-		`CRW_TEST_BINARY="$PWD/dist/crw_linux_amd64/crw" go test -trimpath -tags integration -count=1 ./internal/runtime/integration/...`} {
+	for _, step := range []string{"run: make lint", "run: make test-part TEST_PART="} {
 		if !strings.Contains(jobs["go-product"], step) {
 			t.Errorf("go-product lacks %q", step)
 		}
+	}
+	// The isolated-home integration test runs in the dist leg, after the build, against the
+	// binary it built; test_gate.py pins the same step.
+	steps := workflowSteps(t, jobs["go-product"])
+	index := map[string][]int{}
+	for i, step := range steps {
+		index[step["name"]] = append(index[step["name"]], i)
+	}
+	build, wired := "Build the static binaries for every published target", "Install and wire the release binary in an isolated home"
+	for _, name := range []string{build, wired} {
+		if len(index[name]) != 1 {
+			t.Fatalf("go-product has %d steps named %q, want one", len(index[name]), name)
+		}
+		if got := steps[index[name][0]]["if"]; got != "matrix.part == 'dist'" {
+			t.Errorf("%q runs if %q, want matrix.part == 'dist'", name, got)
+		}
+	}
+	if index[wired][0] < index[build][0] {
+		t.Errorf("%q runs before %q", wired, build)
+	}
+	step := steps[index[wired][0]]
+	if want := `CRW_TEST_BINARY="$PWD/dist/crw_linux_amd64/crw" go test -trimpath -tags integration -count=1 ./internal/runtime/integration/...`; step["run"] != want {
+		t.Errorf("%q runs %q, want %q", wired, step["run"], want)
+	}
+	if _, found := step["continue-on-error"]; found {
+		t.Errorf("%q may not continue on error", wired)
 	}
 	shards := matrixValues(t, jobs["packages"], "shard")
 	var expected []string
