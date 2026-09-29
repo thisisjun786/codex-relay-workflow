@@ -438,6 +438,88 @@ func TestDoctorReportsASettingsRecordThatIsNotAnObjectAsUnreadable(t *testing.T)
 	}
 }
 
+// rewriteInstalls applies change to every install entry of component recorded at location.
+func (h *host) rewriteInstalls(t *testing.T, raw []byte, component, location string, change func(map[string]any)) {
+	t.Helper()
+	var document map[string]any
+	if err := json.Unmarshal(raw, &document); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range document["components"].(map[string]any)[component].(map[string]any)["installs"].([]any) {
+		if install := entry.(map[string]any); install["location"] == location {
+			change(install)
+		}
+	}
+	changed, err := json.MarshalIndent(document, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, h.record, string(changed)+"\n", 0o600)
+}
+
+// A Go install is own only against a recorded SHA-256 its bytes match: a binaryDigest that is
+// missing, null, not a string, empty or not 64 lowercase hex digits leaves the component
+// unreadable, and a Python entry recorded at the same location (interpreter fields, no
+// binaryDigest) is not the Go install, so the component is foreign.
+func TestDoctorRequiresTheRecordedDigestOfTheGoInstall(t *testing.T) {
+	h, dir, digest := goHost(t, true)
+	raw, err := os.ReadFile(h.record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	location := filepath.Join(dir, "bin")
+	for name, change := range map[string]func(map[string]any){
+		"missing":   func(e map[string]any) { delete(e, "binaryDigest") },
+		"null":      func(e map[string]any) { e["binaryDigest"] = nil },
+		"number":    func(e map[string]any) { e["binaryDigest"] = 42 },
+		"empty":     func(e map[string]any) { e["binaryDigest"] = "" },
+		"short":     func(e map[string]any) { e["binaryDigest"] = digest[:40] },
+		"uppercase": func(e map[string]any) { e["binaryDigest"] = strings.ToUpper(digest) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			h.rewriteInstalls(t, raw, "codex-thread-bridge", location, change)
+			report := h.diagnose(t)
+			bridge := golden.Canon(at(report, "components", "codex-thread-bridge"))
+			if at(report, "components", "codex-thread-bridge", "class") != "unreadable" || !strings.Contains(bridge, "the recorded binaryDigest of the Go install entry at "+location) {
+				t.Errorf("%s", bridge)
+			}
+			if at(report, "components", "codex-session-relay", "class") != "own" || at(report, "checks", "results", "installed", "value") != "not_verified" {
+				t.Errorf("relay %v, installed %v", at(report, "components", "codex-session-relay", "class"), at(report, "checks", "results", "installed", "value"))
+			}
+		})
+	}
+	t.Run("a Python entry at the location", func(t *testing.T) {
+		h.rewriteInstalls(t, raw, "codex-thread-bridge", location, func(e map[string]any) {
+			delete(e, "binaryDigest")
+			e["interpreter"], e["interpreterPath"], e["installMode"] = "3.13.14", filepath.Join(location, "python3"), "copy"
+		})
+		report := h.diagnose(t)
+		if at(report, "components", "codex-thread-bridge", "class") != "foreign" || at(report, "components", "codex-thread-bridge", "recordedInstall") != "python" {
+			t.Errorf("%s", golden.Canon(at(report, "components", "codex-thread-bridge")))
+		}
+	})
+}
+
+// A selected runtime whose relay cannot be reached (a dangling link) is a failed scope reading
+// of that runtime, reported with why, never the "no relay executable" answer a host with no
+// selection gets.
+func TestDoctorReportsAnUnreachableSelectedRelay(t *testing.T) {
+	h, dir, _ := goHost(t, true)
+	relay := filepath.Join(dir, "bin", "codex-session-relay")
+	if err := os.Remove(relay); err != nil {
+		t.Fatal(err)
+	}
+	link(t, "gone", relay)
+	scopeReading := golden.Obj(at(h.diagnose(t), "scope"))
+	if _, skipped := record.Lookup(scopeReading, "skipped"); skipped || !strings.Contains(golden.Canon(record.Get(scopeReading, "unreadable")), filepath.Join(h.current(), "bin", "codex-session-relay")+" could not be reached") {
+		t.Errorf("%s", golden.Canon(scopeReading))
+	}
+	clean := newHost(t)
+	if got := golden.Canon(at(clean.diagnose(t), "scope")); !strings.Contains(got, `"skipped"`) {
+		t.Errorf("a host with no selection: %s", got)
+	}
+}
+
 // Every component the definition requires must be selected by an absolute path: a selection
 // that is missing, null, not a string, empty or relative leaves the pointer's agreement
 // unestablished (agrees null, the selection listed) and the Go classification unreadable,

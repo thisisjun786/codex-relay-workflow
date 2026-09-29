@@ -274,7 +274,7 @@ func TestRetentionScanExpandsWhatAHookCommandNames(t *testing.T) {
 	write(t, filepath.Join(h.codex, "hooks.json"), `{"hooks": {"Stop": [{"hooks": [
  {"type": "command", "command": "\"$HOME/venv/bin/codex-session-relay\" hook", "timeout": 10},
  {"type": "command", "command": "${HOME}/venv/bin/codex-thread-bridge serve", "timeout": 10},
- {"type": "command", "command": "~/venv/bin/crw-completion-hook stop", "timeout": 10},
+ {"type": "command", "command": "~/venv/bin/crw-completion-hook", "timeout": 10},
  {"type": "command", "command": "\"$CODEX_HOME/relay\" hook", "timeout": 10},
  {"type": "command", "command": "\"$RELAY_HOME/bin/relay\" hook", "timeout": 10}]}]}}`, 0o600)
 	link(t, filepath.Join(env, "bin", "codex-session-relay"), filepath.Join(h.codex, "relay"))
@@ -687,5 +687,75 @@ func TestRetentionScanDoesNotDropTheBootCheckItCannotMake(t *testing.T) {
 	write(t, path, `{"pid": 4242, "startTicks": 777}`, 0o600)
 	if report := h.scanProc(t, proc); row3(report) != true || len(unreadable(report)) != 0 || len(references(report)) != 1 {
 		t.Errorf("a record naming no boot: row 3 scanned %v, unreadable %v, references %v", row3(report), unreadable(report), references(report))
+	}
+}
+
+// Row 2 reads every journal root a retained Stop registration can write to, not only the one
+// the default settings name: the default settings' root, the root of a settings document a
+// hooks.json registration names as its argument, the default root for settings naming none, and
+// a root a Stop-event claim names. A registration whose settings cannot be established is
+// unreadable.
+func TestRetentionScanReadsEveryJournalRootAStopRegistrationReaches(t *testing.T) {
+	h := newHost(t)
+	rootA := filepath.Join(h.home, "journal-a")
+	rootB := filepath.Join(h.home, "journal-b")
+	rootE := filepath.Join(h.home, "journal-e")
+	rootD := filepath.Join(h.codex, "crw-completion-hook", "journal")
+	settingsB := filepath.Join(h.home, "other", "settings-b.json")
+	settingsC := filepath.Join(h.home, "other", "settings-c.json")
+	write(t, filepath.Join(h.codex, "crw-completion-hook.json"), `{"journalRoot": "`+rootA+`"}`, 0o600)
+	write(t, settingsB, `{"journalRoot": "`+rootB+`"}`, 0o600)
+	write(t, settingsC, `{"configVersion": 1}`, 0o600)
+	write(t, filepath.Join(h.codex, "hooks.json"), `{"hooks": {"Stop": [{"hooks": [
+ {"type": "command", "command": "/usr/bin/true /opt/relay/completion_hook.py `+settingsB+`", "timeout": 10},
+ {"type": "command", "command": "/usr/bin/true /opt/relay/crw-completion-hook `+settingsC+`", "timeout": 10},
+ {"type": "command", "command": "/usr/bin/true /opt/relay/completion_hook.py \"$UNKNOWN/settings.json\"", "timeout": 10}]}]}}`, 0o600)
+	key := strings.Repeat("e", 64)
+	write(t, filepath.Join(h.codex, "crw-completion-hook", "stop-events", key+".json"), `{"eventKey": "`+key+`", "claimedAt": "2026-09-29T11:59:00Z", "claimedBy": {"pid": 1, "journalRoot": "`+rootE+`"}}`, 0o600)
+	write(t, filepath.Join(rootE, "accepted", key+".outcome.json"), `{}`, 0o600)
+	for _, root := range []string{rootA, rootB, rootD, rootE} {
+		write(t, filepath.Join(root, "20260929", "recent.json"), `{"at": "2026-09-29T11:59:55Z"}`, 0o600)
+	}
+	report := h.scan(t)
+	var held []string
+	for _, raw := range golden.List(record.Get(report, "liveHolds")) {
+		if hold := golden.Obj(raw); record.Get(hold, "row") == int64(2) {
+			held = append(held, filepath.Dir(filepath.Dir(record.Get(hold, "source").(string))))
+		}
+	}
+	sort.Strings(held)
+	want := []string{rootA, rootB, rootD, rootE}
+	sort.Strings(want)
+	if strings.Join(held, ",") != strings.Join(want, ",") {
+		t.Errorf("held journal roots %v, want %v", held, want)
+	}
+	if got := unreadable(report); !listed(got, "row 2 hooks.Stop[0].hooks[2].command", "$UNKNOWN") {
+		t.Errorf("unreadable %v", got)
+	}
+}
+
+// A directory the scan enumerates is listed explicitly: the Codex home (row 4), a cached plugin
+// version's hook declarations (row 5) and a relay state directory's managed-start locks (row 6)
+// that cannot be listed leave their row unscanned and the directory unreadable, never a
+// completed scan that found nothing.
+func TestRetentionScanDoesNotReadAnUnlistableDirectoryAsEmpty(t *testing.T) {
+	skipAsRoot(t)
+	h := newHost(t)
+	hooks := filepath.Join(h.codex, "plugins", "cache", "crw", "crw", "0.4.0+test", "wiring", "hooks")
+	scope := filepath.Join(h.state, "codex-session-relay", "scope-1")
+	write(t, filepath.Join(hooks, "stop.json"), `{"hooks": {}}`, 0o644)
+	write(t, filepath.Join(scope, "managed-start-"+strings.Repeat("c", 64)+".lock"), "", 0o600)
+	for _, directory := range []string{h.codex, hooks, scope} {
+		if err := os.Chmod(directory, 0o311); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(directory, 0o755) })
+	}
+	report := h.scan(t)
+	got := unreadable(report)
+	for row, directory := range map[int64]string{4: h.codex, 5: hooks, 6: scope} {
+		if record.Get(surfaceRow(t, report, row), "scanned") != false || !listed(got, directory+": PermissionError") {
+			t.Errorf("row %d with %s unlistable: %s, unreadable %v", row, directory, golden.Canon(surfaceRow(t, report, row)), got)
+		}
 	}
 }

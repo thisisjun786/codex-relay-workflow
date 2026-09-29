@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/pointer"
@@ -321,16 +323,27 @@ func classifyGo(c definition.Component, target string, rec Object, recordUsable 
 	location := filepath.Dir(resolved)
 	out = append(out, record.Object{{Key: "entryPointResolves", Value: resolved}, {Key: "location", Value: location}}...)
 	_, component := record.Component(append(Object{}, rec...), c.Name)
+	// The Go install entry at this location: a Python entry recorded there (interpreter fields,
+	// no binaryDigest) is not the Go install and records no digest for these bytes.
 	var install Object
-	for _, raw := range record.Get(component, "installs").([]any) {
+	recordedAs := any(nil)
+	installs, _ := record.Get(component, "installs").([]any)
+	for _, raw := range installs {
 		candidate, _ := raw.(Object)
 		recorded, _ := record.Get(candidate, "location").(string)
 		if recorded == "" {
 			continue
 		}
-		if real, err := record.Resolve(recorded); err == nil && real == location {
-			install = candidate
+		if real, err := record.Resolve(recorded); err != nil || real != location {
+			continue
 		}
+		if pythonInstall(candidate) {
+			if install == nil {
+				recordedAs = "python"
+			}
+			continue
+		}
+		install, recordedAs = candidate, "go"
 	}
 	signals.EntryPointRecorded = install != nil
 	problems, unread := launchProblems(target)
@@ -350,9 +363,16 @@ func classifyGo(c definition.Component, target string, rec Object, recordUsable 
 	} else {
 		digestValue = digest
 		if install != nil {
-			recorded, _ := record.Get(install, "binaryDigest").(string)
-			matches := recorded == digest
-			signals.DigestMatches = &matches
+			// The comparison is made only against a recorded SHA-256. A binaryDigest that is
+			// missing, not a string or not 64 lowercase hex digits records nothing these bytes
+			// can agree with, so classification stops rather than reaching own without it.
+			recorded, isString := record.Get(install, "binaryDigest").(string)
+			if isString && sha256Hex.MatchString(recorded) {
+				matches := recorded == digest
+				signals.DigestMatches = &matches
+			} else {
+				signals.Unreadable = append(signals.Unreadable, "the recorded binaryDigest of the Go install entry at "+location+" (found "+evidence.Repr(record.Get(install, "binaryDigest"))+")")
+			}
 		}
 	}
 	wanted := map[string]string{"install": location, "host": host}
@@ -381,12 +401,27 @@ func classifyGo(c definition.Component, target string, rec Object, recordUsable 
 		{Key: "registrations", Value: nonNil(registered.report)},
 		{Key: "digest", Value: digestValue},
 		{Key: "recordedDigest", Value: record.Get(install, "binaryDigest")},
+		{Key: "recordedInstall", Value: recordedAs},
 		{Key: "pointsCovering", Value: int64(len(points))},
 		{Key: "launchable", Value: launchable},
 		{Key: "class", Value: class},
 		{Key: "reasons", Value: strs(reasons)},
 		{Key: "notChecked", Value: []any{"the skill links (crw install skills, todo 39)", "the App Server dimension (observed by measure, todo 38)"}},
 	}...)
+}
+
+// sha256Hex is a recorded binaryDigest: a SHA-256, lowercase hex.
+var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// pythonInstall reports an install entry the Python installer wrote: it names an interpreter
+// or an install mode, and a Go entry carries neither (record.GoInstall).
+func pythonInstall(entry Object) bool {
+	for _, key := range []string{"interpreter", "interpreterPath", "installMode"} {
+		if _, ok := record.Lookup(entry, key); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // launchProblems is what keeps a host from launching a Go runtime's entry points, and what
@@ -569,17 +604,26 @@ func Diagnose(ctx context.Context, o Options) Object {
 	survey := residue.Survey(residueRoot, owned, record.Get(rec, "pointer"), protect, unreadableDestination)
 
 	relayExecutable := o.RelayCommand
+	unreachable := ""
 	if relayExecutable == "" && target != "" {
+		// The pointer selects a runtime, so its relay is the one to ask. One that cannot be
+		// reached (a broken or inaccessible link) is a failed reading of the selected runtime,
+		// never the same answer as no selection at all.
 		candidate := filepath.Join(owned, "bin", definition.Relay)
 		if _, err := os.Stat(candidate); err == nil {
 			relayExecutable = candidate
+		} else {
+			unreachable = "the selected runtime's relay " + candidate + " could not be reached (" + store.PythonOSError(err) + "), so no scope reading was made"
 		}
 	}
 	var summary Object
 	var readings any
-	if relayExecutable == "" {
+	switch {
+	case unreachable != "":
+		summary = Object{{Key: "unreadable", Value: unreachable}, {Key: "relayExecutable", Value: filepath.Join(owned, "bin", definition.Relay)}}
+	case relayExecutable == "":
 		summary = Object{{Key: "skipped", Value: "no relay executable was found, so no scope reading was made"}}
-	} else {
+	default:
 		scopeReadings := scope.Survey(ctx, relayExecutable, o.Socket, o.State, o.Env)
 		readings = scopeReadings
 		status := scope.Relay(ctx, []string{"service", "status"}, relayExecutable, o.Socket, o.State, o.Env, false, 0)

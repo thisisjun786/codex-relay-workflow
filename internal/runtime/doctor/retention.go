@@ -18,6 +18,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/pointer"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -71,6 +72,16 @@ type scan struct {
 	unreadable []string
 	surfaces   []any
 	timeouts   []float64
+	// stopSettings are the settings documents the retained Stop registrations read (row 2),
+	// and claimRoots the journal roots Stop-event claims name.
+	stopSettings []stopSettings
+	claimRoots   []string
+}
+
+// stopSettings is the settings document one Stop registration reads: path, or why it cannot be
+// established.
+type stopSettings struct {
+	source, field, path, problem string
 }
 
 func (s *scan) reference(row int, source, fieldName string, e Executable, extra ...record.Object) {
@@ -189,13 +200,13 @@ func RetentionScan(ctx context.Context, o RetentionOptions) Object {
 		o.Proc = "/proc"
 	}
 	s := &scan{o: o, pointer: pointer.Path(o.Destination)}
-	settings := s.settingsRecords() // row 4, and the journal root and timeout row 2 needs
-	s.pluginCache()                 // row 5, before row 2 so its hook timeouts count
-	s.userHooks()                   // row 9, likewise
-	s.claims()                      // row 1
-	s.journal(settings)             // row 2
-	daemonPids := s.daemons()       // row 3
-	s.lockHolders(daemonPids)       // row 6
+	s.settingsRecords()       // row 4, and the settings timeout row 2 needs
+	s.pluginCache()           // row 5, before row 2 so its hook timeouts count
+	s.userHooks()             // row 9, likewise
+	s.claims()                // row 1
+	s.journal()               // row 2
+	daemonPids := s.daemons() // row 3
+	s.lockHolders(daemonPids) // row 6
 	s.surface(7, false, 0, "Codex threads are listed through the App Server (crw bridge list_threads) and judged against the host's turn-command cache lifetime, which todo 43 records on codex-cli 0.154.0; this command reads neither, so the scan is incomplete until todo 43 adds this row")
 	s.launcherCopy()  // row 8
 	s.configToml(ctx) // row 10
@@ -256,21 +267,44 @@ func (s *scan) readJSON(path, what string) (Object, bool) {
 	return value, ok
 }
 
-// settingsRecords is row 4. It returns the completion-hook settings for row 2.
-func (s *scan) settingsRecords() Object {
-	matches, err := filepath.Glob(filepath.Join(globEscape(s.o.CodexHome), "crw-*.json"))
+// listNamed lists directory for the names match accepts, sorted: nil and no error when the
+// directory does not exist, and the listing error when it cannot be read, which a caller
+// reports rather than reading as an empty directory.
+func listNamed(directory string, match func(string) bool) ([]string, error) {
+	entries, err := os.ReadDir(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, entry := range entries {
+		if match(entry.Name()) {
+			paths = append(paths, filepath.Join(directory, entry.Name()))
+		}
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+// settingsRecords is row 4. The Codex home is listed explicitly: one that cannot be listed
+// leaves the row unscanned, never scanned with no record found.
+func (s *scan) settingsRecords() {
+	matches, err := listNamed(s.o.CodexHome, func(name string) bool {
+		return strings.HasPrefix(name, "crw-") && strings.HasSuffix(name, ".json")
+	})
 	if err != nil {
 		s.unread(s.o.CodexHome, err)
+		s.surface(4, false, 0, "the Codex home "+s.o.CodexHome+" could not be listed, so its crw-*.json records are unknown")
+		return
 	}
-	sort.Strings(matches)
-	var completion Object
 	for _, path := range matches {
 		value, ok := s.readJSON(path, filepath.Base(path))
 		if !ok {
 			continue
 		}
 		if filepath.Base(path) == "crw-completion-hook.json" {
-			completion = value
 			if seconds, ok := number(record.Get(value, "timeoutSeconds")); ok {
 				s.timeouts = append(s.timeouts, seconds)
 			}
@@ -290,7 +324,6 @@ func (s *scan) settingsRecords() Object {
 		}
 	}
 	s.surface(4, true, len(matches), "every crw-*.json record in "+s.o.CodexHome+", each executable resolved through links")
-	return completion
 }
 
 // words is a string value, or each string in a list value.
@@ -322,17 +355,6 @@ func number(v any) (float64, bool) {
 		return float64(n), true
 	}
 	return 0, false
-}
-
-func globEscape(path string) string {
-	var b strings.Builder
-	for _, r := range path {
-		if strings.ContainsRune(`*?[\`, r) {
-			b.WriteByte('\\')
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
 }
 
 // commandWords reads one hook command, which Codex runs through a shell, as a shell program
@@ -427,7 +449,11 @@ func (s *scan) hookCommands(row int, path string, document Object, base, pluginR
 				if seconds, ok := number(record.Get(one, "timeout")); ok && event.Key == "Stop" {
 					s.timeouts = append(s.timeouts, seconds)
 				}
-				s.commandWords(row, path, "hooks."+event.Key+"["+strconv.Itoa(g)+"].hooks["+strconv.Itoa(h)+"].command", command, base, pluginRoot)
+				field := "hooks." + event.Key + "[" + strconv.Itoa(g) + "].hooks[" + strconv.Itoa(h) + "].command"
+				s.commandWords(row, path, field, command, base, pluginRoot)
+				if event.Key == "Stop" {
+					s.stopRegistration(path, field, command, pluginRoot)
+				}
 			}
 		}
 	}
@@ -468,11 +494,15 @@ func (s *scan) pluginCache() {
 		s.surface(5, true, 0, "the plugin cache could not be listed")
 		return
 	}
-	count := 0
+	count, incomplete := 0, false
 	for _, version := range versions {
 		base := filepath.Join(root, version.Name())
-		hooks, _ := filepath.Glob(filepath.Join(globEscape(base), "wiring", "hooks", "*.json"))
-		sort.Strings(hooks)
+		directory := filepath.Join(base, "wiring", "hooks")
+		hooks, err := listNamed(directory, func(name string) bool { return strings.HasSuffix(name, ".json") })
+		if err != nil {
+			s.unread(directory, err)
+			incomplete = true
+		}
 		for _, path := range hooks {
 			if document, ok := s.readJSON(path, "a cached hook declaration"); ok {
 				count += s.hookCommands(5, path, document, base, base)
@@ -484,6 +514,10 @@ func (s *scan) pluginCache() {
 				count += s.mcpServers(5, path, servers, base, base)
 			}
 		}
+	}
+	if incomplete {
+		s.surface(5, false, count, "a cached plugin version's hook declarations under "+root+" could not be listed, so its hook commands are unknown")
+		return
 	}
 	s.surface(5, true, count, "every hook and MCP command declared by a cached plugin version under "+root)
 }
@@ -529,6 +563,9 @@ func (s *scan) claims() {
 		}
 		claimed := asObject(record.Get(claim, "claimedBy"))
 		root, _ := record.Get(claimed, "journalRoot").(string)
+		if root != "" {
+			s.claimRoots = append(s.claimRoots, root)
+		}
 		fields := record.Object{{Key: "eventKey", Value: key}, {Key: "claimedAt", Value: record.Get(claim, "claimedAt")}, {Key: "pid", Value: record.Get(claimed, "pid")}}
 		if root == "" {
 			s.hold(1, path, append(fields, record.Object{{Key: "outcome", Value: nil}, {Key: "detail", Value: "the claim names no journal root, so its outcome cannot be looked for"}}...))
@@ -548,15 +585,14 @@ func (s *scan) claims() {
 }
 
 // journal is row 2: a row younger than twice the longest configured hook timeout is a turn
-// whose hook may still be running.
-func (s *scan) journal(settings Object) {
-	root, _ := record.Get(settings, "journalRoot").(string)
-	if root == "" {
-		root = filepath.Join(s.o.CodexHome, "crw-completion-hook", "journal")
-	}
+// whose hook may still be running. Every journal root a retained Stop registration can write
+// to is scanned (journalRoots), each within the same window.
+func (s *scan) journal() {
+	roots := s.journalRoots()
+	listing := strings.Join(roots, ", ")
 	longest := s.longestTimeout()
 	if math.IsNaN(longest) {
-		s.surface(2, false, 0, "a configured Stop hook timeout is NaN, so no window can be computed and no journal row under "+root+" was judged")
+		s.surface(2, false, 0, "a configured Stop hook timeout is NaN, so no window can be computed and no journal row under "+listing+" was judged")
 		return
 	}
 	// A window a Duration cannot hold (2 x 4.6e9 s or more, or infinite) holds every row.
@@ -569,65 +605,176 @@ func (s *scan) journal(settings Object) {
 		window = time.Duration(seconds * float64(time.Second))
 		since = now.Add(-window)
 	}
-	days, err := os.ReadDir(root)
-	if errors.Is(err, os.ErrNotExist) {
-		s.surface(2, true, 0, "no journal exists at "+root)
-		return
-	}
-	if err != nil {
-		s.unread(root, err)
-		s.surface(2, true, 0, "the journal's day directories could not be listed")
-		return
-	}
 	count := 0
-	for _, day := range days {
-		start, err := time.Parse("20060102", day.Name())
-		if err != nil || day.Name() != start.Format("20060102") {
-			continue // not a day directory (accepted/ holds the outcomes)
-		}
-		// Every day from the one the window reaches back into (floor(now - window)) on,
-		// a future-dated one included.
-		if !unbounded && !start.AddDate(0, 0, 1).After(since) {
-			continue
-		}
-		directory := filepath.Join(root, day.Name())
-		entries, err := os.ReadDir(directory)
+	for _, root := range roots {
+		days, err := os.ReadDir(root)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
-			s.unread(directory, err)
+			s.unread(root, err)
 			continue
 		}
-		for _, entry := range entries {
-			if !strings.HasSuffix(entry.Name(), ".json") {
+		for _, day := range days {
+			start, err := time.Parse("20060102", day.Name())
+			if err != nil || day.Name() != start.Format("20060102") {
+				continue // not a day directory (accepted/ holds the outcomes)
+			}
+			// Every day from the one the window reaches back into (floor(now - window)) on,
+			// a future-dated one included.
+			if !unbounded && !start.AddDate(0, 0, 1).After(since) {
 				continue
 			}
-			path := filepath.Join(directory, entry.Name())
-			row := reading.ReadJSON(path, "a journal row", nil, nil)
-			if row.State == reading.Absent {
-				continue // removed since the directory was listed
-			}
-			count++
-			written, configuration, problem := journalRow(row)
-			if problem != "" {
-				s.unreadable = append(s.unreadable, path+": row 2 journal row: "+problem+", so when its Stop hook ran, and whether the turn that ran it may still hold its command, is unknown")
+			directory := filepath.Join(root, day.Name())
+			entries, err := os.ReadDir(directory)
+			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
-			if unbounded || now.Sub(written) < window {
-				detail := "a Stop hook ran within the last " + strconv.FormatFloat(window.Seconds(), 'f', -1, 64) + " s, so the turn that ran it may still hold its command"
-				if unbounded {
-					detail = "the longest configured Stop hook timeout (" + strconv.FormatFloat(longest, 'g', -1, 64) + " s) gives a window no row is outside of, so the turn that ran it may still hold its command"
+			if err != nil {
+				s.unread(directory, err)
+				continue
+			}
+			for _, entry := range entries {
+				if !strings.HasSuffix(entry.Name(), ".json") {
+					continue
 				}
-				s.hold(2, path, record.Object{{Key: "at", Value: written.UTC().Format("2006-01-02T15:04:05Z")}, {Key: "configuration", Value: configuration}, {Key: "detail", Value: detail}})
+				path := filepath.Join(directory, entry.Name())
+				row := reading.ReadJSON(path, "a journal row", nil, nil)
+				if row.State == reading.Absent {
+					continue // removed since the directory was listed
+				}
+				count++
+				written, configuration, problem := journalRow(row)
+				if problem != "" {
+					s.unreadable = append(s.unreadable, path+": row 2 journal row: "+problem+", so when its Stop hook ran, and whether the turn that ran it may still hold its command, is unknown")
+					continue
+				}
+				if unbounded || now.Sub(written) < window {
+					detail := "a Stop hook ran within the last " + strconv.FormatFloat(window.Seconds(), 'f', -1, 64) + " s, so the turn that ran it may still hold its command"
+					if unbounded {
+						detail = "the longest configured Stop hook timeout (" + strconv.FormatFloat(longest, 'g', -1, 64) + " s) gives a window no row is outside of, so the turn that ran it may still hold its command"
+					}
+					s.hold(2, path, record.Object{{Key: "at", Value: written.UTC().Format("2006-01-02T15:04:05Z")}, {Key: "configuration", Value: configuration}, {Key: "detail", Value: detail}})
+				}
 			}
 		}
 	}
 	if unbounded {
-		s.surface(2, true, count, "journal rows in every day directory under "+root+": the window is unbounded")
+		s.surface(2, true, count, "journal rows in every day directory under "+listing+": the window is unbounded")
 		return
 	}
-	s.surface(2, true, count, "journal rows under "+root+" in every day directory from "+since.Format("20060102")+" on")
+	s.surface(2, true, count, "journal rows under "+listing+" in every day directory from "+since.Format("20060102")+" on")
+}
+
+// journalRoots is every distinct journal root row 2 reads, sorted: the root the default settings
+// (<CODEX_HOME>/crw-completion-hook.json, which the packaged launcher and a registration naming
+// no settings read) name, the root each settings document a Stop registration names as its
+// argument names, the default root <CODEX_HOME>/crw-completion-hook/journal (always, and
+// wherever a settings document names none) and every root a Stop-event claim names. Settings
+// that cannot be established or read, and a journalRoot that is not an absolute path, are
+// unreadable: the root they name is unknown.
+func (s *scan) journalRoots() []string {
+	found := map[string]bool{}
+	add := func(root string) { found[filepath.Clean(root)] = true }
+	fallback := filepath.Join(s.o.CodexHome, "crw-completion-hook", "journal")
+	add(fallback)
+	defaults := filepath.Join(s.o.CodexHome, "crw-completion-hook.json")
+	settings := append([]stopSettings{{source: s.o.CodexHome, field: "the default settings", path: defaults}}, s.stopSettings...)
+	read := map[string]bool{}
+	for _, one := range settings {
+		if one.problem != "" {
+			s.unreadable = append(s.unreadable, one.source+": row 2 "+one.field+": the settings this Stop registration reads cannot be established ("+one.problem+"), so the journal root it writes to is unknown")
+			continue
+		}
+		if read[one.path] {
+			continue
+		}
+		read[one.path] = true
+		document := reading.ReadJSON(one.path, "Stop settings", nil, nil)
+		if document.State == reading.Absent {
+			continue // no settings: the hook releases and journals nothing
+		}
+		value, ok := document.Value.(Object)
+		if !document.OK() || !ok {
+			detail := document.Detail
+			if detail == "" {
+				detail = "not a JSON object"
+			}
+			s.unreadable = append(s.unreadable, one.path+": row 2: the Stop settings could not be read ("+detail+"), so the journal root they name is unknown")
+			continue
+		}
+		if seconds, ok := number(record.Get(value, "timeoutSeconds")); ok && one.path != defaults {
+			s.timeouts = append(s.timeouts, seconds)
+		}
+		switch root := record.Get(value, "journalRoot").(type) {
+		case nil:
+			add(fallback)
+		case string:
+			if !filepath.IsAbs(root) {
+				s.unreadable = append(s.unreadable, one.path+": row 2: journalRoot "+strconv.Quote(root)+" is not an absolute path, so where it resolves is unknown")
+				continue
+			}
+			add(root)
+		default:
+			s.unreadable = append(s.unreadable, one.path+": row 2: journalRoot is "+scope.TypeName(root)+", not a path, so the journal root is unknown")
+		}
+	}
+	for _, root := range s.claimRoots {
+		if filepath.IsAbs(root) {
+			add(root)
+		}
+	}
+	roots := make([]string, 0, len(found))
+	for root := range found {
+		roots = append(roots, root)
+	}
+	sort.Strings(roots)
+	return roots
+}
+
+// adapterEntries are the basenames of the programs that read Stop settings (completion_hook.py,
+// the crw-completion-hook entry point), after which a registration names its settings.
+var adapterEntries = map[string]bool{"completion_hook.py": true, definition.HookScript: true}
+
+// launcherEntries are the packaged launcher and its copy, which read the default settings.
+var launcherEntries = map[string]bool{"crw_stop_hook.py": true, "crw-stop-hook.py": true}
+
+// stopRegistration records which settings document one Stop hook command reads: the word after
+// the adapter's entry point (or after `crw hook`), which completion.settings_path and the Go
+// hook both take first, else the default settings. A command that runs neither the adapter nor
+// the packaged launcher reads no crw settings.
+func (s *scan) stopRegistration(source, field, command, pluginRoot string) {
+	calls, err := shellWords(command)
+	if err != nil {
+		s.stopSettings = append(s.stopSettings, stopSettings{source: source, field: field, problem: "the command cannot be parsed: " + err.Error()})
+		return
+	}
+	for _, words := range calls {
+		for i, word := range words {
+			base := filepath.Base(word)
+			crwHook := base == "crw" && i+1 < len(words) && words[i+1] == "hook"
+			if !adapterEntries[base] && !crwHook && !launcherEntries[base] {
+				continue
+			}
+			if crwHook {
+				i++
+			}
+			if launcherEntries[base] || i+1 >= len(words) {
+				s.stopSettings = append(s.stopSettings, stopSettings{source: source, field: field, path: filepath.Join(s.o.CodexHome, "crw-completion-hook.json")})
+				return
+			}
+			named, missing := s.expander(pluginRoot).Expand(words[i+1])
+			switch {
+			case missing != "":
+				s.stopSettings = append(s.stopSettings, stopSettings{source: source, field: field, problem: "its settings argument " + strconv.Quote(words[i+1]) + " needs " + missing + ", an expansion this scan does not make"})
+			case !filepath.IsAbs(named):
+				s.stopSettings = append(s.stopSettings, stopSettings{source: source, field: field, problem: "its settings argument " + strconv.Quote(words[i+1]) + " is a relative path, which resolves wherever the hook runs"})
+			default:
+				s.stopSettings = append(s.stopSettings, stopSettings{source: source, field: field, path: named})
+			}
+			return
+		}
+	}
 }
 
 // journalRow is when a journal row's Stop hook ran (its at: completion.now writes
@@ -854,8 +1001,15 @@ func (s *scan) lockHolders(exclude map[int]bool) {
 		ino          uint64
 	}
 	files := map[inode]string{}
+	unlisted := 0
 	for _, directory := range s.stateDirectories() {
-		matches, _ := filepath.Glob(filepath.Join(globEscape(directory), "managed-start-*.lock"))
+		matches, err := listNamed(directory, func(name string) bool {
+			return strings.HasPrefix(name, "managed-start-") && strings.HasSuffix(name, ".lock")
+		})
+		if err != nil {
+			s.unread(directory, err)
+			unlisted++
+		}
 		for _, path := range matches {
 			info, err := os.Stat(path)
 			if err != nil {
@@ -869,14 +1023,21 @@ func (s *scan) lockHolders(exclude map[int]bool) {
 			files[inode{unix.Major(uint64(sys.Dev)), unix.Minor(uint64(sys.Dev)), sys.Ino}] = path
 		}
 	}
+	// The holders of locks nobody could list are unknown whatever the lock table says.
+	surface := func(scanned bool, detail string) {
+		if unlisted > 0 {
+			scanned, detail = false, strconv.Itoa(unlisted)+" relay state directories could not be listed, so the managed-start locks in them, and their holders, are unknown; "+detail
+		}
+		s.surface(6, scanned, len(files), detail)
+	}
 	if len(files) == 0 {
-		s.surface(6, true, 0, "no managed-start lock exists under the relay state root")
+		surface(true, "no managed-start lock exists under the relay state root")
 		return
 	}
 	locks, err := os.Open(filepath.Join(s.o.Proc, "locks"))
 	if err != nil {
 		s.unread(filepath.Join(s.o.Proc, "locks"), err)
-		s.surface(6, false, len(files), "the kernel's lock table could not be read, so the holders of "+strconv.Itoa(len(files))+" managed-start locks are unknown")
+		surface(false, "the kernel's lock table could not be read, so the holders of "+strconv.Itoa(len(files))+" managed-start locks are unknown")
 		return
 	}
 	defer locks.Close()
@@ -920,10 +1081,10 @@ func (s *scan) lockHolders(exclude map[int]bool) {
 		s.inspect(6, holders[pid], "holder", pid)
 	}
 	if partial != nil {
-		s.surface(6, false, len(files), "the kernel's lock table could not be read to its end, so the holders of "+strconv.Itoa(len(files))+" managed-start locks are unknown")
+		surface(false, "the kernel's lock table could not be read to its end, so the holders of "+strconv.Itoa(len(files))+" managed-start locks are unknown")
 		return
 	}
-	s.surface(6, true, len(files), "the /proc/locks holders of every managed-start lock, less the pids row 3 reports")
+	surface(true, "the /proc/locks holders of every managed-start lock, less the pids row 3 reports")
 }
 
 // launcherCopy is row 8: <CODEX_HOME>/crw-stop-hook.py is a .py launcher by definition.

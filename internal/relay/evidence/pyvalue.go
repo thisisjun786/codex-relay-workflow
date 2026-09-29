@@ -32,11 +32,13 @@ func Dumps(value any, compact, sortKeys, ascii bool) string {
 }
 
 // DumpsIndent is json.dumps(value, indent=indent, sort_keys=sortKeys, ensure_ascii=ascii): with
-// an indent Python's default separators are (",", ": "), every member of a non-empty container
-// starts a new line indented one level deeper, and an empty container stays "{}" or "[]".
+// any integer indent Python's default separators are (",", ": "), every member of a non-empty
+// container starts a new line indented one level deeper by indent spaces (none for indent 0 or
+// less, as " " * indent gives), and an empty container stays "{}" or "[]". Only indent=None is
+// compact, and that is Dumps.
 func DumpsIndent(value any, indent int, sortKeys, ascii bool) string {
 	var b strings.Builder
-	d := dumper{b: &b, item: ",", key: ": ", sortKeys: sortKeys, ascii: ascii, indent: strings.Repeat(" ", indent)}
+	d := dumper{b: &b, item: ",", key: ": ", sortKeys: sortKeys, ascii: ascii, pretty: true, indent: strings.Repeat(" ", max(indent, 0))}
 	d.write(value)
 	return b.String()
 }
@@ -45,8 +47,9 @@ type dumper struct {
 	b               *strings.Builder
 	item, key       string
 	sortKeys, ascii bool
-	// indent is one level of indentation, "" for none; level is how deep the member being
-	// written sits.
+	// pretty is an indent given at all (each member on its own line); indent is one level of
+	// indentation, which may be ""; level is how deep the member being written sits.
+	pretty bool
 	indent string
 	level  int
 }
@@ -56,14 +59,14 @@ func (d dumper) open(i int) {
 	if i > 0 {
 		d.b.WriteString(d.item)
 	}
-	if d.indent != "" {
+	if d.pretty {
 		d.b.WriteString("\n" + strings.Repeat(d.indent, d.level+1))
 	}
 }
 
 // close writes the line break and indentation before a non-empty container's closing bracket.
 func (d dumper) close() {
-	if d.indent != "" {
+	if d.pretty {
 		d.b.WriteString("\n" + strings.Repeat(d.indent, d.level))
 	}
 }
