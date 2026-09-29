@@ -1,0 +1,338 @@
+//go:build dev
+
+package trialledger
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
+)
+
+// The goldens were captured once from the Python ledger, `python3 scripts/trial_startup.py ledger
+// --start <start.json>` under CPython 3.14.4 (the relay host's interpreter), over the cases in
+// testdata/cases.json materialized as materialize does here; the same grader reproduced every
+// ledger-grade.json on the relay host byte for byte. fromisoformat.json is
+// datetime.datetime.fromisoformat's answer to each string, from the same interpreter.
+
+type ledgerCase struct {
+	Name   string   `json:"name"`
+	Start  *string  `json:"start"`
+	Ledger *string  `json:"ledger"`
+	Setup  []string `json:"setup"`
+	Arg    *string  `json:"arg"`
+}
+
+func loadCases(t *testing.T) []ledgerCase {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/cases.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []ledgerCase
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatal(err)
+	}
+	// encoding/json turns a lone surrogate into U+FFFD; the cases need the one Python wrote.
+	decoded, err := hook.Decode(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, item := range decoded.([]any) {
+		c := item.(hook.Object)
+		for key, into := range map[string]**string{"start": &cases[i].Start, "ledger": &cases[i].Ledger, "arg": &cases[i].Arg} {
+			if s, ok := evidence.Get(c, key).(string); ok {
+				*into = &s
+			}
+		}
+	}
+	return cases
+}
+
+// fsEncode is how Python's surrogateescape writes a str to a file: U+DC80..U+DCFF are the bytes
+// they stand for.
+func fsEncode(s string) []byte {
+	var b []byte
+	for i := 0; i < len(s); {
+		if surrogateAt(s, i) {
+			r := rune(s[i]&0x0f)<<12 | rune(s[i+1]&0x3f)<<6 | rune(s[i+2]&0x3f)
+			if r >= 0xdc80 && r <= 0xdcff {
+				b = append(b, byte(r-0xdc00))
+				i += 3
+				continue
+			}
+		}
+		b = append(b, s[i])
+		i++
+	}
+	return b
+}
+
+// materialize lays a case out under base as the capture did and returns the --start argument.
+func materialize(t *testing.T, c ledgerCase, base string) string {
+	t.Helper()
+	trial := base + "/trial"
+	sub := strings.NewReplacer("${TRIAL}", trial, "${BASE}", base).Replace
+	has := func(op string) bool {
+		for _, s := range c.Setup {
+			if s == op {
+				return true
+			}
+		}
+		return false
+	}
+	must := func(err error) {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(os.Mkdir(trial, 0o755))
+	start := trial + "/start.json"
+	if has("start-outside") {
+		start = base + "/start.json"
+	}
+	switch {
+	case has("start-dir"):
+		must(os.Mkdir(start, 0o755))
+	case c.Start != nil:
+		must(os.WriteFile(start, fsEncode(sub(*c.Start)), 0o600))
+	}
+	if has("git-above") {
+		must(os.Mkdir(base+"/.git", 0o755))
+	}
+	if c.Ledger != nil {
+		text := fsEncode(sub(*c.Ledger))
+		switch {
+		case has("ledger-link-outside"):
+			must(os.WriteFile(base+"/outside.jsonl", text, 0o600))
+			must(os.Symlink(base+"/outside.jsonl", trial+"/ledger.jsonl"))
+		case has("ledger-link-worktree"):
+			must(os.MkdirAll(trial+"/nested/.git", 0o755))
+			must(os.WriteFile(trial+"/nested/ledger.jsonl", text, 0o600))
+			must(os.Symlink(trial+"/nested/ledger.jsonl", trial+"/ledger.jsonl"))
+		default:
+			must(os.WriteFile(trial+"/ledger.jsonl", text, 0o600))
+		}
+	}
+	if has("ledger-dir") {
+		must(os.Mkdir(trial+"/ledger.jsonl", 0o755))
+	}
+	if c.Arg != nil {
+		return sub(*c.Arg)
+	}
+	return start
+}
+
+var nowField = regexp.MustCompile(`"now": "[^"]*"`)
+
+func grade(t *testing.T, c ledgerCase) (int, string, map[string]any) {
+	t.Helper()
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out, errs bytes.Buffer
+	code := Run([]string{"--start", materialize(t, c, base)}, &out, &errs)
+	text := nowField.ReplaceAllString(strings.ReplaceAll(out.String(), base, "${BASE}"), `"now": "<now>"`)
+	var document map[string]any
+	if err := json.Unmarshal(out.Bytes(), &document); err != nil {
+		t.Fatalf("%s: no document (exit %d): %v\n%s", c.Name, code, err, errs.String())
+	}
+	return code, text, document
+}
+
+// TestLedgerGradesAsThePythonLedgerDid: every case's exit status and document are the Python
+// ledger's, byte for byte, refusals included.
+func TestLedgerGradesAsThePythonLedgerDid(t *testing.T) {
+	raw, err := os.ReadFile("testdata/golden.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var golden map[string]struct {
+		Exit   int    `json:"exit"`
+		Stdout string `json:"stdout"`
+	}
+	if err := json.Unmarshal(raw, &golden); err != nil {
+		t.Fatal(err)
+	}
+	cases := loadCases(t)
+	if len(cases) != len(golden) {
+		t.Fatalf("%d cases, %d goldens", len(cases), len(golden))
+	}
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			want, ok := golden[c.Name]
+			if !ok {
+				t.Fatal("no golden")
+			}
+			code, text, _ := grade(t, c)
+			if code != want.Exit || text != want.Stdout {
+				t.Fatalf("exit %d, want %d\n--- got\n%s\n--- want\n%s", code, want.Exit, text, want.Stdout)
+			}
+		})
+	}
+}
+
+func caseNamed(t *testing.T, name string) ledgerCase {
+	t.Helper()
+	for _, c := range loadCases(t) {
+		if c.Name == name {
+			return c
+		}
+	}
+	t.Fatalf("no case %q", name)
+	return ledgerCase{}
+}
+
+func windowOf(document map[string]any) map[string]any { return document["window"].(map[string]any) }
+
+// TSU-13 and TSU-37 (the ledger's half): a window that has closed is graded; interventions are
+// counted apart by timestamp; one inside the window fails window.passed and exits 1; a finished
+// trial under the older record version is still gradable; the bounds say whether they were
+// corroborated.
+func TestTSU13_PreparationAndTheWindowAreCountedApart(t *testing.T) {
+	code, _, document := grade(t, caseNamed(t, "clean window after a failed preparation segment"))
+	preparation, window := document["preparation"].(map[string]any), windowOf(document)
+	if code != 0 || preparation["interventions"] != 1.0 || window["interventions"] != 0.0 || window["windowIsClean"] != true || len(document["judgmentsThatFailed"].([]any)) != 0 {
+		t.Fatal(document)
+	}
+	if failed := preparation["failedSegments"].([]any); len(failed) != 1 || failed[0] != "P1" || preparation["segments"].([]any)[0].(map[string]any)["interventions"] != 1.0 {
+		t.Fatal(preparation)
+	}
+	if window["provenance"] != "declared" {
+		t.Fatal(window)
+	}
+	code, _, document = grade(t, caseNamed(t, "an intervention inside the window fails its judgment"))
+	if failed := document["judgmentsThatFailed"].([]any); code != 1 || windowOf(document)["passed"] != false || windowOf(document)["interventions"] != 1.0 || len(failed) != 1 || failed[0] != "window.passed" {
+		t.Fatal(code, document)
+	}
+	if code, _, document = grade(t, caseNamed(t, "a record of version 1 is still gradable")); code != 0 || windowOf(document)["windowIsClean"] != true {
+		t.Fatal(code, document)
+	}
+	if code, _, document = grade(t, caseNamed(t, "corroborated opening")); code != 0 || windowOf(document)["provenance"] != "corroborated" {
+		t.Fatal(code, document)
+	}
+}
+
+// TSU-71: a caller's corroboration carries only the times that were compared; a passed or met
+// inside it is dropped and never counted as a judgment.
+func TestTSU71_CorroborationCarriesOnlyComparedTimes(t *testing.T) {
+	_, _, document := grade(t, caseNamed(t, "corroborated opening"))
+	if kept := windowOf(document)["corroboration"].(map[string]any); len(kept) != 1 || kept["opensAt"] == nil || document["judgmentsCounted"] != 1.0 {
+		t.Fatal(document)
+	}
+}
+
+// TSU-14, TSU-24, TSU-70, TSU-90 and the record checks: a ledger or record this cannot grade is
+// refused with its reason, and exit 2.
+func TestLedgerRefusals(t *testing.T) {
+	for name, reason := range map[string]string{
+		"a claimed class disagreeing with its time": "claimed class disagrees",
+		"two windows":                               "a trial has one window",
+		"overlapping segments":                      "two segments overlap in time",
+		"a line without a time":                     "is not a timestamp",
+		"corroboration that disagrees":              "corroborating time disagrees",
+		"corroboration naming no time":              "names no time to compare",
+		"a window the record declares otherwise":    "does not match the one the record declares",
+		"a segment never closing":                   "never closes",
+		"a segment closing without an outcome":      "failed or succeeded",
+		"a line dated after grading":                "dated after the time it is being graded",
+		"open and close name different segments":    "different segments",
+		"a preparation segment through the window":  "overlaps the trial window",
+		"a zero-length window":                      "no duration",
+		"a ledger linked out of the trial root":     "outside the trial root",
+		"a ledger linked into a nested worktree":    "inside a git worktree",
+		"a dispatch before the window":              "does not open at the dispatch",
+		"no dispatch":                               "one dispatch",
+		"a structured actor":                        "written as text",
+		"a structured segment":                      "written as text",
+		"a time without an offset":                  "does not name a UTC offset",
+		"a start record of an unknown version":      "unsupported record version",
+		"a trial root inside a git worktree":        "inside a git worktree",
+		"a start record outside the trial root":     "outside the trial root",
+		"a trial root with a NUL":                   "NUL byte",
+		"no ledger":                                 "the ledger could not be read",
+		"a start record that is not JSON":           "the start record could not be read",
+		"a relative start path":                     "must be an absolute path",
+		"a line splitting on a raw line separator":  "a ledger line is not JSON",
+		"corroboration that is not an object":       "not an object of times",
+		"a window the record does not declare":      "does not declare window.opensAt",
+		"a segment boundary naming no segment":      "names no segment",
+		"a segment closing before it opens":         "closes before it opens",
+		"a segment ending without starting":         "ends without starting",
+		"a start record of a version given as text": "unsupported record version",
+		"a start record that is not UTF-8":          "the start record could not be read",
+		"a ledger that is not UTF-8":                "the ledger could not be read",
+		"a time that is no timestamp":               "not an ISO-8601 timestamp",
+		"a line of no known kind":                   "no known kind",
+		"a trial root that is not a directory":      "not a directory",
+		"a start record that is not an object":      "not a JSON object",
+		"a start record of another source":          "does not stamp itself",
+		"a missing target":                          "target has to be written as text",
+		"a declared bound that is not a time":       "window.opensAt is not an ISO-8601 timestamp",
+		"corroboration that is not a time":          "window.corroboration.opensAt",
+		"a start record that is a directory":        "the start record could not be read",
+		"a ledger that is a directory":              "the ledger could not be read",
+		"a relative trial root":                     "trialRoot must be an absolute path",
+		"a segment starting twice":                  "starts twice",
+		"a segment ending twice":                    "ends twice",
+		"no window close":                           "not bounded",
+		"a line that is not JSON":                   "not JSON",
+		"a line that is JSON but no object":         "no known kind",
+		"a time of the wrong type":                  "is not a timestamp",
+		"a blank time":                              "is not a timestamp",
+		"no start record":                           "the start record could not be read",
+	} {
+		t.Run(name, func(t *testing.T) {
+			code, _, document := grade(t, caseNamed(t, name))
+			refused, _ := document["refused"].(string)
+			if code != 2 || !strings.Contains(refused, reason) || document["source"] != source {
+				t.Fatalf("exit %d, refused %q, want %q", code, refused, reason)
+			}
+		})
+	}
+}
+
+// TSU-30 (the ledger's half): grading reads the trial root and nothing else, so a finished trial
+// is gradable with no installation at all, from any working directory.
+func TestTSU30_AFinishedTrialIsGradableWithoutAnInstallation(t *testing.T) {
+	c := caseNamed(t, "a redacted host window after a succeeded preparation")
+	t.Chdir(t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", "")
+	if code, _, document := grade(t, c); code != 0 || windowOf(document)["windowIsClean"] != true {
+		t.Fatal(code, document)
+	}
+}
+
+// fromISOFormat accepts, places and refuses every string as CPython's datetime.fromisoformat.
+func TestFromISOFormatIsCPythons(t *testing.T) {
+	raw, err := os.ReadFile("testdata/fromisoformat.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := hook.Decode(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows.([]any) {
+		pair := row.([]any)
+		input, want := pair[0].(string), pair[1].([]any)
+		at, aware, err := fromISOFormat(input)
+		var got []any
+		if err != nil {
+			got = []any{"ERR", err.Error()}
+		} else {
+			got = []any{"OK", at.UTC().Format("2006-01-02T15:04:05.000000"), aware}
+		}
+		if !evidence.Equal(got, want) {
+			t.Errorf("%s: %v, want %v", pyRepr(input), got, want)
+		}
+	}
+}
