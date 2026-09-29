@@ -10,7 +10,7 @@ the steps needed to activate GitHub enforcement.
 | `crw-dev ci scope` | Select checks from Git evidence (the `selection` job) |
 | `crw-dev ci validate` | Skill metadata, local links and Python syntax |
 | `crw-dev ci plugin` | Plugin package shape, payload hygiene and the release digest |
-| `python3 -m unittest discover -s scripts/ci/tests -v` | Installer behavior and CI-control tests (CI runs `test_plugin_transition` and the other modules as two legs per Python version) |
+| `python3 -m unittest discover -s scripts/ci/tests -v` | Installer behavior and CI-control tests (CI runs them as two legs per Python version, `heavy` and `rest`; see [the installer test legs](#the-installer-test-legs)) |
 | `crw-dev ci contracts` | Run the owning hook replay and operations shape check when present; reject incomplete script/contract pairs |
 | `crw-dev ci operations` | The operations fixtures against their contract (the Go port of `scripts/check_operations_contract.py`, also run by `contracts`) |
 | `python3 scripts/ci/packages.py [--shard K/N]` | Install, test, run and build the two packages under `packages/` from the root lock file; CI runs each Python version as `--shard` legs that partition the collected tests |
@@ -81,6 +81,23 @@ source, criteria and environments. Pure prose needs reading and link checks, not
 assertions that freeze its wording. CI concurrency cancels obsolete runs within
 the same PR or branch. An interrupted dev push is not release evidence: rerun
 that exact push run if the owner later chooses its commit for release.
+
+### The installer test legs
+
+The `tests` job runs `scripts/ci/tests` as two legs per Python version, because the run
+is at GitHub's cap of 20 concurrent jobs and a third leg would queue rather than help.
+`heavy` runs the modules the job's `HEAVY` variable names and `rest` runs every other
+module discovery would load, so a new module always runs in `rest` and a renamed heavy
+module fails its leg instead of being skipped. The split is by measured time. Each
+module was timed once with `python3 -m unittest <module>` on four CPUs of a loaded
+host (load average 6-14, Python 3.14) on 2026-09-29: `test_runtime_install` 98 s and
+`test_hook_comparison` 43 s make `heavy` 141 s, and the other fifteen modules make
+`rest` 154 s, led by `test_stop_events` 40 s, `test_trial_startup` 38 s,
+`test_install_acceptance` 28 s and `test_plugin_wiring` 18 s. Re-measure and move a
+module when one leg grows well past the other. `test_gate.py` and `internal/dev/ci`
+run the step's own script once per leg over a copy of the test directory, with
+`python3` replaced by a recorder, and check that together the legs run every module
+discovery would load exactly once.
 
 ## Plugin package
 

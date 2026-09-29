@@ -75,8 +75,7 @@ is a separate reading this check does not make.
 
 The payload is what installation copies: the roots the manifest declares, `.codex-plugin/` and
 `LICENSE`, each file's path, mode and contents. It is the same payload `--json` reports a
-digest for and the same one `plugin_transition.py check-declaration` reports as
-`payloadDigest`, so what ships has one definition and the version is derived from that one.
+digest for, so what ships has one definition and the version is derived from that one.
 
 One field is left out of the digest, and it has to be. The manifest ships inside the payload it
 names, so digesting the bytes as they stand has no fixed point: recording the answer would
@@ -218,21 +217,24 @@ needs them, and a skill says so and stops when they are missing.
 
 ### Before you add or update, on a host that gates the bridge
 
-A host whose `config.toml` gates `create_thread` or `send_message_to_thread` keeps that gate only
-because the package declares the same one. Check the package you are about to install, not the one
-already there:
+On a plugin host the package's declaration is the only thing gating `create_thread` and
+`send_message_to_thread`: the `config.toml` table that gated them was handed over when the host
+moved to the plugin install. Check the package you are about to install, not the one already there,
+from a checkout:
 
 ```sh
-python3 scripts/plugin_transition.py check-declaration --package <candidate>   # exits 1 if it would not preserve
+go run -tags dev ./cmd/crw-dev ci plugin --payload <candidate> --json   # exits 1 if it drops or weakens a required gate
 codex plugin add crw@crw
-python3 scripts/plugin_transition.py check-declaration --package "$CODEX_HOME/plugins/cache/crw/crw/<version>"
+go run -tags dev ./cmd/crw-dev ci plugin --payload "$CODEX_HOME/plugins/cache/crw/crw/<version>" --json
 ```
 
-Both receipts carry `payloadDigest`. Equal digests are what tie the first verdict to the bytes that
-landed; a mismatch says the package changed between the check and the add. The same two steps apply
-to `codex plugin update`, which is otherwise checked by nothing at the moment it replaces the
-declaration. This is a gate you run: nothing in this repository invokes `codex plugin add`,
-`update` or `remove`. See [approval policy](plugin-transition.md#approval-policy).
+Both reports carry the payload `digest`. Equal digests are what tie the first verdict to the bytes
+that landed; a mismatch says the package changed between the check and the add. The same two steps
+apply to `codex plugin update`, which is otherwise checked by nothing at the moment it replaces the
+declaration. The check refuses a package that drops or weakens a gate on its list of required gates
+(`requiredToolApprovals` in `internal/dev/ci/plugin.go`), so a gate added to the declaration and not
+to that list is not protected. This is a gate you run: nothing in this repository invokes
+`codex plugin add`, `update` or `remove`. See [approval policy](plugin-transition.md#approval-policy).
 
 ## Turning the wired surfaces on
 
@@ -287,16 +289,15 @@ the record as it stood at that moment, and at the other none was seen to start u
 a Stop and exits, and the completion hook installs in `observe` mode, which classifies and
 records and never holds a turn.
 
-The linked installation in [README](../README.md#install) still works and is
-unchanged. Both installations read the same source: `scripts/install.py` links the
-directory the manifest declares, and the repository root keeps `skills` as a link
-to it so links created before the move still resolve.
+The linked installation in [README](../README.md#install) still works. Both
+installations read the same source: `crw-dev skills link` (and its legacy equivalent
+`scripts/install.py`) links the directory the manifest declares, and the repository
+root keeps `skills` as a link to it so links created before the move still resolve.
 
-A host carrying both runs two of everything. [Moving a manual install to the plugin
-install](plugin-transition.md) described how one became the other, and the update, the failed
-update, the disable and the removal that follow. Its commands that change a host are retired since
-the payload declares the native wiring, and refuse; todo 39's `crw install transition` replaces
-them.
+A host carrying a manual install of the bridge or the hook beside the plugin runs two of
+everything. [Moving a manual install to the plugin install](plugin-transition.md) records how
+this repository's hosts became plugin hosts. The tool that did it is retired: its commands that
+change a host refused once the payload declared the native wiring, and it has since been deleted.
 
 ## Skill names
 
@@ -597,15 +598,16 @@ making its first policy registration as well, and step 8 says what that changes.
    stays the same after the add in both cases until someone approves.
 5. On a host that gates the bridge,
    [check the candidate's declaration](#before-you-add-or-update-on-a-host-that-gates-the-bridge),
-   passing the version directory step 4's throwaway add reported as `--package`.
+   passing the version directory step 4's throwaway add reported as `--payload`.
    Then run `codex plugin add crw@<marketplace>`, and trust the hook again in Codex if step 4
    found its declaration changed. At the first measured replacement the host started bridges again
    before that trust was found in place; at the second, which needed none, none was seen to start.
 6. Read back what landed:
-   - the installed payload: `check-declaration --package` on the version directory the add
-     installed reports a `payloadDigest` that should equal the one the same command reports for
-     the throwaway directory from step 4; `python3 scripts/ci/plugin.py --payload <dir>` checks it
-     against the package rules;
+   - the installed payload: `go run -tags dev ./cmd/crw-dev ci plugin --payload <dir> --json` on
+     the version directory the add installed checks it against the package rules and reports a
+     `digest` that should equal the one the same command reports for the throwaway directory from
+     step 4 (`python3 scripts/ci/plugin.py --payload <dir>` is the legacy equivalent of the rule
+     check);
    - the step 2 dry run again, which now probes the server the new package declares and should
      still answer `record_unchanged`;
    - `get_capabilities` in a fresh task and in the tasks that were loaded during the add: its
@@ -705,9 +707,9 @@ making its first policy registration as well, and step 8 says what that changes.
 that directory automatically or prescribe copying it back after a gap as uninterrupted support.
 If path continuity cannot be established before replacement, use the turn boundary in step 1; do
 not proceed on an assumption that the old cache will remain.
-`python3 scripts/plugin_transition.py swap-state` reports what a replacement actually left. It
-reads the pointer and the host records, not the tasks holding references, so it cannot establish
-that the last reader is gone; that needs evidence of its own.
+`crw install status` reports what a replacement actually left: what the host record selects, what
+the owned pointer names and whether they agree, and every runtime directory with its claim. It reads the pointer and the host records, not the tasks holding references, so
+it cannot establish that the last reader is gone; that needs evidence of its own.
 
 A host carrying temporary compatibility files — an old cache path kept alive by hand after an
 update went wrong — needs a record of its own, kept with the task record outside this
@@ -798,5 +800,5 @@ So the check fails closed: the accepted values are `auto`, `prompt`, `writes` an
 measured from the host's own rejection text; `approval_mode` is the only key allowed inside a tool
 gate; an empty `tools` object is refused because nothing measured says what a host does with one;
 and `codex-thread-bridge` must keep gating `create_thread` and `send_message_to_thread` with
-`approve`, because that gate is what the user configuration hands over when the transition removes
+`approve`, because that gate is what the user configuration handed over when the transition removed
 its table. See [approval policy](plugin-transition.md#approval-policy).

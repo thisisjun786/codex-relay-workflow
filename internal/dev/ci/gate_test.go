@@ -371,5 +371,98 @@ func Test47_GATE_10_ParallelLegsCoverTheWholeRun(t *testing.T) {
 		expected = append(expected, strconv.Itoa(i+1)+"/"+strconv.Itoa(len(shards)))
 	}
 	expectEqual(t, "package shards", shards, expected)
-	expectEqual(t, "installer test parts", matrixValues(t, jobs["tests"], "part"), []string{"transition", "rest"})
+	expectEqual(t, "installer test parts", matrixValues(t, jobs["tests"], "part"), []string{"heavy", "rest"})
+	installerLegsRunEveryModuleOnce(t, jobs["tests"])
+}
+
+// installerLegsRunEveryModuleOnce runs the tests job's own step script once per leg over a
+// mirror of scripts/ci/tests plus a module no list names yet, with python3 replaced by a
+// recorder: together the legs run every module discovery would load, each once, and the
+// unnamed one lands in `rest`. test_gate.py runs the same script the same way.
+func installerLegsRunEveryModuleOnce(t *testing.T, body string) {
+	t.Helper()
+	lines := strings.Split(body, "\n")
+	start := slices.Index(lines, "        run: |")
+	if start < 0 || slices.Index(lines[start+1:], "        run: |") >= 0 {
+		t.Fatal("the tests job does not have exactly one script step")
+	}
+	var script strings.Builder
+	for _, line := range lines[start+1:] {
+		if strings.TrimSpace(line) != "" && !strings.HasPrefix(line, strings.Repeat(" ", 10)) {
+			break
+		}
+		if len(line) > 10 {
+			script.WriteString(line[10:])
+		}
+		script.WriteString("\n")
+	}
+	heavy := regexp.MustCompile(`(?m)^          HEAVY: (.+)$`).FindStringSubmatch(body)
+	if heavy == nil {
+		t.Fatal("the tests job names no HEAVY modules")
+	}
+	root := t.TempDir()
+	mirror := filepath.Join(root, "scripts", "ci", "tests")
+	entries, err := os.ReadDir(filepath.Join(repoRoot(), "scripts", "ci", "tests"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(mirror, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var listed []string
+	for _, name := range append(entryNames(entries), "test_zz_added_later.py") {
+		if err := os.WriteFile(filepath.Join(mirror, name), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasPrefix(name, "test") && strings.HasSuffix(name, ".py") {
+			listed = append(listed, strings.TrimSuffix(name, ".py"))
+		}
+	}
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	recorder := "#!/bin/sh\nprintf '%s\\n' \"$PYTHONPATH\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "python3"), []byte(recorder), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var env []string
+	for _, kv := range os.Environ() {
+		if name, _, _ := strings.Cut(kv, "="); name != "BASH_ENV" && name != "PART" && name != "HEAVY" && name != "PATH" {
+			env = append(env, kv)
+		}
+	}
+	env = append(env, "HEAVY="+heavy[1], "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ran := map[string][]string{}
+	var all []string
+	for _, part := range []string{"heavy", "rest"} {
+		// GitHub runs a `run:` block without a `shell:` as `bash -e {0}`.
+		r := runEnv(t, root, append(slices.Clone(env), "PART="+part), "bash", "-e", "-c", script.String())
+		if r.code != 0 {
+			t.Fatalf("%s leg exited %d: %s", part, r.code, r.stderr)
+		}
+		words := strings.Fields(r.stdout)
+		if len(words) < 4 || !slices.Equal(words[:4], []string{"scripts/ci/tests", "-m", "unittest", "-v"}) {
+			t.Fatalf("%s leg ran %q, not PYTHONPATH=scripts/ci/tests python3 -m unittest -v", part, words)
+		}
+		ran[part] = words[4:]
+		if len(ran[part]) == 0 {
+			t.Errorf("the %s leg runs no module", part)
+		}
+		all = append(all, ran[part]...)
+	}
+	expectEqual(t, "modules the legs run", sortedCopy(all), sortedCopy(listed))
+	if !slices.Contains(ran["rest"], "test_zz_added_later") {
+		t.Errorf("a module no list names does not run in rest: %q", ran)
+	}
+}
+
+func entryNames(entries []os.DirEntry) []string {
+	var names []string
+	for _, entry := range entries {
+		if entry.Type().IsRegular() {
+			names = append(names, entry.Name())
+		}
+	}
+	return names
 }

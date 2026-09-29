@@ -46,16 +46,31 @@ The skills use installed CXC/Paperthin and the available Linear connector; they 
 
 ## Install
 
-Use Git, Python 3.10+, and a platform supporting directory symlinks. The default
-branch `dev` contains ongoing integration work; `main` identifies the last
-owner-authorized source release. Clone into a location you will keep:
+Use Git, the Go toolchain `go.mod` names, and a platform supporting directory
+symlinks. The default branch `dev` contains ongoing integration work; `main`
+identifies the last owner-authorized source release. Clone into a location you will
+keep:
 
 ```sh
 git clone --branch dev https://github.com/thisisjun786/codex-relay-workflow.git
 cd codex-relay-workflow
-python3 scripts/install.py --apply
-python3 scripts/install.py --check
+go run -tags dev ./cmd/crw-dev skills link --apply
+go run -tags dev ./cmd/crw-dev skills link --check
 ```
+
+`crw-dev` is the repository's development binary; the linker is in it because it
+links a checkout, and a release archive has none. `python3 scripts/install.py
+--apply` and `--check` are the legacy equivalent and stay until the Python
+execution path is removed.
+
+### Retired skill migration
+
+`scripts/install.py` still reports skills installed under their retired names
+(`linear-focus`, `linear-next`, `linear-plan`, `linear-run`, `linear-check`,
+`linear-logic`, `crw-focus`) as `LEGACY` lines and leaves them in place; `--check`
+fails while any remain. Neither linker removes them: inspect who owns each entry,
+then move it outside the skills directory Codex discovers (`$CODEX_HOME/skills`, or
+`~/.codex/skills`). `crw-dev skills link` does not look for retired names.
 
 Or install the same skills as a versioned plugin, which needs no checkout to stay
 in place:
@@ -74,7 +89,8 @@ what installing does not do.
 
 | Capability | What you need |
 | --- | --- |
-| Install or run repository checks | Python 3.10+; installation also requires directory symlinks |
+| Link the skills from a checkout | The Go toolchain `go.mod` names, and directory symlinks |
+| Run repository checks | Python 3.10+ |
 | Work on the packages | Python 3.11+ and [uv](https://docs.astral.sh/uv/) |
 | Plan and verify Linear work | Codex with local skill support and a connected Linear workspace you can access |
 | Use the shared workflow | Separately installed CXC and Paperthin skills referenced by the [integration guide](plugins/crw/skills/crw-plan/references/integrations.md) |
@@ -113,7 +129,7 @@ operations contract before enabling delegation, hooks, or automatic reporting.
 
 ### Installation behavior
 
-The destination defaults to `$CODEX_HOME/skills`, or `~/.codex/skills`. Use `--dest /absolute/skills/path` for another Codex installation.
+The destination defaults to `$CODEX_HOME/skills`, or `~/.codex/skills`; a leading `~` in `CODEX_HOME` or `--dest` is expanded. Use `--dest /absolute/skills/path` for another Codex installation. Run it from inside the checkout: it finds the checkout with Git and links the skills directory its plugin manifest declares.
 
 Installation creates a symlink per skill to this checkout. Repeating it preserves correct links. Existing directories or links to other locations are reported as conflicts and left untouched; compare and back them up before deliberately replacing them. There is no automatic deletion or overwrite option.
 
@@ -127,54 +143,12 @@ A change reaches you in stages, and a report naming only the last stage it compl
 git log --oneline -1
 skills_dest="${CODEX_HOME:-$HOME/.codex}/skills"   # or the --dest you installed with
 readlink "$skills_dest/crw-run"
-python3 scripts/install.py --dest "$skills_dest" --check
+go run -tags dev ./cmd/crw-dev skills link --dest "$skills_dest" --check
 ```
 
 The first line is the revision this checkout holds. `readlink` gives the checkout an installed skill actually resolves to, which is not always the one you just edited. `--check` reports whether the links belong to the checkout you run it from and prints `CONFLICT` when they point elsewhere; it does not print targets, so read the link itself when the answer matters, and point both commands at the destination you installed with. A plugin installation has no link to read: the cache holds one published version per plugin, and an edit here reaches it only after the manifest version is recorded again and the plugin is installed. That version carries the digest of the packaged bytes, so the version `codex plugin list` shows names the payload and not only the release.
 
 None of that is the same as using the change. A conversation that already read a skill keeps the text it read, so the shortest confirmation is to start a fresh task, invoke the skill on a real request, and compare what it does with the behavior the change describes. The skills apply the same rule when they report their own delivery; see [Delivery reach and current usability](plugins/crw/skills/crw-plan/references/integrations.md#delivery-reach-and-current-usability).
-
-### Retired skill migration
-
-The former `linear-*` entrypoints use CRW names. `crw-focus` is now retired:
-Run and Loop perform [project binding](plugins/crw/skills/crw-plan/references/integrations.md#project-parent-binding)
-as shared setup. A request to connect or restore the parent without execution still
-does only that setup. Existing project/task IDs and coordination records remain valid.
-
-| Previous name | Current name |
-| --- | --- |
-| `linear-focus`, `crw-focus` | `crw-run` with a binding-only request |
-| `linear-next` | `crw-next` |
-| `linear-plan` | `crw-plan` |
-| `linear-run` | `crw-run` |
-| `linear-check` | `crw-check` |
-| `linear-logic` | `crw-logic` |
-
-Run `python3 scripts/install.py --check` after updating your checkout. It reports
-`LEGACY` for any of these retired destination names, including dangling links,
-ordinary files, directories, and links to another checkout. It never changes them.
-`--check` exits nonzero while a canonical link is missing, a conflict exists, or
-a legacy entry remains.
-
-Run `--apply` to create the new links. It exits successfully when those links are
-installed, even if it also warns about old entries. A conflict at a **new** name
-prevents all planned link creation. Compare that destination with the intended
-source before deliberately resolving it; the installer has no overwrite option.
-
-Inspect each old entry and its original target. After verifying that a symlink
-belongs to the installation you are retiring, move that link to a backup directory
-outside Codex's scanned skill directories. Preserve foreign files, directories,
-and links for their owner to reconcile. Do not infer ownership from the old name,
-and do not move the linked source directory. Run `--check` again; a clean result
-means all current skill links point to this checkout and no known old names remain.
-
-There are no old-name aliases or duplicate skill instruction folders. Refresh the
-client's skill catalog or start a fresh task, then invoke `$crw-run`, for example.
-An existing or compacted task may still carry `$linear-run` or an old path: use
-the mapping above and read `plugins/crw/skills/crw-run/SKILL.md` from the updated checkout.
-The descriptions retain a former-name hint for discovery, but this does not make
-an old explicit invocation resolve in an already loaded catalog. The rename does
-not change task IDs, relay state, permissions, or running CXC workflows.
 
 ## Maintain
 
@@ -202,7 +176,7 @@ When the bundled Codex skill validator is available:
 for skill in plugins/crw/skills/*; do
   python3 "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" "$skill" || exit 1
 done
-python3 scripts/install.py --check
+go run -tags dev ./cmd/crw-dev skills link --check
 git diff --check
 ```
 

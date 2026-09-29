@@ -1,26 +1,22 @@
 # Moving a manual install to the plugin install
 
-**Retired.** `transition`, `disable` and `remove` refuse with exit 2 and one line on stderr, and
-change nothing. The plugin payload now declares the native wiring
-([decision 26](port/decisions.md)): its Stop hook and bridge run the Go runtime's `crw` and
-`codex-thread-bridge` behind `$HOME/.local/share/crw-runtime/current`. These steps hand the
-surfaces only to a Python runtime (preflight requires `<dest>/current/bin/python3` and a cached
-payload equal to this checkout's), so on every host they accepted, an applied transition removed
-the working Stop registration and bridge table, reported every step settled, and left a Stop hook
-and a bridge that could not run there. `inspect`, `check-declaration` and `swap-state` still
-answer, read-only. Todo 39 replaces the tool with `crw install transition` and deletes it. The rest
-of this page describes the tool as it was.
+This page is a historical note. `scripts/plugin_transition.py` moved a host with a manual install
+of CRW to the [plugin installation](plugin-packaging.md), and it is retired: this repository's
+host completed that move, and nothing in the repository runs the tool any more. Its commands that
+change a host (`transition`, `disable` and `remove`) were retired first, when the plugin payload
+began declaring the native wiring ([decision 26](port/decisions.md)). Its Stop hook and bridge run
+the Go runtime's `crw` and `codex-thread-bridge` behind `$HOME/.local/share/crw-runtime/current`.
+The steps handed the surfaces only to a Python runtime (preflight requires
+`<dest>/current/bin/python3` and a cached payload equal to the checkout's). So on every host they
+accepted, an applied transition removed the working Stop registration and bridge table, reported
+every step settled, and left a Stop hook and a bridge that could not run there. From then until the
+tool was deleted, those commands refused with exit 2 and one line on stderr, and changed nothing.
+The full reference it had is this page at a revision where the tool still ran; see
+[a host that still needs it](#a-host-that-still-needs-it).
 
-The [linked installation](../README.md#install) and the [plugin installation](plugin-packaging.md)
-can both be present on one host, and on that host two things run for every one that should. This
-page is how a host with a manual install becomes a host with a plugin install, and what owns the
-update, the failure, the disable and the removal afterwards.
+## What it did
 
-`scripts/plugin_transition.py` performs it. It prints one JSON document per run, it writes nothing
-without `--apply`, and it never installs a runtime, registers a plugin, grants hook trust, stops a
-service, or deletes an operational database, journal, receipt or assignment.
-
-## The three surfaces, and who owns each
+A host could carry both installations, and then two things ran for every one that should:
 
 | Surface | Manual install | Plugin install |
 | --- | --- | --- |
@@ -28,478 +24,69 @@ service, or deletes an operational database, journal, receipt or assignment.
 | Task bridge | `[mcp_servers.codex-thread-bridge]` in `config.toml`, plus a record naming owner `user` | `wiring/mcp.json` plus a record naming owner `plugin` |
 | Completion hook | an entry in `$CODEX_HOME/hooks.json` running `<checkout>/scripts/completion_hook.py` | the package's declared Stop hook plus `crw-completion-hook.json` settings naming owner `plugin` |
 
-## Why there is a standdown step
+`transition` removed the manual surfaces, and only the bytes it could prove ran this repository's
+own code, in a fixed order: place the fallback Stop launcher `<CODEX_HOME>/crw-stop-hook.py`,
+retire the settings the manual registration named, remove that registration, write the
+plugin-owned settings, retire the user-owned bridge record, remove the `config.toml` table, write
+the plugin-owned bridge record, and remove the CRW-owned skill links. `inspect`,
+`check-declaration`, `disable`, `remove` and `swap-state` read a host, judged a candidate package,
+and retired or removed the plugin records afterwards. Every command printed one JSON document and
+wrote nothing without `--apply`.
 
-`completion.run()` validates the settings, including who owns the registration, and then calls the
-guard regardless of that owner. It does not stand down on it. Both readers also read the same
-settings file by default: the packaged launcher reads `$CODEX_HOME/crw-completion-hook.json` and
-nothing else, and the user-owned command carries that same path. So there is no content you can put
-in that file that leaves one of them running and stops the other. With valid settings naming the
-plugin, both fire on every Stop.
+## Why it was retired
 
-The only thing that stops the old registration is that registration no longer being there, or no
-longer being trusted. So the transition removes it, and removal is where the care goes.
+The one host that had a manual install is a plugin host now: its skills come from the plugin cache,
+its `hooks.json` and `config.toml` hold no CRW registration, and its settings and bridge record
+name owner `plugin`. No skill, workflow, CI script or cutover document runs the tool. The Go
+runtime writes only plugin-owned registrations (`crw install hook` and `register-mcp` take
+`--owner plugin` alone), so it cannot create a manual install that would need the move again.
 
-## What it will and will not remove
+What the tool did that is still needed has another home:
 
-It removes only bytes it can render back, and only when the plugin declaration provably reproduces
-what they were doing. For the hook and the skill link that comes to the same thing as proving they
-run this repository's own code. For the bridge table it does not: a per-tool approval policy runs
-no code and was written by an operator, and it is removed on the strength of the declaration
-carrying the same gate. See [Approval policy](#approval-policy).
+| Was | Now |
+| --- | --- |
+| `check-declaration --package` | `crw-dev ci plugin --payload <dir> --json`, before and after `codex plugin add`; see [before you add or update](plugin-packaging.md#before-you-add-or-update-on-a-host-that-gates-the-bridge) |
+| `swap-state` | `crw install status` |
+| `disable` as the repair for a refused bridge record | move the record aside by hand, then register again |
+| the launcher half of `remove` | `install.RemoveLauncher` in `internal/runtime/install`: it deletes `<CODEX_HOME>/crw-stop-hook.py` only while the file carries the launcher marker, proves the marker again under the launcher's own lock, and never touches the settings. The cutover calls it once the retention scan is clear |
+| making the skill links | `crw-dev skills link --apply` (see [README](../README.md#install)) |
 
-| Surface | What is proven | Otherwise |
-| --- | --- | --- |
-| skill link | a symlink resolving to a `crw-*` skill directory inside a CRW checkout | left byte-identical, and named in the output |
-| hook entry | the command is exactly what `completion.command_for` emits for the words it names, and its script sits in a CRW checkout | left in place, the transition refuses, the hand edit is printed |
-| `config.toml` table | the parent block equals what `codexconfig.render` produces for the registration found there, the registration carries no key beyond `command`, `args` and `tools`, and every tool it gates is a `[mcp_servers.<name>.tools.<tool>]` block equal to what this command renders for it | left in place, the transition refuses, and the refusal names the key or the spelling in the way |
-| bridge record | it passes the record's own shape check and names owner `user` | left in place, the transition refuses |
+`scripts/crw_transition/inventory.py` stays until the Python installer is removed, because
+`runtime_install.py register-mcp --execution-policy` reads the enabled plugin through it.
 
-One limit worth stating plainly: a hook file carries no provenance, so nobody can prove from it who
-wrote a registration. What is proven is that the registration runs this repository's adapter. That
-is the property that matters, because a registration running our adapter beside the plugin's
-declaration is the double fire this exists to prevent, whoever created it.
+## A host that still needs it
 
-## The order, and the two windows
+A host this repository cannot see may still carry a manual install. Run the tool from a revision
+before the native wiring, where it still runs and this page is still the full reference. The
+revisions between the native wiring and the tool's deletion carry it, but their `transition`,
+`disable` and `remove` refuse. `53caad67` on `dev` is one such earlier revision:
 
-    preflight
-    1 place the fallback Stop launcher this host will need
-    2 retire the settings the registration names
-    3 remove the registration that runs our adapter
-    4 write the plugin-owned settings, recording the adapter under the destination pointer
-    5 retire the user-owned bridge record
-    6 remove the config.toml table
-    7 write the plugin-owned bridge record
-    8 remove the CRW-owned skill links
+```sh
+git worktree add --detach /path/to/transition 53caad67
+cd /path/to/transition && python3 scripts/plugin_transition.py inspect
+```
 
-Step 1 goes first because it is the only step here that takes nothing away and the only one that
-can refuse on a condition outside this command: a file at the stable launcher path that is not
-ours, or another run holding its lock. Placed after the retire and the standdown, such a refusal
-left the host with its settings archived and its manual registration removed and nothing to put
-them back, which is a worse host than the one the command started with. First, it refuses before
-anything has been taken.
-
-It is here at all because this command writes the same plugin-owned settings
-`runtime_install.py hook --owner plugin` writes. A migration that stopped at the settings would
-leave the package's Stop declaration with one candidate again, and the first package replacement
-while a task still held the old command would land back in the loop that declaration exists to
-avoid. See
-[the fallback launcher](runtime-install.md#the-fallback-launcher-and-why-this-command-places-it)
-for what it refuses and who removes it, and [the cache lifetime](plugin-packaging.md#the-cache-lifetime)
-for why a second candidate is needed at all.
-
-The rest of that order is forced, and the forced part is what prevents doubles: the registration
-goes before the new settings, the old settings go before the new ones, and the table goes before the
-plugin record. Steps 5 to 7 are held under the same ownership lock `register-mcp` takes, because a
-user-owned registration landing in the middle would put the record back and leave the host with no
-bridge.
-
-The settings are retired before the registration is removed, and that is deliberate. A custom
-settings path is recorded only in the hook command, so removing the command first and stopping there
-leaves a file the next run cannot rediscover, and a host with no completion hook. Retiring first
-costs a window in which the old registration runs against settings that are no longer there, which
-it answers by releasing in silence, and costs no window in which two adapters run, because the
-plugin-owned settings are not installed until step 3.
-
-A settings path a registration names and that is not on disk when the run reads the host is kept as
-a watched path rather than dropped, because a supported installer can create it inside that same
-window. The standdown holds the lock on every watched path while it asks whether anything arrived
-there, and refuses the removal if something did: a document written back after the retire is one
-the plugin install will not overwrite, and removing the registration in front of it would leave no
-completion hook at all. The retire carries those paths on every answer it gives, including the ones
-where it found nothing to archive and where every document it did find already names the plugin.
-
-Every step decides from the host as it stands at that step, not from the snapshot the run opened
-with. The bridge surface is re-read inside the ownership lock, the hook file is re-read and its
-registrations re-proved inside the hook lock, the bridge table's span and its proof are re-derived
-before a byte is removed, and the skills directory is inventoried again at step 8 and once more
-after it. That last one is a weaker guarantee than the other two and is named as such: the
-directory has no lock, so a link arriving during the removals is reported rather than prevented,
-and the run refuses instead of reporting success over it.
-
-Step 8 removes nothing until every link it would remove has been proved, and then proves each one
-again in the moment before it is unlinked. Neither pass is a lock. The first stops a refusal from
-leaving half a manual installation behind; the second stops a link replaced during the removals
-from being deleted as though it were still ours, and narrows that window to the gap between a
-read and the call after it. Closing it entirely needs a lock that `scripts/install.py` takes too,
-which is a change to a tool other flows use and is not made here.
-
-One limitation of the locks themselves, stated rather than papered over. The ownership lock is
-`hostrecord.Locked`, because that is the lock `register-mcp` takes and a lock only excludes those
-who take the same one. `Locked` treats a lock file older than 300 seconds as stale and removes it,
-so a step that stays inside the lock for longer than that -- a cross-filesystem archive of a large
-document, say -- can have its lock taken by a waiter while it is still working. Taking a different
-lock here would not fix it; it would silently stop excluding the other owner, which is worse. The
-repair belongs to `hostrecord` and to every command that takes that lock, and `hostrecord` already
-carries the corrected mechanism it would use: `Exclusive`, which holds an advisory lock on a file
-that is never unlinked and expires only when its holder dies.
-
-A second limitation of the same kind, reported rather than prevented. The plugin entry lives in
-`config.toml` and nothing that writes it takes a lock this command could wait on, so an operator
-disabling the plugin, or a cache replaced underneath it, can land between the readiness check in
-front of a destructive step and the write that follows. Asking again before every destructive step
-narrows that window and cannot close it. When it lands after the completion registration has
-already been removed, the refusal says what the host now is: the manual registration is gone, the
-plugin's declared hook is all that remains and cannot load while the plugin is disabled, and no
-completion hook fires until the plugin is enabled again and the run repeated. The registration is
-not put back, because by then the settings at the fixed path name the plugin, and a user-owned
-registration reading a plugin-owned document is refused by the adapter on ownership -- a hook that
-fires, records nothing and looks installed, which is worse than an absence the run names.
-
-Three windows follow, and all three are printed by the run:
-
-- between 1 and 2 the old registration runs with no settings to read and releases without recording;
-- between 2 and 3 no completion hook fires at all;
-- between 5 and 6 a session that starts finds no bridge registered.
-
-## Renumbering and trust
-
-Codex records hook trust positionally. Removing an entry shifts the index of every later hook in the
-same event and detaches the trust recorded against those positions, so those hooks need trusting
-again. The transition refuses to do that until `--accept-hook-renumbering` says it may, and it names
-every identity that would shift. When the entry is the only hook in its matcher group, the group is
-left in place and empty, which renumbers nothing.
-
-Trust for the plugin's own hook is reported, never asserted. A `[hooks.state]` entry records a hash
-for the hook as it stood when trust was given, and nothing here can compute the hash Codex compares
-it against, so a stale or fabricated record is indistinguishable from a current one. An untrusted
-declared hook fires zero times, which would turn the window above into a host with no completion
-hook at all. So the transition reports the key it found, reports that the hash was not compared, and
-requires `--accept-hook-trust-gap` on every run. Trust the hook and confirm it fires first.
-
-## Preflight refuses rather than half-finishing
-
-    python3 scripts/plugin_transition.py inspect
-    python3 scripts/plugin_transition.py transition            # a dry run
-    python3 scripts/plugin_transition.py transition --apply
-
-Before anything is removed, preflight requires: the plugin registered and enabled in `config.toml`;
-a cache version that passes `scripts/ci/plugin.py --payload`, because an empty hook document and an
-empty `mcp.json` satisfy a file census and leave nothing working; the cached package carrying every
-skill the links being removed provide; the destination pointer resolving, and the adapter, its
-interpreter and the bridge each existing as executable files, because a dangling pointer still reads
-as a link; and every registration proven, including any table that starts the same bridge under
-another name, because `register-mcp` takes `--name` and leaving an alias would start two
-bridges.
-
-It also requires the relay under that pointer, which is easy to forget because the adapter does not
-answer a Stop by itself: it runs the relay as a subprocess for the guard decision, and a host
-missing it reaches a working adapter on every Stop and releases with `guard_unreachable`.
-
-## The cached package has to be the replacement, not merely a valid package
-
-`scripts/ci/plugin.py --payload` answers whether the installed package is well formed. Well formed
-is not the question standing in front of a working hook and a working bridge registration about to
-be removed: its hook check accepts any nonempty event and command, and its server check any
-nonempty name. So the transition also compares what the cached package DECLARES with what this
-checkout ships, and refuses when they differ.
-
-What is compared, and why each part is there:
-
-- the documents the cached MANIFEST names, not the files at the paths this repository happens to
-  use, because Codex loads what the manifest declares and ignores everything else in the package;
-- the interpreter and the script together, as one pair, because half a launcher is not a launcher:
-  a versioned name this checkout does not ship is a valid spelling of a Python that need not exist
-  on the host. The interpreter is compared whole, directory included: reduced to a basename, an
-  absolute path to a Python that is not on this host reads as the bare `python3` this package
-  declares, and that declaration starts nothing;
-- the script positionally, the way an interpreter resolves it -- the first non-option argument, with
-  only the options that leave the next word alone skipped -- because `-c` takes source text and
-  `-m` takes a module name, and a command that merely mentions the launcher does not run it;
-- the matcher and the timeout beside the command, because the right launcher under a restrictive
-  matcher fires on some turns and not others, and a one-second timeout is killed before the
-  adapter's own budget can answer;
-- the whole set, counted: a document declaring our launcher twice fires two adapters on every Stop,
-  and an `mcp.json` carrying the expected entry plus another name starting the same launcher loads
-  two bridges. Addition defeats a one-owner handoff as surely as substitution does;
-- both event maps rather than the events this checkout declares, because a cached document can keep
-  the expected `Stop` entry and add another event running the same adapter, and a walk of our own
-  events never asks about an event only the cache has. The adapter and its guard would then run on
-  turns this repository never declared a hook for;
-- every field of a server entry beyond the command and its arguments, serialised rather than
-  enumerated, because `required` moving from false to true turns a bridge that may fail to start
-  into one whose failure ends the session, and `cwd` decides what the relative launcher path in
-  `args` resolves against. Enumerating the fields that matter today would miss the next one;
-- a declaration whose shape cannot be read is counted as exactly that rather than skipped, because
-  a skipped declaration is one Codex still runs and this comparison cannot see.
-
-A registration is treated as this repository's own when three things hold: the command is byte for
-byte what this repository's writer emits for the words it names, the file at the script position is
-this checkout's adapter compared byte for byte, and the program at the interpreter position answers
-an expression it could not have precomputed, as a Python would. The third is asked by running the
-candidate, which the installer already does before it writes one, because a name is neither
-sufficient nor necessary: `runtime_install.py` takes `--python` and accepts any executable that
-answers as a supported Python, so a name rule would disown this repository's own registration, and
-`/tmp/python3 -> /bin/true` shows a name rule accepting one that runs nothing.
-
-That is evidence rather than proof, and the reading says so in `provenBasis`. An `argv[0]` written
-to deceive -- real Python semantics for `-c` and something else for a script argument -- cannot be
-distinguished from here. Closing that needs an attestation written when the hook is registered, by
-the command that registers it, which is `scripts/runtime_install.py` and outside this document's
-scope. What this side can do is refuse to remove anything the three tests do not agree on.
-
-What this deliberately is not: a shell parser, and not a resolution of the declared interpreter
-against a PATH this command does not control. An unreadable shape is refused rather than
-interpreted, and the interpreter that IS resolved is the one the settings record, through the same
-probe that asks it to be a Python before recording it.
-
-Work in flight is reported rather than judged. The relay is never asked: its status subcommand takes
-no store argument, asking about an absent store would create one, and an idle relay answers with a
-nonempty object. The marker root is listed instead, and a marker is created once and outlives the
-work it recorded, so those entries are history. Whether a turn is running right now is not
-establishable from these records, and the run says so rather than refusing on a reading that was
-never about liveness.
-
-## Re-running, and an interrupted run
-
-Every step decides from what is on disk, so nothing depends on a previous step's result in memory. A
-second run reports `already_done` for each step, writes nothing, and exits zero. A run interrupted
-anywhere converges on the next run.
-
-That is a claim about interruption, not about writers running beside this one. What another writer
-can do while this runs is bounded by the locks named above: excluded where the lock is shared,
-detected and refused where the artifact is re-read under one, and reported rather than prevented
-where no shared lock exists at all, which is the plugin entry and the skills directory.
-
-Convergence after the bridge table is removed depends on the identity surviving it. A legacy
-install can have a `config.toml` table and no ownership record, and then the table is the only
-durable copy of the bridge executable and its arguments. The table standdown archives that identity
-under the record's own `.superseded-` name before the bytes go, so a run interrupted between the
-two rebuilds the record from the archive instead of from the pointer default with no arguments.
-
-The same holds for the execution policy a plugin-owned record may name (see
-[the execution policy the plugin bridge runs under](runtime-install.md#the-execution-policy-the-plugin-bridge-runs-under)).
-Step 7 carries it forward from the live record when that record is the plugin's, and otherwise,
-with no live registration, from the newest retired record when that one was the plugin's. A rerun
-on such a host is therefore `already_done`, and a transition after `disable` rebuilds a record
-naming the same file and digest instead of one that starts a bridge checking no role. A user-owned
-record never names a policy, so nothing is invented for a manual install.
-
-The newest archive has to read as a record for that carry-forward. When it cannot be read, or is
-not a regular file at all, the rebuild is refused rather than taken from an older archive, because
-an older one can predate the policy.
-Every entry under the stem also has to carry a name `retire` writes, a real UTC moment stamped
-`YYYYMMDDTHHMMSSZ` with an optional collision suffix from `-001` up, padded to three digits. An entry whose name cannot be placed in that order might be the
-newest, so it refuses the rebuild by name instead of being ranked below the others.
-
-The file the carried reference names is read too, the way the launcher reads it at every start: it
-has to open as a regular file whose bytes hash to the recorded digest. A policy edited or removed
-since it was recorded, whether after a `disable` or under a live record, makes preflight refuse and
-name the repair (restore the file, or register the policy as it now stands). Writing the stale
-reference would leave a record no new thread's launcher starts, reported as settled, and dropping
-it would start a bridge that checks no role.
-
-## Update
-
-Nothing here migrates a session. The settings record the adapter, the interpreter and the relay
-through `<destination>/current`, so replacing the version behind that pointer changes what new work
-resolves while a process already running keeps the one it started with. The records are not rewritten
-by an update, which is the point of recording the pointer rather than a resolved version.
-
-Replacing the plugin package is a separate update with an order of its own, because the host may
-start the bridges of loaded threads again, a running turn keeps its skills directory until it ends,
-and a changed hook declaration has to be trusted again. See
-[updating safely](plugin-packaging.md#updating-safely).
-
-## A failed version replacement
-
-    python3 scripts/plugin_transition.py swap-state
-
-It reports the pointer state, the pointer target, whether that target resolves, and whether a host
-record was read, as separate facts. What it does not do is invent the failed run's own residue:
-`residualPaths`, `residualOwnership` and `recoveryRequires` exist only in the result of the run that
-failed and cannot be recovered from any later reading. The retry is the owner's own command,
-`runtime_install.py install --apply`. Nothing in this page moves a pointer, writes a host record or
-touches the store.
-
-## Disable and remove
-
-    python3 scripts/plugin_transition.py disable --apply
-    python3 scripts/plugin_transition.py remove --apply
-
-`disable` retires the two records the packaged launchers read, and decides each one under the lock
-that serialises its own write: the settings under that file's lock, and the bridge record under the
-same ownership lock `register-mcp` takes. Both owners are read again inside the lock, so a record
-that became user-owned while this command ran is refused rather than archived as if it were ours.
-
-The receipt reports what is in effect, not what was intended. `stops` names only the surfaces this
-run actually left unable to serve a new call, `wouldStop` is what an `--apply` would stop on a dry
-run, and `stillLive` names every surface a reader must not read as stopped, carrying the reason it
-is not. A stopped settings record means new adapter invocations stop, because the launcher finds no
-settings and returns; a stopped bridge record means new bridge starts stop, because the launcher has
-no record. What does not stop: a bridge already spawned in a running session, a turn already inside
-the adapter, and the relay service if one runs. Excluding a shared service is the operator's own
-action, and this tool never performs or claims it.
-
-`remove` additionally removes the CRW-owned skill links. Out of its scope, and printed as such: the
-plugin cache and its `config.toml` entry, which `codex plugin remove` owns; the marketplace
-registration; the runtime installation; and the relay store, the bridge ledger, the hook journal and
-every receipt. There is deliberately no purge flag.
-
-## What none of this establishes
-
-Written, registered, trusted and fired are four claims. These commands can establish the first two.
-That a hook fired on a trusted path, that a promoted pointer serves a real installation, and that a
-round trip completed are separate observations with their own task.
+Its preflight requires `<dest>/current/bin/python3` and a cached payload equal to that revision's,
+so it moves only a host still on the Python runtime and the pre-native payload.
 
 ## Approval policy
 
 A Codex configuration can gate individual tools of an MCP server:
 
-    [mcp_servers.codex-thread-bridge]
-    command = "..."
-
     [mcp_servers.codex-thread-bridge.tools.create_thread]
     approval_mode = "approve"
 
-Measured on an isolated home, and the two facts that shape everything below:
-
-- While that table exists it **wins** over the plugin declaration. One entry is served, the user
-  one. So installing the plugin does not drop the gate. **Removing the table is what drops it**,
-  and the removal is step 5 of this transition.
-- There is no overlay. A configuration that keeps the `tools` sub-tables and drops `command` and
-  `args` fails to load at all: `invalid transport`, and every codex command exits 1. An orphaned
-  policy table is therefore not a harmless leftover, it is a host that cannot start.
-
-The package declares the same gate, so removing the table hands it over rather than dropping it:
+Measured on an isolated home: while that table exists it wins over the plugin declaration, so
+installing the plugin does not drop the gate, and removing the table does. There is no overlay: a
+configuration that keeps the `tools` sub-tables and drops `command` and `args` fails to load at all.
+The package declares the same gate, so removing the table hands the gate over instead of dropping
+it:
 
     "tools": { "create_thread": { "approval_mode": "approve" },
                "send_message_to_thread": { "approval_mode": "approve" } }
 
-### What has to be true before the table can go
-
-Let U be the policy the configuration grants and P the policy the installed package declares. The
-table may be removed only when U is readable, P is readable and valid, and **every tool in U is in
-P with an equal mode**.
-
-Tools in P but not in U are allowed. They are what this package ships, and a host registered by
-`register-mcp` has no policy at all, so forbidding additions would make every ordinary transition
-impossible. They add a declared requirement rather than preserving an absent one. Tools in U but
-not in P refuse: what the host does for a tool with no declared mode is not measured, so absent
-cannot be read as preserved.
-
-**Equality, and no ranking of the modes.** The measured set is `auto`, `prompt`, `writes`,
-`approve`. `writes` names a category of calls rather than a rung on a ladder, and `prompt` against
-`approve` was never measured. Ordering them would be a guess in the one place where guessing wrong
-quietly loosens a gate. This command never rewrites a value; it only decides whether removing one
-is safe.
-
-The question is asked three times, always before a byte moves: at preflight, at the re-read inside
-the ownership lock, and inside the standdown against the exact bytes it is about to edit. A dry run
-reaches the first, so the verdict is readable without writing anything.
-
-### The supported path
-
-    python3 scripts/plugin_transition.py inspect
-    python3 scripts/plugin_transition.py check-declaration --package <candidate>
-    codex plugin add ...                       # you run this, not this tool
-    python3 scripts/plugin_transition.py check-declaration --package <installed version>
-    python3 scripts/plugin_transition.py transition
-    python3 scripts/plugin_transition.py transition --apply
-
-`check-declaration` judges the package **about to be installed**, not the one already there, and
-prints a `payloadDigest`. Running it again against the installed version and comparing digests is
-what ties the verdict to the bytes that actually landed. It exits 1 when adding that package would
-not preserve what this host grants.
-
-Nothing in this repository runs `codex plugin add`, `update` or `remove`. `check-declaration` is a
-gate you run, not one that intercepts you.
-
-### The paths that refuse, and why
-
-| Refused because | What you see |
-| --- | --- |
-| the configuration gates a tool the declaration does not | the tool, and that an undeclared mode was never measured |
-| the modes disagree | both values, and that this command does not choose between them |
-| a tool gate carries a key other than `approval_mode` | the table and the key |
-| a mode is outside the measured set | the value and the four modes |
-| the declaration could not be read | that preservation was compared with nothing |
-| the registration carries another key, such as `tool_timeout_sec` | the key, and that the declaration does not reproduce it |
-| the policy is spelled so this command cannot render it back: the quoted form, an inline table, a dotted `tools.<tool>.approval_mode` key, or a table outside the registration's own span | which tools, and the provable byte form: one table per tool, holding only `approval_mode` |
-| a policy block carries anything else, such as a comment | that block, and that a provable one is exactly two lines, the header and `approval_mode` |
-| the file is written with CRLF line endings | that this command reads configurations with universal newlines, so removing the table would rewrite every line ending in the file, outside the table as well as inside |
-
-A refusal is not a completed transition. Do not read one as evidence that the plugin install, or a
-round trip through it, succeeded.
-
-### Three limits, stated rather than implied
-
-**`register-mcp` could re-open the gate. Now guarded, with one narrower gap left open.**
-`runtime_install.py register-mcp` writes `command` and `args` only. Run again on a host that has
-already transitioned, it used to create a table with no policy, and by the measurement above that
-table wins over the declaration.
-
-The path was real and is measured: `transition --apply` writes a plugin-owned record, which the
-ownership check already refuses to register beside. `remove --apply` retires that record and
-deliberately leaves the plugin cache and its config entry alone, because `codex plugin remove`
-owns those. A `register-mcp --owner user` run after that found no record and a package that still
-declared the server, and appended the shadowing table reporting success.
-
-The ownership check now refuses that write: when an installed package already declares the server
-name being registered and no user-owned record claims it, the run is refused with that reason and
-nothing is written. It refuses rather than copying the package's approval fields into a user
-table, because copying would duplicate a declaration the package owns and leave two writers for
-one policy. A cache that cannot be read is refused too, rather than treated as declaring nothing.
-A host with no plugin installed is unaffected, which is the ordinary manual install this command
-exists for.
-
-**What is still open, stated rather than implied.** The guard is about shadowing: a user table
-under the name the package declares. Registering the same bridge under a *different* name with
-`--name` is a different failure — two bridge servers side by side rather than one hidden behind
-the other — and `_other_bridge_tables` only compares against tables already in the configuration,
-never against what a package declares. That case is measured and pinned by a test, and handed back
-to the operations lane rather than absorbed here. The sweep predicate for whoever takes it: a user
-registration starting a bridge a package also declares is a second bridge whatever table name it
-is given.
-
-**A later cache replacement is not checked at that moment.** Once the table is gone the declaration
-is the only thing gating those tools. A `codex plugin update` installing a package without the gate
-is caught by `check-declaration` if you run it, and by nothing otherwise.
-
-**`tool_timeout_sec` blocks the live host for a different reason.** A registration carrying any key
-beyond `command`, `args` and `tools` is refused, because the declaration does not reproduce it and
-removing the table would lose it. That is the same class of problem as the approval gate and it is
-not solved here; the refusal names the key so the two are not confused.
-
-### Reading `policyInEffect`
-
-`inspect`, `disable`, `remove`, `swap-state` and `check-declaration` all report which per-tool
-approval policy this host is actually under. `transition` reports `policyBefore` instead, because
-on an applied run the table is gone by the time the receipt prints, and the standdown's own answer
-carries `removedPolicy`.
-
-The source is the user table while it exists, because measurement says that table wins, and the
-installed declaration only once the table is gone. `state` is one of three answers and they are
-deliberately not interchangeable:
-
-| `state` | What it means |
-| --- | --- |
-| `PRESENT` | a policy was read, and `tools` lists it |
-| `ABSENT` | it was read, and there is no policy here: no table, no MCP document declared, the package does not declare this server, or it declares no `tools`. `detail` is null, because nothing failed |
-| `UNREADABLE` | the question was not answered: a file that could not be read, a manifest or document whose root is not an object, a declared path that is not a usable string, a server entry that is not an object, or a malformed gate. `detail` says which |
-
-`ABSENT` and `UNREADABLE` are the distinction this whole change exists to keep. An unreadable
-policy reported as absent reads as "nothing gates these tools", which is the claim that must never
-be made on an unanswered question; an absent policy reported as unreadable sends an operator
-looking for a broken file that is fine. A declaration is only ever read once the plugin entry is
-present, `enabled` is true, and one cache version can be named; otherwise the answer says which of
-those was missing, because a cached directory is not a loaded plugin.
-
-### Why CRLF is refused rather than handled
-
-This is worth stating because the failure it prevents is invisible. Configurations are read with
-universal newlines, so a CRLF file arrives as LF. The span is then rendered in LF, compares equal
-to what this repository renders, and the table reads as proven — while the parser-backed check on
-the real bytes says the opposite. Writing the result back would replace every line ending in the
-file, outside the table as well as inside, and the step's own byte check could not see it, because
-both sides of that comparison have already been translated. A command that promises to leave every
-other byte alone cannot also rewrite the whole file, so it declines the file instead.
-
-### The race this does not close
-
-The standdown reads the configuration once inside the ownership lock, derives its proof and its
-edit from those same bytes, and compares them against the file again immediately before writing.
-That serialises cooperating runs and detects a change made by anything else between the proof and
-the comparison. It is not compare-and-swap: `hostrecord.Locked` says so itself, and what stays open
-is the inside of `atomic_write`, between its temporary file and its replace. An editor that ignores
-the lock can still land there.
+The modes are compared for equality and never ranked. The measured set is `auto`, `prompt`,
+`writes` and `approve`, and `prompt` against `approve` was never measured. On a plugin host the
+declaration is the only gate left, so `crw-dev ci plugin` refuses a package that drops or weakens a
+required gate, and `runtime_install.py register-mcp` refuses to write a user table that would shadow
+a server an installed package declares.

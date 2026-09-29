@@ -315,10 +315,9 @@ def same_registration(found, wanted):
 
 # The repair for a record whose policy reference no longer describes the file: there is no
 # command that rewrites a record, so it goes aside and is registered again.
-_POLICY_REPAIR = ("move {path} aside by hand (or retire it with plugin_transition.py disable,"
-                  " which also retires the Stop settings), then run register-mcp again. Threads"
-                  " started in between find no record and start no bridge; threads already"
-                  " running keep the bridge they spawned")
+_POLICY_REPAIR = ("move {path} aside by hand, then run register-mcp again. Threads started in"
+                  " between find no record and start no bridge; threads already running keep the"
+                  " bridge they spawned")
 
 
 def _policy_now(wanted):
