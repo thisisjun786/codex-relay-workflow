@@ -151,7 +151,7 @@ func (b *builder) str() (string, error) {
 // _no_duplicates does, so an inner duplicate is reported before an outer one.
 func (b *builder) object() (any, error) {
 	o := &object{values: map[string]any{}}
-	repeated := ""
+	repeated, duplicate := "", false
 	for b.ws(); b.i < len(b.s) && b.s[b.i] != '}'; b.ws() {
 		key, err := b.str()
 		if err != nil {
@@ -164,8 +164,8 @@ func (b *builder) object() (any, error) {
 			return nil, err
 		}
 		if o.has(key) {
-			if repeated == "" {
-				repeated = key
+			if !duplicate {
+				repeated, duplicate = key, true
 			}
 		} else {
 			o.keys = append(o.keys, key)
@@ -176,7 +176,7 @@ func (b *builder) object() (any, error) {
 		}
 	}
 	b.i++
-	if repeated != "" {
+	if duplicate {
 		return nil, &PolicyError{fmt.Sprintf("duplicate key %s in the execution policy", repr(repeated))}
 	}
 	return o, nil
