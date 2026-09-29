@@ -23,9 +23,8 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/pyload"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 const (
@@ -122,7 +121,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		var refused *refusal
 		if !errors.As(err, &refused) {
-			refused = refuse("this run raised before it could report", "exception", exceptionName(err), "detail", err.Error(), "raisedAt", nil)
+			refused = refuse("this run raised before it could report", "exception", exceptionName(err), "detail", exceptionText(err), "raisedAt", nil)
 		}
 		fmt.Fprintln(stdout, evidence.DumpsIndent(refused.record(), 2, true, true))
 		return 2
@@ -132,6 +131,15 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// exceptionText is str(error): a Python exception's message without its class.
+func exceptionText(err error) string {
+	var python *evidence.PythonError
+	if errors.As(err, &python) {
+		return python.Detail
+	}
+	return err.Error()
 }
 
 func exceptionName(err error) string {
@@ -300,10 +308,10 @@ func report(record object, path string) (object, error) {
 		if pyStrip(line) == "" {
 			continue
 		}
-		if message := store.PythonJSONError(line); message != "" {
-			return nil, refuse("a ledger line is not JSON", "line", number, "detail", message)
+		value, err := pyload.Loads([]byte(line))
+		if python, deep := pyload.Recursion(err); deep {
+			panic(python) // `except ValueError` does not catch a RecursionError
 		}
-		value, err := hook.Decode([]byte(line))
 		if err != nil {
 			return nil, refuse("a ledger line is not JSON", "line", number, "detail", err.Error())
 		}

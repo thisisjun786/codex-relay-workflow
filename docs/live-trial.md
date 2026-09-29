@@ -240,7 +240,9 @@ script, so it is the tool for a trial on a Python install, and it retires with t
 The second is run after the window has closed, which is what it needs in order to grade anything.
 It is the development binary's ledger (`make crw-dev` builds `dist/crw-dev`), and it prints the
 document `python3 scripts/trial_startup.py ledger --start ...` printed, byte for byte, so a grade
-taken with either compares with a grade taken with the other. Both print one JSON object on standard
+taken with either compares with a grade taken with the other. The one exception is a record nested
+tens of thousands of containers deep, near where the interpreter's stack runs out
+([a known difference](port/known-defects.md)), which no operator writes. Both print one JSON object on standard
 output and create no file of their own. That is a claim about the checker rather than about the
 commands it runs: every relay command opens the store on construction and `doctor` writes a
 temporary file to measure whether the state directory is writable, so a mistyped state

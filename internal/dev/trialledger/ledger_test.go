@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/pyload"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 )
@@ -334,5 +335,57 @@ func TestFromISOFormatIsCPythons(t *testing.T) {
 		if !evidence.Equal(got, want) {
 			t.Errorf("%s: %v, want %v", pyRepr(input), got, want)
 		}
+	}
+}
+
+// A start record or a ledger line reads as deep as CPython 3.14's json nests (past
+// encoding/json's 10000) and grades as the same trial without the nesting; one container past
+// the interpreter's edge, the RecursionError neither reader catches is the run that raised before
+// it could report, with the message and not the class as its detail. An integer longer than
+// int() converts is the ValueError it is, not a JSONDecodeError.
+func TestLedgerReadsRecordsAsDeepAsPython(t *testing.T) {
+	raw, err := os.ReadFile("testdata/golden.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var golden map[string]struct {
+		Exit   int    `json:"exit"`
+		Stdout string `json:"stdout"`
+	}
+	if err := json.Unmarshal(raw, &golden); err != nil {
+		t.Fatal(err)
+	}
+	const name = "clean window after a failed preparation segment"
+	want := golden[name]
+	nestedIn := func(where, value string) ledgerCase {
+		c := caseNamed(t, name)
+		if where == "start" {
+			s := strings.Replace(*c.Start, `{"source"`, `{"note": `+value+`, "source"`, 1)
+			c.Start = &s
+		} else {
+			s := strings.Replace(*c.Ledger, `"kind": "segment_start"`, `"kind": "segment_start", "note": `+value, 1)
+			c.Ledger = &s
+		}
+		return c
+	}
+	arrays := func(depth int) string { return strings.Repeat("[", depth) + strings.Repeat("]", depth) }
+	for _, where := range []string{"start", "ledger"} {
+		for _, depth := range []int{20000, pyload.Nesting - 1} {
+			code, text, _ := grade(t, nestedIn(where, arrays(depth)))
+			if code != want.Exit || text != want.Stdout {
+				t.Fatalf("%s %d deep: exit %d\n%s", where, depth, code, text)
+			}
+		}
+		code, _, document := grade(t, nestedIn(where, arrays(pyload.Nesting)))
+		detail, _ := document["detail"].(map[string]any)
+		if code != 2 || document["refused"] != "this run raised before it could report" || detail["exception"] != "RecursionError" ||
+			detail["detail"] != "maximum recursion depth exceeded while decoding a JSON array from a unicode string" || detail["raisedAt"] != nil {
+			t.Fatalf("%s past the edge: exit %d %v", where, code, document)
+		}
+	}
+	code, _, document := grade(t, nestedIn("start", "1"+strings.Repeat("0", 4300)))
+	detail, _ := document["detail"].(map[string]any)
+	if code != 2 || detail["detail"] != "could not read the start record (ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit)" {
+		t.Fatalf("exit %d %v", code, document)
 	}
 }

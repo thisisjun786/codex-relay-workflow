@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/pyload"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 )
 
@@ -625,6 +626,42 @@ func TestSEV12_OnDiskFormIsTheWriters(t *testing.T) {
 			})
 		}
 	}
+	// A field the reader never types can hold anything its writer's JSON can, as deep as
+	// CPython 3.14's json nests: past encoding/json's 10000 the record still reads, and it is
+	// the writer's bytes. One container past the interpreter's edge, _read_record raises the
+	// RecursionError it does not catch and the reading stops there as a reader fault.
+	t.Run("a record nested as deep as Python reads one", func(t *testing.T) {
+		deep := func(depth int) any {
+			var v any = []any{}
+			for range depth - 1 {
+				v = []any{v}
+			}
+			return v
+		}
+		for _, c := range []struct {
+			field string
+			depth int
+		}{
+			{"assignmentId", 10000},
+			{"observation", 20000},
+			{"guardRecordedAs", pyload.Nesting - 1},
+		} {
+			h, records := oneEvent(t)
+			change(t, records[hook.Accepted], set(c.field, deep(c.depth)))
+			code, answer := verify(t, append(roots(h.journal), "--codex-home", h.codex)...)
+			expectVerdict(t, code, answer, 0, "TRUE")
+			if len(listed(answer, "rowsUnreadable")) != 0 || len(listed(answer, "acceptedRowsMissing")) != 0 {
+				t.Fatalf("%s %d deep: %v", c.field, c.depth, answer)
+			}
+		}
+		h, records := oneEvent(t)
+		change(t, records[hook.Accepted], set("assignmentId", deep(pyload.Nesting)))
+		code, answer := verify(t, append(roots(h.journal), "--codex-home", h.codex)...)
+		expectVerdict(t, code, answer, 3, "UNREADABLE")
+		if answer["readerFault"] != "RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string" {
+			t.Fatal(answer["readerFault"])
+		}
+	})
 	t.Run("a linked day or ledger directory", func(t *testing.T) {
 		for _, kind := range []string{hook.Accepted, "claim"} {
 			h, records := oneEvent(t)

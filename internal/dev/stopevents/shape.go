@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/pyload"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 )
@@ -177,7 +178,10 @@ func readRecord(p string) (any, bool, bool) {
 	if err != nil {
 		return nil, false, false
 	}
-	body, err := hook.Decode(raw)
+	body, err := pyload.Loads(raw)
+	if python, deep := pyload.Recursion(err); deep {
+		panic(python) // _read_record catches ValueError only, so the reading stops here
+	}
 	if err != nil {
 		return nil, false, false
 	}

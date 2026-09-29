@@ -9,8 +9,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/pyload"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -132,16 +132,24 @@ func readJSON(path, what string) (string, string, any) {
 	if state != present {
 		return state, detail, nil
 	}
-	if message := store.PythonJSONError(text); message != "" {
-		state, detail := failure(&decodeError{"JSONDecodeError", message}, "could not read "+what)
-		return state, detail, nil
+	value, err := pyload.Loads([]byte(text))
+	if python, deep := pyload.Recursion(err); deep {
+		panic(python) // region() classifies ValueError and OSError; a RecursionError raises past it
 	}
-	value, err := hook.Decode([]byte(text))
 	if err != nil {
-		state, detail := failure(&decodeError{"JSONDecodeError", err.Error()}, "could not read "+what)
+		state, detail := failure(&decodeError{decodeClass(err.Error()), err.Error()}, "could not read "+what)
 		return state, detail, nil
 	}
 	return present, "", value
+}
+
+// decodeClass is the class of what json.loads raised: a JSONDecodeError, or the ValueError
+// int() raises for an integer longer than sys.get_int_max_str_digits() allows.
+func decodeClass(message string) string {
+	if strings.HasPrefix(message, "Exceeds the limit (4300 digits) for integer string conversion") {
+		return "ValueError"
+	}
+	return "JSONDecodeError"
 }
 
 // pathlibForm is str(Path(p)): repeated separators and "." components collapse, ".." stays, a
