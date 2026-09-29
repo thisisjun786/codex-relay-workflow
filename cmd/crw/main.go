@@ -20,6 +20,7 @@ import (
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/routing"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/sync"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/skill"
 )
 
@@ -65,6 +66,8 @@ func runAt(ctx context.Context, program string, args []string, stdout, stderr io
 		return hook.Run(ctx, rest, os.Stdin, stdout, started)
 	case "skill":
 		return skill.Run(rest, os.Stdin, stdout, stderr)
+	case "doctor":
+		return doctor.Run(ctx, rest, stdout, stderr)
 	case "help", "-h", "--help":
 		usage(stdout)
 		return 0
@@ -73,7 +76,7 @@ func runAt(ctx context.Context, program string, args []string, stdout, stderr io
 		return 0
 	default:
 		usage(stderr)
-		fmt.Fprintf(stderr, "crw: error: argument command: invalid choice: %s (choose from 'relay', 'bridge', 'hook', 'skill', 'help', 'version')\n", store.PythonRepr(mode))
+		fmt.Fprintf(stderr, "crw: error: argument command: invalid choice: %s (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'help', 'version')\n", store.PythonRepr(mode))
 		return parserExit
 	}
 }
@@ -92,5 +95,5 @@ func relay(ctx context.Context, program string, args []string, stdout, stderr io
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: crw [-h] [--version] {relay,bridge,hook,skill,help,version} ...")
+	fmt.Fprintln(w, "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,help,version} ...")
 }

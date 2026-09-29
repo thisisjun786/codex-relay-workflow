@@ -125,35 +125,93 @@ func quoteRepr(s string) string {
 type ReadOnly struct{ db *sql.DB }
 
 // OpenStopRead is ownership.stop_metadata's read for the read-only Stop path (cutover.md Lock
-// order): it creates no SQLite sidecar and copies nothing. With D-wal and D-shm both present a
-// WAL connection (live or crashed) left SQLite's coordination files, and mode=ro reads its
-// committed frames while creating nothing; otherwise every commit is in D (SQLite unlinks -shm
-// before -wal at a checkpointed close, and a writer creates -wal before it can commit), so D is
-// read immutable=1, which never creates -wal or -shm. A plain mode=ro would create both.
+// order): it creates no SQLite sidecar and copies nothing, under the rule InPlaceRead states. A
+// store whose committed state cannot be read that way (ErrWALWithoutIndex) is an error, which
+// the Stop owner read answers by asking the owner rather than trusting D.
 func OpenStopRead(ctx context.Context, path string, timeout time.Duration) (*ReadOnly, error) {
 	resolved, err := refuseLiveState(path)
 	if err != nil {
 		return nil, err
 	}
-	params := url.Values{"mode": {"ro"}}
-	if !fileExists(resolved+"-wal") || !fileExists(resolved+"-shm") {
-		params.Set("immutable", "1")
-	}
-	db, err := boundedURI(resolved, params, timeout)
+	return OpenInPlace(ctx, resolved, timeout)
+}
+
+// OpenInPlace opens the store at path read-only under InPlaceRead's rule, taking no lock and
+// running no schema script: the file InPlaceRead resolved, with the parameters it gave for that
+// file's sidecars. SQLite then has to name that same file as the connection's main database
+// (PRAGMA database_list), so a read never pairs one file's sidecars with another file's pages,
+// as a link replaced between the examination and the open would.
+func OpenInPlace(ctx context.Context, path string, timeout time.Duration) (*ReadOnly, error) {
+	resolved, params, err := InPlaceRead(path)
 	if err != nil {
 		return nil, err
 	}
-	if err := db.PingContext(ctx); err != nil {
+	return openExamined(ctx, resolved, params, timeout)
+}
+
+// openExamined opens the file whose sidecars were examined and refuses a connection SQLite made
+// to any other file.
+func openExamined(ctx context.Context, examined string, params url.Values, timeout time.Duration) (*ReadOnly, error) {
+	db, err := boundedURI(examined, params, timeout)
+	if err != nil {
+		return nil, err
+	}
+	var opened string
+	if err := db.QueryRowContext(ctx, "SELECT file FROM pragma_database_list WHERE name = 'main'").Scan(&opened); err != nil {
 		_ = db.Close()
 		return nil, err
+	}
+	if opened != examined {
+		_ = db.Close()
+		return nil, fmt.Errorf("the store's sidecars were examined beside %s, but SQLite opened %s, so its committed state was not read", quoteRepr(examined), quoteRepr(opened))
 	}
 	return &ReadOnly{db: db}, nil
 }
 
-// fileExists is os.path.exists: anything at name, following a final symlink.
-func fileExists(name string) bool {
-	_, err := os.Stat(name)
-	return err == nil
+// walHeaderSize is a write-ahead log's header; a log no longer than it holds no frame.
+const walHeaderSize = 32
+
+// ErrWALWithoutIndex is a store whose write-ahead log holds frames while its shared-memory index
+// is missing or unusable, which an unclean shutdown leaves. The frames may hold commits D does
+// not, and SQLite reads them only by building the index, which is a sidecar.
+var ErrWALWithoutIndex = errors.New("the store's write-ahead log holds frames and its shared-memory index is missing or unusable (an unclean shutdown), so its committed state cannot be read without creating a SQLite sidecar")
+
+// InPlaceRead is the read-only, no-sidecar rule for reading a store's committed state (decision
+// 36): the file SQLite opens for path and the URI parameters for it, or why none can be given.
+// SQLite's unix VFS resolves a database path one component at a time, symbolic links included,
+// and keeps -wal and -shm beside the file it resolved to, so path is resolved the same way
+// first (resolvePath) and the sidecars examined are that file's; beside a link to D there are
+// none, and reading D immutable there would skip every frame of the WAL beside D. The caller
+// opens the returned path, never path itself (OpenInPlace). With D-wal and D-shm both present
+// a WAL connection (live or crashed) left SQLite's coordination files, and mode=ro reads the
+// committed frames while creating nothing. With no D-wal, or one that holds no frame (empty or
+// only its header), every commit is in D (SQLite unlinks -shm before -wal at a checkpointed
+// close, and a writer creates -wal before it can commit), so D is read immutable=1, which never
+// creates -wal or -shm; a plain mode=ro would create both. A D-wal holding frames beside no
+// usable D-shm (ErrWALWithoutIndex), or one that cannot be examined, has no such read: immutable
+// would ignore frames that may hold commits, and mode=ro would create the index. A path that
+// cannot be resolved has none either. Python's ownership.stop_metadata reads D immutable in that
+// state.
+func InPlaceRead(path string) (string, url.Values, error) {
+	resolved, err := resolvePath(path)
+	if err != nil {
+		return "", nil, fmt.Errorf("the store's path could not be resolved as SQLite resolves it: %w", err)
+	}
+	params := url.Values{"mode": {"ro"}}
+	wal, walErr := os.Stat(resolved + "-wal")
+	shm, shmErr := os.Stat(resolved + "-shm")
+	switch {
+	case walErr == nil && shmErr == nil && shm.Mode().IsRegular():
+		return resolved, params, nil
+	case errors.Is(walErr, os.ErrNotExist):
+	case walErr != nil:
+		return "", nil, fmt.Errorf("the store's write-ahead log could not be examined: %w", walErr)
+	case wal.Mode().IsRegular() && wal.Size() <= walHeaderSize:
+	default:
+		return "", nil, ErrWALWithoutIndex
+	}
+	params.Set("immutable", "1")
+	return resolved, params, nil
 }
 
 // OpenReadOnly opens path read-only with a bounded busy timeout.

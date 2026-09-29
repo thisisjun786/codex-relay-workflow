@@ -24,6 +24,10 @@ const (
 	approverRoute              = "The host's, not this bridge's. Measured on codex-cli " + testedHostVersion + ", the host sends an approval request to every client subscribed to the thread, replays a pending one to a client that resumes the thread later, and applies the first answer from any of them. This bridge therefore answers none and the thread's own client decides; that it does so on the connected server is not re-measured by this call, and how a particular client such as Desktop presents the request is not established here."
 )
 
+// TestedHostVersion is the codex-cli release the App Server client is pinned against
+// (docs/port/decisions.md 17); `crw doctor --json` reports it beside the version it observes.
+const TestedHostVersion = testedHostVersion
+
 func connectedVersion(agent, version string) bool {
 	for _, match := range hostVersionToken.FindAllStringSubmatch(agent, -1) {
 		if match[1] == version {

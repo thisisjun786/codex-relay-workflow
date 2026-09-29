@@ -19,9 +19,11 @@ import (
 // may evaluate in-process from the mirror and the durable owner, and that read creates no
 // SQLite sidecar beside the store (store.OpenStopRead, Python's ownership.stop_metadata):
 // without a WAL connection D is read immutable, and an owner change committed only to a live
-// WAL is still seen, so the Stop goes to the control socket instead.
+// WAL is still seen, so the Stop goes to the control socket instead. An owner change left in a
+// WAL whose shared-memory index is gone (an unclean shutdown) cannot be read without creating
+// that index, so D's stale owner is not trusted either: the Stop goes to the control socket.
 func Test30StopOwnerReadCreatesNothing(t *testing.T) {
-	for _, name := range []string{"no-wal", "live-wal-owner"} {
+	for _, name := range []string{"no-wal", "live-wal-owner", "wal-without-index"} {
 		t.Run(name, func(t *testing.T) {
 			home := hookHome(t, 5)
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -38,6 +40,10 @@ func Test30StopOwnerReadCreatesNothing(t *testing.T) {
 				if _, err := os.Lstat(path + suffix); !errors.Is(err, os.ErrNotExist) {
 					t.Fatalf("closed fixture left %s: %v", suffix, err)
 				}
+			}
+			if name == "wal-without-index" {
+				// D says go; a WAL left with no index beside it commits python.
+				walWithoutIndex(ctx, t, path, "UPDATE schema_meta SET value='python' WHERE key='owner'")
 			}
 			if name == "live-wal-owner" {
 				// The durable owner becomes python in the WAL only; D and the mirror say go.
@@ -98,12 +104,47 @@ func Test30StopOwnerReadCreatesNothing(t *testing.T) {
 				t.Fatal(rows)
 			}
 			want, wantRouted := "unmanaged", false
-			if name == "live-wal-owner" {
+			if name != "no-wal" {
 				want, wantRouted = "answered-by-owner", true
 			}
 			if got := <-routed; got != wantRouted || rows[0]["guardState"] != want {
 				t.Fatalf("routed=%v row=%v", got, rows[0])
 			}
 		})
+	}
+}
+
+// walWithoutIndex leaves the store at path as an unclean shutdown leaves it: D as it was, and a
+// WAL holding the commit of statement with no -shm beside it and no connection open.
+func walWithoutIndex(ctx context.Context, t *testing.T, path, statement string) {
+	t.Helper()
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer.SetMaxOpenConns(1)
+	for _, s := range []string{"PRAGMA journal_mode=WAL", "PRAGMA wal_autocheckpoint=0", statement} {
+		if _, err = writer.ExecContext(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wal, err := os.ReadFile(path + "-wal")
+	if err != nil || len(wal) <= 32 {
+		t.Fatalf("the WAL holds no frame: %d %v", len(wal), err)
+	}
+	if err = writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for file, content := range map[string][]byte{path: before, path + "-wal": wal} {
+		if err = os.WriteFile(file, content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = os.Lstat(path + "-shm"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("an index is left: %v", err)
 	}
 }

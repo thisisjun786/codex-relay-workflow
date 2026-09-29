@@ -31,10 +31,49 @@ func Dumps(value any, compact, sortKeys, ascii bool) string {
 	return b.String()
 }
 
+// DumpsIndent is json.dumps(value, indent=indent, sort_keys=sortKeys, ensure_ascii=ascii): with
+// any integer indent Python's default separators are (",", ": "), every member of a non-empty
+// container starts a new line indented one level deeper by indent spaces (none for indent 0 or
+// less, as " " * indent gives), and an empty container stays "{}" or "[]". Only indent=None is
+// compact, and that is Dumps.
+func DumpsIndent(value any, indent int, sortKeys, ascii bool) string {
+	var b strings.Builder
+	d := dumper{b: &b, item: ",", key: ": ", sortKeys: sortKeys, ascii: ascii, pretty: true, indent: strings.Repeat(" ", max(indent, 0))}
+	d.write(value)
+	return b.String()
+}
+
 type dumper struct {
 	b               *strings.Builder
 	item, key       string
 	sortKeys, ascii bool
+	// pretty is an indent given at all (each member on its own line); indent is one level of
+	// indentation, which may be ""; level is how deep the member being written sits.
+	pretty bool
+	indent string
+	level  int
+}
+
+// open writes the line break and indentation before member i of a container at d.level.
+func (d dumper) open(i int) {
+	if i > 0 {
+		d.b.WriteString(d.item)
+	}
+	if d.pretty {
+		d.b.WriteString("\n" + strings.Repeat(d.indent, d.level+1))
+	}
+}
+
+// close writes the line break and indentation before a non-empty container's closing bracket.
+func (d dumper) close() {
+	if d.pretty {
+		d.b.WriteString("\n" + strings.Repeat(d.indent, d.level))
+	}
+}
+
+func (d dumper) inner() dumper {
+	d.level++
+	return d
 }
 
 func (d dumper) write(value any) {
@@ -47,12 +86,13 @@ func (d dumper) write(value any) {
 		}
 		d.b.WriteByte('{')
 		for i, f := range fields {
-			if i > 0 {
-				d.b.WriteString(d.item)
-			}
+			d.open(i)
 			d.str(f.Key)
 			d.b.WriteString(d.key)
-			d.write(f.Value)
+			d.inner().write(f.Value)
+		}
+		if len(fields) > 0 {
+			d.close()
 		}
 		d.b.WriteByte('}')
 	case map[string]any:
@@ -70,10 +110,11 @@ func (d dumper) write(value any) {
 	case []any:
 		d.b.WriteByte('[')
 		for i, item := range v {
-			if i > 0 {
-				d.b.WriteString(d.item)
-			}
-			d.write(item)
+			d.open(i)
+			d.inner().write(item)
+		}
+		if len(v) > 0 {
+			d.close()
 		}
 		d.b.WriteByte(']')
 	case []string:

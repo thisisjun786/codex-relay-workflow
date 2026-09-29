@@ -359,3 +359,28 @@ func (s *Store) Locate(ctx context.Context) (Location, error) {
 	}
 	return result, nil
 }
+
+// SchemaStatements is the schema a store installs, in the order Store installs it: the DDL
+// script, then each guard index (store.py DDL and GUARD_INDEXES). The runtime swap gate applies
+// them to an in-memory database to learn the schema this build declares.
+func SchemaStatements() (string, []string, error) {
+	raw, err := schema.ReadFile("relay-sqlite.sql")
+	if err != nil {
+		return "", nil, fmt.Errorf("embedded schema: %w", err)
+	}
+	sections := strings.SplitN(string(raw), guardMarker, 2)
+	if len(sections) != 2 {
+		return "", nil, errors.New("embedded schema lacks guard marker")
+	}
+	guards := strings.SplitN(sections[1], seedMarker, 2)
+	if len(guards) != 2 {
+		return "", nil, errors.New("embedded schema lacks seed marker")
+	}
+	var statements []string
+	for _, statement := range strings.Split(guards[0], ";") {
+		if statement = strings.TrimSpace(statement); statement != "" {
+			statements = append(statements, statement)
+		}
+	}
+	return sections[0], statements, nil
+}

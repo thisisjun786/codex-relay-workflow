@@ -1138,6 +1138,178 @@ hook exited without connecting) and `TestDomain/hook/...recorded_elsewhere` (CI 
 instrumented binary showed the settings cut, the input release and the skipped pre-scan
 row firing 316-381 ms after entry.
 
+## 33. The `.crw-lock` sidecar keeps Python's O_EXCL protocol until todo 44
+
+Decision: `internal/runtime/record.Lock`, the read-modify-write lock beside the host record, a
+staging claim and the settings records, takes `<target>.crw-lock` exactly as
+`hostrecord.Locked` does: `O_CREAT|O_EXCL`, the pid written into it, a file older than 300 s
+unlinked as stale, and the file unlinked on release. This is the one declared exception to the
+rule that no lock file is ever unlinked or replaced, and it ends when todo 44 deletes
+`scripts/runtime_install.py` and `scripts/crw_transition`, the last Python writers of those
+files. `.promotion-lock` and `.crw-staging-lock` are flock(2) files under decision 7: created
+once, never unlinked, released by `LOCK_UN` or by the holder's death.
+
+Why: the Python installer and `plugin_transition` still write the host record, the claims and
+`crw-bridge-mcp.json` under this lock. A flock on the same path would not exclude an O_EXCL
+holder, and an O_EXCL file would not exclude a flock holder, so switching one side alone would
+let a Go and a Python read-modify-write interleave on the same record.
+
+Evidence: scripts/crw_runtime/hostrecord.py:271-315 (`Locked`), :335-378 (`Exclusive`);
+scripts/crw_runtime/staging.py:165-209 (`Held`), :212-240 (`owner_liveness`) and :155-162 (`write_claim` under `Locked`);
+scripts/crw_transition/steps.py (nine `Locked` sites); internal/runtime/record/locks.go;
+`TestCrwLockIsExclusiveAndExpiresOnlyWhenStale`,
+`TestPromotionLockContentionAndTheFileIsNeverUnlinked` and, under the parity tag,
+`TestParity_locks_exclude_across_runtimes` (a Python holder makes Go's promotion Busy and a Go
+holder makes Python's `Exclusive` raise `Busy`).
+
+## 34. The host record stays recordVersion 1; Go install entries are additive
+
+Decision: `internal/runtime/record` reads and writes the one host record
+(`${XDG_STATE_HOME:-~/.local/state}/codex-relay-workflow/host-record.json`) as `recordVersion`
+1, byte for byte as `json.dump(indent=2, sort_keys=True)` plus a newline writes it, and never
+rewrites a Python entry or point. There is no record v2 and no "write beside, then rename". A Go
+install entry carries `location` (`<runtime>/bin`, the directory a running Go relay reports as
+its own), `entryPoint`, `environment`, `integrity` and `binaryDigest` (the binary's SHA-256),
+`target` (`<goos>/<goarch>`), `reachedVia`, `digestMatchesDefinition` and `source`, and no
+`interpreter`, `interpreterPath` or `installMode`. `source` is what both fault sweepers read as
+the installed revision: `repositoryCommit` and `workingTreeClean` come from the binary's build
+information, and `repositoryTree` and `subdirectoryTree` (equal: the Go module is the repository
+root) from the tree `make build`/`make dist` stamp with
+`-X .../internal/runtime/record.sourceTree=$(git rev-parse HEAD^{tree})`, and only when the
+working tree is clean (`git status --porcelain` empty, the test behind Go's own `vcs.modified`):
+a build with a modified tracked file or an untracked one is not built from HEAD's tree, so it
+stamps nothing. A binary built without the stamp - a build from a dirty tree, and today every
+GoReleaser release build, until todo 44 adds the stamp to the release workflow - records null
+trees, and both sweepers then report "this copy's install entry records
+an incomplete revision (repositoryTree, subdirectoryTree missing or malformed), which identifies
+nothing" rather than a revision nobody measured. The dead `outgoing` key and component-level
+facts are carried through when present and never written.
+
+Why: the Python installer, the developer harness and both sweepers (faultsweep.py:497 and
+internal/relay/faults/sweep.go:470) read the same file during coexistence and answer "not
+record version 1" for anything else, which would lose every fault's installed revision.
+
+Evidence: scripts/crw_runtime/hostrecord.py:77-160, :451-540; internal/runtime/record;
+internal/runtime/record/testdata/host-record-v1.json (the relay host's record, redacted and
+reduced to three installs and two points per component); `TestV1RecordRoundTripsByteForByte`,
+`TestUpdateWritesWhatPythonWrites` (seven deltas against Python's bytes in
+internal/runtime/testdata/goldens.json), `TestMakefileStampsTheTreeOnlyFromACleanTree` (the
+Makefile run in a temporary repository: clean stamps HEAD's tree, modified or untracked stamps
+nothing), `TestSourceWithoutAStampIsNull`, `Test37_SweeperReadsTheGoInstallEntry`
+(internal/relay/faults) and, under the parity tag, `TestParity_python_faultsweep_reads_a_go_install_entry`.
+
+## 35. The components definition stays definitionVersion 1, without per-target digests
+
+Decision: scripts/crw_runtime/components.json keeps `definitionVersion` 1 and every field it has
+while the Python installer and scripts/trial_startup.py read it (until todos 44 and 48).
+`internal/runtime/definition` carries the fields a Go install uses - component, `consoleScript`
+(the compatibility link names), version, `licencePath`, `identityTool`, `exerciseCommand` and
+upstream provenance - and `TestDefinitionAgreesWithComponentsJSON` keeps it equal to the file.
+No per-target binary digest is committed and no `verify-definition` re-derives one from `dist/`:
+release digests live in the release's SHA256SUMS and in the host record (decision 34).
+`definition.Digest` is `ops12_digest` itself: it takes the files in the order Python's `sorted()`
+gives their `os.fsdecode` spelling, where a byte that is not UTF-8 is a lone surrogate, and fails
+on the first path that is not UTF-8, where `.encode()` raises `UnicodeEncodeError`, so it answers
+a digest exactly when Python does, and the same one.
+
+Why: a binary digest is self-referential (the build stamps `git describe --dirty`), so a
+committed one can never describe the commit it is in, and re-deriving it would make every pull
+request cross-build three targets and regenerate a file.
+
+Evidence: scripts/crw_runtime/components.json; scripts/crw_runtime/definition.py:148-206
+(`verify`), :62-83 (`ops12_digest`); Makefile `VERSION`/`LDFLAGS`; .goreleaser.yaml `ldflags`,
+`mod_timestamp`; .omo/ulw-execute/scope-analysis-31-46.md "# 37" (plan items to drop);
+`TestDigestIsTheOPS12Walk`, `TestDigestRefusesANameThatIsNotUTF8`.
+
+## 36. The swap gate reads a store's catalog without store.Open
+
+Decision: the runtime swap gate settles store presence with an lstat of the path the relay's
+own selection rule resolves (`store.ResolveStateDir`) and reads the store's schema objects with a
+read-only SQLite connection that creates nothing beside the database (`store.OpenInPlace`), under
+`store.InPlaceRead`, the rule `store.OpenStopRead` reads the Stop path's store with. The path is
+first resolved as SQLite's unix VFS resolves it, symbolic links included, because SQLite keeps
+`-wal` and `-shm` beside the file a link names: the sidecars examined are that file's, the
+resolved path is what is opened, and the connection is refused unless `PRAGMA database_list`
+names that same file. Then: `mode=ro` when both `-wal` and
+`-shm` exist (a connection left them and its committed frames are read); `immutable=1` when there
+is no `-wal` or it holds no frame (empty, or only its 32-byte header), since every commit is then
+in the main file; and no read at all when a `-wal` holding frames has no usable `-shm` beside it
+(an unclean shutdown) or cannot be examined, because an immutable read ignores frames that may
+commit what the main file lacks and `mode=ro` would create the index. The swap gate reports that
+store's schema unreadable, so the gate is UNESTABLISHED rather than AGREES, and the Stop owner
+read fails, so the native hook asks the owner rather than trusting the main file. It never
+calls `store.Open`, runs no schema script and takes no lock. The daemon and in-flight cells ask the SELECTED relay
+executable (`service status`, `doctor`) as a subprocess, and the candidate's schema is what the
+candidate binary prints for `crw doctor declared-schema --json`. Each subprocess is bounded (60 s
+for the relay, 120 s for the candidate, then `scope.WaitDelay` for output that a process it left
+behind still holds); a relay the deadline ended is Python's `TimeoutExpired`, with no exit status
+and nothing it printed kept, and an answer whose output stayed open past its exit is not read.
+
+Why: runtime_install.py asked `<interpreter> -c <program>` for all three, and a Go runtime has
+no interpreter. `store.Open` refuses the live state root before todo 42 (`ErrLiveState`) and a
+plain `mode=ro` connection creates `-wal` and `-shm` beside a checkpointed store. Python's
+`read_only_rows` answers the swap gate through `/proc/self/fd`, which SQLite resolves to the
+file a link names, so it reads the WAL beside that file; its
+`ownership.stop_metadata` shares the immutable read of a WAL without its index (deferred review
+finding PR190 4130471334).
+
+Evidence: scripts/runtime_install.py:470-600 (`_STORE_TABLES_PROGRAM`,
+`_CANDIDATE_TABLES_PROGRAM`, `store_presence`); internal/relay/store/hold.go (`InPlaceRead`,
+`OpenStopRead`); internal/runtime/swapgate/swapgate.go (`StoreSchema`, `readCatalog`,
+`DeclaredSchema`); `TestStoreReadingsCreateNothingAndAgreeWithTheDeclaredSchema` (the state
+directory's file set is unchanged, and a table committed only to a live WAL is read),
+`TestAStoreWhoseWALHasNoIndexIsUnreadable` (also through a symlinked relay.sqlite3),
+`TestInPlaceReadRefusesAWALWithoutItsIndex`, `TestInPlaceReadExaminesTheSidecarsOfTheFileALinkNames`,
+`TestARelayTheDeadlineEndedIsTimeoutExpired`, `TestARelayThatLeavesItsOutputOpenIsBounded`,
+`TestACandidateThatLeavesItsOutputOpenIsBounded`,
+`Test30StopOwnerReadCreatesNothing/wal-without-index` and, under the parity tag,
+`TestParity_declared_schema_is_the_python_candidates`.
+
+## 37. Two third-party readers: github.com/BurntSushi/toml and mvdan.cc/sh/v3
+
+Decision: Go reads `config.toml` with `github.com/BurntSushi/toml`, at the version go.sum already
+pins through staticcheck, now a direct requirement. Todo 37's retention scan reads
+`mcp_servers.*.command` and `args` with it; todo 38's `register-mcp` uses the same reader for its
+append-only registration and read-back.
+
+The retention scan parses hook commands, shell wrappers and the programs they hand a shell
+(`sh -c` strings) with `mvdan.cc/sh/v3/syntax` v3.14.1, the parser behind shfmt, in its Bash
+variant, and judges the syntax tree itself (internal/runtime/doctor/shell.go) against an
+allowlisted grammar: simple commands joined by `;`, `&`, `&&`, `||`, pipes and newlines, words
+literal after the scan's own expansions (`~`, `$HOME`, `$CODEX_HOME`, `${PLUGIN_ROOT}`),
+redirections to such words, and a closed set of commands (`exit`, `true`, `:`, `exec`, `env`
+with `-i`, `sh`/`bash`/`dash` with `-c` or a script operand, a Python program, any other program
+with its arguments judged as things it may run). Every other node - a function, an assignment,
+a compound command, a here-document, a substitution, a glob or brace pattern, an expansion the
+scan does not make - is reported unreadable with the construct, never interpreted. Both
+libraries are used for reading only. Nothing is formatted, evaluated, expanded or run through
+them; the `interp` and `expand` packages are not imported.
+
+Why: codexconfig.py refuses to approximate TOML (a hand-written reader produced ten defects), and
+the retention scan must read every registered command rather than guess at text. The same holds
+for shell: todo 43 removes Python behind the scan's answer, so a mis-parse that hides a command
+position is a safety defect, and a hand-written lexer and grammar for it is a large surface of
+exactly that. The Bash variant, because Codex runs a hook command through a shell the scan cannot
+name (dash is /bin/sh on the relay host, bash its login shell) and a wrapper names its own
+interpreter: Bash's grammar is a superset of the POSIX grammar those shells share, so every
+program either would run parses, and one neither accepts is a parse error, reported unreadable.
+
+Why an allowlist rather than a fuller reading: the todo 37 sweep found one construct after
+another that a walker modelling shell semantics read as a row scanned with nothing found while the
+shell ran Python - a function shadowing a PATH program, a PATH assignment in any of its forms, a
+glob, a runner handing `sh -c` on, a relative PATH directory, a wrapper passing `"$PY"` to an
+unmodelled runner.
+Emulating shell semantics statically has no bound: every fix admits the next construct. The
+allowlist is conservative by construction: what the scan does not read completely is unreadable,
+which keeps `clear` false until a person rewrites or removes the command, while the commands the
+host really registers (the native Stop command, the pre-native `python3 -c` bootstrap, launcher
+invocations and `sh ./wiring/crw-bridge.sh`) are inside it and judged.
+
+Evidence: scripts/crw_runtime/codexconfig.py:1-25; go.mod; internal/runtime/doctor/retention.go
+(`configToml`, `hookCommands`, `server`); internal/runtime/doctor/shell.go;
+`TestRetentionScanReadsTheWiringSurfaces`, `TestTheGrammarRefusesEveryOtherConstruct`,
+`TestRetentionScanJudgesOnlyWhatItsGrammarReads`, `TestRetentionScanJudgesAnMCPServerAsCodexStartsIt`.
+
 ## 39. A caller's cancellation claims every answer the send has not yet used
 
 Decision: once the caller of `Adapter.Send` has cancelled, the send uses no further answer
@@ -1223,3 +1395,81 @@ the worker's leader has exited while a thread that blocks SIGTERM holds the daem
 runtime's stop answers ok with worker `exited` and leaves the lock free. Restoring the
 leader-state reading (the old `alive` body, or `waitTermination` asking `ProcessState`) makes
 each answer `replaced_by_new_launch` with that thread still running.
+
+## 41. `crw doctor` judges each registration as the program that reads it accepts it
+
+Decision: `crw doctor --json` says `own`, `agrees` or `installed: verified` for a Go runtime only
+when the host would actually run the selected runtime for that component, and a reading it did
+not or could not take is an unread signal that stops classification (`unreadable`, `installed:
+not_verified`), never a dimension dropped from the comparison. Each registration is judged as a
+whole document, by its consumer's own acceptance rule, before any field is compared with the
+selected `bin/crw`:
+
+- the Stop settings (`crw-completion-hook.json`) through `hook.ReadSettings`, the check every Go
+  Stop runs first: a document it refuses (`configVersion`, `markerRoot`, `mode`, the owner, a
+  relative `relayExecutable` or adapter path, a plugin budget over 7 s) is a relay conflict
+  naming the complaints, since the hook then runs no relay. It contains every gate of the
+  packaged launcher's `adapter_call`. A plugin owner's adapter must be the system env, recognised
+  by the path it is run under (`/usr/bin/env` or `/bin/env`, resolving to a native executable
+  regular file), and an entry point holding `=` is a conflict because env reads it as an
+  assignment;
+- every Stop command in `<CODEX_HOME>/hooks.json` that runs a Stop adapter, for every owner,
+  read by the retention scan's own Stop-command reader (`readStopCommand`: its allowlisted
+  grammar, following `exec`, `env` and `sh -c`), so one reader answers both which settings a
+  Stop reads and which hook it runs: the selected `crw-completion-hook` (or `crw hook`)
+  executed by path and reading these settings agrees; the checkout's `completion_hook.py`,
+  another runtime's hook and a hook handed to an interpreter conflict; a bare hook, a word or
+  construct outside the grammar, a script that may run the adapter itself, other settings
+  (named, or `$CRW_COMPLETION_HOOK_CONFIG` for a hook naming none) or a hooks.json it cannot
+  read are unreadable;
+- a plugin-owned `crw-bridge-mcp.json` through `crw_bridge_mcp.py`'s record contract
+  (`recordVersion` 1 or 2 by Python's `==`, `serverName`, an absolute `bridgeExecutable`, `args`
+  a list of strings, no policy in version 1, a version-2 policy that exists, is regular and
+  hashes to its digest): a record the launcher refuses before exec is a bridge conflict;
+- `config.toml`'s `mcp_servers` read whole with `codexconfig.registration_view`'s shape rules (a
+  malformed table makes the configuration unreadable), then every table that starts the bridge:
+  `codex-thread-bridge`, the table a user-owned record names, and any whose command or arguments
+  run the bridge. A bare command is looked up only on the table's own `env.PATH`; without one it
+  is unreadable.
+
+No value a consumer requires to be absolute is looked up on the doctor's own PATH. The Codex CLI
+version, the host name and the App Server identity are point dimensions
+(`runtime_install.classify_component`): an unread one stops classification, and `codex
+--version` whose output a descendant holds open past a 5 s wait delay (as `scope.WaitDelay`) is
+unread. The doctor does not observe the App Server yet, so until todo 38 wires
+`Options.AppServer` (`func(ctx, bridge string) *string`, asked through the selected runtime's
+`bin/codex-thread-bridge`) into `crw doctor`, a Go component is `unreadable` with it named and
+`notChecked` lists it. The skill links are not a signal for a Go install, unlike in
+`classify_component`: an installed product takes its skills from the plugin payload the Codex
+marketplace installs, and skill links are a developer-checkout concern (`crw-dev skills link`,
+todo 39) that no release archive or installer makes. The host record's
+`pointer.path` is read through `Path()` (a trailing `/`, `//` and `/./` name the same link), and
+the state home, Codex home and default destination expand the home as `pathlib` does (HOME, else
+the passwd entry, `~user` from that user's entry); one that cannot be established, or would be
+relative, is reported (`hostRecordState: ACCESS_ERROR`), never read as a clean host.
+
+Why: a field judged on its own reported `agrees` for documents the hook, the launchers or Codex
+refuse, and for commands they never look up on PATH, and a dimension left out of `wanted` either
+let a point that recorded none cover (App Server) or reported `unmeasured` from a reading nobody
+took (Codex CLI, host name). Python's diagnose reads the Stop hook not at all and only the
+`codex-thread-bridge` table; the Go doctor judges more, so it judges what the host executes. A
+`codex --version` whose output an inherited descendant kept open held the whole diagnosis until
+that descendant exited.
+
+Evidence: internal/runtime/doctor/registration.go (`stopSettings`, `interpreter`, `stopHooks`,
+`stopCommand`, `hookCall`, `pluginBridge`, `policy`, `codexConfig`, `mcpCommand`);
+internal/runtime/doctor/retention.go (`readStopCommand`, `stopAdapterIn`, `settingsOf`); internal/runtime/doctor/doctor.go
+(`observe`, `classifyGo`, `codexVersion`, `Diagnose`); internal/runtime/record/home.go; internal/relay/hook/
+settings.go (`Complaints`, `ReadSettings`); plugins/crw/wiring/crw_stop_hook.py (`adapter_call`);
+plugins/crw/wiring/crw_bridge_mcp.py (`main`, `policy_environment`); scripts/crw_runtime/
+codexconfig.py (`registration_view`); scripts/runtime_install.py (`classify_component`,
+`_starts_this_bridge`); scripts/crw_runtime/hostrecord.py (`state_home`). Tests:
+`TestDoctorNeverLooksARegisteredCommandUpOnItsOwnPATH`,
+`TestDoctorJudgesTheStopSettingsAsTheHookAcceptsThem`, `TestDoctorJudgesTheLauncherInvocation`,
+`TestDoctorJudgesTheStopCommandsInHooksJSON`, `TestDoctorJudgesTheBridgeRecordAsTheLauncherAcceptsIt`,
+`TestDoctorReadsTheCodexConfigurationWhole`, `TestDoctorJudgesTheBridgeUnderEveryTableName`,
+`TestDoctorStopsOnTheReadingsItDoesNotMake`, `TestDoctorKeepsAnUnreadDimensionInTheComparison`,
+`TestDoctorReadsTheRecordedPointerThroughPath`, `TestDoctorNeverReadsAnUnestablishedHomeAsACleanHost`,
+`TestStateHomeExpandsTheHomeAsPathlibDoes`, `TestCodexVersionIsUnreadWhenADescendantHoldsItsOutput`; under the parity tag
+`TestParity_the_bridge_record_is_refused_where_the_launcher_refuses_it` (22 records, the real
+launcher) and `TestParity_state_home_is_hostrecords`.

@@ -68,3 +68,21 @@ func TestRun_bridge_mode_and_link_dispatch_to_the_bridge(t *testing.T) {
 		}
 	}
 }
+
+// `crw doctor` is the host-level diagnosis, distinct from `crw relay doctor`; its
+// declared-schema form is what the swap gate asks a candidate binary.
+func TestRun_doctor_dispatches_to_the_host_doctor(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), "crw", []string{"doctor", "declared-schema", "--json"}, &stdout, &stderr); code != 0 || !strings.HasPrefix(stdout.String(), "{\n  \"readable\": true,\n  \"objects\": {") {
+		t.Fatalf("declared-schema: code=%d stdout=%.200q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run(context.Background(), "crw", []string{"doctor", "bogus"}, &stdout, &stderr); code != 2 || stdout.Len() != 0 || !strings.Contains(stderr.String(), `unknown argument "bogus"`) {
+		t.Fatalf("an unknown doctor form: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	if code := run(context.Background(), "crw", []string{"help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "{relay,bridge,hook,skill,doctor,help,version}") {
+		t.Fatalf("usage: %q", stdout.String())
+	}
+}

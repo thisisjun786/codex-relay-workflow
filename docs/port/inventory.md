@@ -196,22 +196,22 @@ disappear from the product path.
 | `scripts/runtime_install.py:240` | `sys.executable` named in `installedBy` | Python self reference | binary version string (todo 38) |
 | `scripts/runtime_install.py:294` | argv `[sys.executable, scripts/install.py, --check, --dest]` | Python | in-process `crw install skills --check` (todo 39) |
 | `scripts/runtime_install.py:296` | runs the :294 argv | Python | same |
-| `scripts/runtime_install.py:528` | `_asked`: `<interpreter> -c <store program>` (store presence/tables, :560-597) | Python | in-process store read (todo 37) |
-| `scripts/runtime_install.py:639` | `<python> -c "import platform;print(platform.python_version())"` version probe | Python | retired with venvs (todo 37) |
-| `scripts/runtime_install.py:657` | `<python> -c "import <module>"` module location probe | Python | retired with venvs (todo 37) |
+| `scripts/runtime_install.py:528` | `_asked`: `<interpreter> -c <store program>` (store presence/tables, :560-597) | Python | an lstat of the relay's resolved selection and a read-only catalog read that creates no sidecar (`internal/runtime/swapgate` `StorePresence`/`StoreSchema`, decision 36); the candidate's schema from the candidate binary's `crw doctor declared-schema --json` (todo 37) |
+| `scripts/runtime_install.py:639` | `<python> -c "import platform;print(platform.python_version())"` version probe | Python | retired (todo 37): Go points have no interpreter dimension (`internal/runtime/record.Dimensions`) |
+| `scripts/runtime_install.py:657` | `<python> -c "import <module>"` module location probe | Python | retired (todo 37): `crw doctor` has no `imported` field; the selected runtime kind comes from the pointer target, pyvenv.cfg and the record |
 | `scripts/runtime_install.py:858` | `sys.executable` default interpreter for classification | Python | retired (todo 37) |
 | `scripts/runtime_install.py:1089` | `sys.executable` fallback for `observe_app_server` | Python | retired (todo 37) |
-| `scripts/runtime_install.py:1429` | `<python> check_connection.py --socket` | Python | `crw bridge` MCP `tools/list` (todo 37) |
-| `scripts/runtime_install.py:1456` | `codex --version` | non-Python, stays | `exec.Command("codex")` (todo 37) |
+| `scripts/runtime_install.py:1429` | `<python> check_connection.py --socket` | Python | the App Server dimension is observed by `crw install measure` (todo 38); `crw doctor` (todo 37) reports it not observed |
+| `scripts/runtime_install.py:1456` | `codex --version` | non-Python, stays | `exec.Command("codex")` in `internal/runtime/doctor` (todo 37) |
 | `scripts/runtime_install.py:1554` | comment naming the `sys.executable` probe it avoids | none (comment) | - |
-| `scripts/runtime_install.py:1637` | `<interpreter> -B -c <settings program>` | Python probe | in-process settings check (todo 37) |
-| `scripts/runtime_install.py:1690` | `<interpreter> -B -c <predicate program>` | Python probe | in-process predicate (todo 37) |
-| `scripts/runtime_install.py:1815` | `<interpreter> -B -c <normalize probe>` | Python probe | in-process path normalisation (todo 37) |
-| `scripts/runtime_install.py:1862` | `<interpreter> -B -c <contains probe>` | Python probe | in-process containment (todo 37) |
-| `scripts/runtime_install.py:1903` | `<interpreter> -B -c <admits probe>` | Python probe | in-process admission (todo 37) |
+| `scripts/runtime_install.py:1637` | `<interpreter> -B -c <settings program>` | Python probe | not ported: `diagnose --trial` is deferred past todo 44 (scope analysis "# 37"); retired with runtime_install.py |
+| `scripts/runtime_install.py:1690` | `<interpreter> -B -c <predicate program>` | Python probe | not ported: `diagnose --trial` (deferred past todo 44) |
+| `scripts/runtime_install.py:1815` | `<interpreter> -B -c <normalize probe>` | Python probe | not ported: `diagnose --trial` (deferred past todo 44) |
+| `scripts/runtime_install.py:1862` | `<interpreter> -B -c <contains probe>` | Python probe | not ported: `diagnose --trial` (deferred past todo 44) |
+| `scripts/runtime_install.py:1903` | `<interpreter> -B -c <admits probe>` | Python probe | not ported: `diagnose --trial` (deferred past todo 44) |
 | `scripts/runtime_install.py:2327` | `sys.executable` default for `hook --python` | Python | retired (todo 38) |
 | `scripts/runtime_install.py:2686` | `perform`: `<interpreter> -m venv` (:2906), `<python> -m pip install` (:2911) | Python venv/pip | archive unpack (todo 38) |
-| `scripts/runtime_install.py:4434` | `<python> -c "import sys;print(sys.prefix)"` | Python probe | retired (todo 37) |
+| `scripts/runtime_install.py:4434` | `<python> -c "import sys;print(sys.prefix)"` | Python probe | retired (todo 37): a Go install's environment is the directory holding bin/crw, named in its install entry |
 | `scripts/runtime_install.py:4539` | `<python> check_connection.py` (measure) | Python | `crw bridge` exercise (todo 38) |
 | `scripts/runtime_install.py:4641` | `sys.executable` default for `measure --python` | Python | retired (todo 38) |
 | `scripts/runtime_install.py:4893` | `sys.executable` written as the probe record's command | Python | `crw` path (todo 38) |
@@ -220,9 +220,9 @@ disappear from the product path.
 | `scripts/crw_runtime/completion.py:767` | `invoke_guard`: relay `guard` subcommand | Python console script | `crw relay guard-evaluate` (todo 37) |
 | `scripts/crw_runtime/completion.py:1031` | `_require_python`: `<candidate> -c "print(sys.version_info)"` | Python probe | retired (todo 37) |
 | `scripts/crw_runtime/completion.py:3110` | `<relay> guard --help` | Python console script | `crw relay guard-evaluate --help` (todo 37) |
-| `scripts/crw_runtime/completion.py:3458` | `_answers_as_an_interpreter`: `<resolved> -c <source>` | Python probe | retired (todo 37) |
-| `scripts/crw_runtime/definition.py:100` | `git` | non-Python, stays | `exec.Command("git")` (todo 37) |
-| `scripts/crw_runtime/scope.py:73` | relay CLI `doctor` (discovery, selected state and root candidate, :114-126) | Python console script | in-process call (todo 37) |
+| `scripts/crw_runtime/completion.py:3458` | `_answers_as_an_interpreter`: `<resolved> -c <source>` | Python probe | kept until todos 43/44: hook status still asks it while a registration or settings record may name a Python interpreter (already ported, `internal/relay/hook/status.go` `answersPython`, todo 33) |
+| `scripts/crw_runtime/definition.py:100` | `git` | non-Python, stays | retired (todo 37): no git at run time; the build stamps the source tree (decision 34) and the definition keeps no derivable digest (decision 35) |
+| `scripts/crw_runtime/scope.py:73` | relay CLI `doctor` (discovery, selected state and root candidate, :114-126) | Python console script | a subprocess of the SELECTED relay executable, Python until the cutover and Go after (`internal/runtime/scope.Relay`, todo 37): the live store refuses in-process opens before todo 42 |
 | `scripts/crw_transition/inventory.py:454` | argv `[sys.executable, scripts/install.py, --check, --dest]` | Python | in-process (todo 39) |
 | `scripts/crw_transition/inventory.py:459` | runs the :454 argv | Python | same |
 | `scripts/crw_transition/inventory.py:602` | `_evaluates_python`: `<candidate> -c <arith program>` | Python probe | retired (todo 39) |
@@ -262,16 +262,18 @@ venv; the Go runtime has no interpreter to probe, so each is retired, not ported
 
 | site | question it answers | retired by |
 | --- | --- | --- |
-| `scripts/runtime_install.py:1637` | does the installed relay accept these settings (`-B -c <settings program>`) | todo 37 (in-process settings check) |
-| `scripts/runtime_install.py:1690` | does the installed relay admit this predicate (`-B -c <predicate program>`) | todo 37 |
-| `scripts/runtime_install.py:4434` | which environment the interpreter reports (`sys.prefix`) | todo 37 (binary digest replaces the environment) |
-| `scripts/crw_runtime/completion.py:3458` | does the hook's interpreter word answer as a Python | todo 37 |
+| `scripts/runtime_install.py:1637` | does the installed relay accept these settings (`-B -c <settings program>`) | not ported: `diagnose --trial`, deferred past todo 44 (retired with runtime_install.py) |
+| `scripts/runtime_install.py:1690` | does the installed relay admit this predicate (`-B -c <predicate program>`) | not ported: `diagnose --trial`, deferred past todo 44 |
+| `scripts/runtime_install.py:4434` | which environment the interpreter reports (`sys.prefix`) | todo 37 (the install entry names the environment holding bin/crw) |
+| `scripts/crw_runtime/completion.py:3458` | does the hook's interpreter word answer as a Python | todos 43/44 (kept while a record may name a Python interpreter; ported by todo 33) |
 | `scripts/crw_transition/inventory.py:602` | does the candidate evaluate Python | todo 39 |
 
 Siblings of the same kind, found by the spawn grep: `scripts/runtime_install.py:528` (store
 programs), `:639` (version), `:657` (module location), `:1815`, `:1862`, `:1903` (path and
-admission probes), `scripts/crw_runtime/completion.py:1031` (`_require_python`). All retire with
-the venv in todos 37-38.
+admission probes), `scripts/crw_runtime/completion.py:1031` (`_require_python`). The store programs and the
+version and module probes retire in todo 37; the path and admission probes belong to
+`diagnose --trial`, deferred past todo 44; `_require_python` retires with the Go `crw install
+hook` (todo 38), which never registers an interpreter.
 
 ## In-process edges that force one binary
 
@@ -295,6 +297,13 @@ search, and the trigger after which the Python definition may go.
 | --- | --- | --- | --- |
 | `packages/codex-session-relay/src/codex_session_relay/intent.py:930` `dispatch_is_registered` | collapses `dispatch_generation_state` to a boolean for a caller that never came; the detailed answer is ported (`internal/relay/delivery/intent.go`, `DispatchCurrent`) and is what the tests exercise | `grep -rn dispatch_is_registered` over packages/ (src and tests), scripts/, plugins/, docs/ and internal/ at 3684949c: the definition only, 0 callers, 0 tests | deleted with intent.py in todo 44 (CRW-141) |
 | `packages/codex-session-relay/src/codex_session_relay/marker.py:71` `_checked_segment` | a raising wrapper over `valid_segment` nothing calls; every marker path check goes through `valid_segment` directly, ported as `delivery.ValidSegment` | `grep -rn _checked_segment` over packages/ (src and tests), scripts/, plugins/, docs/ and internal/ at 3684949c: the definition only, 0 callers, 0 tests | deleted with marker.py in todo 44 (CRW-141) |
+| `scripts/crw_runtime/reading.py:217` `where`, `:231` `failure`, `:242` `region` and the exception lattice (`SHAPE_FAILURES`, `READ_FAILURES`, `RESOLVE_FAILURES`, :72-88) | Python's traceback locator and exception classification; the Go reading (`internal/runtime/reading`) keeps the four states and the refusal shape, names the Python exception class a reader would have seen, and reports `raisedAt` null | `grep -rn 'reading.where\|reading.region\|READ_FAILURES'` over scripts/ at 07caf101: runtime_install.py, hook_comparison.py, trial_startup.py, crw_runtime/completion.py and crw_runtime/* only | deleted with the crw_runtime package in todo 46 |
+| `scripts/crw_runtime/definition.py:92` `git`, `:108` `working_tree_clean`, `:125` `pyproject_fields`, `:148` `verify` and `scripts/runtime_install.py:269` `cmd_verify_definition` | re-derive the Python-shaped definition from a checkout; the Go definition keeps no derivable digest (decision 35) and a Go install's source revision is stamped at build (decision 34) | `grep -rn 'pyproject_fields\|definition.verify\|working_tree_clean\|definition.git'` over scripts/ at 07caf101: definition.py, ownership.py and runtime_install.py only; CI's `verify-definition` step (scripts/ci/contracts.py, internal/dev/ci/contracts.go) | deleted with runtime_install.py in todo 44 |
+| `scripts/runtime_install.py:525` `_asked`, `:568` `store_presence`, `:579` `store_tables`, `:594` `candidate_tables` and their `-c` programs | interpreter probes; replaced by the Go reads of decision 36 | `grep -rn 'store_presence\|store_tables\|candidate_tables'` over scripts/ at 07caf101: runtime_install.py and crw_runtime/swapgate.py (a comment) | deleted with runtime_install.py in todo 44 |
+| `scripts/crw_runtime/staging.py:71` `RECORDED` and its branch of `decide` | adopted a populated, claimless directory the record selects (installs made before claims); every env-* directory on the relay host carries a claim, so Go decides FOREIGN there | `ls ~/.local/share/crw-runtime/env-*/.crw-staging-claim.json` on the relay host 2026-09-29: 14 of 14 | deleted with staging.py in todo 46 |
+| `scripts/crw_runtime/hostrecord.py:452` `component_facts` and `outgoing` deltas of `update` | component-level facts feed only the informational `repositoryCommitDrift`; `outgoing` has no reader | `grep -rn 'component_facts\|outgoing'` over scripts/ at 07caf101: hostrecord.py and runtime_install.py writers, and their tests | deleted with runtime_install.py in todo 44 |
+| `scripts/crw_runtime/ownership.py:78` `commit_matches`, `tree_matches`, `working_tree_clean` signals | a Go install is an archive, not a checkout: `commit_matches` was never filled and the tree signals describe a checkout (the revision is recorded in the entry's `source`) | `grep -rn commit_matches` over scripts/ at 07caf101: ownership.py and runtime_install.py only | deleted with ownership.py in todo 46 |
+| `scripts/crw_runtime/check.py:14` field `imported` | the location an interpreter imports a package from; a binary has no import | `grep -rn '"imported"\|importedLocation'` over scripts/ at 07caf101: check.py and runtime_install.py, and their tests | deleted with check.py in todo 46 |
 
 Marker-root resolution exists twice in Python: the relay's (`marker.resolve_marker_root`,
 `Path.absolute`, ported as `internal/relay/delivery.ResolveMarkerRoot`) and the installer's copy
