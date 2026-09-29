@@ -323,3 +323,36 @@ func TestLaunchPolicy_state_files_follow_the_spelled_state_directory(t *testing.
 		t.Fatal("the declaration landed in the lexically cleaned directory")
 	}
 }
+
+// A declaration recording a path that holds NUL reaches `service start` and `service restart`
+// resolved and not refused (it names a file), so the launcher meets it assigning the child's
+// environment, after it opened daemon.log: subprocess.Popen's ValueError, exit 3, the log
+// created and empty, no child.
+func TestLaunchPolicy_start_and_restart_meet_a_recorded_NUL_as_the_launcher_does(t *testing.T) {
+	golden := loadLaunchGolden(t)
+	for _, command := range []string{"start", "restart"} {
+		_, state, _ := launchTree(t, golden, "record-nul")
+		if got := relay(t, "--state", state, "--socket", "app.sock", "service", "enable"); got.code != 0 {
+			t.Fatalf("enable: exit %d\n%s", got.code, got.stdout)
+		}
+		got := relay(t, "--state", state, "--socket", "app.sock", "service", command, "--allow-isolated-scope")
+		if want := "{\n  \"error\": \"host\",\n  \"detail\": \"ValueError: embedded null byte\"\n}\n"; got.code != 3 || got.stdout != want {
+			t.Fatalf("%s: exit %d\n%s", command, got.code, got.stdout)
+		}
+		if log, err := os.ReadFile(filepath.Join(state, "daemon.log")); err != nil || len(log) != 0 {
+			t.Fatalf("%s: daemon.log %q (%v)", command, log, err)
+		}
+		// The files the Python console script leaves for the same tree and commands.
+		entries, err := os.ReadDir(state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for _, entry := range entries {
+			names = append(names, entry.Name())
+		}
+		if want := []string{"daemon.lock", "daemon.log", "launch-policy.json", "service.json"}; !slices.Equal(names, want) {
+			t.Fatalf("%s: state holds %v, python %v", command, names, want)
+		}
+	}
+}

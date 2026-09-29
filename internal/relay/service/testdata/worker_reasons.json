@@ -53,6 +53,7 @@
     "requirements-extra-key": "worker_policy_requirements_invalid",
     "requirements-model-blank": "worker_policy_requirements_invalid",
     "requirements-model-false": "worker_policy_requirements_invalid",
+    "requirements-model-separator": "worker_policy_requirements_invalid",
     "requirements-null-item": "worker_policy_requirements_invalid",
     "requirements-object": "worker_policy_requirements_invalid",
     "role-supervisor": "worker_policy_role_unsupported",

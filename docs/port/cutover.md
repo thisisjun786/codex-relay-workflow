@@ -148,10 +148,20 @@ that disagrees with it. Both runtimes implement the binding: Go in `store.Open`
 (`internal/relay/store/ownership.go` `bindSocket`), whose start preflight
 (`store.StartPreflight` over `ownership.CheckStart`) takes the command's socket as
 `check_start` does, so the opener that completes a torn binding is let through. Like
-`cli.py` `main`, Go runs that preflight before `daemon`, every `service` form but
-`status`, and the two marker forms that name the selected store (`intent-declare` without
-`--no-db-path`, `intent-register` without `--db-path`): a store the other runtime owns, or
-one draining or starting, refuses them before any lock, record or marker fact is written. Any other disagreement between the halves has
+`cli.py` `main`, Go runs that preflight before `daemon` and every `service` form but
+`status`: a store the other runtime owns, or one draining or starting, refuses them before
+any lock or record is written, and so does any store Go would not open (a legacy `D`
+included, which Go never initializes). The marker commands get `check_start` itself, read in
+the fence's order (`store.CheckStartLikeFence`): `main` runs it before the two forms that name
+the selected store (`intent-declare` without `--no-db-path`, `intent-register` without
+`--db-path`), `intent-claim` runs it on the store the intent names, and `intent-disposition`
+meets it opening that store before it publishes (`declarations.Held`). The exception is the
+legacy store: with no ownership key and no `takeover.json` it passes, as `check_start` lets
+it, so `intent-declare` records it and a claim or disposition is published; only a command
+that then opens it meets Go's refusal (`intent-register`'s hold, and the store record a claim
+or disposition answers with). An unreadable mirror refuses in the fence's words, and an
+unreadable database is the host error `check_start` raises (claim and disposition leave it to
+their record, as the fence does). Any other disagreement between the halves has
 no automatic repair; before todo 42, check that the chosen store's `appServerSocket` equals
 its `schema_meta.socket_path`.
 

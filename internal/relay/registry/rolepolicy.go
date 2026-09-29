@@ -1,15 +1,14 @@
 package registry
 
 import (
-	"bytes"
 	"context"
 	"os"
 	"sort"
 	"sync"
-	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -67,17 +66,11 @@ func ResolveRolePolicy(env map[string]string) RolePolicy {
 	return RolePolicy{Declared: true, policy: policy, digest: digest}
 }
 
-// policyDepth is the C JSON scanner's container budget at the policy parse (measured against
-// CPython 3.13 through the relay CLI: an array at depth 9999, or an object closing at 9997,
-// raises RecursionError).
-const policyDepth = 9998
-
 // nestedTooDeep is whether json.loads(raw, object_pairs_hook=_no_duplicates) raises
-// RecursionError before any other refusal. Bytes that are not UTF-8 fail decoding first, and
-// json.loads reads a leading UTF-8 byte order mark as utf-8-sig.
+// RecursionError before any other refusal: the bytes decoded as json.loads decodes them first.
 func nestedTooDeep(raw []byte) bool {
-	raw = bytes.TrimPrefix(raw, []byte("\xef\xbb\xbf"))
-	return utf8.Valid(raw) && store.PythonHookedJSONRecursion(string(raw), policyDepth)
+	text, err := pyjson.DecodeBytes(raw)
+	return err == nil && pyjson.HookedRecursion(text, execution.PolicyDepth)
 }
 
 // EnvironmentRolePolicy is rolepolicy.declared(): the policy named by this process's

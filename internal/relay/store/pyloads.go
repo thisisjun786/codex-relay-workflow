@@ -148,16 +148,3 @@ func PathlibSpelling(value string) string { return pathlibSpelling(value) }
 // unknown ~user), the working directory prefixed to a relative path, nothing resolved and no
 // ".." folded, so a symlink the caller named stays the path they named.
 func AbsoluteExpanded(value string) (string, error) { return absoluteExpanded(value) }
-
-// PythonHookedJSONRecursion is whether json.loads(raw, object_pairs_hook=hook) raises
-// RecursionError before anything else refuses the document: the parse the execution policy
-// file gets (codex_thread_bridge.execution.from_bytes, _no_duplicates). The C scanner enters
-// one recursion level per container and refuses past limit; the hook every object calls on
-// closing costs two more, so an object that closes deeper than limit-2 refuses too. A syntax
-// error met first, or a duplicate key the hook refuses at an earlier close, wins instead, as
-// it does in Python. doc is the decoded text; a caller with undecodable bytes never gets here.
-func PythonHookedJSONRecursion(doc string, limit int) bool {
-	p := &pyScan{s: []rune(doc), maxDepth: limit, hookDepth: limit - 2, hookKeys: true}
-	p.value(p.ws(0))
-	return p.recursionError != ""
-}

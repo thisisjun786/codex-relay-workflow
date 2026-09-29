@@ -228,6 +228,22 @@ func cmdIntentClaim(c *cliRun) (any, error) {
 		return nil, err
 	}
 	workspace, assignment, dispatch := c.s("--workspace"), c.s("--assignment"), c.s("--dispatch-request-id")
+	// cmd_intent_claim: the store the intent names fences this claim before its marker is
+	// published (check_start), so a store another runtime owns refuses with nothing written. A
+	// marker this cannot read names no store here.
+	var before Obj
+	if directory, err := AssignmentDir(root, workspace, assignment); err == nil {
+		before, _ = ReadAssignment(directory)
+	}
+	if target := storeOf(before); target != nil {
+		path, err := expandedStore(target)
+		if err != nil {
+			return nil, err
+		}
+		if err := intentStoreFence(c.ctx, path); err != nil {
+			return nil, err
+		}
+	}
 	published, err := PublishClaim(root, workspace, assignment, c.s("--session"), dispatch, c.opt("--first-turn"), c.clock.ISO())
 	if err != nil {
 		return nil, err
@@ -280,8 +296,11 @@ func cmdIntentClaim(c *cliRun) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		record = recordClaim(c.ctx, storeOf(facts), store.ReportingSessionsRow{AssignmentID: assignment, SessionID: pyStr(session), DispatchRequestID: dispatch,
+		record, err = recordClaim(c.ctx, storeOf(facts), store.ReportingSessionsRow{AssignmentID: assignment, SessionID: pyStr(session), DispatchRequestID: dispatch,
 			MarkerRoot: markerRoot, Workspace: workspaceResolved, IssueKey: nullString(fieldOf(intentFact, "issueKey")), Capability: declarationsCapability, RecordedAt: c.clock.ISO()})
+		if err != nil {
+			return nil, err
+		}
 	}
 	return withStoreRecord(published, record)
 }
@@ -332,7 +351,12 @@ func cmdIntentDisposition(c *cliRun) (any, error) {
 		}
 		return nil
 	}
-	held, heldPath, problem := openDeclarationStore(c.ctx, storeOf(before))
+	// declarations.Held: the store is opened before anything is published, so an ownership
+	// refusal (or an unexpandable path) is raised with nothing written.
+	held, heldPath, problem, err := openDeclarationStore(c.ctx, storeOf(before))
+	if err != nil {
+		return nil, err
+	}
 	if held == nil {
 		if err := body(c.ctx, nil, "", problem); err != nil {
 			return nil, err
@@ -407,7 +431,7 @@ func storeOf(facts Obj) any {
 		return nil
 	}
 	path, ok := fieldOf(declared, "dbPath").(string)
-	if !ok || strings.TrimSpace(path) == "" {
+	if !ok || store.PythonStrip(path) == "" {
 		return nil
 	}
 	return path
@@ -444,31 +468,60 @@ func pathlibString(value string) string {
 	return joined
 }
 
-// openDeclarationStore is declarations._open: the store to record in and its path, or nil and
-// the answer saying why there is none.
-func openDeclarationStore(ctx context.Context, dbPath any) (*store.Store, string, Obj) {
-	if dbPath == nil {
-		return nil, "", declNotRecorded("no_store_recorded", "the assignment's intent names no relay store, so there is none to record this in; the relay derives nothing from a store for this assignment", nil)
-	}
+// expandedStore is str(Path(value).expanduser()) for a store an intent names; an unknown ~user
+// is pathlib's RuntimeError, which the fence raises out of the command (a host error).
+func expandedStore(dbPath any) (string, error) {
 	expanded, err := store.ExpandUser(dbPath.(string))
-	if err != nil {
-		return nil, "", declFailure("store_unreadable", store.PythonOSError(err), dbPath)
+	if errors.Is(err, store.ErrNoHome) {
+		return "", &hostError{"RuntimeError", "Could not determine home directory."}
 	}
-	path := pathlibString(expanded)
+	if err != nil {
+		return "", err
+	}
+	return pathlibString(expanded), nil
+}
+
+// intentStoreFence is the ownership check the fence makes on the store an intent names before
+// a claim or a disposition is published (cmd_intent_claim's check_start, declarations.Held's
+// Store()): only an ownership refusal refuses. An OS or SQLite failure refuses nothing here; it
+// is the record the command answers with after its marker write.
+func intentStoreFence(ctx context.Context, path string) error {
+	err := store.CheckStartLikeFence(ctx, path, "")
+	var refused *store.RefusedError
+	if errors.As(err, &refused) {
+		return refused
+	}
+	return nil
+}
+
+// openDeclarationStore is declarations._open: the store to record in and its path, or nil and
+// the answer saying why there is none. What Store() raises rather than answers - an ownership
+// refusal, like the RuntimeError of an unexpandable path - is the error.
+func openDeclarationStore(ctx context.Context, dbPath any) (*store.Store, string, Obj, error) {
+	if dbPath == nil {
+		return nil, "", declNotRecorded("no_store_recorded", "the assignment's intent names no relay store, so there is none to record this in; the relay derives nothing from a store for this assignment", nil), nil
+	}
+	path, err := expandedStore(dbPath)
+	if err != nil {
+		return nil, "", nil, err
+	}
 	metadata, err := os.Stat(path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		return nil, path, declNotRecorded("store_absent", "the relay store the intent names does not exist, so nothing can be derived from it either; nothing was created", path)
+		return nil, path, declNotRecorded("store_absent", "the relay store the intent names does not exist, so nothing can be derived from it either; nothing was created", path), nil
 	case err != nil:
-		return nil, path, declFailure("store_unreadable", store.PythonOSError(err), path)
+		return nil, path, declFailure("store_unreadable", store.PythonOSError(err), path), nil
 	case !metadata.Mode().IsRegular():
-		return nil, path, declFailure("store_not_a_file", "the path the intent names is not a regular file", path)
+		return nil, path, declFailure("store_not_a_file", "the path the intent names is not a regular file", path), nil
+	}
+	if err := intentStoreFence(ctx, path); err != nil {
+		return nil, path, nil, err
 	}
 	s, err := store.Open(ctx, path, "")
 	if err != nil {
-		return nil, path, declFailure("store_unopenable", store.PythonSQLiteError(err), path)
+		return nil, path, declFailure("store_unopenable", store.PythonSQLiteError(err), path), nil
 	}
-	return s, path, nil
+	return s, path, nil, nil
 }
 
 func declRecordedAnswer(path string) Obj {
@@ -497,14 +550,14 @@ func nullValue(n sql.NullString) any {
 }
 
 // recordClaim is declarations.record_claim: create-once in a write of its own.
-func recordClaim(ctx context.Context, dbPath any, row store.ReportingSessionsRow) Obj {
-	s, path, problem := openDeclarationStore(ctx, dbPath)
+func recordClaim(ctx context.Context, dbPath any, row store.ReportingSessionsRow) (Obj, error) {
+	s, path, problem, err := openDeclarationStore(ctx, dbPath)
 	if s == nil {
-		return problem
+		return problem, err
 	}
 	defer func() { _ = s.Close() }()
 	var answer Obj
-	err := s.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
+	err = s.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
 		existing, err := s.ReportingSession(ctx, row.AssignmentID, row.SessionID)
 		if errors.Is(err, sql.ErrNoRows) {
 			if err := s.RecordReportingSession(ctx, row); err != nil {
@@ -525,9 +578,9 @@ func recordClaim(ctx context.Context, dbPath any, row store.ReportingSessionsRow
 		return nil
 	})
 	if err != nil {
-		return declFailure("store_write_failed", store.PythonSQLiteError(err), path)
+		return declFailure("store_write_failed", store.PythonSQLiteError(err), path), nil
 	}
-	return answer
+	return answer, nil
 }
 
 // recordDisposition is Held.disposition: the declared outcome, create-once, on the held write.

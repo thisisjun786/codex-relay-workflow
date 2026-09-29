@@ -95,13 +95,15 @@ func TestWorkerReadiness_every_reason_is_pythons(t *testing.T) {
 		"requirements-null-item":   {valid, "[null]", policyFile},
 		"requirements-model-false": {valid, `[` + strings.Replace(ready, `"anthropic/claude-opus-5-5"`, "false", 1) + `]`, policyFile},
 		"requirements-model-blank": {valid, `[` + strings.Replace(ready, `"anthropic/claude-opus-5-5"`, `"  "`, 1) + `]`, policyFile},
-		"requirements-extra-key":   {valid, "[" + with("exception", `"x"`) + "]", policyFile},
-		"role-supervisor":          {valid, "[" + strings.Replace(ready, `"parent"`, `"supervisor"`, 1) + "]", policyFile},
-		"role-undeclared":          {observation(summary(parentOnly)), "[" + child + "]", parentOnly},
-		"unobserved":               {contract.OrderedObject{{Key: "observed", Value: false}, {Key: "reason", Value: nil}, {Key: "policy", Value: nil}}, "[" + ready + "]", policyFile},
-		"unobserved-reason":        {contract.OrderedObject{{Key: "observed", Value: false}, {Key: "reason", Value: "worker_policy_lock_unheld"}, {Key: "policy", Value: nil}}, "[" + ready + "]", policyFile},
-		"worker-unresolved":        {withPolicy(func(p contract.OrderedObject) contract.OrderedObject { return set(p, "state", "unresolved") }), "[" + ready + "]", policyFile},
-		"caller-unresolved":        {valid, "[" + ready + "]", ""},
+		// str.strip() also strips the information separators U+001C..U+001F.
+		"requirements-model-separator": {valid, `[` + strings.Replace(ready, `"anthropic/claude-opus-5-5"`, `"\u001f"`, 1) + `]`, policyFile},
+		"requirements-extra-key":       {valid, "[" + with("exception", `"x"`) + "]", policyFile},
+		"role-supervisor":              {valid, "[" + strings.Replace(ready, `"parent"`, `"supervisor"`, 1) + "]", policyFile},
+		"role-undeclared":              {observation(summary(parentOnly)), "[" + child + "]", parentOnly},
+		"unobserved":                   {contract.OrderedObject{{Key: "observed", Value: false}, {Key: "reason", Value: nil}, {Key: "policy", Value: nil}}, "[" + ready + "]", policyFile},
+		"unobserved-reason":            {contract.OrderedObject{{Key: "observed", Value: false}, {Key: "reason", Value: "worker_policy_lock_unheld"}, {Key: "policy", Value: nil}}, "[" + ready + "]", policyFile},
+		"worker-unresolved":            {withPolicy(func(p contract.OrderedObject) contract.OrderedObject { return set(p, "state", "unresolved") }), "[" + ready + "]", policyFile},
+		"caller-unresolved":            {valid, "[" + ready + "]", ""},
 		"digest-mismatch": {withPolicy(func(p contract.OrderedObject) contract.OrderedObject {
 			return set(p, "digest", strings.Repeat("0", 64))
 		}), "[" + ready + "]", policyFile},

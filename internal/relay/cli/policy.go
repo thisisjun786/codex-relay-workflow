@@ -86,7 +86,7 @@ func workerReadiness(observation contract.OrderedObject, requirements any, calle
 		}
 		for _, field := range object {
 			text, ok := field.Value.(string)
-			if !ok || strings.TrimSpace(text) == "" {
+			if !ok || store.PythonStrip(text) == "" {
 				return refused("worker_policy_requirements_invalid")
 			}
 		}

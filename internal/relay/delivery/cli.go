@@ -224,9 +224,9 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 		// command that is neither read-only nor answers without the selected store. Of the
 		// marker commands that is intent-declare recording this store and intent-register
 		// confirming against it, so another runtime's store refuses them before any
-		// marker fact is written.
+		// marker fact is written; a legacy store passes, as it does for the fence.
 		if fencedMarker(command) && !exempt {
-			if err := store.StartPreflight(ctx, selection.DBPath(), socket); err != nil {
+			if err := store.CheckStartLikeFence(ctx, selection.DBPath(), socket); err != nil {
 				var refused *store.RefusedError
 				if !errors.As(err, &refused) {
 					return reply(stdout, Obj{{Key: "error", Value: "host"}, {Key: "detail", Value: hostDetail(err)}}, contract.ExitHost), true
@@ -368,6 +368,9 @@ func hostDetail(err error) string {
 	var h *hostError
 	if errors.As(err, &h) {
 		return h.Error()
+	}
+	if detail, ok := store.PythonHostDetail(err); ok {
+		return detail
 	}
 	return "RuntimeError: " + err.Error()
 }

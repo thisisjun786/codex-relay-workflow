@@ -145,7 +145,8 @@ func TestPolicy_whenPythonPolicyFileIsLoaded(t *testing.T) {
 		{"test_without_a_digest_the_environment_reads_exactly_as_before", func(t *testing.T) {
 			dir := canonicalTemp(t)
 			path := writePolicy(t, dir, marshal(t, policyFor(dir)))
-			for _, env := range []map[string]string{{}, {EnvDigest: "  "}} {
+			// Stripped as str.strip() strips, the information separators included.
+			for _, env := range []map[string]string{{}, {EnvDigest: "  "}, {EnvPolicy: "\x1f", EnvDigest: "\x1c "}} {
 				p, err := FromEnvironment(env)
 				if err != nil || p.Mode() != "presence_only" || p.digest != "" {
 					t.Fatal(p, err)

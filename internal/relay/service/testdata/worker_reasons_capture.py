@@ -167,6 +167,7 @@ class Capture(WorkerPolicyEvidence):
             "requirements-null-item": (valid, [None], self.caller),
             "requirements-model-false": (valid, [dict(ready, model=False)], self.caller),
             "requirements-model-blank": (valid, [dict(ready, model="  ")], self.caller),
+            "requirements-model-separator": (valid, [dict(ready, model="\x1f")], self.caller),
             "requirements-extra-key": (valid, [dict(ready, exception="x")], self.caller),
             "role-supervisor": (valid, [dict(ready, role="supervisor")], self.caller),
             "role-undeclared": (valid, [child], None),

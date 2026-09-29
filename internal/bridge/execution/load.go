@@ -55,8 +55,8 @@ func ReadFile(path string) ([]byte, error) {
 
 // FromEnvironment is ExecutionPolicy.from_environment; the zero Policy is PRESENCE_ONLY.
 func FromEnvironment(env map[string]string) (Policy, error) {
-	configured := strings.TrimSpace(env[EnvPolicy])
-	expected := strings.TrimSpace(env[EnvDigest])
+	configured := pyStrip(env[EnvPolicy])
+	expected := pyStrip(env[EnvDigest])
 	if configured == "" {
 		if expected != "" {
 			return Policy{}, &PolicyError{fmt.Sprintf("%s expects a policy with digest %s, and %s names no file", EnvDigest, expected, EnvPolicy)}

@@ -367,7 +367,8 @@ F12; AGENTS.md provenance rule.
 
 Decision: where the Python bridge's caller-visible text is produced by a Python library
 rather than by the bridge, the Go bridge keeps the machine-readable parts exact and writes
-the prose itself. Four places, recorded as accepted differences:
+the prose itself. Three places, recorded as accepted differences (a fourth, the policy
+file's decoder message, was retired by todo 32):
 - Tool-argument validation: the first line `Error executing tool <t>: <N> validation
   error(s) for <t>Arguments`, the error count and the failing field locations in signature
   order are Python's; each field's reason line is the bridge's own, without pydantic's
@@ -376,10 +377,12 @@ the prose itself. Four places, recorded as accepted differences:
   (`codex_thread_bridge.__version__`); FastMCP sends the mcp library version (1.30.0 at the pin).
 - The JSON inside a tool reply's text content is compared as parsed values; its key order
   is Go's, not the dict insertion order of the Python receipt.
-- An execution-policy file that is not valid JSON is refused with the same exit code,
-  empty stdout and `execution_policy_unreadable` prefix; the decoder message after it is
-  Go's, not CPython's `json.JSONDecodeError` text.
-Every other reply on the wire is Python's bytes (decision 5, todo 16 wire tests).
+Every other reply on the wire is Python's bytes (decision 5, todo 16 wire tests). The
+execution-policy file is no longer among the differences: the one parser behind the bridge
+and the relay (`internal/bridge/execution` over `internal/pyjson`) decodes its bytes as
+`json.loads` does (UTF-8, UTF-16 or UTF-32 by `detect_encoding`, `surrogatepass`) and scans
+them as CPython's scanner does, so which files are accepted, and the codec, JSONDecodeError
+or integer-limit text after `is not valid JSON:`, are Python's.
 
 Evidence: packages/codex-thread-bridge/src/codex_thread_bridge/server.py (FastMCP tool
 registration); todo-16 checker comparison against mcp 1.30.0 / pydantic 2.13.5 recorded in

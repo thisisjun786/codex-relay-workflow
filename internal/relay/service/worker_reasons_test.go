@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"golang.org/x/sys/unix"
 )
 
@@ -70,13 +72,16 @@ func newWorkerFixture(t *testing.T, policy json.RawMessage) *workerFixture {
 	}
 	t.Setenv(execution.EnvPolicy, f.policyFile)
 	ctx := context.Background()
-	db, err := store.Open(ctx, filepath.Join(f.state, "relay.sqlite3"), "")
-	if err != nil {
+	// A copy of one store created once: creating a fenced store costs a quarter second, and
+	// every case needs one of its own. The copy gets its own physical identity (Rehome).
+	if err := os.MkdirAll(f.state, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err = db.Close(); err != nil {
+	database := filepath.Join(f.state, "relay.sqlite3")
+	if err := os.WriteFile(database, workerStoreBytes(t), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	testsupport.Rehome(t, database)
 	selection, err := store.ResolveStateDir(f.state, "")
 	if err != nil {
 		t.Fatal(err)
@@ -126,6 +131,32 @@ func newWorkerFixture(t *testing.T, policy json.RawMessage) *workerFixture {
 	}
 	f.observer = adapter.WorkerObservation{State: f.state, Socket: f.socket, Scope: f.service.Scope.Root, Authority: f.service.Scope.Authority, Installation: filepath.Dir(executable)}
 	return f
+}
+
+// workerStore is the bytes of a closed, Go-created fenced store, made once per test binary.
+var workerStore = sync.OnceValues(func() ([]byte, error) {
+	dir, err := os.MkdirTemp("", "worker-store-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	db, err := store.Open(context.Background(), filepath.Join(dir, "relay.sqlite3"), "")
+	if err != nil {
+		return nil, err
+	}
+	if err = db.Close(); err != nil {
+		return nil, err
+	}
+	return os.ReadFile(filepath.Join(dir, "relay.sqlite3"))
+})
+
+func workerStoreBytes(t *testing.T) []byte {
+	t.Helper()
+	raw, err := workerStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }
 
 func (f *workerFixture) readJSON(path string) map[string]any {

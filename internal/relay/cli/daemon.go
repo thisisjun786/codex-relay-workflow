@@ -106,6 +106,10 @@ func serviceError(err error) error {
 	if errors.As(err, &refusal) {
 		return &PayloadExit{Code: 2, Payload: contract.OrderedObject{{Key: "ok", Value: false}, {Key: "reason", Value: refusal.Reason}, {Key: "detail", Value: nullableText(refusal.Detail)}}}
 	}
+	if errors.Is(err, service.ErrEmbeddedNUL) {
+		// The launcher's environment assignment (os.environ / subprocess.Popen).
+		return &HostError{Class: "ValueError", Detail: service.ErrEmbeddedNUL.Error()}
+	}
 	var errno syscall.Errno
 	if errors.As(err, &errno) {
 		// main's f"{type(error).__name__}: {error}" for an OSError.
