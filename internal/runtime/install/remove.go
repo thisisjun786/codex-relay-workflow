@@ -27,8 +27,9 @@ func runtimeDirectory(name string) bool {
 }
 
 // processScope is what a process-table reading can see, stated in every answer that rests on
-// one: this host's procfs in this command's PID namespace.
-const processScope = "this host's process table, as this command's PID namespace shows it: a process in another PID namespace (a container sharing this directory) or on another host (a network home) is not seen, and crw install remove is run where the runtime's processes run"
+// one: this host's procfs in this command's PID namespace, where another user's process whose
+// working directory the kernel hides is judged by what it names (hiddenReach).
+const processScope = "this host's process table, as this command's PID namespace shows it: a process in another PID namespace (a container sharing this directory) or on another host (a network home) is not seen, and crw install remove is run where the runtime's processes run; and another user's process whose working directory the kernel hides is judged by what its command line names: a relative path it runs counts only when it names this directory or is there inside it, so such a process working inside this directory while naming nothing there is not seen"
 
 // Remove is `crw install remove <dir>`: delete one runtime directory under the destination,
 // only when nothing may still be using it. The directory is taken by its name under the
@@ -598,7 +599,11 @@ func runtimeNames() map[string]bool {
 // judged by its cmdline, which every user may read, and is not ruled out when that is hidden
 // too (a procfs mounted hidepid) or when it starts one of this runtime's executables by a bare
 // name, which could be this runtime's. A process of this user whose exe or cmdline cannot be
-// read for any other reason is not ruled out.
+// read for any other reason is not ruled out. A relative operand is opened against the
+// process's working directory (its cwd link, which also needs ptrace access); one that cannot
+// be read leaves a process of this user, or a failure other than a refusal, not ruled out, while
+// another user's process whose working directory the kernel hides is judged by what its command
+// line names (hiddenReach), since whether that directory is inside cannot be established.
 func liveProcesses(proc string, d *runtimeDir) (found, unruled []any, err error) {
 	if _, err := os.Stat(filepath.Join(proc, "self")); err != nil {
 		return nil, nil, &noProcessTable{proc}
@@ -609,6 +614,14 @@ func liveProcesses(proc string, d *runtimeDir) (found, unruled []any, err error)
 	}
 	inside := d.holds
 	self, me := os.Getpid(), os.Getuid()
+	var walked []string
+	var walkErr error
+	directories := func() ([]string, error) {
+		if walked == nil && walkErr == nil {
+			walked, walkErr = directoriesIn(d.path)
+		}
+		return walked, walkErr
+	}
 	for _, entry := range entries {
 		pid, err := strconv.Atoi(entry.Name())
 		if err != nil || pid == self {
@@ -663,21 +676,34 @@ func liveProcesses(proc string, d *runtimeDir) (found, unruled []any, err error)
 		case cwdErr == nil && inside(cwd):
 			hits = append(hits, cwd)
 		}
-		unresolved := ""
+		unresolved, reach := "", ""
 		for _, operand := range argvOperands(words, exe, exeErr == nil) {
 			if !filepath.IsAbs(operand) {
-				if cwdErr != nil {
+				if cwdErr == nil {
+					operand = filepath.Join(cwd, operand)
+				} else if uid != me && denied(cwdErr) {
+					// Another user's process whose working directory the kernel hides is
+					// judged by what it names (hiddenReach).
+					if reach = hiddenReach(operand, d, directories); reach == "" {
+						continue
+					}
+					unresolved = operand
+					break
+				} else {
 					unresolved = operand
 					break
 				}
-				operand = filepath.Join(cwd, operand)
 			}
 			if inside(operand) {
 				hits = append(hits, operand)
 			}
 		}
 		if unresolved != "" && len(hits) == 0 {
-			unknown(int64(uid), "its command line runs "+unresolved+" relative to its working directory, which could not be read ("+store.PythonOSError(cwdErr)+"), so what it runs is unknown")
+			why := "its command line runs " + unresolved + " relative to its working directory, which could not be read (" + store.PythonOSError(cwdErr) + "), so what it runs is unknown"
+			if reach != "" {
+				why = "its command line runs " + unresolved + " relative to its working directory, which the kernel hides from another user (" + store.PythonOSError(cwdErr) + "), and " + reach + ", so it may run out of this directory"
+			}
+			unknown(int64(uid), why)
 			continue
 		}
 		for _, word := range words {
@@ -694,4 +720,57 @@ func liveProcesses(proc string, d *runtimeDir) (found, unruled []any, err error)
 		}
 	}
 	return found, unruled, nil
+}
+
+// hiddenReach is why operand, a path relative to the working directory of another user's
+// process whose working directory the kernel hides from this one (EACCES, EPERM), may reach
+// inside d, or "" when it cannot. Where that process runs cannot be read, so it is judged by
+// what it names: an operand reaches inside d when it names d by its name (from the destination,
+// or from beside d, it enters d), or when it is there inside d as the kernel would open it from
+// d or from any directory in d (directories, walked once); one that is nowhere inside d is ruled
+// out, so such a process working inside d while naming nothing there is not seen (processScope
+// states it). Whatever cannot be read to answer that is not ruled out. So a host's own daemons
+// that run a relative script as root (an Azure VM's WALinuxAgent, `python3 -u
+// bin/WALinuxAgent-<v>.egg`) do not keep every runtime directory in use.
+func hiddenReach(operand string, d *runtimeDir, directories func() ([]string, error)) string {
+	for _, part := range strings.Split(filepath.Clean(operand), string(filepath.Separator)) {
+		if strings.EqualFold(part, d.name) {
+			return "it names this directory (" + d.name + ")"
+		}
+	}
+	all, err := directories()
+	if err != nil {
+		return "whether it is there inside this directory could not be read (" + store.PythonOSError(err) + ")"
+	}
+	for _, dir := range all {
+		candidate := filepath.Join(dir, operand)
+		if candidate != d.path && !strings.HasPrefix(candidate, d.path+string(filepath.Separator)) {
+			continue
+		}
+		switch _, err := os.Lstat(candidate); {
+		case err == nil:
+			return candidate + " is there inside this directory"
+		case !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR):
+			return "whether " + candidate + " is there inside this directory could not be read (" + store.PythonOSError(err) + ")"
+		}
+	}
+	return ""
+}
+
+// directoriesIn is directory and every directory inside it, links not followed: every working
+// directory inside it a process could have. A directory that is not there has none.
+func directoriesIn(directory string) ([]string, error) {
+	out := []string{}
+	err := filepath.WalkDir(directory, func(path string, entry os.DirEntry, err error) error {
+		switch {
+		case err != nil && path == directory && errors.Is(err, os.ErrNotExist):
+			return filepath.SkipAll
+		case err != nil:
+			return err
+		case entry.IsDir():
+			out = append(out, path)
+		}
+		return nil
+	})
+	return out, err
 }

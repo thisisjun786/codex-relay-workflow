@@ -1750,8 +1750,19 @@ executable could not be read (a readable one settles what runs) and it holds no 
 process title such as sshd's is no path), the command `env` runs, and an interpreter's script
 operand after its options (the interpreter known by argv[0] or by its executable), a relative one
 resolved against `/proc/<pid>/cwd`, with a Python's `-c` and `-m` and a shell's `-c` ending the
-options - resolving inside it; a process whose argv runs something relative to a working
-directory it cannot read is not ruled out), and no registration the host reads names a path inside it. The registrations are read by the
+options - resolving inside it; a process whose argv runs something relative to a working directory
+it cannot read is not ruled out (and a process of this user whose working directory fails for a
+reason other than a refusal is not ruled out at all), except another user's process whose working
+directory the kernel hides (EACCES, EPERM: `/proc/<pid>/cwd` needs ptrace access), which is judged
+by what its command line names, since whether it works inside the directory cannot be established:
+a relative operand counts, and leaves it not ruled out, when it names the directory by its name
+(from the destination or beside it, it enters the directory) or is there inside it (`lstat` of it
+joined to the directory or to any directory in it, walked once per reading, finds it; a spelling
+that climbs out of the directory does not count), and it is ruled out otherwise; a directory in
+it that cannot be walked or searched leaves the answer unread, which is not ruled out. So a
+host's own daemon that runs a relative script as root - every Azure VM runs WALinuxAgent as
+`python3 -u bin/WALinuxAgent-<version>.egg -run-exthandlers` - does not keep every runtime
+directory in use, as todo 40's integration test found on a GitHub-hosted runner), and no registration the host reads names a path inside it. The registrations are read by the
 retention scan's own readers (`doctor.RegisteredInside`, rows 4, 5, 8, 9 and 10: every
 `crw-*.json` record, so the Stop settings' `relayExecutable`, `adapterEntryPoint` and
 `adapterInterpreter` and the bridge record's `bridgeExecutable`; the cached plugin declarations;
@@ -1818,10 +1829,12 @@ whatever environment started it; remove finds a process running out of the runti
 process table whichever registry recorded it, so an isolated environment's remove (todo 40's
 integration test) no longer reads, or is refused by, the machine's live registry. A remove that
 succeeds names the registries and state directories whose records it read (`relayRecords`). The
-reading rests on one assumption, stated in every answer that depends on it (`processTable`): the
+reading rests on two assumptions, stated in every answer that depends on it (`processTable`): the
 process table is this host's, in this command's PID namespace, so a process in another PID
 namespace (a container sharing the directory) or on another host (a network home) is not seen,
-and `crw install remove` is to be run where the runtime's processes run. The reclaim of an
+and `crw install remove` is to be run where the runtime's processes run; and another user's
+process whose working directory the kernel hides is judged by what it names, so one that works
+inside the directory while its command line names nothing there is not seen. The reclaim of an
 abandoned staging applies the same reading. Live
 processes are read from procfs, so on a platform without one (darwin) whether a relay or bridge still runs out of the directory
 cannot be established and `crw install remove` always refuses there (fail-closed), saying that

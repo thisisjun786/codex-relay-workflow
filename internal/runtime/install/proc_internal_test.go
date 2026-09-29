@@ -106,7 +106,10 @@ func Argv(words ...string) []byte {
 // capabilities, as systemd --user does) is judged by its cmdline - the interpreter and the
 // script it starts, spelled and resolved - and is not ruled out when that is hidden too or when
 // it starts one of this runtime's executables by a bare name. A process of this user whose exe
-// fails for another reason, or whose cmdline cannot be read, is not ruled out.
+// fails for another reason, or whose cmdline cannot be read, is not ruled out. A relative operand
+// is resolved against the working directory; where that cannot be read, a process of this user
+// is not ruled out, and another user's whose working directory the kernel hides is judged by what
+// it names (todo 40 CI: every Azure VM runs WALinuxAgent as root with a relative script).
 func TestLiveProcessesRuleOutOnlyWhatTheyRead(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads every file, so an unreadable one cannot be made")
@@ -120,6 +123,16 @@ func TestLiveProcessesRuleOutOnlyWhatTheyRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.Symlink("crw", filepath.Join(directory, "bin", "codex-session-relay")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(directory, "lib", "app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "lib", "app", "main.py"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Beside the directory, not in it: a relative path that climbs out of it reaches this.
+	if err := os.WriteFile(filepath.Join(filepath.Dir(directory), "beside.py"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	const other = 5000 // pids from here belong to another user
@@ -160,7 +173,7 @@ func TestLiveProcessesRuleOutOnlyWhatTheyRead(t *testing.T) {
 		{"a script after interpreter options", FakeProcess{Pid: 401, Exe: "/usr/bin/python3", Cmdline: Argv("python3", "-u", "-Wignore::DeprecationWarning", "-X", "utf8", filepath.Join(filepath.Base(directory), "bin", "codex-thread-bridge")), Cwd: filepath.Dir(directory)}, true, false},
 		{"a script env runs", FakeProcess{Pid: 402, Exe: "/usr/bin/env", Cmdline: Argv("/usr/bin/env", "-i", "LANG=C", "python3", "./"+filepath.Join(filepath.Base(directory), "bin", "codex-thread-bridge")), Cwd: filepath.Dir(directory)}, true, false},
 		{"a shell script run relative", FakeProcess{Pid: 403, Exe: "/usr/bin/bash", Cmdline: Argv("bash", "-e", "-o", "pipefail", filepath.Join(filepath.Base(directory), "run.sh")), Cwd: filepath.Dir(directory)}, true, false},
-		{"a relative program whose executable and working directory are denied", FakeProcess{Pid: other + 11, Exe: "denied", Cmdline: Argv(filepath.Join(filepath.Base(directory), "bin", "codex-session-relay"), "service"), Cwd: "denied"}, false, true},
+		{"another user's relative program naming the directory, its executable and working directory denied", FakeProcess{Pid: other + 11, Exe: "denied", Cmdline: Argv(filepath.Join(filepath.Base(directory), "bin", "codex-session-relay"), "service"), Cwd: "denied"}, false, true},
 		{"a process title another user wrote over its argv", FakeProcess{Pid: other + 10, Exe: "denied", Cmdline: Argv("sshd: /usr/sbin/sshd -D [listener] 0 of 10-100 startups"), Cwd: "denied"}, false, false},
 		{"an interpreter known by its executable", FakeProcess{Pid: 410, Exe: "/usr/bin/python3", Cmdline: Argv("my-daemon", filepath.Join(filepath.Base(directory), "bin", "codex-thread-bridge")), Cwd: filepath.Dir(directory)}, true, false},
 		{"an argument that is no operand", FakeProcess{Pid: 409, Exe: "/usr/bin/grep", Cmdline: Argv("grep", "-r", "x", filepath.Base(directory)), Cwd: filepath.Dir(directory)}, false, false},
@@ -168,7 +181,18 @@ func TestLiveProcessesRuleOutOnlyWhatTheyRead(t *testing.T) {
 		{"an inline program outside", FakeProcess{Pid: 406, Exe: "/usr/bin/python3", Cmdline: Argv("python3", "-c", "import bin"), Cwd: "/"}, false, false},
 		{"a relative script outside", FakeProcess{Pid: 407, Exe: "/usr/bin/python3", Cmdline: Argv("python3", "bin/codex-thread-bridge"), Cwd: "/tmp"}, false, false},
 		{"this user's process whose working directory fails otherwise", FakeProcess{Pid: 408, Exe: "/usr/bin/sleep", Cmdline: Argv("sleep", "30"), Cwd: "!"}, false, true},
-		{"another user's relative script, its working directory denied", FakeProcess{Pid: other + 7, Exe: "denied", Cmdline: Argv("/usr/bin/python3", "bin/codex-thread-bridge"), Cwd: "denied"}, false, true},
+		// Another user's process whose working directory the kernel hides is judged by what it
+		// names: a relative operand counts when it names the directory or is there inside it, as
+		// opened from the directory or from any directory in it, and is ruled out otherwise.
+		{"another user's relative script nowhere inside, its working directory denied", FakeProcess{Pid: other + 7, Exe: "denied", Cmdline: Argv("/usr/bin/python3", "bin/codex-thread-bridge"), Cwd: "denied"}, false, false},
+		{"an Azure VM's agent, run relative as root", FakeProcess{Pid: other + 12, Exe: "denied", Cmdline: Argv("python3", "-u", "bin/WALinuxAgent-2.16.0.2-py3.12.egg", "-run-exthandlers"), Cwd: "denied"}, false, false},
+		{"another user's relative script there inside the directory", FakeProcess{Pid: other + 13, Exe: "denied", Cmdline: Argv("/usr/bin/python3", "bin/codex-session-relay"), Cwd: "denied"}, false, true},
+		{"another user's relative script there inside a directory in it", FakeProcess{Pid: other + 14, Exe: "denied", Cmdline: Argv("/usr/bin/python3", "codex-session-relay"), Cwd: "denied"}, false, true},
+		{"another user's relative script deeper inside a directory in it", FakeProcess{Pid: other + 15, Exe: "denied", Cmdline: Argv("/usr/bin/python3", "app/main.py"), Cwd: "denied"}, false, true},
+		{"another user's script reached from a directory in it through its parent", FakeProcess{Pid: other + 16, Exe: "denied", Cmdline: Argv("/usr/bin/python3", "../bin/crw"), Cwd: "denied"}, false, true},
+		{"another user's relative script that climbs out of the directory", FakeProcess{Pid: other + 17, Exe: "denied", Cmdline: Argv("/usr/bin/python3", "../beside.py"), Cwd: "denied"}, false, false},
+		{"another user's relative script, its working directory failing otherwise", FakeProcess{Pid: other + 18, Exe: "denied", Cmdline: Argv("python3", "-u", "bin/WALinuxAgent-2.16.0.2-py3.12.egg"), Cwd: "!"}, false, true},
+		{"this user's relative script, its working directory denied", FakeProcess{Pid: 304, Exe: "denied", Cmdline: Argv("python3", "-u", "bin/WALinuxAgent-2.16.0.2-py3.12.egg"), Cwd: "denied"}, false, true},
 		{"another user's absolute script, its working directory denied", FakeProcess{Pid: other + 8, Exe: "denied", Cmdline: Argv("/usr/bin/python3", "/usr/bin/networkd-dispatcher"), Cwd: "denied"}, false, false},
 		{"another user's bare program, its working directory denied", FakeProcess{Pid: other + 9, Exe: "denied", Cmdline: Argv("sshd", "-D"), Cwd: "denied"}, false, false},
 	} {
@@ -177,10 +201,32 @@ func TestLiveProcessesRuleOutOnlyWhatTheyRead(t *testing.T) {
 			t.Fatalf("%s: %v", c.label, err)
 		}
 		if (len(found) > 0) != c.found || (len(unruled) > 0) != c.unruled {
-			t.Fatalf("%s: found %s, not ruled out %s", c.label, golden.Canon(found), golden.Canon(unruled))
+			t.Errorf("%s: found %s, not ruled out %s", c.label, golden.Canon(found), golden.Canon(unruled))
+			continue
 		}
 		if c.unruled && record.Get(golden.Obj(unruled[0]), "pid") != int64(c.process.Pid) {
-			t.Fatalf("%s: %s", c.label, golden.Canon(unruled))
+			t.Errorf("%s: %s", c.label, golden.Canon(unruled))
+		}
+	}
+
+	// A directory in it that cannot be listed (its walk fails) or searched (the script's path in
+	// it cannot be read) leaves unanswered whether the relative script is there, so another
+	// user's process whose working directory is hidden is not ruled out.
+	agent := FakeProcess{Pid: other + 12, Exe: "denied", Cmdline: Argv("python3", "-u", "bin/WALinuxAgent-2.16.0.2-py3.12.egg"), Cwd: "denied"}
+	for _, mode := range []os.FileMode{0o100, 0o400} {
+		sealed := filepath.Join(directory, "sealed")
+		if err := os.Mkdir(sealed, mode); err != nil {
+			t.Fatal(err)
+		}
+		found, unruled, err := liveProcesses(FakeProc(t, agent), mustIdentify(filepath.Dir(directory), filepath.Base(directory)))
+		if err := os.Chmod(sealed, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(sealed); err != nil {
+			t.Fatal(err)
+		}
+		if err != nil || len(found) > 0 || len(unruled) != 1 {
+			t.Errorf("a directory in it of mode %o: found %s, not ruled out %s, %v", mode, golden.Canon(found), golden.Canon(unruled), err)
 		}
 	}
 }
