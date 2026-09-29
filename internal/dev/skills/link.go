@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/ci"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // Run dispatches `crw-dev skills <command> [args]`.
@@ -87,33 +88,40 @@ func Link(args []string, getenv func(string) string, stdout, stderr io.Writer) i
 		return usageError("argument --dest: expected one argument")
 	}
 	home := getenv("HOME")
-	// install.py expands a leading ~ on whichever destination it ends up with, the default built
-	// from CODEX_HOME as well as --dest. Each is expanded as given, before a join could clean a
-	// ~/.. away.
+	// install.py computes Path(CODEX_HOME or Path.home()/".codex") / "skills" (or --dest), then
+	// .expanduser().absolute(): a leading ~ is expanded on whichever destination it ends up with,
+	// the working directory is prefixed to a relative one, and nothing else is normalised beyond
+	// Path()'s own spelling rules. In particular ".." is never folded, so a symlink followed by
+	// ".." means what the filesystem makes of it, as for Codex; filepath.Join and filepath.Abs
+	// would fold it lexically and could name another directory.
+	var expanded string
 	if !destGiven {
 		codexHome := getenv("CODEX_HOME")
 		if codexHome == "" && home == "" {
 			return usageError("neither CODEX_HOME nor HOME is set, so there is no default destination; pass --dest")
 		}
 		if codexHome == "" {
-			codexHome = filepath.Join(home, ".codex")
+			codexHome = pathlibJoin(home, ".codex")
 		}
-		expanded, err := expandUser(codexHome, home)
+		codexDir, err := expandUser(codexHome, home)
 		if err != nil {
 			return usageError("CODEX_HOME: " + err.Error())
 		}
-		dest = filepath.Join(expanded, "skills")
+		expanded = pathlibJoin(codexDir, "skills")
 	} else {
-		expanded, err := expandUser(dest, home)
-		if err != nil {
+		var err error
+		if expanded, err = expandUser(dest, home); err != nil {
 			return usageError("argument --dest: " + err.Error())
 		}
-		dest = expanded
 	}
-	destination, err := filepath.Abs(dest)
-	if err != nil {
-		return usageError(err.Error())
+	if !strings.HasPrefix(expanded, "/") {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return usageError(err.Error())
+		}
+		expanded = pathlibJoin(cwd, expanded)
 	}
+	destination := store.PathlibSpelling(expanded)
 	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		return usageError("not inside a Git checkout, so there is no checkout to link: " + err.Error())
@@ -140,7 +148,7 @@ func link(root, destination string, apply bool, stdout, stderr io.Writer) int {
 	var pending []pair
 	conflicts := 0
 	for _, source := range sources {
-		target := filepath.Join(destination, filepath.Base(source))
+		target := pathlibJoin(destination, filepath.Base(source)) // destination / name, never folded
 		switch linkState(target, source) {
 		case "LINKED":
 			fmt.Fprintf(stdout, "LINKED %s -> %s\n", target, source)
@@ -211,7 +219,21 @@ func expandUser(path, home string) (string, error) {
 			return "", fmt.Errorf("%q names no user with a home directory", path)
 		}
 	}
-	return filepath.Join(dir, rest), nil
+	return pathlibJoin(dir, rest), nil
+}
+
+// pathlibJoin is str(Path(base) / rest) before Path()'s spelling rules: an absolute rest wins,
+// and nothing is folded.
+func pathlibJoin(base, rest string) string {
+	switch {
+	case rest == "":
+		return base
+	case strings.HasPrefix(rest, "/"):
+		return rest
+	case base == "":
+		return rest
+	}
+	return strings.TrimRight(base, "/") + "/" + rest
 }
 
 func failed(stderr io.Writer, err error) int {

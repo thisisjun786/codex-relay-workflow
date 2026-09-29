@@ -63,6 +63,15 @@ links a checkout, and a release archive has none. `python3 scripts/install.py
 --apply` and `--check` are the legacy equivalent and stay until the Python
 execution path is removed.
 
+### Retired skill migration
+
+`scripts/install.py` still reports skills installed under their retired names
+(`linear-focus`, `linear-next`, `linear-plan`, `linear-run`, `linear-check`,
+`linear-logic`, `crw-focus`) as `LEGACY` lines and leaves them in place; `--check`
+fails while any remain. Neither linker removes them: inspect who owns each entry,
+then move it outside the skills directory Codex discovers (`$CODEX_HOME/skills`, or
+`~/.codex/skills`). `crw-dev skills link` does not look for retired names.
+
 Or install the same skills as a versioned plugin, which needs no checkout to stay
 in place:
 

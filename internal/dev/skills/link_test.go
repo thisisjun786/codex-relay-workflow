@@ -327,7 +327,7 @@ func TestATildeDestinationIsExpandedWhereverItComesFrom(t *testing.T) {
 	}{
 		{"~/codex", nil, filepath.Join(home, "codex", "skills")},
 		{"~", nil, filepath.Join(home, "skills")},
-		{"~/../sibling/codex", nil, filepath.Join(scratch, "sibling", "codex", "skills")},
+		{"~/../sibling/codex", nil, home + "/../sibling/codex/skills"}, // ".." kept, as Path.absolute() keeps it
 		{"~someone/codex", nil, filepath.Join(other, "codex", "skills")},
 		{"", nil, filepath.Join(home, ".codex", "skills")},
 		{"~/ignored", []string{"--dest", "~/explicit"}, filepath.Join(home, "explicit")},
@@ -371,5 +371,47 @@ func TestATildeDestinationIsExpandedWhereverItComesFrom(t *testing.T) {
 	}
 	if entries, err := os.ReadDir(scratch); err != nil || len(entries) != 1 {
 		t.Fatalf("only HOME may be written, found %v %v", entries, err)
+	}
+}
+
+func TestASymlinkFollowedByDotDotMeansWhatTheFilesystemMakesOfIt(t *testing.T) {
+	// install.py keeps ".." unfolded (Path.absolute() never normalises it), so <alias>/../codex
+	// is <alias's target's parent>/codex, the directory Codex itself reaches. Folding it lexically
+	// would name <alias's parent>/codex instead.
+	scratch := t.TempDir()
+	real := filepath.Join(scratch, "srv", "user")
+	if err := os.MkdirAll(filepath.Join(real, "codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(scratch, "tmp", "alias")
+	if err := os.MkdirAll(filepath.Dir(alias), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(real, "codex"), alias); err != nil {
+		t.Fatal(err)
+	}
+	wanted := filepath.Join(real, "codex", "skills")
+	lexical := filepath.Join(scratch, "tmp", "codex", "skills")
+	for _, row := range []struct {
+		name string
+		env  map[string]string
+		args []string
+	}{
+		{"CODEX_HOME", map[string]string{"CODEX_HOME": alias + "/../codex", "HOME": filepath.Join(scratch, "home")}, []string{"--apply"}},
+		{"--dest", map[string]string{"HOME": filepath.Join(scratch, "home")}, []string{"--apply", "--dest", alias + "/../codex/skills"}},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			_ = os.RemoveAll(wanted)
+			var stdout, stderr bytes.Buffer
+			if code := Link(row.args, func(key string) string { return row.env[key] }, &stdout, &stderr); code != 0 {
+				t.Fatalf("exit %d\n%s%s", code, stdout.String(), stderr.String())
+			}
+			if _, ok := inodes(t, wanted)["crw-run"]; !ok {
+				t.Fatalf("nothing linked under %s:\n%s", wanted, stdout.String())
+			}
+			if _, err := os.Lstat(lexical); !os.IsNotExist(err) {
+				t.Fatalf("the destination was folded lexically to %s", lexical)
+			}
+		})
 	}
 }
