@@ -14,12 +14,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // Version is components.json definitionVersion.
@@ -84,8 +87,18 @@ func Of(name string) (Component, bool) {
 // counts as the file it names. An entry whose target is absent (a dangling link) is not a file,
 // as os.DirEntry.is_file answers; any other failure to examine one (a link loop, a directory
 // without search permission) fails the walk, as it raises out of files_under.
+//
+// The relative paths are Python's: os.fsdecode spells a byte that is not part of UTF-8 as the
+// lone surrogate U+DC80..U+DCFF, sorted() orders them by code point, and .encode() refuses a
+// surrogate. So the files are taken in that order, and the first path that is not UTF-8 fails
+// the walk where Python raises UnicodeEncodeError, after every file before it has been read:
+// no digest is answered for a tree Python cannot digest.
 func Digest(root string) (string, error) {
-	var files []string
+	type file struct {
+		relative string
+		key      []rune
+	}
+	var files []file
 	pending := []string{root}
 	for len(pending) > 0 {
 		dir := pending[len(pending)-1]
@@ -116,16 +129,20 @@ func Digest(root string) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			files = append(files, filepath.ToSlash(relative))
+			relative = filepath.ToSlash(relative)
+			files = append(files, file{relative: relative, key: fsdecode(relative)})
 		}
 	}
-	sort.Strings(files)
+	sort.Slice(files, func(i, j int) bool { return slices.Compare(files[i].key, files[j].key) < 0 })
 	digest := sha256.New()
-	for _, relative := range files {
-		if strings.Contains("/"+relative+"/", "/__pycache__/") {
+	for _, f := range files {
+		if strings.Contains("/"+f.relative+"/", "/__pycache__/") {
 			continue
 		}
-		file, err := os.Open(filepath.Join(root, filepath.FromSlash(relative)))
+		if err := encodeUTF8(f.key); err != nil {
+			return "", err
+		}
+		file, err := os.Open(filepath.Join(root, filepath.FromSlash(f.relative)))
 		if err != nil {
 			return "", err
 		}
@@ -135,9 +152,55 @@ func Digest(root string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		digest.Write([]byte(relative))
+		digest.Write([]byte(f.relative))
 		digest.Write([]byte{0})
 		digest.Write(inner.Sum(nil))
 	}
 	return hex.EncodeToString(digest.Sum(nil)), nil
 }
+
+// fsdecode is os.fsdecode of a POSIX path as code points: UTF-8, with each byte that is not
+// part of a valid sequence the lone surrogate U+DC00+byte (surrogateescape).
+func fsdecode(path string) []rune {
+	out := make([]rune, 0, len(path))
+	for i := 0; i < len(path); {
+		r, size := utf8.DecodeRuneInString(path[i:])
+		if r == utf8.RuneError && size == 1 {
+			r = 0xdc00 + rune(path[i])
+		}
+		out = append(out, r)
+		i += size
+	}
+	return out
+}
+
+// UnicodeEncodeError is str.encode()'s refusal of a surrogate, in Python's words.
+type UnicodeEncodeError struct {
+	Start, End int // code point positions, End exclusive
+	Char       rune
+}
+
+func (e *UnicodeEncodeError) Error() string {
+	if e.End-e.Start == 1 {
+		return fmt.Sprintf("'utf-8' codec can't encode character '\\u%04x' in position %d: surrogates not allowed", e.Char, e.Start)
+	}
+	return fmt.Sprintf("'utf-8' codec can't encode characters in position %d-%d: surrogates not allowed", e.Start, e.End-1)
+}
+
+// encodeUTF8 is whether str.encode() accepts the code points: it refuses the first run of
+// surrogates.
+func encodeUTF8(key []rune) error {
+	for start, r := range key {
+		if !isSurrogate(r) {
+			continue
+		}
+		end := start + 1
+		for end < len(key) && isSurrogate(key[end]) {
+			end++
+		}
+		return &UnicodeEncodeError{Start: start, End: end, Char: r}
+	}
+	return nil
+}
+
+func isSurrogate(r rune) bool { return r >= 0xd800 && r <= 0xdfff }

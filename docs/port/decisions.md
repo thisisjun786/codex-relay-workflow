@@ -1207,21 +1207,30 @@ while the Python installer and scripts/trial_startup.py read it (until todos 44 
 upstream provenance - and `TestDefinitionAgreesWithComponentsJSON` keeps it equal to the file.
 No per-target binary digest is committed and no `verify-definition` re-derives one from `dist/`:
 release digests live in the release's SHA256SUMS and in the host record (decision 34).
+`definition.Digest` is `ops12_digest` itself: it takes the files in the order Python's `sorted()`
+gives their `os.fsdecode` spelling, where a byte that is not UTF-8 is a lone surrogate, and fails
+on the first path that is not UTF-8, where `.encode()` raises `UnicodeEncodeError`, so it answers
+a digest exactly when Python does, and the same one.
 
 Why: a binary digest is self-referential (the build stamps `git describe --dirty`), so a
 committed one can never describe the commit it is in, and re-deriving it would make every pull
 request cross-build three targets and regenerate a file.
 
 Evidence: scripts/crw_runtime/components.json; scripts/crw_runtime/definition.py:148-206
-(`verify`); Makefile `VERSION`/`LDFLAGS`; .goreleaser.yaml `ldflags`, `mod_timestamp`;
-.omo/ulw-execute/scope-analysis-31-46.md "# 37" (plan items to drop).
+(`verify`), :62-83 (`ops12_digest`); Makefile `VERSION`/`LDFLAGS`; .goreleaser.yaml `ldflags`,
+`mod_timestamp`; .omo/ulw-execute/scope-analysis-31-46.md "# 37" (plan items to drop);
+`TestDigestIsTheOPS12Walk`, `TestDigestRefusesANameThatIsNotUTF8`.
 
 ## 36. The swap gate reads a store's catalog without store.Open
 
 Decision: the runtime swap gate settles store presence with an lstat of the path the relay's
 own selection rule resolves (`store.ResolveStateDir`) and reads the store's schema objects with a
-read-only SQLite connection that creates nothing beside the database, under `store.InPlaceRead`,
-the rule `store.OpenStopRead` reads the Stop path's store with: `mode=ro` when both `-wal` and
+read-only SQLite connection that creates nothing beside the database (`store.OpenInPlace`), under
+`store.InPlaceRead`, the rule `store.OpenStopRead` reads the Stop path's store with. The path is
+first resolved as SQLite's unix VFS resolves it, symbolic links included, because SQLite keeps
+`-wal` and `-shm` beside the file a link names: the sidecars examined are that file's, the
+resolved path is what is opened, and the connection is refused unless `PRAGMA database_list`
+names that same file. Then: `mode=ro` when both `-wal` and
 `-shm` exist (a connection left them and its committed frames are read); `immutable=1` when there
 is no `-wal` or it holds no frame (empty, or only its 32-byte header), since every commit is then
 in the main file; and no read at all when a `-wal` holding frames has no usable `-shm` beside it
@@ -1231,12 +1240,16 @@ store's schema unreadable, so the gate is UNESTABLISHED rather than AGREES, and 
 read fails, so the native hook asks the owner rather than trusting the main file. It never
 calls `store.Open`, runs no schema script and takes no lock. The daemon and in-flight cells ask the SELECTED relay
 executable (`service status`, `doctor`) as a subprocess, and the candidate's schema is what the
-candidate binary prints for `crw doctor declared-schema --json`.
+candidate binary prints for `crw doctor declared-schema --json`. Each subprocess is bounded (60 s
+for the relay, 120 s for the candidate, then `scope.WaitDelay` for output that a process it left
+behind still holds); a relay the deadline ended is Python's `TimeoutExpired`, with no exit status
+and nothing it printed kept, and an answer whose output stayed open past its exit is not read.
 
 Why: runtime_install.py asked `<interpreter> -c <program>` for all three, and a Go runtime has
 no interpreter. `store.Open` refuses the live state root before todo 42 (`ErrLiveState`) and a
 plain `mode=ro` connection creates `-wal` and `-shm` beside a checkpointed store. Python's
-`read_only_rows` answers the swap gate from a copy, which reads the WAL; its
+`read_only_rows` answers the swap gate through `/proc/self/fd`, which SQLite resolves to the
+file a link names, so it reads the WAL beside that file; its
 `ownership.stop_metadata` shares the immutable read of a WAL without its index (deferred review
 finding PR190 4130471334).
 
@@ -1245,7 +1258,10 @@ Evidence: scripts/runtime_install.py:470-600 (`_STORE_TABLES_PROGRAM`,
 `OpenStopRead`); internal/runtime/swapgate/swapgate.go (`StoreSchema`, `readCatalog`,
 `DeclaredSchema`); `TestStoreReadingsCreateNothingAndAgreeWithTheDeclaredSchema` (the state
 directory's file set is unchanged, and a table committed only to a live WAL is read),
-`TestAStoreWhoseWALHasNoIndexIsUnreadable`, `TestInPlaceReadRefusesAWALWithoutItsIndex`,
+`TestAStoreWhoseWALHasNoIndexIsUnreadable` (also through a symlinked relay.sqlite3),
+`TestInPlaceReadRefusesAWALWithoutItsIndex`, `TestInPlaceReadExaminesTheSidecarsOfTheFileALinkNames`,
+`TestARelayTheDeadlineEndedIsTimeoutExpired`, `TestARelayThatLeavesItsOutputOpenIsBounded`,
+`TestACandidateThatLeavesItsOutputOpenIsBounded`,
 `Test30StopOwnerReadCreatesNothing/wal-without-index` and, under the parity tag,
 `TestParity_declared_schema_is_the_python_candidates`.
 

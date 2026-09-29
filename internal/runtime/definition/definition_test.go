@@ -2,6 +2,8 @@ package definition_test
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -154,5 +156,52 @@ func TestDigestFailsOnAnEntryItCannotExamine(t *testing.T) {
 	defer os.Chmod(locked, 0o755)
 	if got, err := definition.Digest(root); err == nil {
 		t.Errorf("a link into a directory without search permission was left out of digest %s", got)
+	}
+}
+
+// A file name that is not UTF-8 has no digest in Python: os.fsdecode spells its bytes as lone
+// surrogates and ops12_digest's .encode() refuses them, so the walk fails in Python's words
+// rather than answering a digest Python cannot compute. The files are taken in Python's order
+// (code points, where such a byte sorts after U+4E2D and before U+10000), so an unreadable file
+// Python reaches first is the failure, as it is there.
+func TestDigestRefusesANameThatIsNotUTF8(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"a", "\xe4\xb8\xad", "\xff"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := definition.Digest(root)
+	var refused *definition.UnicodeEncodeError
+	if !errors.As(err, &refused) || err.Error() != `'utf-8' codec can't encode character '\udcff' in position 0: surrogates not allowed` {
+		t.Fatalf("a name that is not UTF-8: digest %q, error %v", got, err)
+	}
+	if err := os.Remove(filepath.Join(root, "\xff")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "z\xff\xfe"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "z\xff\xfe", "q"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := definition.Digest(root); err == nil || err.Error() != `'utf-8' codec can't encode characters in position 1-2: surrogates not allowed` {
+		t.Fatalf("a directory whose name is not UTF-8: %v", err)
+	}
+	if os.Geteuid() == 0 {
+		return // root reads any file
+	}
+	ordered := t.TempDir()
+	for _, name := range []string{"\x80", "\xe4\xb8\xad"} {
+		if err := os.WriteFile(filepath.Join(ordered, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(filepath.Join(ordered, "\xe4\xb8\xad"), 0); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(filepath.Join(ordered, "\xe4\xb8\xad"), 0o644)
+	if _, err := definition.Digest(ordered); !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("U+4E2D sorts before the surrogate for 0x80, so its unreadable file is the failure: %v", err)
 	}
 }

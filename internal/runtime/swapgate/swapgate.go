@@ -17,7 +17,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"net/url"
 	"os"
 	"os/exec"
 	"sort"
@@ -377,23 +376,17 @@ func StoreSchema(ctx context.Context, state, socket string) Object {
 
 // readCatalog asks SchemaObjectsQuery of the database at path without creating anything beside
 // it and without store.Open (which refuses the live state root before todo 42 and would run the
-// schema script). It reads under the Stop path's no-sidecar rule (store.InPlaceRead): mode=ro
-// when a WAL connection left both -wal and -shm, immutable=1 when no -wal holds a frame, and no
-// read at all when a -wal holds frames beside no usable -shm, whose commits an immutable read
-// would miss. It takes no lock and writes nothing.
+// schema script). It reads under the Stop path's no-sidecar rule (store.OpenInPlace): the path
+// resolved as SQLite resolves it, so a symlinked relay.sqlite3 is read with the -wal and -shm
+// beside the file it names; mode=ro when a WAL connection left both, immutable=1 when no -wal
+// holds a frame, and no read at all when a -wal holds frames beside no usable -shm, whose commits
+// an immutable read would miss. It takes no lock and writes nothing.
 func readCatalog(ctx context.Context, path string) (Object, error) {
-	params, err := store.InPlaceRead(path)
-	if err != nil {
-		return nil, err
-	}
-	params.Set("_pragma", "busy_timeout(5000)")
-	u := url.URL{Scheme: "file", Path: path, RawQuery: params.Encode()}
-	db, err := sql.Open("sqlite", u.String())
+	db, err := store.OpenInPlace(ctx, path, 5*time.Second)
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(1)
 	rows, err := db.QueryContext(ctx, SchemaObjectsQuery)
 	if err != nil {
 		return nil, err
@@ -472,7 +465,9 @@ func DeclaredSchema(ctx context.Context) Object {
 // nonzero exit or a signal means the candidate failed, and whatever it printed first is kept as
 // a diagnostic rather than read as its schema: a failed candidate must never make the gate
 // ALLOWED. runtime_install._asked parses stdout whatever the exit status, which is the same
-// defect on the Python side.
+// defect on the Python side. The wait is bounded (120 s, then scope.WaitDelay for output a
+// process the candidate started still holds), and an answer whose output stayed open past its
+// exit is not read either.
 func CandidateSchema(ctx context.Context, binary string) Object {
 	argv := []string{binary, "doctor", "declared-schema", "--json"}
 	command := strs(argv)
@@ -482,10 +477,14 @@ func CandidateSchema(ctx context.Context, binary string) Object {
 	run, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(run, argv[0], argv[1:]...)
+	cmd.WaitDelay = scope.WaitDelay
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	var exit *exec.ExitError
+	if errors.Is(err, exec.ErrWaitDelay) {
+		return fail("the candidate's declared tables were not answered: the candidate exited, but a process it left behind kept its output open " + scope.WaitDelay.String() + " past that, so nothing it printed is read as its schema" + diagnostics(stderr.String(), string(out)))
+	}
 	if errors.As(err, &exit) {
 		ended := exit.ProcessState.String()
 		if run.Err() != nil {

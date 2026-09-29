@@ -228,7 +228,9 @@ Details that matter:
 - The read-only Stop path takes none of these locks. It decides ownership and routing from the
   mirror `S/takeover.json` and one in-place read of `schema_meta` that copies nothing and
   creates no SQLite sidecar (Python `ownership.check_stop`/`stop_metadata`, Go
-  `store.OpenStopRead` in the native hook's `ownsGuard`): with `D-wal` and `D-shm` both present
+  `store.OpenStopRead` in the native hook's `ownsGuard`). `D` is the file SQLite opens, resolved
+  as its unix VFS resolves a path (a symlinked `D` keeps its sidecars beside the file it names),
+  and Go's read is refused unless SQLite names that file. With `D-wal` and `D-shm` both present
   it opens `mode=ro`, which sees committed WAL frames and creates nothing; with no `D-wal`, or
   one holding no frame, every commit is in `D` and it reads `D` with `immutable=1`. A `D-wal`
   holding frames beside no usable `D-shm` (an unclean shutdown) has no such read, since an

@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
@@ -151,9 +152,20 @@ func TypeName(v any) string {
 // Timeout is scope.relay's default per-command budget.
 var Timeout = 60 * time.Second
 
+// WaitDelay bounds how long a command's output is still waited for once the command has exited
+// or its deadline has killed it. A process it started that inherited its stdout or stderr holds
+// the pipes open for as long as it lives, and without this bound Wait waits for it too, past any
+// deadline. Python's subprocess.run kills and then waits for the process alone at its timeout.
+var WaitDelay = 5 * time.Second
+
 // Relay is scope.relay: run one relay command and return its parsed JSON with the invocation
 // recorded. With discovery, CODEX_SESSION_RELAY_STATE is removed and no --state passed; with a
 // state, both selectors are set together (OPS-3.3).
+//
+// A command the deadline ended is subprocess.run's TimeoutExpired: no exit status and nothing it
+// printed kept as its answer. A command that exited while a process it left behind kept its
+// output open past WaitDelay is not read either: what it printed may be incomplete, and Python,
+// which keeps reading until the deadline, would have waited for that process.
 func Relay(ctx context.Context, command []string, executable, socket, state string, env Env, discovery bool, timeout time.Duration) Object {
 	if timeout == 0 {
 		timeout = Timeout
@@ -170,22 +182,29 @@ func Relay(ctx context.Context, command []string, executable, socket, state stri
 	}
 	argv = append(argv, command...)
 	commandValue := strings2any(argv)
+	unreadable := func(said string) Object {
+		return Object{{Key: "ok", Value: false}, {Key: "command", Value: commandValue}, {Key: "unreadable", Value: said}}
+	}
 	run, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(run, argv[0], argv[1:]...)
 	cmd.Env = env
+	cmd.WaitDelay = WaitDelay
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
 	var exit *exec.ExitError
-	if err != nil && !errors.As(err, &exit) {
-		said := store.PythonOSError(err)
-		if run.Err() != nil {
-			said = "TimeoutExpired: Command " + evidence.Dumps(commandValue, false, false, false) + " timed out after " + strconv.Itoa(int(timeout/time.Second)) + " seconds"
-		}
-		return Object{{Key: "ok", Value: false}, {Key: "command", Value: commandValue}, {Key: "unreadable", Value: said}}
+	switch {
+	case err != nil && ctx.Err() != nil:
+		return unreadable("the relay command was stopped before it finished: " + ctx.Err().Error())
+	case err != nil && run.Err() != nil:
+		return unreadable("TimeoutExpired: Command '" + evidence.Repr(commandValue) + "' timed out after " + seconds(timeout) + " seconds")
+	case errors.Is(err, exec.ErrWaitDelay):
+		return unreadable("the relay exited, but a process it left behind kept its output open " + WaitDelay.String() + " past that, so what it printed is not read")
+	case err != nil && !errors.As(err, &exit):
+		return unreadable(store.PythonOSError(err))
 	}
-	code := cmd.ProcessState.ExitCode()
+	code := returnCode(cmd.ProcessState)
 	var payload any
 	if strings.TrimSpace(stdout.String()) != "" {
 		if value, err := reading.Decode(stdout.Bytes()); err == nil {
@@ -196,9 +215,9 @@ func Relay(ctx context.Context, command []string, executable, socket, state stri
 	if len(errText) > 2000 {
 		errText = errText[:2000]
 	}
-	var unreadable any
+	var unread any
 	if payload == nil {
-		unreadable = "the relay did not return JSON"
+		unread = "the relay did not return JSON"
 	}
 	return Object{
 		{Key: "ok", Value: code == 0},
@@ -206,8 +225,24 @@ func Relay(ctx context.Context, command []string, executable, socket, state stri
 		{Key: "command", Value: commandValue},
 		{Key: "payload", Value: payload},
 		{Key: "stderr", Value: nullable(errText)},
-		{Key: "unreadable", Value: unreadable},
+		{Key: "unreadable", Value: unread},
 	}
+}
+
+// returnCode is Popen.returncode: the exit status, or -N for a process signal N ended.
+func returnCode(state *os.ProcessState) int {
+	if status, ok := state.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+		return -int(status.Signal())
+	}
+	return state.ExitCode()
+}
+
+// seconds is str() of a timeout in seconds as Python's callers spell it: an int when whole.
+func seconds(d time.Duration) string {
+	if d%time.Second == 0 {
+		return strconv.FormatInt(int64(d/time.Second), 10)
+	}
+	return evidence.Float(d.Seconds())
 }
 
 func nullable(s string) any {
@@ -288,7 +323,11 @@ func SiblingReading(payload Object) string {
 	if !has || siblings == nil {
 		return "not reported: this relay build does not emit siblingStores, so the conflict inventory could not be read from it"
 	}
-	o, _ := siblings.(Object)
+	o, ok := siblings.(Object)
+	if !ok {
+		// Python's sibling_reading raises on anything but an object; nothing in it was read.
+		return "not readable: siblingStores is a " + TypeName(siblings) + ", not an object, so the conflict inventory could not be read from it"
+	}
 	if record.Get(o, "checked") == false {
 		return "not checked: " + PyStr(record.Get(o, "reason"))
 	}
@@ -385,7 +424,9 @@ func StoresSeen(readings Object, env Env) []any {
 	for _, entry := range seen {
 		match := -1
 		for i, u := range unique {
-			if record.Get(u, "path") == record.Get(entry, "path") && record.Get(u, "database") == record.Get(entry, "database") {
+			// A relay's doctor payload may carry any JSON value as a path, and Python compares
+			// lists and objects by value where Go's == would panic on them.
+			if evidence.Equal(record.Get(u, "path"), record.Get(entry, "path")) && evidence.Equal(record.Get(u, "database"), record.Get(entry, "database")) {
 				match = i
 				break
 			}

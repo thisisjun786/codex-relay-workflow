@@ -6,13 +6,17 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/swapgate"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
@@ -335,7 +339,10 @@ func TestAFailedCandidateIsUnreadableWhateverItPrinted(t *testing.T) {
 // A store whose WAL holds frames with no shared-memory index beside it (an unclean shutdown)
 // has commits an immutable read of the main file would miss, here a table the candidate does
 // not declare: its schema is unreadable, never AGREES, and the read creates nothing. An empty
-// WAL beside no index holds no commit, so the main file is read and agrees.
+// WAL beside no index holds no commit, so the main file is read and agrees. A relay.sqlite3 that
+// is a symbolic link is read as SQLite reads it, with the sidecars beside the file it names: a
+// table committed only to the live WAL there makes the gate NARROWS, and a crashed WAL there is
+// unreadable, never an AGREES taken from the main file alone.
 func TestAStoreWhoseWALHasNoIndexIsUnreadable(t *testing.T) {
 	ctx := context.Background()
 	live := filepath.Join(t.TempDir(), "live")
@@ -375,8 +382,38 @@ func TestAStoreWhoseWALHasNoIndexIsUnreadable(t *testing.T) {
 		}
 	}
 	declared := swapgate.DeclaredSchema(ctx)
+	linkTo := func(target string) string {
+		state := filepath.Join(t.TempDir(), "state")
+		if err := os.MkdirAll(state, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(target, "relay.sqlite3"), filepath.Join(state, "relay.sqlite3")); err != nil {
+			t.Fatal(err)
+		}
+		return state
+	}
+	linkedLive, linkedCrashed := linkTo(live), linkTo(crashed)
+	liveBefore, crashedBefore := listing(t, live), listing(t, crashed)
+	if got := swapgate.SchemaCell(swapgate.StoreSchema(ctx, linkedLive, ""), declared); record.Get(got, "answer") != swapgate.Narrows || !strings.Contains(scopeText(got), "table only_in_wal") {
+		t.Errorf("a link to a live store was read without the WAL beside the file it names: %s", golden.Canon(got))
+	}
+	held := swapgate.StoreSchema(ctx, linkedCrashed, "")
+	if cell := swapgate.SchemaCell(held, declared); record.Get(held, "readable") != false || !strings.Contains(scopeText(held), "shared-memory index") || record.Get(cell, "answer") != reading.Unreadable {
+		t.Errorf("a link to a WAL with frames and no index was read as the store's schema: %s / %s", golden.Canon(held), golden.Canon(cell))
+	}
+	for _, state := range []string{linkedLive, linkedCrashed} {
+		if entries, _ := os.ReadDir(state); len(entries) != 1 {
+			t.Errorf("the read created a sidecar beside the link: %v", entries)
+		}
+	}
+	if after := listing(t, crashed); after != crashedBefore {
+		t.Errorf("the read through a link changed the crashed directory:\n before %s\n after  %s", crashedBefore, after)
+	}
+	if after := listing(t, live); strings.Count(after, ",") != strings.Count(liveBefore, ",") {
+		t.Errorf("the read through a link changed the live directory's file set:\n before %s\n after  %s", liveBefore, after)
+	}
 	before := listing(t, crashed)
-	held := swapgate.StoreSchema(ctx, crashed, "")
+	held = swapgate.StoreSchema(ctx, crashed, "")
 	cell := swapgate.SchemaCell(held, declared)
 	if record.Get(held, "readable") != false || !strings.Contains(scopeText(held), "shared-memory index") || record.Get(cell, "answer") != reading.Unreadable {
 		t.Errorf("a WAL with frames and no index was read as the store's schema: %s / %s", golden.Canon(held), golden.Canon(cell))
@@ -389,5 +426,48 @@ func TestAStoreWhoseWALHasNoIndexIsUnreadable(t *testing.T) {
 	}
 	if got := swapgate.SchemaCell(swapgate.StoreSchema(ctx, crashed, ""), declared); record.Get(got, "answer") != swapgate.Agrees {
 		t.Errorf("an empty WAL beside no index: %s", golden.Canon(got))
+	}
+}
+
+// A candidate that leaves a process behind holding its output does not hold the gate: at the
+// deadline the candidate is killed and its output waited for scope.WaitDelay at most, and a
+// candidate that exits while such a process keeps its output open is not read, so the schema
+// cell is unreadable within its bound rather than when that process exits.
+func TestACandidateThatLeavesItsOutputOpenIsBounded(t *testing.T) {
+	defer func(previous time.Duration) { scope.WaitDelay = previous }(scope.WaitDelay)
+	scope.WaitDelay = time.Second
+	dir := t.TempDir()
+	answer := `{"readable": true, "objects": {}, "schemaVersion": "1", "detail": null}`
+	for _, c := range []struct {
+		name, tail string
+		deadline   time.Duration
+		said       string
+	}{
+		{"hangs", "exec sleep 20\n", time.Second, "signal: killed"},
+		{"exits", "printf '%s\\n' '" + answer + "'\nexit 0\n", 20 * time.Second, "kept its output open 1s past that"},
+	} {
+		candidate := filepath.Join(dir, c.name)
+		pidFile := candidate + ".pid"
+		script := "#!/bin/sh\nsleep 30 &\necho $! > " + pidFile + "\n" + c.tail
+		if err := os.WriteFile(candidate, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), c.deadline)
+		started := time.Now()
+		got := swapgate.CandidateSchema(ctx, candidate)
+		elapsed := time.Since(started)
+		cancel()
+		if raw, err := os.ReadFile(pidFile); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+		if bound := 10 * time.Second; elapsed > bound {
+			t.Errorf("%s: the candidate's reading took %s, past its %s bound, waiting for a process it left behind", c.name, elapsed, bound)
+		}
+		detail, _ := record.Get(got, "detail").(string)
+		if record.Get(got, "readable") != false || record.Get(got, "objects") != nil || !strings.Contains(detail, c.said) {
+			t.Errorf("%s: %s", c.name, golden.Canon(got))
+		}
 	}
 }
