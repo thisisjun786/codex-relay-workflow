@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
@@ -84,18 +85,8 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 		return refuse("the host record could not be read, so whether it selects this directory was not established: "+loaded.Detail, "reading", loaded.Refusal())
 	}
 	rec := loaded.Value.(Object)
-	if selectsUnder(rec, directory) {
-		return refuse("the host record selects this runtime, so it is in service", "selected", record.Get(rec, "selected"))
-	}
-	pointerPath := recordedPointer(rec, o.Dest)
-	for _, path := range uniqueStrings(pointerPath, pointer.Path(o.Dest)) {
-		names := pointer.Names(path, directory)
-		if names == nil {
-			return refuse("whether the pointer at "+path+" names this runtime could not be established, and an unread pointer is not a pointer aimed elsewhere", "pointer", pointerObject(path))
-		}
-		if *names {
-			return refuse("the pointer at "+path+" names this runtime, so the commands a host reaches still resolve into it", "pointer", pointerObject(path))
-		}
+	if u := selectedOrPointed(rec, o.Dest, directory); u != nil {
+		return refuse(u.detail, u.extra()...)
 	}
 	claim := staging.ReadClaim(directory)
 	switch {
@@ -108,19 +99,8 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 	if liveness, detail := staging.OwnerLiveness(directory); liveness != staging.Dead {
 		return refuse("another run still holds this directory, or whether one does could not be established: "+detail, "claim", claimValue)
 	}
-	processes, err := liveProcesses(o.proc(), directory)
-	if err != nil {
-		return refuse("the process table could not be read, so whether a process still runs out of this directory was not established: " + err.Error())
-	}
-	if len(processes) > 0 {
-		return refuse("live processes run out of this directory", "processes", processes)
-	}
-	registered, unreadable := doctor.RegisteredInside(ctx, doctor.RetentionOptions{Env: o.Env, CodexHome: o.CodexHome, Destination: o.Dest}, directory)
-	if len(registered) > 0 {
-		return refuse("a registration the host reads still names a path inside this directory, and each new session starts it from there", "registrations", registered)
-	}
-	if len(unreadable) > 0 {
-		return refuse("a registration the host reads could not be read or judged, so whether it names a path inside this directory was not established", "unreadable", strs(unreadable))
+	if u := runningOrRegistered(ctx, o, directory); u != nil {
+		return refuse(u.detail, u.extra()...)
 	}
 	dropped, why := dropInstalls(o.RecordPath, directory)
 	if why != "" {
@@ -141,6 +121,72 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 		field("claim", claimValue), field("droppedInstallEntries", strs(dropped)),
 		field("note", "the directory was removed after the record, the pointer, its claim, the process table and every registration the host reads all said nothing uses it, and after its install entries were dropped from the host record. Its measured points stay in the host record as history."),
 	}, OK
+}
+
+// use is why a runtime directory may still be in use, and the reading that says so.
+type use struct {
+	detail string
+	key    string
+	value  any
+}
+
+// extra is the reading as a refusal carries it.
+func (u *use) extra() []any {
+	if u.key == "" {
+		return nil
+	}
+	return []any{u.key, u.value}
+}
+
+// fields is the reading as result fields, or none.
+func (u *use) fields() []contract.Field {
+	if u.key == "" {
+		return nil
+	}
+	return []contract.Field{field(u.key, u.value)}
+}
+
+// selectedOrPointed is the half of the in-use rule the host record and the owned pointer
+// answer: the record selects something inside directory, or the pointer - the one the record
+// names, or the default one - names it, or could not be read (an unread pointer is not a
+// pointer aimed elsewhere). nil when neither does.
+func selectedOrPointed(rec Object, dest, directory string) *use {
+	if selectsUnder(rec, directory) {
+		return &use{"the host record selects this runtime, so it is in service", "selected", record.Get(rec, "selected")}
+	}
+	for _, path := range uniqueStrings(recordedPointer(rec, dest), pointer.Path(dest)) {
+		names := pointer.Names(path, directory)
+		if names == nil {
+			return &use{"whether the pointer at " + path + " names this runtime could not be established, and an unread pointer is not a pointer aimed elsewhere", "pointer", pointerObject(path)}
+		}
+		if *names {
+			return &use{"the pointer at " + path + " names this runtime, so the commands a host reaches still resolve into it", "pointer", pointerObject(path)}
+		}
+	}
+	return nil
+}
+
+// runningOrRegistered is the half of the in-use rule nothing in the record answers: a live
+// process runs out of directory (its /proc/<pid>/exe, or the interpreter or script its argv
+// starts, resolving inside it, which covers every daemon.json pid), or a registration the host
+// reads names a path inside it (doctor.RegisteredInside) or could not be read or judged. nil
+// when neither does.
+func runningOrRegistered(ctx context.Context, o Options, directory string) *use {
+	processes, err := liveProcesses(o.proc(), directory)
+	if err != nil {
+		return &use{"the process table could not be read, so whether a process still runs out of this directory was not established: " + err.Error(), "", nil}
+	}
+	if len(processes) > 0 {
+		return &use{"live processes run out of this directory", "processes", processes}
+	}
+	registered, unreadable := doctor.RegisteredInside(ctx, doctor.RetentionOptions{Env: o.Env, CodexHome: o.CodexHome, Destination: o.Dest}, directory)
+	if len(registered) > 0 {
+		return &use{"a registration the host reads still names a path inside this directory, and each new session starts it from there", "registrations", registered}
+	}
+	if len(unreadable) > 0 {
+		return &use{"a registration the host reads could not be read or judged, so whether it names a path inside this directory was not established", "unreadable", strs(unreadable)}
+	}
+	return nil
 }
 
 // dropInstalls drops every install entry whose environment resolves to directory, in one write

@@ -218,8 +218,7 @@ func (r *run) take(rec Object) (Object, int, string) {
 			r.step("resume an interrupted promotion", true, field("detail", why))
 			return nil, 0, "resume"
 		case staging.Reclaim:
-			if err := os.RemoveAll(r.environment); err != nil {
-				result, code := refusedResult(r.command, "the abandoned staging could not be removed: "+store.PythonOSError(err), "nothing else was written.", append(standing, field("residualPaths", []any{r.environment}))...)
+			if result, code, reclaimed := r.reclaim(standing); !reclaimed {
 				return result, code, ""
 			}
 			r.step("reclaim abandoned staging", true, field("detail", why))
@@ -253,6 +252,82 @@ func (r *run) take(rec Object) (Object, int, string) {
 	}
 	r.step("claim the runtime directory", true, field("claim", staging.ClaimPath(r.environment)))
 	return nil, 0, "build"
+}
+
+// reclaim removes a staging its run abandoned (a STAGING claim whose lock nobody holds, which
+// the record does not select and the pointer does not name) only when nothing may still be using
+// it, judged as crw install remove judges it and on the record read again under the promotion
+// lock: the record selects it, or a pointer (the recorded one or the default) names it or cannot
+// be read; a live process runs out of it; a registration the host reads names a path inside it
+// or cannot be read. And a runtime the record's outgoing names is never reclaimed: a promotion
+// put it in service (an exit 3, or a replaced runtime whose claim never settled), so its claim is
+// settled COMPLETE instead and it is kept, which crw install rollback returns to. Anything kept is
+// a refusal with nothing removed or built. runtime_install.py reclaims the same staging with no
+// such reading (scripts/runtime_install.py:2831-2844).
+func (r *run) reclaim(standing []contract.Field) (Object, int, bool) {
+	keep := func(detail, note string, extra ...contract.Field) (Object, int, bool) {
+		result, code := refusedResult(r.command, detail, note, append(append([]contract.Field{}, standing...), extra...)...)
+		return result, code, false
+	}
+	exclusive, err := record.Promote(r.o.RecordPath, 0)
+	if err != nil {
+		return keep("another run holds the promotion lock, so whether this abandoned staging is in use was not read on a record nobody is changing: "+err.Error(), "nothing was removed, built or written.")
+	}
+	defer exclusive.Release()
+	fresh := record.Load(r.o.RecordPath, definition.Version)
+	if !fresh.Usable() {
+		return keep("the host record could not be read again, so whether this staging is in use was not established: "+fresh.Detail, "nothing was removed, built or written.", field("reading", fresh.Refusal()))
+	}
+	rec := fresh.Value.(Object)
+	if u := selectedOrPointed(rec, r.o.Dest, r.environment); u != nil {
+		return keep("this staging's run is gone, but it is not abandoned: "+u.detail, "nothing was removed, built or written.", u.fields()...)
+	}
+	if outgoingUnder(rec, r.environment) {
+		settled := settleInService(r.o, r.environment, "the host record's outgoing selection names this runtime, so a promotion put it in service; its claim never settled, and it is kept rather than reclaimed")
+		return keep("this staging's run is gone, but a promotion put it in service: the host record's outgoing selection names it, which crw install rollback returns to, so it is not abandoned staging",
+			"nothing was removed or built. Its claim was settled COMPLETE ('claim'), so it now reads as a runtime whose install finished; crw install rollback "+r.environment+" puts it back in service.",
+			field("outgoing", record.Get(rec, "outgoing")), field("claim", orNull(settled)))
+	}
+	if u := runningOrRegistered(r.ctx, r.o, r.environment); u != nil {
+		return keep("this staging's run is gone, but it is not abandoned: "+u.detail, "nothing was removed, built or written.", u.fields()...)
+	}
+	if err := os.RemoveAll(r.environment); err != nil {
+		return keep("the abandoned staging could not be removed: "+store.PythonOSError(err), "nothing else was written.", field("residualPaths", []any{r.environment}))
+	}
+	return nil, 0, true
+}
+
+// outgoingUnder is whether the record's outgoing baseline selects any component inside
+// environment.
+func outgoingUnder(rec Object, environment string) bool {
+	outgoing, _ := record.Get(rec, "outgoing").(Object)
+	for _, f := range outgoing {
+		entry, _ := f.Value.(Object)
+		if location, ok := record.Get(entry, "selected").(string); ok && location != "" && record.Under(location, environment) {
+			return true
+		}
+	}
+	return false
+}
+
+// settleInService writes the COMPLETE claim of a runtime that a promotion put in service when
+// its claim still says STAGING and nobody holds it (why says how that is known), so that no
+// later install reads it as abandoned staging and removes a directory processes may still run
+// out of. nil when there is nothing to settle.
+func settleInService(o Options, environment, why string) Object {
+	if says, readable := claimSays(environment); !readable || says != staging.Staging {
+		return nil
+	}
+	if liveness, _ := staging.OwnerLiveness(environment); liveness != staging.Dead {
+		return nil
+	}
+	err := staging.WriteClaim(environment, staging.NewPayload(staging.Complete, o.Issue, strconv.Itoa(os.Getpid())))
+	says, _ := claimSays(environment)
+	var detail any
+	if err != nil {
+		detail = err.Error()
+	}
+	return Object{field("environment", environment), field("settled", says == staging.Complete), field("detail", detail), field("why", why)}
 }
 
 // build unpacks, records, exercises and promotes the candidate this run owns.
@@ -474,6 +549,7 @@ func (r *run) promote(installs, measurement Object) (Object, int) {
 		r.step("establish the pointer is this command's", false, field("detail", "a symbolic link is already at "+r.pointerPath+" and this host record has never recorded placing one there"))
 		return r.failed("establish the pointer is this command's", failure{})
 	}
+	leaving := inService(rec, r.pointerPath)
 	owners, conflict := secondOwners(r.o.CodexHome, filepath.Join(r.pointerPath, "bin", definition.Bridge))
 	if conflict != "" {
 		r.step("refuse a second owner", false, field("detail", conflict))
@@ -521,6 +597,10 @@ func (r *run) promote(installs, measurement Object) (Object, int) {
 		previousTarget = before.Target
 	}
 	r.step("replace the owned pointer", true, field("previousTarget", previousTarget), field("target", r.environment))
+	var left Object
+	if leaving != "" && leaving != r.environment {
+		left = settleInService(r.o, leaving, "the runtime this promotion replaced was selected and named by the pointer, so it was in service, and its claim never settled; it is kept, and now reads as a runtime whose install finished")
+	}
 	exclusive.Release()
 	locked = false
 
@@ -537,7 +617,7 @@ func (r *run) promote(installs, measurement Object) (Object, int) {
 		field("claim", settled), field("recoveryRequires", record.Get(settled, "recoveryRequires")), field("swapGate", r.gate),
 		field("pointer", Object{field("path", r.pointerPath), field("target", r.environment), field("previousTarget", previousTarget),
 			field("meaning", "the registered commands reach a runtime through this path. It is a way to reach one and never an identity: a process already started goes on running the runtime it started in.")}),
-		field("secondOwner", owners), field("settings", transition.report),
+		field("secondOwner", owners), field("settings", transition.report), field("leftClaim", orNull(left)),
 		field("selected", record.Get(current, "selected")), field("previousSelection", previous), field("outgoing", outgoing),
 		field("note", "the pointer moved only after both components were exercised through this runtime's own executables and a point was recorded (OPS-2.4). The previous runtime is kept and recorded as outgoing, which crw install rollback returns to. Nothing here removes, moves or recreates the store."),
 	}, code

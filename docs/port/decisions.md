@@ -1437,7 +1437,21 @@ settings are carried to the new runtime kind (decision 18), then the selection, 
 write, the pointer is renamed over and read back, and on any failure the pointer, the selection,
 `outgoing` and the settings are put back (the settings are replaced by copying the old document
 aside and renaming the new one over it, so the path is never empty and a write that fails or does
-not read back leaves the old document where it was). The COMPLETE claim is written last. Exit
+not read back leaves the old document where it was). The COMPLETE claim is written last; the
+runtime the promotion replaced, selected and named by the pointer and so in service, has its claim
+settled COMPLETE too (under the lock, after the pointer is read back) when it still says STAGING
+with nobody holding it (an exit 3), so no later install of its archive reads it as abandoned
+staging. An existing directory of the candidate's name that is abandoned staging (a STAGING claim
+nobody holds, which the record does not select and the pointer does not name) is reclaimed only
+under the rules `crw install remove` applies, read again under the promotion lock: the record
+selects it, a pointer (the recorded one or the default) names it or cannot be read, a live process
+runs out of it (which covers every daemon.json pid), or a registration the host reads names a path
+inside it or cannot be read, each keeps it and refuses with nothing removed or built. One the
+record's `outgoing` names was put in service by a promotion, so it is never reclaimed either: its
+claim is settled COMPLETE and it is kept, which `crw install rollback` returns to.
+runtime_install.py reclaims the same staging with `rmtree` and none of these readings
+(scripts/runtime_install.py:2831-2844); `crw install remove`, an operator's explicit request, still
+removes an outgoing runtime nothing else uses (the Python venv after the cutover is one). Exit
 statuses are 0 (promoted and settled, or already installed), 1 (refused: nothing moved, and this
 run's directory was released unless the record or the pointer may name it), 2 (usage) and 3
 (promoted and in service, only the claim unsettled: never a free destination). `crw install
@@ -1517,7 +1531,8 @@ scripts/crw_runtime/staging.py:350-352 (a finished, unselected environment is ke
 (`TestRemoveRefusesARuntimeARegistrationStillNames`,
 `TestRemoveDropsTheInstallEntriesBeforeTheDirectory`, `TestAnArchiveCannotPlantControlData`,
 `TestAnOversizedOrShortEntryIsRefusedBeforeAnythingIsWritten`, `TestAnOversizedOrShortEntryIsNotInstalled`,
-`TestAReleaseTagIsCheckedBeforeAnythingIsFetched`, `TestOutgoingIsWrittenOnlyByAPromotion`,
+`TestAReleaseTagIsCheckedBeforeAnythingIsFetched`, `TestAReinstallNeverReclaimsARuntimeThatWasInService`,
+`TestReclaimKeepsAStagingThatMayStillBeInUse`, `TestOutgoingIsWrittenOnlyByAPromotion`,
 `TestAnUnsettledCandidatesInstallEntriesAreNeverActedOn`); internal/runtime/doctor/references.go;
 internal/runtime/exercise (`TestTheSessionClosesItsReaderAtTheDeadlineWithoutACopyingGoroutine`);
 the rollback rules (`TestARollbackReturnsToAPromotedRuntimeWhoseClaimNeverSettled`,

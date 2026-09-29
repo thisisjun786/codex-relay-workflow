@@ -2,9 +2,7 @@ package install
 
 import (
 	"context"
-	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -18,26 +16,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/staging"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/swapgate"
 )
-
-// installsIn is every install entry of component name the record lists inside environment,
-// newest last.
-func installsIn(rec Object, name, environment string) []Object {
-	components, _ := record.Get(rec, "components").(Object)
-	component, _ := record.Get(components, name).(Object)
-	entries, _ := record.Get(component, "installs").([]any)
-	var found []Object
-	for _, raw := range entries {
-		install, ok := raw.(Object)
-		if !ok {
-			continue
-		}
-		location, _ := record.Get(install, "location").(string)
-		if location != "" && record.Under(location, environment) {
-			found = append(found, install)
-		}
-	}
-	return found
-}
 
 // environmentOf is the runtime directory an install entry lives in.
 func environmentOf(install Object) string {
@@ -309,20 +287,7 @@ func settleLeft(o Options, leaving, environment string) Object {
 	if leaving == "" || leaving == environment {
 		return nil
 	}
-	if says, readable := claimSays(leaving); !readable || says != staging.Staging {
-		return nil
-	}
-	if liveness, _ := staging.OwnerLiveness(leaving); liveness != staging.Dead {
-		return nil
-	}
-	err := staging.WriteClaim(leaving, staging.NewPayload(staging.Complete, o.Issue, strconv.Itoa(os.Getpid())))
-	says, _ := claimSays(leaving)
-	var detail any
-	if err != nil {
-		detail = err.Error()
-	}
-	return Object{field("environment", leaving), field("settled", says == staging.Complete), field("detail", detail),
-		field("why", "the runtime this rollback left was promoted and in service with its claim never settled; it is kept, and now reads as a runtime whose install finished")}
+	return settleInService(o, leaving, "the runtime this rollback left was promoted and in service with its claim never settled; it is kept, and now reads as a runtime whose install finished")
 }
 
 func stringsOf(values ...any) []string {

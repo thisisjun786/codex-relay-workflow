@@ -237,6 +237,12 @@ func TestARollbackReturnsToAPromotedRuntimeWhoseClaimNeverSettled(t *testing.T) 
 	h.mustInstall(t, "install", first)
 	write(t, staging.ClaimPath(a), string(record.Encode(staging.NewPayload(staging.Staging, "CRW-158", "1"))))
 	h.mustInstall(t, "update", second)
+	// The update settles the claim of the in-service runtime it replaces; the state a rollback
+	// meets is one it did not settle (a promotion made before it did, or one whose write failed).
+	if claimState(t, a) != staging.Complete {
+		t.Fatalf("the update left the replaced runtime's claim %v", claimState(t, a))
+	}
+	write(t, staging.ClaimPath(a), string(record.Encode(staging.NewPayload(staging.Staging, "CRW-158", "1"))))
 
 	result, code := install.Rollback(context.Background(), h.options(), "")
 	if code != install.OK || h.pointerTarget(t) != a || at(result, "claim", "settled") != true || claimState(t, a) != staging.Complete {

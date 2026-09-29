@@ -47,10 +47,7 @@ func TestRemoveRefusesARuntimeARegistrationStillNames(t *testing.T) {
 	old := runtimeDir(h, "0.9.0", first, t)
 	h.mustInstall(t, "install", first)
 	h.mustInstall(t, "update", second)
-	venv := h.pythonVenv(t)
-	if err := os.Symlink("/usr/bin/python3", filepath.Join(venv, "bin", "python3")); err != nil {
-		t.Fatal(err)
-	}
+	venv := h.pythonVenv(t) // its bin/python3 is a link to the base interpreter, outside it
 	write(t, filepath.Join(venv, "bin", "codex-thread-bridge"), "#!"+filepath.Join(venv, "bin", "python3")+"\n")
 	if err := os.Chmod(filepath.Join(venv, "bin", "codex-thread-bridge"), 0o755); err != nil {
 		t.Fatal(err)

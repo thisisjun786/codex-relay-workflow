@@ -98,7 +98,7 @@ func TestAnUnsettledCandidatesInstallEntriesAreNeverActedOn(t *testing.T) {
 
 	before := readFile(t, h.record)
 	refused, code := install.Rollback(context.Background(), h.options(), next)
-	if code != install.Refused || !strings.Contains(text(at(refused, "refused")), "no settled claim") || h.pointerTarget(t) != old || readFile(t, h.record) != before {
+	if code != install.Refused || !strings.Contains(text(at(refused, "refused")), "not a runtime whose install finished") || h.pointerTarget(t) != old || readFile(t, h.record) != before {
 		t.Fatalf("a rollback to an unsettled candidate: exit %d, pointer %s\n%s", code, h.pointerTarget(t), golden.Canon(refused))
 	}
 
