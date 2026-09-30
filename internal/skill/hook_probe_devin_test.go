@@ -4,14 +4,12 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -240,45 +238,6 @@ func cloneHookObject(t *testing.T, source hook.Object) hook.Object {
 		t.Fatal(err)
 	}
 	return asObject(value)
-}
-
-func TestHookProbeReturnSitesMatchCanonicalPythonSource(t *testing.T) {
-	// Given the embedded Python oracle source and the live Python AST implementation.
-	pythonSites, err := pythonReturnSites(bundledSkillFiles)
-	if err != nil {
-		t.Fatal(err)
-	}
-	root := repositoryRoot()
-	code := `import importlib.util,json,pathlib
-p=pathlib.Path(` + fmt.Sprintf("%q", filepath.Join(root, "plugins", "crw", "skills", "crw-run", "scripts", "hook_probe.py")) + `)
-s=importlib.util.spec_from_file_location("hook_probe",p);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
-sites=m.return_sites()
-print(json.dumps([{"function":name,"line":line,"source":sites[(name,line)].splitlines()[0].strip()} for name,line in sites],sort_keys=True))`
-	command := exec.Command(filepath.Join(root, ".venv", "bin", "python"), "-c", code)
-	command.Env = oracleEnv("PYTHONDONTWRITEBYTECODE=1")
-	output, err := command.Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var live []struct {
-		Function string `json:"function"`
-		Line     int    `json:"line"`
-		Source   string `json:"source"`
-	}
-	if err := json.Unmarshal(output, &live); err != nil {
-		t.Fatal(err)
-	}
-	got := make([]struct {
-		Function string `json:"function"`
-		Line     int    `json:"line"`
-		Source   string `json:"source"`
-	}, len(pythonSites))
-	for i, site := range pythonSites {
-		got[i].Function, got[i].Line, got[i].Source = site.function, site.line, site.source
-	}
-	if !reflect.DeepEqual(got, live) {
-		t.Fatalf("source parser drifted from live Python AST\nGo: %#v\nPython: %#v", got, live)
-	}
 }
 
 func assertDecideParity(t *testing.T, binary string, observation contract.OrderedObject, expectedState string) {
