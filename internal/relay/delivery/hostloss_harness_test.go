@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // The Go mirror of tests/test_host_lost_turn.py's HostLossCase (and test_unknown_send_lost.py's
@@ -33,35 +35,126 @@ type pyCapture struct {
 }
 
 var (
-	captureRoots = map[string]string{}
+	captureHomes = map[string]string{}
 	captureMu    sync.Mutex
 )
 
-// pythonCaptures runs capture.py for module once per test process and returns its root.
-func pythonCaptures(t *testing.T, module string) string {
+// pythonCaptures runs capture.py for module over root once per test process and returns the home
+// it ran under.
+func pythonCaptures(t *testing.T, module, root string) string {
 	t.Helper()
 	captureMu.Lock()
 	defer captureMu.Unlock()
-	if root, ok := captureRoots[module]; ok {
-		return root
+	if home, ok := captureHomes[module]; ok {
+		return home
 	}
-	root, err := os.MkdirTemp("", "crw-capture-")
-	mustDo(t, err)
-	registerCaptureCleanup(root)
 	repo := repoRoot(t)
 	script, _ := filepath.Abs("testdata/capture.py")
 	home, err := os.MkdirTemp("", "crw-capture-home-")
 	mustDo(t, err)
 	registerCaptureCleanup(home)
+	source := pythonPackageCopy(t)
 	cmd := exec.Command("uv", "run", "--no-sync", "python", script, root, module)
 	cmd.Dir = filepath.Join(repo, "packages", "codex-session-relay")
 	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home,
-		"PYTHONPATH="+filepath.Join(repo, "packages", "codex-session-relay", "src")+":"+filepath.Join(repo, "packages", "codex-session-relay"))
+		"PYTHONPATH="+source+":"+filepath.Join(repo, "packages", "codex-session-relay"))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("capture %s: %v\n%s", module, err, out)
 	}
-	captureRoots[module] = root
-	return root
+	captureHomes[module] = home
+	return home
+}
+
+// pythonPackageDir is the directory the captured Python runs its relay package from: a copy in
+// a fixed tree. The fault sweep names the package's resolved directory in every observation's
+// evidence (faultsweep.INSTALLATION) and digests that evidence, so a checkout's own path would
+// be in digests no substitution can move to another checkout; the Go sweeper is given this
+// same directory (sweeper).
+func pythonPackageDir(t testing.TB) string {
+	t.Helper()
+	return filepath.Join(processParityTree(t, "python-package"), "codex_session_relay")
+}
+
+var pythonPackageOnce sync.Once
+
+// pythonPackageCopy copies the relay package to pythonPackageDir, once, and returns the
+// directory to put first on PYTHONPATH.
+func pythonPackageCopy(t *testing.T) string {
+	t.Helper()
+	target := pythonPackageDir(t)
+	pythonPackageOnce.Do(func() {
+		source := filepath.Join(repoRoot(t), "packages", "codex-session-relay", "src", "codex_session_relay")
+		mustDo(t, filepath.WalkDir(source, func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			rel, err := filepath.Rel(source, path)
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				if entry.Name() == "__pycache__" {
+					return filepath.SkipDir
+				}
+				return os.MkdirAll(filepath.Join(target, rel), 0o755)
+			}
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(target, rel), content, 0o644)
+		}))
+	})
+	return filepath.Dir(target)
+}
+
+// capturedTables are the Python tables a mirror of module compares: deliveryTables, the fault
+// tables requireSameFaultTables reads and, for the re-review module, the tables rrMirror reads.
+func capturedTables(module string) []string {
+	tables := append(append([]string{}, deliveryTables...), "fault_ledger", "fault_occurrences", "fault_timeline", "fault_publications", "fault_notifications")
+	if module == rrd {
+		tables = append(tables, reviewTables...)
+	}
+	return tables
+}
+
+// pythonCapture is what module's Class.method name asserted, its sends and the tables a mirror
+// compares, as recorded, and the fixed tree the Go mirror runs in (the one Python ran in).
+func pythonCapture(t *testing.T, module, name string) (string, pyCapture) {
+	t.Helper()
+	root := processParityTree(t, "capture/"+module)
+	tree := filepath.Join(root, name)
+	var home string
+	if pyoracle.Live() {
+		home = pythonCaptures(t, module, root)
+	}
+	raw := pyAnswer(t, module+"/"+name, func() ([]byte, error) {
+		raw, err := os.ReadFile(filepath.Join(tree, "capture.json"))
+		if err != nil {
+			return nil, err
+		}
+		var whole map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &whole); err != nil {
+			return nil, err
+		}
+		var tables map[string]json.RawMessage
+		if err := json.Unmarshal(whole["tables"], &tables); err != nil {
+			return nil, err
+		}
+		compared := capturedTables(module)
+		for table := range tables {
+			if !slices.Contains(compared, table) {
+				delete(tables, table)
+			}
+		}
+		if whole["tables"], err = json.Marshal(tables); err != nil {
+			return nil, err
+		}
+		return json.Marshal(whole)
+	}, pyoracle.Substitute(tree, "<tree>"), pyoracle.Substitute(root, "<root>"), pyoracle.Substitute(pythonPackageDir(t), "<python-package>"), pyoracle.Substitute(home, "<home>"))
+	var python pyCapture
+	mustDo(t, json.Unmarshal(raw, &python))
+	return tree, python
 }
 
 var (
@@ -82,6 +175,8 @@ type hl struct {
 	adapter Adapter
 	got     []any
 	policy  tickPolicy
+	// python is what the Python twin captured.
+	python pyCapture
 }
 
 // tickPolicy is the part of RetryPolicy the daemon's tick reads.
@@ -92,18 +187,13 @@ func defaultTick() tickPolicy { return tickPolicy{4, 4, 8} }
 // mirror runs body as the Go twin of module's Class.method and compares it with Python.
 func mirror(t *testing.T, module, name string, body func(h *hl)) {
 	t.Helper()
-	root := pythonCaptures(t, module)
-	tree := filepath.Join(root, name)
-	raw, err := os.ReadFile(filepath.Join(tree, "capture.json"))
-	mustDo(t, err)
-	var python pyCapture
-	mustDo(t, json.Unmarshal(raw, &python))
+	tree, python := pythonCapture(t, module, name)
 	if len(python.Problems) > 0 {
 		t.Fatalf("the Python test itself failed: %s", python.Problems)
 	}
 	f := newFixture(t, tree)
 	f.rid = ""
-	h := &hl{fixture: f, name: name, ack: NewAck(f.delivery), rc: NewReconciler(f.delivery), adapter: f.host, policy: defaultTick()}
+	h := &hl{fixture: f, name: name, ack: NewAck(f.delivery), rc: NewReconciler(f.delivery), adapter: f.host, policy: defaultTick(), python: python}
 	h.checks = &TurnChecks{Reconciler: h.rc, Budget: 4}
 	body(h)
 	requireSameCaptures(t, h.got, python.Captures)

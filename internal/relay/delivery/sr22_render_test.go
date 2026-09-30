@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 type sr22Capture struct {
@@ -20,21 +22,29 @@ type sr22Capture struct {
 
 func captureSR22(t *testing.T) (sr22Capture, *store.Store) {
 	t.Helper()
-	repo := repoRoot(t)
 	root := t.TempDir()
 	dbPath := filepath.Join(root, "relay.sqlite3")
-	script, err := filepath.Abs("testdata/sr22_render.py")
-	mustDo(t, err)
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, dbPath)
-	cmd.Dir = filepath.Join(repo, "packages", "codex-session-relay")
+	// The fixture's artifact paths name the event: a fixed tree keeps them the same.
+	tree := parityTree(t)
 	home := t.TempDir()
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+os.TempDir(), "PYTHONPATH="+filepath.Join(repo, "packages", "codex-session-relay"))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Python SR-22: %v\n%s", err, out)
-	}
+	out := pyAnswer(t, "sr22", func() ([]byte, error) {
+		repo := repoRoot(t)
+		script, err := filepath.Abs("testdata/sr22_render.py")
+		if err != nil {
+			return nil, err
+		}
+		cmd := exec.Command("uv", "run", "--no-sync", "python", script, dbPath, tree)
+		cmd.Dir = filepath.Join(repo, "packages", "codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+os.TempDir(), "PYTHONPATH="+filepath.Join(repo, "packages", "codex-session-relay"))
+		out, err := pythonCombined(cmd)
+		if err != nil {
+			return nil, fmt.Errorf("Python SR-22: %w", err)
+		}
+		return out, nil
+	}, pyoracle.Substitute(tree, "<tree>"))
 	var captured sr22Capture
 	mustDo(t, json.Unmarshal(out, &captured))
+	recordedStore(t, "sr22 store", dbPath)
 	// The capture is a backup of Python's fenced store, alone in its directory: Go renders from
 	// it after a takeover.
 	testsupport.Rehome(t, dbPath)

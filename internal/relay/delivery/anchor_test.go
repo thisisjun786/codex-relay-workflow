@@ -74,7 +74,7 @@ func (a *anb) bindPending() []any {
 }
 
 func runANB(t *testing.T, mode string, goSide func(a *anb, out map[string]any)) {
-	tree := t.TempDir()
+	tree := parityTree(t)
 	python := runPython(t, tree, "anb", mode)
 	a := newANB(t, tree)
 	out := map[string]any{}

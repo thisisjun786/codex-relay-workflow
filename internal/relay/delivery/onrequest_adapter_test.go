@@ -2,11 +2,14 @@ package delivery
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // ORD-6..ORD-9. Python drives its REAL adapter (the pinned bridge's guarded send over a fake
@@ -20,19 +23,23 @@ import (
 
 func runOrdAdapter(t *testing.T, mode string) map[string]any {
 	t.Helper()
-	root := repoRoot(t)
-	script, _ := filepath.Abs("testdata/ordadapter.py")
-	home := t.TempDir()
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, t.TempDir(), mode)
-	cmd.Dir = filepath.Join(root, "packages", "codex-session-relay")
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home, "PYTHONPATH="+filepath.Join(root, "packages", "codex-session-relay", "src")+":"+filepath.Join(root, "packages", "codex-session-relay"))
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("python %s: %v", mode, err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	// The supervisor channel's message id is derived from the fixture's paths: a fixed tree.
+	home, tree := t.TempDir(), parityTree(t)
+	out := pyAnswer(t, "ordadapter "+mode, func() ([]byte, error) {
+		root := repoRoot(t)
+		script, _ := filepath.Abs("testdata/ordadapter.py")
+		cmd := exec.Command("uv", "run", "--no-sync", "python", script, tree, mode)
+		cmd.Dir = filepath.Join(root, "packages", "codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home, "PYTHONPATH="+filepath.Join(root, "packages", "codex-session-relay", "src")+":"+filepath.Join(root, "packages", "codex-session-relay"))
+		out, err := pythonOutput(cmd)
+		if err != nil {
+			return nil, fmt.Errorf("python %s: %w", mode, err)
+		}
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		return []byte(lines[len(lines)-1]), nil
+	}, pyoracle.Substitute(tree, "<tree>"), pyoracle.Substitute(home, "<home>"))
 	var got map[string]any
-	mustDo(t, json.Unmarshal([]byte(lines[len(lines)-1]), &got))
+	mustDo(t, json.Unmarshal(out, &got))
 	return got
 }
 

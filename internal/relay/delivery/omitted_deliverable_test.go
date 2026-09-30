@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // deliverableCase stages one stored receipt's deliverable: an artifact, its manifest, and the
@@ -187,7 +188,8 @@ func deliverableCases() []deliverableCase {
 // stageDeliverable returns the manifest, the revision, the frozen reference and the roots.
 func stageDeliverable(t *testing.T, c deliverableCase) ([]store.ManifestEntry, string, string, []string) {
 	t.Helper()
-	base := t.TempDir()
+	// The revision covers the artifact's path, and Python's answer is recorded: a fixed tree.
+	base := parityTree(t)
 	work := filepath.Join(base, "work")
 	if err := os.Mkdir(work, 0o700); err != nil {
 		t.Fatal(err)
@@ -230,11 +232,12 @@ func guardDeliverableState(t *testing.T, entries []store.ManifestEntry, revision
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", "-c", `import json, sys
+	out := pyAnswer(t, "deliverable_state", func() ([]byte, error) {
+		repo, err := filepath.Abs("../../..")
+		if err != nil {
+			return nil, err
+		}
+		cmd := exec.Command("uv", "run", "--no-sync", "python", "-c", `import json, sys
 from codex_session_relay.guard import deliverable_state
 spec = json.load(sys.stdin)
 try:
@@ -243,12 +246,10 @@ except Exception as error:
     # An exception its except clauses do not name leaves deliverable_state.
     answer = ["raised", type(error).__name__ + ": " + str(error)]
 print(json.dumps(answer))`)
-	cmd.Dir = repo
-	cmd.Stdin = bytes.NewReader(spec)
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("python: %v", err)
-	}
+		cmd.Dir = repo
+		cmd.Stdin = bytes.NewReader(spec)
+		return pythonOutput(cmd)
+	}, pyoracle.Substitute(filepath.Dir(roots[0]), "<base>"))
 	var answer []any
 	if err := json.Unmarshal(out, &answer); err != nil {
 		t.Fatalf("%v: %s", err, out)

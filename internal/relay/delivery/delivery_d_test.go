@@ -12,7 +12,7 @@ import (
 // test_delivery.py properties DEL-31..DEL-35.
 
 func TestDEL31_a_restart_keeps_every_durable_record_and_resends_nothing(t *testing.T) {
-	tree := t.TempDir()
+	tree := parityTree(t)
 	python := runPython(t, tree, "del31")
 	f := newFixture(t, tree)
 	first := f.queuedEvent(regOpts{})
@@ -59,8 +59,8 @@ func TestDEL31_a_restart_keeps_every_durable_record_and_resends_nothing(t *testi
 }
 
 func TestDEL32_a_stray_declaration_on_a_completion_is_not_labelled(t *testing.T) {
-	tree := t.TempDir()
-	python := runPython(t, tree, "del32")
+	tree := parityTree(t)
+	python := runPythonOut(t, tree, "del32")
 	f := newFixture(t, tree)
 	event := f.queuedEvent(regOpts{})
 	receipt, err := f.delivery.Receipt(f.ctx, event)
@@ -76,7 +76,7 @@ func TestDEL32_a_stray_declaration_on_a_completion_is_not_labelled(t *testing.T)
 }
 
 func TestDEL33_a_claim_refused_on_the_shared_gap_is_rescheduled_not_failed(t *testing.T) {
-	tree := t.TempDir()
+	tree := parityTree(t)
 	python := runPython(t, tree, "del33")
 	f := newFixture(t, tree)
 	event := f.queuedEvent(regOpts{})
@@ -104,7 +104,7 @@ func TestDEL34_exec_source_recipients_deliver_or_withhold_with_their_relationshi
 	// and discovery_cursors, which only that adapter writes, is left out of the comparison.
 	for _, mode := range []string{"live", "archived", "legacy"} {
 		t.Run(mode, func(t *testing.T) {
-			tree := t.TempDir()
+			tree := parityTree(t)
 			python := runPython(t, tree, "del34", mode)
 			f := newFixture(t, tree)
 			_, correction := f.correctionAfterNeedsChanges()
@@ -138,7 +138,7 @@ func TestDEL34_exec_source_recipients_deliver_or_withhold_with_their_relationshi
 func TestDEL35_a_withhold_records_its_failure_in_its_own_transition(t *testing.T) {
 	for _, mode := range []string{"lifecycle", "settings", "busy"} {
 		t.Run(mode, func(t *testing.T) {
-			tree := t.TempDir()
+			tree := parityTree(t)
 			python := runPython(t, tree, "del35", mode)
 			f := newFixture(t, tree)
 			event := f.queuedEvent(regOpts{noSettings: mode == "settings"})
@@ -163,7 +163,7 @@ func TestDEL35_a_withhold_records_its_failure_in_its_own_transition(t *testing.T
 		})
 	}
 	t.Run("one stamp", func(t *testing.T) {
-		tree := t.TempDir()
+		tree := parityTree(t)
 		python := runPython(t, tree, "del35", "stamp")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
