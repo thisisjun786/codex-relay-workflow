@@ -7,7 +7,6 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 )
@@ -60,16 +59,6 @@ func (l look) same(other look) bool {
 		return false
 	}
 	return !l.present || l.dev == other.dev && l.ino == other.ino && l.size == other.size && l.mtime == other.mtime && bytes.Equal(l.raw, other.raw)
-}
-
-// holds is whether this look's bytes decode to value: whether a decision read from the path is
-// the one this look saw.
-func (l look) holds(value any) bool {
-	if l.failed != "" || !l.present {
-		return false
-	}
-	decoded, err := reading.Decode(l.raw)
-	return err == nil && evidence.Dumps(decoded, true, true, false) == evidence.Dumps(value, true, true, false)
 }
 
 // beforeWriteLock runs between a write's decision and the lock it acts under, with the path it

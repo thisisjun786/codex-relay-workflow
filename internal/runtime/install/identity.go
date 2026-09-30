@@ -12,7 +12,6 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/pointer"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -216,27 +215,6 @@ func unclaimedTombstone(path string) string {
 		return "a run may still hold " + path + ": " + detail
 	}
 	return ""
-}
-
-// reached is landedAt for a runtime of kind: a Go runtime is proved through its bin/crw, and a
-// Python venv (a rollback's target, judged launchable before the move) by the pointer resolving,
-// without an error, to the directory itself.
-func reached(pointerPath, environment, kind string) (bool, string) {
-	if kind == doctor.KindGoRuntime {
-		return landedAt(pointerPath, environment)
-	}
-	at, err := os.Stat(pointerPath)
-	if err != nil {
-		return false, "the pointer does not resolve: " + store.PythonOSError(err)
-	}
-	wanted, err := os.Stat(environment)
-	if err != nil {
-		return false, "the runtime the pointer was placed at could not be read: " + store.PythonOSError(err)
-	}
-	if !os.SameFile(at, wanted) {
-		return false, "the pointer resolves to a directory other than " + environment
-	}
-	return true, ""
 }
 
 // landedAt proves the placed pointer reaches environment as a host will: it resolves without an

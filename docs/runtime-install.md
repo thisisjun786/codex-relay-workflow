@@ -35,9 +35,8 @@ The Python installer, `scripts/runtime_install.py`, installed the Python fence r
 development and rollback path until todo 44 removed the Python execution path;
 [the Python fence installer](#the-python-fence-installer) is the one section of this page about it.
 Moving a host from the Python runtime to this one is [the cutover](port/cutover.md), not an install
-alone. The cutover moves the store's ownership. Where `crw install install`, which moves the pointer
-(and on the relay host's first Go install replaces its Python-era Stop settings, once), falls among
-its steps is not written yet; that order is an open item todo 42 settles
+alone. The cutover moves the store's ownership. Where `crw install install`, which moves the
+pointer, falls among its steps is not written yet; that order is an open item todo 42 settles
 ([the backlog](port/refactor-backlog.md#deferred-review-findings)).
 
 ## What an installation is
@@ -69,9 +68,8 @@ does not decide, as the isolated-home integration test (`internal/runtime/integr
 `CODEX_HOME` and `XDG_STATE_HOME` inside the same tree, `CODEX_SESSION_RELAY_SCOPE_DIR` set to a
 directory there, and `CODEX_SESSION_RELAY_STATE` and `CODEX_SESSION_RELAY_MARKER_ROOT` unset or
 pointed there too. Each is read on its own. A `CODEX_HOME` left naming another Codex home has the
-install replace that home's Python-era Stop settings by a document whose adapter is under the
-temporary pointer, so once the temporary tree is gone the Python bootstrap, which runs the adapter
-the settings name, releases every Stop there without a record; an `XDG_STATE_HOME` left naming
+install judge that home's registrations and `crw install hook` write its Stop settings naming the
+temporary pointer; an `XDG_STATE_HOME` left naming
 another state home puts the temporary host record there, or is refused where the record there names
 another pointer; and without `CODEX_SESSION_RELAY_SCOPE_DIR` the relay finds its scope registry from
 this user's passwd entry, never from `HOME`. `crw doctor` still takes `--dest`, to read another
@@ -131,8 +129,8 @@ What follows is one run, in this order, and the result lists the steps it took:
    path. A run that cannot exercise the candidate records no point and promotes nothing.
 5. Under the host-wide promotion lock: [read whether it is safe to swap](#reading-whether-it-is-safe-to-swap),
    establish that the pointer is this command's, refuse a second owner of the bridge or the Stop
-   hook, and, where the Stop settings still name the Python adapter, replace them once by their Go
-   variant ([one Stop settings document](#one-stop-settings-document)).
+   hook, and refuse Stop settings that name through the pointer something a Go runtime does not
+   serve ([one Stop settings document](#one-stop-settings-document)); nothing rewrites them.
 6. [Commit the selection, then replace the pointer](#the-order-a-swap-commits-in), and read the
    pointer back.
 7. Settle the claim.
@@ -229,40 +227,20 @@ because the command strings are unchanged.
 
 ### One Stop settings document
 
-`crw install` writes one plugin-owned Stop settings document, and it serves both runtime kinds
-through the pointer. `adapterInterpreter` `/usr/bin/env` and `adapterEntryPoint`
-`<destination>/current/bin/crw-completion-hook` run the Go hook on a Go runtime and the fence
-release's `crw-completion-hook` console script on a Python `env-*` runtime, and `relayExecutable`
-`<destination>/current/bin/codex-session-relay` is the Go link or the venv's console script. No
-promotion and no rollback rewrites that document ([decision 18](port/decisions.md)).
+`crw install hook` writes one plugin-owned Stop settings document, and every runtime the pointer
+names serves it: `relayExecutable` `<destination>/current/bin/codex-session-relay` and the adapter
+keys name the runtime through the pointer, so no promotion and no rollback rewrites that document
+([decision 18](port/decisions.md)). Every move of the pointer reads it first, under the promotion
+lock, and refuses, with nothing changed, when it names through the pointer a path a Go runtime does
+not serve (`bin/crw` and its compatibility links); settings a user owns are judged with the second
+owners. The settings are reported under `settings` with `action` `none`.
 
-The one rewrite is of a Python-era document, and only when the pointer moves onto a Go runtime. The
-relay host's Python-era document names `.../current/bin/python3` as `adapterInterpreter`, a path
-that is gone once the pointer leaves the virtual environment. So a move of the pointer onto a Go
-runtime that finds one (an install, an update or a `crw install rollback`; on the relay host, its
-first Go install) archives it, inside its promotion and before the pointer moves, beside the file
-as `crw-completion-hook.json.superseded-<time>` (a hard link to the same file, or a copy where the
-filesystem refuses one, and never deleted) and replaces it, in one rename,
-by its Go variant: the same relay, marker root, database, journal, socket, mode and budget, with only
-the two adapter keys moved. Both documents work while the pointer still names the venv, so a Stop
-always finds settings it can run. Settings a user owns, or that name an adapter this command did not
-write, are left as they are. A write lands only on the document it was decided from: one that
-changed after it was read is never written over, and a replacement never destroys another writer's
-bytes.
-
-A run that fails after this step puts the Python-era document back, and says so under
-`settings.undone`, only while the path still holds exactly the bytes this run wrote, and then by an
-atomic exchange of the two names (`renameat2` `RENAME_EXCHANGE` on Linux, `renamex_np`
-`RENAME_SWAP` on darwin). Where no atomic exchange exists, nothing is renamed over the active path:
-both files stay, and the answer gives the `mv` that puts the found settings back by hand.
-
-A rollback to a Python runtime never puts the archive back; it requires the venv to serve the one
-document instead ([rolling back](#rolling-back)). To return to the Python-era document itself, do it
-by hand and only while the pointer names the venv, after `crw install rollback <venv>`: take the
-newest `<CODEX_HOME>/crw-completion-hook.json.superseded-*` whose `adapterInterpreter` ends in
-`/current/bin/python3` and `mv` it over `crw-completion-hook.json`, one rename, so a Stop never
-finds the path empty. The next move of the pointer onto a Go runtime, whether `crw install install`,
-`update` or a `crw install rollback` onto one, archives it again and writes its Go variant.
+Until refactor R1 a move onto a Go runtime also replaced a Python-era document (one naming
+`.../current/bin/python3`), archiving it as `crw-completion-hook.json.superseded-<time>`, and a
+rollback could point at a Python `env-*` runtime that served the same document. The relay host's
+first Go install made that replacement, and no Python runtime is left on it, so both are retired
+(decision 61); a Python-era document found now is judged like any other and refused when it
+names a path a Go runtime does not serve.
 
 ### The claim a run leaves behind
 
@@ -437,44 +415,24 @@ second-owner rules, commits the selection before the link, and proves the pointe
 runtime it leaves stays installed and becomes the outgoing selection, so a second rollback returns
 to it. Where there is no outgoing selection, a bare rollback refuses and writes nothing.
 
-The target may be a Go runtime or a Python `env-*` runtime the fence installer made. It has to be
-launchable as it stands, judged without running it, and its claim has to be settled, or unsettled
-with nobody holding it where the record shows a promotion committed it (an exit 3). A rollback
-onto a Python runtime never rewrites the Stop settings; one onto a Go runtime replaces a Python-era
-document as a promotion does ([one Stop settings document](#one-stop-settings-document)). Onto a
-Python runtime it requires the venv to serve that one document before the pointer moves:
-`bin/crw-completion-hook`, `bin/codex-session-relay` and `bin/codex-thread-bridge`, each one's `#!`
-interpreter and the recorded interpreter all resolve to regular files this user may execute, the
-hook script names `codex_session_relay.stopadapter`, the relay package the record lists there is the
-fence release, and every path the settings name through the pointer exists in the venv. Otherwise it
-refuses with nothing changed.
-
-The plugin's declared commands do not follow it there. The native wiring runs
-`current/bin/crw hook --plugin-launch` and execs `current/bin/codex-thread-bridge --plugin-launch`,
-and a Python runtime has no `bin/crw` and a bridge that refuses the flag. So with the native payload
-installed, a rollback onto a Python runtime would release every Stop without a record and stop the
-server from starting. It refuses instead, with nothing written: before it commits, it reads every
-cached plugin version's hook and MCP declarations the way `crw install remove` reads them
-([row 5](#what-remove-reads), the shell scripts they run included), and any command that runs a program through the
-pointer with `--plugin-launch` keeps the pointer where it is. The refusal names the cached version
-directory, each such command (`pluginLaunches`) and the repair. A cached declaration that cannot
-be read or judged refuses too, since whether it launches that way is then unknown. Reinstall a
-plugin revision whose declarations are the Python bootstrap first, then roll the runtime back
-([update and roll back](plugin-packaging.md#update-and-roll-back)). Nothing checks this for a Go
-runtime built before decision 26, which reads the flag as something else; the order is its only
-guard.
+The target has to be a Go runtime (`bin/crw`) launchable as it stands, judged without running
+it, and its claim has to be settled, or unsettled with nobody holding it where the record shows a
+promotion committed it (an exit 3). A rollback never rewrites the Stop settings
+([one Stop settings document](#one-stop-settings-document)). A directory the record lists that is
+not a Go runtime - a Python `env-*` runtime the fence installer made - is refused with nothing
+changed (decision 61).
 
 Install rollback is not takeover rollback. `crw install rollback` moves which runtime the pointer
-names, and onto a Python runtime it rewrites no settings. It does not move the store's ownership. After the cutover
+names, and it rewrites no settings. It does not move the store's ownership. After the cutover
 the store is owned by the Go runtime, and handing it back to the Python fence release was
 `crw relay takeover rollback --to python --python-relay <path>`, which named the Python relay by
 absolute path and never through the pointer ([cutover rollback](port/cutover.md#rollback)); since
 todo 44 no Python candidate is launched and that rollback is refused (decision 48), and refactor R1
-deleted the takeover command (decision 54). One does
-not imply the other, and a return to Python needed both; with the store's half refused, this
-revision offers no return to Python, and `crw install rollback` onto a Python runtime moves only
-the pointer. The one order fixed for the pointer is the plugin payload's, above: the payload goes
-back before the runtime does.
+deleted the takeover command (decision 54). One does not imply the other, and a return to
+Python needed both; with the store's half refused and `crw install rollback` taking only a Go
+runtime, this revision offers no return to Python. The one order fixed for the pointer is the
+plugin payload's ([update and roll back](plugin-packaging.md#update-and-roll-back)): the payload
+goes back before the runtime does.
 
 ## Removing a runtime
 
@@ -864,10 +822,8 @@ this adapter for Stop (the user-owned registration, refused by name, because two
 twice on every Stop), settings already there that this command cannot act on, and
 `CRW_COMPLETION_HOOK_CONFIG`, refused while it is set, because the plugin's hook reads only the
 Codex home and never that override. Settings that already say something else are refused rather
-than overwritten, because they carry the mode. On a Go host, Python-era settings are replaced only
-by settings that record the same host facts; other flags answer `config_differs`, naming the
-differing fields and the repair: rerun with the flags of the table above that say what those
-settings say, or move the document aside by hand
+than overwritten, because they carry the mode: they answer `config_differs`, naming the differing
+fields; move the document aside by hand to write these flags' settings instead
 ([one Stop settings document](#one-stop-settings-document)).
 The run registers nothing and leaves the hook file untouched. Written, registered and observed to
 have fired stay three separate claims.

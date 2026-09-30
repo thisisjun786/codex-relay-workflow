@@ -9,7 +9,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
 
@@ -37,33 +36,6 @@ func TestARollbackNeedsAnIssue(t *testing.T) {
 	}
 	if result, code := install.Rollback(context.Background(), h.options(), ""); code != install.OK {
 		t.Fatalf("with an issue: exit %d\n%s", code, golden.Canon(result))
-	}
-}
-
-// Where no atomic exchange of two names is available (a platform or filesystem without
-// renameat2 RENAME_EXCHANGE or renamex_np RENAME_SWAP), undoing a settings transition renames
-// nothing over the active path: the settings this run wrote stay, the settings it found stay
-// archived, and the answer names the recovery by hand.
-func TestASettingsUndoWithoutAnAtomicExchangeRenamesNothing(t *testing.T) {
-	h := newHost(t)
-	venv, original := h.pythonEraHost(t)
-	path := filepath.Join(h.codex, install.SettingsName)
-	restoreExchange := install.ReplaceExchange(func(string, string) error { return install.ErrNoExchange })
-	restoreCommit := install.ReplaceSelectionCommit(func(string, int, record.Delta) (reading.Reading, error) {
-		return reading.Reading{}, errNoSpace
-	})
-	result, code := install.Install(context.Background(), h.options(), "update", install.Source{From: archive(t, "0.9.0", "")})
-	restoreCommit()
-	restoreExchange()
-	if code != install.Refused || at(result, "failedStep") != "commit the selection" || at(result, "settings", "undone", "undone") != false || h.pointerTarget(t) != venv {
-		t.Fatalf("exit %d\n%s", code, golden.Canon(result))
-	}
-	archives := must(filepath.Glob(path + ".superseded-*"))
-	if len(archives) != 1 || readFile(t, archives[0]) != original || readFile(t, path) == original {
-		t.Fatalf("settings %q, archives %v", readFile(t, path), archives)
-	}
-	if recovery := text(at(result, "settings", "undone", "recoveryRequires")); !strings.Contains(recovery, "mv "+archives[0]+" "+path) {
-		t.Fatalf("recovery: %q", recovery)
 	}
 }
 

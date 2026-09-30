@@ -51,8 +51,8 @@ const scopeDirEnv = "CODEX_SESSION_RELAY_SCOPE_DIR"
 // settingsKeys are the keys of a crw-*.json record that name something to execute.
 var settingsKeys = []string{"relayExecutable", "bridgeExecutable", "adapterEntryPoint", "adapterInterpreter", "interpreterPath", "command", "args"}
 
-// scan is one reading of the host: the registrations it reads (RegisteredMatching,
-// PluginLaunches) or the relay records it keeps (RecordedDaemons). Everything it could not read
+// scan is one reading of the host: the registrations it reads (RegisteredMatching) or the relay
+// records it keeps (RecordedDaemons). Everything it could not read
 // or judge is in unreadable, never dropped.
 type scan struct {
 	o          ScanOptions
@@ -70,9 +70,6 @@ type scan struct {
 	// observe, when set, receives every path the registration rows classify, with the row,
 	// source and field naming it (RegisteredMatching).
 	observe func(row int, source, field, path string, e Executable)
-	// seen, when set, receives every command the registration rows judge, those a shell script
-	// they run holds included, with the row, source and field naming it (PluginLaunches).
-	seen func(row int, source, field string, argv []shellWord, command Executable)
 }
 
 // stopSettings is the settings document one Stop registration reads: path, or why it cannot be
@@ -113,7 +110,7 @@ func (s *scan) expander(pluginRoot string) Expander {
 // judge is an argvJudge whose reports are filed under one row, source and field.
 func (s *scan) judge(row int, source, field, cwd string, x Expander) argvJudge {
 	c := s.classifier(row, source, field, x)
-	return argvJudge{c: c, cwd: cwd, seen: c.seen, report: func(word string, e Executable) {
+	return argvJudge{c: c, cwd: cwd, report: func(word string, e Executable) {
 		e.Value = word
 		s.verdict(row, source, field, e)
 	}}
@@ -125,9 +122,6 @@ func (s *scan) classifier(row int, source, field string, x Expander) Classifier 
 	c := Classifier{Pointer: s.pointer, Expand: x}
 	if s.observe != nil {
 		c.Observe = func(path string, e Executable) { s.observe(row, source, field, path, e) }
-	}
-	if s.seen != nil {
-		c.seen = func(argv []shellWord, e Executable) { s.seen(row, source, field, argv, e) }
 	}
 	return c
 }

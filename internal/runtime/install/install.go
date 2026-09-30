@@ -716,7 +716,7 @@ func (r *run) promote(installs, measurement Object) (Object, int) {
 		return r.failed("establish the pointer is this command's", failure{})
 	}
 	leaving := inService(rec, r.pointerPath)
-	owners, conflict := secondOwners(r.o.CodexHome, filepath.Join(r.pointerPath, "bin", definition.Bridge))
+	owners, conflict := secondOwners(r.o.CodexHome, r.pointerPath)
 	if conflict != "" {
 		r.step("refuse a second owner", false, field("detail", conflict))
 		return r.failed("refuse a second owner", failure{owners: owners})
@@ -726,10 +726,10 @@ func (r *run) promote(installs, measurement Object) (Object, int) {
 		r.step("carry the Stop settings to this runtime", false, field("detail", interrupted(err)))
 		return r.failed("carry the Stop settings to this runtime", failure{err: err})
 	}
-	transition := transitionSettings(r.ctx, r.o.CodexHome, r.pointerPath, doctor.KindGoRuntime)
+	transition := checkSettings(r.o.CodexHome, r.pointerPath)
 	if transition.refused != "" {
 		r.step("carry the Stop settings to this runtime", false, field("detail", transition.refused))
-		return r.failed("carry the Stop settings to this runtime", failure{settings: append(transition.report, field("undone", transition.undo()))})
+		return r.failed("carry the Stop settings to this runtime", failure{settings: transition.report})
 	}
 	r.step("carry the Stop settings to this runtime", true, field("detail", record.Get(transition.report, "detail")))
 
@@ -740,8 +740,7 @@ func (r *run) promote(installs, measurement Object) (Object, int) {
 	outgoing := outgoingOf(leavingSelection(rec, r.pointerPath, previous))
 	if err := r.ctx.Err(); err != nil {
 		r.step("commit the selection", false, field("detail", interrupted(err)))
-		undone := transition.undo()
-		return r.failed("commit the selection", failure{err: err, settings: append(transition.report, field("undone", undone))})
+		return r.failed("commit the selection", failure{err: err, settings: transition.report})
 	}
 	promoted, err := commitSelection(r.ctx, r.o.RecordPath, definition.Version, record.Delta{
 		Select:   selection,
@@ -750,8 +749,7 @@ func (r *run) promote(installs, measurement Object) (Object, int) {
 	})
 	if err != nil || !promoted.Usable() {
 		r.step("commit the selection", false, field("detail", commitDetail(promoted, err)))
-		undone := transition.undo()
-		return r.failed("commit the selection", failure{reading: &promoted, err: err, settings: append(transition.report, field("undone", undone))})
+		return r.failed("commit the selection", failure{reading: &promoted, err: err, settings: transition.report})
 	}
 	placeErr := placePointer(r.pointerPath, r.environment)
 	landed, why := landedAt(r.pointerPath, r.environment)
@@ -764,8 +762,7 @@ func (r *run) promote(installs, measurement Object) (Object, int) {
 		putBack := restorePointer(r.o, r.pointerPath, before, r.environment, ownedBefore)
 		r.step("put the pointer back", record.Get(putBack, "verified") == true, field("detail", record.Get(putBack, "detail")))
 		restored := restoreSelection(r.o, previous, selection, outgoingBefore)
-		undone := transition.undo()
-		return r.failed("replace the owned pointer", failure{restored: restored, pointerRestored: putBack, settings: append(transition.report, field("undone", undone))})
+		return r.failed("replace the owned pointer", failure{restored: restored, pointerRestored: putBack, settings: transition.report})
 	}
 	var previousTarget any
 	if before.Target != "" {
@@ -845,37 +842,31 @@ func (r *run) resume() (Object, int) {
 	// One owner per surface, read now under the promotion lock: the registrations may have changed
 	// since the interrupted run judged them, and finishing its promotion moves the pointer they
 	// start through as a promotion does.
-	owners, conflict := secondOwners(r.o.CodexHome, filepath.Join(r.pointerPath, "bin", definition.Bridge))
+	owners, conflict := secondOwners(r.o.CodexHome, r.pointerPath)
 	if conflict != "" {
 		return refusedResult(r.command, conflict, "nothing was written; the selection stays as the interrupted run committed it, and a rerun finishes it once one owner registers each surface.", field("environment", r.environment), field("secondOwner", owners))
 	}
 	if err := r.ctx.Err(); err != nil {
 		return refusedResult(r.command, interrupted(err), "nothing was written.", field("environment", r.environment))
 	}
-	transition := transitionSettings(r.ctx, r.o.CodexHome, r.pointerPath, doctor.KindGoRuntime)
+	transition := checkSettings(r.o.CodexHome, r.pointerPath)
 	if transition.refused != "" {
-		return refusedResult(r.command, transition.refused, "nothing was written; any Stop settings this run had set aside were put back (settings.undone).", field("environment", r.environment), field("settings", append(transition.report, field("undone", transition.undo()))))
-	}
-	if err := r.ctx.Err(); err != nil {
-		undone := transition.undo()
-		return refusedResult(r.command, interrupted(err), "nothing was written; any Stop settings this run had set aside were put back (settings.undone).", field("environment", r.environment), field("settings", append(transition.report, field("undone", undone))))
+		return refusedResult(r.command, transition.refused, "nothing was written.", field("environment", r.environment), field("settings", transition.report))
 	}
 	if names == nil || !*names {
 		// The placement is recorded before the link moves (OPS-4.4: a transition is committed
 		// before its side effect), and put back with it when the move does not land.
 		if written, err := commitSelection(r.ctx, r.o.RecordPath, definition.Version, record.Delta{Pointer: Object{field("path", r.pointerPath), field("recordedAt", r.o.stamp()), field("recordedBy", r.o.Issue)}}); err != nil || !written.Usable() {
-			undone := transition.undo()
-			return refusedResult(r.command, "the pointer ownership could not be recorded: "+commitDetail(written, err), "the pointer was not moved.", field("environment", r.environment), field("settings", append(transition.report, field("undone", undone))))
+			return refusedResult(r.command, "the pointer ownership could not be recorded: "+commitDetail(written, err), "the pointer was not moved.", field("environment", r.environment), field("settings", transition.report))
 		}
 		placeErr := placePointer(r.pointerPath, r.environment)
 		if landed, why := landedAt(r.pointerPath, r.environment); placeErr != nil || !landed {
 			putBack := restorePointer(r.o, r.pointerPath, before, r.environment, ownedBefore)
-			undone := transition.undo()
 			detail := "the pointer does not reach this runtime after it was placed: " + why
 			if placeErr != nil {
 				detail = "the pointer could not be placed: " + store.PythonOSError(placeErr)
 			}
-			return refusedResult(r.command, detail, "the pointer and its ownership were put back; the selection stays as the interrupted run committed it.", field("environment", r.environment), field("pointerRestored", putBack), field("settings", append(transition.report, field("undone", undone))))
+			return refusedResult(r.command, detail, "the pointer and its ownership were put back; the selection stays as the interrupted run committed it.", field("environment", r.environment), field("pointerRestored", putBack), field("settings", transition.report))
 		}
 	}
 	r.step("replace the owned pointer", true, field("target", r.environment))

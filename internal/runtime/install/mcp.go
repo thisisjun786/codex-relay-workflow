@@ -433,22 +433,17 @@ func bridgeTables(view servers, exclude, executable string) []string {
 	return names
 }
 
-// secondOwners is secondOwnersFor a Go runtime reached through the pointer bridgeEntry lies in
-// (<pointer>/bin/codex-thread-bridge), which is where every promotion moves it.
-func secondOwners(codexHome, bridgeEntry string) (Object, string) {
-	return secondOwnersFor(codexHome, bridgeEntry, filepath.Dir(filepath.Dir(bridgeEntry)), goProvides)
-}
-
-// secondOwnersFor is the one-owner-per-surface check a promotion makes on the reading it
-// promotes on: the bridge is registered by the Codex configuration or by the plugin record,
-// never both, and a configuration entry for it names the owned pointer rather than a runtime
-// this install would not select; the Stop hook is registered by the user hook file or by
-// plugin-owned settings, never both. A registration that reaches through the pointer something
-// the runtime about to be named does not provide (target) is refused too: the user-owned
-// registrations are retired with runtime_install.py, so such an entry is the second owner beside
-// the plugin's declaration, and the swap would leave it running nothing. Any reading that failed
-// refuses: registering on an unanswered question is how a second copy arrives.
-func secondOwnersFor(codexHome, bridgeEntry, pointerPath string, target provides) (Object, string) {
+// secondOwners is the one-owner-per-surface check a promotion or a rollback makes on the reading
+// it moves the pointer on: the bridge is registered by the Codex configuration or by the plugin
+// record, never both, and a configuration entry for it names the owned pointer rather than a
+// runtime this install would not select; the Stop hook is registered by the user hook file or by
+// plugin-owned settings, never both. A registration that reaches through the pointer something a
+// Go runtime does not provide (goProvides) is refused too: the user-owned registrations are
+// retired with runtime_install.py, so such an entry is the second owner beside the plugin's
+// declaration, and the swap would leave it running nothing. Any reading that failed refuses:
+// registering on an unanswered question is how a second copy arrives.
+func secondOwners(codexHome, pointerPath string) (Object, string) {
+	bridgeEntry := filepath.Join(pointerPath, "bin", definition.Bridge)
 	recordPath := filepath.Join(codexHome, BridgeRecordName)
 	found, outcome, detail := readBridgeRecord(recordPath)
 	if found == nil && outcome != RecordAbsent {
@@ -497,7 +492,7 @@ func secondOwnersFor(codexHome, bridgeEntry, pointerPath string, target provides
 	for _, name := range names {
 		server := view[name]
 		for _, word := range append([]string{server.Command}, server.Args...) {
-			if rel, through := throughPointer(word, pointerPath); through && !target(rel) {
+			if rel, through := throughPointer(word, pointerPath); through && !goProvides(rel) {
 				return report, "the Codex configuration starts " + evidence.Repr(name) + " with " + word + ", which it reaches through the owned pointer, and the runtime about to be named provides no " + rel + ": after the swap that server would start nothing. Remove or repoint that table in " + configPath + " first"
 			}
 		}
@@ -510,7 +505,7 @@ func secondOwnersFor(codexHome, bridgeEntry, pointerPath string, target provides
 	}
 	for _, command := range commands {
 		for _, word := range command.Words {
-			if rel, through := throughPointer(word, pointerPath); through && !target(rel) {
+			if rel, through := throughPointer(word, pointerPath); through && !goProvides(rel) {
 				return report, "the user hook file registers the Stop adapter as " + command.Identity + " (" + evidence.Repr(command.Command) + "), which runs " + word + " through the owned pointer, and the runtime about to be named provides no " + rel + ": after the swap that registration would run nothing, and the host reads the failure as a hook error, never as a judged Stop. The user-owned registration is retired with runtime_install.py and the plugin package declares the Stop hook, so this entry is the second owner: remove it from " + hookFile + " by hand, move " + settingsPath + " aside and run crw install hook --owner plugin, then rerun"
 			}
 		}

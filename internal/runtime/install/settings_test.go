@@ -1,14 +1,10 @@
 package install_test
 
 import (
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
 
@@ -63,41 +59,5 @@ func TestHookSettingsBytesArePythons(t *testing.T) {
 		if len(golden.List(record.Get(golden.Obj(f.Value), "complaints"))) != 0 || len(install.Complaints(document)) != 0 {
 			t.Errorf("%s is refused: %v", f.Key, install.Complaints(document))
 		}
-		if install.PythonEra(document) || !install.GoEra(document) {
-			t.Errorf("%s is not read as the Go adapter's", f.Key)
-		}
-	}
-}
-
-// Superseding copies a document aside under <path>.superseded-<stamp>, a name that sorts after
-// every archive already there (a future stamp included), with its bytes and permission bits, and
-// leaves the document where it is: it is then replaced by a rename over the path, so a Stop
-// never finds the path empty.
-func TestSupersedeCopiesAsideAndLeavesThePath(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, install.SettingsName)
-	write(t, path+".superseded-29990101T000000Z", "future")
-	write(t, path, "live")
-	if err := os.Chmod(path, 0o640); err != nil {
-		t.Fatal(err)
-	}
-	archived, err := install.Supersede(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if archived != path+".superseded-29990101T000000Z-001" {
-		t.Fatalf("archived to %s", archived)
-	}
-	if raw, _ := os.ReadFile(archived); string(raw) != "live" {
-		t.Fatal("the archived bytes are not the document's")
-	}
-	if info, err := os.Stat(archived); err != nil || info.Mode().Perm() != 0o640 {
-		t.Fatalf("the archive does not keep the document's permission bits: %v %v", info.Mode(), err)
-	}
-	if raw, err := os.ReadFile(path); err != nil || string(raw) != "live" {
-		t.Fatalf("the document left its path: %q %v", raw, err)
-	}
-	if read := reading.ReadText(path+".superseded-29990101T000000Z", "x"); !strings.Contains(text(read.Value), "future") {
-		t.Fatal("an older archive was touched")
 	}
 }

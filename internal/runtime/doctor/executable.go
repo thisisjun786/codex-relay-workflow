@@ -143,9 +143,6 @@ type Classifier struct {
 	Pointer string
 	Expand  Expander
 	Observe func(path string, e Executable)
-	// seen, when set, receives every command judged under this classifier, a shell script's
-	// own commands included, with what its first word runs.
-	seen func(argv []shellWord, command Executable)
 }
 
 // Classify is the package-level Classify with this classifier's pointer and expansions.
@@ -318,7 +315,7 @@ func (c Classifier) wrapper(e *Executable, path, interpreter string, depth int) 
 		return
 	}
 	unresolved := ""
-	argvJudge{c: c, depth: depth + 1, seen: c.seen, report: func(word string, inner Executable) {
+	argvJudge{c: c, depth: depth + 1, report: func(word string, inner Executable) {
 		switch {
 		case inner.Python && !e.Python:
 			e.Kind, e.Python, e.Detail = KindPythonScript, true, "a shell script that runs "+word+", "+inner.Detail

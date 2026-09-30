@@ -3,7 +3,6 @@ package install
 import (
 	"context"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -111,9 +110,9 @@ func selectedAs(rec Object, selection []contract.Field) bool {
 // the last promotion replaced (the record's outgoing), or at a runtime directory the record
 // lists, under the target's directory lock and the promotion lock and with the same gate,
 // ownership, second-owner and settings rules as a promotion, reading the pointer back. The target
-// has to be launchable as it stands (nothing is run), and the one Stop settings document is never
-// rewritten toward a venv: the venv has to serve it. The runtime the pointer leaves stays
-// installed and is recorded as outgoing, so a second rollback returns to it. Where the pointer
+// has to be a Go runtime launchable as it stands (nothing is run); the Stop settings are never
+// rewritten. The runtime the pointer leaves stays installed and is recorded as outgoing, so a
+// second rollback returns to it. Where the pointer
 // already names the target only the record moves, so the swap gate, which guards replacing a
 // runtime, is not asked, and outgoing is left as it was.
 //
@@ -210,8 +209,8 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 		return nothing("the pointer already names " + environment + " and the record selects it, so there is nothing to roll back to it")
 	}
 	kind := doctor.RuntimeKind(environment)
-	if kind != doctor.KindGoRuntime && kind != doctor.KindPythonVenv {
-		return nothing(environment + " is neither a Go runtime (bin/crw) nor a Python virtual environment, so the pointer is not moved to it")
+	if kind != doctor.KindGoRuntime {
+		return nothing(environment + " is not a Go runtime (bin/crw), so the pointer is not moved to it")
 	}
 	if liveness, detail := staging.OwnerLiveness(environment); liveness != staging.Dead {
 		return nothing("whether another run is still building " + environment + " is not established as no: " + detail)
@@ -229,27 +228,13 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 	default:
 		return nothing(environment + " carries no readable claim of this command's (" + staging.ReadClaim(environment).State + "), so it is not a runtime whose install finished")
 	}
-	if problems, unread := targetProblems(rec, environment, kind); len(problems)+len(unread) > 0 {
+	if problems, unread := doctor.LaunchProblems(environment); len(problems)+len(unread) > 0 {
 		return nothing("the pointer would name a runtime that cannot be launched as it stands: "+strings.Join(append(problems, unread...), "; "),
 			field("launchable", Object{field("problems", strs(problems)), field("unread", strs(unread))}))
 	}
-	if kind == doctor.KindPythonVenv {
-		if detail, launches := nativePayload(o); detail != "" {
-			return nothing(detail, field("pluginLaunches", launches),
-				field("repair", "reinstall a plugin revision whose declarations are the Python bootstrap, so that no cached version runs --plugin-launch through the pointer, then rerun this rollback (docs/plugin-packaging.md \"Update and roll back\": the payload goes back before the runtime)"))
-		}
-	}
 	var gate Object
 	if moving {
-		var candidateSchema Object
-		if kind == doctor.KindPythonVenv {
-			// This command runs no interpreter. The Go store executes the identical DDL the Python
-			// store runs (docs/port/decisions.md 14), and until the commit point no Go release
-			// changes it (docs/port/cutover.md), so this build's declared schema stands for the
-			// Python runtime's, and a store holding anything else still refuses.
-			candidateSchema = record.Set(swapgate.DeclaredSchema(ctx), "command", "this crw build's declared schema, standing for the Python runtime's identical DDL (docs/port/decisions.md 14)")
-		}
-		gate = swapGate(ctx, o, rec, environment, candidateSchema)
+		gate = swapGate(ctx, o, rec, environment, nil)
 		if record.Get(gate, "verdict") != swapgate.Allowed {
 			return nothing("it is not established that the runtime can be replaced now: "+strings.Join(stringsOf(record.Get(gate, "blockedBy"), record.Get(gate, "unreadable")), "; "), field("swapGate", gate))
 		}
@@ -259,8 +244,7 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 	if !pointer.Usable(before.State) || (before.State == pointer.Link && !record.PlacementRecorded(ownedBefore)) {
 		return nothing("the owned pointer is not one this command may replace: "+before.Detail, field("pointer", pointerObject(pointerPath)))
 	}
-	target := providesFor(kind, environment)
-	owners, conflict := secondOwnersFor(o.CodexHome, filepath.Join(pointerPath, "bin", definition.Bridge), pointerPath, target)
+	owners, conflict := secondOwners(o.CodexHome, pointerPath)
 	if conflict != "" {
 		return nothing(conflict, field("secondOwner", owners))
 	}
@@ -268,9 +252,9 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 	if err := ctx.Err(); err != nil {
 		return nothing(interrupted(err))
 	}
-	transition := transitionSettingsFor(ctx, o.CodexHome, pointerPath, kind, target)
+	transition := checkSettings(o.CodexHome, pointerPath)
 	if transition.refused != "" {
-		return append(base, field("refused", transition.refused), field("settings", append(transition.report, field("undone", transition.undo()))), field("note", "nothing was written; any Stop settings this run had set aside were put back (settings.undone).")), Refused
+		return append(base, field("refused", transition.refused), field("settings", transition.report), field("note", "nothing was written.")), Refused
 	}
 	delta := record.Delta{Select: selection, Pointer: Object{field("path", pointerPath), field("recordedAt", o.stamp()), field("recordedBy", o.Issue)}}
 	var outgoing any = outgoingBefore
@@ -293,21 +277,18 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		undone := transition.undo()
-		return append(base, field("refused", interrupted(err)), field("settings", append(transition.report, field("undone", undone))),
-			field("note", "the pointer was not moved, and the Stop settings were put back as 'settings.undone' says.")), Refused
+		return append(base, field("refused", interrupted(err)), field("settings", transition.report), field("note", "the pointer was not moved.")), Refused
 	}
 	committed, err := commitSelection(ctx, o.RecordPath, definition.Version, delta)
 	if err != nil || !committed.Usable() {
-		undone := transition.undo()
-		return append(base, field("refused", "the selection could not be committed: "+commitDetail(committed, err)), field("settings", append(transition.report, field("undone", undone))),
-			field("note", "the pointer was not moved, and the Stop settings were put back as 'settings.undone' says.")), Refused
+		return append(base, field("refused", "the selection could not be committed: "+commitDetail(committed, err)), field("settings", transition.report),
+			field("note", "the pointer was not moved.")), Refused
 	}
 	var placeErr error
 	if moving {
 		placeErr = placePointer(pointerPath, environment)
 	}
-	landed, why := reached(pointerPath, environment, kind)
+	landed, why := landedAt(pointerPath, environment)
 	if placeErr != nil || !landed {
 		detail := "the pointer does not reach " + environment + " after it was placed: " + why
 		if placeErr != nil {
@@ -319,9 +300,8 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 		}
 		outgoingObject, _ := outgoingBefore.(Object)
 		restored := restoreSelection(o, current, selection, outgoingObject)
-		undone := transition.undo()
-		return append(base, field("refused", detail), field("pointerRestored", putBack), field("selectionRestored", restored), field("settings", append(transition.report, field("undone", undone))),
-			field("note", "the selection, the pointer and the Stop settings were put back to what this run found.")), Refused
+		return append(base, field("refused", detail), field("pointerRestored", putBack), field("selectionRestored", restored), field("settings", transition.report),
+			field("note", "the selection and the pointer were put back to what this run found.")), Refused
 	}
 	left := settleLeft(o, leaving, environment)
 	exclusive.Release()
@@ -344,35 +324,6 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 		field("swapGate", orNull(gate)), field("secondOwner", owners), field("settings", transition.report), field("claim", orNull(claim)), field("leftClaim", orNull(left)),
 		field("note", "the pointer names the runtime the record selects again, read back after the move. The runtime it left is still installed and is now the outgoing selection, so rolling back again returns to it. A process already started keeps the runtime it started in."),
 	}, code
-}
-
-// nativePayload is why the plugin's cached declarations keep a rollback off a Python runtime,
-// or "" when nothing does, and what they launch (doctor.PluginLaunches). The native wiring runs
-// current/bin/crw hook --plugin-launch and execs current/bin/codex-thread-bridge
-// --plugin-launch (decision 26); a Python env-* runtime has no bin/crw and a bridge that refuses
-// the flag, so with the pointer on one every Stop would be released without a record and the
-// bridge would not start. A cached declaration that cannot be read leaves that unknown, which
-// keeps the pointer where it is as well.
-func nativePayload(o Options) (string, Object) {
-	launches, unread := doctor.PluginLaunches(doctor.ScanOptions{Env: o.Env, CodexHome: o.CodexHome, Destination: o.Dest})
-	if launches == nil {
-		launches = []any{}
-	}
-	found := Object{field("launches", launches), field("unread", strs(unread))}
-	var versions []string
-	for _, launch := range launches {
-		version, _ := record.Get(launch.(Object), "version").(string)
-		if !slices.Contains(versions, version) {
-			versions = append(versions, version)
-		}
-	}
-	switch {
-	case len(versions) > 0:
-		return "a cached plugin version (" + strings.Join(versions, ", ") + ") declares commands that run through the pointer with --plugin-launch, which a Python runtime cannot serve: it has no bin/crw and its codex-thread-bridge refuses the flag, so with the pointer on it every Stop would be released without a record and the bridge would not start", found
-	case len(unread) > 0:
-		return "whether a cached plugin version under " + filepath.Join(o.CodexHome, "plugins", "cache", "crw", "crw") + " declares commands that run through the pointer with --plugin-launch, which a Python runtime cannot serve, is not established: " + strings.Join(unread, "; "), found
-	}
-	return "", found
 }
 
 // sameSpelling is whether two runtime directories are one by their resolved spelling, for a

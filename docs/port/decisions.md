@@ -2980,3 +2980,36 @@ still run the pre-native bootstrap that falls back to it (docs/port/cutover.md "
 
 Evidence: `git grep -n RemoveLauncher` over cmd/ and internal/ before the deletion (its own file,
 its tests and a test seam only); docs/plugin-transition.md.
+
+## 61. `crw install` moves the pointer only between Go runtimes and rewrites no Stop settings (refactor R1)
+
+Decision: `crw install rollback` takes only a Go runtime (`bin/crw`) as its target; a directory
+the record lists that is not one - a Python `env-*` runtime the fence installer made - is refused
+with nothing changed ("... is not a Go runtime (bin/crw), so the pointer is not moved to it",
+where it answered "is neither a Go runtime (bin/crw) nor a Python virtual environment" for any
+other kind). With it go what only a rollback onto a venv read: the venv launchability reading
+(`fenceProblems`, the console-script and interpreter checks), the cached native-payload refusal
+(`nativePayload`, `doctor.PluginLaunches`, the answer's `pluginLaunches` and its repair) and this
+build's declared schema standing in for the Python runtime's at the swap gate. And no promotion
+or rollback writes the Stop settings any more: the Python-era replacement decision 18 added for
+the relay host's first Go install - the archive `crw-completion-hook.json.superseded-<time>`, the
+Go variant, the atomic-exchange undo (`exchange_*.go`) and the retry on a document that changed
+under the read - is deleted. A move still reads the settings under the promotion lock and refuses
+settings that name through the pointer a path a Go runtime does not serve, as it did; the answer's
+`settings` member keeps `configuration`, `state`, `action` (always `none`) and `detail` and loses
+`undone`, `write`, `retired` and `rebuiltFromFreshReading`, which only the replacement wrote; the
+`detail` of Go-era settings is the generic "every path the settings reach through the pointer is
+one this runtime serves". `crw install hook` no longer replaces a Python-era document either: one
+found answers `config_differs` like any other document that says something else
+(`config_replaced` is no longer an outcome).
+
+Why: the relay host made the Python-era replacement at its first Go install and has had no Python
+runtime since (store owner=go, rollback_allowed=0, no venv or shim, 2026-10-01); decision 48
+already refuses the store's half of a return to Python, so a pointer moved back onto a venv could
+only release every Stop unrecorded.
+
+Evidence: `internal/runtime/install/{rollback.go,settings.go,target.go,install.go,hook.go,mcp.go}`;
+`TestARollbackNeverRewritesTheSettings`, `TestARollbackKilledAtItsCommitLeavesStopsRecorded`,
+`TestARollbackRefusesARuntimeThatCannotBeLaunched` (a recorded directory without bin/crw),
+`TestAFailedPromotionPutsBackEverythingItChanged`, `TestAUserRegistrationThroughThePointerIsASecondOwner`;
+docs/runtime-install.md "One Stop settings document" and "Rolling back".

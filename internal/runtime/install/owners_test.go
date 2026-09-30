@@ -153,29 +153,14 @@ func TestHookWritesTheGoSettingsAndRefusesASecondOwner(t *testing.T) {
 	}
 }
 
-// pythonEraSettings is the relay host's plugin-owned document before the cutover: the Python
-// interpreter and the checkout's completion_hook.py, the interpreter reached through the pointer.
-func (h *host) pythonEraSettings(t *testing.T) string {
+// goEraSettings writes the plugin-owned Stop settings `crw install hook` writes for this host and
+// answers their bytes.
+func (h *host) goEraSettings(t *testing.T) string {
 	t.Helper()
-	text := `{
-  "adapterEntryPoint": "/home/user/code/codex-relay-workflow/scripts/completion_hook.py",
-  "adapterInterpreter": "` + filepath.Join(h.dest, "current", "bin", "python3") + `",
-  "configVersion": 1,
-  "dbPath": null,
-  "event": "Stop",
-  "installedBy": "CRW-116",
-  "isolationAssertedBy": null,
-  "journalPolicy": "every_invocation",
-  "journalRoot": "` + filepath.Join(h.home, "journal") + `",
-  "markerRoot": "` + filepath.Join(h.home, "markers") + `",
-  "mode": "observe",
-  "owner": "plugin",
-  "relayExecutable": "` + filepath.Join(h.dest, "current", "bin", "codex-session-relay") + `",
-  "timeoutSeconds": 5
-}
-`
-	write(t, filepath.Join(h.codex, install.SettingsName), text)
-	return text
+	if result, code := install.Hook(context.Background(), h.options(), h.hookOptions()); code != install.OK {
+		t.Fatalf("hook: exit %d\n%s", code, golden.Canon(result))
+	}
+	return readFile(t, filepath.Join(h.codex, install.SettingsName))
 }
 
 // hostPython is this host's python3, resolved, or "" when there is none.
@@ -263,52 +248,6 @@ func (h *host) pythonVenv(t *testing.T) string {
 	return env
 }
 
-// The host's Python-era settings name current/bin/python3, which vanishes when the pointer
-// leaves the venv. install retires them (archived, never deleted) and writes their Go variant -
-// the same host facts, only the adapter moved - BEFORE it moves the pointer. That one document
-// serves both runtime kinds (/usr/bin/env <pointer>/bin/crw-completion-hook is the Go hook on a
-// Go runtime and the Python Stop adapter's console script on a venv), so a rollback to the
-// Python runtime and a roll forward again leave it exactly as it is, and the archive is never
-// put back. hook refuses to replace the Python-era document while the pointer still reaches the
-// Python adapter.
-func TestPythonEraSettingsMoveWithThePointer(t *testing.T) {
-	h := newHost(t)
-	original := h.pythonEraSettings(t)
-	path := filepath.Join(h.codex, install.SettingsName)
-	if refused, code := install.Hook(context.Background(), h.options(), h.hookOptions()); code != install.Refused || at(refused, "settings", "outcome") != install.ConfigDiffers {
-		t.Fatalf("hook before the swap: exit %d\n%s", code, golden.Canon(refused))
-	}
-	venv := h.pythonVenv(t)
-	first := archive(t, "0.9.0", "")
-	result := h.mustInstall(t, "install", first)
-	if at(result, "settings", "action") != "replaced" {
-		t.Fatalf("settings: %s", golden.Canon(at(result, "settings")))
-	}
-	retired := text(at(result, "settings", "retired"))
-	if readFile(t, retired) != original || !strings.HasPrefix(retired, path+".superseded-") {
-		t.Fatalf("the Python-era document was not archived as it was: %s", retired)
-	}
-	now := readFile(t, path)
-	for _, want := range []string{`"adapterInterpreter": "/usr/bin/env"`, `"adapterEntryPoint": "` + filepath.Join(h.dest, "current", "bin", "crw-completion-hook") + `"`, `"installedBy": "CRW-116"`, filepath.Join(h.home, "markers")} {
-		if !strings.Contains(now, want) {
-			t.Fatalf("the Go variant lacks %s:\n%s", want, now)
-		}
-	}
-	back, code := install.Rollback(context.Background(), h.options(), venv)
-	if code != install.OK || h.pointerTarget(t) != venv || at(back, "settings", "action") != "none" {
-		t.Fatalf("rollback to the Python runtime: exit %d\n%s", code, golden.Canon(back))
-	}
-	if readFile(t, path) != now {
-		t.Fatal("a rollback to the Python runtime rewrote the settings")
-	}
-	if again, code := install.Rollback(context.Background(), h.options(), ""); code != install.OK || at(again, "settings", "action") != "none" || readFile(t, path) != now {
-		t.Fatalf("rolling forward again: exit %d\n%s", code, golden.Canon(again))
-	}
-	if archives := must(filepath.Glob(path + ".superseded-*")); len(archives) != 1 || readFile(t, archives[0]) != original {
-		t.Fatalf("the Python-era document is archived once and stays archived: %v", archives)
-	}
-}
-
 // A promotion refuses a second owner on the reading it promotes on: a config.toml table that
 // starts the bridge from a path the pointer does not name, and settings owned by the plugin
 // beside a user hook-file registration. The candidate is released and nothing moved.
@@ -318,7 +257,7 @@ func TestInstallRefusesASecondOwner(t *testing.T) {
 			write(t, filepath.Join(h.codex, "config.toml"), "[mcp_servers.codex-thread-bridge]\ncommand = \"/opt/elsewhere/bin/codex-thread-bridge\"\n")
 		},
 		"hooks.json": func(h *host) {
-			h.pythonEraSettings(t)
+			h.goEraSettings(t)
 			write(t, filepath.Join(h.codex, "hooks.json"), `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "python3 /repo/scripts/completion_hook.py /x.json"}]}]}}`)
 		},
 	} {
