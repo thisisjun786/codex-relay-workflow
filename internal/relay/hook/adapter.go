@@ -506,8 +506,10 @@ func ownsGuard(ctx context.Context, state, configuredDB string) bool {
 //
 // Nothing a peer sends fails the owner (control.py GuardServer._serve, PR #185 4128954449): a
 // request it cannot serve, a guard that failed and a handler panic are all answered with the
-// host record, and the answered request is no handler failure. The error it returns is a
-// transport failure only: the peer went away, or its deadline passed, before an answer.
+// host record, and the answered request is no handler failure. So is a request line that has
+// not arrived by ControlAnswerGrace before ctx's deadline: control.py answers its read timeout
+// "TimeoutError: timed out", and the grace is the time kept to write that answer. The error it
+// returns is a transport failure only: the peer went away before an answer.
 func HandleControl(ctx context.Context, conn net.Conn, ownerState string) (err error) {
 	defer conn.Close()
 	defer func() {
@@ -522,7 +524,13 @@ func HandleControl(ctx context.Context, conn net.Conn, ownerState string) (err e
 	if err := conn.SetDeadline(deadline); err != nil {
 		return err
 	}
+	if err := conn.SetReadDeadline(deadline.Add(-ControlAnswerGrace)); err != nil {
+		return err
+	}
 	request, refused, err := readRequest(conn)
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return answerHost(conn, "TimeoutError: timed out")
+	}
 	if err != nil {
 		return err
 	}

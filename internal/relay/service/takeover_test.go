@@ -207,10 +207,14 @@ func Test30ControlDisconnectBeforeARequestIsNoFailure(t *testing.T) {
 
 // PR #185 4128954449, the rule it cites (control.py GuardServer._serve): nothing a peer or the
 // kernel does ends or fails the owner. Every frame below is one the retained Python owner
-// answers with its host record, and the Go owner answers it with the same bytes; a peer that
-// hangs up after a complete request is skipped, and a failed accept is retried. Both owners
-// still serve the next Stop afterwards, and none of it reaches Go's Close, so a daemon segment
-// whose work succeeded exits 0.
+// answers with its host record, and the Go owner answers it with the same bytes: among them the
+// nesting edge of GuardServer's serving thread (9996 containers decode, 9997 raise), a naive
+// deadline, and a peer that has not finished its request line when control.py's 5 s read
+// timeout expires. A frame Python serves, one led by a UTF-8 byte order mark, Go serves with the
+// same verdict. A peer that hangs up after a complete request is skipped, and a failed accept is
+// retried. Both owners still serve the next Stop afterwards, and none of it reaches Go's Close,
+// so a daemon segment whose work succeeded exits 0. (Every other reading of a frame is
+// TestControlReadsEveryFrameAsControlPyReadsIt, over control.py's _answer.)
 func Test30ControlPeerFailuresAreAnsweredAsPythonAnswersThem(t *testing.T) {
 	home, err := os.MkdirTemp("", "t30-peer-")
 	if err != nil {
@@ -233,6 +237,8 @@ func Test30ControlPeerFailuresAreAnsweredAsPythonAnswersThem(t *testing.T) {
 		{"not json", "JSONDecodeError: Expecting value: line 1 column 1 (char 0)"},
 		{"nested past the scanner", "RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string"},
 		{"nested past a goroutine stack", "RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string"},
+		{"nested to the serving thread's edge", "TypeError: guard request must be an object"},
+		{"nested one past the serving thread's edge", "RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string"},
 		{"not an object", "TypeError: guard request must be an object"},
 		{"no params", "KeyError: 'params'"},
 		{"params not an object", "TypeError: guard params must be an object"},
@@ -241,23 +247,32 @@ func Test30ControlPeerFailuresAreAnsweredAsPythonAnswersThem(t *testing.T) {
 		{"null deadline", "TypeError: guard deadline must be a string"},
 		{"unparseable deadline", "ValueError: Invalid isoformat string: 'soon'"},
 		{"expired deadline", "TimeoutError: guard request deadline expired"},
+		{"naive deadline", "TypeError: can't subtract offset-naive and offset-aware datetimes"},
 		{"socketPath not a string", "TypeError: guard socketPath must be a string"},
 		{"program not a string", "TypeError: guard program must be a string"},
+		{"silent past the read timeout", "TimeoutError: timed out"},
 	}
 	frames := map[string][]byte{
 		"not json":                      []byte("not json\n"),
 		"nested past the scanner":       []byte(`{"params":` + strings.Repeat("[", 200000) + "\n"),
 		"nested past a goroutine stack": []byte(`{"params":` + strings.Repeat("[", 5000000) + "\n"),
-		"not an object":                 []byte("[1]\n"),
-		"no params":                     []byte(`{"protocol":1,"method":"guard-evaluate"}` + "\n"),
-		"params not an object":          frame("[]"),
-		"no stop input":                 frame("{}"),
-		"stop input not an object":      frame(`{"stopInput":[]}`),
-		"null deadline":                 frame(params("null", "")),
-		"unparseable deadline":          frame(params(`"soon"`, "")),
-		"expired deadline":              frame(params(`"2020-01-01T00:00:00+00:00"`, "")),
-		"socketPath not a string":       frame(params(later, `,"socketPath":1`)),
-		"program not a string":          frame(params(later, `,"program":["crw"]`)),
+		// The edge is the serving thread's, measured through GuardServer: a CPython whose C
+		// stack budget or call depth differs fails here first.
+		"nested to the serving thread's edge":       []byte(strings.Repeat("[", 9996) + strings.Repeat("]", 9996) + "\n"),
+		"nested one past the serving thread's edge": []byte(strings.Repeat("[", 9997) + strings.Repeat("]", 9997) + "\n"),
+		"not an object":            []byte("[1]\n"),
+		"no params":                []byte(`{"protocol":1,"method":"guard-evaluate"}` + "\n"),
+		"params not an object":     frame("[]"),
+		"no stop input":            frame("{}"),
+		"stop input not an object": frame(`{"stopInput":[]}`),
+		"null deadline":            frame(params("null", "")),
+		"unparseable deadline":     frame(params(`"soon"`, "")),
+		"expired deadline":         frame(params(`"2020-01-01T00:00:00+00:00"`, "")),
+		"naive deadline":           frame(params(`"2999-01-01T00:00:00"`, "")),
+		// No line end: the owner waits for the rest of the line until its read timeout.
+		"silent past the read timeout": []byte(`{"protocol":1`),
+		"socketPath not a string":      frame(params(later, `,"socketPath":1`)),
+		"program not a string":         frame(params(later, `,"program":["crw"]`)),
 	}
 	ask := func(t *testing.T, path string, request []byte) []byte {
 		t.Helper()
@@ -266,7 +281,7 @@ func Test30ControlPeerFailuresAreAnsweredAsPythonAnswersThem(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer conn.Close()
-		if err = conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		if err = conn.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
 			t.Fatal(err)
 		}
 		if _, err = conn.Write(request); err != nil {
@@ -288,16 +303,23 @@ func Test30ControlPeerFailuresAreAnsweredAsPythonAnswersThem(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// served asks every failing frame, then hangs up after a complete request, then asks a Stop
-	// the owner must still answer with a verdict.
+	// A frame led by a UTF-8 byte order mark: json.loads decodes bytes as utf-8-sig.
+	marked := append([]byte("\xef\xbb\xbf"), frame(params(later, ""))...)
+	// served asks every failing frame, then the marked frame, then hangs up after a complete
+	// request, then asks a Stop the owner must still answer with a verdict.
 	served := func(t *testing.T, path string) map[string][]byte {
 		t.Helper()
 		answers := map[string][]byte{}
 		for _, failure := range failures {
 			answers[failure.name] = ask(t, path, frames[failure.name])
 		}
-		hangUp(t, path, frame(params(later, "")))
+		answers["marked"] = ask(t, path, marked)
 		var verdict map[string]any
+		if err := json.Unmarshal(answers["marked"], &verdict); err != nil || verdict["decision"] != "release" {
+			t.Errorf("the owner did not serve a frame led by a byte order mark: %q %v", answers["marked"], err)
+		}
+		hangUp(t, path, frame(params(later, "")))
+		verdict = nil
 		if err := json.Unmarshal(ask(t, path, frame(params(later, ""))), &verdict); err != nil || verdict["decision"] != "release" {
 			t.Errorf("the owner no longer serves a Stop after its failed peers: %v %v", verdict, err)
 		}
@@ -360,6 +382,11 @@ server.close()`, state)
 			if string(answers[failure.name]) != string(python[failure.name]) {
 				t.Errorf("%s: the Go owner answered %q where the Python owner answered %q", failure.name, answers[failure.name], python[failure.name])
 			}
+		}
+		// The same verdict; each owner spaces its verdict line as its own serializer does.
+		var goVerdict, pythonVerdict any
+		if json.Unmarshal(answers["marked"], &goVerdict) != nil || json.Unmarshal(python["marked"], &pythonVerdict) != nil || !reflect.DeepEqual(goVerdict, pythonVerdict) {
+			t.Errorf("a frame led by a byte order mark: the Go owner answered %q where the Python owner answered %q", answers["marked"], python["marked"])
 		}
 		if err = server.Close(); err != nil {
 			t.Fatalf("a failed peer failed the listener: %v", err)

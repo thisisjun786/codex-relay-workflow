@@ -507,15 +507,26 @@ classifies them. The legacy `guard-evaluate` CLI answers the first three with ex
 64 MiB, answers a request it could not evaluate with `{"error":"host","detail":...}` and keeps
 serving, closes an unauthenticated peer unanswered, and applies the CLI's selection refusals
 to an unpinned request using its `socketPath` and `program` (decision 24). The Go owner's server
-(`service.ListenControl`, `hook.HandleControl`) answers failures the same way: a frame that is
-not a JSON object, nests deeper than CPython's scanner decodes (9998 containers), lacks `params` or
-`stopInput`, carries a deadline that is not a string or has passed, or a `socketPath` or
+(`service.ListenControl`, `hook.HandleControl`) reads a request as `control.py` reads it and
+answers failures the same way. The line is `json.loads` of its bytes: decoded as `json.loads`
+decodes bytes (UTF-8 with or without its byte order mark, UTF-16 or UTF-32 by their marks or
+NUL bytes, a lone surrogate passed and kept), then scanned to the nesting the C scanner reaches
+in `GuardServer`'s serving thread (9996 containers under CPython 3.13; the 9997th raises
+`RecursionError`). The deadline is `datetime.fromisoformat` of it as CPython 3.13 parses it
+(after `Z` becomes `+00:00`), subtracted from the aware present. A frame whose bytes do not
+decode, that is not a JSON object, nests too deep, lacks `params` or `stopInput`, carries a
+deadline that is not a string, does not parse, has no offset or has passed, or a `socketPath` or
 `program` that is not a string, is answered by both owners with the same host detail,
 `control.py`'s `<exception class>: <message>` (`TypeError: guard params must be an object`,
-`TimeoutError: guard request deadline expired`). Nothing a peer does ends or fails either
-owner (PR #185 4128954449): a peer that goes away before its answer is skipped, an accept the
-kernel refuses for want of descriptors, buffers or memory is retried after 50 ms, and neither
-reaches the daemon's exit status.
+`TypeError: can't subtract offset-naive and offset-aware datetimes`, `TimeoutError: guard
+request deadline expired`), and a peer that has not finished its request line when the 5 s
+read timeout expires is answered `TimeoutError: timed out`. Nothing a peer does ends or fails
+either owner (PR #185 4128954449): a peer that goes away before its answer is skipped, an
+accept the kernel refuses for want of descriptors, buffers or memory is retried after 50 ms,
+and neither reaches the daemon's exit status. One difference is kept: `control.py`'s timeout
+applies to each read, so a peer that trickles its line, each part within 5 s of the last, is
+served by Python however long it takes and answered `TimeoutError: timed out` by Go 5 s after
+it connected; the Go owner serves each connection concurrently and bounds each one whole.
 
 Every client sends those two selection inputs: the Go hook client (`RequestGuard`), the Stop
 adapter's pinned route (`socketPath` from its settings, `program` its `relayExecutable`) and

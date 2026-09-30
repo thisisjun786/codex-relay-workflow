@@ -91,7 +91,9 @@ func ListenControl(ctx context.Context, state string) (*Control, error) {
 				// that went away or ran out of time before its answer, whose own adapter journals
 				// that. Neither is this listener's failure, so neither reaches Close.
 				defer func() { _ = recover() }()
-				requestCtx, stop := context.WithTimeout(serveCtx, 5*time.Second)
+				// control.py reads the request line under a 5 s timeout and answers its expiry;
+				// the handler keeps ControlAnswerGrace past it to write that answer.
+				requestCtx, stop := context.WithTimeout(serveCtx, 5*time.Second+hook.ControlAnswerGrace)
 				defer stop()
 				// The request deadline bounds malformed/idle clients too.
 				deadline, _ := requestCtx.Deadline()

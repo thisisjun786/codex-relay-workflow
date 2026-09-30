@@ -77,9 +77,42 @@ func decodeToken(d *json.Decoder, raw []byte) (any, error) {
 		if at < 0 {
 			return nil, fmt.Errorf("missing string token")
 		}
-		return ledger.DecodeJSON(spelling[at:])
+		return decodeString(spelling[at:])
 	}
 	return token, nil
+}
+
+// decodeString decodes a string token's spelling, quotes included. A lone surrogate the
+// document holds as its WTF-8 bytes rather than as an escape (json.loads decoded the frame's
+// bytes with surrogatepass, pyjson.DecodeBytesWTF8) is one character of the string, kept as it
+// stands; the spans around it are decoded as JSON. Python's scanner pairs only two \u escapes,
+// so such a surrogate pairs with nothing, and it cannot sit inside an escape the scan accepted.
+func decodeString(spelling []byte) (any, error) {
+	body := spelling[1 : len(spelling)-1]
+	var out strings.Builder
+	from := 0
+	for i := 0; i+3 <= len(body); i++ {
+		if body[i] != 0xed || body[i+1] < 0xa0 || body[i+1] > 0xbf || body[i+2] < 0x80 || body[i+2] > 0xbf {
+			continue
+		}
+		part, err := ledger.DecodeJSON([]byte("\"" + string(body[from:i]) + "\""))
+		if err != nil {
+			return nil, err
+		}
+		out.WriteString(part.(string))
+		out.Write(body[i : i+3])
+		from = i + 3
+		i += 2
+	}
+	if from == 0 {
+		return ledger.DecodeJSON(spelling)
+	}
+	part, err := ledger.DecodeJSON([]byte("\"" + string(body[from:]) + "\""))
+	if err != nil {
+		return nil, err
+	}
+	out.WriteString(part.(string))
+	return out.String(), nil
 }
 
 func decodeValue(d *json.Decoder, raw []byte, constants map[int64]float64) (any, error) {
