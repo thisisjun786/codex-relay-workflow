@@ -33,6 +33,7 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -139,6 +140,9 @@ func Values() []any {
 		[]map[string]any{{"z": 1, "y": 2}}, pyjson.Object{}, pyjson.Object{{Key: "b", Value: 1}, {Key: "a", Value: 2},
 			{Key: "b", Value: 3}, {Key: "A", Value: pyjson.Object{{Key: "y", Value: []any{1, 2.5}}}}},
 		[]any{[]any{[]any{}}, pyjson.Object{{Key: "k", Value: pyjson.Object{}}}}}
+	values = append(values, big.NewInt(0), json.Number("0.0"), json.Number("-0.0"), json.Number("1e400"),
+		[]byte{}, []byte("x"), (*int64)(nil), []any{math.NaN()}, pyjson.Object{{Key: "n", Value: math.NaN()}},
+		map[string][]string{}, map[string][]string{"b": {"2"}, "a": {"1", "\u00e9"}}, []any{map[string][]string{"x": nil}})
 	for _, f := range Floats()[:60] {
 		values = append(values, f)
 	}
@@ -477,4 +481,125 @@ func typeName(v any) string {
 		return "nil"
 	}
 	return reflect.TypeOf(v).String()
+}
+
+// Pairs is the pairs of values every == is held to: each value with itself and with its
+// neighbours, and the pairs Python's == answers against a Go reading (an int and a float, a bool
+// and an int, integers past float64's precision, NaN alone and inside containers, a dict's keys
+// in another order).
+func Pairs(values []any) [][2]any {
+	big53, _ := new(big.Int).SetString("9007199254740993", 10)
+	pairs := [][2]any{
+		{int64(1), 1.0}, {true, int64(1)}, {false, 0.0}, {json.Number("1"), 1.0}, {json.Number("1.0"), int64(1)},
+		{json.Number("9007199254740993"), float64(9007199254740992)}, {big53, float64(9007199254740992)},
+		{json.Number("9007199254740993"), json.Number("9007199254740992")}, {math.NaN(), math.NaN()},
+		{[]any{math.NaN()}, []any{math.NaN()}}, {json.Number("1e400"), math.Inf(1)}, {"a", []any{"a"}},
+		{pyjson.Object{{Key: "a", Value: 1}, {Key: "b", Value: 2}}, pyjson.Object{{Key: "b", Value: 2}, {Key: "a", Value: 1}}},
+		{map[string]any{"a": int64(1)}, pyjson.Object{{Key: "a", Value: 1.0}}}, {nil, nil}, {nil, false},
+		{[]string{"a"}, []any{"a"}}, {int64(2), json.Number("2")}, {math.Copysign(0, -1), int64(0)},
+	}
+	for i, v := range values {
+		pairs = append(pairs, [2]any{v, v})
+		if i > 0 {
+			pairs = append(pairs, [2]any{values[i-1], v})
+		}
+	}
+	return pairs
+}
+
+// All reports whether keep holds for v and every value inside it.
+func All(v any, keep func(any) bool) bool {
+	if !keep(v) {
+		return false
+	}
+	switch x := v.(type) {
+	case pyjson.Object:
+		for _, f := range x {
+			if !All(f.Value, keep) {
+				return false
+			}
+		}
+	case map[string]any:
+		for _, item := range x {
+			if !All(item, keep) {
+				return false
+			}
+		}
+	case []any:
+		for _, item := range x {
+			if !All(item, keep) {
+				return false
+			}
+		}
+	case []map[string]any:
+		for _, item := range x {
+			if !All(item, keep) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// Types is a filter for All: the value is of one of the named Go types (as %T names them).
+func Types(types ...string) func(any) bool {
+	return func(v any) bool { return slices.Contains(types, typeName(v)) }
+}
+
+// Finite is a filter for All: the value is not a NaN or an infinite float64.
+func Finite(v any) bool {
+	f, ok := v.(float64)
+	return !ok || !math.IsNaN(f) && !math.IsInf(f, 0)
+}
+
+// IntegerNumbers is a filter for All: a json.Number is an integer spelling, as every reader that
+// reads a fraction into a float64 leaves it.
+func IntegerNumbers(v any) bool {
+	n, ok := v.(json.Number)
+	return !ok || !strings.ContainsAny(string(n), ".eE")
+}
+
+// Both is a filter for All that keeps what every one of keep keeps.
+func Both(keep ...func(any) bool) func(any) bool {
+	return func(v any) bool {
+		for _, k := range keep {
+			if !k(v) {
+				return false
+			}
+		}
+		return true
+	}
+}
+
+// SameText requires two spellings of each value in values that keep keeps throughout (All) to be
+// equal, naming the first that is not; a nil keep keeps every value.
+func SameText(t testing.TB, name string, values []any, keep func(any) bool, old, folded func(any) string) {
+	t.Helper()
+	for _, value := range values {
+		if keep != nil && !All(value, keep) {
+			continue
+		}
+		if want, got := old(value), folded(value); want != got {
+			t.Errorf("%s(%#v) = %q, folded %q", name, value, want, got)
+		}
+	}
+}
+
+// SameTruth is SameText for a predicate.
+func SameTruth(t testing.TB, name string, values []any, keep func(any) bool, old, folded func(any) bool) {
+	t.Helper()
+	SameText(t, name, values, keep, func(v any) string { return strconv.FormatBool(old(v)) }, func(v any) string { return strconv.FormatBool(folded(v)) })
+}
+
+// SameEquality requires two == to agree over Pairs(values), keep keeping both values of a pair.
+func SameEquality(t testing.TB, name string, values []any, keep func(any) bool, old, folded func(a, b any) bool) {
+	t.Helper()
+	for _, pair := range Pairs(values) {
+		if keep != nil && (!All(pair[0], keep) || !All(pair[1], keep)) {
+			continue
+		}
+		if want, got := old(pair[0], pair[1]), folded(pair[0], pair[1]); want != got {
+			t.Errorf("%s(%#v, %#v) = %v, folded %v", name, pair[0], pair[1], want, got)
+		}
+	}
 }
