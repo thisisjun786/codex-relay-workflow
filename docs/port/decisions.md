@@ -2197,6 +2197,249 @@ go-interrupted-together 15 of 20 times. Under the load that failed the previous 
 times, the final build passed every run: the takeover test 50 of 50,
 `Test42InterruptedSupervisorStopsItsWorker` 50 of 50, and go-interrupted-together 200 more.
 
+## 43. A host turn start is a time only when it reads as a finite number, in both runtimes
+
+Decision: every reader of a host turn's `startedAt` reads it by one rule, the fence's
+`hostadapter.host_time` and Go's `delivery.HostTime`. Null and a bool are no time. A number, or a
+string Python's `float()` reads (surrounding whitespace, a sign, underscores between digits, an
+exponent, Unicode decimal digits), is the seconds it spells. NaN and an infinity, however spelled,
+an integer too large for a double, and anything `float()` refuses (other text, a list, an object)
+are no time. A start that is no time is read exactly as a missing one: an acknowledgement from
+that turn is `unverified_turn`, a supervisor readback naming it is `unverified_turn`, a listed turn
+never ends the dispatched-turn listing and is never a fold candidate, and a continuation's host
+ordering is `not_corroborated`. The fence's readers that changed are `ack._verify_ack_turn`,
+`hostadapter.find_in_listing` (with `_older` and `_older_after_match`), `hostloss._fold_candidates`
+and `admission.AnchorOrExplicit._corroborate`. `supervisorchannel._host_time`, where the rule was
+written first, is now `host_time` itself. Go's `TurnStartedAt` and the `BridgeReads` listing now
+read a numeric string as the fence does.
+
+Why: only the supervisor channel applied the rule, and each other reader compared the raw value.
+The fence's acknowledgement checked only for a missing start and then asked `certainly_before`,
+whose `float()` answered False for what it could not read. So a start of `"bad"`, `[1]` or NaN
+verified the acknowledgement, and `True` (1 s after the epoch) or `"-inf"` refused it as a turn
+begun before the delivery. The listing and the fold raised TypeError on any string, and the
+admission raised it or compared two strings as text. Go read every string and bool as no start,
+so the runtimes disagreed on a numeric-string start: Go left the acknowledgement unverified where
+the fence verified or refused it, and Go's listing read on where the fence raised. The App Server
+sends numbers, so only a host that sends something else reaches any of this.
+
+Cost: a fence acknowledgement whose turn start is unreadable stays `unverified_turn` where it was
+verified, and one with a `True` or negative-infinity start stays unverified where it was refused.
+A listing or fold that meets a string start reads it instead of raising.
+
+Evidence: `packages/codex-session-relay/src/codex_session_relay/hostadapter.py:29` (`host_time`),
+`:174-233` (`find_in_listing`, `_older`, `_older_after_match`), `ack.py:420` (`_verify_ack_turn`),
+`hostloss.py:429` (`_fold_candidates`), `admission.py:118` (`_corroborate`),
+`supervisorchannel.py:220`; `internal/relay/delivery/adapter.go:49-99` (`TurnStartedAt`,
+`HostTime`), `internal/relay/delivery/bridge_reads.go:44`. Tests:
+`internal/relay/delivery/host_time_test.go` (`TestHostTimeReadsEveryValueAsTheFence`, 49 values
+against the live fence), `currency_ack_test.go` (`TestAckTurnStartIsReadAsAHostTime`, ten starts,
+whole records and tables against the fence), `unknownsend_a_test.go`
+(`Test21_USL09b_a_listed_turn_start_is_read_as_a_host_time`, mirroring
+`AListedTurnStartIsReadAsAHostTime`), `internal/relay/supervisor/batch6_test.go`
+(`Test24_SCH_52b_TurnStartIsReadAsAHostTime`); in the fence, `tests/test_ack_reconcile.py`
+(`Acknowledgement.test_a_turn_start_that_is_no_time_does_not_verify_the_ack`,
+`test_a_numeric_string_start_is_the_time_it_spells`) and `tests/test_delivery.py`
+(`ContinuationCorroborationReadsHostTimes`). Before the change the acknowledgement test failed
+for all ten starts, the listing test on the fence's TypeError, the readback test for its three
+numeric strings, and the fence's acknowledgement and ordering tests for every start that is no
+time.
+
+## 44. A frozen copy is reached, read and raised the same way in both runtimes
+
+Decision: the fence's `manifest.verify_frozen_detailed` asks whether a frozen `MANIFEST.json` is
+a regular file with `os.path.isfile`, which answers False for any stat failure on every supported
+interpreter. It then names the failure as before. Absence, a traversed file, a loop and a stale
+handle (ENOENT, ENOTDIR, ELOOP, ESTALE) are a problem only. Any other errno is also an access
+failure: `<ref>: the frozen manifest could not be reached: [Errno N] <strerror>: '<document>'`.
+A document that is reached and cannot be read, or is not UTF-8, not JSON, nested deeper than
+`json.loads` descends, or not shaped as a manifest's records, still raises. Go's
+`store.VerifyFrozenDetailed` answers the same, and follows the fence at each of the three steps
+below. A digest, in the fence as in Go, is 64 lowercase hex characters and nothing after them:
+`manifest.DIGEST_RE` and `identity.DIGEST_RE` end at `\Z`, not `$`.
+
+- Reaching. The document, the blobs and the files directory are the paths pathlib spells from
+  the reference (`str(Path(ref) / "MANIFEST.json")`): `.` parts, repeated slashes and a trailing
+  slash dropped, exactly two leading slashes kept, and every `..` kept for the kernel, which
+  resolves it after the symlink before it. `<document>` above is that spelling. A blob is
+  resolved as `Path.resolve()` resolves it (`os.path.realpath`, not strict): a component that
+  cannot be examined is kept, and a `..` after it removes it. Go builds the same strings
+  (`store.FrozenDocument`, `frozenPath`) and never cleans a `..` away itself, so
+  `<ref>/missing/../frozen` is no frozen copy and `<ref>/lnk/../frozen` is the one beside the
+  link's target. `store.FreezeManifest` makes, writes and re-reads its copy at the same paths,
+  so it freezes where the fence freezes.
+- Reading. The document is `Path.read_text()`'s, then `json.loads`'s. `read_text()` reads with
+  universal newlines, so a CRLF or a lone CR is one line feed by the time `json.loads` names the
+  line, column and character where a document stops being JSON; a `UnicodeDecodeError` counts
+  the bytes before that translation. `json.loads` reads NaN and the infinities as floats, an
+  integer exactly, and a repeated key keeps its first place and its last value. Its C scanner
+  spends one level of the interpreter's recursion budget on each object or list, and where the
+  installed `codex-session-relay` console script reaches it on CPython 3.13 that budget is 9998
+  (measured at the guard's read through `cli.main`; `reception/depth.go` and `merge_evidence.go`
+  keep the same boundary). A document nested deeper is a `RecursionError`, `maximum recursion
+  depth exceeded while decoding a JSON array from a unicode string` (or `object`), raised where
+  the scanner meets that container, so a syntax error it meets first is raised instead. Within
+  four levels of the budget the scanner's error paths spend more than one level: from 9995
+  containers deep the fence raises a `RecursionError` in place of each JSONDecodeError the scanner
+  raises itself, and at 9998 also in place of `Expecting value` and an over-long integer's
+  ValueError, and of NaN or an infinity, which it reads anywhere else. Go keeps the one-level
+  rule there, so it raises the JSONDecodeError or ValueError or reads the constant;
+  known-defects.md records that band and each reader's answer in it as a Python defect not
+  carried over. Go reads with the same translation and the same depth (`store.frozenJSONDepth`),
+  and its decoder keeps each object's key positions, so a document with many keys is read in
+  time proportional to its length, as `json.loads` reads it. The
+  budget is what is left at the call, so code that reaches `json.loads` through C re-entries has
+  less (measured: 9995 under `python -m`, 9980 inside a unittest test, 9978 under pytest). The
+  fence therefore answers a document within twenty levels of the boundary differently on such a
+  path, and only a document well past it raises on every path; the parity tests stage the
+  boundary from a script's top level, as the console script calls it, and the whole-reading
+  tests a document 100000 levels deep. Each record's `path`, `sha256` and `bytes` are
+  the values `json.loads` made of them, and they are compared, printed and hashed as Python does
+  (`store.PythonEntry`). Only a number or a bool can equal a byte count: `"19"`, `[19]`, `{}`,
+  `"x"` and NaN never do, `19.0` and `19.000000000000001` (the same double) do, and `true` is 1.
+  A problem prints a value as `str()` does: `19`, `[19]`, `{}`, `x`, `nan`, `inf`, `True`.
+- Raising. Each step raises what the fence raises there, as `store.ManifestException` with the
+  Python class and words, or as the `ScopeError` revision_hash raises (a `RefusedError`). A list
+  or dict path or digest is `TypeError: unhashable type: 'list'` when the frozen set is built. A
+  true digest that is not a str is `TypeError: expected string or bytes-like object, got 'int'`,
+  and a false one (null, 0, false) is a digest problem. Then revision_hash closes the function: a
+  path that is not a str is `AttributeError: 'int' object has no attribute 'encode'`, a lone
+  surrogate in a path a `UnicodeEncodeError`, and a digest that is not a str the `ScopeError`
+  that names its repr (`None`). A digest that ends in a newline is a digest problem like any
+  other non-digest, and revision_hash then raises that `ScopeError`. The `RecursionError` of a
+  document nested too deep is the one exception here that is not an OSError, a ValueError, a
+  KeyError, a TypeError or an AttributeError (`ManifestException.RuntimeError`).
+
+Each Go reader answers as the fence's reader of the same function, outside the band above:
+
+- the intake reads `store.VerifyFrozen`, now the detailed call without the access list, as
+  `verify_frozen` is. An unreachable frozen copy is refused `manifest_unverified` and recorded.
+  One that is not a manifest, or is nested too deep, is the fence's host error (`{"error":
+  "host", "detail": "JSONDecodeError: ..."}`, `"RecursionError: ..."`), and no refusal is
+  recorded. The ScopeError of a frozen record is a refusal, as it is in the fence. The receipt's
+  own digests are read by the same rule: a `sha256` or `revisionHash` ending in a newline is
+  `malformed_receipt` in both runtimes;
+- the omission reader (`delivery.omissionDeliverable`) and the Stop hook (`hook.DeliverableState`)
+  follow `guard.deliverable_state`. An unreachable frozen copy, a manifest that cannot be read, a
+  ScopeError, and unreadable live bytes that no frozen copy answers for are unverifiable, which
+  the omission reports as `receipt_unreadable`. A frozen copy that is not a manifest is changed,
+  and the detail is the exception's words alone. A live artifact that is gone is changed. A
+  frozen copy nested too deep raises the `RecursionError` out of `deliverable_state`, whose
+  except clauses do not name it, and out of `lookup_receipt`: the Stop hook's evaluation faults
+  (`guard_faulted`, released and recorded, the fault `RecursionError: ...`), and the omission
+  reader, which catches RuntimeError, is `unmeasured` with `evidence_unreadable: <its words>`
+  (`delivery.omissionReceiptFailure`). The hook reads the document whole under its deadline, as
+  the fence and the store's readers do, without the 4 MiB bound it keeps for other evidence
+  (decision 24's native reads). It reads what follows the document's read with the store's reader
+  (`store.VerifyFrozenDocument`), and it reads the stored receipt's own records the same way
+  (`store.PythonManifestEntries`, `store.PythonRevisionHash`), so a stored byte count of `"19"` is
+  a size that disagrees, not 19;
+- `store.FreezeManifest` re-reads the blob it copied where `_read_frozen_blob` reads it. A
+  destination reached through a symlinked directory, named relative to the working directory, or
+  holding a `..` now freezes where the fence freezes, and the refusals quote paths as Python's
+  `repr` does.
+
+Why: `Path.is_file()` raised PermissionError for a blocked parent up to Python 3.13 and answers
+False from 3.14. The fence runs on 3.13, and the packages are tested on 3.11 and 3.13. There, a
+frozen copy behind a permission left the fence as an exception: the intake printed a host error
+and recorded nothing, and the guard answered unverifiable with the exception's text. A 3.14 fence
+refused the same copy and named it. Go's detailed verifier returned an error, as 3.13 did. Go's
+intake used a loop of its own. It read every read failure as "no MANIFEST.json" and every
+undecodable document as "the frozen manifest is not readable JSON", both refused, NaN included,
+which the fence reads. It refused a symlinked or relative reference that the fence verified,
+because it resolved with `filepath.EvalSymlinks` and not as `Path.resolve()` does. It also
+cleaned every `..` away with `filepath.Join`, so it judged, and `FreezeManifest` wrote, a
+different directory than the fence whenever the component before a `..` was a symlink or
+missing. `FreezeManifest` refused symlinked and relative destinations too (`symlink_component`,
+`scope_escape`). The omission reader read the frozen copy through that loop, so an unreachable
+copy was a changed deliverable, and it read every failed live hash as unreadable where the fence
+reads a vanished artifact as changed. The Stop hook named a blocked frozen copy "no
+MANIFEST.json" and merged a JSONDecodeError into the live problems. It also resolved blobs
+strictly, so a blocked blob directory surfaced Go's `lstat` text, and it read the frozen
+document with the 4 MiB bound it keeps for other evidence, so a larger copy was unverifiable
+where the fence and Go's other readers read it. It read a byte count through
+`evidence.IntOf`, which takes the string `"19"` as 19, and refused a path or digest of another
+type with words of its own. A first repair decoded a frozen byte count as a JSON number, which
+also took `"19"`, and returned Go's decoder errors for a list, a NaN or a non-str path.
+
+A repair then found three more differences and one in the fence. Go checked the frozen document
+for JSON errors with no depth limit and decoded it by recursion, so it read a copy that is a
+good freeze beside a value nested 100000 levels deep, where the fence raises RecursionError: the
+intake stored the receipt and the hook answered current. Go counted a CRLF or CR as the fence's
+text never holds it, so a corrupt copy's JSONDecodeError named another line, column or
+character. Its decoder searched an object's keys for every key it added, so 200000 keys took
+26 s where the fence takes 0.05 s, past the hook's five-second budget. And the fence's `DIGEST_RE` was `^[0-9a-f]{64}$`, whose `$`
+also matches just before a final newline: the fence took `<hex>\n` as a digest in the receipt's
+shape check, in `canonical_payload`, in `freeze` (where the digest names a file) and in the
+frozen record check, and then refused the receipt as `manifest_unverified` or
+`revision_mismatch`, or answered a frozen copy holding it as changed. Go's pattern already ended
+at the end, so it refused `malformed_receipt` and answered unverifiable.
+
+Cost: a 3.13 fence now refuses and records a receipt whose frozen copy it cannot reach, where it
+answered a host error. The guard's detail for that copy now names the unreachable manifest, not
+the PermissionError. Go's intake answers a host error for a corrupt frozen copy, and for a frozen
+record revision_hash cannot hash, where it refused. It accepts a frozen copy that holds NaN
+outside its records, as the fence does. Go's intake answers a host error, the hook a fault that
+releases the Stop and the omission reader an unmeasured reading for a frozen copy nested past
+the scanner's depth, where Go read it; the fence's guard releasing on that fault is its
+behaviour, kept as it is. The fence refuses a receipt whose digest ends in a newline as
+`malformed_receipt`, where it refused it later for another reason, and its guard answers a frozen
+record holding one as unverifiable, where it answered changed. No contract fixture freezes a
+copy or carries such a digest.
+
+Evidence: `packages/codex-session-relay/src/codex_session_relay/manifest.py:269-358`
+(`_frozen_document_access`, `verify_frozen_detailed`), `:209-266` (`freeze`, `_read_frozen_blob`),
+`:28-76` (`DIGEST_RE`, `Entry.from_record`, `canonical_payload`, `revision_hash`),
+`identity.py:23-24` (`DIGEST_RE`), `guard.py:123-195` (`deliverable_state`), `guard.py:906-987`
+(`evaluate`, `_faulted`), `omitted.py:505-507,624-626` (`evidence_unreadable`);
+`internal/relay/store/frozen_detailed.go:22-162` (`VerifyFrozenDetailed`,
+`FrozenDocument`, `frozenPath`, `VerifyFrozenDocument`), `:164-268` (`frozenJSONDepth`,
+`frozenRecords`, `ManifestException`, `RuntimeError`, `resolveFrozenPath`),
+`internal/relay/store/frozen_value.go` (`PythonEntry`,
+`PythonManifestEntries`, `PythonRevisionHash`, `PythonStr`, `PythonEqual`, the `json.loads`
+decoder), `internal/relay/store/manifest.go:84-176` (`FreezeManifest`, `ReadFrozenBlob`,
+`VerifyFrozen`), `receipt_intake.go:186` (`verifyBytes`), `ownership.go:120` (`PythonHostDetail`),
+`internal/relay/delivery/omitted.go:660-720` (`omissionDeliverable`, `omissionReceiptFailure`),
+`internal/relay/hook/receipt.go:150-306` (`DeliverableState`, `raisedState`, `verifyEntries`,
+`verifyFrozen`), `settings.go:158-199` (`unbounded`, `readRegular`),
+`internal/relay/hook/guard.go:110-120` (the fault). Tests: `internal/testsupport/frozen.go` (`FrozenManifests`, 29 frozen documents
+no freeze writes, staged for every reader below: among them a digest ending in a newline, a
+value nested 9997, 9998 and 100000 levels beside a good record, and corrupt documents with CRLF
+and CR line ends); `internal/relay/adapter/scope_test.go`
+(`Test28_MSC_9_AccessFailureIsNotDisagreement`, whose fence answer flips with the fix and which
+fails on Go's former error, and `Test28_MSC_8b_FrozenCopyIsReadAsTheFenceReadsIt`: every crafted
+document with and without the caller's entries, and references through a missing directory, a
+symlink and a blocked directory, revision, problems, access failures and the exception's class
+compared, and `Test28_MSC_1b_DigestEndingInANewlineIsRefused`), `intake_test.go`
+(`Test28_MSC_11_IntakeAdmissionUnchanged`: blocked, corrupt, unreadable, crafted and `..` frozen
+copies, and a receipt whose `sha256` or `revisionHash` ends in a newline, with the host detail
+and the recorded refusals compared), `internal/relay/delivery/omitted_deliverable_test.go` and
+`internal/relay/hook/deliverable_test.go` (every case against the fence's `deliverable_state`,
+an exception it lets out included, the hook's also with stored records whose bytes, path or
+digest is another type and with a frozen copy past its 4 MiB evidence bound),
+`internal/relay/delivery/omitted_capture_test.go`
+(`Test24_OMI_7b_WholeOutput`, the whole omission reading of a copy nested too deep),
+`internal/relay/hook/guard_test.go` (`Test33GuardFrozenCopyAtTheDecoderDepth`, the whole Stop
+verdict, bytes and recorded observation, at and past the depth),
+`internal/relay/store/frozen_copy_test.go` (a source changed during the copy, a blob pre-seeded
+under the digest's name, symlinked, relative and `..` destinations),
+`internal/relay/store/frozen_value_test.go` (200000 keys read in well under five seconds); in
+the fence, `tests/test_manifest_scope.py`
+(`test_an_unreachable_frozen_directory_is_named_as_an_access_failure`,
+`test_an_unreachable_frozen_directory_is_refused_as_unverified`,
+`test_a_corrupt_frozen_manifest_raises_and_records_no_refusal`, three `FrozenCopy` tests, and
+the four digest-newline tests `test_a_digest_ending_in_a_newline_is_not_a_digest`,
+`test_a_digest_ending_in_a_newline_names_no_blob`,
+`test_a_frozen_record_whose_digest_ends_in_a_newline_is_not_hashed` and
+`test_a_receipt_digest_ending_in_a_newline_is_malformed`) and `tests/test_omitted.py`
+(`test_a_frozen_copy_nested_past_the_decoder_is_unreadable_evidence`).
+Before the repair the new cases failed in every reader: the intake 16 of the 22 crafted
+documents and both `..` references, the omission reader 16 and both, the hook 32 of its 37 new
+cases, the direct capture 18 documents and the `..` references, and both `..` freeze tests.
+Before the second repair the intake failed 7 of its new cases, the direct capture 6, the
+omission reader 6 and its whole reading, the hook 6 and its whole verdict past the depth, the
+canonical form 1, the 200000-key read took 26 s, and the fence failed its four digest tests.
+
 ## 45. Discovery asks the stores under the absolute state root, in both runtimes
 
 Decision: the retained Python fence's `discover_state_dir` walks the stores beside the canonical

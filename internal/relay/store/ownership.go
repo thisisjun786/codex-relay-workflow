@@ -141,8 +141,9 @@ func fenceRefused(detail string) error {
 }
 
 // PythonHostDetail is the host envelope detail, f"{type(error).__name__}: {error}", of an OS or
-// SQLite failure the fence raises unhandled out of an ownership read (CheckStartLikeFence), and
-// whether err is one.
+// SQLite failure the fence raises unhandled out of an ownership read (CheckStartLikeFence), or of
+// the exception it raises for a frozen copy it could not read as a manifest, and whether err is
+// one of them.
 func PythonHostDetail(err error) (string, bool) {
 	if encode := EncodeError(err); encode != nil {
 		return encode.HostDetail(), true
@@ -150,6 +151,11 @@ func PythonHostDetail(err error) (string, bool) {
 	var host *pythonHostError
 	if errors.As(err, &host) {
 		return host.Error(), true
+	}
+	// A frozen copy that is not a manifest leaves the fence's intake as this exception.
+	var frozen *ManifestException
+	if errors.As(err, &frozen) {
+		return frozen.PythonText(), true
 	}
 	return "", false
 }

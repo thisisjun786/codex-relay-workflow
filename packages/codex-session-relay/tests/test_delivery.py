@@ -3,8 +3,15 @@
 import os
 import unittest
 
+from codex_session_relay.admission import (
+    ORDERING_ABSENT,
+    ORDERING_CONTRADICTED,
+    ORDERING_CORROBORATED,
+    AnchorOrExplicit,
+)
 from codex_session_relay.delivery import COMPLETION, REVISION, DeliveryService
 from codex_session_relay.errors import RefusalReason
+from codex_session_relay.hostadapter import TurnInfo
 from codex_session_relay.lifecycle import ARCHIVED, BUDGET_LIMITED, CANNOT_ACCEPT, PAUSED, UNKNOWN
 from codex_session_relay.transport import (
     DEFERRED_BUSY,
@@ -728,6 +735,35 @@ class ContinuationAdmission(DeliveryTestCase):
             payload, observation=self.assigned_turn("completed", turn="turn-loop-3")
         )
         self.assertTrue(again["_duplicate"])
+
+
+class ContinuationCorroborationReadsHostTimes(unittest.TestCase):
+    """Host ordering corroborates a continuation only from starts that are host times.
+
+    A numeric string is the time it spells; a bool, a list, other text, NaN or an infinity is no
+    start, so the ordering is absent rather than contradicted or corroborated. Comparing the raw
+    values raised TypeError for a string, and read True as a start of 1 s after the epoch.
+    """
+
+    def corroboration(self, anchor_start, candidate_start):
+        class Host:
+            def read_turn(self, _thread, turn_id):
+                started = anchor_start if turn_id == "anchor" else candidate_start
+                return TurnInfo(turn_id, "completed", started)
+
+        relationship = {"child": {"taskId": CHILD},
+                        "generations": [{"executionGeneration": 1, "dispatchTurnId": "anchor"}]}
+        return AnchorOrExplicit(Host())._corroborate(relationship, "anchor", "later")
+
+    def test_a_numeric_string_start_is_ordered_by_the_time_it_spells(self):
+        self.assertEqual(self.corroboration(1000.0, "2000"), ORDERING_CORROBORATED)
+        self.assertEqual(self.corroboration("2000", " 1e3 "), ORDERING_CONTRADICTED)
+
+    def test_a_start_that_is_no_time_neither_corroborates_nor_contradicts(self):
+        for unreadable in ("bad", True, [1], float("nan"), "inf"):
+            with self.subTest(start=unreadable):
+                self.assertEqual(self.corroboration(1000.0, unreadable), ORDERING_ABSENT)
+                self.assertEqual(self.corroboration(unreadable, 1000.0), ORDERING_ABSENT)
 
 
 class DirectionalMessages(DeliveryTestCase):

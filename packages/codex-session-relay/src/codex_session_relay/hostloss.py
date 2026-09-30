@@ -54,7 +54,7 @@ from datetime import datetime
 
 from .delivery import COMPLETION
 from .hostadapter import DISPATCH_TURN_SKEW_SECONDS, TURN_PRESENT, TURN_START_PRECISION_SECONDS
-from .hostadapter import IN_TURN_ITEMS_MAX, ListingBounded, ListingEmpty
+from .hostadapter import IN_TURN_ITEMS_MAX, ListingBounded, ListingEmpty, host_time
 from .policy import HOST_LOST_TURN, TURN_CHECK_UNDECIDED, UNKNOWN_SEND_LOST, UNKNOWN_SEND_UNDECIDED
 from .transport import DISPATCHED, HELD_UNCERTAIN, QUEUED, assert_attempt_invariants
 
@@ -436,9 +436,9 @@ def _fold_candidates(presence, sent_at):
     aaa190a6), so every one of them is read. A turn begun after the send, or with no start time,
     is left to the since-send scan, which covers it whole or says that it did not.
     """
+    bound = sent_at + TURN_START_PRECISION_SECONDS
     turns = [turn for turn in presence.seen_turns
-             if turn.started_at is not None
-             and turn.started_at <= sent_at + TURN_START_PRECISION_SECONDS]
+             if (started := host_time(turn.started_at)) is not None and started <= bound]
     if presence.stop_turn is not None:
         turns.append(presence.stop_turn)
     return turns

@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 type GuardOptions struct {
@@ -108,6 +109,13 @@ func Evaluate(ctx context.Context, stop Object, options GuardOptions) (verdict O
 				path = text(get(object(get(marker, "intent")), "dbPath"))
 			}
 			o.Receipt, readable, err = LookupReceipt(ctx, path, options.DefaultDBPath, get(registered, "relationshipId"), session, turn, get(registered, "executionGeneration"), delivery.ClaimedDispatch(marker, session, o.Assignment))
+			var raised *store.ManifestException
+			if errors.As(err, &raised) {
+				// The exception guard.deliverable_state lets out (a RecursionError) leaves
+				// lookup_receipt too, and evaluate classifies it as a fault of this evaluation.
+				fault(raised.PythonText())
+				return verdict, nil
+			}
 			if err != nil {
 				return nil, err
 			}

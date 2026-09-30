@@ -42,11 +42,18 @@ func PythonOSError(err error) string {
 	if !errors.As(err, &errno) {
 		return err.Error()
 	}
-	class, known := errnoClass[errno]
-	if !known {
-		class = "OSError"
+	return pythonOSErrorClass(err) + ": " + PythonOSErrorText(err)
+}
+
+// pythonOSErrorClass is type(error).__name__ for the OSError Python raises for err's errno.
+func pythonOSErrorClass(err error) string {
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		if class, known := errnoClass[errno]; known {
+			return class
+		}
 	}
-	return class + ": " + PythonOSErrorText(err)
+	return "OSError"
 }
 
 // PythonOSErrorText is str(error) for an OSError: "[Errno N] text: 'path'".

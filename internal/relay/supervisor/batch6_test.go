@@ -174,6 +174,42 @@ func (h *invalidTurnStartHost) ReadTurn(_ string, id string) (*delivery.TurnInfo
 	return &delivery.TurnInfo{TurnID: id, StartedAt: h.started}, nil
 }
 
+// The readback reads the named turn's start by supervisorchannel._host_time, the rule every
+// host-time reader shares: a string float() reads is the time it spells, anything else that is
+// not a finite number is no start and does not verify.
+func Test24_SCH_52b_TurnStartIsReadAsAHostTime(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		started any
+		want    string
+	}{
+		{"numeric-string", "1700000001", "host_read"},
+		{"spaced-underscored", " 1_700_000_001 ", "host_read"},
+		{"numeric-string-before-send", "1000", "turn_predates_send"},
+		{"text", "bad", "unverified_turn"},
+		{"bool", true, "unverified_turn"},
+		{"nan-text", "nan", "unverified_turn"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, h, id, _ := delivered24(t)
+			host := &textTurnStartHost{sendHost: h, started: tc.started}
+			answer, err := f.c.ReadBack(f.ctx, id, "turn-supervisor-1", Proof(id, "turn-supervisor-1"), "", host, 1_700_000_002)
+			if err != nil || answer["verified"] != tc.want {
+				t.Fatalf("readback %v %v", answer, err)
+			}
+		})
+	}
+}
+
+type textTurnStartHost struct {
+	*sendHost
+	started any
+}
+
+func (h *textTurnStartHost) ReadTurn(_ string, id string) (*delivery.TurnInfo, error) {
+	return &delivery.TurnInfo{TurnID: id, StartedAt: h.started}, nil
+}
+
 func Test24_SCH_51_HandoverAtTransportStartCancelsClaim(t *testing.T) {
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}

@@ -44,6 +44,7 @@ from . import envelope, omitted, packets, supervision
 from .ack import TURN_START_PRECISION_SECONDS
 from .delivery import authorized_settings, reserve_send, send_refusal
 from .errors import DeliveryRefused, RefusalReason
+from .hostadapter import host_time
 from .identity import supervisor_read_proof, supervisor_request_id
 from .lifecycle import observe, record as record_lifecycle
 from .policy import RetryPolicy
@@ -212,21 +213,11 @@ def _addressed_as(row, resolution):
             and row["project_key"] == resolution["projectKey"])
 
 
-def _host_time(value):
-    """A host timestamp in seconds, or None when it is not a finite number.
-
-    Every chronology this channel checks reads its times through here or _iso_time, because
-    the comparison that used to do it answered False for a value it could not read - so a
-    start of "not-a-timestamp" or NaN counted as "not earlier" and verified. An unreadable
-    time is not established, and the callers treat that as not verified.
-    """
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        seconds = float(value)
-    except (TypeError, ValueError):
-        return None
-    return seconds if math.isfinite(seconds) else None
+# Every chronology this channel checks reads its host times through hostadapter.host_time (the
+# one rule every reader of a host start shares) or _iso_time, because the comparison that used to
+# do it answered False for a value it could not read - so a start of "not-a-timestamp" or NaN
+# counted as "not earlier" and verified.
+_host_time = host_time
 
 
 def _iso_time(value):

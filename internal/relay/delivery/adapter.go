@@ -3,6 +3,10 @@ package delivery
 import (
 	"encoding/json"
 	"errors"
+	"math"
+	"strconv"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 )
 
 // HostError is a host read or send that could not complete. Kind is the Python exception class
@@ -41,21 +45,55 @@ type TurnInfo struct {
 	StartedAt any
 }
 
+// TurnStartedAt is the turn's start read by HostTime, nil when the host gave none that is a time.
 func TurnStartedAt(turn *TurnInfo) *float64 {
-	if turn == nil || turn.StartedAt == nil {
+	if turn == nil {
 		return nil
 	}
-	switch value := turn.StartedAt.(type) {
+	return HostTime(turn.StartedAt)
+}
+
+// HostTime is hostadapter.host_time: a host timestamp in seconds, or nil when it is not a finite
+// number. A bool is no time; a string is read as Python's float() reads it (surrounding
+// whitespace, a sign, underscores between digits, an exponent, inf and nan, Unicode decimal
+// digits), and NaN or an infinity, however spelled, is no time either. Every reader of a host
+// turn start takes it through here, as every fence reader takes it through host_time.
+func HostTime(value any) *float64 {
+	var seconds float64
+	switch v := value.(type) {
 	case *float64:
-		return value
-	case float64:
-		return &value
-	case json.Number:
-		if number, err := value.Float64(); err == nil {
-			return &number
+		if v == nil {
+			return nil
 		}
+		seconds = *v
+	case float64:
+		seconds = v
+	case int:
+		seconds = float64(v)
+	case int64:
+		seconds = float64(v)
+	case json.Number:
+		// Python's float() of an integer too large for a double raises OverflowError, which
+		// host_time reads as no time; ParseFloat answers it with an infinity.
+		number, err := strconv.ParseFloat(string(v), 64)
+		if err != nil && !errors.Is(err, strconv.ErrRange) {
+			return nil
+		}
+		seconds = number
+	case string:
+		number, ok := argparse.ParseFloat(v)
+		if !ok {
+			return nil
+		}
+		seconds = number
+	default:
+		// nil, a bool, a list, an object: float() refuses each (a bool it reads, host_time does not).
+		return nil
 	}
-	return nil
+	if math.IsNaN(seconds) || math.IsInf(seconds, 0) {
+		return nil
+	}
+	return &seconds
 }
 
 func TurnStatus(turn *TurnInfo) string {

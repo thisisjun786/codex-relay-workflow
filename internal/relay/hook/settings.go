@@ -155,6 +155,13 @@ func Complaints(value any) []string {
 	}
 	return found
 }
+
+// unbounded is readRegular's limit for a file the fence reads whole: decision 24's native
+// context-aware reads keep the deadline and the regular-file check and impose no byte bound.
+const unbounded = -1
+
+// readRegular reads a regular file within ctx, refusing one longer than limit bytes unless the
+// limit is unbounded.
 func readRegular(ctx context.Context, path string, limit int64) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -178,11 +185,15 @@ func readRegular(ctx context.Context, path string, limit int64) ([]byte, error) 
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("not a regular file")
 	}
-	raw, err := io.ReadAll(io.LimitReader(f, limit+1))
+	var reader io.Reader = f
+	if limit != unbounded {
+		reader = io.LimitReader(f, limit+1)
+	}
+	raw, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(raw)) > limit {
+	if limit != unbounded && int64(len(raw)) > limit {
 		return nil, fmt.Errorf("file exceeds read bound")
 	}
 	return raw, ctx.Err()

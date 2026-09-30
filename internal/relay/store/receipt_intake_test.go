@@ -212,8 +212,8 @@ func TestReceiptIntake_python_duplicates_generations_and_scope(t *testing.T) {
 		if first.EventID == second.EventID || f.count(`SELECT COUNT(*) FROM events`) != 2 {
 			t.Fatalf("revisions collapsed: %s %s", first.EventID, second.EventID)
 		}
-		if problems := VerifyFrozen(reference, first.Manifest); len(problems) != 0 {
-			t.Fatalf("older revision no longer verifiable: %v", problems)
+		if problems, err := VerifyFrozen(reference, first.Manifest); err != nil || len(problems) != 0 {
+			t.Fatalf("older revision no longer verifiable: %v %v", problems, err)
 		}
 		if revision, err := ManifestRevision(first.Manifest); err != nil || revision != first.RevisionHash {
 			t.Fatalf("frozen revision %s: %v", revision, err)

@@ -5,9 +5,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -34,7 +36,15 @@ func seedIntake(t *testing.T, path, root string) *store.Store {
 	return s
 }
 func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
-	for _, kind := range []string{"frozen-good", "frozen-unreachable", "frozen-tampered", "frozen-absent", "live-good", "live-changed", "live-unreadable"} {
+	kinds := []string{"frozen-good", "frozen-unreachable", "frozen-tampered", "frozen-absent", "frozen-blocked", "frozen-corrupt", "frozen-manifest-unreadable", "frozen-parent-of-missing", "frozen-parent-through-symlink", "live-good", "live-changed", "live-unreadable", "claimed-digest-newline", "claimed-revision-newline"}
+	// A frozen MANIFEST.json no freeze writes is read as json.loads reads it, so the intake takes
+	// or refuses it, or fails on it, as the fence's intake does.
+	crafted := map[string]testsupport.FrozenManifest{}
+	for _, manifest := range testsupport.FrozenManifests() {
+		crafted[manifest.Name] = manifest
+		kinds = append(kinds, manifest.Name)
+	}
+	for _, kind := range kinds {
 		t.Run(kind, func(t *testing.T) {
 			root := t.TempDir()
 			work := filepath.Join(root, "work")
@@ -65,12 +75,46 @@ func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
 			}
 			payload := map[string]any{"eventId": event, "relationshipId": "rel-1", "executionGeneration": 1, "attempt": 1, "revisionHash": revision, "outcome": "ready_for_review", "producer": "child", "turnRef": map[string]any{"threadId": "01child-task", "turnId": "turn-dispatch-1", "turnStatus": "completed"}, "manifest": entriesRecord(entries), "emittedAt": "2023-11-14T22:13:20.000000+00:00"}
 			ref := filepath.Join(root, "frozen")
-			switch kind {
-			case "frozen-good", "frozen-unreachable", "frozen-tampered", "frozen-absent":
+			t.Cleanup(func() {
+				for _, path := range []string{ref, filepath.Join(ref, "MANIFEST.json")} {
+					if err := os.Chmod(path, 0o700); err != nil && !os.IsNotExist(err) {
+						t.Error(err)
+					}
+				}
+			})
+			switch {
+			case strings.HasPrefix(kind, "frozen-"):
 				if _, err := Freeze(entries, ref); err != nil {
 					t.Fatal(err)
 				}
 				payload["manifestRef"] = ref
+				if kind == "frozen-parent-through-symlink" {
+					// The kernel takes lnk/.. to real, whose frozen copy is good. The copy at the
+					// lexical parent is tampered below, so a reader that folds the '..' away itself
+					// judges a different frozen copy than the fence.
+					if _, err := Freeze(entries, filepath.Join(root, "real", "frozen")); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.MkdirAll(filepath.Join(root, "real", "inner"), 0o700); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(filepath.Join(root, "real", "inner"), filepath.Join(root, "lnk")); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(ref, "files", entries[0].SHA256), []byte("tampered"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					payload["manifestRef"] = root + "/lnk/../frozen"
+				}
+				if kind == "frozen-parent-of-missing" {
+					// The kernel fails the walk at the missing directory before it reaches '..'.
+					payload["manifestRef"] = root + "/missing/../frozen"
+				}
+				if manifest, ok := crafted[kind]; ok {
+					if err := os.WriteFile(filepath.Join(ref, "MANIFEST.json"), []byte(manifest.Document(entries[0].Path, entries[0].SHA256)), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
 				if err := os.WriteFile(file, []byte("a later revision"), 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -92,14 +136,37 @@ func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-			case "live-changed":
+				// A frozen copy nobody can reach is absent to the two-value form; bytes that are
+				// read and are not a manifest, or a manifest that cannot be read, are exceptions.
+				if kind == "frozen-blocked" {
+					if err := os.Chmod(ref, 0); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if kind == "frozen-corrupt" {
+					if err := os.WriteFile(filepath.Join(ref, "MANIFEST.json"), []byte("not json"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if kind == "frozen-manifest-unreadable" {
+					if err := os.Chmod(filepath.Join(ref, "MANIFEST.json"), 0); err != nil {
+						t.Fatal(err)
+					}
+				}
+			case kind == "live-changed":
 				if err := os.WriteFile(file, []byte("a later revision"), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "live-unreadable":
+			case kind == "live-unreadable":
 				if err := os.Chmod(work, 0); err != nil {
 					t.Fatal(err)
 				}
+			// A digest is its 64 hex characters and nothing after them: the receipt's shape
+			// check refuses a trailing newline before any byte is read.
+			case kind == "claimed-digest-newline":
+				payload["manifest"].([]any)[0].(map[string]any)["sha256"] = entries[0].SHA256 + "\n"
+			case kind == "claimed-revision-newline":
+				payload["revisionHash"] = revision + "\n"
 			}
 			goStore := seedIntake(t, filepath.Join(root, "go", "go.sqlite3"), work)
 			// The oracle's store has a directory of its own (one takeover.json per directory)
@@ -115,8 +182,15 @@ func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
 			got := map[string]any{"accepted": err == nil}
 			if err == nil {
 				got["event"] = event
+			} else if reason := store.RefusalReason(err); reason != "" {
+				got["reason"] = reason
 			} else {
-				got["reason"] = store.RefusalReason(err)
+				got["reason"] = nil
+				detail, ok := store.PythonHostDetail(err)
+				if !ok {
+					detail = "RuntimeError: " + err.Error()
+				}
+				got["host"] = detail
 			}
 			rows, err := goStore.Querier(context.Background()).QueryContext(context.Background(), "SELECT event_id,path_binding_mode FROM events ORDER BY event_id")
 			if err != nil {
@@ -137,6 +211,22 @@ func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
 				t.Fatal(err)
 			}
 			got["rows"] = all
+			refusals := []any{}
+			reasons, err := goStore.Querier(context.Background()).QueryContext(context.Background(), "SELECT reason FROM refusals ORDER BY id")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for reasons.Next() {
+				var reason string
+				if err := reasons.Scan(&reason); err != nil {
+					t.Fatal(err)
+				}
+				refusals = append(refusals, reason)
+			}
+			if err := errors.Join(reasons.Err(), reasons.Close()); err != nil {
+				t.Fatal(err)
+			}
+			got["refusals"] = refusals
 			spec, _ := json.Marshal(map[string]any{"store": pyStore.Path, "payload": payload})
 			repo, _ := filepath.Abs("../../..")
 			cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/intake_capture.py"))

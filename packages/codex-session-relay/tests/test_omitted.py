@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from codex_session_relay import guard, intent, marker, omitted
+from codex_session_relay import guard, intent, manifest, marker, omitted
 from codex_session_relay.admission import admit_explicitly
 from codex_session_relay.receipts import ObservationOutcome
 from codex_session_relay.store import resolve_state_dir
@@ -162,6 +162,31 @@ class Reporting(GuardTestCase):
         self.assertEqual(result["reportingState"], "reported")
         self.assertEqual(result["receipt"]["stage"], "staged")
         self.assertEqual(result["terminalObservation"]["status"], "unobserved")
+
+    def test_a_frozen_copy_nested_past_the_decoder_is_unreadable_evidence(self):
+        """json.loads raises RecursionError for a frozen MANIFEST.json nested past its depth.
+
+        guard.deliverable_state catches the exceptions a receipt of the wrong shape raises and not
+        that one, so it leaves lookup_receipt and this reader answers it as evidence it could not
+        read, never as a changed deliverable or a missing receipt.
+        """
+        relation = self.managed()
+        path = self.artifact("out.txt", "work")
+        payload = self.ready_payload(relation, [path], turn=self.assigned_turn("completed"))
+        entries = [manifest.Entry.from_record(record) for record in payload["manifest"]]
+        reference = Path(self.tmp) / "frozen"
+        payload["manifestRef"] = manifest.freeze(entries, reference)
+        self.accept(payload)
+        self.dispose("ready_for_review")
+        Path(path).write_text("a later revision")
+        document = reference / "MANIFEST.json"
+        document.write_text(
+            document.read_text()[:-1] + ', "x": ' + "[" * 100000 + "]" * 100000 + "}")
+        result = self.read()
+        self.assertEqual(
+            (result["reportingState"], result["reason"]),
+            ("unmeasured", "evidence_unreadable: maximum recursion depth exceeded while decoding"
+                           " a JSON array from a unicode string"))
 
     def test_failed_settlement_without_receipt_is_not_a_report(self):
         relation = self.managed()

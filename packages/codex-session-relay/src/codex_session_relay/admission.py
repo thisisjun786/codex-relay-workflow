@@ -16,6 +16,7 @@ completion call, so nothing here adds a readiness turn, a reapproval, or a read 
 from dataclasses import dataclass
 
 from .errors import RegistrationError, RefusalReason
+from .hostadapter import host_time
 
 ANCHOR = "anchor"
 EXPLICIT_ADMISSION = "explicit_admission"
@@ -126,12 +127,15 @@ class AnchorOrExplicit:
             return ORDERING_ABSENT
         if candidate is None:
             return ORDERING_CONTRADICTED
-        if anchor is None or anchor.started_at is None or candidate.started_at is None:
+        # Both starts are read as host times: one the host gave as no time orders nothing.
+        anchor_start = host_time(anchor.started_at) if anchor is not None else None
+        candidate_start = host_time(candidate.started_at)
+        if anchor_start is None or candidate_start is None:
             return ORDERING_ABSENT
-        if candidate.started_at < anchor.started_at:
+        if candidate_start < anchor_start:
             return ORDERING_CONTRADICTED
         closing = _next_anchor_start(self.adapter, relationship, generation_of(relationship, anchor_id), thread)
-        if closing is not None and candidate.started_at >= closing:
+        if closing is not None and candidate_start >= closing:
             return ORDERING_CONTRADICTED
         return ORDERING_CORROBORATED
 

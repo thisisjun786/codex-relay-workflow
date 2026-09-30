@@ -45,5 +45,6 @@ try:
         result={'digest':digest,'problems':problems,'unreadable':unreadable}
     else: raise AssertionError(op)
 except Exception as error:
-    result={'error':str(error)}
+    # classed asks for the exception's class too, as the CLI's host envelope names it.
+    result={'error':f"{type(error).__name__}: {error}" if spec.get('classed') else str(error)}
 print(json.dumps(result,sort_keys=True))
