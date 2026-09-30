@@ -2793,3 +2793,63 @@ operator's to delete. docs/port/cutover.md marks the Inbox section historical.
 Evidence: `internal/relay/delivery/cli.go`, `internal/relay/faults/cli.go` (no queue branch);
 `internal/relay/cli/registry.go` (`admit`, `admitsBeforeHandler`);
 `Test31_check_start_precedes_the_selection_kind_module_and_handler_refusals` (refusal order).
+
+## 56. The write fence is a frozen stamp read on the writer's own connection (refactor R1)
+
+Decision: a writable open of an existing store no longer runs the fence's admission. It opens the
+database read-write and, on that connection and before any statement of the open writes, reads
+`schema_meta`: the six ownership keys must be present and valid and `owner` must be `go`, and
+every table and column of the frozen v1 schema must exist; then it takes `write-gate.lock` SH for
+the store's lifetime (binding the store to the App Server socket it names first, when the store
+records none). Removed: `ownership.Admission` (`Admit`, the per-connection `Check`, the
+per-transaction `Revalidate` and `Compose`'s revalidation), the start preflight's `CheckStart`
+and `CheckStop` judgements of the mirror against the stamp (`ownership.Validate`), the fence's
+wording of mirror disagreements (store/fence_wording.go), and every disposable copy of the
+database a writable open used to read (`SnapshotMeta` for the admission, the connection hook and
+the binding, `validateSchemaSnapshot`). The lock-free preflights (`StartPreflight`,
+`CheckStartLikeFence`, `CheckStop`) still refuse a mirror whose bytes are unreadable or not a JSON
+object, then read the stamp in place (no copy, no sidecar; a command's preflight waits for a
+writer's lock as its open would, the Stop path does not wait) and refuse a fenced store that names
+another owner, or none, in the fence's words ("the relay store belongs to another runtime",
+"missing or unsupported writer protocol"); a store whose write-ahead log an in-place read cannot
+use is left to the writable open. `ownership.PythonBuild` is `ownership.CompatibilityBuild`, with the
+same value.
+
+Kept, for the one live store and for any older Go runtime (the rollback target admits a store only
+with all of them): the six `schema_meta` ownership rows, `takeover.json`, `write-gate.lock` and
+`takeover.lock` are never rewritten or deleted. A new store is still created with the six rows
+(owner go, epoch 1), the gate and the mirror; the socket binding still records `socket_path` and
+republishes the mirror with the socket and scope key, every other field as it was, and a torn
+binding is completed by the next open naming the same socket. Nothing repairs a missing mirror
+(decision D0): a store whose creator died after linking its stamped database and before publishing
+the mirror is written on its stamp, and its mirror stays absent (the operator's
+`takeover repair-mirror` went with decision 54). The Stop hook (`ownsGuard`, `localStop`) and
+the doctor's ownership block read the mirror and the stamp as before.
+
+Changed, only for states the live host cannot reach: the mirror's phase and its agreement with the
+stamp are no longer inputs, so a Go store whose mirror says draining or starting, or disagrees
+with the stamp, is written as any Go store is; the doctor's access probe names another owner in
+the fence's words instead of validate's; and opening another runtime's store read-write before
+refusing it may leave SQLite's WAL sidecars beside it (no row changes: the stamp is judged before
+the schema script runs).
+
+Why: the admission guarded a two-runtime handoff that no longer exists (decisions 54 and
+55). It copied the database and its WAL three to four times per writable open (the admission,
+the schema check, the connection hook, and the binding's preflight) and reread the mirror and the
+stamp on every transaction; the stamp alone decides who may write, and it is read where the write
+happens.
+
+Measured (`go test -run XXX -bench 'BenchmarkWritableOpen|BenchmarkTransaction' -benchtime 30x
+./internal/relay/store/`, five CPUs, the same host, before and after this change): an open and
+close of an empty store went from 5.3 ms to 3.0 ms, of a store holding 20 MB of rows from 25.0 ms
+to 2.7 ms (the copies grew with the database; the stamp read does not), and a one-row transaction
+from 6.8 ms and 173 allocations to 6.9 ms and 16 allocations (its time is the synchronous commit;
+the stamp and mirror reread were its allocations).
+
+Evidence: internal/relay/store/stamp.go (`verifyWritable`, `holdGate`, `bindSocket`,
+`stampInPlace`), internal/relay/store/ownership.go (`checkStamp`);
+internal/relay/store/open_bench_test.go;
+Test30SocketBindingBindsAnUnboundStoreOnce, Test30TornSocketBindingIsCompletedOnlyByItsSocket,
+Test30CreateAbsentNeverExposesUnstampedDatabase (a crashed creation is written on its stamp),
+TestDoctor_ownership_block_matches_python_on_a_broken_store (the probe's words for a mirror-only
+breakage).

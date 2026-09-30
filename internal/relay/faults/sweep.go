@@ -60,7 +60,7 @@ func ExecutableInstallation() (Installation, error) {
 }
 
 // RelayPackageVersion is codex_session_relay.__version__, the version faultsweep.INSTALLATION
-// records in every observation's facts. It follows the package, unlike ownership.PythonBuild,
+// records in every observation's facts. It follows the package, unlike ownership.CompatibilityBuild,
 // which names the fence release and never moves with a later bump.
 const RelayPackageVersion = "0.2.0"
 

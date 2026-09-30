@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,25 +134,10 @@ func ownershipPreflight(ctx context.Context, dbPath string) string {
 	if raw == nil || meta["writer_protocol"] != "1" {
 		return refused + "missing or unsupported writer protocol"
 	}
-	resolved, err := resolvePath(dbPath)
-	if err != nil {
-		return ""
+	if meta["owner"] != "go" {
+		return refused + "the relay store belongs to another runtime"
 	}
-	var denied *ownership.Refused
-	switch err := checkStart(ctx, resolved); {
-	case err == nil:
-		return ""
-	case !errors.As(err, &denied):
-		return ""
-	}
-	if why := fenceRefusal(resolved, meta, raw, ""); why != "" {
-		return refused + why
-	}
-	// Refusals validate does not make keep Go's words, but for a decision the fence words too.
-	if words := fenceWords(denied.Detail); words != "" {
-		return refused + words
-	}
-	return refused + denied.Detail
+	return ""
 }
 
 // probeForeign is probe's foreign-store branch: identity from a disposable copy and a stat of
@@ -210,12 +196,12 @@ func probeRead(ctx context.Context, file *os.File, expected string, result *Prob
 }
 
 func probeWrite(ctx context.Context, file *os.File, expected string, result *ProbeResult, notes *[]string) {
-	admission, err := admitWrite(ctx, expected)
+	gate, err := ownership.Lock(filepath.Join(filepath.Dir(expected), "write-gate.lock"), false, false)
 	if err != nil {
-		*notes = append(*notes, "database write probe failed: "+err.Error())
+		*notes = append(*notes, "database write probe failed: "+ownershipRefusal(&ownership.Refused{Detail: fmt.Sprintf("write gate: %v", err)}).Error())
 		return
 	}
-	defer admission.Close()
+	defer gate.Close()
 	conn, err := openHeld(ctx, file, "rw")
 	if err != nil {
 		*notes = append(*notes, "database write probe failed: "+PythonSQLiteError(err))
@@ -227,7 +213,7 @@ func probeWrite(ctx context.Context, file *os.File, expected string, result *Pro
 		*notes = append(*notes, "database write probe failed: "+elsewhere)
 		return
 	}
-	if err = admission.Revalidate(ctx, conn.conn); err != nil {
+	if _, err = stampOn(ctx, conn.conn); err != nil {
 		*notes = append(*notes, "database write probe failed: "+err.Error())
 		return
 	}

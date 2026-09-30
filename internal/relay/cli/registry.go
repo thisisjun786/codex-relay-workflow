@@ -175,7 +175,7 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 		if !startChecked || selection.Path == "" {
 			return nil
 		}
-		return store.CheckStartLikeFence(ctx, selection.DBPath(), socket)
+		return store.CheckStartLikeFence(ctx, selection.DBPath())
 	}
 	ctx, admitted := store.WithAdmitted(ctx)
 	defer func() { _ = admitted.Release() }()
@@ -342,7 +342,7 @@ func run(ctx context.Context, command *Command, argv0, state, socket string, kin
 	// the selection refusal, --kind-module and the handler's own refusals: another runtime's
 	// store, or one mid-transition, is refused first.
 	if !store.ReadOnlyCommand(ctx) && command.Name != "merge-evidence" {
-		if err := store.CheckStartLikeFence(ctx, services.Selection.DBPath(), socket); err != nil {
+		if err := store.CheckStartLikeFence(ctx, services.Selection.DBPath()); err != nil {
 			return nil, err
 		}
 	}

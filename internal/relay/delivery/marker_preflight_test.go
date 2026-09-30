@@ -20,7 +20,8 @@ import (
 // makes none. cli.py main runs check_start before intent-declare recording the selected store
 // and intent-register confirming against it; cmd_intent_claim runs it on the store the intent
 // names, and intent-disposition opens that store (declarations.Held) before publishing. On a
-// store the other runtime owns, or one draining, each refuses with no marker fact written. A
+// store the other runtime owns, each refuses with no marker fact written (a Go store's mirror
+// phase is no longer judged, decision 56, so its draining case is gone). A
 // legacy store (no ownership key, no mirror) passes check_start, so intent-declare records it.
 // A broken store answers what check_start raises: an unreadable mirror refuses in the fence's
 // words, an unreadable database is the host error.
@@ -74,29 +75,8 @@ func declared(t *testing.T, s *cliSide, own string) {
 	}
 }
 
-// drain publishes the side's own store as draining toward the other runtime, one epoch on.
-func drain(t *testing.T, s *cliSide) {
-	t.Helper()
-	mirror := filepath.Join(s.state, "takeover.json")
-	raw, err := os.ReadFile(mirror)
-	mustDo(t, err)
-	var record map[string]any
-	mustDo(t, json.Unmarshal(raw, &record))
-	to := map[string]string{"python": "go", "go": "python"}[record["owner"].(string)]
-	epoch, _ := record["epoch"].(float64)
-	record["phase"] = "draining"
-	record["transition"] = map[string]any{"id": "t32-drain", "from": record["owner"], "to": to, "targetEpoch": epoch + 1}
-	raw, err = json.Marshal(record)
-	mustDo(t, err)
-	mustDo(t, os.WriteFile(mirror, raw, 0o600))
-}
-
 func markerCases() []markerCase {
 	foreign := func(t *testing.T, s *cliSide, _, other string) { testsupport.Create(t, markerDB(s), "", other) }
-	draining := func(t *testing.T, s *cliSide, own, _ string) {
-		testsupport.Create(t, markerDB(s), "", own)
-		drain(t, s)
-	}
 	handedOver := func(t *testing.T, s *cliSide, own, other string) {
 		declared(t, s, own)
 		testsupport.HandOver(t, markerDB(s), other)
@@ -159,7 +139,6 @@ func markerCases() []markerCase {
 		short := strings.TrimPrefix(command, "intent-")
 		cases = append(cases,
 			markerCase{short + "/owned-by-the-other-runtime", foreign, markerArgs(command)},
-			markerCase{short + "/draining", draining, markerArgs(command)},
 			markerCase{short + "/state-is-a-file", stateFile, markerArgs(command)},
 			markerCase{short + "/state-unreadable", stateUnreadable, markerArgs(command)},
 			markerCase{short + "/mirror-corrupt", mirrorCorrupt, markerArgs(command)},

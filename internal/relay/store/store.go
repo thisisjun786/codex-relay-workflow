@@ -19,8 +19,6 @@ import (
 
 	"golang.org/x/sys/unix"
 	"modernc.org/sqlite"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
 //go:embed relay-sqlite.sql
@@ -46,7 +44,8 @@ type Store struct {
 	// faultHook runs inside every opened transaction after its body and before COMMIT
 	// (store.py fault_hook). Tests use it to die at that point; nil in production.
 	faultHook func()
-	admission *ownership.Admission
+	// gate is write-gate.lock, held SH while a writable store is open (holdGate).
+	gate *os.File
 	// readOnly is Store(read_only=True): mode=ro, query_only=ON, deferred BEGIN.
 	readOnly bool
 }
@@ -60,8 +59,9 @@ type OpenOptions struct {
 	BusyTimeout   time.Duration
 	OnConnect     func()
 	BusyRetryHook func()
-	// admission is installed only by the fenced opener, before connection hooks.
-	admission *ownership.Admission
+	// verify is the fenced opener's check of a writable store, run on the opened database
+	// before the schema script; it returns the write gate the store holds (verifyWritable).
+	verify func(context.Context, *sql.DB) (*os.File, error)
 }
 
 func Open(ctx context.Context, path, socketPath string) (*Store, error) {
@@ -139,11 +139,6 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 		if options.OnConnect != nil {
 			options.OnConnect()
 		}
-		if options.admission != nil {
-			if err := options.admission.Check(ctx); err != nil {
-				return err
-			}
-		}
 		// Python's sqlite3.connect installs its timeout before executing journal_mode.
 		// Do the same: journal_mode may need a lock even before the schema is read.
 		pragmas := []string{fmt.Sprintf("PRAGMA busy_timeout=%d", options.BusyTimeout.Milliseconds()), "PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL", "PRAGMA foreign_keys=ON"}
@@ -209,6 +204,17 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	if err = db.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("connect database: %w", err)
 	}
+	var gate *os.File
+	if options.verify != nil {
+		if gate, err = options.verify(ctx, db); err != nil {
+			return nil, err
+		}
+		defer func() {
+			if err != nil {
+				err = errors.Join(err, gate.Close())
+			}
+		}()
+	}
 	ddl, err := schema.ReadFile("relay-sqlite.sql")
 	if err != nil {
 		return nil, fmt.Errorf("embedded schema: %w", err)
@@ -220,7 +226,7 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	if _, err = db.ExecContext(ctx, sections[0]); err != nil {
 		return nil, fmt.Errorf("initialize schema: %w", err)
 	}
-	result := &Store{DB: db, Path: pathlibSpelling(path)}
+	result := &Store{DB: db, Path: pathlibSpelling(path), gate: gate}
 	guards := strings.SplitN(sections[1], seedMarker, 2)
 	if len(guards) != 2 {
 		return nil, errors.New("embedded schema lacks seed marker")
@@ -322,7 +328,14 @@ func randomBytes(size int) ([]byte, error) {
 	return b, nil
 }
 
-func (s *Store) Close() error { return errors.Join(s.DB.Close(), s.admission.Close()) }
+func (s *Store) Close() error {
+	err := s.DB.Close()
+	if s.gate != nil {
+		err = errors.Join(err, s.gate.Close())
+		s.gate = nil
+	}
+	return err
+}
 
 // Location distinguishes the database inode from the directory entry containing its WAL.
 type Location struct {

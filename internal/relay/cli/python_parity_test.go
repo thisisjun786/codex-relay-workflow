@@ -210,7 +210,7 @@ func asPythonReport(t *testing.T, stdout, pythonSawOwner string) string {
 	t.Helper()
 	report := withoutKey(t, stdout, "runtime")
 	report = regexp.MustCompile(`\n    "owner": "[a-z]+",\n`).ReplaceAllString(report, "\n    \"owner\": \""+pythonSawOwner+"\",\n")
-	return regexp.MustCompile(`"runtime_build": "[^"]*"`).ReplaceAllString(report, `"runtime_build": "`+ownership.PythonBuild+`"`)
+	return regexp.MustCompile(`"runtime_build": "[^"]*"`).ReplaceAllString(report, `"runtime_build": "`+ownership.CompatibilityBuild+`"`)
 }
 
 // A declared execution policy, read through the bridge's parser, from each source doctor

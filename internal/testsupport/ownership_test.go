@@ -567,10 +567,13 @@ func TestRestamp_gives_a_copy_to_the_other_runtime_as_its_creator(t *testing.T) 
 				if withMirror {
 					copyFile(t, filepath.Join(filepath.Dir(original), "takeover.json"), filepath.Join(filepath.Dir(copied), "takeover.json"))
 				}
-				// Reversion: Go refuses the copy before Restamp, whoever it is for. (The Python fence's
-				// refusal of a copy restamped for it was checked here until todo 44.)
-				if refused := goAdmission(t, copied, socket); !strings.HasPrefix(refused, "refused: store_owned_by_other") {
-					t.Fatalf("Go admitted the copy for %s before Restamp: %s", owner, refused)
+				// Reversion: Go refuses the copy of a Python store before Restamp. A copy stamped go is
+				// Go's to write on its stamp alone (decision 56). (The Python fence's refusal of a
+				// copy restamped for it was checked here until todo 44.)
+				if owner == "go" {
+					if refused := goAdmission(t, copied, socket); !strings.HasPrefix(refused, "refused: store_owned_by_other") {
+						t.Fatalf("Go admitted the copy for %s before Restamp: %s", owner, refused)
+					}
 				}
 				testsupport.Restamp(t, copied, owner)
 				requireOwnedBy(t, copied, socket, owner)

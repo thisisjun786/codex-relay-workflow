@@ -135,7 +135,7 @@ func requireDaemonHost(s Services) error {
 // ownershipPreflight is Python's check_start before a service or daemon command
 // (store.StartPreflight), with the command's App Server socket.
 func ownershipPreflight(ctx context.Context, services Services) error {
-	return store.StartPreflight(ctx, services.Selection.DBPath(), services.SocketPath)
+	return store.StartPreflight(ctx, services.Selection.DBPath())
 }
 
 // applyLaunchPolicy is cli.py main's _apply_launch_policy for `service run`: before the handler
@@ -281,7 +281,7 @@ func runDaemon(ctx context.Context, services Services, args Args) (out any, err 
 		// draining or partial one that holds a mirror), in its words, and only then for the
 		// missing socket; a store check_start passes (absent, legacy, a gate alone) gets the
 		// usage error. Nothing is written either way.
-		if err = store.CheckStartLikeFence(ctx, services.Selection.DBPath(), ""); err != nil {
+		if err = store.CheckStartLikeFence(ctx, services.Selection.DBPath()); err != nil {
 			return nil, err
 		}
 	}

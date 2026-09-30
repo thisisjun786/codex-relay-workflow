@@ -11,7 +11,7 @@ import (
 // version in the one compatibility definition, internal/runtime/definition (the only copy since
 // todo 44 removed scripts/crw_runtime/components.json); the Go constant is read against it so a
 // later bump cannot drift silently.
-// ownership.PythonBuild is the fence identity and is not checked here.
+// ownership.CompatibilityBuild is the fence identity and is not checked here.
 func TestRelayPackageVersion_is_the_relay_component_version(t *testing.T) {
 	relay, ok := definition.Of(definition.Relay)
 	if !ok {

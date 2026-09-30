@@ -132,23 +132,6 @@ func ownerOnlyState(t *testing.T, root, name string) string {
 	return state
 }
 
-// setPhase republishes the mirror of a stopped store in phase draining (a transition in
-// progress, as `takeover begin` publishes it) or back in phase active.
-func setPhase(t *testing.T, dbPath, phase string) {
-	t.Helper()
-	r, err := ownership.ReadRecord(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.Phase, r.Transition = phase, nil
-	if phase == "draining" {
-		r.Transition = &ownership.Transition{ID: "t31-drain", From: r.Owner, To: map[string]string{"go": "python", "python": "go"}[r.Owner], TargetEpoch: r.Epoch + 1}
-	}
-	if err = ownership.Publish(dbPath, r, nil); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // snapshotQuery reads a stopped or live store through a disposable copy, never beside it.
 func snapshotQuery(t *testing.T, dbPath, query string, args ...any) []map[string]any {
 	t.Helper()

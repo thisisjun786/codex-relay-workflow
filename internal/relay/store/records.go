@@ -54,12 +54,6 @@ func (s *Store) q(ctx context.Context) querier {
 func (s *Store) Transaction(ctx context.Context, run func(context.Context, *sql.Conn) error) (err error) {
 	if open, ok := ctx.Value(openTxKey{}).(openTx); ok && open.store == s {
 		if open.composing {
-			// store.py transaction() revalidates before it joins, so every joined transaction
-			// of a Compose scope rereads the mirror and the stamp: an ownership change inside
-			// the scope fails the joined body, and the opener rolls the whole scope back.
-			if err := s.admission.Revalidate(ctx, open.conn); err != nil {
-				return err
-			}
 			return run(ctx, open.conn)
 		}
 		return ErrNestedTransaction
@@ -69,9 +63,6 @@ func (s *Store) Transaction(ctx context.Context, run func(context.Context, *sql.
 		return fmt.Errorf("transaction connection: %w", err)
 	}
 	defer func() { err = errors.Join(err, conn.Close()) }()
-	if err = s.admission.Revalidate(ctx, conn); err != nil {
-		return err
-	}
 	// A read-only Store takes no writer lock: deferred BEGIN under query_only (store.py transaction).
 	begin := "BEGIN IMMEDIATE"
 	if s.readOnly {

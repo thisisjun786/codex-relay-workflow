@@ -63,6 +63,14 @@ refuses, and a 0775 state directory (Python's `mkdir` under umask 002) serves in
 
 ## Record
 
+Since refactor R1 (decision 56) the Go writer's admission is the durable stamp alone: a
+writable open reads `schema_meta` on the connection it opened and requires the six keys naming
+owner `go` and the frozen schema, before any statement of the open writes; it takes
+`write-gate SH` for the store's lifetime and no longer reads or judges the mirror, copies the
+database, or rereads the stamp per transaction. A new store still gets the six keys and the mirror
+below, the socket binding still republishes the mirror, and no writer rewrites or deletes either.
+What follows describes the record both runtimes kept during the cutover.
+
 Ownership has two halves. The durable truth lives in the existing `schema_meta` table; the
 admission mirror lives in `S/takeover.json`. Writer admission requires that both agree while the
 writer holds `write-gate SH`. A missing, malformed, unsupported or disagreeing record means no
@@ -242,6 +250,10 @@ The `database` block is how Go proves it opened the same physical store: `Store.
 `store_id` values alone are not proof of the same file.
 
 ## Lock order
+
+Since decisions 54 to 56 only the creation, the socket binding and the ordinary writer's
+`write-gate SH` remain of the order below; the transition controller, its barrier and the inbox
+replay are removed.
 
 Every path that needs more than one of these locks takes them in this order and releases them
 in reverse:
