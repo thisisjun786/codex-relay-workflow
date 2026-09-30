@@ -25,7 +25,7 @@ import (
 // fixture's guard result, not the adapter decision or its filesystem effects.
 func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 	if s.Domain != "hook" && s.Domain != "records" {
-		return nil, fmt.Errorf("%w: %s/%s", ErrNotPorted, s.Domain, s.Kind)
+		return nil, fmt.Errorf("%w: the hook runners serve the hook and records domains, not %s", ErrFixture, s.Domain)
 	}
 	if s.Kind == "status" {
 		if truthy(s.Run["document"]) {
@@ -43,7 +43,7 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 	}
 	for _, step := range steps {
 		if step["kind"] == "mutate" {
-			return nil, fmt.Errorf("%w: stop-events record mutation", ErrNotPorted)
+			return nil, fmt.Errorf("%w: no hook runner mutates a stop-events record", ErrFixture)
 		}
 	}
 	bin, err := crwBinary()
@@ -74,13 +74,6 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 			}
 			config[k] = v
 		}
-	}
-	// Literal Python fixture paths (e.g. /tmp/relay.sqlite) were only argv to
-	// a fake subprocess. Native RPC needs a private owner directory instead of
-	// binding a shared /tmp/control.sock. Preserve the legacy argv observation.
-	legacyDB := config["dbPath"]
-	if db, ok := legacyDB.(string); ok && db != "" && !strings.HasPrefix(db, home+string(filepath.Separator)) {
-		config["dbPath"] = filepath.Join(home, "fixture-state", filepath.Base(db))
 	}
 	if s.Kind == "stop" && config["owner"] == nil {
 		config["owner"] = "plugin"
@@ -180,23 +173,17 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 						mu.Unlock()
 						return
 					}
+					// The call as the owner receives it: the method, every parameter but the Stop
+					// payload, and the payload as the text it arrived as.
 					stdin, _ := json.Marshal(params["stopInput"])
-					// The legacy relay command line the request stands for: a socketPath is the relay's
-					// global --socket option, ahead of the subcommand.
-					argv := []any{"guard-evaluate", "--marker-root", params["markerRoot"]}
-					if socket, ok := params["socketPath"].(string); ok && socket != "" {
-						argv = append([]any{"--socket", socket}, argv...)
-					}
-					if db := params["dbPath"]; db != nil { // The native route pins a DB; only expose a legacy --db-path if the fixture configured it.
-						if overrides, ok := s.Given["settings_overrides"].(map[string]any); ok && overrides["dbPath"] != nil {
-							argv = append(argv, "--db-path", legacyDB)
+					observed := map[string]any{}
+					for key, value := range params {
+						if key != "stopInput" {
+							observed[key] = value
 						}
 					}
-					if params["mode"] == "hold" {
-						argv = append(argv, "--mode", "hold")
-					}
 					mu.Lock()
-					calls = append(calls, map[string]any{"argv": argv, "stdin": string(stdin)})
+					calls = append(calls, map[string]any{"method": request["method"], "params": observed, "stdin": string(stdin)})
 					callNumber := len(calls)
 					mu.Unlock()
 					if truthy(relay["die_first"]) && callNumber == 1 {

@@ -20,7 +20,6 @@ import (
 // so their CLI shape is proved here against the built crw binary: every case of
 // internal/relay/registry/testdata/cli_cases.json, replayed through `crw relay`, must print the
 // exact stdout bytes and exit code the Python CLI printed (python_cli.json, from gen_cli.py).
-// This test has no skip path, so it holds under CRW_CONTRACT_STRICT=1 as it does without it.
 var registryCommands = []string{"register", "settings-record", "settings-show", "generation-open",
 	"generation-bind", "admit-turn", "relationship-status", "relationship-resume"}
 

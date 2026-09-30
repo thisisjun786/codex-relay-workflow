@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -114,88 +113,4 @@ func withoutVolatile(records []any) []any {
 		out[i] = kept
 	}
 	return out
-}
-
-// nativeDivergence is a corpus scenario whose expectation names what only the Python-era process
-// adapter could answer: a guard run as a relay subprocess, with an exit status, a signal and an
-// exec error of its own. The Go hook asks the owner over its control socket instead (docs/port
-// decisions 22 and 32), so these few checks are held to the native answer. The scenario still runs
-// in full and every other check stands; the fixture is left as the Python corpus run reads it.
-type nativeDivergence struct {
-	why    string
-	checks []divergentCheck
-}
-
-// divergentCheck replaces the fixture's eq check at path, which must still say python, with native.
-type divergentCheck struct {
-	path   []any
-	python any
-	native Check
-}
-
-func nativeEq(value any) Check { return Check{Kind: "eq", Value: value} }
-
-var nativeDivergences = func() map[string]nativeDivergence {
-	row := func(field string) []any { return []any{"rows", float64(0), field} }
-	const stem = "test_adapter_agreement__"
-	out := map[string]nativeDivergence{
-		stem + "test_a_signalled_runtime_is_signalled_in_both": {
-			why: "no guard process exists for a signal to end: the guard runs inside the owner, and an owner that dies " +
-				"mid-request leaves the connection unanswered, which both settings documents record as guard_said_nothing",
-			checks: []divergentCheck{{path: []any{"records", float64(0), "adapterOutcome"}, python: "guard_signalled", native: nativeEq("guard_said_nothing")}},
-		},
-	}
-	for _, document := range []string{"checkout", "packaged"} {
-		out[stem+"test_a_runtime_that_cannot_be_run_is_unreachable_in_both__"+document] = nativeDivergence{
-			why: "the guard is the owner's control socket, not relayExecutable: a connect that fails is journalled before " +
-				"any transcript scan or claim (decision 22), so acceptance and eventIdentity stay unobserved and the detail names the socket",
-			checks: []divergentCheck{
-				{path: row("acceptance"), python: "unestablished", native: nativeEq(nil)},
-				{path: row("eventIdentity"), python: map[string]any{"answerItem": nil, "established": false, "reason": "identity_fields_incomplete", "scannedBytes": float64(0), "scannedLines": float64(0), "transcriptPath": nil}, native: nativeEq(nil)},
-				{path: row("detail"), python: "the configured runtime could not be run: [Errno 2] No such file or directory: '/nonexistent/crw-contract-absent/relay'",
-					native: Check{Kind: "regex", Value: `^the configured runtime could not be run: \[Errno 2\] No such file or directory: '/.+/control\.sock'$`}},
-			},
-		}
-		out[stem+"test_an_error_record_at_each_exit_code_is_its_own_outcome_in_both__exit_7__"+document] = nativeDivergence{
-			why: "the owner answers over a socket and has no exit status: an error record of no known kind is " +
-				"guard_ended_unexpectedly with exitCode 0",
-			checks: []divergentCheck{{path: row("exitCode"), python: float64(7), native: nativeEq(float64(0))}},
-		}
-		out[stem+"test_silence_at_two_and_at_zero_are_different_outcomes_in_both__exit_9__"+document] = nativeDivergence{
-			why: "an owner that answers nothing has no exit status to tell a crash from silence: it is guard_said_nothing " +
-				"with exitCode 0, as at exit 0 (the rejected call, exit 2 with silence, stays its own outcome)",
-			checks: []divergentCheck{
-				{path: row("adapterOutcome"), python: "guard_ended_unexpectedly", native: nativeEq("guard_said_nothing")},
-				{path: row("exitCode"), python: float64(9), native: nativeEq(float64(0))},
-			},
-		}
-	}
-	return out
-}()
-
-// withNativeExpectations returns the scenario with its native divergence applied. Each replaced
-// check must still say what the Python runtime answered, so a declaration cannot outlive the
-// fixture it describes.
-func withNativeExpectations(t *testing.T, scenario Scenario) Scenario {
-	t.Helper()
-	divergence, declared := nativeDivergences[scenario.ID]
-	if !declared {
-		return scenario
-	}
-	checks := slices.Clone(scenario.Expect.Checks)
-	for _, replacement := range divergence.checks {
-		replaced := 0
-		for i, check := range checks {
-			if check.Kind == "eq" && reflect.DeepEqual(check.Path, replacement.path) && reflect.DeepEqual(check.Value, replacement.python) {
-				checks[i].Kind, checks[i].Value = replacement.native.Kind, replacement.native.Value
-				replaced++
-			}
-		}
-		if replaced != 1 {
-			t.Fatalf("%s: a native divergence declares %v == %#v, which the fixture no longer checks once", scenario.ID, replacement.path, replacement.python)
-		}
-	}
-	t.Logf("native divergence (%d checks): %s", len(divergence.checks), divergence.why)
-	scenario.Expect.Checks = checks
-	return scenario
 }

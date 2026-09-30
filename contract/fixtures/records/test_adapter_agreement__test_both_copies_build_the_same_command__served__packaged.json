@@ -30,41 +30,11 @@
         "value": 1
       },
       {
-        "kind": "length",
-        "path": [
-          "calls",
-          0,
-          "argv"
-        ],
-        "value": 5
-      },
-      {
         "kind": "eq",
         "path": [
           "calls",
           0,
-          "argv",
-          0
-        ],
-        "value": "--socket"
-      },
-      {
-        "kind": "eq",
-        "path": [
-          "calls",
-          0,
-          "argv",
-          1
-        ],
-        "value": "/run/app-server.sock"
-      },
-      {
-        "kind": "eq",
-        "path": [
-          "calls",
-          0,
-          "argv",
-          2
+          "method"
         ],
         "value": "guard-evaluate"
       },
@@ -73,30 +43,40 @@
         "path": [
           "calls",
           0,
-          "argv",
-          3
+          "params",
+          "socketPath"
         ],
-        "value": "--marker-root"
+        "value": "/run/app-server.sock"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "calls",
+          0,
+          "params",
+          "dbPath"
+        ],
+        "value": null
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "calls",
+          0,
+          "params",
+          "mode"
+        ],
+        "value": "observe"
       },
       {
         "kind": "regex",
         "path": [
           "calls",
           0,
-          "argv",
-          4
+          "params",
+          "markerRoot"
         ],
         "value": "/marker$"
-      },
-      {
-        "kind": "after",
-        "path": [
-          "calls",
-          0,
-          "argv"
-        ],
-        "flag": "--socket",
-        "value": "/run/app-server.sock"
       }
     ]
   }

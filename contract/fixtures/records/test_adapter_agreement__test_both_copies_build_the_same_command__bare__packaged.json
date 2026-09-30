@@ -29,21 +29,11 @@
         "value": 1
       },
       {
-        "kind": "length",
-        "path": [
-          "calls",
-          0,
-          "argv"
-        ],
-        "value": 3
-      },
-      {
         "kind": "eq",
         "path": [
           "calls",
           0,
-          "argv",
-          0
+          "method"
         ],
         "value": "guard-evaluate"
       },
@@ -52,29 +42,40 @@
         "path": [
           "calls",
           0,
-          "argv",
-          1
+          "params",
+          "socketPath"
         ],
-        "value": "--marker-root"
+        "value": null
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "calls",
+          0,
+          "params",
+          "dbPath"
+        ],
+        "value": null
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "calls",
+          0,
+          "params",
+          "mode"
+        ],
+        "value": "observe"
       },
       {
         "kind": "regex",
         "path": [
           "calls",
           0,
-          "argv",
-          2
+          "params",
+          "markerRoot"
         ],
         "value": "/marker$"
-      },
-      {
-        "kind": "excludes",
-        "path": [
-          "calls",
-          0,
-          "argv"
-        ],
-        "value": "--socket"
       }
     ]
   }

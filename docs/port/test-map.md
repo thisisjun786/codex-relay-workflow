@@ -19,7 +19,7 @@ Map revision: `659ec41c70f3f0039d5837f4fd36fae238733dab`
 
 `--final`, todo 44's acceptance, also requires that every destination names where its property
 lives now: each `corpus:` a domain under `contract/fixtures`, which `internal/contracttest` replays
-(`CRW_CONTRACT_STRICT=1` refuses a skipped domain), and each `go-test:` a directory of this
+(every fixture runs: a kind without a runner fails, and nothing is skipped), and each `go-test:` a directory of this
 checkout. The Python answers the Go tests were compared with are recorded beside them, under each
 package's `testdata/python-oracle` ([the phase-A reports](oracles/g1.md)).
 

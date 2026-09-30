@@ -20,8 +20,7 @@ import (
 // cli-shape fixtures also call linkage-bind (todo 26), so their CLI shape is proved here against
 // the built crw: every case of internal/relay/capacity/testdata/cli_cases.json, replayed through
 // `crw relay`, must print the stdout bytes and exit code the Python CLI printed (python_cli.json,
-// from gen_cli.py). The cases seed their scope bindings with SQL rather than linkage-bind. No skip
-// path, so it holds under CRW_CONTRACT_STRICT=1 as it does without it.
+// from gen_cli.py). The cases seed their scope bindings with SQL rather than linkage-bind.
 var capacityCommands = []string{"slot-reserve", "slot-release", "limit-declare", "usage-observe", "capacity-show"}
 
 func TestCapacityCommands_the_built_crw_prints_what_python_printed(t *testing.T) {

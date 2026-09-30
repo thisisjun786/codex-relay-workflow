@@ -94,7 +94,7 @@
      0,
      "adapterOutcome"
     ],
-    "value": "guard_ended_unexpectedly"
+    "value": "guard_said_nothing"
    },
    {
     "kind": "eq",
@@ -164,7 +164,7 @@
      0,
      "exitCode"
     ],
-    "value": 9
+    "value": 0
    },
    {
     "kind": "eq",

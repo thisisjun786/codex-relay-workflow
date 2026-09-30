@@ -78,7 +78,7 @@
      0,
      "acceptance"
     ],
-    "value": "unestablished"
+    "value": null
    },
    {
     "kind": "eq",
@@ -108,13 +108,13 @@
     "value": null
    },
    {
-    "kind": "eq",
+    "kind": "regex",
     "path": [
      "rows",
      0,
      "detail"
     ],
-    "value": "the configured runtime could not be run: [Errno 2] No such file or directory: '/nonexistent/crw-contract-absent/relay'"
+    "value": "^the configured runtime could not be run: \\[Errno 2\\] No such file or directory: '/.+/control\\.sock'$"
    },
    {
     "kind": "eq",
@@ -141,14 +141,7 @@
      0,
      "eventIdentity"
     ],
-    "value": {
-     "answerItem": null,
-     "established": false,
-     "reason": "identity_fields_incomplete",
-     "scannedBytes": 0,
-     "scannedLines": 0,
-     "transcriptPath": null
-    }
+    "value": null
    },
    {
     "kind": "eq",

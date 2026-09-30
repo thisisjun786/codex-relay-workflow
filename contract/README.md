@@ -23,7 +23,7 @@ read its real status until wave R1 deleted that reading (decision 57 in
 [the port decisions](../docs/port/decisions.md)): the runner now refuses a `status` run other
 than the settings document below, and `run.status`. These are distinct from the packaged `stop`
 run kind.
-The hook spike's implemented form uses `given.relay` (a real executable stub with `stdout` and `exit`), `given.settings` (false means absent), `given.settings_overrides`, and `given.files` (relative UTF-8 text). File content supports `${HOME}`, `${PYTHON}`, `${ENTRY}` expansion. `run.kind` is `entry` (subprocess), `hook` (the real completion.run) or `status` (the real completion.status); `run.stdin` is a JSON value or a raw string, `run.argv` contains entrypoint arguments, `run.status` reads the status after an invocation. `expect.exit` is mandatory. `expect.stdout_json` compares parsed JSON. `expect.files` maps relative paths to expected existence. `expect.checks` is a list of `{"kind":"eq", "path":["rows",0,"adapterOutcome"], "value":"guard_answered"}`. Paths address `exit`, `stdout`, `stderr`, `rows` (journal JSON), `status`, `call` (the fake relay's actual argv and stdin), and `files`. Checks run against observed data; expected values must not be derived from the observed values.
+The hook spike's implemented form uses `given.relay` (a real executable stub with `stdout` and `exit`), `given.settings` (false means absent), `given.settings_overrides`, and `given.files` (relative UTF-8 text). File content supports `${HOME}`, `${PYTHON}`, `${ENTRY}` expansion. `run.kind` is `entry` (subprocess), `hook` (the real completion.run) or `status` (the real completion.status); `run.stdin` is a JSON value or a raw string, `run.argv` contains entrypoint arguments, `run.status` reads the status after an invocation. `expect.exit` is mandatory. `expect.stdout_json` compares parsed JSON. `expect.files` maps relative paths to expected existence. `expect.checks` is a list of `{"kind":"eq", "path":["rows",0,"adapterOutcome"], "value":"guard_answered"}`. Paths address `exit`, `stdout`, `stderr`, `rows` (journal JSON), `status`, `call` (the guard call the owner received: its `method`, its `params` apart from the Stop payload, and the payload as `stdin`; the Python corpus observed the relay subprocess's argv here), and `files`. Checks run against observed data; expected values must not be derived from the observed values.
 
 ## Assertion survey of all 14 class-A files
 
@@ -37,7 +37,7 @@ The 20 `test_completion_hook__*.json` cases added `call.argv`, captured raw stdi
 
 Live-interleaving cases remain Python tests until an equivalent Go package test exists: `test_worktree::test_cancellation_after_git_creation_retains_checkout_without_starting_task` requires intercepting the exact git subprocess between creation and checkout; `test_worktree::test_checkout_change_during_thread_start_withholds_prompt` and `test_worktree::test_interrupted_dispatch_is_retained_and_never_repeated` require live paused RPC interleavings; `test_worker_policy::test_record_changing_during_read_is_not_a_ready_snapshot` requires replacing a method between two reads; `test_completion_hook::test_a_link_retargeted_under_the_listing_is_not_published_as_an_alias` requires an exact mid-read symlink retarget. They must not be represented by a fixture that simply calls the original test. Other live races and monkeypatch cases in those files need the same per-case determination during lane conversion.
 
-Until todo 44, `scripts/port/check_corpus_count.py` was the corpus's coverage check, not a fixture count (it left with the Python test files it counted; `contract/notes/*.md` keep its per-file record). It parsed every fixture as JSON and failed naming any that did not parse. It listed every class-A test function from the class-A files in `docs/port/test-map.md` (by AST, including class methods; one parametrised function is one function). It read `contract/notes/*.md` and required each function to appear exactly once with status `converted`, `kept`, or `blocked`: converted needed at least one existing fixture whose name starts with `<stem>__<function>`, kept needed a reason, and blocked needed the missing kind named. The number of fixtures did not need to match the number of tests. `CRW_CONTRACT_STRICT=1 go test ./internal/contracttest/...` fails on any domain it would skip.
+Until todo 44, `scripts/port/check_corpus_count.py` was the corpus's coverage check, not a fixture count (it left with the Python test files it counted; `contract/notes/*.md` keep its per-file record). It parsed every fixture as JSON and failed naming any that did not parse. It listed every class-A test function from the class-A files in `docs/port/test-map.md` (by AST, including class methods; one parametrised function is one function). It read `contract/notes/*.md` and required each function to appear exactly once with status `converted`, `kept`, or `blocked`: converted needed at least one existing fixture whose name starts with `<stem>__<function>`, kept needed a reason, and blocked needed the missing kind named. The number of fixtures did not need to match the number of tests. `go test ./internal/contracttest/...` runs every fixture of every domain; nothing is skipped.
 
 ## Implemented runner families
 
@@ -118,8 +118,10 @@ scenario ID.
 
 ## The Go runner (`internal/contracttest`)
 
-`CRW_CONTRACT_STRICT=1 go test ./internal/contracttest/...` replays every domain with no
-Python on the machine. Its `records` runners drive the built `crw hook`, which asks the
+`go test ./internal/contracttest/...` replays every fixture of every domain with no Python on
+the machine; a fixture whose kind has no runner, or that asks a runner for something it cannot
+do, fails as a corpus defect (until wave R1 such a fixture was skipped unless
+`CRW_CONTRACT_STRICT=1` was set, which CI never set). Its `records` runners drive the built `crw hook`, which asks the
 owner over its control socket instead of starting a relay subprocess, with a guard peer
 standing in for the owner. `agreement` runs it under the checkout settings document and
 under the plugin-owned one, each in its own home, and requires the same printed answer and
@@ -133,14 +135,13 @@ The rest of the release route, every refusal and recovery test_release.py held, 
 `${PYTHON}` and `${ENTRY}` expand to stand-ins that answer the status probe and exist;
 no fixture executes them.
 
-Seven `test_adapter_agreement` scenarios expect what only the Python subprocess adapter
+Seven `test_adapter_agreement` scenarios expected what only the Python subprocess adapter
 could answer: a signalled guard, a guard exit status of 7 or 9, and an exec error naming
-`relayExecutable`. The native hook has no guard process (decisions 22 and 32), so
-`nativeDivergences` in `internal/contracttest/records.go` holds those checks, and only
-those, to the native answer, each with its reason, and fails when a fixture stops making
-the check it replaces. When the Python corpus run leaves the repository, those fixtures
-should be rewritten to the native values and the table removed; the Python corpus run left
-with todo 44, so nothing else holds those checks to the Python answer any more.
+`relayExecutable`. The native hook has no guard process (decisions 22 and 32), so since wave R1
+those fixtures check the native answer themselves (`guard_said_nothing`, `exitCode` 0, a
+connect error naming `control.sock` before any identity scan) instead of a table in the runner.
+The guard peer records the native call, not the relay command line it stood for, and a
+fixture's `dbPath` names a directory under `${HOME}`, where the peer's `control.sock` is bound.
 
 ## Check examples
 
