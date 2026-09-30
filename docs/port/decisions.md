@@ -3067,3 +3067,20 @@ host has no `env-*` directory (2026-10-01), and `crw install rollback` no longer
 Evidence: `internal/runtime/staging/staging.go`, `internal/runtime/install/{identity.go,remove.go}`;
 `TestReadClaimKeepsFourAnswersAndOwnership`, `TestRemoveRefusesWhatMayStillBeInUse`,
 `TestRemoveRefusesARuntimeARegistrationStillNames`.
+
+## 64. `definition.Digest` is deleted; an outgoing selection names a Go runtime's binary digest only (refactor R1)
+
+It supersedes the `definition.Digest` sentence of decision 35.
+
+Decision: `definition.Digest`, the port of `ops12_digest` (the tree digest of a Python selection's
+package directory, with `os.fsdecode` ordering and `UnicodeEncodeError`), and what only it used
+are deleted. The one caller, the outgoing baseline a promotion records, gave it the selected
+location when that was not a Go runtime's `bin` beside a native `crw`; such an entry's `digest` is
+now null (`present` and `selected` are as before). A Go runtime's entry keeps the SHA-256 of its
+`crw`.
+
+Why: only a Python selection took that branch, and no promotion leaves one any more (decision
+61).
+
+Evidence: `internal/runtime/definition/definition.go`, `internal/runtime/install/install.go`
+`outgoingOf`; `TestOutgoingIsWrittenOnlyByAPromotion`, `TestAPromotionRecordsTheRuntimeThePointerLeaves`.

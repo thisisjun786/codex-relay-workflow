@@ -646,8 +646,6 @@ func outgoingOf(selected Object) Object {
 		if present {
 			if value, err := record.FileDigest(filepath.Join(location, Binary)); err == nil && doctor.RuntimeKind(filepath.Dir(location)) == doctor.KindGoRuntime {
 				digest = value
-			} else if value, err := definition.Digest(location); err == nil {
-				digest = value
 			}
 		}
 		out = append(out, field(c.Name, Object{field("selected", location), field("present", present), field("digest", digest)}))
