@@ -1014,16 +1014,19 @@ Both owners drain entries, the same way, including after rollback:
 
 Each entry is applied through the command's existing handler on the drainer's own admitted
 store (Go: in `store.Compose`, never through a second `store.Open`, which would wait on the
-connection the replay's transaction holds), with the drainer's App Server socket as its host:
-a queued `emit` reads its turn from the host as a direct `emit --socket` does, and a queued
-`ack` confirms a delivery through it. Go's queued-ack host is an adapter that shares no store,
-so the replayed ack records no discovery cursor, where Python's adapter records one inside the
-replay's transaction. A legacy `supervisor-read` entry replays as a direct `supervisor-read`
-does on the drainer's store (Go: `supervisor.Channel.ReadBack` inside the replay's
-transaction): with no drainer socket, its no-host usage answer (exit 4); with one, the
-readback's own store checks first (no such message, another recipient, a wrong proof: the same
-exit-2 answer in both runtimes), and a host opened only on its first use, as Python's
-`_LazyAdapter` is. Go's readback host, like its queued-ack host, shares no store.
+connection the replay's transaction holds), with the drainer's App Server socket as its host: a
+queued `emit` reads its turn from the host as a direct `emit --socket` does, and a queued `ack`
+confirms a delivery through it. Go's queued-ack host is an adapter that shares no store, and
+the replay writes the same rows as the fence's: an adapter records a `discovery_cursors` row
+only while `is_archived` scans the thread listings, which only a lifecycle observation asks for
+(a delivery or supervisor-send attempt, a fault notice, a managed run), and a replayed ack asks
+for none, so neither runtime's replay records a discovery cursor. A legacy `supervisor-read`
+entry replays as a direct `supervisor-read` does on the drainer's store (Go:
+`supervisor.Channel.ReadBack` inside the replay's transaction): with no drainer socket, its
+no-host usage answer (exit 4); with one, the readback's own store checks first (no such
+message, another recipient, a wrong proof: the same exit-2 answer in both runtimes), and a host
+opened only on its first use, as Python's `_LazyAdapter` is. Go's readback host, like its
+queued-ack host, shares no store, and a readback asks for no lifecycle observation either.
 
 Golden entry bytes live in `contract/golden/takeover-inbox/`, one per queueable command plus
 the retained legacy `supervisor-read` format; Go's envelope (`internal/relay/inbox.Envelope`)
