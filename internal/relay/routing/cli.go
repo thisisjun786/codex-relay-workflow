@@ -36,13 +36,7 @@ func init() {
 	for _, name := range CommandNames {
 		name := name
 		spec := argparse.Specs[name]
-		required := []string{}
-		for _, action := range spec.Actions {
-			if action.Required {
-				required = append(required, strings.TrimPrefix(action.Flags[len(action.Flags)-1], "--"))
-			}
-		}
-		cli.Commands = append(cli.Commands, cli.Command{Name: name, Required: required, Flags: func(f *flag.FlagSet) {
+		cli.Commands = append(cli.Commands, cli.Command{Name: name, Flags: func(f *flag.FlagSet) {
 			for _, action := range spec.Actions {
 				if len(action.Flags) == 0 || action.Kind == "_HelpAction" {
 					continue

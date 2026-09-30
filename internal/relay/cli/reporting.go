@@ -15,7 +15,6 @@ import (
 // Reporting observation belongs to todo 24. omitted.py was carried from todo 21.
 var reportingShowCommand = Command{
 	Name: "reporting-show", Exempt: true,
-	Required: []string{"marker-root", "workspace", "assignment", "session", "turn"},
 	Flags: func(f *flag.FlagSet) {
 		for _, name := range []string{"marker-root", "workspace", "assignment", "session", "turn"} {
 			f.String(name, "", "")
@@ -47,7 +46,7 @@ var reportingShowCommand = Command{
 }
 
 var reportingDeriveCommand = Command{
-	Name: "reporting-derive", Exempt: true, Required: []string{"relationship"},
+	Name: "reporting-derive", Exempt: true,
 	Flags: func(f *flag.FlagSet) {
 		f.String("relationship", "", "")
 		f.String("turn", "", "")

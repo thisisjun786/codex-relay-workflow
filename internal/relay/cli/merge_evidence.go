@@ -37,7 +37,7 @@ var forgeRunner = func(ctx context.Context) evidence.Runner {
 	}
 }
 
-var mergeEvidenceCommand = Command{Name: "merge-evidence", Exempt: true, Required: []string{"repository", "pull-request"}, Flags: func(f *flag.FlagSet) {
+var mergeEvidenceCommand = Command{Name: "merge-evidence", Exempt: true, Flags: func(f *flag.FlagSet) {
 	f.String("repository", "", "")
 	f.Int("pull-request", 0, "")
 	f.String("restate", "", "")

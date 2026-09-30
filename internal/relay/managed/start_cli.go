@@ -13,7 +13,7 @@ import (
 )
 
 func init() {
-	cli.Commands = append(cli.Commands, cli.Command{Name: "managed-start", Required: []string{"request", "marker-root"}, Flags: func(f *flag.FlagSet) { f.String("request", "", ""); f.String("marker-root", "", "") }, Exempt: true, Run: runStart})
+	cli.Commands = append(cli.Commands, cli.Command{Name: "managed-start", Flags: func(f *flag.FlagSet) { f.String("request", "", ""); f.String("marker-root", "", "") }, Exempt: true, Run: runStart})
 }
 
 // HostStart is installed by the production adapter; nil preserves the existing

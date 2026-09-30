@@ -116,29 +116,24 @@ func endpoint(p parsed, prefix string) Endpoint {
 }
 
 var linkageCommands = []command{
-	{name: "linkage-bind", options: []option{{name: "role", required: true, choices: roleChoices}, {name: "scope", required: true},
-		{name: "task", required: true}, {name: "host", required: true}, {name: "cwd"}, {name: "cxc-session"}},
+	{name: "linkage-bind",
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			return r.BindScopeAs(ctx, p.text("role"), p.text("scope"), endpoint(p, ""), Active)
 		}},
-	{name: "linkage-supervise", options: []option{{name: "initiative", required: true}, {name: "project", required: true},
-		{name: "supervisor-task", required: true}, {name: "supervisor-host", required: true}, {name: "supervisor-cwd"}, {name: "supervisor-cxc-session"},
-		{name: "parent-task", required: true}, {name: "parent-host", required: true}, {name: "parent-cwd"}, {name: "parent-cxc-session"},
-		{name: "kind", def: linkExec, choices: []string{linkExec, linkReference}}},
+	{name: "linkage-supervise", defaults: map[string]string{"kind": linkExec},
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			return r.RegisterSupervision(ctx, p.text("initiative"), p.text("project"), endpoint(p, "supervisor-"), endpoint(p, "parent-"), p.text("kind"))
 		}},
-	{name: "linkage-peer", options: []option{{name: "left-project", required: true}, {name: "left-task", required: true}, {name: "left-host", required: true},
-		{name: "right-project", required: true}, {name: "right-task", required: true}, {name: "right-host", required: true}},
+	{name: "linkage-peer",
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			return r.RegisterPeer(ctx, p.text("left-project"), Endpoint{TaskID: p.text("left-task"), HostID: p.text("left-host")},
 				p.text("right-project"), Endpoint{TaskID: p.text("right-task"), HostID: p.text("right-host")})
 		}},
-	{name: "linkage-attach", options: []option{{name: "relationship", required: true}, {name: "project", required: true}},
+	{name: "linkage-attach",
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			return r.AttachIssue(ctx, p.text("relationship"), p.text("project"))
 		}},
-	{name: "linkage-outstanding", options: []option{{name: "project", required: true}, {name: "task"}},
+	{name: "linkage-outstanding",
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			outstanding, err := r.Outstanding(ctx, p.text("project"), p.optional("task"))
 			if err != nil {
@@ -147,27 +142,22 @@ var linkageCommands = []command{
 			return contract.OrderedObject{{Key: "projectKey", Value: p.text("project")}, {Key: "taskId", Value: nullable(p.optional("task"))},
 				{Key: "outstanding", Value: strList(outstanding)}}, nil
 		}},
-	{name: "linkage-completion", options: []option{{name: "project", required: true}},
+	{name: "linkage-completion",
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			return withEnforcement(r, r.ProjectState(ctx, p.text("project"))), nil
 		}},
-	{name: "linkage-handover", options: []option{{name: "role", required: true, choices: []string{roleSupervisor, roleParent}},
-		{name: "scope", required: true}, {name: "expect-task", required: true}, {name: "task", required: true}, {name: "host", required: true},
-		{name: "cwd"}, {name: "cxc-session"}, {name: "acknowledge", multi: true}, {name: "evidence", required: true}, {name: "actor", required: true}},
+	{name: "linkage-handover",
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			return r.Handover(ctx, p.text("role"), p.text("scope"), p.text("expect-task"), endpoint(p, ""), p.values["acknowledge"],
 				p.text("evidence"), p.text("actor"))
 		}},
-	{name: "linkage-directive", options: []option{{name: "scope-kind", required: true, choices: []string{scopeInitiative, scopeProject, scopeIssue}},
-		{name: "scope", required: true}, {name: "from-task", required: true}, {name: "from-scope", required: true}, {name: "link", required: true},
-		{name: "digest", required: true}, {name: "reference"}, {name: "purpose", choices: SupervisorPurposes()}, {name: "correlation"}},
+	{name: "linkage-directive",
 		run: cmdLinkageDirective},
-	{name: "linkage-settle", options: []option{{name: "directive", required: true}, {name: "disposition", required: true, choices: []string{"chosen", "superseded"}},
-		{name: "actor", required: true}, {name: "reason"}},
+	{name: "linkage-settle",
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			return r.SettleDirective(ctx, p.text("directive"), p.text("disposition"), p.text("actor"), p.optional("reason"))
 		}},
-	{name: "linkage-down", options: []option{{name: "scope-kind", required: true, choices: []string{scopeInitiative, scopeProject, scopeIssue}}, {name: "scope", required: true}},
+	{name: "linkage-down",
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			answer, err := r.downRaising(ctx, p.text("scope-kind"), p.text("scope"))
 			if err != nil {
@@ -175,10 +165,9 @@ var linkageCommands = []command{
 			}
 			return withEnforcement(r, answer), nil
 		}},
-	{name: "linkage-up", options: []option{{name: "task"}, {name: "issue"}, {name: "relationship"}, {name: "scope"}},
-		exclusive: []string{"task", "issue", "relationship"}, precheck: linkageUpPrecheck, run: cmdLinkageUp},
-	{name: "linkage-counterpart", options: []option{{name: "from-task", required: true}, {name: "to-task", required: true}, {name: "from-scope"},
-		{name: "quoted-scope"}, {name: "quoted-revision", integer: true}},
+	{name: "linkage-up",
+		precheck: linkageUpPrecheck, run: cmdLinkageUp},
+	{name: "linkage-counterpart",
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			q := CounterpartQuery{QuotedScope: p.optional("quoted-scope"), FromScope: p.optional("from-scope")}
 			if p.set["quoted-revision"] {

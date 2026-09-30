@@ -14,8 +14,8 @@ import (
 
 func init() {
 	cli.Commands = append(cli.Commands,
-		cli.Command{Name: "managed-show", Required: []string{"request-id"}, Flags: func(f *flag.FlagSet) { f.String("request-id", "", "") }, Exempt: true, Run: runShow},
-		cli.Command{Name: "managed-release", Required: []string{"request-id", "fingerprint", "revision", "reason"}, Flags: func(f *flag.FlagSet) {
+		cli.Command{Name: "managed-show", Flags: func(f *flag.FlagSet) { f.String("request-id", "", "") }, Exempt: true, Run: runShow},
+		cli.Command{Name: "managed-release", Flags: func(f *flag.FlagSet) {
 			f.String("request-id", "", "")
 			f.String("fingerprint", "", "")
 			f.Int64("revision", 0, "")

@@ -293,7 +293,7 @@ func observationMapSlice(values []any) []map[string]any {
 	return out
 }
 
-var supervisorStandingCommand = Command{Name: "supervisor-standing", Required: []string{"project"}, Flags: func(f *flag.FlagSet) { f.String("project", "", ""); f.Var(new(stringsFlag), "observation", "") }, Run: func(ctx context.Context, services Services, args Args) (any, error) {
+var supervisorStandingCommand = Command{Name: "supervisor-standing", Flags: func(f *flag.FlagSet) { f.String("project", "", ""); f.Var(new(stringsFlag), "observation", "") }, Run: func(ctx context.Context, services Services, args Args) (any, error) {
 	project, _ := args.String("project")
 	paths := []string(*args.Flags.Lookup("observation").Value.(*stringsFlag))
 	readings := make([]any, 0, len(paths))
@@ -330,7 +330,7 @@ var supervisorStandingCommand = Command{Name: "supervisor-standing", Required: [
 	return supervisorOutput(ctx, c, answer)
 }}
 
-var supervisorSelectCommand = Command{Name: "supervisor-select", Required: []string{"event"}, Flags: func(f *flag.FlagSet) { f.String("event", "", ""); f.String("recipient", "", "") }, Run: func(ctx context.Context, services Services, args Args) (any, error) {
+var supervisorSelectCommand = Command{Name: "supervisor-select", Flags: func(f *flag.FlagSet) { f.String("event", "", ""); f.String("recipient", "", "") }, Run: func(ctx context.Context, services Services, args Args) (any, error) {
 	event, _ := args.String("event")
 	recipient, _ := args.String("recipient")
 	c, close, err := supervisorChannel(ctx, services)
@@ -500,7 +500,7 @@ var supervisorStageCommand = Command{
 		return supervisorOrdered(result), supervisorResult(err)
 	},
 }
-var supervisorShowCommand = Command{Name: "supervisor-show", Required: []string{"message"}, Flags: func(f *flag.FlagSet) { f.String("message", "", "") }, Run: func(ctx context.Context, services Services, args Args) (any, error) {
+var supervisorShowCommand = Command{Name: "supervisor-show", Flags: func(f *flag.FlagSet) { f.String("message", "", "") }, Run: func(ctx context.Context, services Services, args Args) (any, error) {
 	id, _ := args.String("message")
 	c, close, err := supervisorChannel(ctx, services)
 	if err != nil {
@@ -568,7 +568,7 @@ func runSupervisorHost(ctx context.Context, command string, services Services, a
 	return supervisorOrdered(result), supervisorResult(err)
 }
 
-var supervisorSendCommand = Command{Name: "supervisor-send", Required: []string{"message"}, Flags: func(f *flag.FlagSet) { f.String("message", "", "") }, Run: func(ctx context.Context, services Services, args Args) (any, error) {
+var supervisorSendCommand = Command{Name: "supervisor-send", Flags: func(f *flag.FlagSet) { f.String("message", "", "") }, Run: func(ctx context.Context, services Services, args Args) (any, error) {
 	if err := requireSupervisorHost(services, "supervisor-send", "a send observes the recipient's lifecycle and resumes its thread. Without a host every read fails, which reads as an unmeasured recipient and would record a withholding that describes this process rather than the task"); err != nil {
 		return nil, err
 	}
@@ -579,7 +579,7 @@ var supervisorSendCommand = Command{Name: "supervisor-send", Required: []string{
 // readbackNeedsHost is why supervisor-read refuses to run without --socket.
 const readbackNeedsHost = "a readback is checked against the host's own turn list and the recipient's transcript. Without a host it would record an unverified readback, which is a statement about this process and reads as one about the recipient"
 
-var supervisorReadCommand = Command{Name: "supervisor-read", Required: []string{"message", "turn", "proof", "as"}, Flags: func(f *flag.FlagSet) {
+var supervisorReadCommand = Command{Name: "supervisor-read", Flags: func(f *flag.FlagSet) {
 	f.String("message", "", "")
 	f.String("turn", "", "")
 	f.String("proof", "", "")
