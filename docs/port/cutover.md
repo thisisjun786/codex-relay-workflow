@@ -775,6 +775,13 @@ adapter journals it as `guard_host_error`. The fault sweep's managed readings na
 
 ## Rollback
 
+Since todo 44 the controller launches no Python candidate (decision 48): `crw relay takeover
+rollback --to python`, and a `takeover activate` that would resume a Python activation, are
+refused before any durable edge with `store_owned_by_other`, whatever `--python-relay` names,
+because the Python runtime left the repository; on the owner's host the cutover is committed
+(`rollback_allowed=0`), which refuses the rollback as well. What follows is the procedure the
+todo-42 rehearsal ran while the fence release was retained.
+
 Rollback is the same protocol run in reverse, Go to the retained fence Python release, on the
 **same live database**, installing `owner_epoch = current + 1`:
 
@@ -842,8 +849,9 @@ command with the service's socket (for example `crw relay --socket <socket> stor
 drains; then rerun the commit. An entry a drain keeps holds the commit back until a later drain
 applies it: a receipt whose host could not confirm its turn is retained for the next drain, and
 an invalid entry fails every drain closed until the operator moves it out (Wire format).
-Meanwhile `takeover rollback --to python --python-relay <path>` stays available, and its Python
-candidate replays the inbox before readiness. No other controller step ends the way back:
+Meanwhile `takeover rollback --to python --python-relay <path>` stayed available until todo 44
+refused every Python candidate (decision 48), and its Python candidate replayed the inbox before
+readiness. No other controller step ends the way back:
 `takeover abort` and `takeover rollback` keep `rollback_allowed=1`, and the owner either leaves
 replays the inbox at its next drain. A receipt the retained Python CLI queues after the commit
 is applied by the Go owner's next drain like any other (PR #185 thread 4128457226;

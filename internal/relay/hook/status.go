@@ -518,6 +518,15 @@ func interpreterProbe(ctx context.Context, named string, ask bool) map[string]an
 	}
 	return answersPython(ctx, resolved, "the registered interpreter")
 }
+
+// answersPython asks the program a registration or the settings name whether it runs a
+// supported Python: it runs `<path> -c <version probe>` for at most 5 s and reads only the
+// version it prints. It stays after todo 44 (decision 50): the status reading judges whatever
+// Stop registrations a host holds, including a user hooks.json entry or Python-era settings no
+// Go install wrote, and for such a registration whether it can start at all turns on whether the
+// program it names runs Python; only asking the program answers that for a wrapper. Nothing
+// else in the runtime executes a Python interpreter, and the contract corpus's hook status
+// fixtures freeze this reading.
 func answersPython(ctx context.Context, path, label string) map[string]any {
 	c, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

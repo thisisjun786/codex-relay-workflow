@@ -259,7 +259,7 @@ venv; the Go runtime has no interpreter to probe, so each is retired, not ported
 | `scripts/runtime_install.py:1637` | does the installed relay accept these settings (`-B -c <settings program>`) | not ported: `diagnose --trial`, deferred past todo 44 (retired with runtime_install.py) |
 | `scripts/runtime_install.py:1690` | does the installed relay admit this predicate (`-B -c <predicate program>`) | not ported: `diagnose --trial`, deferred past todo 44 |
 | `scripts/runtime_install.py:4434` | which environment the interpreter reports (`sys.prefix`) | todo 37 (the install entry names the environment holding bin/crw) |
-| `scripts/crw_runtime/completion.py:3458` | does the hook's interpreter word answer as a Python | todos 43/44 (kept while a record may name a Python interpreter; ported by todo 33) |
+| `scripts/crw_runtime/completion.py:3458` | does the hook's interpreter word answer as a Python | todos 43/44 (ported by todo 33 as `answersPython` in internal/relay/hook/status.go, which todo 44 keeps while a registration may name a Python interpreter: decision 50) |
 | `scripts/crw_transition/inventory.py:602` | does the candidate evaluate Python | todo 39 |
 
 Siblings of the same kind, found by the spawn grep: `scripts/runtime_install.py:528` (store
@@ -268,6 +268,9 @@ admission probes), `scripts/crw_runtime/completion.py:1031` (`_require_python`).
 version and module probes retire in todo 37; the path and admission probes belong to
 `diagnose --trial`, deferred past todo 44; `_require_python` retires with the Go `crw install
 hook` (todo 38), which never registers an interpreter.
+
+Todo 44 also removed the two Go paths that executed Python beyond that probe: the takeover's
+Python candidate (decision 48) and the bridge settings table's `go generate` program (decision 49).
 
 ## In-process edges that force one binary
 

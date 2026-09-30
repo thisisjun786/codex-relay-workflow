@@ -55,6 +55,10 @@ func ExecuteTakeover(ctx context.Context, argv []string, stdout, stderr io.Write
 	flags := flag.NewFlagSet("takeover "+action, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	to := flags.String("to", "", "")
+	// --python-relay named the retained fence release's console script, the Python candidate's
+	// locator. The frozen action set (contract/schema/records.json takeoverStatus) keeps the
+	// option, and its usage checks stand, but no Python candidate is launched any more: a
+	// transition toward a Python owner is refused before any durable edge (decision 48).
 	pythonRelay := flags.String("python-relay", "", "")
 	readyTimeout := flags.Float64("ready-timeout", service.DefaultReadyTimeout.Seconds(), "")
 	flags.Bool("json", false, "")
@@ -94,7 +98,7 @@ func ExecuteTakeover(ctx context.Context, argv []string, stdout, stderr io.Write
 		build = Build
 	}
 	ready := time.Duration(*readyTimeout * float64(time.Second))
-	c, err := service.NewTakeover(ctx, selection, *socket, build, service.TakeoverOptions{PythonRelay: *pythonRelay, ReadyTimeout: ready})
+	c, err := service.NewTakeover(ctx, selection, *socket, build, service.TakeoverOptions{ReadyTimeout: ready})
 	if err != nil {
 		return fail(takeoverError(err))
 	}

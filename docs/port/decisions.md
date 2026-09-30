@@ -2590,3 +2590,70 @@ Evidence: `internal/runtime/definition/definition.go` (`Components`, `Links`, `V
 (`runtimeCheck`, `releaseLinks`, `releaseArchiveFiles`) and `TestContractsRuntimeDefinition`
 (a changed link, an unarchived licence, a missing licence, tool contract or release configuration
 each fail it); `internal/bridge/mcp/version_test.go`, `internal/relay/faults/version_test.go`.
+
+## 48. No Python takeover candidate: the way back to a Python owner is refused (todo 44)
+
+Decision: `crw relay takeover` launches no Python candidate. A transition toward a Python owner
+(`takeover rollback --to python`, or an activation that would resume a Python owner) is refused
+in the controller's preflight, before any durable edge, as `store_owned_by_other` with the detail
+`service.NoPythonCandidate`; the candidate command of a record naming a Python owner is refused
+the same way. `service.TakeoverOptions` no longer carries the Python relay's path. The
+`--python-relay` option stays on `activate` and `rollback`, with its usage checks (absolute path;
+launching actions only), because `contract/schema/records.json` freezes the takeover action set
+and its options; its value is never executed. The ownership controller's protocol, including
+`Rollback`, is unchanged and stays covered by `internal/relay/store/ownership`'s protocol tests
+with fake runtimes.
+
+Why: the only candidate a rollback could launch was the retained fence release's Python console
+script. The owner's host committed the cutover at todo 43 (`rollback_allowed=0`, which already
+refuses a rollback), no Python runtime is installed there, and todo 44 removes the Python
+implementation from the repository, so keeping a path that executes whatever `--python-relay`
+names would keep a Python execution path in the product for a transition nobody can complete.
+Refusing before the reverse CAS leaves the store where it was.
+
+Cost: a store that is not committed and whose operator still holds a fence release can no longer
+be handed back to it by this controller. The readiness bound (`--ready-timeout`), which the
+silent Python candidate used to exercise end to end, is exercised in process with a silent
+command standing in for the Go candidate (`takeoverRuntime.command`).
+
+Evidence: `internal/relay/service/takeover.go` (`NoPythonCandidate`, `Preflight`, `candidate`,
+`Start`); `internal/relay/cli/takeover.go`; `Test30TakeoverBuiltCLI`,
+`Test30AbortAndFailedCandidateBuiltCLI`, `Test30ReadyTimeoutBoundsSilentCandidate`,
+`Test30StatusSchema` (the frozen action set is still accepted); docs/port/cutover.md "Rollback".
+
+## 49. The bridge's printable table is frozen; its Python generator is deleted (todo 44)
+
+Decision: `internal/bridge/settings/generate`, the `go generate` program that ran `python3 -c` to
+read `str.isprintable()` of every code point under CPython 3.14's Unicode database (16.0.0) into
+`printable_generated.go`, is deleted with the `//go:generate` line. The generated table is kept as
+committed and is not regenerated: `TestPrintableIsCPython314sIsprintable` compares it with that
+interpreter's recorded answer (pyoracle).
+
+Why: the table's source of truth is the Python bridge's behaviour, which is frozen with the
+Python implementation; a generator that needs a CPython 3.14 on PATH is a Python execution path
+that could only ever reproduce the same table, and a later CPython would answer another question.
+
+Evidence: `internal/bridge/settings/printable.go`, `printable_generated.go`,
+`printable_test.go`.
+
+## 50. `hook-status` still asks a named program whether it runs Python (todo 44)
+
+Decision: the Stop-hook status reading (`answersPython` in `internal/relay/hook/status.go`) keeps
+running a program that a registration or the settings name as the adapter's interpreter with a
+bounded `-c` version probe (5 s, only the printed version is read). No other product path
+executes a Python interpreter: the processes the installer, the doctor and the swap gate start
+are the runtime's own executables, and the retention scan classifies Python without running it.
+
+Why: the reading judges whatever Stop registrations a host holds, including a user-owned
+`hooks.json` entry or Python-era settings that no Go install wrote, and for such a registration
+whether it can start turns on whether the program it names runs a supported Python; a wrapper
+around an interpreter answers only when asked. The contract corpus's hook `status` fixtures
+(`test_completion_hook__*`) freeze this reading, the Go install's own settings name no Python,
+and the probe executes only what the host's configuration already names. It retires with the
+user-owner and Python-era shapes of the reading, which is a contract change of its own.
+
+Evidence: `internal/relay/hook/status.go` (`interpreterProbe`, `answersPython`, `programCell`);
+contract/fixtures/hook/`test_completion_hook__test_a_recorded_interpreter_that_is_not_one_is_not_startable_either.json`,
+`...__test_a_valid_answer_survives_a_wrapper_that_replaces_the_exit_status.json`,
+`...__test_every_probe_that_ran_a_program_says_so_not_only_the_one_that_worked.json`; the
+exec sites listed by `git grep -n 'exec.Command' -- 'cmd/*.go' 'internal/*.go' ':!*_test.go'`.

@@ -26,14 +26,16 @@ func ProcessIdentity(build string) ownership.Identity {
 	return ownership.Identity{BootID: boot, PID: os.Getpid(), StartTicks: ticks, Build: build}
 }
 
-// TakeoverOptions are the controller's explicit launch inputs. PythonRelay is the
-// absolute path of the retained fence release's console script, the only locator the
-// controller uses for a Python candidate; nothing searches PATH or an install tree.
-// ReadyTimeout bounds the wait for readiness, which spans the candidate's recovery.
+// TakeoverOptions are the controller's explicit launch inputs. ReadyTimeout bounds the wait for
+// readiness, which spans the candidate's recovery. Until todo 44 they also carried the absolute
+// path of the retained fence release's console script, the only locator of a Python candidate;
+// no Python candidate is launched any more (decision 48).
 type TakeoverOptions struct {
-	PythonRelay  string
 	ReadyTimeout time.Duration
 }
+
+// NoPythonCandidate is why a transition toward a Python owner is refused before any durable edge.
+const NoPythonCandidate = "no Python candidate can be launched: the Python runtime left this repository in todo 44, so the way back to a Python owner is closed (decision 48); on a store whose cutover is committed, rollback_allowed=0 refuses it as well"
 
 // DefaultReadyTimeout is the controller's readiness bound when none is given. The
 // 20-second channel bound covers start validation and the activation exchange only.
@@ -79,7 +81,7 @@ func NewTakeover(ctx context.Context, selection store.StateSelection, socket, bu
 	}
 	// The existing authority, not a freshly created alternate scope, is used.
 	// A Python fence created in an isolated root must record that root's key.
-	return &ownership.Controller{Path: physical.RealPath, Socket: canonical, ScopeKey: s.Scope.Key(canonical), ScopeLock: s.Scope.path(canonical, ".lock"), Identity: ProcessIdentity(""), Runtime: &takeoverRuntime{s, build, options}, ValidateSchema: store.ValidateOwnershipSchema, ValidateInbox: inbox.Check, PrepareScope: s.Scope.Prepare}, nil
+	return &ownership.Controller{Path: physical.RealPath, Socket: canonical, ScopeKey: s.Scope.Key(canonical), ScopeLock: s.Scope.path(canonical, ".lock"), Identity: ProcessIdentity(""), Runtime: &takeoverRuntime{service: s, build: build, options: options}, ValidateSchema: store.ValidateOwnershipSchema, ValidateInbox: inbox.Check, PrepareScope: s.Scope.Prepare}, nil
 }
 
 // absentMirrorStamp is the durable stamp of a store whose mirror is absent (ENOENT, not
@@ -95,18 +97,20 @@ type takeoverRuntime struct {
 	service *Service
 	build   string
 	options TakeoverOptions
+	// command is the candidate's command line; nil is candidate, the one the product runs. A test
+	// stands a silent command in for it to reach the readiness bound.
+	command func(ownership.Record) (*exec.Cmd, string, error)
 }
 
-// Preflight checks what the candidate of the given runtime needs before any durable
-// edge: the retained Python entry point, the service intent (both candidates are the
+// Preflight checks what the candidate needs before any durable edge: that it is the Go
+// candidate (a Python one is refused, decision 48), the service intent (the candidate is the
 // service supervisor) and a launch declaration the candidate will not refuse.
 func (r *takeoverRuntime) Preflight(ctx context.Context, record ownership.Record, to string) error {
 	s := r.service
 	if to == "python" {
-		if err := r.pythonRelay(); err != nil {
-			return err
-		}
-	} else if _, err := store.RefuseLiveState(s.Selection.DBPath()); err != nil {
+		return &ownership.Refused{Detail: NoPythonCandidate}
+	}
+	if _, err := store.RefuseLiveState(s.Selection.DBPath()); err != nil {
 		return &ownership.Refused{Detail: "the Go candidate could not open this store: " + err.Error()}
 	}
 	if !truth(get(s.Intent(), "enabled")) {
@@ -117,35 +121,18 @@ func (r *takeoverRuntime) Preflight(ctx context.Context, record ownership.Record
 	}
 	return ctx.Err()
 }
-func (r *takeoverRuntime) pythonRelay() error {
-	path := r.options.PythonRelay
-	if path == "" {
-		return &ownership.Refused{Detail: "a Python candidate requires --python-relay <absolute path of the retained fence release's codex-session-relay>"}
-	}
-	if !filepath.IsAbs(path) {
-		return &ownership.Refused{Detail: "--python-relay must be an absolute path: " + path}
-	}
-	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() || unix.Access(path, unix.X_OK) != nil {
-		return &ownership.Refused{Detail: "--python-relay is not an executable file: " + path}
-	}
-	return nil
-}
 
-// candidate is the frozen candidate argv of either runtime (decision 28): the service
-// supervisor, `service run --takeover-candidate`, executed directly so its pid is the
-// reply pid and its parent is this controller. It returns the build its readiness
-// identity must carry.
+// candidate is the frozen candidate argv (decision 28): the service supervisor,
+// `service run --takeover-candidate`, executed directly so its pid is the reply pid and its
+// parent is this controller. It returns the build its readiness identity must carry. A record
+// naming a Python owner asks for the Python candidate, which is refused (decision 48).
 func (r *takeoverRuntime) candidate(record ownership.Record) (*exec.Cmd, string, error) {
 	args := []string{"--state", r.service.Selection.Path, "--socket", r.service.Socket, "service", "run", "--takeover-candidate"}
 	if r.service.Scope.Authority == "isolated" {
 		args = append(args, "--allow-isolated-scope")
 	}
 	if record.Owner == "python" {
-		if err := r.pythonRelay(); err != nil {
-			return nil, "", err
-		}
-		// Rollback step 4: the running Python build must equal python_compatibility_build.
-		return exec.Command(r.options.PythonRelay, args...), record.PythonCompatibilityBuild, nil
+		return nil, "", &ownership.Refused{Detail: NoPythonCandidate}
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -310,7 +297,11 @@ type launchedCandidate struct {
 }
 
 func (r *takeoverRuntime) Start(ctx context.Context, record ownership.Record) (ownership.CandidateProcess, error) {
-	cmd, build, err := r.candidate(record)
+	command := r.command
+	if command == nil {
+		command = r.candidate
+	}
+	cmd, build, err := command(record)
 	if err != nil {
 		return nil, err
 	}

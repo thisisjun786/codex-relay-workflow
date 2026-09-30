@@ -750,11 +750,12 @@ func ownerMarkers(home string) string {
 
 // Audit findings 0, 3, 4, 8, 11, 13, 17, 19, 32, 55 (decisions D1, D6): the todo-42
 // sequence on one physical store. Go activates as the service supervisor over the store the
-// retained Python fence owned, and a rollback without a Python locator is refused while Go
-// serves. The rest of the sequence, a Python client queueing under the Go owner, the retained
-// Python fence build activated as the Go controller's own candidate at epoch 3 and Go taking the
-// store back at epoch 4, ran here until todo 44: rollback to Python closed at todo 43
-// (rollback_allowed=0), and the Python runtime leaves in todo 44.
+// retained Python fence owned, and a rollback toward Python is refused while Go serves: no
+// Python candidate can be launched since todo 44 (decision 48). The rest of the sequence, a
+// Python client queueing under the Go owner, the retained Python fence build activated as the
+// Go controller's own candidate at epoch 3 and Go taking the store back at epoch 4, ran here
+// until todo 44: rollback to Python closed at todo 43 (rollback_allowed=0), and the Python
+// runtime left in todo 44.
 func Test30TakeoverBuiltCLI(t *testing.T) {
 	home := seedTakeover(t)
 	before, err := ownership.Physical(home + "/state/relay.sqlite3")
@@ -778,10 +779,13 @@ func Test30TakeoverBuiltCLI(t *testing.T) {
 		}
 	}
 	activeHolder(t, home, "dev")
-	// No locator: refused before the reverse CAS, while Go still owns and serves.
-	result, code := takeoverCLI(t, home, "rollback", "--to", "python")
-	if code != 2 || result["reason"] != "store_owned_by_other" || !strings.Contains(text(result["detail"]), "--python-relay") {
-		t.Fatalf("rollback without a Python locator: %d %+v", code, result)
+	// Refused before the reverse CAS, while Go still owns and serves, with or without the
+	// retained option naming a locator.
+	for _, extra := range [][]string{nil, {"--python-relay", home + "/never-started-relay"}} {
+		result, code := takeoverCLI(t, home, append([]string{"rollback", "--to", "python"}, extra...)...)
+		if code != 2 || result["reason"] != "store_owned_by_other" || text(result["detail"]) != NoPythonCandidate {
+			t.Fatalf("rollback toward Python %v: %d %+v", extra, code, result)
+		}
 	}
 	status, code := takeoverCLI(t, home, "status", "--json")
 	if code != 0 || status["owner"] != "go" || status["phase"] != "active" || status["epoch"] != float64(2) {
@@ -1297,35 +1301,17 @@ func Test30AbortAndFailedCandidateBuiltCLI(t *testing.T) {
 	if code != 2 || !strings.Contains(text(result["detail"]), "takeover activate") {
 		t.Fatalf("abort after the CAS: %d %+v", code, result)
 	}
-	// Review of decision D2: the reverse transfer from this failed candidate fails
-	// before its CAS (a busy daemon.lock), and abort returns it to starting, never to
-	// active: no Go candidate became ready, so no Go service may serve over the entry.
-	// The Python locator is never started; it only has to be an executable file.
-	relay := home + "/never-started-relay"
-	if err = os.WriteFile(relay, []byte("#!/bin/sh\nexit 99\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	lock, err := os.OpenFile(home+"/state/daemon.lock", os.O_RDWR|os.O_CREATE, 0600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
-		t.Fatal(err)
-	}
-	result, code = takeoverCLI(t, home, "rollback", "--to", "python", "--python-relay", relay)
-	if err = lock.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if code == 0 {
-		t.Fatalf("rollback past a busy daemon.lock: %+v", result)
+	// Review of decision D2: no reverse transfer leaves this failed candidate. Until todo 44 one
+	// toward the retained Python fence began, failed on a busy daemon.lock and was aborted back to
+	// starting; now it is refused before its CAS (decision 48), and the store stays starting,
+	// never active: no Go candidate became ready, so no Go service may serve over the entry.
+	result, code = takeoverCLI(t, home, "rollback", "--to", "python", "--python-relay", home+"/never-started-relay")
+	if code != 2 || text(result["detail"]) != NoPythonCandidate {
+		t.Fatalf("rollback from a failed candidate: %d %+v", code, result)
 	}
 	status, code = takeoverCLI(t, home, "status", "--json")
-	if code != 0 || status["owner"] != "go" || status["phase"] != "draining" || status["epoch"] != float64(2) {
+	if code != 0 || status["owner"] != "go" || status["phase"] != "starting" || status["epoch"] != float64(2) || status["holder"] != nil || status["jsonStale"] != false {
 		t.Fatal(code, status)
-	}
-	result, code = takeoverCLI(t, home, "abort")
-	if code != 0 || result["owner"] != "go" || result["phase"] != "starting" || result["epoch"] != float64(2) || result["holder"] != nil || result["jsonStale"] != false {
-		t.Fatalf("abort of the reverse begin: %d %+v", code, result)
 	}
 	start := exec.Command(testBinary, "relay", "--state", home+"/state", "--socket", home+"/socket", "service", "start", "--allow-isolated-scope")
 	start.Env = environment(home)
@@ -1543,32 +1529,31 @@ func Test30CommitRefusesOverQueuedInboxEntries(t *testing.T) {
 }
 
 // Audit finding 31: the controller bounds readiness, which spans recovery, by its own
-// --ready-timeout rather than the 20-second channel bound. A retained entry point that
-// never answers is given up on at that bound and ownership stays starting.
+// --ready-timeout rather than the 20-second channel bound. A candidate that never answers is
+// given up on at that bound and ownership stays starting. Until todo 44 the silent candidate was
+// a retained Python entry point a rollback launched; a Python candidate is refused now (decision
+// 48), so the controller runs in process here, with a silent command standing in for the Go
+// candidate of an activation. The launch options' own checks stay on the built CLI.
 func Test30ReadyTimeoutBoundsSilentCandidate(t *testing.T) {
 	home := seedTakeover(t)
+	// Proactive sweep: a malformed bound and misplaced options are refused as usage before any
+	// durable edge, and a locator for the retained Python candidate, whatever it names, is refused
+	// as a transition toward Python (decision 48); Go keeps serving.
 	for _, args := range [][]string{{"begin", "--to", "go"}, {"drain"}, {"transfer"}, {"activate"}} {
 		if result, code := takeoverCLI(t, home, args...); code != 0 {
 			t.Fatalf("%v: %d %+v", args, code, result)
 		}
 	}
-	silent := home + "/silent-relay"
-	// It reads the channel and never answers; the controller's close ends it at once.
-	if err := os.WriteFile(silent, []byte("#!/bin/sh\nexec cat <&3 >/dev/null\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	// Proactive sweep: a locator that is missing, a directory or not executable, and a
-	// malformed bound are refused before any durable edge; Go keeps serving.
 	if err := os.WriteFile(home+"/plain-file", nil, 0600); err != nil {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{{"--python-relay", home + "/missing"}, {"--python-relay", home}, {"--python-relay", home + "/plain-file"}} {
-		if result, code := takeoverCLI(t, home, append([]string{"rollback", "--to", "python"}, args...)...); code != 2 || !strings.Contains(text(result["detail"]), "--python-relay") {
+		if result, code := takeoverCLI(t, home, append([]string{"rollback", "--to", "python"}, args...)...); code != 2 || text(result["detail"]) != NoPythonCandidate {
 			t.Fatalf("%v: %d %+v", args, code, result)
 		}
 	}
 	for _, bound := range []string{"0", "-1", "nan", "inf", "soon", "1e300"} {
-		if result, code := takeoverCLI(t, home, "rollback", "--to", "python", "--python-relay", silent, "--ready-timeout", bound); code != 4 {
+		if result, code := takeoverCLI(t, home, "rollback", "--to", "python", "--ready-timeout", bound); code != 4 {
 			t.Fatalf("--ready-timeout %s: %d %+v", bound, code, result)
 		}
 	}
@@ -1577,23 +1562,56 @@ func Test30ReadyTimeoutBoundsSilentCandidate(t *testing.T) {
 			t.Fatalf("%v: %d %+v", args, code, result)
 		}
 	}
+	if result, code := takeoverCLI(t, home, "status", "--ready-timeout", "1"); code != 4 {
+		t.Fatalf("--ready-timeout accepted outside activate and rollback: %d %+v", code, result)
+	}
+	if result, code := takeoverCLI(t, home, "activate", "--python-relay", "relative/relay"); code != 4 {
+		t.Fatalf("relative --python-relay accepted: %d %+v", code, result)
+	}
 	if status, code := takeoverCLI(t, home, "status", "--json"); code != 0 || status["owner"] != "go" || status["phase"] != "active" || status["epoch"] != float64(2) {
 		t.Fatal(code, status)
 	}
+
+	// The bound itself, on a second store: an activation whose candidate reads the channel and
+	// never answers is given up on at --ready-timeout, not the step bound.
+	home = seedTakeover(t)
+	for _, args := range [][]string{{"begin", "--to", "go"}, {"drain"}, {"transfer"}} {
+		if result, code := takeoverCLI(t, home, args...); code != 0 {
+			t.Fatalf("%v: %d %+v", args, code, result)
+		}
+	}
+	for _, kv := range environment(home) {
+		if key, value, ok := strings.Cut(kv, "="); ok && key != "" && os.Getenv(key) != value {
+			t.Setenv(key, value)
+		}
+	}
+	selection, err := store.ResolveStateDir(home+"/state", home+"/socket")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := NewTakeover(t.Context(), selection, home+"/socket", "test-build", TakeoverOptions{ReadyTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	silent := home + "/silent-candidate"
+	// It reads the channel and never answers; the controller's close ends it at once.
+	if err := os.WriteFile(silent, []byte("#!/bin/sh\nexec cat <&3 >/dev/null\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	c.Runtime.(*takeoverRuntime).command = func(ownership.Record) (*exec.Cmd, string, error) {
+		return exec.Command(silent), "test-build", nil
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
 	started := time.Now()
-	result, code := takeoverCLI(t, home, "rollback", "--to", "python", "--python-relay", silent, "--ready-timeout", "1")
-	if code == 0 || time.Since(started) > 12*time.Second {
-		t.Fatalf("silent candidate: %d after %s %+v", code, time.Since(started), result)
+	err = c.Activate(ctx)
+	if err == nil || time.Since(started) > 12*time.Second || !strings.Contains(err.Error(), "candidate gave no readiness") {
+		t.Fatalf("silent candidate: %v after %s", err, time.Since(started))
 	}
+	t.Logf("silent candidate given up on after %s: %v", time.Since(started), err)
 	status, code := takeoverCLI(t, home, "status", "--json")
-	if code != 0 || status["owner"] != "python" || status["phase"] != "starting" || status["holder"] != nil {
+	if code != 0 || status["owner"] != "go" || status["phase"] != "starting" || status["holder"] != nil {
 		t.Fatal(code, status)
-	}
-	if result, code = takeoverCLI(t, home, "status", "--ready-timeout", "1"); code != 4 {
-		t.Fatalf("--ready-timeout accepted outside activate and rollback: %d %+v", code, result)
-	}
-	if result, code = takeoverCLI(t, home, "activate", "--python-relay", "relative/relay"); code != 4 {
-		t.Fatalf("relative --python-relay accepted: %d %+v", code, result)
 	}
 }
 
