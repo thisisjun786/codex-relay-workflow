@@ -77,8 +77,13 @@ func readOnlyFixture(t *testing.T, dir string) (db string, forms []json.RawMessa
 
 // execute is one answer of a program: its exit status and output. Safe off the test goroutine.
 func execute(program string, argv ...string) (run, error) {
+	return executeWith(nil, program, argv...)
+}
+
+// executeWith is execute with extra environment entries, which win over the inherited ones.
+func executeWith(extra []string, program string, argv ...string) (run, error) {
 	command := exec.Command(program, argv...)
-	command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
+	command.Env = append(append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1"), extra...)
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	code := 0
@@ -105,13 +110,20 @@ func binaryRun(t *testing.T, alias string, argv ...string) run {
 var (
 	isoInstant   = regexp.MustCompile(`"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?\+00:00)"`)
 	installation = regexp.MustCompile(`"installationId": "[0-9a-f]+"`)
+	// observedInstant is a field a read form stamps with the moment it ran: merge-evidence's
+	// observation window and base verification, and the reporting forms' observation.
+	observedInstant = regexp.MustCompile(`"(startedAt|finishedAt|baseVerifiedAt|observedAt)": "\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?\+00:00"`)
 )
 
 // comparable masks what two processes a moment apart legitimately answer differently: the
-// wall-clock instant each one observed, and the installation identity of each program.
+// wall-clock instant each one observed, and the installation identity of each program. The
+// Python answers are recordings, so their run-time instants are the recording's time: the
+// fields a read form stamps with the moment it ran are masked by name, however old the
+// recording, and any other instant within a day of now is masked as the moment of this run.
 func comparable(command, stdout string) (string, error) {
 	now := time.Now()
-	masked := isoInstant.ReplaceAllStringFunc(stdout, func(quoted string) string {
+	masked := observedInstant.ReplaceAllString(stdout, `"$1": "<now>"`)
+	masked = isoInstant.ReplaceAllStringFunc(masked, func(quoted string) string {
 		instant, err := time.Parse("2006-01-02T15:04:05.999999-07:00", strings.Trim(quoted, `"`))
 		if err == nil && instant.Sub(now).Abs() < 24*time.Hour {
 			return `"<now>"`
@@ -199,6 +211,22 @@ func storeFiles(dir string) (map[string][32]byte, error) {
 	return files, nil
 }
 
+// unauthenticatedGH is a PATH entry whose gh answers as the gh on the host that recorded the
+// Python answers did: unauthenticated, exit 4, with the help that names gh auth login. The only
+// gh call a read form makes (merge-evidence's first read) fails there, and the recorded answer
+// quotes that message, so the Go side meets the same gh rather than this host's, whose message
+// depends on where it runs (a GitHub Actions runner's names GH_TOKEN for workflows) and which,
+// authenticated, would reach the network.
+func unauthenticatedGH(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\nprintf 'To get started with GitHub CLI, please run:  gh auth login\\nAlternatively, populate the GH_TOKEN environment variable with a GitHub API authentication token.\\n' >&2\nexit 4\n"
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return "PATH=" + dir + string(os.PathListSeparator) + os.Getenv("PATH")
+}
+
 // Every read form of test_fence_readonly.py's READ_FORMS, through the built binary, answers
 // what the real Python CLI answers for the same copy of one populated store, whoever owns it
 // and whatever phase it is in (cli.py:185-205, cutover.md Read-only clients). Where Go may
@@ -206,6 +234,7 @@ func storeFiles(dir string) (map[string][32]byte, error) {
 // the Go reads change no byte of the store.
 func TestReadOnlyForms_match_python_in_every_ownership_state(t *testing.T) {
 	home := pythonHome(t)
+	recordedGH := unauthenticatedGH(t)
 	_, alias := packageBinary(t)
 	var built struct {
 		DB    string
@@ -274,7 +303,7 @@ func TestReadOnlyForms_match_python_in_every_ownership_state(t *testing.T) {
 					fail("%v", err)
 					return
 				}
-				got, err := execute(alias, argv...)
+				got, err := executeWith([]string{recordedGH}, alias, argv...)
 				if err != nil {
 					fail("%v", err)
 					return
