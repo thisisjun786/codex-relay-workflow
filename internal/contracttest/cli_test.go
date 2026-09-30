@@ -83,14 +83,14 @@ func TestCLIRunner_reads_sqlite_rows_and_file_observations(t *testing.T) {
 	}
 }
 
-func TestCLIRunner_reports_an_unregistered_relay_command_as_not_ported(t *testing.T) {
-	// Given: a command the Go relay does not register yet.
+func TestCLIRunner_refuses_a_fixture_naming_no_relay_command(t *testing.T) {
+	// Given: a command the relay does not register.
 	scenario := scenarioFrom(t, `{"run":{"kind":"cli","argv":["no-such-command"]},"expect":{"exit":0}}`)
 	// When
 	_, err := runCLI(t, scenario)
-	// Then: a counted skip, never a run against the usage path.
-	if !errors.Is(err, ErrNotPorted) {
-		t.Fatalf("want ErrNotPorted, got %v", err)
+	// Then: a corpus defect, never a run against the usage path.
+	if !errors.Is(err, ErrFixture) {
+		t.Fatalf("want ErrFixture, got %v", err)
 	}
 }
 

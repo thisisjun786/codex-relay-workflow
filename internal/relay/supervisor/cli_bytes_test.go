@@ -23,7 +23,7 @@ func Test24BuiltBinaryRoundtripStoreBytes(t *testing.T) {
 	state := filepath.Join(root, "tree", "state")
 	id := py.Tables["supervisor_messages"][0]["message_id"].(string)
 	event := py.Tables["supervisor_messages"][0]["event_id"].(string)
-	binary := supervisorBinary(t)
+	binary := testsupport.CRW(t)
 	repo, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +89,7 @@ func Test24BuiltBinaryEmbeddedProgramParityAndExecution(t *testing.T) {
 	if err = s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	built := supervisorBinary(t)
+	built := testsupport.CRWAt(t, filepath.Join(t.TempDir(), "crw"))
 	alias := filepath.Join(filepath.Dir(built), "codex-session-relay")
 	if err = os.Symlink(built, alias); err != nil {
 		t.Fatal(err)

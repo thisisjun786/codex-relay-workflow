@@ -9,47 +9,52 @@ VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 SOURCE_TREE := $(shell test -z "$$(git status --porcelain 2>/dev/null)" && git rev-parse 'HEAD^{tree}' 2>/dev/null)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X github.com/thisisjun786/codex-relay-workflow/internal/runtime/record.sourceTree=$(SOURCE_TREE)
 STATICCHECK := $(GO) run honnef.co/go/tools/cmd/staticcheck
-# Per-package test binary budget. internal/relay/delivery drove its Python oracle serially and
-# took about 450-500 s on eight CPUs, most of go test's 10m default; since todo 44 it replays
-# recorded answers, and the budget stays until the suite is measured again (CRW-241). In CI each
-# leg's job timeout still bounds a hang.
-TEST_TIMEOUT := -timeout 20m
+# Per-package test binary budget, go test's default. The slowest package, internal/relay/delivery,
+# took 190-235 s on four CPUs in wave R1 (it needed 20m while it drove a live Python oracle,
+# before todo 44). Its fixed /tmp/crw-delivery-parity trees are locked per process, so two
+# checkouts testing delivery at once on one machine wait for each other.
+TEST_TIMEOUT := -timeout 10m
+# The one crw every package's tests run (internal/testsupport CRW): built once per `make test`
+# or part, release-shaped (-trimpath), instead of once or more in each package that runs it.
+TEST_BINARY := $(CURDIR)/dist/test/crw
+TEST_ENV := CRW_TEST_BINARY=$(TEST_BINARY)
 
-.PHONY: build test test-part contract lint dist crw-dev
+.PHONY: build test test-binary test-part lint dist crw-dev
 
 build:
 	@if ! $(GO) list ./... 2>/dev/null | grep -q .; then echo "no Go packages yet: build skipped"; else $(GO) build -o $(BINARY) -trimpath -ldflags="$(LDFLAGS)" ./cmd/crw; fi
 
-test:
-	@if ! $(GO) list ./... 2>/dev/null | grep -q .; then echo "no Go packages yet: test skipped"; else $(GO) test $(TEST_TIMEOUT) ./... && $(GO) test $(TEST_TIMEOUT) -tags dev ./cmd/crw-dev/... ./internal/dev/...; fi
+test: test-binary
+	$(TEST_ENV) $(GO) test $(TEST_TIMEOUT) ./... && $(TEST_ENV) $(GO) test $(TEST_TIMEOUT) -tags dev ./cmd/crw-dev/... ./internal/dev/...
+
+test-binary:
+	$(GO) build -trimpath -o $(TEST_BINARY) ./cmd/crw
 
 # CI runs `make test` as parallel parts, one runner each (.github/workflows/ci.yml).
-# Parts 1-5 name the slowest packages; `rest` is every other package plus the dev-tagged
+# Parts 1-4 name the slowest packages; `rest` is every other package plus the dev-tagged
 # tests, so the parts are disjoint, together equal `make test`, and a new package always
 # lands in `rest`. A renamed package makes its part fail in `go list`, never skip.
-# The Stop-hook package has wall-clock budgets, so it shares its runner only with light
-# packages (part 5).
-TEST_PART_1 := ./internal/relay/faults ./internal/relay/sync
-TEST_PART_2 := ./internal/contracttest ./internal/relay/store ./internal/relay/mergeturn
-TEST_PART_3 := ./internal/relay/delivery ./internal/relay/cli ./internal/relay/registry
-TEST_PART_4 := ./internal/relay/supervisor ./internal/relay/service ./internal/relay/managed
-TEST_PART_5 := ./internal/relay/hook ./internal/relay/linkage ./internal/relay/evidence
-TEST_PARTS := $(TEST_PART_1) $(TEST_PART_2) $(TEST_PART_3) $(TEST_PART_4) $(TEST_PART_5)
+# Balanced on wave R1's times on four CPUs, a part's packages running together: delivery
+# (190-235 s) sets the critical path with cli beside it; supervisor and registry (110-170 s)
+# share a runner; part 3's six packages take 25-165 s. The Stop-hook package has wall-clock
+# budgets, so it shares its runner only with light packages (part 4).
+TEST_PART_1 := ./internal/relay/delivery ./internal/relay/cli
+TEST_PART_2 := ./internal/relay/supervisor ./internal/relay/registry
+TEST_PART_3 := ./internal/contracttest ./internal/relay/store ./internal/relay/mergeturn ./internal/relay/service ./internal/relay/sync ./internal/relay/faults
+TEST_PART_4 := ./internal/relay/hook ./internal/relay/linkage ./internal/relay/evidence ./internal/relay/managed
+TEST_PARTS := $(TEST_PART_1) $(TEST_PART_2) $(TEST_PART_3) $(TEST_PART_4)
 
-test-part:
+test-part: test-binary
 ifeq ($(TEST_PART),rest)
 	@set -e; named="$$($(GO) list $(TEST_PARTS))"; \
 	rest="$$($(GO) list ./... | grep -vxF "$$named")"; \
-	$(GO) test $(TEST_TIMEOUT) $$rest; \
-	$(GO) test $(TEST_TIMEOUT) -tags dev ./cmd/crw-dev/... ./internal/dev/...
-else ifneq ($(filter $(TEST_PART),1 2 3 4 5),)
-	$(GO) test $(TEST_TIMEOUT) $(TEST_PART_$(TEST_PART))
+	$(TEST_ENV) $(GO) test $(TEST_TIMEOUT) $$rest; \
+	$(TEST_ENV) $(GO) test $(TEST_TIMEOUT) -tags dev ./cmd/crw-dev/... ./internal/dev/...
+else ifneq ($(filter $(TEST_PART),1 2 3 4),)
+	$(TEST_ENV) $(GO) test $(TEST_TIMEOUT) $(TEST_PART_$(TEST_PART))
 else
-	$(error TEST_PART must be 1, 2, 3, 4, 5 or rest)
+	$(error TEST_PART must be 1, 2, 3, 4 or rest)
 endif
-
-contract:
-	@if [ ! -d ./internal/contracttest ] || ! $(GO) list ./internal/contracttest/... 2>/dev/null | grep -q .; then echo "no Go packages yet: contract skipped"; else $(GO) test ./internal/contracttest/...; fi
 
 # The development tooling (cmd/crw-dev, internal/dev) builds only with -tags dev, so lint and
 # test cover it in a second pass; dist and goreleaser never pass the tag. The isolated-home

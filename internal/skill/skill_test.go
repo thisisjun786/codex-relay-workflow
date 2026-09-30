@@ -21,14 +21,6 @@ func call(args []string, input string) (int, string, string) {
 	code := Run(args, strings.NewReader(input), &out, &err)
 	return code, out.String(), err.String()
 }
-func TestSkillFixtureReplays(t *testing.T) {
-	for _, args := range [][]string{{"hook-probe", "replay"}, {"parent-title", "replay"}, {"start-policy", "selftest"}} {
-		code, out, err := call(args, "")
-		if code != 0 {
-			t.Fatalf("%v: %d\n%s\n%s", args, code, out, err)
-		}
-	}
-}
 
 // The shipped fixtures keep changing, so the replays over them are held to what the fixtures
 // themselves say rather than to a recorded Python answer: every decision fixture matches, every

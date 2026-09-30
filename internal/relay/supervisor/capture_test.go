@@ -3,13 +3,13 @@ package supervisor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
-	"sync"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -23,13 +23,6 @@ type supervisorCapture struct {
 	Tables   map[string][]map[string]any `json:"tables"`
 }
 
-var (
-	supervisorBinaryOnce sync.Once
-	supervisorBinaryPath string
-	supervisorBinaryDir  string
-	supervisorBinaryErr  error
-)
-
 func TestMain(m *testing.M) {
 	cleanup, err := testsupport.IsolateRelayState()
 	if err != nil {
@@ -37,15 +30,9 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	code := m.Run()
-	if err := cleanup(); err != nil {
+	if err := errors.Join(cleanup(), testsupport.RemoveCRW()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		code = 1
-	}
-	if supervisorBinaryDir != "" {
-		if err := os.RemoveAll(supervisorBinaryDir); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			code = 1
-		}
 	}
 	os.Exit(code)
 }

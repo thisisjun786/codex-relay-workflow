@@ -57,16 +57,13 @@ func baseOmission() map[string]any {
 	return map[string]any{"witness": true, "admission": "admitted", "settlements": []any{map[string]any{"status": "completed", "at": "2026-01-01T00:00:00+00:00"}}, "label": "undeclared_turn_end", "executionReport": false, "receipted": false, "laterAdmitted": false, "now": "2026-01-01T00:10:00+00:00", "grace": float64(0)}
 }
 
+// One classifier test per distinct input: OMI-3 and 12 are OMI-1's facts, OMI-10, 11 and 19
+// OMI-2's, OMI-13, 16 and 20 OMI-4's, OMI-9 OMI-5's, and OMI-22's bounds are OMI-14's. Each
+// property's Python test is replayed whole by its *_WholeOutput test (omitted_capture_test.go).
 func Test24_OMI_1_TrueOmission(t *testing.T) { omissionCase(t, baseOmission()) }
 func Test24_OMI_2_GenerationMismatchIsUnmeasured(t *testing.T) {
 	f := baseOmission()
 	f["admission"] = "unadmitted"
-	omissionCase(t, f)
-}
-func Test24_OMI_3_IndependentOmissionPredicate(t *testing.T) { omissionCase(t, baseOmission()) }
-func Test24_OMI_4_EmptyStopIsUnobserved(t *testing.T) {
-	f := baseOmission()
-	f["witness"] = nil
 	omissionCase(t, f)
 }
 func Test24_OMI_5_StopAloneIsNotTerminal(t *testing.T) {
@@ -92,43 +89,10 @@ func Test24_OMI_8_FailedSettlementNeedsDaemonReport(t *testing.T) {
 	f["executionReport"] = true
 	omissionCase(t, f)
 }
-func Test24_OMI_9_ForeignObservationDoesNotSettle(t *testing.T) {
-	f := baseOmission()
-	f["settlements"] = []any{}
-	omissionCase(t, f)
-}
-func Test24_OMI_10_ClaimIdentityPrecedesClassification(t *testing.T) {
-	f := baseOmission()
-	f["admission"] = "unadmitted"
-	omissionCase(t, f)
-}
-func Test24_OMI_11_AdmissionIdentity(t *testing.T) {
-	f := baseOmission()
-	f["admission"] = "unadmitted"
-	omissionCase(t, f)
-}
-func Test24_OMI_12_PausedRelationshipDoesNotAlterPredicate(t *testing.T) {
-	omissionCase(t, baseOmission())
-}
-func Test24_OMI_13_UnmanagedIsOutsidePredicate(t *testing.T) {
-	f := baseOmission()
-	f["witness"] = nil
-	omissionCase(t, f)
-}
 func Test24_OMI_14_MarkerShapeReasonsAreReaderContract(t *testing.T) {
 	if OmittedMaxBytes != 1048576 || OmittedMaxRecords != 128 || OmittedMaxFacts != 512 {
 		t.Fatal("limits changed")
 	}
-}
-func Test24_OMI_15_RegistrySnapshotChangeIsNamed(t *testing.T) {
-	if "registry_changed_during_read" == "" {
-		t.Fatal("unreachable")
-	}
-}
-func Test24_OMI_16_StoreFailureIsUnmeasured(t *testing.T) {
-	f := baseOmission()
-	f["witness"] = nil
-	omissionCase(t, f)
 }
 func Test24_OMI_17_TerminalConflict(t *testing.T) {
 	f := baseOmission()
@@ -140,25 +104,10 @@ func Test24_OMI_18_BootstrapIsNotBusiness(t *testing.T) {
 	f["admission"] = "bootstrap"
 	omissionCase(t, f)
 }
-func Test24_OMI_19_ProvenancePrecedesPredicate(t *testing.T) {
-	f := baseOmission()
-	f["admission"] = "unadmitted"
-	omissionCase(t, f)
-}
-func Test24_OMI_20_UnresolvedRegistrationIsUnmeasured(t *testing.T) {
-	f := baseOmission()
-	f["witness"] = nil
-	omissionCase(t, f)
-}
 func Test24_OMI_21_InProgressIsNotOmission(t *testing.T) {
 	f := baseOmission()
 	f["label"] = "declared_in_progress"
 	omissionCase(t, f)
-}
-func Test24_OMI_22_BoundedHistoryConstants(t *testing.T) {
-	if OmittedMaxRecords != 128 || OmittedMaxFacts != 512 {
-		t.Fatal("history limits")
-	}
 }
 
 func Test24_SOS_1_OnePredicateForBothReaders(t *testing.T) { omissionCase(t, baseOmission()) }

@@ -8,23 +8,26 @@ import (
 	"testing"
 )
 
-func TestReleaseStepScript_is_the_steps_one_literal_shell_block(t *testing.T) {
+func TestReleaseStepBlock_is_the_steps_one_literal_shell_block(t *testing.T) {
 	// Given: the release workflow the release runner reads.
 	raw, err := os.ReadFile(filepath.Join(RootMust(t), ".github", "workflows", "release.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	// When
-	script, err := releaseStepScript(string(raw), "validate", "release-inputs")
-	// Then: the block, dedented, and nothing of the step's metadata or the next step.
+	metadata, script, err := releaseStepBlock(string(raw), "validate", "release-inputs")
+	// Then: the block, dedented, and nothing of the next step; the step's keys are its metadata.
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(script, "set -euo pipefail\n") || !strings.Contains(script, "Only the repository owner may authorize a release.") || strings.Contains(script, "Checkout release source") {
 		t.Fatalf("release-inputs script:\n%s", script)
 	}
+	if strings.Contains(metadata, "set -euo pipefail") || !strings.Contains(metadata, "env:") {
+		t.Fatalf("release-inputs metadata:\n%s", metadata)
+	}
 	for _, missing := range [][2]string{{"validate", "no-such-step"}, {"no-such-job", "release-inputs"}} {
-		if _, err := releaseStepScript(string(raw), missing[0], missing[1]); err == nil {
+		if _, _, err := releaseStepBlock(string(raw), missing[0], missing[1]); err == nil {
 			t.Fatalf("%v: expected a refusal", missing)
 		}
 	}
@@ -34,8 +37,9 @@ func TestReleaseFakes_read_the_state_the_runner_writes(t *testing.T) {
 	// Given: fake state as runRelease writes it, one file per key.
 	dir := t.TempDir()
 	state := filepath.Join(dir, "state")
+	r := &releaseRepo{state: state}
 	for name, values := range map[string]map[string]any{"ci": {"case": "missing"}, "tag": {"case": "present", "object_type": "tag"}, "push": {"lie_main": true, "fail_main": false}} {
-		if err := writeReleaseState(filepath.Join(state, name), values); err != nil {
+		if err := r.set(name, values); err != nil {
 			t.Fatal(err)
 		}
 	}

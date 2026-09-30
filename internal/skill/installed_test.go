@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 type skillProcessResult struct {
@@ -35,12 +36,7 @@ func captureSkillProcess(t testing.TB, command *exec.Cmd) skillProcessResult {
 func TestSkillInstalledOutsideCheckout(t *testing.T) {
 	// Given an installed, release-shaped binary and a cwd without any checkout.
 	dir := t.TempDir()
-	binary := filepath.Join(dir, "crw")
-	build := exec.Command("go", "build", "-trimpath", "-o", binary, "./cmd/crw")
-	build.Dir = repositoryRoot()
-	if result := captureSkillProcess(t, build); result.exit != 0 {
-		t.Fatalf("build failed: %+v", result)
-	}
+	binary := testsupport.CRW(t)
 	for _, test := range []struct {
 		name     string
 		args     []string

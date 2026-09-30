@@ -3225,3 +3225,58 @@ Why: a switch with one allowed value only adds a way to fail; no skill, document
 passes `--adapter` or `--event`, and every one that passes `--owner` passes `plugin`.
 
 Evidence: `internal/runtime/install/cli.go`, `hook.go`; `TestHookAndRegisterMCPNeedNoSingleValueSwitch`.
+
+## 70. The Stop hook's final row is bounded by the 5 s deadline, not a shortened budget
+
+Decision: a `timeoutSeconds` below 5 still shortens every wait of the native Stop hook (the
+input, the identity scan, the dial and the guard allocation, decision 32), but no longer the
+final journal row and ledger outcome that record how the invocation ended. That bookkeeping is
+bounded by the unshortened absolute deadline, 5 s after process entry. With the default budget
+(5 s, which `crw install hook` writes) the two deadlines are the same and nothing changes.
+
+Why: the bookkeeping reserve inside a shortened budget is at most 100 ms. A guard that used its
+whole allocation expires at the reserve's start, and a host that leaves the process unscheduled
+past the reserve made the journal refuse the write (`ctx.Err()` before the create-once open) or
+`bounded` return before it, so the invocation left no row at all: the contract corpus's
+guard-timeout fixtures (`test_completion_hook__test_a_guard_that_never_answers_is_killed_and_the_turn_ends`,
+`test_adapter_agreement__test_a_runtime_past_its_budget_times_out_in_both__packaged`, both with a
+1 s budget) failed twice on loaded CI runners with `rows` empty. Python journals after a guard
+timeout without a deadline; decision 32's rule applies: time the process spent unscheduled says
+nothing about the host or the owner, so it must not remove the record. The row's content does not
+change, and the hook still prints nothing and exits 0 on this path.
+
+Cost: settings with a budget below 5 s and a journal on a hung filesystem hold the hook until
+5 s after entry instead of the shortened budget, still inside the host's 10 s.
+
+Evidence: internal/relay/hook/adapter.go (`bookkeeping`, used by `finish`, `recordFault` and the
+decision-22 pre-scan row); `Test33StalledPastTheBudgetKeepsTheTimedOutRow` in
+internal/relay/hook/stall_test.go stops the process from the guard request until 1.5 s later and
+fails without the change (no row). With every hook process of the two fixtures stopped for a
+random 50-450 ms, the pre-change binary failed 17 of 50 runs with exactly the CI signature and the
+changed one none of 50.
+
+## 71. CI runs every check on every event; `dev-gate` is a shell check of its prerequisites
+
+Decision: the `selection` job, `crw-dev ci scope` and `crw-dev ci gate` are removed, with their
+Python twins (`scripts/ci/scope.py`, `scripts/ci/gate.py`) and tests. Every CI job runs on every
+pull request, dev push and dispatch, and `dev-gate`, the one required check (its name is
+unchanged), needs every other job, runs `if: always()`, and passes only when every job it needs
+reports `success`; it still fails a pull request whose base is `main`. The job results reach its
+shell step as a file the step's own script writes from `toJSON(needs)`, never as an environment
+variable. The `tests` job, which ran the CI checks' Python twins' own tests, is removed too: its
+release cases are Go tests (R1D1), and the twins that stay (`plugin.py`, `validate.py`) are
+compared with their Go checks by `internal/dev/ci` in `make test` until todo 48. The dist leg's
+second `crw-dev ci plugin` run is removed; the validate job runs it once.
+
+Why: the Go product legs, the longest, always ran whatever changed, so path selection only ever
+skipped the Python tests job, and it put one job (and a `crw-dev` build in the gate) on every
+run's critical path. The selection's changed-path list travelled to the gate in `NEEDS_JSON`, one
+environment variable, so a pull request that changed about a thousand paths made the gate fail
+with "Argument list too long" before it judged anything. No consumer reads these commands: no
+skill, hook or wiring file names them; they are developer tools.
+
+Evidence: .github/workflows/ci.yml (`dev-gate`); internal/dev/ci/workflow_test.go
+(`TestWorkflow_the_gate_passes_only_when_every_prerequisite_succeeded` runs the step's script
+against written results, including a failed, cancelled and skipped job, unreadable results, a PR
+into main and a 240 KB result; the structural tests hold the needs list, `if: always()`, pinning,
+the legs and one run of each check); docs/CI.md.

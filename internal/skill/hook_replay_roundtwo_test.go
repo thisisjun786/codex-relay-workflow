@@ -9,7 +9,7 @@ import (
 
 func TestHookProbeUnreadableFixtureLivePython(t *testing.T) {
 	// Given a copied fixture whose permissions prohibit reads by this user.
-	binary := buildHookProbeCLI(t)
+	binary := recordedCRW(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "unreadable.json")
 	if err := os.WriteFile(path, []byte(`{"observation":{},"expected":{"state":"unmanaged"}}`), 0600); err != nil {

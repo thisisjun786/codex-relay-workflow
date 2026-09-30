@@ -351,7 +351,7 @@ func TestSweep24_ProjectCLIUsesGraceAndDeduplicatesCallerReading(t *testing.T) {
 				}
 				args = []string{"--observation", path}
 			}
-			binary := supervisorBinary(t)
+			binary := testsupport.CRW(t)
 			goCmd := exec.Command(binary, append([]string{"relay", "--state", filepath.Join(goFixture.root, "state"), "supervisor-stage", "--project", project}, args...)...)
 			goCmd.Env = append(os.Environ(), "HOME="+goFixture.root, "XDG_STATE_HOME="+goFixture.root, "CODEX_HOME="+goFixture.root)
 			goOut, goErr := goCmd.CombinedOutput()

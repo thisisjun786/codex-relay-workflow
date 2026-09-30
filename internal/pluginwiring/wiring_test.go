@@ -15,7 +15,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -36,7 +35,8 @@ var moduleRoot = func() string {
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 }()
 
-var buildDir string
+// linkDir holds the names the tests give the built crw (bridgeEntry).
+var linkDir string
 
 func TestMain(m *testing.M) {
 	cleanup, err := testsupport.IsolateRelayState()
@@ -44,41 +44,23 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	buildDir, err = os.MkdirTemp("", "crw-pluginwiring-")
+	linkDir, err = os.MkdirTemp("", "crw-pluginwiring-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 	code := m.Run()
-	if err := os.RemoveAll(buildDir); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		code = 1
-	}
-	if err := cleanup(); err != nil {
+	if err := errors.Join(os.RemoveAll(linkDir), cleanup(), testsupport.RemoveCRW()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		code = 1
 	}
 	os.Exit(code)
 }
 
-// crwBinary is the real multi-call binary, built once for every test here that runs it.
-var crwBinary = sync.OnceValues(func() (string, error) {
-	path := filepath.Join(buildDir, "crw")
-	cmd := exec.Command("go", "build", "-o", path, "./cmd/crw")
-	cmd.Dir = moduleRoot
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("go build: %w\n%s", err, out)
-	}
-	return path, nil
-})
-
+// builtCrw is the real multi-call binary (testsupport.CRW).
 func builtCrw(t *testing.T) string {
 	t.Helper()
-	path, err := crwBinary()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return path
+	return testsupport.CRW(t)
 }
 
 func repoRoot(*testing.T) string { return moduleRoot }

@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // The fixture runner also executes these inputs; this test pins the whole public JSON
@@ -19,14 +21,8 @@ func reportingCLIParity(t *testing.T, argv func(string) []string) (int, map[stri
 		t.Fatal(err)
 	}
 	binDir := t.TempDir()
-	binary := filepath.Join(binDir, "crw")
-	build := exec.Command("go", "build", "-o", binary, "./cmd/crw")
-	build.Dir = repo
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v %s", err, out)
-	}
 	relayBinary := filepath.Join(binDir, "codex-session-relay")
-	if err := os.Symlink(binary, relayBinary); err != nil {
+	if err := os.Symlink(testsupport.CRW(t), relayBinary); err != nil {
 		t.Fatal(err)
 	}
 	type answer struct {

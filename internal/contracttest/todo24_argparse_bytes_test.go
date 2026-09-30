@@ -77,12 +77,7 @@ func replaceArg(base []string, flag, value string) []string {
 // The Python side of the two Test24 tests is recorded (internal/testsupport/pyoracle).
 func Test24IntentDeclareSamePathMatchesLivePythonBytes(t *testing.T) {
 	root := todo24Root(t)
-	binary := filepath.Join(t.TempDir(), "codex-session-relay")
-	build := exec.Command("go", "build", "-o", binary, "./cmd/crw")
-	build.Dir = root
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, output)
-	}
+	binary := relayAlias(t)
 	home := t.TempDir()
 	marker, workspace, state := filepath.Join(home, "marker"), filepath.Join(home, "work"), filepath.Join(home, "state")
 	if err := os.MkdirAll(marker, 0700); err != nil {
@@ -116,12 +111,7 @@ func Test24IntentDeclareSamePathMatchesLivePythonBytes(t *testing.T) {
 
 func Test24Todo24ArgparseSweepMatchesLivePythonBytes(t *testing.T) {
 	root := todo24Root(t)
-	binary := filepath.Join(t.TempDir(), "codex-session-relay")
-	build := exec.Command("go", "build", "-o", binary, "./cmd/crw")
-	build.Dir = root
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, output)
-	}
+	binary := relayAlias(t)
 	type command struct {
 		name               string
 		base, abbreviation []string
@@ -170,4 +160,19 @@ func Test24Todo24ArgparseSweepMatchesLivePythonBytes(t *testing.T) {
 			})
 		}
 	}
+}
+
+// relayAlias is the crw under test spelled codex-session-relay, the name its argparse text
+// carries.
+func relayAlias(t *testing.T) string {
+	t.Helper()
+	built, err := crwBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "codex-session-relay")
+	if err := os.Symlink(built, alias); err != nil {
+		t.Fatal(err)
+	}
+	return alias
 }

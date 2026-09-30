@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# The release contract runner's fake gh (internal/contracttest/records.go:runRelease), taken from
-# scripts/ci/tests/fake_gh.sh. The one difference: the scripted state is one file per key,
+# The release workflow tests' fake gh (internal/contracttest/release.go), taken from the Python
+# tests' fake_gh.sh. The one difference: the scripted state is one file per key,
 # $GH_STATE/<fake>/<key>, read with cat, so no JSON parser (and no Python) is needed.
 printf '%s\n' "$*" >> "$GH_LOG"
 state_get() {

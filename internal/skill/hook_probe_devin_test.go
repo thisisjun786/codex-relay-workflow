@@ -21,18 +21,6 @@ type hookProbeResult struct {
 	stdout, stderr string
 }
 
-func buildHookProbeCLI(t *testing.T) string {
-	t.Helper()
-	binary := filepath.Join(t.TempDir(), "crw")
-	command := exec.Command("go", "build", "-trimpath", "-o", binary, "./cmd/crw")
-	command.Dir = repositoryRoot()
-	command.Env = oracleEnv("TMPDIR=/var/tmp")
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("build crw: %v\n%s", err, output)
-	}
-	return binary
-}
-
 // runHookProbePython answers what hook_probe.py answered for args (recorded; see
 // python_oracle_test.go).
 func runHookProbePython(t *testing.T, args ...string) hookProbeResult {
@@ -82,7 +70,7 @@ func firstHookProbeDifference(want, got string) string {
 
 func TestHookProbeReplayFailuresMatchLivePython(t *testing.T) {
 	pythonOracleRoot(t)
-	binary := buildHookProbeCLI(t)
+	binary := recordedCRW(t)
 	root := repositoryRoot()
 	inputs := pythonInputs(t)
 	decisions := filepath.Join(inputs, "decisions")
@@ -150,7 +138,7 @@ func TestHookProbeReplayFailuresMatchLivePython(t *testing.T) {
 
 func TestHookProbeMalformedSelectionAndCountersMatchLivePython(t *testing.T) {
 	pythonOracleRoot(t)
-	binary := buildHookProbeCLI(t)
+	binary := recordedCRW(t)
 	decisions := filepath.Join(pythonInputs(t), "decisions")
 	raw, err := os.ReadFile(filepath.Join(decisions, "claim-whose-preimage-is-not-a-string.json"))
 	if err != nil {

@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"testing"
 
@@ -21,7 +20,6 @@ import (
 // so their CLI shape is proved here against the built crw binary: every case of
 // internal/relay/registry/testdata/cli_cases.json, replayed through `crw relay`, must print the
 // exact stdout bytes and exit code the Python CLI printed (python_cli.json, from gen_cli.py).
-// This test has no skip path, so it holds under CRW_CONTRACT_STRICT=1 as it does without it.
 var registryCommands = []string{"register", "settings-record", "settings-show", "generation-open",
 	"generation-bind", "admit-turn", "relationship-status", "relationship-resume"}
 
@@ -35,13 +33,6 @@ func TestRegistryCommands_the_built_crw_prints_what_python_printed(t *testing.T)
 // step's stdout bytes and exit code with <dir>/python_cli.json; every command in commands must
 // be exercised by some case.
 func replayCLICases(t *testing.T, dir string, commands []string) {
-	t.Helper()
-	replayCLICasesOnly(t, dir, commands, nil)
-}
-
-// replayCLICasesOnly replays the named cases only (every case when only is nil); commands are
-// asserted covered only when every case ran.
-func replayCLICasesOnly(t *testing.T, dir string, commands, only []string) {
 	t.Helper()
 	binary, err := crwBinary()
 	if err != nil {
@@ -72,9 +63,6 @@ func replayCLICasesOnly(t *testing.T, dir string, commands, only []string) {
 	}
 	covered := map[string]bool{}
 	for name, steps := range cases {
-		if only != nil && !slices.Contains(only, name) {
-			continue
-		}
 		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
 			targetNames := map[string]string{}
@@ -142,7 +130,7 @@ func replayCLICasesOnly(t *testing.T, dir string, commands, only []string) {
 		})
 	}
 	for _, command := range commands {
-		if only == nil && !covered[command] {
+		if !covered[command] {
 			t.Errorf("no case exercises %s", command)
 		}
 	}

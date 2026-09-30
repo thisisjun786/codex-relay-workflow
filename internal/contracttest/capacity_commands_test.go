@@ -20,8 +20,7 @@ import (
 // cli-shape fixtures also call linkage-bind (todo 26), so their CLI shape is proved here against
 // the built crw: every case of internal/relay/capacity/testdata/cli_cases.json, replayed through
 // `crw relay`, must print the stdout bytes and exit code the Python CLI printed (python_cli.json,
-// from gen_cli.py). The cases seed their scope bindings with SQL rather than linkage-bind. No skip
-// path, so it holds under CRW_CONTRACT_STRICT=1 as it does without it.
+// from gen_cli.py). The cases seed their scope bindings with SQL rather than linkage-bind.
 var capacityCommands = []string{"slot-reserve", "slot-release", "limit-declare", "usage-observe", "capacity-show"}
 
 func TestCapacityCommands_the_built_crw_prints_what_python_printed(t *testing.T) {
@@ -114,29 +113,12 @@ func replayTodo27Cases(t *testing.T, dir, casesFile, pythonFile string, commands
 }
 
 // regionCommands are the edit-region commands todo 27 part A registers (cli.py:5271-5387),
-// proved the same way against region_cli_cases.json / python_region_cli.json.
+// proved the same way against region_cli_cases.json / python_region_cli.json. With the capacity
+// test above it owns CCL-10..14 (test_coordination_cli.py): each is one or more of these cases.
 var regionCommands = []string{"region-propose", "region-settle", "region-restate-revision", "region-reaffirm",
 	"region-followup", "region-followup-accept", "region-followup-settle", "region-show"}
 
 func TestRegionCommands_the_built_crw_prints_what_python_printed(t *testing.T) {
-	replayTodo27Cases(t, filepath.Join("internal", "relay", "capacity", "testdata"), "region_cli_cases.json", "python_region_cli.json", regionCommands)
-}
-
-// CCL-10..14 include the original cli-shape corpus scenarios. These tests additionally
-// run the Python-output replays without relying on the linkage CLI's availability.
-func Test27_CCL10_SlotReservedReleasedAndReported(t *testing.T) {
-	replayTodo27Cases(t, filepath.Join("internal", "relay", "capacity", "testdata"), "cli_cases.json", "python_cli.json", capacityCommands)
-}
-func Test27_CCL11_DeclaredBoundProvenance(t *testing.T) {
-	replayTodo27Cases(t, filepath.Join("internal", "relay", "capacity", "testdata"), "cli_cases.json", "python_cli.json", capacityCommands)
-}
-func Test27_CCL12_RegionProposedSettledShown(t *testing.T) {
-	replayTodo27Cases(t, filepath.Join("internal", "relay", "capacity", "testdata"), "region_cli_cases.json", "python_region_cli.json", regionCommands)
-}
-func Test27_CCL13_UnassignedFollowupRefused(t *testing.T) {
-	replayTodo27Cases(t, filepath.Join("internal", "relay", "capacity", "testdata"), "region_cli_cases.json", "python_region_cli.json", regionCommands)
-}
-func Test27_CCL14_LateAcceptanceStaleAndCarriedTerms(t *testing.T) {
 	replayTodo27Cases(t, filepath.Join("internal", "relay", "capacity", "testdata"), "region_cli_cases.json", "python_region_cli.json", regionCommands)
 }
 

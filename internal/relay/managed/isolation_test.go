@@ -1,9 +1,9 @@
 package managed
 
 import (
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -18,23 +18,12 @@ func TestMain(m *testing.M) {
 	if os.Getenv("CRW_LOCK_HELPER_STORE") != "" {
 		os.Exit(m.Run())
 	}
-	goBinary, err := exec.LookPath("go")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
 	root, err := os.MkdirTemp("", "crw-managed-tests-")
 	if err != nil {
 		panic(err)
 	}
-	sharedCRW = filepath.Join(root, "crw")
-	command := exec.Command(goBinary, "build", "-buildvcs=false", "-o", sharedCRW, "./cmd/crw")
-	command.Dir, err = filepath.Abs("../../..")
-	if err != nil {
-		panic(err)
-	}
-	if output, err := command.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "build shared crw: %v: %s\n", err, output)
+	if sharedCRW, err = testsupport.CRWPath(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		if cleanupErr := testsupport.RemoveTempTree(root); cleanupErr != nil {
 			fmt.Fprintln(os.Stderr, cleanupErr)
 		}
@@ -49,7 +38,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	code := m.Run()
-	if err := testsupport.RemoveTempTree(root); err != nil {
+	if err := errors.Join(testsupport.RemoveTempTree(root), testsupport.RemoveCRW()); err != nil {
 		fmt.Fprintln(os.Stderr, "cleanup isolated state:", err)
 		code = 1
 	}

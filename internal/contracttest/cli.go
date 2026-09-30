@@ -6,14 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
 	// The todo 27 commands register themselves in the relay CLI when their package loads.
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
 	relaycli "github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+
 	// Registers the merge-turn-* commands, as cmd/crw does, so Registered agrees with the binary.
-	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
-	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
-	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/routing"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +19,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/routing"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // runCLI is the `cli` family of contract/README.md: each step spawns `crw relay --state
@@ -55,14 +58,12 @@ func runCLI(t *testing.T, scenario Scenario) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	// A scenario that drives a relay command the Go build has not registered yet is not ported:
-	// it is counted as a skip (a failure under CRW_CONTRACT_STRICT=1), never run against usage.
-	// relaycli.Registered is the union of both gates: the delivery commands (todo 21) and the
-	// diagnostics commands of internal/relay/cli (todo 20: doctor, status, show, store-*).
+	// A scenario that names a command the relay does not register is a corpus defect: it would
+	// only ever be answered by the usage path.
 	for _, step := range steps {
 		if argv, _ := step["argv"].([]any); len(argv) > 0 {
 			if name, ok := argv[0].(string); ok && !relaycli.Registered(name) {
-				return nil, fmt.Errorf("%w: %s/cli command %q", ErrNotPorted, scenario.Domain, name)
+				return nil, fmt.Errorf("%w: %s/cli command %q is not a relay command", ErrFixture, scenario.Domain, name)
 			}
 		}
 	}

@@ -39,8 +39,7 @@
         "kind": "eq",
         "path": [
           "call",
-          "argv",
-          0
+          "method"
         ],
         "value": "guard-evaluate"
       }

@@ -49,8 +49,8 @@ The Python packages the runtime was ported from left the repository in todo 44; 
 them is the bridge's licence and provenance under `packages/codex-thread-bridge` and the relay's
 documents under `docs/relay`. The CI checks keep Python twins under `scripts/ci`, developer tools
 listed in `scripts/dev/ALLOWED_PYTHON.txt` until todo 48 removes them: `make test` runs
-`internal/dev/ci`'s parity tests, which compare each twin with its `crw-dev ci` check, and CI's
-`tests` job runs the twins' own tests. Change a twin only together with its Go check.
+`internal/dev/ci`'s parity tests, which compare each twin with its `crw-dev ci` check. Change a
+twin only together with its Go check.
 
 Installer tests use temporary destinations; do not point test runs at your real
 Codex skill directory. The bundled Codex skill validator, when installed, is an
@@ -78,7 +78,5 @@ do not open a promotion PR. Release approval, a version tag and notes are requir
 
 During implementation, run focused tests for the changed behavior. Reuse passing
 evidence while its source, criteria and environment remain applicable. Hosted CI
-selects checks by path; root prose and `docs/*.md` avoid expensive suites, while
-executable skills and runtime changes retain their owning checks. A manifest change
-still selects full coverage, including a derived plugin-version update. Unknown
-paths need an explicit verification mapping before the gate can pass.
+runs every check on every PR and dev push, whatever the change touches, and
+`dev-gate` passes only when all of them succeeded.

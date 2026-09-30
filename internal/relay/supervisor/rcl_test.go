@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
@@ -59,7 +60,7 @@ func runRCL(t *testing.T, python bool, binary, home string, argv func(string) []
 // runtime answered.
 func compareRCLBytes(t *testing.T, argv func(string) []string, normalize func(raw []byte, python bool) []byte) rclAnswer {
 	t.Helper()
-	built := supervisorBinary(t)
+	built := testsupport.CRW(t)
 	binary := filepath.Join(t.TempDir(), "codex-session-relay")
 	if err := os.Symlink(built, binary); err != nil {
 		t.Fatal(err)
@@ -121,7 +122,7 @@ func Test24_RCL_3_UnmanagedObservationWholeStdoutBytes(t *testing.T) {
 // answering runtime. Each side's runtime_build is pinned to its own build (the fence's
 // pinned build for Python, `crw version` for Go) before both become one token.
 func Test24_RCL_4_DoctorWholeStdoutBytes(t *testing.T) {
-	version, err := exec.Command(supervisorBinary(t), "version").Output()
+	version, err := exec.Command(testsupport.CRW(t), "version").Output()
 	if err != nil {
 		t.Fatal(err)
 	}

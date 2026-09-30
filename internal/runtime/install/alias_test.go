@@ -10,6 +10,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // A runtime is known by identity, not by spelling. The same directory is mounted twice (bwrap
@@ -37,11 +38,8 @@ func TestRemoveKnowsARuntimeByIdentityNotSpelling(t *testing.T) {
 		if out, err := exec.Command(bwrap, "--dev-bind", "/", "/", "--bind", a, b, "true").CombinedOutput(); err != nil {
 			t.Skipf("bwrap cannot bind here: %v %s", err, out)
 		}
-		if _, err := binary(); err != nil {
-			t.Fatal(err)
-		}
 		cmd := exec.Command(bwrap, "--dev-bind", "/", "/", "--bind", a, b, os.Args[0], "-test.run=^TestRemoveKnowsARuntimeByIdentityNotSpelling$", "-test.count=1", "-test.v")
-		cmd.Env = append(os.Environ(), "CRW_ALIAS_A="+a, "CRW_ALIAS_B="+b, "TMPDIR="+a, "CRW_TEST_CRW="+filepath.Join(buildDir, "crw"))
+		cmd.Env = append(os.Environ(), "CRW_ALIAS_A="+a, "CRW_ALIAS_B="+b, "TMPDIR="+a, testsupport.CRWBinaryEnv+"="+testsupport.CRW(t))
 		out, err := cmd.CombinedOutput()
 		if err != nil || !strings.Contains(string(out), "the aliased host was read by identity") {
 			t.Fatalf("inside bwrap: %v\n%s", err, out)

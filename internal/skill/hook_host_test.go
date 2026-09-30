@@ -12,12 +12,7 @@ import (
 
 func TestHookHostMutationsLivePython(t *testing.T) {
 	pythonOracleRoot(t)
-	crw := filepath.Join(t.TempDir(), "crw")
-	build := exec.Command("go", "build", "-o", crw, "./cmd/crw")
-	build.Dir = repositoryRoot()
-	if result := captureSkillProcess(t, build); result.exit != 0 {
-		t.Fatalf("build failed: %+v", result)
-	}
+	crw := recordedCRW(t)
 	inputs := pythonInputs(t)
 	host := filepath.Join(inputs, "host")
 	contractPath := filepath.Join(inputs, "hook-contract.md")

@@ -22,10 +22,7 @@ import (
 // remove waiting for the promotion lock answers that it was interrupted, and the directory is
 // still there. Without the handling the signal kills it outright, mid-wait or mid-removal.
 func TestAnInstallCommandStopsWhenAsked(t *testing.T) {
-	crw := filepath.Join(t.TempDir(), "crw")
-	if out, err := exec.Command("go", "build", "-o", crw, ".").CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, out)
-	}
+	crw := testsupport.CRW(t)
 	for _, signal := range []syscall.Signal{syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT} {
 		home := t.TempDir()
 		state := filepath.Join(home, "state")

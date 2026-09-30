@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -179,5 +180,51 @@ func Test33LateInputOnADescriptorIsReleased(t *testing.T) {
 	rows := rowsAt(t, home)
 	if len(rows) != 1 || rows[0]["adapterOutcome"] != "stdin_unreadable" || rows[0]["sessionId"] != nil {
 		t.Fatal(rows)
+	}
+}
+
+// A host that leaves the hook unscheduled across its whole configured budget, after the guard
+// was asked, must still leave the invocation's row: the guard's allocation expired while the
+// process slept, so the verdict is guard_timed_out, and the small create-once journal write that
+// records it is bounded by the 5 s absolute deadline, not by the shortened timeoutSeconds whose
+// reserve the stall already spent. Stopping the process makes the stall exact: it starts after
+// the owner has the request and ends 1.5 s later, past the whole 1 s budget. (The contract
+// corpus's guard-timeout fixtures lost this row on loaded CI runners.)
+func Test33StalledPastTheBudgetKeepsTheTimedOutRow(t *testing.T) {
+	home := hookHome(t, 1)
+	requested := make(chan struct{})
+	done, _ := fakeControl(t, home, func(conn net.Conn) error {
+		if _, err := readFrame(conn); err != nil {
+			return err
+		}
+		close(requested)
+		_, err := io.Copy(io.Discard, conn) // never answers; the hook's close ends the read
+		return err
+	})
+	cmd := hookCommand(t, home, `{"session_id":"s","turn_id":"t"}`)
+	var output bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &output, &output
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-requested:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the hook never asked the owner")
+	}
+	if err := cmd.Process.Signal(syscall.SIGSTOP); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	if err := cmd.Process.Signal(syscall.SIGCONT); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil || output.Len() != 0 {
+		t.Fatalf("%v %s", err, output.String())
+	}
+	awaitHost(t, done)
+	rows := rowsAt(t, home)
+	if len(rows) != 1 || rows[0]["adapterOutcome"] != "guard_timed_out" || rows[0]["processEnding"] != "timed_out" || rows[0]["held"] != false {
+		t.Fatalf("rows after a stall past the budget: %v", rows)
 	}
 }

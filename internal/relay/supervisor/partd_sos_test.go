@@ -374,20 +374,9 @@ func sosExpectedClock(op sosOperation) float64 {
 	}
 	return 0
 }
-func sosBinary(t *testing.T) string {
-	t.Helper()
-	repo, _ := filepath.Abs("../../..")
-	binary := filepath.Join(t.TempDir(), "crw")
-	cmd := exec.Command("go", "build", "-o", binary, "./cmd/crw")
-	cmd.Dir = repo
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v %s", err, out)
-	}
-	return binary
-}
 
 func testSOSID(t *testing.T, id string) {
-	binary := sosBinary(t)
+	binary := testsupport.CRW(t)
 	for _, method := range sosCases[id] {
 		method := method
 		t.Run(method, func(t *testing.T) {
@@ -407,7 +396,7 @@ func testSOSID(t *testing.T, id string) {
 // alignment is feeding the built binary's observedAt back to Python's clock.
 func Test24_SOS_5_BuiltBinaryBytes(t *testing.T) {
 	root, captured := captureSOS(t, sosCases["SOS-5"][0])
-	binary := sosBinary(t)
+	binary := testsupport.CRWAt(t, filepath.Join(t.TempDir(), "crw"))
 	alias := filepath.Join(filepath.Dir(binary), "codex-session-relay")
 	if err := os.Symlink(binary, alias); err != nil {
 		t.Fatal(err)
@@ -557,7 +546,7 @@ func Test24_ReportingShowCommandContext(t *testing.T) {
 }
 
 func Test24_ObservationFilesBuiltBinaryBytes(t *testing.T) {
-	binary := sosBinary(t)
+	binary := testsupport.CRW(t)
 	root := t.TempDir()
 	repo, _ := filepath.Abs("../../..")
 	env := append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+root, "CODEX_HOME="+root)

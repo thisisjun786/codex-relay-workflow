@@ -173,7 +173,6 @@ func Test24_AUT_1_ObligationStagesAndSendsOnce(t *testing.T) {
 		t.Fatal(again, err)
 	}
 }
-func Test24_AUT_3_RestartConverges(t *testing.T) { Test24_AUT_1_ObligationStagesAndSendsOnce(t) }
 func Test24_AUT_4_ArchivedWaits(t *testing.T) {
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
@@ -207,11 +206,6 @@ func Test24_AUT_7_UnaddressedHeadDoesNotBlock(t *testing.T) {
 	rows, err := f.c.autoHeads(f.ctx, 1700000000, 8, "", "")
 	if err != nil || len(rows) != 0 {
 		t.Fatal(rows, err)
-	}
-}
-func Test24_AUT_8_OneRecipientDoesNotStarveAnother(t *testing.T) {
-	if 2*4 != 8 {
-		t.Fatal("send page")
 	}
 }
 

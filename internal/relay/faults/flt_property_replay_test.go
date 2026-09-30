@@ -62,22 +62,9 @@ func Test22_FLT_5_6_7_8_19_23_24_LifecycleWholeOutput(t *testing.T) {
 	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-prune", "--fault", id, "--keep", "1"})
 }
 
-// FLT-9, FLT-10, FLT-13, FLT-15, FLT-16, FLT-18, FLT-20, FLT-21, FLT-22,
-// FLT-32: sweep rotation, bounds, readings, derivation and source clearing.
-func Test22_FLT_9_10_13_15_16_18_20_21_22_32_SweepWholeOutput(t *testing.T) {
-	TestF1_FLT_18_21_22_SweepSourcesWholeCLI(t)
-	TestF1_FLT_18_21_InFlightWholeCLI(t)
-	TestF1_FLT_21_SourceBeyondPageWholeCLI(t)
-	TestF1_FLT_32_ReadingsContinuationWholeCLI(t)
-	TestF1SweepBoundsAndScopeWholeCLI(t)
-	TestF1SweepReadingsWholeCLI(t)
-}
-
-// FLT-11, FLT-12, FLT-25, FLT-26, FLT-27: target changes and the complete
-// publication protocol compare command bytes and every fault table row.
-func Test22_FLT_11_12_25_26_27_PublicationWholeOutput(t *testing.T) {
-	testFLT252627LifecycleWholeCLI(t)
-}
+// FLT-9, 10, 13, 15, 16, 18, 20, 21, 22 and 32 (sweep rotation, bounds, readings, derivation and
+// source clearing) are the TestF1 sweep tests' (f1_*_test.go), and FLT-11, 12, 25, 26 and 27
+// (target changes and the publication protocol) TestF1_FLT_25_26_27_LifecycleWholeCLI's.
 
 // FLT-17: opening a pre-existing database that lacks the fault tables. Here the runtimes
 // differ by decision, and each one's documented behaviour is pinned (docs/port/decisions.md 14

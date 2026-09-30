@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
 	"strconv"
 	"strings"
 	"unicode/utf16"
@@ -172,11 +171,6 @@ func pyReprList(items []string) string {
 func failf(w io.Writer, format string, args ...any) int {
 	fmt.Fprintf(w, format+"\n", args...)
 	return 1
-}
-
-// appendFile opens path for appending like open(path, "a").
-func appendFile(path string) (*os.File, error) {
-	return os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o666)
 }
 
 // pyJSONNumber is json.dumps of the int or float a JSON number decoded to.

@@ -36,12 +36,6 @@ func Test22_FC_20_LapsedAttentionWholeOutput(t *testing.T) {
 	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-attention"})
 }
 
-func Test22_FC_21_ReservationLifecycleWholeOutput(t *testing.T) {
-	TestDNotificationLifecyclePythonWholeReplies(t)
-	TestDNotificationRelationshipEligibilityAgainstPython(t)
-	Test22_FN_7_BudgetAndRefundWholeOutput(t)
-}
-
 func Test22_FC_37_PagedLimitsPoliciesWholeOutput(t *testing.T) {
 	ctx, gd, pd := f1ReplayStores(t)
 	seed := []string{}

@@ -4,7 +4,7 @@
       "stdout": "{\"decision\": \"release\", \"state\": \"unmanaged\", \"observation\": \"unmanaged\", \"reason\": \"No marker names this workspace.\", \"assignmentId\": null, \"counters\": {}, \"recordedAs\": null, \"hook_output\": {}}"
     },
     "settings_overrides": {
-      "dbPath": "/tmp/relay.sqlite",
+      "dbPath": "${HOME}/fixture-state/relay.sqlite",
       "mode": "hold",
       "isolationAssertedBy": "the coordinator, for this test"
     }
@@ -16,20 +16,21 @@
     "exit": 0,
     "checks": [
       {
-        "kind": "contains",
+        "kind": "regex",
         "path": [
           "call",
-          "argv"
+          "params",
+          "dbPath"
         ],
-        "value": "--db-path"
+        "value": "/fixture-state/relay\\.sqlite$"
       },
       {
-        "kind": "after",
+        "kind": "eq",
         "path": [
           "call",
-          "argv"
+          "params",
+          "mode"
         ],
-        "flag": "--mode",
         "value": "hold"
       }
     ]

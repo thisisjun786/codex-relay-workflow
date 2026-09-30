@@ -1,12 +1,13 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
@@ -41,11 +42,10 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
+	// A copy, not a link: the installation is the executable's own directory.
 	testBinary = filepath.Join(installation, "crw")
-	cmd := exec.Command("go", "build", "-o", testBinary, "./cmd/crw")
-	cmd.Dir = root
-	if raw, err := cmd.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "build: %v\n%s", err, raw)
+	if err := testsupport.CopyCRW(testBinary); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		_ = os.RemoveAll(home)
 		os.Exit(1)
 	}
@@ -65,7 +65,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	code := m.Run()
-	if err = os.RemoveAll(home); err != nil {
+	if err = errors.Join(os.RemoveAll(home), testsupport.RemoveCRW()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		code = 1
 	}

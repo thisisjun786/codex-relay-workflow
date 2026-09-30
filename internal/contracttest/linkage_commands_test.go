@@ -9,7 +9,7 @@ import (
 // The only cli-shape fixtures that reach them use linkage-bind beside commands other parts port,
 // so every one is proved here against the built crw: internal/relay/linkage/testdata/cli_cases.json
 // replayed through `crw relay` must print the stdout bytes and exit code the Python CLI printed
-// (python_cli.json, from gen_cli.py). No skip path, so it holds under CRW_CONTRACT_STRICT=1.
+// (python_cli.json, from gen_cli.py).
 var linkageCommands = []string{"linkage-bind", "linkage-supervise", "linkage-peer", "linkage-attach",
 	"linkage-outstanding", "linkage-completion", "linkage-handover", "linkage-directive", "linkage-settle",
 	"linkage-down", "linkage-up", "linkage-counterpart"}

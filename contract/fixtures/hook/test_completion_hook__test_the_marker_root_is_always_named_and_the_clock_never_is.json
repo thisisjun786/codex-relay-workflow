@@ -11,36 +11,40 @@
     "exit": 0,
     "checks": [
       {
-        "kind": "contains",
+        "kind": "regex",
         "path": [
           "call",
-          "argv"
+          "params",
+          "markerRoot"
         ],
-        "value": "--marker-root"
+        "value": "/marker$"
       },
       {
-        "kind": "excludes",
+        "kind": "eq",
         "path": [
           "call",
-          "argv"
+          "params",
+          "now"
         ],
-        "value": "--now"
+        "value": null
       },
       {
-        "kind": "excludes",
+        "kind": "eq",
         "path": [
           "call",
-          "argv"
+          "params",
+          "dbPath"
         ],
-        "value": "--db-path"
+        "value": null
       },
       {
-        "kind": "excludes",
+        "kind": "eq",
         "path": [
           "call",
-          "argv"
+          "params",
+          "mode"
         ],
-        "value": "--mode"
+        "value": "observe"
       }
     ]
   }

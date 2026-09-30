@@ -1,36 +1,26 @@
 package delivery
 
 import (
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-// TestMain removes the crw binary the CLI tests build and the Python capture trees, once per
-// package run.
+// TestMain removes the crw binary the CLI tests may build (testsupport.CRW) and the Python
+// capture trees, once per package run.
 func TestMain(m *testing.M) {
-	goBinary, err := exec.LookPath("go")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
 	root, err := os.MkdirTemp("", "crw-delivery-tests-")
 	if err != nil {
 		panic(err)
 	}
-	// Build once with the caller's cache environment before isolating HOME.
+	// A copy of its own: tests name the binary beside it (selection_test's alias).
 	crwPath = filepath.Join(root, "crw")
-	command := exec.Command(goBinary, "build", "-buildvcs=false", "-o", crwPath, "./cmd/crw")
-	command.Dir, err = filepath.Abs("../../..")
-	if err != nil {
-		panic(err)
-	}
-	if output, err := command.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "build shared crw: %v: %s\n", err, output)
+	if err = testsupport.CopyCRW(crwPath); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		if cleanupErr := testsupport.RemoveTempTree(root); cleanupErr != nil {
 			fmt.Fprintln(os.Stderr, cleanupErr)
 		}
@@ -53,7 +43,7 @@ func TestMain(m *testing.M) {
 			code = 1
 		}
 	}
-	if err := testsupport.RemoveTempTree(root); err != nil {
+	if err := errors.Join(testsupport.RemoveTempTree(root), testsupport.RemoveCRW()); err != nil {
 		fmt.Fprintln(os.Stderr, "cleanup isolated state:", err)
 		code = 1
 	}

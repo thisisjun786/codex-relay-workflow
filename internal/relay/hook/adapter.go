@@ -136,6 +136,13 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 	absolute := started.Add(5 * time.Second)
 	ctx, cancel := context.WithDeadline(parent, absolute)
 	defer cancel()
+	// The invocation's final row is bounded by the 5 s absolute deadline even when
+	// timeoutSeconds shortens every wait below. The waits spend the shortened budget;
+	// the small create-once write that records how they ended waits on nothing the host
+	// or the owner supplies, so a process left unscheduled past the shortened deadline
+	// still leaves its row (as Python journals after a guard timeout), inside the host's
+	// 10 s. With the default budget the two deadlines are the same.
+	bookkeeping := ctx
 	pluginLaunch := len(args) > 0 && args[0] == PluginLaunch
 	if len(args) > 0 && !pluginLaunch {
 		return 0
@@ -162,7 +169,6 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 		return 0
 	}
 	if budget, ok := seconds(get(settings.config, "timeoutSeconds")); ok && budget < 5 {
-		cancel()
 		absolute = started.Add(time.Duration(budget * float64(time.Second)))
 		ctx, cancel = context.WithDeadline(parent, absolute)
 		defer cancel()
@@ -208,14 +214,14 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 				}
 			}
 		}
-		_, _ = bounded(ctx, func() (bool, error) {
-			row, e := Journal(ctx, settings.config, record, slot)
+		_, _ = bounded(bookkeeping, func() (bool, error) {
+			row, e := Journal(bookkeeping, settings.config, record, slot)
 			var named any
 			if row != "" {
 				named = slot.Name()
 			}
 			if claimed != "" {
-				e = errors.Join(e, RecordOutcome(ctx, settings.config, claimed, record, named))
+				e = errors.Join(e, RecordOutcome(bookkeeping, settings.config, claimed, record, named))
 			}
 			return true, e
 		})
@@ -227,14 +233,14 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 		record = set(record, "fault", faultText(value))
 		record = set(record, "held", false)
 		record = set(record, "elapsedMs", time.Since(started).Milliseconds())
-		_, _ = bounded(ctx, func() (bool, error) {
-			row, err := Journal(ctx, settings.config, record, slot)
+		_, _ = bounded(bookkeeping, func() (bool, error) {
+			row, err := Journal(bookkeeping, settings.config, record, slot)
 			var named any
 			if row != "" {
 				named = slot.Name()
 			}
 			if claimed != "" {
-				err = errors.Join(err, RecordOutcome(ctx, settings.config, claimed, record, named))
+				err = errors.Join(err, RecordOutcome(bookkeeping, settings.config, claimed, record, named))
 			}
 			return true, err
 		})
@@ -285,13 +291,13 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 	if err != nil && prescanErrno(err) {
 		// Decision 22: retain the single Python failure row, without fsync. Identity
 		// remains unobserved: no transcript scan, claim or DB access precedes it.
-		// Decision 32: the small create-once write is bounded by the absolute
-		// deadline, so a late-scheduled invocation still leaves its row.
+		// Decision 32: the small create-once write is bounded by the 5 s absolute
+		// deadline (bookkeeping), so a late-scheduled invocation still leaves its row.
 		record = unreachableRecord(record, err, time.Since(dialStarted))
 		record = set(record, "adapterOutcome", "guard_unreachable")
 		record = set(record, "detail", "the configured runtime could not be run: "+store.PythonOSErrorText(&os.PathError{Op: "connect", Path: socket, Err: err}))
 		record = set(record, "elapsedMs", time.Since(started).Milliseconds())
-		_, _ = bounded(ctx, func() (string, error) { return Journal(ctx, settings.config, record, slot) })
+		_, _ = bounded(bookkeeping, func() (string, error) { return Journal(bookkeeping, settings.config, record, slot) })
 		return 0
 	} // No retry, daemon start, writer lock or synchronous diagnostic fsync.
 	if conn != nil {

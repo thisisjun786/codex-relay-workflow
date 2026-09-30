@@ -73,7 +73,7 @@ func hashed(s string) string {
 
 func TestHookProbeRoundThreeSelectionLivePython(t *testing.T) {
 	pythonOracleRoot(t)
-	binary := buildHookProbeCLI(t)
+	binary := recordedCRW(t)
 	cases := []struct {
 		name, state string
 		mutate      func(o, current, older map[string]any)
@@ -123,7 +123,7 @@ func TestHookProbeRoundThreeSelectionLivePython(t *testing.T) {
 
 func TestSkillUnreadableInputsLivePython(t *testing.T) {
 	pythonOracleRoot(t)
-	binary := buildHookProbeCLI(t)
+	binary := recordedCRW(t)
 	dir := t.TempDir()
 	write := func(name string, content []byte) string {
 		path := filepath.Join(dir, name)
@@ -171,7 +171,7 @@ func TestSkillUnreadableInputsLivePython(t *testing.T) {
 
 func TestSkillReplayUnreadableFixturesLivePython(t *testing.T) {
 	pythonOracleRoot(t)
-	binary := buildHookProbeCLI(t)
+	binary := recordedCRW(t)
 	copyDir := func(t *testing.T, from string) string {
 		t.Helper()
 		to := filepath.Join(t.TempDir(), "fixtures")

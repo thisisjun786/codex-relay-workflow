@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# The release contract runner's fake git (internal/contracttest/records.go:runRelease), taken from
-# scripts/ci/tests/fake_git.sh. The one difference: the push state is one file per key,
+# The release workflow tests' fake git (internal/contracttest/release.go), taken from the Python
+# tests' fake_git.sh. The one difference: the push state is one file per key,
 # $GH_STATE/push/<key>, read with cat, so no JSON parser (and no Python) is needed.
 push_state() {
   local path="$GH_STATE/push/$1"

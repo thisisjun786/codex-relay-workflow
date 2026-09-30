@@ -18,7 +18,7 @@ type argparseCase struct {
 func TestSkillArgparseMatchesLivePython(t *testing.T) {
 	pythonOracleRoot(t)
 	// Given the built Go CLI, the three canonical Python command families, and every parser level.
-	binary := buildHookProbeCLI(t)
+	binary := recordedCRW(t)
 	tests := map[string][]argparseCase{
 		"hook-probe": {
 			{"missing command", nil}, {"short root help", []string{"-h"}}, {"long root help", []string{"--help"}},
@@ -147,7 +147,7 @@ func TestSkillArgparseMatchesLivePython(t *testing.T) {
 func TestSkillArgparseDoubleDashPassesOptionLikePositionals(t *testing.T) {
 	pythonOracleRoot(t)
 	// Given option-looking filenames containing valid inputs in an isolated working directory.
-	binary := buildHookProbeCLI(t)
+	binary := recordedCRW(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "-h"), []byte("run_mode: loop\nobservation_path: blocked\n"), 0600); err != nil {
 		t.Fatal(err)
