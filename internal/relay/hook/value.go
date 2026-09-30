@@ -44,6 +44,11 @@ func Decode(raw []byte) (any, error) {
 	if message := store.PythonJSONError(string(raw)); message != "" {
 		return nil, fmt.Errorf("%s", message)
 	}
+	return decodeScanned(raw)
+}
+
+// decodeScanned is Decode past its checks: raw is UTF-8 that Python's JSON scanner accepts.
+func decodeScanned(raw []byte) (any, error) {
 	raw, constants := jsonConstants(raw)
 	d := json.NewDecoder(strings.NewReader(string(raw)))
 	d.UseNumber()

@@ -204,6 +204,228 @@ func Test30ControlDisconnectBeforeARequestIsNoFailure(t *testing.T) {
 		}
 	})
 }
+
+// PR #185 4128954449, the rule it cites (control.py GuardServer._serve): nothing a peer or the
+// kernel does ends or fails the owner. Every frame below is one the retained Python owner
+// answers with its host record, and the Go owner answers it with the same bytes; a peer that
+// hangs up after a complete request is skipped, and a failed accept is retried. Both owners
+// still serve the next Stop afterwards, and none of it reaches Go's Close, so a daemon segment
+// whose work succeeded exits 0.
+func Test30ControlPeerFailuresAreAnsweredAsPythonAnswersThem(t *testing.T) {
+	home, err := os.MkdirTemp("", "t30-peer-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	root := filepath.Join(home, "markers")
+	if err = os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_SESSION_RELAY_MARKER_ROOT", root)
+	frame := func(params string) []byte {
+		return []byte(`{"protocol":1,"method":"guard-evaluate","params":` + params + "}\n")
+	}
+	params := func(deadline string, extra string) string {
+		return `{"markerRoot":` + strconv.Quote(root) + `,"stopInput":{},"mode":"observe","now":"2026-01-01T00:00:00Z","noRecord":true,"deadline":` + deadline + extra + `}`
+	}
+	later := strconv.Quote(time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano))
+	failures := []struct{ name, detail string }{
+		{"not json", "JSONDecodeError: Expecting value: line 1 column 1 (char 0)"},
+		{"nested past the scanner", "RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string"},
+		{"nested past a goroutine stack", "RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string"},
+		{"not an object", "TypeError: guard request must be an object"},
+		{"no params", "KeyError: 'params'"},
+		{"params not an object", "TypeError: guard params must be an object"},
+		{"no stop input", "KeyError: 'stopInput'"},
+		{"stop input not an object", "TypeError: stop input must be an object"},
+		{"null deadline", "TypeError: guard deadline must be a string"},
+		{"unparseable deadline", "ValueError: Invalid isoformat string: 'soon'"},
+		{"expired deadline", "TimeoutError: guard request deadline expired"},
+		{"socketPath not a string", "TypeError: guard socketPath must be a string"},
+		{"program not a string", "TypeError: guard program must be a string"},
+	}
+	frames := map[string][]byte{
+		"not json":                      []byte("not json\n"),
+		"nested past the scanner":       []byte(`{"params":` + strings.Repeat("[", 200000) + "\n"),
+		"nested past a goroutine stack": []byte(`{"params":` + strings.Repeat("[", 5000000) + "\n"),
+		"not an object":                 []byte("[1]\n"),
+		"no params":                     []byte(`{"protocol":1,"method":"guard-evaluate"}` + "\n"),
+		"params not an object":          frame("[]"),
+		"no stop input":                 frame("{}"),
+		"stop input not an object":      frame(`{"stopInput":[]}`),
+		"null deadline":                 frame(params("null", "")),
+		"unparseable deadline":          frame(params(`"soon"`, "")),
+		"expired deadline":              frame(params(`"2020-01-01T00:00:00+00:00"`, "")),
+		"socketPath not a string":       frame(params(later, `,"socketPath":1`)),
+		"program not a string":          frame(params(later, `,"program":["crw"]`)),
+	}
+	ask := func(t *testing.T, path string, request []byte) []byte {
+		t.Helper()
+		conn, err := net.Dial("unix", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		if err = conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = conn.Write(request); err != nil {
+			t.Fatal(err)
+		}
+		line, _ := bufio.NewReader(conn).ReadBytes('\n')
+		return line
+	}
+	hangUp := func(t *testing.T, path string, request []byte) {
+		t.Helper()
+		conn, err := net.Dial("unix", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = conn.Write(request); err != nil {
+			t.Fatal(err)
+		}
+		if err = conn.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// served asks every failing frame, then hangs up after a complete request, then asks a Stop
+	// the owner must still answer with a verdict.
+	served := func(t *testing.T, path string) map[string][]byte {
+		t.Helper()
+		answers := map[string][]byte{}
+		for _, failure := range failures {
+			answers[failure.name] = ask(t, path, frames[failure.name])
+		}
+		hangUp(t, path, frame(params(later, "")))
+		var verdict map[string]any
+		if err := json.Unmarshal(ask(t, path, frame(params(later, ""))), &verdict); err != nil || verdict["decision"] != "release" {
+			t.Errorf("the owner no longer serves a Stop after its failed peers: %v %v", verdict, err)
+		}
+		return answers
+	}
+	python := func(t *testing.T) map[string][]byte {
+		t.Helper()
+		state := filepath.Join(home, "python")
+		if err := os.Mkdir(state, 0700); err != nil {
+			t.Fatal(err)
+		}
+		owner := exec.Command(filepath.Join(testRoot, ".venv/bin/python"), "-c", `import sys
+from codex_session_relay.control import GuardServer
+server = GuardServer(sys.argv[1])
+print("bound", flush=True)
+sys.stdin.read()
+server.close()`, state)
+		stdin, err := owner.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		stdout, err := owner.StdoutPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var stderr bytes.Buffer
+		owner.Stderr = &stderr
+		if err = owner.Start(); err != nil {
+			t.Fatal(err)
+		}
+		if line, err := bufio.NewReader(stdout).ReadString('\n'); err != nil || line != "bound\n" {
+			_ = owner.Process.Kill()
+			_ = owner.Wait()
+			t.Fatalf("the Python owner never bound control.sock: %q %v %s", line, err, stderr.String())
+		}
+		answers := served(t, ControlPath(state))
+		_ = stdin.Close()
+		if err = owner.Wait(); err != nil {
+			t.Fatalf("the Python owner: %v %s", err, stderr.String())
+		}
+		return answers
+	}(t)
+	t.Run("listener", func(t *testing.T) {
+		state := filepath.Join(home, "go")
+		if err := os.Mkdir(state, 0700); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+		defer cancel()
+		server, err := ListenControl(ctx, state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		answers := served(t, ControlPath(state))
+		for _, failure := range failures {
+			want := `{"error": "host", "detail": "` + failure.detail + `"}` + "\n"
+			if string(python[failure.name]) != want {
+				t.Errorf("%s: the Python owner answered %q, not %q", failure.name, python[failure.name], want)
+			}
+			if string(answers[failure.name]) != string(python[failure.name]) {
+				t.Errorf("%s: the Go owner answered %q where the Python owner answered %q", failure.name, answers[failure.name], python[failure.name])
+			}
+		}
+		if err = server.Close(); err != nil {
+			t.Fatalf("a failed peer failed the listener: %v", err)
+		}
+	})
+	t.Run("accept", func(t *testing.T) {
+		// control.py backs off 50 ms after EMFILE, ENFILE, ENOBUFS or ENOMEM and accepts again.
+		state := filepath.Join(home, "accept")
+		if err := os.Mkdir(state, 0700); err != nil {
+			t.Fatal(err)
+		}
+		var refused []error
+		accept := acceptControl
+		acceptControl = func(listener *net.UnixListener) (net.Conn, error) {
+			if len(refused) < 2 {
+				e := &net.OpError{Op: "accept", Net: "unix", Err: os.NewSyscallError("accept4", []unix.Errno{unix.EMFILE, unix.ENOBUFS}[len(refused)])}
+				refused = append(refused, e)
+				return nil, e
+			}
+			return accept(listener)
+		}
+		defer func() { acceptControl = accept }()
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+		defer cancel()
+		server, err := ListenControl(ctx, state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var verdict map[string]any
+		if err := json.Unmarshal(ask(t, ControlPath(state), frame(params(later, ""))), &verdict); err != nil || verdict["decision"] != "release" || len(refused) != 2 {
+			t.Errorf("the owner stopped accepting after %v: %v %v", refused, verdict, err)
+		}
+		if err = server.Close(); err != nil {
+			t.Fatalf("a refused accept failed the listener: %v", err)
+		}
+	})
+	t.Run("daemon", func(t *testing.T) {
+		daemon := exec.Command(testBinary, "relay", "--state", home+"/state", "--socket", home+"/socket", "daemon", "--deadline", "2", "--allow-isolated-scope")
+		daemon.Env = environment(home)
+		var stdout, stderr bytes.Buffer
+		daemon.Stdout, daemon.Stderr = &stdout, &stderr
+		if err := daemon.Start(); err != nil {
+			t.Fatal(err)
+		}
+		path := ControlPath(home + "/state")
+		for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+			if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSocket != 0 {
+				break
+			}
+			if time.Now().After(deadline) {
+				_ = daemon.Process.Kill()
+				_ = daemon.Wait()
+				t.Fatalf("the daemon never bound control.sock: %s %s", stdout.String(), stderr.String())
+			}
+		}
+		if answer := ask(t, path, frames["params not an object"]); string(answer) != string(python["params not an object"]) {
+			t.Errorf("the daemon answered %q where the Python owner answered %q", answer, python["params not an object"])
+		}
+		hangUp(t, path, frame(params(later, "")))
+		err := daemon.Wait()
+		var result map[string]any
+		if err != nil || json.Unmarshal(stdout.Bytes(), &result) != nil || result["ok"] != true {
+			t.Fatalf("daemon after failed peers: %v\n%s%s", err, stdout.String(), stderr.String())
+		}
+	})
+}
 func takeoverCLI(t *testing.T, home string, args ...string) (map[string]any, int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 35*time.Second)

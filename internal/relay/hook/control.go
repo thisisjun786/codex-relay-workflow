@@ -9,11 +9,13 @@ import (
 	"io"
 	"net"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // The control protocol is one JSON object per line with a 64 MiB transport bound.
@@ -91,6 +93,97 @@ func ControlAddress(path string) (string, func(), error) {
 		return "", nil, err
 	}
 	return fmt.Sprintf("/proc/self/fd/%d/%s", fd, filepath.Base(path)), func() { _ = unix.Close(fd) }, nil
+}
+
+// controlDepth is the container depth to which control.py's json.loads decodes a request
+// before the C scanner raises RecursionError (at 9999, measured against CPython 3.13 in the
+// GuardServer's serving thread). The Go decoder has no bound of its own short of the goroutine
+// stack, and overflowing that is fatal to the whole owner, not to one request.
+const controlDepth = 9998
+
+// readRequest is control.py _answer's reading of the one request line. A frame it cannot read
+// as a JSON object is refused with the host detail control.py answers for it, "<exception
+// class>: <message>"; err is a transport failure only: the peer went away or said nothing in
+// time. A line cut short by end-of-file is read as it stands, as readline returns it.
+func readRequest(r io.Reader) (request Object, refused string, err error) {
+	raw, err := bufio.NewReader(io.LimitReader(r, maxControlBytes+1)).ReadBytes('\n')
+	if len(raw) > maxControlBytes {
+		// Judged before the read error: the limit ends an oversized frame with io.EOF too.
+		return nil, "ValueError: guard request exceeds 64 MiB", nil
+	}
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, "", err
+	}
+	text, err := store.DecodeUTF8(raw)
+	if err != nil {
+		return nil, "UnicodeDecodeError: " + err.Error(), nil
+	}
+	message, recursion := store.PythonJSONErrorWithLimit(text, controlDepth)
+	switch {
+	case recursion:
+		return nil, "RecursionError: " + message, nil
+	case strings.HasPrefix(message, "Exceeds the limit"):
+		// int() refuses the digits, not the JSON scanner: a ValueError, as Python raises it.
+		return nil, "ValueError: " + message, nil
+	case message != "":
+		return nil, "JSONDecodeError: " + message, nil
+	}
+	value, err := decodeScanned(raw)
+	if err != nil {
+		return nil, "ValueError: " + err.Error(), nil
+	}
+	request, ok := evidence.Object(value)
+	if !ok {
+		return nil, "TypeError: guard request must be an object", nil
+	}
+	return request, "", nil
+}
+
+// guardParams is control.py _answer's reading of a guard-evaluate request's params: the
+// request's own deadline, and the first check that fails as the host detail control.py
+// answers, in its order and words.
+func guardParams(request Object, now time.Time) (params, stop Object, deadline time.Time, refused string) {
+	value, present := evidence.Lookup(request, "params")
+	if !present {
+		return nil, nil, time.Time{}, "KeyError: 'params'"
+	}
+	params, ok := evidence.Object(value)
+	if !ok {
+		return nil, nil, time.Time{}, "TypeError: guard params must be an object"
+	}
+	if value, present = evidence.Lookup(params, "stopInput"); !present {
+		return nil, nil, time.Time{}, "KeyError: 'stopInput'"
+	}
+	if stop, ok = evidence.Object(value); !ok {
+		return nil, nil, time.Time{}, "TypeError: stop input must be an object"
+	}
+	spelled, ok := get(params, "deadline").(string)
+	if !ok {
+		return nil, nil, time.Time{}, "TypeError: guard deadline must be a string"
+	}
+	spelled = strings.ReplaceAll(spelled, "Z", "+00:00")
+	deadline, err := time.Parse(time.RFC3339Nano, spelled)
+	if err != nil {
+		return nil, nil, time.Time{}, "ValueError: Invalid isoformat string: " + store.PyRepr(spelled)
+	}
+	if !deadline.After(now) {
+		return nil, nil, time.Time{}, "TimeoutError: guard request deadline expired"
+	}
+	for _, key := range []string{"socketPath", "program"} {
+		if value := get(params, key); value != nil {
+			if _, ok := value.(string); !ok {
+				return nil, nil, time.Time{}, "TypeError: guard " + key + " must be a string"
+			}
+		}
+	}
+	return params, stop, deadline, ""
+}
+
+// answerHost answers a request with the relay's host record, as control.py answers a request
+// it could not serve: the requester journals guard_host_error, never a refusal or silence.
+func answerHost(conn net.Conn, detail string) error {
+	_, err := io.WriteString(conn, evidence.Dumps(Object{{Key: "error", Value: "host"}, {Key: "detail", Value: detail}}, false, false, true)+"\n")
+	return err
 }
 
 // rejectControl is the protocol dispatcher's answer before any guard command runs.

@@ -110,8 +110,10 @@ def prepare(home: Path, case: str) -> None:
         assert after[name] == value, ('changed input marker', name)
     for name in after.keys() - before.keys():
         (root / name).unlink()
+    # Every client sends its deadline; control.py refuses a request without one as a host error.
     (home / 'request.json').write_text(json.dumps(dict(protocol=1, method='guard-evaluate',
-        params=dict(markerRoot=str(root), stopInput=stop, mode='hold', dbPath=request_db, now=NOW, noRecord=False))))
+        params=dict(markerRoot=str(root), stopInput=stop, mode='hold', dbPath=request_db, now=NOW, noRecord=False,
+                    deadline='2999-01-01T00:00:00+00:00'))))
     # A pinned request is served by the owner of the pinned store, where every client routes it
     # (the pinned dbPath's directory); an owner reads no other store (control.py owner_paths).
     served = receipt_db.parent if case == 'request_pin' else state

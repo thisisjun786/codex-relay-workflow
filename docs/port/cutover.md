@@ -496,7 +496,16 @@ classifies them. The legacy `guard-evaluate` CLI answers the first three with ex
 `{"error":"host","detail":...}`. The Python control server accepts frames up to decision 24's
 64 MiB, answers a request it could not evaluate with `{"error":"host","detail":...}` and keeps
 serving, closes an unauthenticated peer unanswered, and applies the CLI's selection refusals
-to an unpinned request using its `socketPath` and `program` (decision 24).
+to an unpinned request using its `socketPath` and `program` (decision 24). The Go owner's server
+(`service.ListenControl`, `hook.HandleControl`) answers failures the same way: a frame that is
+not a JSON object, nests deeper than CPython's scanner decodes (9998 containers), lacks `params` or
+`stopInput`, carries a deadline that is not a string or has passed, or a `socketPath` or
+`program` that is not a string, is answered by both owners with the same host detail,
+`control.py`'s `<exception class>: <message>` (`TypeError: guard params must be an object`,
+`TimeoutError: guard request deadline expired`). Nothing a peer does ends or fails either
+owner (PR #185 4128954449): a peer that goes away before its answer is skipped, an accept the
+kernel refuses for want of descriptors, buffers or memory is retried after 50 ms, and neither
+reaches the daemon's exit status.
 
 Every client sends those two selection inputs: the Go hook client (`RequestGuard`), the Stop
 adapter's pinned route (`socketPath` from its settings, `program` its `relayExecutable`) and

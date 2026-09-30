@@ -503,48 +503,45 @@ func ownsGuard(ctx context.Context, state, configuredDB string) bool {
 // ownerState is the serving owner's selected state directory, not client input or
 // a fresh environment-based discovery. Its store is used only when neither the
 // request nor the coordinator's intent pins one, as in the in-process path.
+//
+// Nothing a peer sends fails the owner (control.py GuardServer._serve, PR #185 4128954449): a
+// request it cannot serve, a guard that failed and a handler panic are all answered with the
+// host record, and the answered request is no handler failure. The error it returns is a
+// transport failure only: the peer went away, or its deadline passed, before an answer.
 func HandleControl(ctx context.Context, conn net.Conn, ownerState string) (err error) {
+	defer conn.Close()
 	defer func() {
 		if p := recover(); p != nil {
-			err = fmt.Errorf("guard control panic: %v", p)
+			err = answerHost(conn, fmt.Sprintf("guard control panic: %v", p))
 		}
 	}()
-	defer conn.Close()
-	if _, ok := ctx.Deadline(); !ok {
+	deadline, ok := ctx.Deadline()
+	if !ok {
 		return fmt.Errorf("guard control handler requires an absolute deadline")
 	}
-	if deadline, ok := ctx.Deadline(); ok {
-		if err := conn.SetDeadline(deadline); err != nil {
-			return err
-		}
+	if err := conn.SetDeadline(deadline); err != nil {
+		return err
 	}
-	request, err := readFrame(conn)
+	request, refused, err := readRequest(conn)
 	if err != nil {
 		return err
+	}
+	if refused != "" {
+		return answerHost(conn, refused)
 	}
 	if get(request, "method") != "guard-evaluate" || get(request, "protocol") != int64(1) {
 		return rejectControl(conn)
 	}
-	params, ok := evidence.Object(get(request, "params"))
-	if !ok {
-		return fmt.Errorf("guard params must be an object")
+	params, stop, at, refused := guardParams(request, time.Now())
+	if refused != "" {
+		return answerHost(conn, refused)
 	}
-	stop, ok := evidence.Object(get(params, "stopInput"))
-	if !ok {
-		return fmt.Errorf("stop input must be an object")
-	}
-	if deadline := text(get(params, "deadline")); deadline != "" {
-		at, err := time.Parse(time.RFC3339Nano, deadline)
-		if err != nil {
-			return err
-		}
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithDeadline(ctx, at)
-		defer cancel()
-		deadline, _ := ctx.Deadline()
-		if err := conn.SetDeadline(deadline); err != nil {
-			return err
-		}
+	var cancel context.CancelFunc
+	ctx, cancel = context.WithDeadline(ctx, at)
+	defer cancel()
+	deadline, _ = ctx.Deadline()
+	if err := conn.SetDeadline(deadline); err != nil {
+		return err
 	}
 	root, db, refused, err := ownerPaths(ownerState, params)
 	if err != nil {
@@ -555,8 +552,7 @@ func HandleControl(ctx context.Context, conn net.Conn, ownerState string) (err e
 	if refused != "" {
 		// Answered before anything is read or recorded, as a host error: the request asked this
 		// owner to evaluate somewhere it does not, which is no Stop refusal (control.py owner_paths).
-		_, err = io.WriteString(conn, evidence.Dumps(Object{{Key: "error", Value: "host"}, {Key: "detail", Value: refused}}, false, false, true)+"\n")
-		return err
+		return answerHost(conn, refused)
 	}
 	v, err := evaluateOwner(ctx, stop, GuardOptions{Root: root, Now: text(get(params, "now")), Mode: text(get(params, "mode")), DBPath: db, NoRecord: get(params, "noRecord") == true, DefaultDBPath: ownerFallback(ownerState, text(get(params, "socketPath")), text(get(params, "program")))})
 	if err != nil {
@@ -568,8 +564,7 @@ func HandleControl(ctx context.Context, conn net.Conn, ownerState string) (err e
 		// the same error and control.py answers a guard that raised, never with silence:
 		// the live-state guard's refusal (cutover.md) reaches the requester this way, which
 		// journals guard_host_error. The answered request is not a handler failure.
-		_, err = io.WriteString(conn, evidence.Dumps(Object{{Key: "error", Value: "host"}, {Key: "detail", Value: err.Error()}}, false, false, true)+"\n")
-		return err
+		return answerHost(conn, err.Error())
 	}
 	_, err = io.WriteString(conn, evidence.Dumps(v, true, false, true)+"\n")
 	return err
