@@ -23,6 +23,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 type sosOperation struct {
@@ -73,18 +74,29 @@ func captureSOS(t *testing.T, method string) (string, sosCapture) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
-	repo, _ := filepath.Abs("../../..")
-	script, _ := filepath.Abs("testdata/sos_capture.py")
-	home := filepath.Join(root, "home")
-	if err := os.MkdirAll(home, 0700); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, root, method)
-	cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+os.TempDir(), "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src")+":"+filepath.Join(repo, "packages/codex-session-relay"))
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("live Python %s: %v\n%s", method, err, out)
-	}
+	// capture.json and every operation's pre-N tree snapshot are recorded
+	// (supervisor.PythonTree).
+	supervisor.PythonTreeRevisions(t, method, root, func() ([]byte, error) {
+		repo, _ := filepath.Abs("../../..")
+		script, _ := filepath.Abs("testdata/sos_capture.py")
+		home := filepath.Join(root, "home")
+		if err := os.MkdirAll(home, 0700); err != nil {
+			return nil, err
+		}
+		cmd := exec.Command("uv", "run", "--no-sync", "python", script, root, method)
+		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+os.TempDir(), "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src")+":"+filepath.Join(repo, "packages/codex-session-relay"))
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("live Python %s: %v\n%s", method, err, out)
+		}
+		// The final tree is not kept: every replay restores an operation's pre-tree first.
+		for _, gone := range []string{home, filepath.Join(root, "tree")} {
+			if err := os.RemoveAll(gone); err != nil {
+				return nil, err
+			}
+		}
+		return nil, nil
+	}, sosWorkspaceKey(t, root))
 	raw, err := os.ReadFile(filepath.Join(root, "capture.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -97,6 +109,17 @@ func captureSOS(t *testing.T, method string) (string, sosCapture) {
 		t.Fatal(got.Problems)
 	}
 	return root, got
+}
+
+// sosWorkspaceKey substitutes the marker directory of the capture's workspace, a digest of its
+// path under root, which a replay in another root derives anew.
+func sosWorkspaceKey(t *testing.T, root string) pyoracle.Option {
+	t.Helper()
+	key, err := delivery.WorkspaceKey(filepath.Join(root, "tree", "work"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pyoracle.Substitute(key, "<workspace key>")
 }
 
 func sosRestore(t *testing.T, root, pre string) {
@@ -427,33 +450,60 @@ func Test24_SOS_5_BuiltBinaryBytes(t *testing.T) {
 				t.Fatalf("Go JSON: %v %s", err, got)
 			}
 			at, _ := answer["observedAt"].(string)
-			py := exec.Command(filepath.Join(repo, ".venv/bin/python"), append([]string{"-c", `import sys
+			want, pyCode := sosPythonCLI(t, args[0], func() *exec.Cmd {
+				testsupport.HandOver(t, sosDB(root), "python")
+				py := exec.Command(filepath.Join(repo, ".venv/bin/python"), append([]string{"-c", `import sys
 from codex_session_relay import cli,clock,supervisorchannel
 clock.SystemClock.iso=lambda self: sys.argv[1]
 supervisorchannel.relay_program=lambda: (sys.argv[2],)
 raise SystemExit(cli.main(sys.argv[3:]))`, at, alias, "--state", state}, args...)...)
-			py.Env = env
-			testsupport.HandOver(t, sosDB(root), "python")
-			want, pyErr := py.CombinedOutput()
-			sosCompareBytes(t, got, want, goErr, pyErr)
+				py.Env = env
+				return py
+			}, pyoracle.Substitute(alias, "<alias>"), pyoracle.Substitute(root, "<root>"), pyoracle.Substitute(at, "<observedAt>"))
+			sosCompareCodes(t, got, want, goErr, pyCode)
 		})
 	}
 }
 
-func sosCompareBytes(t *testing.T, got, want []byte, goErr, pyErr error) {
+// sosPythonCLI is the recorded combined output and exit code of the Python command command
+// makes (supervisor.PythonOutput).
+func sosPythonCLI(t *testing.T, key string, command func() *exec.Cmd, opts ...pyoracle.Option) ([]byte, int) {
 	t.Helper()
-	code := func(err error) int {
-		if err == nil {
-			return 0
+	raw := supervisor.PythonOutput(t, key, func() ([]byte, error) {
+		out, err := command().CombinedOutput()
+		code := 0
+		if err != nil {
+			exit, ok := err.(*exec.ExitError)
+			if !ok {
+				return nil, err
+			}
+			code = exit.ExitCode()
 		}
-		if e, ok := err.(*exec.ExitError); ok {
-			return e.ExitCode()
-		}
-		t.Fatal(err)
-		return -1
+		return json.Marshal(map[string]any{"code": code, "output": string(out)})
+	}, opts...)
+	var answer struct {
+		Code   int    `json:"code"`
+		Output string `json:"output"`
 	}
-	if code(goErr) != code(pyErr) || !bytes.Equal(got, want) {
-		t.Errorf("CLI byte diff\nGo(%d): %s\nPython(%d): %s", code(goErr), got, code(pyErr), want)
+	if err := json.Unmarshal(raw, &answer); err != nil {
+		t.Fatal(err)
+	}
+	return []byte(answer.Output), answer.Code
+}
+
+// sosCompareCodes compares Go's exit code and output bytes with Python's recorded ones.
+func sosCompareCodes(t *testing.T, got, want []byte, goErr error, pyCode int) {
+	t.Helper()
+	goCode := 0
+	if goErr != nil {
+		e, ok := goErr.(*exec.ExitError)
+		if !ok {
+			t.Fatal(goErr)
+		}
+		goCode = e.ExitCode()
+	}
+	if goCode != pyCode || !bytes.Equal(got, want) {
+		t.Errorf("CLI byte diff\nGo(%d): %s\nPython(%d): %s", goCode, got, pyCode, want)
 	}
 }
 
@@ -543,11 +593,13 @@ func Test24_ObservationFilesBuiltBinaryBytes(t *testing.T) {
 				goCmd := exec.Command(binary, append([]string{"relay"}, args...)...)
 				goCmd.Env = env
 				got, goErr := goCmd.CombinedOutput()
-				handTo(t, "python")
-				pyCmd := exec.Command(filepath.Join(repo, ".venv/bin/python"), append([]string{"-m", "codex_session_relay.cli"}, args...)...)
-				pyCmd.Env = env
-				want, pyErr := pyCmd.CombinedOutput()
-				sosCompareBytes(t, got, want, goErr, pyErr)
+				want, pyCode := sosPythonCLI(t, command+"/"+tc.name, func() *exec.Cmd {
+					handTo(t, "python")
+					pyCmd := exec.Command(filepath.Join(repo, ".venv/bin/python"), append([]string{"-m", "codex_session_relay.cli"}, args...)...)
+					pyCmd.Env = env
+					return pyCmd
+				}, pyoracle.Substitute(root, "<root>"))
+				sosCompareCodes(t, got, want, goErr, pyCode)
 			})
 		}
 	}

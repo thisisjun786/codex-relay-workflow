@@ -26,15 +26,19 @@ func set1Capture(t *testing.T, id string) (map[string]any, *store.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, id, root)
-	cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-	cmd.Env = append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+root, "CODEX_HOME="+root, "TMPDIR="+os.TempDir())
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("capture: %v: %s", err, output)
-	}
+	// The store Python's fixture left is recorded with the answer (pythonTree).
+	output := pythonTree(t, id, root, func() ([]byte, error) {
+		cmd := exec.Command("uv", "run", "--no-sync", "python", script, id, root)
+		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+root, "CODEX_HOME="+root, "TMPDIR="+os.TempDir())
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("capture: %v: %s", err, output)
+		}
+		return output, nil
+	})
 	var want map[string]any
-	if err = json.Unmarshal(output, &want); err != nil {
+	if err := json.Unmarshal(output, &want); err != nil {
 		t.Fatal(err)
 	}
 	ownCopied(t, filepath.Join(root, "relay.sqlite3"), "go")

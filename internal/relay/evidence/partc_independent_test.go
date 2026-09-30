@@ -196,8 +196,9 @@ func Test24_FGE_5_IndependentCollector(t *testing.T) {
 }
 
 func Test24_MEE_2_IndependentOracle(t *testing.T) {
-	repo, _ := filepath.Abs("../../..")
-	raw, err := os.ReadFile(filepath.Join(repo, "packages/codex-session-relay/tests/fixtures/merge_turn_oracle.json"))
+	// A copy of packages/codex-session-relay/tests/fixtures/merge_turn_oracle.json, the landed
+	// merge turn's answers, kept here so the test outlives the Python package.
+	raw, err := os.ReadFile(filepath.Join("testdata", "merge_turn_oracle.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

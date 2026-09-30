@@ -2,11 +2,14 @@ package managed
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // A managed request's missing and unknown fields are named as Python's f"{sorted(keys)}" names
@@ -47,12 +50,15 @@ for document in json.loads(sys.argv[1]):
     except ValueError as error:
         out.append(str(error))
 print(json.dumps(out))`
-	command := exec.Command(filepath.Join(root, ".venv", "bin", "python"), "-c", script, string(raw))
-	command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	out, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("oracle: %v\n%s", err, out)
-	}
+	out := pyoracle.Answer(t, "parse_request", func() ([]byte, error) {
+		command := exec.Command(filepath.Join(root, ".venv", "bin", "python"), "-c", script, string(raw))
+		command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
+		out, err := command.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("oracle: %v\n%s", err, out)
+		}
+		return out, nil
+	})
 	var want []*string
 	if err = json.Unmarshal(out, &want); err != nil || len(want) != len(documents) {
 		t.Fatalf("%v: %s", err, out)

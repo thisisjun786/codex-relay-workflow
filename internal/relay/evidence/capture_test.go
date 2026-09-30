@@ -3,13 +3,15 @@ package evidence
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"testing"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func pythonCapture(t *testing.T, id string) any {
@@ -22,14 +24,17 @@ func pythonCapture(t *testing.T, id string) any {
 	if err != nil {
 		t.Fatal(err)
 	}
-	home := t.TempDir()
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, id)
-	cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+os.TempDir(), "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src")+":"+filepath.Join(repo, "packages/codex-session-relay"))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("python %s: %v\n%s", id, err, out)
-	}
+	out := pyoracle.Answer(t, id, func() ([]byte, error) {
+		home := t.TempDir()
+		cmd := exec.Command("uv", "run", "--no-sync", "python", script, id)
+		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+os.TempDir(), "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src")+":"+filepath.Join(repo, "packages/codex-session-relay"))
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("python %s: %v\n%s", id, err, out)
+		}
+		return out, nil
+	})
 	var value any
 	dec := json.NewDecoder(bytes.NewReader(out))
 	dec.UseNumber()

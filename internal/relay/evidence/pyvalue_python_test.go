@@ -2,11 +2,13 @@ package evidence
 
 import (
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func TestDumpsLivePython(t *testing.T) {
@@ -27,17 +29,25 @@ func TestDumpsLivePython(t *testing.T) {
 		{"unicode-html-separator", `{"z":"<>&\u2028\u2029","é":"雪😀"}`, map[string]any{"z": "<>&\u2028\u2029", "é": "雪😀"}},
 		{"integer", `9007199254740993`, json.Number("9007199254740993")},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			for _, ascii := range []bool{false, true} {
-				a := "0"
-				if ascii {
-					a = "1"
-				}
+		// Python's answers are read in the parent test, so they share one recording.
+		wants := map[bool][]byte{}
+		for _, ascii := range []bool{false, true} {
+			a := "0"
+			if ascii {
+				a = "1"
+			}
+			wants[ascii] = pyoracle.Answer(t, tc.name+"/ascii="+a, func() ([]byte, error) {
 				cmd := exec.Command(python, "-c", `import json,sys;sys.stdout.write(json.dumps(json.loads(sys.argv[1]),sort_keys=True,ensure_ascii=sys.argv[2]=='1'))`, tc.input, a)
 				want, err := cmd.CombinedOutput()
 				if err != nil {
-					t.Fatalf("Python: %v %s", err, want)
+					return nil, fmt.Errorf("Python: %v %s", err, want)
 				}
+				return want, nil
+			})
+		}
+		t.Run(tc.name, func(t *testing.T) {
+			for _, ascii := range []bool{false, true} {
+				want := wants[ascii]
 				got := Dumps(tc.value, false, true, ascii)
 				if got != string(want) {
 					t.Errorf("Dumps diff (ascii=%v)\nGo: %q\nPython: %q", ascii, got, want)
@@ -59,11 +69,14 @@ func Test24ProviderReprPythonBytes(t *testing.T) {
 		{`{"dev-gate":["42"],"external":["43"]}`, map[string][]string{"external": {"43"}, "dev-gate": {"42"}}},
 		{`{"z":{"b":true,"a":null},"a":[1,"x"]}`, contract.OrderedObject{{Key: "z", Value: contract.OrderedObject{{Key: "b", Value: true}, {Key: "a", Value: nil}}}, {Key: "a", Value: []any{1, "x"}}}},
 	} {
-		cmd := exec.Command(python, "-c", `import json,sys;sys.stdout.write(repr(json.loads(sys.argv[1])))`, tc.input)
-		want, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("oracle: %v %s", err, want)
-		}
+		want := pyoracle.Answer(t, tc.input, func() ([]byte, error) {
+			cmd := exec.Command(python, "-c", `import json,sys;sys.stdout.write(repr(json.loads(sys.argv[1])))`, tc.input)
+			want, err := cmd.CombinedOutput()
+			if err != nil {
+				return nil, fmt.Errorf("oracle: %v %s", err, want)
+			}
+			return want, nil
+		})
 		if got := Repr(tc.value); got != string(want) {
 			t.Fatalf("repr byte diff\nGo: %q\nPython: %q", got, want)
 		}

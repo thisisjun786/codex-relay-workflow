@@ -30,18 +30,28 @@ func partDPython(t *testing.T, module, id string) (string, supervisorCapture) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
-	repo, _ := filepath.Abs("../../..")
-	script, _ := filepath.Abs("testdata/partd_dir_aut_capture.py")
-	home := filepath.Join(root, "home")
-	if err := os.MkdirAll(home, 0700); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, root, module, id)
-	cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+os.TempDir(), "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src")+":"+filepath.Join(repo, "packages/codex-session-relay"))
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("python %s: %v\n%s", id, err, out)
-	}
+	// capture.json and the snapshots are recorded (pythonTree); Python's final store and its
+	// final.sqlite3 copy are not, as no Go test reads them.
+	pythonTree(t, module+" "+id, root, func() ([]byte, error) {
+		repo := repoRoot(t)
+		script, _ := filepath.Abs("testdata/partd_dir_aut_capture.py")
+		home := filepath.Join(root, "home")
+		if err := os.MkdirAll(home, 0700); err != nil {
+			return nil, err
+		}
+		cmd := exec.Command("uv", "run", "--no-sync", "python", script, root, module, id)
+		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+os.TempDir(), "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src")+":"+filepath.Join(repo, "packages/codex-session-relay"))
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("python %s: %v\n%s", id, err, out)
+		}
+		for _, gone := range []string{home, filepath.Join(root, "final.sqlite3")} {
+			if err := os.RemoveAll(gone); err != nil {
+				return nil, err
+			}
+		}
+		return nil, removeStoreFiles(filepath.Join(root, "tree", "state", "relay.sqlite3"))
+	})
 	return root, readSupervisorCapture(t, root)
 }
 

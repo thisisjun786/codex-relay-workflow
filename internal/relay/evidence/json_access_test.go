@@ -1,9 +1,12 @@
 package evidence
 
 import (
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // Envelope helpers are library surfaces, not commands. Compare their real Python
@@ -33,10 +36,13 @@ for v in [None,False,True,0,2,1.5,"","x",[],[1],{}, {"a":1}]:
   except Exception as ex: result=None;error=type(ex).__name__+": "+str(ex)
   out.append({"op":op,"value":v,"result":result,"error":error})
 print(json.dumps(out))`
-	raw, err := exec.Command(filepath.Join(root, ".venv/bin/python"), "-c", script).CombinedOutput()
-	if err != nil {
-		t.Fatalf("oracle: %v\n%s", err, raw)
-	}
+	raw := pyoracle.Answer(t, "envelope-accessors", func() ([]byte, error) {
+		raw, err := exec.Command(filepath.Join(root, ".venv/bin/python"), "-c", script).CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("oracle: %v\n%s", err, raw)
+		}
+		return raw, nil
+	})
 	for _, value := range Items(Decode(string(raw))) {
 		row := Dict(value, false)
 		tc := struct {

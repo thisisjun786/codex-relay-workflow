@@ -13,10 +13,11 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func Test24_SCH_53_ReportCorrectionGateSentFrozen(t *testing.T) {
-	root, _ := pythonSupervisorCapture(t, "WhatTheEighthReviewRoundFound.test_a_report_sent_upward_can_no_longer_be_corrected")
+	root, _ := pythonSupervisorCapture(t, "WhatTheEighthReviewRoundFound.test_a_report_sent_upward_can_no_longer_be_corrected", "event")
 	db := filepath.Join(root, "tree", "state", "relay.sqlite3")
 	original, err := os.ReadFile(filepath.Join(root, "event.sqlite3"))
 	if err != nil {
@@ -53,15 +54,19 @@ func Test24_SCH_53_ReportCorrectionGateSentFrozen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	capture := filepath.Dir(ownedCopy(t, db, "python"))
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, "SCH-53-gate", capture, event)
-	cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-	home := t.TempDir()
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir())
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Python gate: %v %s", err, output)
-	}
+	// Python judges the same resubmissions on a copy of the store Go left; recorded.
+	output := pythonOutput(t, "SCH-53-gate", func() ([]byte, error) {
+		capture := filepath.Dir(ownedCopy(t, db, "python"))
+		cmd := exec.Command("uv", "run", "--no-sync", "python", script, "SCH-53-gate", capture, event)
+		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
+		home := t.TempDir()
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir())
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("Python gate: %v %s", err, output)
+		}
+		return output, nil
+	}, pyoracle.Substitute(root, "<root>"))
 	var want map[string]any
 	if err = json.Unmarshal(output, &want); err != nil {
 		t.Fatal(err)

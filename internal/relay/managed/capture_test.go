@@ -14,8 +14,10 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -25,6 +27,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 type managedCapture struct {
@@ -43,17 +46,36 @@ type managedCapture struct {
 func capturePythonManaged(t *testing.T, scenario string) (string, managedCapture) {
 	t.Helper()
 	root := t.TempDir()
-	home := t.TempDir()
-	_, file, _, _ := runtime.Caller(0)
-	repo := filepath.Clean(filepath.Join(filepath.Dir(file), "../../.."))
-	cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/managed/testdata/capture.py"), root, scenario)
-	cmd.Dir = repo
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_CONFIG_HOME="+home, "XDG_DATA_HOME="+home, "CODEX_HOME="+home, "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src")+":"+filepath.Join(repo, "packages/codex-thread-bridge/src")+":"+filepath.Join(repo, "packages/codex-session-relay"))
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("Python fake %s: %v\n%s", scenario, err, output)
-	}
-	raw, err := os.ReadFile(filepath.Join(root, "capture.json"))
+	// Python's capture is recorded with the tree it ran in as <root> and the ledger file's
+	// physical identity as fixed numbers (canonicalLedger); the Go fake is handed that identity.
+	raw := pyoracle.Answer(t, scenario, func() ([]byte, error) {
+		home := t.TempDir()
+		_, file, _, _ := runtime.Caller(0)
+		repo := filepath.Clean(filepath.Join(filepath.Dir(file), "../../.."))
+		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/managed/testdata/capture.py"), root, scenario)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_CONFIG_HOME="+home, "XDG_DATA_HOME="+home, "CODEX_HOME="+home, "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src")+":"+filepath.Join(repo, "packages/codex-thread-bridge/src")+":"+filepath.Join(repo, "packages/codex-session-relay"))
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("Python fake %s: %v\n%s", scenario, err, output)
+		}
+		raw, err := os.ReadFile(filepath.Join(root, "capture.json"))
+		if err != nil {
+			return nil, err
+		}
+		if scenario == "execution-cli" {
+			return canonicalStoreIdentity(raw, root)
+		}
+		if raw, err = canonicalLedger(raw); err != nil {
+			return nil, err
+		}
+		return canonicalFingerprints(raw), nil
+	}, captureOptions(t, root, scenario)...)
+	raw, err := rootDevice(raw, root)
 	if err != nil {
+		t.Fatal(err)
+	}
+	// The workspace Python's run made in the tree; the Go side's request names it as its cwd.
+	if err := os.MkdirAll(filepath.Join(root, "workspace"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	var capture managedCapture
@@ -62,6 +84,195 @@ func capturePythonManaged(t *testing.T, scenario string) (string, managedCapture
 	}
 	return root, capture
 }
+
+// captureOptions are the pyoracle options for a scenario's capture: the tree it ran in as
+// <root>; for execution-cli, the marker directory's workspace key, a digest of the workspace's
+// path in that tree; and, for the two thread races, the comparison check mode applies.
+func captureOptions(t *testing.T, root, scenario string) []pyoracle.Option {
+	t.Helper()
+	var options []pyoracle.Option
+	if scenario == "execution-cli" {
+		key, err := delivery.WorkspaceKey(filepath.Join(root, "execution-workspace"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		options = append(options, pyoracle.Substitute(key, "<execution workspace key>"))
+	}
+	options = append(options, pyoracle.Substitute(root, "<root>"))
+	if scenario == "reservation-threads" || scenario == "reservation-arm-release" {
+		return append(options, pyoracle.SameWhen(sameRace))
+	}
+	return options
+}
+
+// canonicalLedgerDevice and canonicalLedgerInode stand for the device and inode of the ledger
+// file Python's fake host created, which differ on every run.
+const (
+	canonicalLedgerDevice = 4242
+	canonicalLedgerInode  = 777000
+)
+
+// canonicalLedger rewrites the ledger file's physical identity in a Python capture to the
+// canonical numbers, wherever the capture carries it: the ledger record and every receipt or row
+// that names it, as a JSON number or inside a JSON text. A replacement ledger (the inode Python's
+// replacement file got) is written as the canonical inode plus one, as the Go fake replaces it.
+func canonicalLedger(raw []byte) ([]byte, error) {
+	var probe struct {
+		Ledger struct {
+			Device uint64 `json:"device"`
+			Inode  uint64 `json:"inode"`
+		} `json:"ledger"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return nil, err
+	}
+	if probe.Ledger.Inode == 0 {
+		return raw, nil
+	}
+	text := string(raw)
+	replace := func(key string, from, to uint64) {
+		pattern := regexp.MustCompile(`(\\?"` + key + `\\?"\s*:\s*)` + strconv.FormatUint(from, 10) + `\b`)
+		text = pattern.ReplaceAllString(text, "${1}"+strconv.FormatUint(to, 10))
+	}
+	replace("device", probe.Ledger.Device, canonicalLedgerDevice)
+	replace("inode", probe.Ledger.Inode, canonicalLedgerInode)
+	// Any other inode a row names belongs to the file that replaced the ledger.
+	other := regexp.MustCompile(`(\\?"inode\\?"\s*:\s*)(\d+)\b`)
+	text = other.ReplaceAllStringFunc(text, func(match string) string {
+		parts := other.FindStringSubmatch(match)
+		if parts[2] == strconv.Itoa(canonicalLedgerInode) {
+			return match
+		}
+		return parts[1] + strconv.Itoa(canonicalLedgerInode+1)
+	})
+	return []byte(text), nil
+}
+
+var requestFingerprint = regexp.MustCompile(`(\\?"(?:requestFingerprint|request_fingerprint)\\?"\s*:\s*\\?")[0-9a-f]{64}`)
+
+// canonicalFingerprints rewrites each request fingerprint, a digest of the physical request (its
+// paths, so of the tree the capture ran in), to 64 hex digits numbering the fingerprints in order
+// of appearance, wherever the capture names it. normalizedManaged compares fingerprints as
+// "<physical fingerprint>".
+func canonicalFingerprints(raw []byte) []byte {
+	text := string(raw)
+	seen := map[string]bool{}
+	var order []string
+	for _, match := range requestFingerprint.FindAllStringSubmatch(text, -1) {
+		value := match[0][len(match[1]):]
+		if !seen[value] {
+			seen[value] = true
+			order = append(order, value)
+		}
+	}
+	for i, value := range order {
+		text = strings.ReplaceAll(text, value, fmt.Sprintf("%064x", i+1))
+	}
+	return []byte(text)
+}
+
+// sameRace compares the capture of a race between two Python threads, whose winner a rerun may
+// change: a live answer is the same as the recorded one when it is equal, when it is equal with
+// the two racers' names exchanged (reservation-threads), or when it holds the same first
+// reservation and a winner and a loser of the kinds the test accepts (reservation-arm-release).
+func sameRace(recorded, live []byte) bool {
+	if bytes.Equal(recorded, live) {
+		return true
+	}
+	swapped := bytes.ReplaceAll(live, []byte("req-a"), []byte("req-?"))
+	swapped = bytes.ReplaceAll(swapped, []byte("req-b"), []byte("req-a"))
+	swapped = bytes.ReplaceAll(swapped, []byte("req-?"), []byte("req-b"))
+	if bytes.Equal(recorded, swapped) {
+		return true
+	}
+	var a, b managedCapture
+	if json.Unmarshal(recorded, &a) != nil || json.Unmarshal(live, &b) != nil || len(a.Receipts) != 4 || len(b.Receipts) != 4 {
+		return false
+	}
+	for _, c := range []managedCapture{a, b} {
+		winner, row := obj(c.Receipts[1]["ok"]), c.Receipts[3]
+		if c.Receipts[2]["error"] != "RegistrationError" || winner["state"] != row["state"] || row["state"] != "create_armed" && row["state"] != "released" {
+			return false
+		}
+	}
+	return reflect.DeepEqual(a.Receipts[0], b.Receipts[0])
+}
+
+// rootDeviceToken stands in a recorded capture for the device of the tree the capture ran in.
+const rootDeviceToken = "<root device>"
+
+var (
+	storeIDField     = regexp.MustCompile(`\\?"storeId\\?"\s*:\s*\\?"([0-9a-f]{32})\\?"`)
+	physicalInode    = regexp.MustCompile(`(\\?"(?:inode|logInode)\\?"\s*:\s*)(\d+)\b`)
+	physicalDevice   = regexp.MustCompile(`(\\?"(?:device|logDevice)\\?"\s*:\s*)(\d+)\b`)
+	canonicalInodeOf = func(i int) string { return strconv.Itoa(900000 + i) }
+)
+
+// canonicalStoreIdentity rewrites what a Python store's creation makes different on every run, in
+// the receipts of a capture that ran the real CLI on a real store (execution-cli): each store's
+// random storeId, the time the store was created and any other time the receipts carry, and the
+// inode of each file, to fixed values in order of appearance, and the device of the tree to
+// rootDeviceToken. normalizedExecution compares none of these but the device, which rootDevice
+// puts back as the device this run's tree lives on, where Go's store lives too.
+func canonicalStoreIdentity(raw []byte, root string) ([]byte, error) {
+	text := string(raw)
+	ids := map[string]string{}
+	for _, match := range storeIDField.FindAllStringSubmatch(text, -1) {
+		if _, ok := ids[match[1]]; !ok {
+			ids[match[1]] = fmt.Sprintf("%032x", len(ids)+1)
+		}
+	}
+	for id, canonical := range ids {
+		text = strings.ReplaceAll(text, id, canonical)
+	}
+	text = executionTime.ReplaceAllString(text, "2000-01-01T00:00:00Z")
+	inodes := map[string]string{}
+	text = physicalInode.ReplaceAllStringFunc(text, func(match string) string {
+		parts := physicalInode.FindStringSubmatch(match)
+		if parts[2] == "0" || parts[2] == strconv.Itoa(canonicalLedgerInode) || parts[2] == strconv.Itoa(canonicalLedgerInode+1) {
+			return match
+		}
+		if _, ok := inodes[parts[2]]; !ok {
+			inodes[parts[2]] = canonicalInodeOf(len(inodes) + 1)
+		}
+		return parts[1] + inodes[parts[2]]
+	})
+	device, err := deviceOf(root)
+	if err != nil {
+		return nil, err
+	}
+	text = physicalDevice.ReplaceAllStringFunc(text, func(match string) string {
+		parts := physicalDevice.FindStringSubmatch(match)
+		if parts[2] != device {
+			return match
+		}
+		return parts[1] + rootDeviceToken
+	})
+	return []byte(text), nil
+}
+
+// rootDevice puts the device of the tree this run's capture lives in where the recording names
+// rootDeviceToken.
+func rootDevice(raw []byte, root string) ([]byte, error) {
+	device, err := deviceOf(root)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.ReplaceAll(raw, []byte(rootDeviceToken), []byte(device)), nil
+}
+
+func deviceOf(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", fmt.Errorf("no device for %s", path)
+	}
+	return strconv.FormatUint(uint64(stat.Dev), 10), nil
+}
+
 func pythonFixture(root string) []byte {
 	workspace := filepath.Join(root, "workspace")
 	settings := func() map[string]any {
