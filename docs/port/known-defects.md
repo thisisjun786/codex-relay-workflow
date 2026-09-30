@@ -18,7 +18,7 @@
   | `parent-title -`, `start-policy - check` (a lone `-` is a positional) | exit 2, `parent_title.py: error: argument command: invalid choice: '-' (choose from 'decide', 'readback', 'replay')`; `start_policy.py: error: argument mode: invalid choice: '-' (choose from 'vocabulary', 'check', 'selftest')` | exit 2, `parent_title.py: error: the following arguments are required: command`; `start_policy.py: error: unrecognized arguments: -` |
   | `parent-title --x decide y` (the root's unrecognized arguments join the subcommand's) | exit 2, `parent_title.py: error: unrecognized arguments: --x y` | exit 2, `parent_title.py: error: unrecognized arguments: y` |
 
-  No skill path reaches them. The skills name these commands with fixed, fully spelled argv (`hook-probe observe` with `--sanitize`, `hook-probe replay`, `parent-title decide` and `replay`, `start-policy vocabulary`, `check` and `selftest`), and `scripts/ci/contracts.py` runs `replay` and `selftest` with nothing else: none abbreviates an option, clusters short flags, passes a lone `-`, or gives the root an argument it does not know.
+  No skill path reaches them. The skills name these commands with fixed, fully spelled argv (`hook-probe observe` with `--sanitize`, `hook-probe replay`, `parent-title decide` and `replay`, `start-policy vocabulary`, `check` and `selftest`), and `scripts/ci/contracts.py` ran `replay` and `selftest` with nothing else until todo 44 deleted it (`crw-dev ci contracts` runs them in process): none abbreviates an option, clusters short flags, passes a lone `-`, or gives the root an argument it does not know.
 
 ## Python defects not carried over
 

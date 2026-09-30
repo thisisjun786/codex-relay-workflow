@@ -46,9 +46,9 @@ class GateTests(unittest.TestCase):
     def env(self, kind="full", event="pull_request", base="dev"):
         paths = {"full": ["scripts/ci/gate.py"], "docs": ["README.md"],
                  "skill": ["plugins/crw/skills/crw-run/SKILL.md"]}[kind]
-        selected = {"tests": kind != "docs", "packages": kind == "full"}
+        selected = {"tests": kind != "docs"}
         if event == "workflow_dispatch":
-            selected = {"tests": True, "packages": True}
+            selected = {"tests": True}
         ref = "refs/pull/1/merge" if event == "pull_request" else "refs/heads/dev"
         selection = dict(version=1, event=event, base="a" * 40, head="b" * 40,
                          base_ref=base, ref=ref, changed=paths, unknown=[], unsafe=[],
@@ -84,7 +84,7 @@ class GateTests(unittest.TestCase):
                     gate.check(self.mutate(self.env(), lambda n: n[job].update(result=state)))
 
     def test_unselected_jobs_must_be_skipped_not_failed_or_run(self):
-        for job in ("tests", "packages"):
+        for job in ("tests",):
             for state in ("success", "failure", "cancelled", "neutral", None):
                 with self.subTest(job=job, state=state), self.assertRaises(ValueError):
                     gate.check(self.mutate(self.env("docs"), lambda n: n[job].update(result=state)))
@@ -100,9 +100,10 @@ class GateTests(unittest.TestCase):
             gate.check(self.mutate(self.env(), lambda n: n.update(extra={"result": "success"})))
 
     def test_selection_cannot_claim_false_exemption(self):
-        for field, value in (("selected", {"tests": False, "packages": False}),
+        for field, value in (("selected", {"tests": False}),
                              ("unknown", ["new/component.py"]), ("head", "old"),
-                             ("version", True), ("selected", {"tests": "true", "packages": True})):
+                             ("version", True), ("selected", {"tests": "true"}),
+                             ("selected", {"tests": True, "packages": True})):
             def alter(needs):
                 data = json.loads(needs["selection"]["outputs"]["scope"])
                 data[field] = value
@@ -133,10 +134,6 @@ class WorkflowTests(unittest.TestCase):
     def test_the_required_set_is_the_set_of_real_jobs(self):
         self.assertEqual(set(workflow_jobs()) - GATES, gate.JOBS)
 
-    def test_the_package_check_is_required(self):
-        self.assertIn("packages", gate.JOBS)
-        self.assertIn("packages", workflow_jobs())
-
     def test_gate_waits_for_every_producer(self):
         jobs = workflow_jobs()
         for name in sorted(GATES):
@@ -150,21 +147,25 @@ class WorkflowTests(unittest.TestCase):
             with self.subTest(job=name):
                 self.assertNotIn("continue-on-error", body)
 
-    def test_expensive_jobs_follow_selection_and_keep_runtime_coverage(self):
-        body = workflow_jobs()["packages"]
-        self.assertIn("scripts/ci/packages.py", body)
-        self.assertIn("if: needs.selection.outputs.packages == 'true'", body)
+    def test_the_expensive_job_follows_selection(self):
         self.assertIn("if: needs.selection.outputs.tests == 'true'", workflow_jobs()["tests"])
-        self.assertIn("scripts/ci/contracts.py", workflow_jobs()["validate"])
-        self.assertNotIn("scripts/ci/contracts.py", workflow_jobs()["tests"])
-        for version in ("'3.11'", "'3.13'"):
-            self.assertIn(version, body)
+        # The contract check runs the dev binary once, in validate, and never in the test matrix.
+        self.assertRegex(workflow_jobs()["validate"], r"(?m)^      - run: .*crw-dev\"? ci contracts'?$")
+        self.assertNotIn("ci contracts", workflow_jobs()["tests"])
 
-    def test_downloaded_tooling_is_pinned_by_commit_and_checksum(self):
-        body = workflow_jobs()["packages"]
-        self.assertIsNotNone(re.search(r"uses: astral-sh/setup-uv@[0-9a-f]{40} #", body))
-        self.assertIsNotNone(re.search(r"checksum: '[0-9a-f]{64}'", body))
-        self.assertIsNotNone(re.search(r"version: '\d+\.\d+\.\d+'", body))
+    def test_no_job_installs_the_python_packages(self):
+        # The Python implementation left the repository in todo 44: nothing syncs a workspace
+        # or runs its suites any more.
+        for name, body in workflow_jobs().items():
+            with self.subTest(job=name):
+                for word in ("setup-uv", "uv sync", "uv run", "packages.py", "pytest"):
+                    self.assertNotIn(word, body)
+
+    def test_downloaded_tooling_is_pinned_by_commit(self):
+        for name, body in workflow_jobs().items():
+            for action in re.findall(r"uses: (\S+)", body):
+                with self.subTest(job=name, action=action):
+                    self.assertRegex(action, r"@[0-9a-f]{40}$")
 
     def test_go_product_always_runs_and_builds_every_static_target(self):
         body = workflow_jobs()["go-product"]
@@ -228,12 +229,6 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(len(legs), len(set(legs)))
         self.assertEqual(sorted(legs), sorted(["lint", "dist", "test-rest"]
                                               + [f"test-{n}" for n in numbered]))
-
-    def test_package_shards_are_every_slice_of_one_total(self):
-        shards = self.matrix("packages", "shard")
-        total = len(shards)
-        self.assertEqual(shards, [f"{index}/{total}" for index in range(1, total + 1)])
-        self.assertIn('packages.py --shard "$SHARD"', workflow_jobs()["packages"])
 
     def installer_step(self):
         """The tests job's run script, unindented as the runner receives it, and its HEAVY list."""

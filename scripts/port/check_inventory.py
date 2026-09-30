@@ -5,8 +5,9 @@ Exit 0 only when the table's path column is set-equal to every non-test .py file
 packages/, scripts/ and plugins/ (the same selection as `find packages scripts plugins -name
 '*.py' -not -path '*/tests/*' -not -path '*/__pycache__/*'`), every line count equals `wc -l`,
 the stated total equals the sum, every row names an owning issue among CRW-150..161, and every
-retire-with-evidence row carries its consumer search and removal trigger. Exit 1 otherwise,
-naming each offending path.
+retire-with-evidence row carries its consumer search and removal trigger. A file that is gone
+is listed once, under "Files deleted with evidence", with its consumer search and what removed
+it, and never in the table of files that exist. Exit 1 otherwise, naming each offending path.
 """
 
 import re
@@ -24,6 +25,7 @@ DISPOSITIONS: Final = frozenset({"port", "retire-with-evidence", "keep-as-data"}
 OWNER: Final = re.compile(r"CRW-1(5[0-9]|6[01])")
 TOTAL: Final = re.compile(r"^Total non-test lines: (\d+)$", re.MULTILINE)
 EMPTY: Final = frozenset({"", "-"})
+DELETED_COLUMNS: Final = ("path", "lines", "invoked", "owner", "consumer_search", "removed by")
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,21 +57,50 @@ def cells(line: str) -> list[str]:
     return [cell.strip() for cell in line.strip().strip("|").split("|")]
 
 
-def table_rows(text: str) -> list[Row]:
-    """Read the rows of the one table whose header is COLUMNS."""
+def table_lines(text: str, columns: tuple[str, ...]) -> list[list[str]]:
+    """The cell texts of each row of the one table whose header is columns."""
     lines = text.splitlines()
-    start = next(i for i, line in enumerate(lines) if tuple(cells(line)) == COLUMNS)
-    rows: list[Row] = []
+    start = next(i for i, line in enumerate(lines) if tuple(cells(line)) == columns)
+    rows: list[list[str]] = []
     for line in lines[start + 2:]:
         if not line.startswith("|"):
             break
-        values = cells(line)
+        rows.append(cells(line))
+    return rows
+
+
+def table_rows(text: str) -> list[Row]:
+    """Read the rows of the one table whose header is COLUMNS."""
+    rows: list[Row] = []
+    for values in table_lines(text, COLUMNS):
         if len(values) != len(COLUMNS):
             rows.append(Row(values[0].strip("`"), "", "", "", "", ""))
             continue
         path, lines_cell, _, _, owner, disposition, search, trigger = values
         rows.append(Row(path.strip("`"), lines_cell, owner, disposition, search, trigger))
     return rows
+
+
+def deleted_problems(text: str, listed: list[str]) -> list[str]:
+    """Name every row of the deleted-files table that is malformed, still present, listed twice or
+    also listed as existing, or that lacks its consumer search or what removed it."""
+    found: list[str] = []
+    paths = []
+    for values in table_lines(text, DELETED_COLUMNS):
+        path = values[0].strip("`")
+        paths.append(path)
+        if len(values) != len(DELETED_COLUMNS):
+            found.append(f"deleted row has {len(values)} cells, not {len(DELETED_COLUMNS)}: {path}")
+            continue
+        if (ROOT / path).exists():
+            found.append(f"listed as deleted but present: {path}")
+        if path in listed:
+            found.append(f"listed both as present and as deleted: {path}")
+        if values[4] in EMPTY or values[5] in EMPTY:
+            found.append(f"deleted row lacks consumer_search or removed by: {path}")
+    found += [f"duplicated deleted row: {path}"
+              for path in sorted({path for path in paths if paths.count(path) > 1})]
+    return found
 
 
 def problems(rows: list[Row], files: dict[str, int], stated_total: int | None) -> list[str]:
@@ -103,6 +134,7 @@ def main() -> int:
     files = python_files()
     total = TOTAL.search(text)
     found = problems(rows, files, int(total.group(1)) if total else None)
+    found += deleted_problems(text, [row.path for row in rows])
     for problem in found:
         print(problem, file=sys.stderr)
     print(f"rows={len(rows)} files={len(files)} lines={sum(files.values())}")

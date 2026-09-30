@@ -51,8 +51,8 @@ func scopeParity(t *testing.T, r *fixtureRepo, base string, overrides map[string
 	return selection
 }
 
-func jobs(tests, packages bool) map[string]any {
-	return map[string]any{"tests": tests, "packages": packages}
+func jobs(tests bool) map[string]any {
+	return map[string]any{"tests": tests}
 }
 
 func strs(items ...string) []any {
@@ -76,7 +76,7 @@ func Test47_SCOPE_1_SelectionFollowsPathClass(t *testing.T) {
 		r.write("docs/releases.md", "release procedure\n")
 		r.commit()
 		s := scopeParity(t, r, base, nil)
-		expectEqual(t, "selected", s["selected"], jobs(false, false))
+		expectEqual(t, "selected", s["selected"], jobs(false))
 		expectEqual(t, "reason", s["reason"], "paths")
 		expectEqual(t, "changed", s["changed"], strs("docs/releases.md"))
 	})
@@ -84,14 +84,14 @@ func Test47_SCOPE_1_SelectionFollowsPathClass(t *testing.T) {
 		r, base := scopeRepo(t)
 		r.write("plugins/crw/skills/crw-run/SKILL.md", "instructions\n")
 		r.commit()
-		expectEqual(t, "selected", scopeParity(t, r, base, nil)["selected"], jobs(true, false))
+		expectEqual(t, "selected", scopeParity(t, r, base, nil)["selected"], jobs(true))
 	})
 	t.Run("skill plus manifest", func(t *testing.T) {
 		r, base := scopeRepo(t)
 		r.write("plugins/crw/skills/crw-run/SKILL.md", "instructions\n")
 		r.write("plugins/crw/.codex-plugin/plugin.json", "{}\n")
 		r.commit()
-		expectEqual(t, "selected", scopeParity(t, r, base, nil)["selected"], jobs(true, true))
+		expectEqual(t, "selected", scopeParity(t, r, base, nil)["selected"], jobs(true))
 	})
 	t.Run("full paths", func(t *testing.T) {
 		for _, path := range []string{"packages/bridge/src/a.py", "scripts/runtime_install.py",
@@ -115,7 +115,7 @@ func Test47_SCOPE_1_SelectionFollowsPathClass(t *testing.T) {
 		s := scopeParity(t, r, base, nil)
 		expectEqual(t, "unknown", s["unknown"], strs())
 		expectEqual(t, "changed", s["changed"], strs(paths...))
-		expectEqual(t, "selected", s["selected"], jobs(true, true))
+		expectEqual(t, "selected", s["selected"], jobs(true))
 		data, _ := json.Marshal(s)
 		if _, err := ValidateSelection(decodeNumbers(t, string(data))); err != nil {
 			t.Errorf("ValidateSelection: %v", err)
@@ -139,7 +139,7 @@ func Test47_SCOPE_2_UnknownCoversTheWholeCandidateTree(t *testing.T) {
 	r.commit()
 	s := scopeParity(t, r, base, nil)
 	expectEqual(t, "unknown", s["unknown"], strs("new-component/source.py"))
-	expectEqual(t, "selected", s["selected"], jobs(true, true))
+	expectEqual(t, "selected", s["selected"], jobs(true))
 }
 
 func Test47_SCOPE_3_RenamesListBothSides(t *testing.T) {
@@ -154,7 +154,7 @@ func Test47_SCOPE_3_RenamesListBothSides(t *testing.T) {
 	r.commit()
 	s := scopeParity(t, r, base, nil)
 	expectEqual(t, "changed", s["changed"], strs("docs/guide.md", "packages/bridge/guide.md"))
-	expectEqual(t, "packages", s["selected"].(map[string]any)["packages"], true)
+	expectEqual(t, "tests", s["selected"].(map[string]any)["tests"], true)
 }
 
 // decodeNumbers decodes JSON the way the gate reads a selection (numbers kept exact).
@@ -176,7 +176,7 @@ func Test47_SCOPE_4_ModeChangesAreUnsafe(t *testing.T) {
 		r.commit()
 		s := scopeParity(t, r, base, nil)
 		expectEqual(t, "unsafe", s["unsafe"], strs("README.md"))
-		expectEqual(t, "selected", s["selected"], jobs(true, true))
+		expectEqual(t, "selected", s["selected"], jobs(true))
 	})
 	t.Run("symlink", func(t *testing.T) {
 		r, base := scopeRepo(t)
@@ -190,7 +190,7 @@ func Test47_SCOPE_4_ModeChangesAreUnsafe(t *testing.T) {
 		r.commit()
 		s := scopeParity(t, r, base, nil)
 		expectEqual(t, "unsafe", s["unsafe"], strs("README.md"))
-		expectEqual(t, "selected", s["selected"], jobs(true, true))
+		expectEqual(t, "selected", s["selected"], jobs(true))
 	})
 }
 
@@ -209,7 +209,7 @@ func Test47_SCOPE_5_NoUsableComparisonSelectsEverything(t *testing.T) {
 		t.Run(row.reason+"/"+row.base, func(t *testing.T) {
 			s := scopeParity(t, r, row.base, row.overrides)
 			expectEqual(t, "reason", s["reason"], row.reason)
-			expectEqual(t, "selected", s["selected"], jobs(true, true))
+			expectEqual(t, "selected", s["selected"], jobs(true))
 		})
 	}
 }
@@ -256,7 +256,7 @@ func Test47_SCOPE_7_CLIWritesJSONAndJobOutputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	expectEqual(t, "GITHUB_OUTPUT", string(goData), string(pyData))
-	want := "scope=" + strings.TrimSuffix(got.stdout, "\n") + "\ntests=false\npackages=false\n"
+	want := "scope=" + strings.TrimSuffix(got.stdout, "\n") + "\ntests=false\n"
 	expectEqual(t, "GITHUB_OUTPUT content", string(goData), want)
 	// A failure is exit 1 with the "Selection failed" prefix and nothing on stdout.
 	bad := goCheck(t, r.root, nil, "scope", scopeArgs(base, map[string]string{"head": "no-such-rev"})...)
@@ -289,7 +289,7 @@ func Test47_SCOPE_1_RootProseFilesAreDocs(t *testing.T) {
 		r.write(path, "changed prose\n")
 		r.commit()
 		s := scopeParity(t, r, base, nil)
-		expectEqual(t, path+" selected", s["selected"], jobs(false, false))
+		expectEqual(t, path+" selected", s["selected"], jobs(false))
 		expectEqual(t, path+" unknown", s["unknown"], strs())
 	}
 }

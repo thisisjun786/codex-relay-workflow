@@ -27,8 +27,15 @@ func TestSchema_embeds_frozen_contract(t *testing.T) {
 		t.Fatal("embedded schema differs from frozen contract")
 	}
 }
+
+// testdata/relay_schema_shipped.json is the schema a fresh Store created at the revision it
+// names (0ffcc4d0, installed on the production host on 2026-09-23), read with the swap gate's
+// own query: every object that has shipped keeps its CREATE text (I-402), because the swap gate
+// compares a store's objects with a candidate's by that text and a changed shipped object would
+// be refused on every store that holds it. Until todo 44 it sat in scripts/ci/tests beside the
+// Python store's twin of this test.
 func TestOpen_preserves_shipped_schema(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join(repositoryRoot(t), "scripts/ci/tests/relay_schema_shipped.json"))
+	data, err := os.ReadFile(filepath.Join("testdata", "relay_schema_shipped.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

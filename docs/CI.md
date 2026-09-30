@@ -14,9 +14,8 @@ Python execution path is removed. Installing and operating the runtime is
 | `crw-dev ci validate` | Skill metadata, local links and Python syntax |
 | `crw-dev ci plugin` | Plugin package shape, payload hygiene and the release digest |
 | `python3 -m unittest discover -s scripts/ci/tests -v` | Installer behavior and CI-control tests (CI runs them as two legs per Python version, `heavy` and `rest`; see [the installer test legs](#the-installer-test-legs)) |
-| `crw-dev ci contracts` | Run the offline contract checks whose contract is present, each built into `crw-dev`: the hook replay, the operations shape check, the component definition's Go-retained fields (licences, the bridge identity tool, the compatibility links), the start-policy self-test and the parent-title replay. No Python checker script is needed; `scripts/ci/contracts.py` still pairs each contract with its script |
+| `crw-dev ci contracts` | Run the offline contract checks whose contract is present, each built into `crw-dev`: the hook replay, the operations shape check, the component definition's Go-retained fields (licences, the bridge identity tool, the compatibility links), the start-policy self-test and the parent-title replay. No Python checker script is needed (`scripts/ci/contracts.py`, which paired each contract with its script, was deleted in todo 44) |
 | `crw-dev ci operations` | The operations fixtures against their contract (the Go port of `scripts/check_operations_contract.py`, also run by `contracts`) |
-| `python3 scripts/ci/packages.py [--shard K/N]` | Install, test, run and build the two packages under `packages/` from the root lock file; CI runs each Python version as `--shard` legs that partition the collected tests |
 | `bash scripts/ci/secrets.sh` | Checksum-pinned Gitleaks scan of all fetched history |
 | `crw-dev ci gate` | Aggregate prerequisite results supplied by the workflow |
 | `make lint`, `make test-part TEST_PART=<1-5, rest>`, `CGO_ENABLED=0 make dist` per target | `go-product` job, one leg each: vet (also of the `dev` and `integration` tagged packages), staticcheck and gofmt; the Go tests and contract corpus as parts that together are `make test`; static `crw` binaries for linux/amd64, linux/arm64 and darwin/arm64 uploaded with `SHA256SUMS` |
@@ -27,9 +26,8 @@ Python execution path is removed. Installing and operating the runtime is
 archives never contain it. Each `crw-dev ci` check replaces the Python script of the same
 name under `scripts/ci/` with identical exit codes and output (except `contracts`, whose Go
 side no longer runs a Python checker or refuses a contract for lacking one, and reports the
-component definition by what the Go build takes from it); the scripts and their tests
-stay until they are deleted before todo 48 of the Go port, and until then `validate` also
-runs `scripts/ci/contracts.py`, which `test_gate.py` pins.
+component definition by what the Go build takes from it); the remaining scripts and their
+tests are developer tools that stay until todo 48 of the Go port.
 
 See the [workflow](../.github/workflows/ci.yml) for exact job inputs and Python
 versions. PR validation uses GitHub's combined merge candidate; pushes to `dev`
@@ -49,7 +47,7 @@ too, so an existing unregistered component cannot hide behind a docs-only diff.
 | --- | --- |
 | Named root prose files and Markdown directly under `docs/` | Validation, plugin identity, offline contracts and secrets |
 | `plugins/crw/skills/**` or the root `skills` link | Above, plus installer/CI tests on Python 3.10 and 3.13 |
-| Runtime, package, wiring, manifest, shared configuration or CI-control paths | All checks, including both package suites on Python 3.11 and 3.13 |
+| Runtime, package, wiring, manifest, shared configuration or CI-control paths | All checks |
 | Go product and contract corpus paths: `go.mod`, `go.sum`, `tools.go`, `Makefile`, `.goreleaser.yaml`, root `conftest.py`, `cmd/**`, `internal/**`, `contract/**`, `docs/port/**`, `scripts/port/**` | All checks |
 | Mixed paths | Union of their coverage |
 | Empty/unavailable diff or manual dispatch | Full coverage |
@@ -60,27 +58,23 @@ with a skill edit still selects full coverage; this selector does not infer a
 version-only exemption from JSON contents. The PR template lives under `.github/`
 and conservatively selects full coverage too.
 
-Markdown under `packages/`, the package READMEs included, stays in the full class.
-Every file there is inside a package's subdirectory tree, which
-`runtime_install.py verify-definition` re-derives against
-`scripts/crw_runtime/components.json` in `validate`, so a README edit cannot land
-without that full-class file changing too; and `test_regression_map.py` reads
-`packages/codex-session-relay/docs/contention-regression.md`, so a package document can
-fail a package suite.
+Markdown under `packages/`, the package READMEs included, stays in the full class: every
+file there belongs to a package, and the class is a path rule, not a judgement of the
+content.
 
-`selection` runs first. Selected test and package jobs and `validate` then run
-independently; secret scanning is independent. The contract check runs once in
+`selection` runs first. The selected test job and `validate` then run independently;
+secret scanning is independent. The contract check runs once in
 `validate`, not in both test-matrix legs. `dev-gate` always runs, requires selection
 and the always-on producers to succeed, and accepts skipped jobs only when that
 selection explicitly did not request them. Missing, malformed, failed, cancelled
 and unexpected-skipped results fail. It rejects PRs targeting `main`.
 
-`go-product` always runs, like `validate`: it needs no uv or Python packages, and
+`go-product` always runs, like `validate`: it needs only the Go toolchain, and
 the darwin/arm64 binary it builds is not validated on a macOS host. Its legs run on
 separate runners; the Makefile names the slowest packages as parts 1-5 and `rest` takes
 every other package, so a new package is always tested. `test_gate.py` and
-`internal/dev/ci` refuse a Makefile part without a workflow leg, and a package-shard
-list that is not every slice of one total. Its `dist` leg also checks the plugin
+`internal/dev/ci` refuse a Makefile part without a workflow leg, and any job that still
+syncs a uv workspace or runs the Python package suites. Its `dist` leg also checks the plugin
 payload with `crw-dev ci plugin`; the step's condition, that the native wiring launcher
 `plugins/crw/wiring/crw-bridge.sh` exists, holds since todo 34. It also runs the isolated-home
 integration test against the linux/amd64 binary it built, with `CGO_ENABLED=0` and
@@ -112,7 +106,10 @@ host (load average 6-14, Python 3.14) on 2026-09-29: `test_runtime_install` 98 s
 `test_install_acceptance` 28 s make `heavy` 126 s, and the other fourteen modules make
 `rest` 126 s, led by `test_stop_events` 40 s, `test_trial_startup` 38 s and
 `test_plugin_wiring` 18 s (`test_hook_comparison`, 43 s, was deleted with the harness it
-tested in todo 46). Re-measure and move a module when one leg grows well past the other. `test_gate.py` and `internal/dev/ci`
+tested in todo 46). Todo 44 deletes the modules that tested the Python implementation, the
+Python installers and harnesses (`test_stop_events`, `test_completion_hook`,
+`test_adapter_agreement`, `test_packages` and `test_relay_schema_shipped` so far), so `rest` is
+now the lighter leg. Re-measure and move a module when one leg grows well past the other. `test_gate.py` and `internal/dev/ci`
 run the step's own script once per leg over a copy of the test directory, with
 `python3` replaced by a recorder, and check that together the legs run every module
 discovery would load exactly once.
@@ -159,62 +156,17 @@ any skill loaded on a host; see [plugin packaging](plugin-packaging.md).
 
 ## Packages
 
-`packages/codex-thread-bridge` and `packages/codex-session-relay` are one uv
-workspace whose root `pyproject.toml` and `uv.lock` live at the repository root.
-The relay declares the bridge with `tool.uv.sources` set to `workspace = true`, so
-the dependency resolves to this checkout instead of an index.
+Until todo 44 a `packages` job installed the two Python packages under `packages/` from the
+root `uv.lock` on Python 3.11 and 3.13, ran both suites under pytest (refusing an empty
+collection, any skipped case and an import satisfied by another copy), ran both CLIs and built
+both wheels. The Go port under `cmd/` and `internal/` is the product now: its tests and the
+contract corpus carry the properties those suites protected ([test map](port/test-map.md)),
+and the job, `scripts/ci/packages.py` and its duration table were deleted with the Python
+implementation. All of this is evidence about this source. It is not evidence about an
+installed runtime, an App Server socket, an MCP registration or delivery on any host; those
+remain separate operations with their own authorization.
 
-The `packages` job runs on Python 3.11 and 3.13, which are the versions those
-packages support. It installs with `--locked`, so a `pyproject.toml` edit without a
-refreshed lock fails there. Three results are treated as failures rather than
-successes, because each of them otherwise reads as a pass:
-
-- A suite that collected nothing. `unittest discover` answers a wrong directory with
-  "Ran 0 tests ... OK" and exit 0, so both suites run under pytest and their JUnit
-  reports are read back for a nonzero count.
-- A skipped case. The relay skips its real-bridge seams when `codex_thread_bridge`
-  cannot be imported, which is the integration this repository now owns, so that skip
-  is named explicitly and any other skip fails too. The relay's own conformance gate
-  runs with `RELAY_CONFORMANCE_REQUIRED=1` for the same reason.
-- An import satisfied by another copy. `codex_thread_bridge.__file__` and
-  `codex_session_relay.__file__` are resolved and required to sit under
-  `packages/<name>/src` before any test runs.
-
-Each Python version runs as two `--shard K/2` legs. Every leg collects the whole
-suite and keeps whole test modules, assigned heaviest first onto the lightest shard.
-A module weighs the seconds recorded for it in
-[`scripts/ci/package-durations.json`](../scripts/ci/package-durations.json), keyed by
-package directory and then module path. A module the table does not name yet weighs
-its collected tests at the mean seconds per test of that package's recorded modules
-(1 per test when none is recorded), so a new module is still placed and still run;
-only the balance suffers until the table is refreshed. Refresh it after adding,
-renaming or substantially slowing a module, with a whole run that writes the
-per-module seconds from its own JUnit reports once every check has passed:
-
-```sh
-CRW_PACKAGES_RECORD=scripts/ci/package-durations.json TMPDIR=/var/tmp python3 scripts/ci/packages.py
-```
-
-A sharded run refuses `CRW_PACKAGES_RECORD`, because it times only its slice. The
-recorded seconds come from whichever machine ran the command; only their proportions
-matter to the balance. Record on an otherwise idle machine: under contention a
-module's time can move several-fold between runs, and the balance moves with it.
-
-The leg count is a trade against concurrency. A CI run already holds about as many
-jobs as a free-plan account runs at once (20), so a third leg per Python version
-would wait in the queue rather than shorten the run. With the table, two legs are
-expected to finish within the slowest other leg of the run; add legs only when that
-stops holding.
-
-The job then runs both CLIs with `--help` and builds both wheels. All of this is
-evidence about this source. It is not evidence about an installed bridge or relay,
-an App Server socket, an MCP registration or delivery on any host; those remain
-separate operations with their own authorization.
-
-The bridge's worktree tests create Git repositories under the pytest temporary
-directory, and a surrounding repository changes what they observe. The check refuses
-to run when the temporary directory is inside a checkout and names
-`CRW_PACKAGES_TMPDIR` as the override. Hosted CI is the authoritative run.
+## Scope of the checks
 
 The installer suite invokes the real CLI against temporary fixtures and leaves
 the user's installed skills alone. The validator is repository-owned structural
@@ -331,8 +283,8 @@ part of this adaptation. Preserve upstream notices for any copied source.
 
 The imported packages' provenance is recorded in [packages/README.md](../packages/README.md).
 The bridge's own `.github/workflows/ci.yml` was not imported as a nested workflow;
-its ruff, ty, pytest and build steps informed the `packages` job, which currently
-runs the pytest and build parts for both packages.
+its ruff, ty, pytest and build steps informed the `packages` job, which ran the pytest
+and build parts for both packages until todo 44.
 
 GitHub's [PR event reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request)
 documents merge-candidate execution. Its [secure use reference](https://docs.github.com/en/actions/reference/security/secure-use)

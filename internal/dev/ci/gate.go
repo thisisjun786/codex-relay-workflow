@@ -15,7 +15,7 @@ import (
 
 // GateJobs is the required-check set the dev gate aggregates; it must stay equal to the
 // workflow's jobs minus dev-gate and to dev-gate's needs list (scripts/ci/gate.py JOBS).
-var GateJobs = []string{"selection", "validate", "tests", "secrets", "packages", "go-product"}
+var GateJobs = []string{"selection", "validate", "tests", "secrets", "go-product"}
 
 // keyError is Python's KeyError: its text is repr(key).
 type keyError struct{ key string }
@@ -93,7 +93,7 @@ func GateCheck(env func(string) (string, bool)) (Selection, error) {
 	}
 	for _, name := range order {
 		expected := "success"
-		if (name == "tests" && !scope.Selected.Tests) || (name == "packages" && !scope.Selected.Packages) {
+		if name == "tests" && !scope.Selected.Tests {
 			expected = "skipped"
 		}
 		job, ok := needs[name].(map[string]any)

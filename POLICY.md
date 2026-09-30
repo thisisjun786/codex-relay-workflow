@@ -67,10 +67,9 @@ state that separately from installation and successful live operation.
 
 CI classifies the changed paths and candidate inventory, runs the selected checks
 in parallel, and reports one result-only `dev-gate`. Validation, plugin identity,
-offline contracts and secret scanning always run. Explicitly listed prose paths
-skip the installer/CI test matrix and package matrix. Skill instructions retain
-the installer/CI tests; runtime, packaging metadata and CI-control changes run
-both matrices. Mixed changes take the union. An unknown path runs full checks and
+offline contracts, secret scanning and the Go product checks always run. Explicitly
+listed prose paths skip the installer/CI test matrix; skill instructions, runtime,
+packaging metadata and CI-control changes run it. Mixed changes take the union. An unknown path runs full checks and
 blocks the gate until its verification mapping is registered. Empty or unavailable
 diffs and manual dispatch run all checks. See the exact map in
 [scripts/ci/scope.py](scripts/ci/scope.py).
@@ -86,7 +85,7 @@ The release workflow is manual and owner-controlled.
 | Skill metadata, local links and Python syntax | Repository structure and readable source |
 | Installer subprocess tests in temporary destinations | Idempotence and preservation of conflicting files, directories and links |
 | CI-control negative tests | Missing, malformed, failed, cancelled or skipped prerequisites cannot pass the aggregator; main-target PRs and invalid release sources are rejected |
-| Locked package install, resolved import locations, full suites, CLIs and wheel builds | The imported packages build, import and test from this checkout, with no empty collection and no skipped case |
+| Go lint, the Go test suite with the contract corpus, static release binaries and the isolated-home install | The Go runtime builds, passes its tests and installs and wires from this checkout |
 | Pinned secret scan of available Git history | No finding under the reviewed scanner configuration in that fetched history |
 | Owning offline contract checks, when present | Their documented parser, fixture or shape behavior |
 | Independent scenario review | Instruction consistency and consequential edge cases within its scope |
@@ -101,9 +100,9 @@ applicable. A structural test does not prove the workflow's meaning, and a fixtu
 replay does not prove an actual Codex hook, relay delivery or Desktop behavior.
 
 The skill and installer checks use Python's standard library and temporary
-synthetic data. The `packages` check additionally needs uv and the dependencies
-resolved in the root `uv.lock`; pin that tooling by version, commit and checksum,
-and keep its own fixtures synthetic and local. Ordinary CI does not need a
+synthetic data; the Go checks need only the Go toolchain `go.mod` names. Pin any
+downloaded tooling by version, commit and checksum, and keep fixtures synthetic
+and local. Ordinary CI does not need a
 contributor's Codex, CXC, Paperthin, Linear account, App Server socket or user
 skill installation. Keep `scripts/install.py`, the legacy skill linker, standard-library-only
 while it remains; `crw-dev skills link` is its replacement in the development binary. Validate the
@@ -148,14 +147,12 @@ interfaces, old/new behavior and unresolved host observations. An upstream green
 build is not this repository's compatibility proof. Do not copy private runtime
 stores or update running installations as a CI side effect.
 
-The `packages` check carries the install, test and compatibility burden for that
-imported source, and every package change runs it. It installs from the lock file,
-resolves both import locations inside `packages/`, runs each suite under pytest,
-exercises both CLIs and builds both wheels. It rejects an empty collection and any
-skipped case, because a suite that collected nothing and a suite that skipped its
-real-bridge seams both report success otherwise. Passing it is evidence about this
-source; it establishes nothing about an installed runtime, a live App Server, or
-delivery on any host. Importing source does not change what is installed anywhere.
+Until todo 44 a `packages` check installed, tested and built that imported Python
+source. The Go port under `cmd/` and `internal/` replaced it as the product, the
+Python source is removed, and the Go checks carry the test burden: passing them is
+evidence about this source; it establishes nothing about an installed runtime, a live
+App Server, or delivery on any host. Changing source does not change what is installed
+anywhere.
 
 This repository uses the [MIT license](LICENSE). Preserve source attribution and
 applicable notices for adapted material. Licensing does not authorize publication;

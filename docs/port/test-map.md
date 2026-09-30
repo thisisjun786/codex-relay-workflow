@@ -11,6 +11,12 @@ missing, duplicated or stale, when a class is not A/B/C, when a `tests` cell dif
 `grep -c 'def test_'`, when a destination kind is unknown, when a C row does not name its
 coupling, or when a stated total below disagrees with the rows or the files.
 
+Todo 44 deletes these test files with the Python implementation, so the check reads them at the
+revision the map is kept at, the last `dev` revision that held every one of them (the rows were
+kept current with the files after the first measurement at `4b4cb463`):
+
+Map revision: `659ec41c70f3f0039d5837f4fd36fae238733dab`
+
 ## Classes
 
 - **A** black box: drives a real process or pipe (subprocess, CLI argv, JSON stdout, SQLite

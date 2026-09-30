@@ -35,8 +35,7 @@ var (
 
 // Jobs is the selection's verdict on the expensive jobs.
 type Jobs struct {
-	Tests    bool
-	Packages bool
+	Tests bool
 }
 
 // Selection is the object scope prints and the gate revalidates.
@@ -52,7 +51,7 @@ func (s Selection) JSON() string {
 	return pyJSON(jsonObject{{"version", 1}, {"event", s.Event}, {"base", s.Base}, {"head", s.Head},
 		{"base_ref", s.BaseRef}, {"ref", s.Ref}, {"changed", nonNil(s.Changed)},
 		{"unknown", nonNil(s.Unknown)}, {"unsafe", nonNil(s.Unsafe)}, {"reason", s.Reason},
-		{"selected", jsonObject{{"tests", s.Selected.Tests}, {"packages", s.Selected.Packages}}}}, true)
+		{"selected", jsonObject{{"tests", s.Selected.Tests}}}}, true)
 }
 
 func nonNil(items []string) []string {
@@ -118,7 +117,7 @@ func selectJobs(changed, unknown, unsafe []string, reason string) Jobs {
 		kinds[Classify(path)] = true
 	}
 	full := reason != "paths" || len(unknown) > 0 || len(unsafe) > 0 || kinds["full"]
-	return Jobs{Tests: full || kinds["skill"], Packages: full}
+	return Jobs{Tests: full || kinds["skill"]}
 }
 
 // ValidateSelection applies scope's rules to a selection decoded from JSON (as by
@@ -190,15 +189,14 @@ func ValidateSelection(raw any) (Selection, error) {
 		}
 	}
 	jobs, ok := value["selected"].(map[string]any)
-	if !ok || len(jobs) != 2 {
+	if !ok || len(jobs) != 1 {
 		return s, valueError{"Selection outputs must be booleans"}
 	}
 	tests, okTests := jobs["tests"].(bool)
-	packages, okPackages := jobs["packages"].(bool)
-	if !okTests || !okPackages {
+	if !okTests {
 		return s, valueError{"Selection outputs must be booleans"}
 	}
-	if (Jobs{tests, packages}) != selectJobs(lists["changed"], lists["unknown"], lists["unsafe"], text["reason"]) {
+	if (Jobs{tests}) != selectJobs(lists["changed"], lists["unknown"], lists["unsafe"], text["reason"]) {
 		return s, valueError{"Selected jobs disagree with path evidence"}
 	}
 	unregistered := len(lists["unknown"]) > 0
@@ -210,7 +208,7 @@ func ValidateSelection(raw any) (Selection, error) {
 	}
 	return Selection{Event: text["event"], Base: text["base"], Head: text["head"], BaseRef: text["base_ref"],
 		Ref: text["ref"], Changed: lists["changed"], Unknown: lists["unknown"], Unsafe: lists["unsafe"],
-		Reason: text["reason"], Selected: Jobs{tests, packages}}, nil
+		Reason: text["reason"], Selected: Jobs{tests}}, nil
 }
 
 // isPythonInt reports whether json.loads would read the number as an int, not a float.
@@ -409,7 +407,7 @@ func Scope(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return failf(stderr, "Selection failed: %s", pyOSErrorText(err))
 		}
-		_, writeErr := fmt.Fprintf(output, "scope=%s\ntests=%t\npackages=%t\n", encoded, result.Selected.Tests, result.Selected.Packages)
+		_, writeErr := fmt.Fprintf(output, "scope=%s\ntests=%t\n", encoded, result.Selected.Tests)
 		closeErr := output.Close()
 		if writeErr != nil {
 			return failf(stderr, "Selection failed: %s", pyOSErrorText(stripPath(writeErr)))

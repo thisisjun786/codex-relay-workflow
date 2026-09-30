@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from scope import validate_selection
 
-JOBS = {"selection", "validate", "tests", "secrets", "packages", "go-product"}
+JOBS = {"selection", "validate", "tests", "secrets", "go-product"}
 
 
 def check(env):

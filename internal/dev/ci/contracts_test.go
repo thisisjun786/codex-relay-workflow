@@ -267,7 +267,8 @@ func contractsRepo(t *testing.T, present ...string) *fixtureRepo {
 	return r
 }
 
-// runPythonContracts copies scripts/ci/contracts.py into root and runs it there (live Python).
+// runPythonContracts copied scripts/ci/contracts.py into root and ran it there (live Python). It
+// runs only when a recording is taken, which needs a checkout from before todo 44 deleted it.
 func runPythonContracts(t *testing.T, root string) result {
 	t.Helper()
 	(&fixtureRepo{t, root}).write("scripts/ci/contracts.py", readRepo(t, "scripts/ci/contracts.py"))
@@ -311,8 +312,9 @@ func copyTree(t *testing.T, root, rel string) {
 }
 
 // Every check is built into crw-dev: a component is present exactly when its contract is, and no
-// checker script has to sit beside it. scripts/ci/contracts.py, the Python twin, still refuses a
-// contract whose checker script is missing (and the reverse); Go no longer has a script to pair.
+// checker script has to sit beside it. scripts/ci/contracts.py, the Python twin (deleted in todo
+// 44; its answers are recorded), refused a contract whose checker script was missing (and the
+// reverse); Go has no script to pair.
 func Test47_ContractsPairsAndAbsentComponents(t *testing.T) {
 	// No component present: every check reports it claims no coverage, as the Python twin did.
 	r := contractsRepo(t)

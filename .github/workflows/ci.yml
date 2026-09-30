@@ -23,7 +23,6 @@ jobs:
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
       tests: ${{ steps.scope.outputs.tests }}
-      packages: ${{ steps.scope.outputs.packages }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -62,14 +61,11 @@ jobs:
           go-version-file: go.mod
       # The CI checks live in the development binary, which release archives never carry.
       - run: go build -tags dev -o "$RUNNER_TEMP/crw-dev" ./cmd/crw-dev
-      # Python stays for the syntax check of the remaining Python sources and for the contract
-      # checkers other components still own.
+      # Python stays for the syntax check of the remaining Python sources, the developer tools
+      # todo 48 removes.
       - run: '"$RUNNER_TEMP/crw-dev" ci validate'
       - run: '"$RUNNER_TEMP/crw-dev" ci plugin'
       - run: '"$RUNNER_TEMP/crw-dev" ci contracts'
-      # Transitional: scripts/ci/tests/test_gate.py, which the tests job still runs, pins this
-      # step in validate. Both go when scripts/ci is deleted before todo 48.
-      - run: python3 scripts/ci/contracts.py
 
   tests:
     needs: selection
@@ -132,17 +128,6 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      # Go tests compare against the Python implementation (schema validation, contract records),
-      # so the Python workspace is synced before they run.
-      - if: startsWith(matrix.part, 'test-')
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
-        with:
-          version: '0.11.32'
-          checksum: 'aab924fd522efd06f1c5f3b93a243864fc453132c94b2dc49f1371b528a4b967'
-          python-version: '3.13'
-          enable-cache: false
-      - if: startsWith(matrix.part, 'test-')
-        run: uv sync --locked
       - name: Lint
         if: matrix.part == 'lint'
         run: make lint
@@ -196,38 +181,9 @@ jobs:
         if: matrix.part == 'dist' && hashFiles('plugins/crw/wiring/crw-bridge.sh') != ''
         run: go run -tags dev ./cmd/crw-dev ci plugin
 
-  packages:
-    needs: selection
-    if: needs.selection.outputs.packages == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.11', '3.13']
-        # Each leg runs its slice of every suite (packages.py --shard); the slices partition
-        # the collected tests, so together they are the whole run. Modules are balanced on
-        # the seconds recorded in scripts/ci/package-durations.json. Two legs, not more: the
-        # run is already at the 20 concurrent jobs a free-plan account gets, so a third
-        # leg per Python version would queue instead of running alongside.
-        shard: ['1/2', '2/2']
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
-        with:
-          version: '0.11.32'
-          checksum: 'aab924fd522efd06f1c5f3b93a243864fc453132c94b2dc49f1371b528a4b967'
-          python-version: ${{ matrix.python-version }}
-          enable-cache: false
-      - env:
-          SHARD: ${{ matrix.shard }}
-        run: python3 scripts/ci/packages.py --shard "$SHARD"
-
   dev-gate:
     if: always()
-    needs: [selection, validate, tests, secrets, packages, go-product]
+    needs: [selection, validate, tests, secrets, go-product]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

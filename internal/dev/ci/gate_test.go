@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -25,9 +24,9 @@ type gateCase struct {
 func gateEnv(kind, event, base string) *gateCase {
 	paths := map[string][]string{"full": {"scripts/ci/gate.py"}, "docs": {"README.md"},
 		"skill": {"plugins/crw/skills/crw-run/SKILL.md"}}[kind]
-	tests, packages := kind != "docs", kind == "full"
+	tests := kind != "docs"
 	if event == "workflow_dispatch" {
-		tests, packages = true, true
+		tests = true
 	}
 	ref := "refs/heads/dev"
 	if event == "pull_request" {
@@ -41,13 +40,13 @@ func gateEnv(kind, event, base string) *gateCase {
 		selection: jsonObject{{"version", 1}, {"event", event}, {"base", strings.Repeat("a", 40)},
 			{"head", strings.Repeat("b", 40)}, {"base_ref", base}, {"ref", ref}, {"changed", paths},
 			{"unknown", []string{}}, {"unsafe", []string{}}, {"reason", reason},
-			{"selected", jsonObject{{"tests", tests}, {"packages", packages}}}},
+			{"selected", jsonObject{{"tests", tests}}}},
 		needs: map[string]any{},
 		env:   map[string]string{"EVENT_NAME": event, "BASE_REF": base, "REF": ref, "HEAD_SHA": strings.Repeat("b", 40)},
 	}
 	for _, name := range GateJobs {
 		result := "success"
-		if (name == "tests" && !tests) || (name == "packages" && !packages) {
+		if name == "tests" && !tests {
 			result = "skipped"
 		}
 		c.needs[name] = jsonObject{{"result", result}}
@@ -115,7 +114,7 @@ func expectRefused(t *testing.T, label string, got result, message string) {
 }
 
 func Test47_GATE_1_NeedsMustNameExactlyTheRequiredJobs(t *testing.T) {
-	const expected = "Expected exactly go-product, packages, secrets, selection, tests, validate results"
+	const expected = "Expected exactly go-product, secrets, selection, tests, validate results"
 	for _, raw := range []string{"", "{", "[]", "null", "true", "{}"} {
 		c := gateEnv("full", "pull_request", "dev")
 		c.raw = &raw
@@ -148,7 +147,7 @@ func Test47_GATE_2_SelectedSucceedAndUnselectedSkip(t *testing.T) {
 			expectRefused(t, label, gateParity(t, label, c), "")
 		}
 	}
-	for _, job := range []string{"tests", "packages"} {
+	for _, job := range []string{"tests"} {
 		for _, state := range []any{"success", "failure", "cancelled", "neutral", nil} {
 			c := gateEnv("docs", "pull_request", "dev")
 			c.needs[job] = jsonObject{{"result", state}}
@@ -166,11 +165,14 @@ func Test47_GATE_3_SelectionIsRevalidated(t *testing.T) {
 		value   any
 		message string
 	}{
-		{"selected", jsonObject{{"tests", false}, {"packages", false}}, "Selected jobs disagree with path evidence"},
+		{"selected", jsonObject{{"tests", false}}, "Selected jobs disagree with path evidence"},
 		{"unknown", []string{"new/component.py"}, "Unregistered paths require an explicit verification mapping"},
 		{"head", "old", "Invalid candidate SHA"},
 		{"version", true, "Invalid selection schema"},
-		{"selected", jsonObject{{"tests", "true"}, {"packages", true}}, "Selection outputs must be booleans"},
+		{"selected", jsonObject{{"tests", "true"}}, "Selection outputs must be booleans"},
+		// The packages job left with the Python implementation (todo 44): a selection still
+		// naming it is not this workflow's.
+		{"selected", jsonObject{{"tests", true}, {"packages", true}}, "Selection outputs must be booleans"},
 	} {
 		c := gateEnv("full", "pull_request", "dev")
 		c.setSelection(row.field, row.value)
@@ -252,9 +254,6 @@ func Test47_GATE_6_RequiredSetIsTheWorkflowJobSet(t *testing.T) {
 		}
 	}
 	expectEqual(t, "jobs", sortedCopy(real), sortedCopy(GateJobs))
-	if !slices.Contains(GateJobs, "packages") || jobs["packages"] == "" {
-		t.Error("packages must be a required, real job")
-	}
 	declared := regexp.MustCompile(`(?m)^    needs: \[([^\]]+)\]$`).FindStringSubmatch(jobs["dev-gate"])
 	if declared == nil {
 		t.Fatal("dev-gate must declare its prerequisites")
@@ -281,12 +280,16 @@ func Test47_GATE_7_NoJobOptsOutOfItsResult(t *testing.T) {
 
 func Test47_GATE_8_ExpensiveJobsFollowTheSelection(t *testing.T) {
 	jobs, _ := workflowJobs(t)
-	for job, want := range map[string]string{
-		"packages": "if: needs.selection.outputs.packages == 'true'",
-		"tests":    "if: needs.selection.outputs.tests == 'true'",
-	} {
-		if !strings.Contains(jobs[job], want) {
-			t.Errorf("%s job lacks %q", job, want)
+	if want := "if: needs.selection.outputs.tests == 'true'"; !strings.Contains(jobs["tests"], want) {
+		t.Errorf("tests job lacks %q", want)
+	}
+	// The Python implementation left the repository in todo 44: nothing syncs a workspace or
+	// runs its suites any more.
+	for name, body := range jobs {
+		for _, word := range []string{"setup-uv", "uv sync", "uv run", "packages.py", "pytest"} {
+			if strings.Contains(body, word) {
+				t.Errorf("%s job still names %q", name, word)
+			}
 		}
 	}
 	// The contract check runs the dev binary once, in validate, and never in the test matrix.
@@ -312,13 +315,6 @@ func Test47_GATE_9_DownloadedToolingIsPinned(t *testing.T) {
 			if !regexp.MustCompile(`@[0-9a-f]{40} # \S`).MatchString(line) {
 				t.Errorf("%s: %q lacks its version comment", name, strings.TrimSpace(line))
 			}
-		}
-	}
-	// Downloaded toolchains that take a checksum carry one and an exact version.
-	body := jobs["packages"]
-	for _, pattern := range []string{`uses: astral-sh/setup-uv@[0-9a-f]{40} #`, `checksum: '[0-9a-f]{64}'`, `version: '\d+\.\d+\.\d+'`} {
-		if !regexp.MustCompile(pattern).MatchString(body) {
-			t.Errorf("packages job lacks %s", pattern)
 		}
 	}
 }
@@ -416,12 +412,6 @@ func Test47_GATE_10_ParallelLegsCoverTheWholeRun(t *testing.T) {
 	if _, found := step["continue-on-error"]; found {
 		t.Errorf("%q may not continue on error", wired)
 	}
-	shards := matrixValues(t, jobs["packages"], "shard")
-	var expected []string
-	for i := range shards {
-		expected = append(expected, strconv.Itoa(i+1)+"/"+strconv.Itoa(len(shards)))
-	}
-	expectEqual(t, "package shards", shards, expected)
 	expectEqual(t, "installer test parts", matrixValues(t, jobs["tests"], "part"), []string{"heavy", "rest"})
 	installerLegsRunEveryModuleOnce(t, jobs["tests"])
 }
