@@ -3,9 +3,10 @@ package store
 import (
 	"errors"
 	"fmt"
+	"strings"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"golang.org/x/sys/unix"
-	"strings"
 )
 
 const ManifestSerialization = "MANIFEST-CANON-01: absolute normalized POSIX paths, sorted byte-wise, '<absolutePath>:<lowercase hex sha256>' per entry, joined with a single LF and no trailing newline, sha256 of that UTF-8 string"

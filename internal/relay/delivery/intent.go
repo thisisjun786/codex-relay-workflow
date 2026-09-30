@@ -226,11 +226,6 @@ func objects(items []any) []Obj {
 
 func resolutionsOf(marker Obj) []Obj { return objects(markerFactList(marker, "resolutions")) }
 
-// FactCovered is covered: this exact fact, by identity AND digest, adjudicated by a resolution.
-func FactCovered(fact Obj, resolutions []Obj) bool {
-	return factCovered(fact, resolutions, nil)
-}
-
 func factCovered(fact Obj, resolutions []Obj, reached ReturnReacher) bool {
 	factID := fieldOf(fact, "factId")
 	if !Named(factID) {

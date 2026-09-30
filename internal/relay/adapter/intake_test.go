@@ -174,7 +174,7 @@ func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
 			goStore := seedIntake(t, filepath.Join(root, "go", "go.sqlite3"), work)
 			raw, _ := json.Marshal(payload)
 			intake := store.ReceiptIntake{Store: goStore, Now: func() string { return "2023-11-14T22:13:20.000000+00:00" }, Minimum: store.BestEffortDetection}
-			_, err = intake.AcceptChildReceipt(context.Background(), raw, store.TurnReference{ThreadID: "01child-task", TurnID: "turn-dispatch-1", Status: "completed"})
+			_, err = intake.AcceptChildReceiptWith(context.Background(), raw, store.TurnReference{ThreadID: "01child-task", TurnID: "turn-dispatch-1", Status: "completed"}, store.AcceptOptions{})
 			got := map[string]any{"accepted": err == nil}
 			if err == nil {
 				got["event"] = event

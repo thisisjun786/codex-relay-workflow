@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
@@ -62,7 +64,7 @@ func guarded(t *testing.T, python map[string]any) (Obj, []any) {
 	if _, present := get(params, "approvalPolicy"); present {
 		t.Fatal("the relay sent an approval policy")
 	}
-	rpcError, findings, notes := VerifyResume(settings, resumed, "idle")
+	rpcError, findings, notes := verifyResume(settings, resumed, "idle")
 	receipt := Obj{{Key: "status", Value: Accepted}, {Key: "rpcError", Value: nil}, {Key: "settingsNotes", Value: nil}, {Key: "settingsFindings", Value: nil}, {Key: "error", Value: nil}, {Key: "statusBeforeResume", Value: "idle"}}
 	methods := []any{"thread/read", "thread/resume"}
 	if rpcError != nil {
@@ -113,7 +115,7 @@ func TestORD08_a_supervisor_push_follows_the_same_policy_rule(t *testing.T) {
 			record := python["record"].(map[string]any)
 			settings := TaskSettings{Data: loadsObj(rawSettings("/supervisor", "never")), SettingsFreeResume: true}
 			resumed := loadsObj(rawResume("/supervisor", tc.policy))
-			rpcError, _, _ := VerifyResume(settings, resumed, "idle")
+			rpcError, _, _ := verifyResume(settings, resumed, "idle")
 			receipt := Obj{{Key: "status", Value: Accepted}, {Key: "resumed", Value: resumed}, {Key: "turnId", Value: "t"}}
 			if rpcError != nil {
 				receipt = Obj{{Key: "status", Value: FailedStatus}, {Key: "resumed", Value: resumed}, {Key: "rpcError", Value: rpcError}, {Key: "error", Value: "thread/resume: x"}}
@@ -151,4 +153,48 @@ func TestORD09_a_push_folded_into_a_running_turn_is_not_a_completion(t *testing.
 	if python["state"] != Dispatched || record["deliveryState"] != Dispatched || python["resent"] != float64(0) {
 		t.Fatalf("stays dispatched and sends nothing more: %v", python)
 	}
+}
+
+// verifyResume is the guarded send's check between thread/resume and turn/start as the bridge
+// adapter runs it (internal/relay/adapter settings.go): registry's recorded-settings predicate,
+// the refusal the receipt carries, or the notes an accepted send carries.
+func verifyResume(settings TaskSettings, resumed any, statusBefore string) (Obj, []any, []any) {
+	transmitted := !settings.SettingsFreeResume
+	recorded := registry.TaskSettings{Data: settings.Data}
+	findings := []any{}
+	for _, finding := range recorded.Mismatches(resumed, transmitted, false, transmitted && statusBefore == "idle") {
+		findings = append(findings, finding)
+	}
+	if len(findings) > 0 {
+		first := findings[0].(Obj)
+		code := str(first, "code")
+		expected, _ := get(first, "expected")
+		returned, _ := get(first, "returned")
+		message := code + ": " + str(first, "field") + " returned " + evidence.Repr(returned) + "; message withheld"
+		if !transmitted {
+			if code == registry.SettingsNotPreserved {
+				code = registry.SettingsDifferAfterLoad
+			}
+			message = code + ": " + str(first, "field") + " is " + evidence.Repr(returned) + " on the loaded thread and " + evidence.Repr(expected) + " in the record; nothing was transmitted and no turn was started"
+		}
+		return Obj{{Key: "code", Value: code}, {Key: "message", Value: message}}, findings, nil
+	}
+	var notes []any
+	if note := settings.ApprovalDivergence(resumed); note != nil {
+		notes = append(notes, note)
+	}
+	for _, note := range recorded.RootsNarrowing(resumed, statusBefore) {
+		notes = append(notes, note)
+	}
+	return nil, nil, notes
+}
+
+func without(o Obj, key string) Obj {
+	var out Obj
+	for _, f := range o {
+		if f.Key != key {
+			out = append(out, f)
+		}
+	}
+	return out
 }

@@ -16,56 +16,6 @@ import (
 	"modernc.org/sqlite"
 )
 
-// WriteHold is intent.registration_hold's connection: the store's write lock (BEGIN IMMEDIATE)
-// held across a check and the publication that depends on it. It opens with mode=rw, never rwc,
-// so an absent store stays absent. Release rolls back: the hold writes nothing itself.
-type WriteHold struct {
-	db        *sql.DB
-	Conn      *sql.Conn
-	admission *ownership.Admission
-}
-
-// HoldForWrite takes the hold within timeout, or returns why it could not, in
-// registration_hold's words.
-func HoldForWrite(ctx context.Context, path string, timeout time.Duration) (*WriteHold, string) {
-	if err := holdStat(path); err != nil {
-		return nil, "the relay store could not be opened for writing: " + PythonOSErrorText(err)
-	}
-	resolved, err := refuseLiveState(path)
-	if err != nil {
-		return nil, "the relay store path " + pythonRepr(path) + " could not be read as a path"
-	}
-	admission, err := admitWrite(ctx, resolved)
-	if err != nil {
-		return nil, "the relay store could not be opened for writing: " + err.Error()
-	}
-	success := false
-	defer func() {
-		if !success {
-			_ = admission.Close()
-		}
-	}()
-	db, err := boundedDB(resolved, "rw", timeout)
-	if err != nil {
-		return nil, "the relay store could not be opened for writing: " + err.Error()
-	}
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		_ = db.Close()
-		return nil, "the relay store could not be opened for writing: " + err.Error()
-	}
-	if err = admission.Revalidate(ctx, conn); err != nil {
-		return nil, "the relay store could not be opened for writing: " + errors.Join(err, conn.Close(), db.Close()).Error()
-	}
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		_ = conn.Close()
-		_ = db.Close()
-		return nil, "the relay store's write lock could not be taken: " + sqliteMessage(err)
-	}
-	success = true
-	return &WriteHold{db: db, Conn: conn, admission: admission}, ""
-}
-
 // holdStat is registration_hold's resolved.stat(), taken before the fence's Admission: the
 // store as Path(db_path).expanduser().absolute() spells it, symlinks followed. Its error names
 // that spelling, so PythonOSErrorText renders it as str(OSError) does, e.g.
@@ -78,41 +28,6 @@ func holdStat(path string) error {
 	}
 	_, err = os.Stat(spelled)
 	return err
-}
-
-// Release rolls back and closes the hold.
-func (h *WriteHold) Release() error {
-	_, rollback := h.Conn.ExecContext(context.Background(), "ROLLBACK")
-	return firstErr(rollback, h.Conn.Close(), h.db.Close(), h.admission.Close())
-}
-
-func firstErr(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			return fmt.Errorf("release write hold: %w", err)
-		}
-	}
-	return nil
-}
-
-// sqliteMessage is str(sqlite3.Error): the engine's message without the driver's code suffix,
-// e.g. "database is locked" for SQLITE_BUSY.
-func sqliteMessage(err error) string {
-	var coded *sqlite.Error
-	if errors.As(err, &coded) {
-		// sqlite3_errstr of the primary code, which is what Python's sqlite3 carries.
-		switch coded.Code() & 0xff {
-		case 5:
-			return "database is locked"
-		case 6:
-			return "database table is locked"
-		case 8:
-			return "attempt to write a readonly database"
-		case 14:
-			return "unable to open database file"
-		}
-	}
-	return err.Error()
 }
 
 // ReadOnly is a mode=ro connection that never creates a store (intent.read_only_connection).

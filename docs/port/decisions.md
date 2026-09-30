@@ -2683,3 +2683,33 @@ runs elsewhere tests nothing the product does.
 Evidence: `internal/relay/store/table_coverage_test.go` (`storedOnly`, `productionSQL`);
 `internal/relay/store/python_parity_test.go` (a table without a typed store query is dumped but
 not compared; the recorded Python runs are unchanged); `internal/testsupport/storeseed`.
+
+## 52. Production code only tests reached moves into the tests or goes (refactor R1)
+
+Decision: functions, methods and constants of the store, delivery, adapter, managed and registry
+packages that no product path calls leave the product. Where a test of the same package drives
+one to set up or observe live code it moves, unchanged, into that package's `testonly_test.go`
+(delivery also `anchorpasses_test.go` and `projection_helpers_test.go`; the adapter's store
+forwarders into `store_forwarders_test.go`). Where nothing but its own tests used it, it goes with
+them:
+
+- the second registration hold, `store.HoldForWrite` and `registry.RegisterUnderHold`: the relay
+  registers under `store.RegistrationHold` only (its recorded fence answers stay covered by
+  `TestRegistrationHold_answers_an_unstattable_store_as_python_does`);
+- `delivery.VerifyResume` and `TaskSettings.Mismatches` with their helpers, a second copy of the
+  resume check the bridge adapter runs through `registry.TaskSettings`; the delivery and
+  supervisor tests that replayed Python's answers through the copy now run the adapter's
+  algorithm and still match the recordings (`TestORD*`, `Test24_SLF_*`);
+- `store.AckProof` (the product's is `delivery.AckProof`).
+
+Kept although only tests reach them, because a test in another package needs them and has no
+other way in: `delivery.NewFakeClock`, `Service.SnapshotItem` (mergeturn's recorded snapshots),
+`Service.PreviewReport` (supervisor), `store.ReceiptIntake.ResolveStaged` (delivery), the store's
+authorized-file surface the adapter's lease tests drive (`IsWithin`, `ArtifactBinding.Record`,
+`AuthorizedFile.Rebaseline`, `HashAuthorized`), and `Store.SetFaultHook`.
+
+Why: the port kept every Python function whose test it ported; the product reaches these paths
+through other code, so a copy that only its tests call tests nothing the product does.
+
+Evidence: `git grep -n 'testonly_test.go'`; `internal/relay/delivery/onrequest_adapter_test.go`
+(`verifyResume`); `internal/relay/supervisor/partd_res_rcf_slf_test.go` (`slfCheck`).

@@ -4,19 +4,17 @@ import "math"
 
 // Hold and pacing words (policy.py).
 const (
-	AttemptCap             = "attempt_cap"
-	BusyCap                = "busy_cap"
-	PushChannelClosed      = "push_channel_closed"
-	SupersededHold         = "superseded"
-	HostLostTurn           = "host_lost_turn"
-	TurnCheckUndecided     = "turn_check_undecided"
-	UnknownSendLost        = "unknown_send_lost"
-	UnknownSendUndecided   = "unknown_send_undecided"
-	UnknownSendHoldNamed   = "unknown_send_hold_named"
-	MinSendInterval        = "min_send_interval"
-	HourlyCap              = "hourly_cap"
-	RateWindowSeconds      = 3600.0
-	RecipientUndeliverable = "recipient_undeliverable"
+	AttemptCap           = "attempt_cap"
+	BusyCap              = "busy_cap"
+	PushChannelClosed    = "push_channel_closed"
+	HostLostTurn         = "host_lost_turn"
+	TurnCheckUndecided   = "turn_check_undecided"
+	UnknownSendLost      = "unknown_send_lost"
+	UnknownSendUndecided = "unknown_send_undecided"
+	UnknownSendHoldNamed = "unknown_send_hold_named"
+	MinSendInterval      = "min_send_interval"
+	HourlyCap            = "hourly_cap"
+	RateWindowSeconds    = 3600.0
 )
 
 // RetryPolicy is policy.RetryPolicy with its defaults.

@@ -142,13 +142,6 @@ func omissionTerminal(rows []OmissionSettlement) (string, bool) {
 	return "unobserved", true
 }
 
-func objMap(o Obj) map[string]any {
-	m := map[string]any{}
-	for _, f := range o {
-		m[f.Key] = f.Value
-	}
-	return m
-}
 func omissionBase(now string) Obj {
 	return Obj{{Key: "schema", Value: OmittedSchema}, {Key: "reportingState", Value: "unmeasured"}, {Key: "reason", Value: nil}, {Key: "observedAt", Value: now}}
 }

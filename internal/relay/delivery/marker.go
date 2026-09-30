@@ -34,9 +34,6 @@ const (
 	claimFile           = "claim.json"
 )
 
-// MarkerPrecedence is PRECEDENCE: the order the marker root rules are asked in.
-var MarkerPrecedence = []string{"flag", "env", "xdg", "home"}
-
 var singleFacts = []struct{ key, name string }{{"intent", "intent.json"}, {"bound", "bound.json"}, {"relationship", "relationship.json"}}
 var numberedFacts = []string{"attempts", "conflicts", "resolutions"}
 
@@ -82,15 +79,6 @@ func ValidSegment(value any) bool {
 
 // MarkerSelection is marker.MarkerSelection: which rule chose the root, and the value that won.
 type MarkerSelection struct{ Path, Source, Detail string }
-
-// Record is MarkerSelection.to_record.
-func (m MarkerSelection) Record() Obj {
-	precedence := make([]any, len(MarkerPrecedence))
-	for i, p := range MarkerPrecedence {
-		precedence[i] = p
-	}
-	return Obj{{Key: "path", Value: m.Path}, {Key: "source", Value: m.Source}, {Key: "detail", Value: m.Detail}, {Key: "precedence", Value: precedence}}
-}
 
 // ResolveMarkerRoot is resolve_marker_root: flag, then the environment, then XDG, then home.
 // Deliberately a different directory from the relay state directory.

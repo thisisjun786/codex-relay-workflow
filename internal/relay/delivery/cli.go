@@ -140,12 +140,6 @@ type PayloadError interface {
 	ExitPayload() (contract.OrderedObject, int)
 }
 
-// ExecuteCLI runs one delivery command as the codex-session-relay console script, with this
-// package's own selection refusal. handled is false for any other command.
-func ExecuteCLI(ctx context.Context, argv []string, stdout, stderr io.Writer) (int, bool) {
-	return ExecuteAs(ctx, "codex-session-relay", argv, stdout, stderr, nil)
-}
-
 // ExecuteAs runs one delivery command of the relay CLI, as cli.main does for it: prog is the
 // program name argparse prints, check the selection refusal applied before the handler (nil
 // uses this package's). handled is false for any other command.
@@ -463,25 +457,6 @@ func AckCommand(ctx context.Context, ack *Ack, rc *Reconciler, adapter Adapter, 
 		record = append(record, F{Key: "_note", Value: "recorded as the parent's authored intent; this turn is not established yet, so it does not close the attempt and cannot yet produce a verdict. Run verify-acks from a process with host access."})
 	}
 	return record, nil
-}
-
-// CompleteKeptAcknowledgement is _complete_kept_acknowledgement: before a verdict, a kept
-// acknowledgement's delivery is confirmed through its turn and the acknowledgement completed.
-func CompleteKeptAcknowledgement(ctx context.Context, ack *Ack, rc *Reconciler, adapter Adapter, event string) error {
-	if adapter == nil {
-		return nil
-	}
-	turn, err := ack.KeptTurn(ctx, event)
-	if err != nil || turn == "" {
-		return err
-	}
-	if rc != nil {
-		if _, err := rc.ConfirmDelivery(ctx, event, adapter, turn); err != nil {
-			return err
-		}
-	}
-	_, err = ack.CompletePending(ctx, event, adapter)
-	return err
 }
 
 // VerifyAcksCommand is cmd_verify_acks: kept acknowledgements have their delivery confirmed

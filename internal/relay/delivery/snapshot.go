@@ -198,35 +198,3 @@ func (d *Service) SnapshotItem(ctx context.Context, eventID string) (Obj, error)
 	}
 	return view, nil
 }
-
-// AttemptMessages is attempt_messages: every attempt's bytes with the status those bytes
-// actually reached, read from the attempt and never inferred from the bytes existing.
-func (d *Service) AttemptMessages(ctx context.Context, eventID string) ([]any, error) {
-	rows, err := all(ctx, d.Store, "SELECT a.request_id, a.attempt_no, a.internal_state, a.state, a.record, a.sent_at, m.message FROM attempts a LEFT JOIN attempt_messages m ON m.request_id = a.request_id WHERE a.event_id = ? ORDER BY a.attempt_no", eventID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]any, 0, len(rows))
-	for _, row := range rows {
-		var record Obj
-		if row.S("record") != "" {
-			record = loadsObj(row.S("record"))
-		}
-		status := "uncertain"
-		switch state := row.S("state"); {
-		case row.N("message"):
-			status = "unavailable"
-		case row.S("internal_state") != "settled":
-			status = "prepared"
-		case state == Dispatched || state == Acknowledged:
-			status = Dispatched
-		case state == HostLostTurn:
-			status = HostLostTurn
-		case record != nil && str(record, "sendAttempted") == "no":
-			status = "confirmed_unsent"
-		}
-		out = append(out, Obj{{Key: "requestId", Value: row.S("request_id")}, {Key: "attemptNo", Value: row.I("attempt_no")}, {Key: "status", Value: status},
-			{Key: "deliveryState", Value: row.Opt("state")}, {Key: "sentAt", Value: row.Opt("sent_at")}, {Key: "message", Value: row.Opt("message")}})
-	}
-	return out, nil
-}

@@ -20,9 +20,3 @@ func (s *Store) InTransaction(ctx context.Context) bool {
 	open, ok := ctx.Value(openTxKey{}).(openTx)
 	return ok && open.store == s
 }
-
-// OpenWith is Open with explicit options (contention tests use a zero busy timeout to observe a
-// held lock without waiting on a clock).
-func OpenWith(ctx context.Context, path, socketPath string, options OpenOptions) (*Store, error) {
-	return openFenced(ctx, path, socketPath, options)
-}

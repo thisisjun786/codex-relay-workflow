@@ -27,7 +27,7 @@ func stateDir(t *testing.T) string {
 }
 
 func Test30AllWritableEntrypointsFenced(t *testing.T) {
-	for _, entry := range []string{"open", "options", "hold", "registration", "probe"} {
+	for _, entry := range []string{"open", "options", "registration", "probe"} {
 		t.Run(entry, func(t *testing.T) {
 			path := filepath.Join(stateDir(t), "relay.sqlite3")
 			db, err := fixtureOpen(t.Context(), path, "")
@@ -56,14 +56,6 @@ func Test30AllWritableEntrypointsFenced(t *testing.T) {
 				if e == nil {
 					_ = opened.Close()
 					t.Fatal("OpenWith bypassed fence")
-				}
-			case "hold":
-				h, why := HoldForWrite(t.Context(), path, time.Second)
-				if h != nil || why == "" {
-					if h != nil {
-						_ = h.Release()
-					}
-					t.Fatal("hold bypassed fence")
 				}
 			case "registration":
 				// The fence raises its refusal out of the hold rather than yielding it.

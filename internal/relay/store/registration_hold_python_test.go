@@ -6,14 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // intent.registration_hold stats the store before the fence's Admission, so a store that does
 // not exist, whose directory does not, that sits below a regular file or behind a dangling
-// symlink is answered in str(OSError)'s words, and nothing is created. Both Go ports of it
-// (RegistrationHold, which intent-register runs, and HoldForWrite) answer the Python fence's
-// bytes (recorded).
+// symlink is answered in str(OSError)'s words, and nothing is created. RegistrationHold, which
+// intent-register runs, answers the Python fence's bytes (recorded).
 func TestRegistrationHold_answers_an_unstattable_store_as_python_does(t *testing.T) {
 	root := t.TempDir()
 	file := filepath.Join(root, "a-file")
@@ -45,13 +43,8 @@ with registration_hold(sys.argv[1]) as (held, why):
 		}); err != nil {
 			t.Fatal(err)
 		}
-		hold, why := HoldForWrite(t.Context(), path, time.Second)
-		if hold != nil {
-			_ = hold.Release()
-			t.Errorf("%s: HoldForWrite took a hold", path)
-		}
-		if registration != python || why != python {
-			t.Errorf("%s\npython:          %s\nRegistrationHold: %s\nHoldForWrite:     %s", path, python, registration, why)
+		if registration != python {
+			t.Errorf("%s\npython:           %s\nRegistrationHold: %s", path, python, registration)
 		}
 	}
 	if after := listTree(t, root); after != before {

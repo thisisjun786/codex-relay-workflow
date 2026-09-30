@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
@@ -52,9 +51,6 @@ func (r startResult) result(state, stage string, reason any) contract.OrderedObj
 	return out
 }
 func validReportingSegment(value string) bool { return delivery.ValidSegment(value) }
-func (r startResult) admitted() contract.OrderedObject {
-	return r.result("admitted", "business_accepted", nil)
-}
 
 // observe persists the full public receipt, including refusals, without retaining a prompt.
 func (r startResult) Observe(ctx context.Context, s *store.Store, at, state, stage string, reason any) (contract.OrderedObject, error) {
@@ -77,22 +73,6 @@ func (r startResult) Observe(ctx context.Context, s *store.Store, at, state, sta
 		return err
 	})
 	return out, err
-}
-
-// LastObservation reads the journal's most recent managed receipt without changing it.
-func LastObservation(ctx context.Context, s *store.Store, requestID string) (any, error) {
-	var raw string
-	err := s.Querier(ctx).QueryRowContext(ctx, "SELECT detail FROM journal WHERE kind='managed_start_observed' AND subject=? ORDER BY rowid DESC LIMIT 1", requestID).Scan(&raw)
-	if err != nil {
-		return nil, err
-	}
-	var result any
-	decoder := json.NewDecoder(bytes.NewBufferString(raw))
-	decoder.UseNumber()
-	if err := decoder.Decode(&result); err != nil {
-		return nil, err
-	}
-	return result, nil
 }
 
 func NewStartResult(id Identity, row store.ManagedStartRequestsRow, assignment, state string) startResult {

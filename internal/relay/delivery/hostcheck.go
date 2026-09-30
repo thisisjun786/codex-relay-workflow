@@ -220,9 +220,6 @@ type TurnChecks struct {
 	nextRead   map[string]float64
 }
 
-// Settled is the finished-turn memory, oldest checked first (daemon._turns_settled).
-func (tc *TurnChecks) Settled() []string { return append([]string(nil), tc.settled...) }
-
 func remove(list []string, id string) []string {
 	for i, v := range list {
 		if v == id {
@@ -360,41 +357,6 @@ func (a *Ack) KeptUnconfirmed(ctx context.Context, now float64, limit int) ([][2
 		out = append(out, [2]string{r.S("event_id"), r.S("ack_turn_id")})
 	}
 	return out, err
-}
-
-func (a *Ack) kept(ctx context.Context, eventID string) (Row, error) {
-	return one(ctx, a.Store, "SELECT a.event_id, a.ack_turn_id, a.ack_at, a.accepted, COALESCE(e.attempts, 0) AS attempts, e.last_reason, e.fingerprint, e.next_check_at FROM acks a JOIN ack_evidence e ON e.event_id = a.event_id WHERE a.event_id = ? AND a.verified = 'unverified_turn' AND e.last_reason = ?", eventID, DeliveryUnconfirmed)
-}
-
-// KeptTurn is kept_turn: the acknowledging turn of a kept acknowledgement, or "".
-func (a *Ack) KeptTurn(ctx context.Context, eventID string) (string, error) {
-	row, err := a.kept(ctx, eventID)
-	if err != nil || row == nil {
-		return "", err
-	}
-	return row.S("ack_turn_id"), nil
-}
-
-// CompletePending is complete_pending: one kept acknowledgement completed now, as the pending
-// pass would. Nil when nothing is kept for this event.
-func (a *Ack) CompletePending(ctx context.Context, eventID string, adapter Adapter) (Obj, error) {
-	now := a.Clock.Now()
-	pending, err := a.kept(ctx, eventID)
-	if err != nil || pending == nil {
-		return nil, err
-	}
-	row, err := a.Delivery.Find(ctx, eventID)
-	if err != nil || row == nil {
-		return nil, err
-	}
-	verification, err := a.verifyAckTurn(ctx, row, pending.S("ack_turn_id"), adapter)
-	if err != nil {
-		if Reason(err) == "" {
-			return nil, err
-		}
-		verification = Reason(err)
-	}
-	return a.settlePendingAck(ctx, eventID, pending, verification, now, row)
 }
 
 // ConfirmKeptAcks is daemon._confirm_kept_acks.
