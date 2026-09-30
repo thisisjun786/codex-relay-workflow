@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "SLF-3": "txt:{\"effort\":{\"code\":\"settings_differ_after_load\",\"findings\":[{\"code\":\"settings_not_preserved\",\"expected\":\"high\",\"field\":\"reasoningEffort\",\"returned\":\"low\"}]},\"model\":{\"code\":\"settings_differ_after_load\",\"findings\":[{\"code\":\"settings_not_preserved\",\"expected\":\"gpt\",\"field\":\"model\",\"returned\":\"other\"}]},\"narrow\":{\"code\":null,\"findings\":[]},\"wide\":{\"code\":\"settings_differ_after_load\",\"findings\":[{\"code\":\"settings_not_preserved\",\"expected\":[\"/workspace/example/worktree\"],\"field\":\"runtimeWorkspaceRoots\",\"returned\":[\"/workspace/example/worktree\",\"/\"]}]}}\n"
+ }
+}

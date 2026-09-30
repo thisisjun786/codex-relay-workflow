@@ -68,7 +68,23 @@ func reportingCLIParity(t *testing.T, argv func(string) []string) (int, map[stri
 		_, stat := os.Stat(state)
 		return answer{code, value, stderr, stat == nil}
 	}
-	py, goResult := run(true), run(false)
+	// Python's answer is recorded (pythonJSON), its JSON as the text it printed.
+	var recorded struct {
+		Code    int    `json:"code"`
+		Value   string `json:"value"`
+		Stderr  string `json:"stderr"`
+		Created bool   `json:"created"`
+	}
+	pythonJSON(t, "reporting-cli", &recorded, func() (any, error) {
+		answer := run(true)
+		value, err := json.Marshal(answer.value)
+		return map[string]any{"code": answer.code, "value": string(value), "stderr": answer.stderr, "created": answer.created}, err
+	})
+	var value map[string]any
+	if err := json.Unmarshal([]byte(recorded.Value), &value); err != nil {
+		t.Fatal(err)
+	}
+	py, goResult := answer{recorded.Code, value, recorded.Stderr, recorded.Created}, run(false)
 	if py.code != goResult.code || !reflect.DeepEqual(py.value, goResult.value) || py.created != goResult.created || py.stderr != goResult.stderr {
 		t.Errorf("Go exit=%d JSON=%s stderr=%q state=%t; Python exit=%d JSON=%s stderr=%q state=%t", goResult.code, jsonText(goResult.value), goResult.stderr, goResult.created, py.code, jsonText(py.value), py.stderr, py.created)
 	}

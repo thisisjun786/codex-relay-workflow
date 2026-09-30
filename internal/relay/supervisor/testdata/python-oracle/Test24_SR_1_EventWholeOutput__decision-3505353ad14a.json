@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "1 event": "txt:{\"schema\": \"supervisor-obligation/1\", \"obligationId\": \"d2e83e4d7c84debe4b52d16553bc3843\", \"kind\": \"decision_request\", \"relationId\": \"rel-1\", \"subject\": \"g1:d468a20c276b9f2a\", \"executionGeneration\": 1, \"revisionHash\": \"abc123456789abcdef\", \"issueKey\": \"REL-1\", \"basis\": {\"table\": \"events\", \"eventId\": \"event-1\", \"outcome\": \"blocked_needs_input\", \"cxcStatus\": \"NEEDS_HUMAN\"}, \"detail\": \"the work is done\"}\n"
+ }
+}

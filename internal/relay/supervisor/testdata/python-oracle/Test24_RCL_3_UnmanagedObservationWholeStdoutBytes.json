@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "rcl": "txt:{\"code\":0,\"created\":false,\"stderr\":\"\",\"stdout\":\"{\\n  \\\"schema\\\": \\\"reporting-observation/1\\\",\\n  \\\"reportingState\\\": \\\"unmanaged\\\",\\n  \\\"reason\\\": \\\"marker_absent\\\",\\n  \\\"observedAt\\\": \\\"2026-09-28T00:00:01.000000+00:00\\\",\\n  \\\"selectors\\\": {\\n    \\\"state\\\": \\\"<home>/absent-state\\\",\\n    \\\"markerRoot\\\": \\\"<home>/markers\\\",\\n    \\\"workspace\\\": \\\"<home>/workspace\\\",\\n    \\\"assignment\\\": \\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\n    \\\"session\\\": \\\"session-1\\\",\\n    \\\"turn\\\": \\\"turn-1\\\"\\n  },\\n  \\\"stopObservation\\\": null,\\n  \\\"terminalObservation\\\": {\\n    \\\"source\\\": \\\"relay_settlement\\\",\\n    \\\"status\\\": \\\"unobserved\\\"\\n  },\\n  \\\"currentObservation\\\": null,\\n  \\\"turnAdmission\\\": \\\"unmeasured\\\",\\n  \\\"relationshipStatus\\\": null,\\n  \\\"owed\\\": false,\\n  \\\"owedReason\\\": \\\"not_an_omission\\\"\\n}\\n\"}"
+ }
+}

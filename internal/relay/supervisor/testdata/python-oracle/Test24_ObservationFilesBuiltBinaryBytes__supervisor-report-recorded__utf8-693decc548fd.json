@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "supervisor-report-recorded/utf8": "txt:{\"code\":4,\"output\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"the observation at '<root>/utf8' could not be read as a reporting-observation/1 record: UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte\\\"\\n}\\n\"}"
+ }
+}

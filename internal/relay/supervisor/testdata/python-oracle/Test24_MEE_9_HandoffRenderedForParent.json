@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "MEE-9": "txt:[\"\",\"merge readiness (restate these; do not collect them again):\",\"  head a1b2c3d4e5f60718293a4b5c6d7e8f9012345678 on base c56576d5be412b5bc352dd93b9eb37ab279a12f6 verified 2026-09-20T09:00:00+00:00\",\"  required: dev-gate - 1 run(s) restated\",\"  review: 1 thread(s) seen over 1 page(s), 0 unresolved\"]\n"
+ }
+}

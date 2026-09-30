@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "MEE-11": "txt:{\"detail\":\"a thread identifier is one line: a line break in it is spliced into the message and adds a line to the protocol rather than wrapping. Put longer detail in the evidence or the unresolved items\",\"reason\":\"malformed_receipt\"}\n"
+ }
+}

@@ -3,6 +3,7 @@ package supervisor
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,27 +21,27 @@ import (
 // the comparison below never picks fields from it.
 func slfPython(t *testing.T, id string) any {
 	t.Helper()
-	repo, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	script, err := filepath.Abs("testdata/slf_capture.py")
-	if err != nil {
-		t.Fatal(err)
-	}
-	home, err := os.MkdirTemp("", "crw-slf-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(home) })
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, id)
-	cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_DATA_HOME="+home,
-		"XDG_CONFIG_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir())
-	raw, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("live Python %s: %v\n%s", id, err, raw)
-	}
+	raw := pythonOutput(t, id, func() ([]byte, error) {
+		repo := repoRoot(t)
+		script, err := filepath.Abs("testdata/slf_capture.py")
+		if err != nil {
+			return nil, err
+		}
+		home, err := os.MkdirTemp("", "crw-slf-")
+		if err != nil {
+			return nil, err
+		}
+		defer os.RemoveAll(home)
+		cmd := exec.Command("uv", "run", "--no-sync", "python", script, id)
+		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_DATA_HOME="+home,
+			"XDG_CONFIG_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir())
+		raw, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("live Python %s: %v\n%s", id, err, raw)
+		}
+		return raw, nil
+	})
 	var out any
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("live Python %s JSON: %v\n%s", id, err, raw)

@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "RC-1": "txt:{\"cxc_done\": \"a DONE report is the child proving its own criteria, not the parent's verdict\", \"pull_request_opened\": \"an open pull request is a place to review, not a review\", \"review_pass\": \"a review PASS is one reviewer's judgment, not the parent's disposition\", \"required_checks_green\": \"a green required check is evidence for a verdict, not a verdict\"}\n"
+ }
+}

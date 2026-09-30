@@ -168,17 +168,22 @@ func rrCapture(t *testing.T, module, method string) (string, []rrOperation) {
 			t.Error(err)
 		}
 	})
-	repo, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := filepath.Join(repo, "internal/relay/supervisor/testdata/res_rcf_capture.py")
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, root, module, method)
-	cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-	cmd.Env = append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+root, "XDG_DATA_HOME="+root, "XDG_CONFIG_HOME="+root, "CODEX_HOME="+root, "TMPDIR="+os.TempDir(), "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay"))
-	if out, e := cmd.CombinedOutput(); e != nil {
-		t.Fatalf("live Python %s: %v\n%s", method, e, out)
-	}
+	// capture.json and every operation's pre-N.sqlite3 snapshot are recorded
+	// (supervisor.PythonTree); Python's final store is not, as no operation reads it.
+	supervisor.PythonTree(t, module+" "+method, root, func() ([]byte, error) {
+		repo, err := filepath.Abs("../../..")
+		if err != nil {
+			return nil, err
+		}
+		script := filepath.Join(repo, "internal/relay/supervisor/testdata/res_rcf_capture.py")
+		cmd := exec.Command("uv", "run", "--no-sync", "python", script, root, module, method)
+		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+root, "XDG_DATA_HOME="+root, "XDG_CONFIG_HOME="+root, "CODEX_HOME="+root, "TMPDIR="+os.TempDir(), "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay"))
+		if out, e := cmd.CombinedOutput(); e != nil {
+			return nil, fmt.Errorf("live Python %s: %v\n%s", method, e, out)
+		}
+		return nil, supervisor.RemoveStoreFiles(filepath.Join(root, "tree", "state", "relay.sqlite3"))
+	})
 	raw, err := os.ReadFile(filepath.Join(root, "capture.json"))
 	if err != nil {
 		t.Fatal(err)

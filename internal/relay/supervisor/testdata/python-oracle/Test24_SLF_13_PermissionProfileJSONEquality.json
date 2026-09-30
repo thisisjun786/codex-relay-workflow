@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "SLF-13": "txt:{\"bool\":{\"code\":\"unverifiable_permission_profile\",\"findings\":[{\"code\":\"unverifiable_permission_profile\",\"expected\":0,\"field\":\"activePermissionProfile\",\"returned\":false}]},\"missing\":{\"code\":\"setting_unobservable\",\"findings\":[{\"code\":\"setting_unobservable\",\"expected\":{\"extends\":null,\"id\":\"profile-1\",\"rules\":[]},\"field\":\"activePermissionProfile\",\"returned\":null}]},\"none\":{\"code\":null,\"findings\":[]},\"same\":{\"code\":null,\"findings\":[]},\"usable\":{\"ok\":null}}\n"
+ }
+}

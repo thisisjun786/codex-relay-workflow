@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // standingPython replays the public project answer against the same persisted store, read by
@@ -18,14 +20,6 @@ import (
 // Observations are input, not a normalization of either result.
 func standingPython(t *testing.T, f *stageFixture, project string, readings []any) {
 	t.Helper()
-	root, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	script, err := filepath.Abs("testdata/selection_capture.py")
-	if err != nil {
-		t.Fatal(err)
-	}
 	raw, err := json.Marshal(readings)
 	if err != nil {
 		t.Fatal(err)
@@ -33,14 +27,7 @@ func standingPython(t *testing.T, f *stageFixture, project string, readings []an
 	if readings == nil {
 		raw = []byte("[]")
 	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, pythonCopy(t, f), string(raw), project, "<none>", "standing")
-	cmd.Dir = filepath.Join(root, "packages/codex-session-relay")
-	home := t.TempDir()
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir())
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Python standing: %v %s", err, output)
-	}
+	output := selectionPython(t, f, "standing", string(raw), project, "<none>", "standing")
 	var want any
 	if err := json.Unmarshal(output, &want); err != nil {
 		t.Fatal(err)
@@ -64,14 +51,6 @@ func standingPython(t *testing.T, f *stageFixture, project string, readings []an
 
 func statusPython(t *testing.T, f *stageFixture, project string, readings []any) {
 	t.Helper()
-	root, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	script, err := filepath.Abs("testdata/selection_capture.py")
-	if err != nil {
-		t.Fatal(err)
-	}
 	raw, err := json.Marshal(readings)
 	if err != nil {
 		t.Fatal(err)
@@ -79,14 +58,7 @@ func statusPython(t *testing.T, f *stageFixture, project string, readings []any)
 	if readings == nil {
 		raw = []byte("[]")
 	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, pythonCopy(t, f), string(raw), project, "<none>", "status")
-	cmd.Dir = filepath.Join(root, "packages/codex-session-relay")
-	home := t.TempDir()
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir())
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Python status: %v %s", err, output)
-	}
+	output := selectionPython(t, f, "status", string(raw), project, "<none>", "status")
 	var want any
 	if err := json.Unmarshal(output, &want); err != nil {
 		t.Fatal(err)
@@ -110,14 +82,6 @@ func statusPython(t *testing.T, f *stageFixture, project string, readings []any)
 
 func envelopePython(t *testing.T, f *stageFixture, o Obligation, decision string) map[string]any {
 	t.Helper()
-	root, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	script, err := filepath.Abs("testdata/selection_capture.py")
-	if err != nil {
-		t.Fatal(err)
-	}
 	raw, err := json.Marshal(o)
 	if err != nil {
 		t.Fatal(err)
@@ -126,14 +90,7 @@ func envelopePython(t *testing.T, f *stageFixture, o Obligation, decision string
 	if decision != "" {
 		decisionArg = decision
 	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, pythonCopy(t, f), string(raw), decisionArg, "<none>", "envelope")
-	cmd.Dir = filepath.Join(root, "packages/codex-session-relay")
-	home := t.TempDir()
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir())
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Python envelope: %v %s", err, output)
-	}
+	output := selectionPython(t, f, "envelope", string(raw), decisionArg, "<none>", "envelope")
 	var answer map[string]any
 	if err := json.Unmarshal(output, &answer); err != nil {
 		t.Fatal(err)
@@ -206,24 +163,9 @@ func Test24_SR_15_LiveProjectStatusWholeOutput(t *testing.T) {
 
 func eventPython(t *testing.T, f *stageFixture, event string) {
 	t.Helper()
-	root, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	script, err := filepath.Abs("testdata/selection_capture.py")
-	if err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, pythonCopy(t, f), "<none>", event, "<none>", "event")
-	cmd.Dir = filepath.Join(root, "packages/codex-session-relay")
-	home := t.TempDir()
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir())
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Python event: %v %s", err, output)
-	}
+	output := selectionPython(t, f, "event", "<none>", event, "<none>", "event")
 	var want any
-	if err = json.Unmarshal(output, &want); err != nil {
+	if err := json.Unmarshal(output, &want); err != nil {
 		t.Fatal(err)
 	}
 	got, err := f.c.FromEvent(context.Background(), event)
@@ -245,24 +187,9 @@ func eventPython(t *testing.T, f *stageFixture, event string) {
 
 func selectEventPython(t *testing.T, f *stageFixture, event, recipient string, now float64) {
 	t.Helper()
-	root, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	script, err := filepath.Abs("testdata/selection_capture.py")
-	if err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, pythonCopy(t, f), event, recipient, strconv.FormatFloat(now, 'f', 6, 64), "select_event")
-	cmd.Dir = filepath.Join(root, "packages/codex-session-relay")
-	home := t.TempDir()
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir())
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Python event select: %v %s", err, out)
-	}
+	out := selectionPython(t, f, "select_event", event, recipient, strconv.FormatFloat(now, 'f', 6, 64), "select_event")
 	var want any
-	if err = json.Unmarshal(out, &want); err != nil {
+	if err := json.Unmarshal(out, &want); err != nil {
 		t.Fatal(err)
 	}
 	got, err := f.c.SelectEvent(context.Background(), event, recipient, now)
@@ -512,47 +439,67 @@ func Test24_SR_5_AdditionalRulingWholeOutput(t *testing.T) {
 func supervisorBinaryPython(t *testing.T, f *stageFixture, binary string, args ...string) map[string]any {
 	t.Helper()
 	state := filepath.Join(f.root, "state")
-	pythonState := filepath.Join(t.TempDir(), "state")
-	if err := os.MkdirAll(pythonState, 0700); err != nil {
-		t.Fatal(err)
-	}
-	for _, suffix := range []string{"", "-wal", "-shm"} {
-		source := filepath.Join(state, "relay.sqlite3"+suffix)
-		data, err := os.ReadFile(source)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
+	// Python answers on a copy of the store as it stands before Go runs, taken only when Python
+	// is asked (pyoracle.Live).
+	pythonState := ""
+	if pyoracle.Live() {
+		pythonState = filepath.Join(t.TempDir(), "state")
+		if err := os.MkdirAll(pythonState, 0700); err != nil {
 			t.Fatal(err)
 		}
-		if err = os.WriteFile(filepath.Join(pythonState, "relay.sqlite3"+suffix), data, 0600); err != nil {
-			t.Fatal(err)
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			source := filepath.Join(state, "relay.sqlite3"+suffix)
+			data, err := os.ReadFile(source)
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(filepath.Join(pythonState, "relay.sqlite3"+suffix), data, 0600); err != nil {
+				t.Fatal(err)
+			}
 		}
+		ownCopied(t, filepath.Join(pythonState, "relay.sqlite3"), "python")
 	}
-	ownCopied(t, filepath.Join(pythonState, "relay.sqlite3"), "python")
 	goCmd := exec.Command(binary, append([]string{"relay", "--state", state}, args...)...)
 	goCmd.Env = append(os.Environ(), "HOME="+f.root, "XDG_STATE_HOME="+f.root, "CODEX_HOME="+f.root)
 	actual, goErr := goCmd.Output()
 	goCode := commandExit24(t, goErr)
-	root, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
+	var python struct {
+		Code   int    `json:"code"`
+		Stdout string `json:"stdout"`
 	}
-	cmd := exec.Command("uv", append([]string{"run", "--no-sync", "python", "-m", "codex_session_relay.cli", "--state", pythonState}, args...)...)
-	cmd.Dir = filepath.Join(root, "packages/codex-session-relay")
-	home := t.TempDir()
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+t.TempDir())
-	out, pyErr := cmd.Output()
-	pyCode := commandExit24(t, pyErr)
-	if goCode != pyCode || !bytes.Equal(actual, out) {
-		t.Errorf("CLI bytes differ: Go exit=%d\n%s\nPython exit=%d\n%s", goCode, actual, pyCode, out)
+	pythonJSON(t, pyKey(t, args[0]), &python, func() (any, error) {
+		cmd := exec.Command("uv", append([]string{"run", "--no-sync", "python", "-m", "codex_session_relay.cli", "--state", pythonState}, args...)...)
+		cmd.Dir = filepath.Join(repoRoot(t), "packages/codex-session-relay")
+		home := t.TempDir()
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+t.TempDir())
+		out, pyErr := cmd.Output()
+		code, err := exitCode(pyErr)
+		return map[string]any{"code": code, "stdout": string(out)}, err
+	}, append(goWallTimes(actual), pyoracle.Substitute(f.root, "<fixture>"))...)
+	if goCode != python.Code || string(actual) != python.Stdout {
+		t.Errorf("CLI bytes differ: Go exit=%d\n%s\nPython exit=%d\n%s", goCode, actual, python.Code, python.Stdout)
 	}
 	var got map[string]any
-	if err = json.Unmarshal(actual, &got); err != nil {
+	if err := json.Unmarshal(actual, &got); err != nil {
 		t.Fatalf("Go JSON: %v %s", err, actual)
 	}
 	return got
 }
+
+// exitCode is a finished command's exit status, or the error that kept it from running.
+func exitCode(err error) (int, error) {
+	if err == nil {
+		return 0, nil
+	}
+	if exit, ok := err.(*exec.ExitError); ok {
+		return exit.ExitCode(), nil
+	}
+	return 0, err
+}
+
 func commandExit24(t *testing.T, err error) int {
 	t.Helper()
 	if err == nil {
@@ -596,14 +543,22 @@ func Test24_SupervisorEmptyStringTruthinessMatchesLivePython(t *testing.T) {
 			goCmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xdg-state"), "XDG_CONFIG_HOME="+filepath.Join(home, "xdg-config"), "XDG_DATA_HOME="+filepath.Join(home, "xdg-data"), "XDG_CACHE_HOME="+filepath.Join(home, "xdg-cache"), "CODEX_HOME="+filepath.Join(home, "codex"), "COLUMNS=80", "TMPDIR="+os.TempDir())
 			goCode, goOut, goErr := run(goCmd)
 
-			repo, err := filepath.Abs("../../..")
-			if err != nil {
-				t.Fatal(err)
+			var python struct {
+				Code   int    `json:"code"`
+				Stdout string `json:"stdout"`
+				Stderr string `json:"stderr"`
 			}
-			pyCmd := exec.Command("uv", append([]string{"run", "--no-sync", "--project", repo, "codex-session-relay", "--state", pythonState}, tc.args...)...)
-			pyCmd.Dir = repo
-			pyCmd.Env = goCmd.Env
-			pyCode, pyOut, pyErr := run(pyCmd)
+			pythonJSON(t, tc.name, &python, func() (any, error) {
+				repo := repoRoot(t)
+				pyCmd := exec.Command("uv", append([]string{"run", "--no-sync", "--project", repo, "codex-session-relay", "--state", pythonState}, tc.args...)...)
+				pyCmd.Dir = repo
+				pyCmd.Env = goCmd.Env
+				var stdout, stderr bytes.Buffer
+				pyCmd.Stdout, pyCmd.Stderr = &stdout, &stderr
+				code, err := exitCode(pyCmd.Run())
+				return map[string]any{"code": code, "stdout": stdout.String(), "stderr": stderr.String()}, err
+			}, pyoracle.Substitute(observation, "<observation>"), pyoracle.Substitute(home, "<home>"))
+			pyCode, pyOut, pyErr := python.Code, []byte(python.Stdout), []byte(python.Stderr)
 			if goCode != pyCode || !bytes.Equal(goOut, pyOut) || !bytes.Equal(goErr, pyErr) {
 				t.Fatalf("Go exit=%d stdout=%q stderr=%q\nPython exit=%d stdout=%q stderr=%q", goCode, goOut, goErr, pyCode, pyOut, pyErr)
 			}
@@ -688,23 +643,20 @@ func Test24_SR_20_UsageWholeOutput(t *testing.T) {
 			goCmd.Env = append(os.Environ(), "HOME="+f.root, "XDG_STATE_HOME="+f.root, "CODEX_HOME="+f.root)
 			actual, goErr := goCmd.Output()
 			goCode := commandExit24(t, goErr)
-			root, err := filepath.Abs("../../..")
-			if err != nil {
-				t.Fatal(err)
+			var python struct {
+				Code   int    `json:"code"`
+				Stdout string `json:"stdout"`
 			}
-			cmd := exec.Command("uv", append([]string{"run", "--no-sync", "python", "-m", "codex_session_relay.cli", "--state", filepath.Dir(pythonCopy(t, f))}, tc.args...)...)
-			cmd.Dir = filepath.Join(root, "packages/codex-session-relay")
-			home := t.TempDir()
-			cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+t.TempDir())
-			out, err := cmd.Output()
-			pyCode := 0
-			if err != nil {
-				exit, ok := err.(*exec.ExitError)
-				if !ok {
-					t.Fatal(err)
-				}
-				pyCode = exit.ExitCode()
-			}
+			pythonJSON(t, tc.name, &python, func() (any, error) {
+				cmd := exec.Command("uv", append([]string{"run", "--no-sync", "python", "-m", "codex_session_relay.cli", "--state", filepath.Dir(pythonCopy(t, f))}, tc.args...)...)
+				cmd.Dir = filepath.Join(repoRoot(t), "packages/codex-session-relay")
+				home := t.TempDir()
+				cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+t.TempDir())
+				out, err := cmd.Output()
+				code, err := exitCode(err)
+				return map[string]any{"code": code, "stdout": string(out)}, err
+			}, pyoracle.Substitute(f.root, "<fixture>"))
+			pyCode, out := python.Code, []byte(python.Stdout)
 			if goCode != pyCode || !bytes.Equal(actual, out) {
 				t.Errorf("CLI byte diff\nGo exit=%d\n%s\nPython exit=%d\n%s", goCode, actual, pyCode, out)
 			}

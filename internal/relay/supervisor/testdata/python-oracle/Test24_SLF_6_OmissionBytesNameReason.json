@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "SLF-6": "txt:{\"message\":\"unreported terminal_without_report generation 3 turn-3\",\"reading\":{\"executionGeneration\":3,\"reason\":\"terminal_without_report\",\"reportingState\":\"unreported\",\"selectors\":{\"turn\":\"turn-3\"}}}\n"
+ }
+}

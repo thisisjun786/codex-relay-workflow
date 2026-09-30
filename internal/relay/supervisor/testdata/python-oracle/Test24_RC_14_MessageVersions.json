@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "RC-14": "txt:{\"legacy\": \"relay-message/legacy\", \"report\": \"relay-report/1\"}\n"
+ }
+}

@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "supervisor-report-recorded/missing": "txt:{\"code\":4,\"output\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"the observation at '<root>/missing' could not be read as a reporting-observation/1 record: FileNotFoundError: [Errno 2] No such file or directory: '<root>/missing'\\\"\\n}\\n\"}"
+ }
+}

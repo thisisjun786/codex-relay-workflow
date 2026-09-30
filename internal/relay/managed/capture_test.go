@@ -65,7 +65,10 @@ func capturePythonManaged(t *testing.T, scenario string) (string, managedCapture
 		if scenario == "execution-cli" {
 			return canonicalStoreIdentity(raw, root)
 		}
-		return canonicalLedger(raw)
+		if raw, err = canonicalLedger(raw); err != nil {
+			return nil, err
+		}
+		return canonicalFingerprints(raw), nil
 	}, captureOptions(t, root, scenario)...)
 	raw, err := rootDevice(raw, root)
 	if err != nil {
@@ -84,7 +87,7 @@ func capturePythonManaged(t *testing.T, scenario string) (string, managedCapture
 
 // captureOptions are the pyoracle options for a scenario's capture: the tree it ran in as
 // <root>; for execution-cli, the marker directory's workspace key, a digest of the workspace's
-// path in that tree; and the comparison check mode applies.
+// path in that tree; and, for the two thread races, the comparison check mode applies.
 func captureOptions(t *testing.T, root, scenario string) []pyoracle.Option {
 	t.Helper()
 	var options []pyoracle.Option
@@ -99,7 +102,7 @@ func captureOptions(t *testing.T, root, scenario string) []pyoracle.Option {
 	if scenario == "reservation-threads" || scenario == "reservation-arm-release" {
 		return append(options, pyoracle.SameWhen(sameRace))
 	}
-	return append(options, pyoracle.SameWhen(sameButFingerprint))
+	return options
 }
 
 // canonicalLedgerDevice and canonicalLedgerInode stand for the device and inode of the ledger
@@ -147,12 +150,25 @@ func canonicalLedger(raw []byte) ([]byte, error) {
 
 var requestFingerprint = regexp.MustCompile(`(\\?"(?:requestFingerprint|request_fingerprint)\\?"\s*:\s*\\?")[0-9a-f]{64}`)
 
-// sameButFingerprint compares a recorded capture with a live one except for the request
-// fingerprints, which hash the physical request (its paths) and which normalizedManaged
-// compares as "<physical fingerprint>".
-func sameButFingerprint(recorded, live []byte) bool {
-	blank := func(b []byte) []byte { return requestFingerprint.ReplaceAll(b, []byte("${1}<physical fingerprint>")) }
-	return bytes.Equal(blank(recorded), blank(live))
+// canonicalFingerprints rewrites each request fingerprint, a digest of the physical request (its
+// paths, so of the tree the capture ran in), to 64 hex digits numbering the fingerprints in order
+// of appearance, wherever the capture names it. normalizedManaged compares fingerprints as
+// "<physical fingerprint>".
+func canonicalFingerprints(raw []byte) []byte {
+	text := string(raw)
+	seen := map[string]bool{}
+	var order []string
+	for _, match := range requestFingerprint.FindAllStringSubmatch(text, -1) {
+		value := match[0][len(match[1]):]
+		if !seen[value] {
+			seen[value] = true
+			order = append(order, value)
+		}
+	}
+	for i, value := range order {
+		text = strings.ReplaceAll(text, value, fmt.Sprintf("%064x", i+1))
+	}
+	return []byte(text)
 }
 
 // sameRace compares the capture of a race between two Python threads, whose winner a rerun may
@@ -160,13 +176,13 @@ func sameButFingerprint(recorded, live []byte) bool {
 // the two racers' names exchanged (reservation-threads), or when it holds the same first
 // reservation and a winner and a loser of the kinds the test accepts (reservation-arm-release).
 func sameRace(recorded, live []byte) bool {
-	if sameButFingerprint(recorded, live) {
+	if bytes.Equal(recorded, live) {
 		return true
 	}
 	swapped := bytes.ReplaceAll(live, []byte("req-a"), []byte("req-?"))
 	swapped = bytes.ReplaceAll(swapped, []byte("req-b"), []byte("req-a"))
 	swapped = bytes.ReplaceAll(swapped, []byte("req-?"), []byte("req-b"))
-	if sameButFingerprint(recorded, swapped) {
+	if bytes.Equal(recorded, swapped) {
 		return true
 	}
 	var a, b managedCapture

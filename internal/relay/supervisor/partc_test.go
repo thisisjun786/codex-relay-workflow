@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"os"
@@ -17,16 +18,19 @@ import (
 
 func partCPython(t *testing.T, id string) any {
 	t.Helper()
-	repo, _ := filepath.Abs("../../..")
-	script, _ := filepath.Abs("testdata/partc_capture.py")
-	home := t.TempDir()
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, id)
-	cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir(), "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src"))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("%v %s", err, out)
-	}
+	out := pythonOutput(t, id, func() ([]byte, error) {
+		repo := repoRoot(t)
+		script, _ := filepath.Abs("testdata/partc_capture.py")
+		home := t.TempDir()
+		cmd := exec.Command("uv", "run", "--no-sync", "python", script, id)
+		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir(), "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src"))
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("%v %s", err, out)
+		}
+		return out, nil
+	})
 	var v any
 	dec := json.NewDecoder(bytes.NewReader(out))
 	dec.UseNumber()

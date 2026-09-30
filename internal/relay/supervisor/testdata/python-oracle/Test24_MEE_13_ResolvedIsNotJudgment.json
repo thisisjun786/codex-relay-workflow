@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "MEE-13": "txt:{\"detail\":\"thread 'PRRT_ready' is recorded as 'resolved', which is not a judgment. Use one of: fixed, accepted, not_applicable, duplicate, already_resolved, disputed. Resolving a thread is a button, not a finding anybody ruled on\",\"reason\":\"merge_review_incomplete\"}\n"
+ }
+}

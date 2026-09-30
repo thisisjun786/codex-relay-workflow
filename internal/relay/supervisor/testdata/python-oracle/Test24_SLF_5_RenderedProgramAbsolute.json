@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "SLF-5": "txt:{\"absolute\":true,\"basename\":\"python3.13\",\"executable\":true}\n"
+ }
+}

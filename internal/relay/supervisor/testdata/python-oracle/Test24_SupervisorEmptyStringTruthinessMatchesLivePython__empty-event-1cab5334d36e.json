@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "empty-event": "txt:{\"code\":4,\"stderr\":\"\",\"stdout\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"supervisor-stage needs a subject: --event for one event's obligation, --project for everything a project owes, or one --observation for the obligation a turn left by ending without reporting\\\"\\n}\\n\"}"
+ }
+}

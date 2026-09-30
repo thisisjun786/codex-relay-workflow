@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "defer_after_fault": "txt:{\"error\": \"Exception: <host> & caf\\u00e9\", \"retryAt\": 1700000060.0}"
+ }
+}

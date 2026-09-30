@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "RC-4": "txt:{\"mine\": \"thisisjun786/codex-relay-workflow#12\", \"other\": \"someone-else/other-project#12\", \"keyMine\": [\"rel-one\", \"thisisjun786/codex-relay-workflow\", 12], \"keyOther\": [\"rel-different\", \"someone-else/other-project\", 12]}\n"
+ }
+}
