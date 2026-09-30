@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import sqlite3
+import stat
 import tempfile
 import time
 from dataclasses import dataclass
@@ -93,6 +94,13 @@ def metadata(path):
             db.close()
 
 
+# A write-ahead log no longer than its header holds no frame.
+WAL_HEADER_SIZE = 32
+WAL_WITHOUT_INDEX = ("the store's write-ahead log holds frames and its shared-memory index is"
+                     " missing or unusable (an unclean shutdown), so its committed state cannot be"
+                     " read without creating a SQLite sidecar")
+
+
 def stop_metadata(path):
     """schema_meta as the read-only Stop path reads it: no copy, no sidecar, no lock file.
 
@@ -101,20 +109,40 @@ def stop_metadata(path):
     evaluation writes nothing to the store (cutover.md Lock order: the read-only Stop path takes
     none of the fence locks), so it reads the durable half in place:
 
-    - D-wal and D-shm both present: a WAL connection (live or crashed) left SQLite's own
+    - D-wal present beside a regular D-shm: a WAL connection (live or crashed) left SQLite's own
       coordination files, and a mode=ro open sees committed WAL frames while creating nothing.
-    - otherwise every committed transaction is in D (SQLite unlinks -shm before -wal at a
-      checkpointed close, and a starting writer creates -wal before it can commit), so D is read
-      immutable=1, which never creates -wal or -shm. mode=ro here would create both.
+    - no D-wal, or one holding no frame (empty, or only its 32-byte header): every committed
+      transaction is in D (SQLite unlinks -shm before -wal at a checkpointed close, and a
+      starting writer creates -wal before it can commit), so D is read immutable=1, which never
+      creates -wal or -shm. mode=ro here would create both.
+    - a D-wal holding frames beside no usable D-shm (an unclean shutdown), or one that cannot be
+      examined, has no such read: immutable=1 would miss commits only its frames hold (an owner
+      change among them), and mode=ro would create the index. sqlite3.OperationalError is
+      raised, so no Stop is judged from D's stale owner.
 
-    Go's native Stop owner read (hook ownsGuard, store.OpenStopRead) applies the same rule.
+    Go's native Stop owner read (hook ownsGuard, store.OpenStopRead, store.InPlaceRead) applies
+    the same rule.
     """
     path = Path(path).resolve()
     if not path.exists():
         return {}
     from .intent import SQLITE_TIMEOUT
 
-    live = Path(str(path) + "-wal").exists() and Path(str(path) + "-shm").exists()
+    try:
+        wal = os.stat(str(path) + "-wal")
+    except FileNotFoundError:
+        wal = None
+    except OSError as error:
+        raise sqlite3.OperationalError(
+            f"the store's write-ahead log could not be examined: {error}") from error
+    try:
+        shm = os.stat(str(path) + "-shm")
+    except OSError:
+        shm = None
+    live = wal is not None and shm is not None and stat.S_ISREG(shm.st_mode)
+    if not live and wal is not None and (not stat.S_ISREG(wal.st_mode)
+                                         or wal.st_size > WAL_HEADER_SIZE):
+        raise sqlite3.OperationalError(WAL_WITHOUT_INDEX)
     db = sqlite3.connect(path.as_uri() + ("?mode=ro" if live else "?mode=ro&immutable=1"),
                          uri=True, timeout=SQLITE_TIMEOUT)
     try:

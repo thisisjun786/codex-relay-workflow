@@ -113,6 +113,41 @@ func TestInPlaceReadRefusesAWALWithoutItsIndex(t *testing.T) {
 	}
 }
 
+// The states test_fence.py test_check_stop_never_judges_a_stop_from_an_owner_its_wal_superseded
+// gives Python's stop_metadata beside the plain unclean shutdown: an index that is not a regular
+// file is no usable index, so frames beside it are refused as beside none; a -wal that is not a
+// regular file is not a header-only log; and a -wal that cannot be examined has no read either.
+func TestInPlaceReadRefusesAnUnusableIndexOrAnUnexaminableWAL(t *testing.T) {
+	frames := make([]byte, walHeaderSize+1)
+	for _, state := range []struct {
+		name  string
+		build func(t *testing.T, path string)
+		want  func(error) bool
+	}{
+		{"frames beside a directory index", func(t *testing.T, path string) {
+			must(t, os.WriteFile(path+"-wal", frames, 0o600))
+			must(t, os.Mkdir(path+"-shm", 0o700))
+		}, func(err error) bool { return errors.Is(err, ErrWALWithoutIndex) }},
+		{"a directory log beside no index", func(t *testing.T, path string) {
+			must(t, os.Mkdir(path+"-wal", 0o700))
+		}, func(err error) bool { return errors.Is(err, ErrWALWithoutIndex) }},
+		{"a log that cannot be examined", func(t *testing.T, path string) {
+			must(t, os.Symlink(filepath.Base(path)+"-wal", path+"-wal"))
+		}, func(err error) bool {
+			return err != nil && strings.HasPrefix(err.Error(), "the store's write-ahead log could not be examined: ")
+		}},
+	} {
+		t.Run(state.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "relay.sqlite3")
+			must(t, os.WriteFile(path, nil, 0o600))
+			state.build(t, path)
+			if _, params, err := InPlaceRead(path); !state.want(err) {
+				t.Fatalf("read with %v: %v", params, err)
+			}
+		})
+	}
+}
+
 // SQLite resolves a symlinked database and keeps its -wal and -shm beside the file the link
 // names, so the rule examines the sidecars there: through a link to a live store the WAL's
 // commits are read (not D alone, immutable), through a link to a crashed one the WAL without its

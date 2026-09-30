@@ -184,8 +184,8 @@ var ErrWALWithoutIndex = errors.New("the store's write-ahead log holds frames an
 // creates -wal or -shm; a plain mode=ro would create both. A D-wal holding frames beside no
 // usable D-shm (ErrWALWithoutIndex), or one that cannot be examined, has no such read: immutable
 // would ignore frames that may hold commits, and mode=ro would create the index. A path that
-// cannot be resolved has none either. Python's ownership.stop_metadata reads D immutable in that
-// state.
+// cannot be resolved has none either. Python's ownership.stop_metadata applies the same rule and
+// raises in those states.
 func InPlaceRead(path string) (string, url.Values, error) {
 	resolved, err := resolvePath(path)
 	if err != nil {

@@ -1565,8 +1565,8 @@ no interpreter. `store.Open` refuses the live state root before todo 42 (`ErrLiv
 plain `mode=ro` connection creates `-wal` and `-shm` beside a checkpointed store. Python's
 `read_only_rows` answers the swap gate through `/proc/self/fd`, which SQLite resolves to the
 file a link names, so it reads the WAL beside that file; its
-`ownership.stop_metadata` shares the immutable read of a WAL without its index (deferred review
-finding PR190 4130471334).
+`ownership.stop_metadata` applies the same no-sidecar rule and raises on a WAL holding frames
+beside no usable index, where it used to read `D` immutable (review finding PR190 4130471334).
 
 Evidence: scripts/runtime_install.py:470-600 (`_STORE_TABLES_PROGRAM`,
 `_CANDIDATE_TABLES_PROGRAM`, `store_presence`); internal/relay/store/hold.go (`InPlaceRead`,

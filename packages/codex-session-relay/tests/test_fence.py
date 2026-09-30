@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import selectors
 import shutil
 import socket
@@ -1768,6 +1769,76 @@ def test_read_only_commands_never_create_an_absent_store(tmp_path, argv):
         "detail": f"no relay store exists at {state / 'relay.sqlite3'}; a read-only command"
                   " never creates one"}
     assert not state.exists() or list(state.iterdir()) == []
+
+
+WAL_WITHOUT_INDEX = ("the store's write-ahead log holds frames and its shared-memory index is"
+                     " missing or unusable (an unclean shutdown), so its committed state cannot be"
+                     " read without creating a SQLite sidecar")
+
+
+@pytest.mark.parametrize("sidecars,owner", [
+    ("none", "python"),
+    ("empty wal", "python"),
+    ("header-only wal", "python"),
+    ("wal and index", "go"),
+    ("wal without index", None),
+    ("wal beside a directory index", None),
+    ("unexaminable wal", None),
+])
+def test_check_stop_never_judges_a_stop_from_an_owner_its_wal_superseded(database, tmp_path,
+                                                                         sidecars, owner):
+    """The read-only Stop owner read (cutover.md Lock order, Go store.InPlaceRead).
+
+    An owner change committed only to D-wal: an unclean shutdown leaves those frames beside no
+    D-shm. Reading D immutable there judged the Stop from D's stale owner; it is an error (the
+    guard's host envelope), never a verdict, and no sidecar is created. With no frame (no -wal, an
+    empty one, or only its 32-byte header) every commit is in D, read immutable; with a regular
+    index beside it the WAL is read mode=ro.
+    """
+    writer = sqlite3.connect(database, isolation_level=None)
+    crashed = tmp_path / "crashed" / "relay.sqlite3"
+    crashed.parent.mkdir(mode=0o700)
+    try:
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute("UPDATE schema_meta SET value='go' WHERE key='owner'")
+        shutil.copyfile(database, crashed)
+        wal = Path(str(database) + "-wal").read_bytes()
+        assert len(wal) > 32
+        if sidecars == "empty wal":
+            Path(str(crashed) + "-wal").write_bytes(b"")
+        elif sidecars == "header-only wal":
+            Path(str(crashed) + "-wal").write_bytes(wal[:32])
+        elif sidecars == "unexaminable wal":
+            os.symlink(Path(str(crashed) + "-wal").name, str(crashed) + "-wal")
+        elif sidecars != "none":
+            Path(str(crashed) + "-wal").write_bytes(wal)
+        if sidecars == "wal and index":
+            shutil.copyfile(str(database) + "-shm", str(crashed) + "-shm")
+        elif sidecars == "wal beside a directory index":
+            os.mkdir(str(crashed) + "-shm")
+    finally:
+        writer.close()
+    # The mirror the stopped store published, naming the copy (as ownership.physical reads it).
+    record = ownership.mirror(database)
+    record.update(database=ownership.physical(crashed),
+                  relayRPCSocket=str(crashed.parent / "control.sock"))
+    (crashed.parent / "takeover.json").write_bytes(inbox.canonical(record))
+    before = sorted(os.listdir(crashed.parent))
+    if owner is None:
+        detail = (WAL_WITHOUT_INDEX if sidecars != "unexaminable wal"
+                  else "the store's write-ahead log could not be examined: ")
+        with pytest.raises(sqlite3.OperationalError, match=re.escape(detail)):
+            ownership.stop_metadata(crashed)
+        with pytest.raises(sqlite3.OperationalError, match=re.escape(detail)):
+            ownership.check_stop(crashed)
+    else:
+        assert ownership.stop_metadata(crashed)["owner"] == owner
+        if owner == "python":
+            ownership.check_stop(crashed)  # the mirror names this runtime's own active store
+        else:
+            with pytest.raises(ownership.OwnershipRefused, match="disagrees with the durable store"):
+                ownership.check_stop(crashed)
+    assert sorted(os.listdir(crashed.parent)) == before
 
 
 def test_doctor_reports_a_stamp_without_its_mirror(database, capsys):
