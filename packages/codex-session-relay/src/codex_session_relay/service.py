@@ -124,6 +124,22 @@ def resolve_scope_root():
     return production_scope_root(), PRODUCTION
 
 
+def canonical_scope_key(canonical, isolated_root=None) -> str:
+    """ScopeRegistry.key of a socket spelling that is already canonical, hashed as given.
+
+    `isolated_root` is an overridden registry root (None for the production authority, whose
+    key has no salt). The ownership record's scopeKey is judged with this against the
+    recorded, already canonical appServerSocket (ownership.scope_key, Go ownership.ScopeKey).
+    """
+    digest = hashlib.sha256(canonical.encode()).hexdigest()[:16]
+    if isolated_root is None:
+        return digest
+    # Namespaced so an isolated record can never be read as the production one. This is
+    # NOT socket isolation: two deliberately isolated services still share the socket.
+    salt = hashlib.sha256(str(isolated_root).encode()).hexdigest()[:8]
+    return f"isolated-{salt}-{digest}"
+
+
 class ScopeUnavailable(Exception):
     """The ownership record cannot be reached, so ownership cannot be established."""
 
@@ -142,13 +158,7 @@ class ScopeRegistry:
         # two launches different keys - so both would take a lock and both would serve one
         # App Server, which is the exact thing this registry exists to prevent.
         canonical = str(Path(socket_path).expanduser().absolute().resolve())
-        digest = hashlib.sha256(canonical.encode()).hexdigest()[:16]
-        if self.authority == PRODUCTION:
-            return digest
-        # Namespaced so an isolated record can never be read as the production one. This is
-        # NOT socket isolation: two deliberately isolated services still share the socket.
-        salt = hashlib.sha256(str(self.root).encode()).hexdigest()[:8]
-        return f"isolated-{salt}-{digest}"
+        return canonical_scope_key(canonical, None if self.authority == PRODUCTION else self.root)
 
     def prepare(self) -> Path:
         """Create and validate the directory, or refuse. There is no second location."""

@@ -8,6 +8,8 @@ import hashlib
 import io
 import json
 import os
+import pwd
+import re
 import selectors
 import shutil
 import socket
@@ -22,8 +24,11 @@ import pytest
 from codex_session_relay import cli, inbox, ownership, stopadapter
 from codex_session_relay.errors import RefusalReason, RelayError
 from codex_session_relay.intent import registration_hold
-from codex_session_relay.service import RelayService
+from codex_session_relay import service as service_module
+from codex_session_relay.service import PRODUCTION, RelayService, ScopeRegistry
 from codex_session_relay.store import Store, probe, resolve_state_dir
+
+from .support import production_registry_untouched, registry_entries
 
 
 @pytest.fixture
@@ -414,9 +419,10 @@ def test_intent_register_explicit_database_ignores_an_unrelated_foreign_selectio
     assert files(selected.parent) == before
 
 
-def test_service_start_refuses_draining_without_launch(database):
+def test_service_start_refuses_draining_without_launch(database, tmp_path):
     stamp(database, phase="draining")
-    service = RelayService(resolve_state_dir(database.parent))
+    service = RelayService(resolve_state_dir(database.parent),
+                           scope=ScopeRegistry(tmp_path / "scopes", PRODUCTION))
     with mock.patch.object(service, "default_launcher") as launch:
         result = service.start()
     assert result["reason"] == "store_owned_by_other"
@@ -523,8 +529,9 @@ def test_probe_foreign_owner_never_takes_write_transaction(database):
     assert files(database.parent) == before
 
 
-def test_supervisor_stops_replacing_workers_at_draining(database):
-    service = RelayService(resolve_state_dir(database.parent))
+def test_supervisor_stops_replacing_workers_at_draining(database, tmp_path):
+    service = RelayService(resolve_state_dir(database.parent),
+                           scope=ScopeRegistry(tmp_path / "scopes", PRODUCTION))
     service.enable(actor="test")
     launches = []
 
@@ -1569,7 +1576,10 @@ def test_service_preflights_let_the_completing_opener_through_a_torn_binding(dat
     with sqlite3.connect(database) as db:
         db.execute("INSERT INTO schema_meta VALUES ('socket_path', ?)", (app,))
     db.close()
-    service = RelayService(resolve_state_dir(database.parent), socket_path=app)
+    # The production authority (so the record's scopeKey is the unsalted one a real launch
+    # records) over a temporary root: never the owner's real registry (conftest.py).
+    scope = ScopeRegistry(tmp_path / "scopes", PRODUCTION)
+    service = RelayService(resolve_state_dir(database.parent), socket_path=app, scope=scope)
     with mock.patch.object(service, "default_launcher"):
         assert service.start().get("reason") != "store_owned_by_other"
     service.enable(actor="test")
@@ -1587,10 +1597,55 @@ def test_service_preflights_let_the_completing_opener_through_a_torn_binding(dat
 
     result = service.supervise(spawn=spawn, max_segments=2, sleeper=lambda _: None)
     assert result["segments"] == [0, 0] and len(launches) == 2
+    assert registry_entries(scope.root) == {f"{scope.key(app)}.json", f"{scope.key(app)}.lock"}
     # Without the socket, the same preflight refuses the torn record.
     with pytest.raises(Exception, match="scope without socket"):
-        RelayService(resolve_state_dir(database.parent)).supervise(
+        RelayService(resolve_state_dir(database.parent), scope=scope).supervise(
             spawn=spawn, max_segments=1, sleeper=lambda _: None)
+
+
+def test_the_registry_guard_fails_a_service_that_claims_in_the_production_registry(
+        database, tmp_path, monkeypatch):
+    """conftest.py's guard, around every test, fails one that leaves a new entry in the
+    production scope registry (support.production_registry_untouched).
+
+    A RelayService built without scope= while CODEX_SESSION_RELAY_SCOPE_DIR is unset resolves
+    the production authority, whose root is the passwd entry's home (production_scope_root),
+    which HOME does not move, and supervising claims the socket there: the torn-binding test
+    above did so on every run until it was given a temporary registry. Here
+    production_scope_root names a scratch directory, so that unfixed construction claims there,
+    the guard fails it, and the real registry is never written. The fixed construction, a
+    temporary registry of the production authority, claims the same key there instead.
+    """
+    production = tmp_path / "production-scopes"
+    monkeypatch.setattr(service_module, "production_scope_root", lambda: production)
+    monkeypatch.delenv("CODEX_SESSION_RELAY_SCOPE_DIR", raising=False)
+    app = str(tmp_path / "app.sock")
+    key = ScopeRegistry(production, PRODUCTION).key(app)
+
+    class Worker:
+        pid = os.getpid()
+
+        def wait(self):
+            return 0
+
+    def supervised(service):
+        service.enable(actor="test")
+        return service.supervise(spawn=lambda **_: Worker(), max_segments=1,
+                                 sleeper=lambda _: None)["segments"]
+
+    with pytest.raises(AssertionError, match="^left .* in the production scope registry "):
+        with production_registry_untouched(service_module.production_scope_root()):
+            assert supervised(RelayService(resolve_state_dir(database.parent),
+                                           socket_path=app)) == [0]
+    assert registry_entries(production) == {f"{key}.json", f"{key}.lock"}
+    fresh = tmp_path / "fresh" / "relay.sqlite3"
+    Store(fresh).close()
+    scopes = tmp_path / "scopes"
+    with production_registry_untouched(production):
+        assert supervised(RelayService(resolve_state_dir(fresh.parent), socket_path=app,
+                                       scope=ScopeRegistry(scopes, PRODUCTION))) == [0]
+    assert registry_entries(scopes) == {f"{key}.json", f"{key}.lock"}
 
 
 def test_python_never_binds_a_store_it_does_not_own_or_that_is_mid_transition(database, tmp_path):
@@ -1622,12 +1677,14 @@ def test_socket_binding_waits_for_other_writers_within_the_declared_bound(databa
     assert ownership.mirror(database)["appServerSocket"] == app
 
 
-@pytest.mark.parametrize("pause", ["before-first-lock", "after-gate-placed"])
-def test_concurrent_first_openers_never_see_a_partial_store(tmp_path, pause):
-    """The gate is placed already held EX, so a racing first opener waits instead of refusing."""
-    path = tmp_path / "state" / "relay.sqlite3"
-    first = subprocess.Popen([sys.executable, "-u", "-c", """
-import fcntl, os, sys
+# A writable first opener of argv[1] that stops at argv[2] ("before-first-lock", or
+# "after-gate-placed": write-gate.lock linked into place and still held EX, no D yet), prints
+# "paused", and goes on after a line on stdin. With argv[3] it stamps the store it creates for
+# that owner, both halves, before it publishes the mirror and while it still holds the gate EX:
+# a first opener of the other runtime, as the fence sees one.
+PAUSABLE_CREATOR = """
+import fcntl, os, sqlite3, sys
+from codex_session_relay import ownership
 from codex_session_relay.store import Store
 pause, paused = sys.argv[2], []
 def wait():
@@ -1635,7 +1692,7 @@ def wait():
         paused.append(True)
         print('paused', flush=True)
         sys.stdin.readline()
-real_flock, real_link = fcntl.flock, os.link
+real_flock, real_link, real_publish = fcntl.flock, os.link, ownership._publish
 def flock(fd, operation):
     if pause == 'before-first-lock':
         wait()
@@ -1644,10 +1701,31 @@ def link(source, target, **options):
     real_link(source, target, **options)
     if pause == 'after-gate-placed' and os.path.basename(target) == 'write-gate.lock':
         wait()
-fcntl.flock, os.link = flock, link
+def publish(directory, record):
+    if len(sys.argv) > 3:
+        db = sqlite3.connect(sys.argv[1])
+        with db:
+            db.execute("UPDATE schema_meta SET value=? WHERE key='owner'", (sys.argv[3],))
+        db.close()
+        record = {**record, 'owner': sys.argv[3]}
+    return real_publish(directory, record)
+fcntl.flock, os.link, ownership._publish = flock, link, publish
 Store(sys.argv[1]).close()
 print('created', flush=True)
-""", str(path), pause], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+"""
+
+
+def pausable_creator(path, pause, owner=None):
+    return subprocess.Popen([sys.executable, "-u", "-c", PAUSABLE_CREATOR, str(path), pause,
+                             *([owner] if owner else [])],
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+
+@pytest.mark.parametrize("pause", ["before-first-lock", "after-gate-placed"])
+def test_concurrent_first_openers_never_see_a_partial_store(tmp_path, pause):
+    """The gate is placed already held EX, so a racing first opener waits instead of refusing."""
+    path = tmp_path / "state" / "relay.sqlite3"
+    first = pausable_creator(path, pause)
     second = None
     try:
         assert line(first) == b"paused\n"
@@ -1676,6 +1754,216 @@ Store(sys.argv[1]).close()
     assert sorted(name.name for name in path.parent.iterdir() if name.name.startswith(".write-gate")) == []
 
 
+def relay_command(path, app, *argv):
+    """The fence's console script on the store at `path`, with the App Server socket `app`."""
+    return [str(Path(sys.executable).parent / "codex-session-relay"), "--state", str(path.parent),
+            "--socket", app, *argv]
+
+
+RELAY_DAEMON = ("daemon", "--allow-isolated-scope", "--max-ticks", "0")
+
+
+def finished_early(processes, seconds=1):
+    """The argv of each relay_command process that exits within `seconds`, none if all wait."""
+    try:
+        processes[0].wait(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        pass
+    return [process.args[5:] for process in processes if process.poll() is not None]
+
+
+def test_service_and_daemon_wait_for_a_first_opener_still_creating_the_store(tmp_path, monkeypatch,
+                                                                          capsys):
+    """refuse_partial waits for a gate its creator holds (Go StartPreflight's creating).
+
+    A first opener places the gate already held EX and creates D after it, so in that window S
+    holds a gate and no D. That is no partial store, and no store to act on yet: a service
+    command and a socketed daemon wait in refuse_partial until the creator no longer holds the
+    gate EX, then judge the store it left from the start and go on on the fence's own store.
+    Once no process holds it, the same gate beside no D is partial again, and a service command
+    and the daemon refuse it before they touch S.
+    """
+    monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", str(tmp_path / "scopes"))
+    app = str(tmp_path / "app.sock")
+    # Each form meets its own creator in its own S, so neither meets the other's daemon.lock.
+    forms = {"service": ("service", "disable"), "daemon": RELAY_DAEMON}
+    paths = {name: tmp_path / name / "relay.sqlite3" for name in forms}
+    creators, waiting = [], []
+    try:
+        for name, argv in forms.items():
+            creators.append(pausable_creator(paths[name], "after-gate-placed"))
+            assert line(creators[-1]) == b"paused\n"
+            assert not paths[name].exists() and (paths[name].parent / "write-gate.lock").exists()
+            waiting.append(subprocess.Popen(relay_command(paths[name], app, *argv),
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE))
+        assert finished_early(waiting) == []  # each waits on the gate its creator holds
+        for creator in creators:
+            creator.stdin.write(b"go\n")
+            creator.stdin.flush()
+            assert line(creator) == b"created\n", creator.stderr.read()
+        for process in waiting:
+            out, err = process.communicate(timeout=60)
+            assert process.returncode == 0, (process.args, out, err)
+            assert json.loads(out)["ok"] is True
+        for creator in creators:
+            assert creator.wait(timeout=30) == 0
+    finally:
+        for process in (*creators, *waiting):
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+    assert all(ownership.metadata(path)["owner"] == "python" for path in paths.values())
+    assert (paths["service"].parent / "service.json").exists()
+    # A creator that died after placing its gate leaves a gate nobody holds: partial.
+    abandoned = tmp_path / "abandoned" / "relay.sqlite3"
+    creator = pausable_creator(abandoned, "after-gate-placed")
+    try:
+        assert line(creator) == b"paused\n"
+    finally:
+        creator.kill()
+        creator.wait()
+    before = sorted(name.name for name in abandoned.parent.iterdir())
+    with pytest.raises(ownership.OwnershipRefused, match="^store_owned_by_other: partial store: "
+                       "write-gate.lock without a database$"):
+        ownership.refuse_partial(abandoned)
+    refused = {"error": "refused", "reason": "store_owned_by_other",
+               "detail": "partial store: write-gate.lock without a database"}
+    for argv in (["service", "disable"], list(RELAY_DAEMON)):
+        assert cli.main(["--state", str(abandoned.parent), "--socket", app, *argv]) == 2
+        assert json.loads(capsys.readouterr().out) == refused
+        assert sorted(name.name for name in abandoned.parent.iterdir()) == before
+
+
+def test_service_forms_wait_for_a_foreign_creator_and_refuse_its_store(tmp_path, monkeypatch):
+    """A service form never acts on a store another runtime is still creating (PR #202 review).
+
+    enable, disable and declare change S and hold no admitted open after their preflight, so
+    letting a live creator through had them write service.json for a store that turned out to be
+    the other runtime's. They wait for the creator instead, then judge the store it left from the
+    start: check_start refuses it in validate's words, and nothing lands in S or the scope
+    registry. A socketed daemon waits and refuses the same way, before its daemon.lock and claim.
+    """
+    scopes = tmp_path / "scopes"
+    monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", str(scopes))
+    path = tmp_path / "state" / "relay.sqlite3"
+    app = str(tmp_path / "app.sock")
+    creator = pausable_creator(path, "after-gate-placed", owner="go")
+    waiting = []
+    try:
+        assert line(creator) == b"paused\n"
+        for argv in (("service", "enable"), ("service", "disable"),
+                     ("service", "declare", "--forget-execution-policy"), RELAY_DAEMON):
+            waiting.append(subprocess.Popen(relay_command(path, app, *argv),
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE))
+        assert finished_early(waiting) == []
+        creator.stdin.write(b"go\n")
+        creator.stdin.flush()
+        assert line(creator) == b"created\n", creator.stderr.read()
+        refused = {"error": "refused", "reason": "store_owned_by_other",
+                   "detail": "the relay store belongs to another runtime"}
+        for process in waiting:
+            out, err = process.communicate(timeout=60)
+            assert (process.returncode, json.loads(out)) == (2, refused), (process.args, out, err)
+        assert creator.wait(timeout=30) == 0
+    finally:
+        for process in (creator, *waiting):
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+    assert ownership.metadata(path)["owner"] == "go" and ownership.mirror(path)["owner"] == "go"
+    assert {name.name for name in path.parent.iterdir()} <= {
+        "relay.sqlite3", "relay.sqlite3-wal", "relay.sqlite3-shm", "takeover.json", "write-gate.lock"}
+    assert not scopes.exists()
+
+
+def test_a_creator_that_keeps_its_gate_past_the_bound_is_refused(tmp_path, monkeypatch, capsys):
+    """The wait is bounded by CREATION_WAIT_SECONDS (Go's store.CreationWait), then refused.
+
+    The refusal is a domain one, store_owned_by_other, exit 2, in the words Go gives it, and S and
+    the scope registry are left as the creator has them. A read-only form never waits: service
+    status answers at once.
+    """
+    scopes = tmp_path / "scopes"
+    monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", str(scopes))
+    monkeypatch.setattr(ownership, "CREATION_WAIT_SECONDS", 0.3)
+    path = tmp_path / "state" / "relay.sqlite3"
+    app = str(tmp_path / "app.sock")
+    creator = pausable_creator(path, "after-gate-placed")
+    detail = "store creation in progress: write-gate.lock still held after 0.3s; retry"
+    try:
+        assert line(creator) == b"paused\n"
+        before = files(path.parent)
+        with pytest.raises(ownership.OwnershipRefused, match=f"^store_owned_by_other: {re.escape(detail)}$"):
+            ownership.refuse_partial(path)
+        for argv in (["service", "disable"], ["service", "enable"], list(RELAY_DAEMON)):
+            assert cli.main(["--state", str(path.parent), "--socket", app, *argv]) == 2
+            assert json.loads(capsys.readouterr().out) == {
+                "error": "refused", "reason": "store_owned_by_other", "detail": detail}
+            assert files(path.parent) == before
+        assert not scopes.exists()
+        status = subprocess.run(relay_command(path, app, "service", "status"), capture_output=True,
+                                timeout=5)
+        assert status.returncode == 0, status
+    finally:
+        creator.kill()
+        creator.wait()
+
+
+def test_a_creator_that_dies_during_the_wait_leaves_a_partial_store(tmp_path):
+    """A creator that lets its gate go with no D gave up: what it leaves is a partial store."""
+    path = tmp_path / "state" / "relay.sqlite3"
+    creator = pausable_creator(path, "after-gate-placed")
+    try:
+        assert line(creator) == b"paused\n"
+        with concurrent.futures.ThreadPoolExecutor(1) as pool:
+            verdict = pool.submit(ownership.refuse_partial, path)
+            with pytest.raises(concurrent.futures.TimeoutError):
+                verdict.result(timeout=0.5)
+            creator.kill()
+            creator.wait()
+            with pytest.raises(ownership.OwnershipRefused, match="^store_owned_by_other: partial "
+                               "store: write-gate.lock without a database$"):
+                verdict.result(timeout=30)
+    finally:
+        if creator.poll() is None:
+            creator.kill()
+            creator.wait()
+
+
+def test_a_creation_completed_before_the_probe_is_left_to_check_start(tmp_path, monkeypatch):
+    """refuse_partial looks again after a probe that finds the gate unheld, in Go's order.
+
+    Go's StartPreflight asks creating and then partialStore, which lstats D once more and lets a
+    D that now exists through to CheckStart. A first opener that completes its creation between
+    refuse_partial's look (a gate, no D, no mirror) and its probe (the gate no longer held) has
+    left a whole store, so the fence lets it through to check_start as Go does, rather than
+    refusing it as a partial one.
+    """
+    path = tmp_path / "state" / "relay.sqlite3"
+    creator = pausable_creator(path, "after-gate-placed")
+    probe = ownership._creating
+
+    def completed_then_probed(gate):
+        creator.stdin.write(b"go\n")
+        creator.stdin.flush()
+        assert line(creator) == b"created\n", creator.stderr.read()
+        assert creator.wait(timeout=30) == 0
+        return probe(gate)
+
+    try:
+        assert line(creator) == b"paused\n"
+        assert not path.exists() and not (path.parent / "takeover.json").exists()
+        monkeypatch.setattr(ownership, "_creating", completed_then_probed)
+        ownership.refuse_partial(path)
+    finally:
+        if creator.poll() is None:
+            creator.kill()
+            creator.wait()
+    assert creator.returncode == 0
+    assert ownership.metadata(path)["owner"] == "python" and ownership.mirror(path) is not None
+    ownership.check_start(path)
+
+
 @pytest.mark.parametrize("drift,refusal", [
     ("meta-socket", "scope without socket"),
     ("scope-key", "invalid socket/scope identity"),
@@ -1699,6 +1987,134 @@ def test_a_drifted_scope_identity_refuses_like_go(tmp_path, drift, refusal):
         Store(path)
     with pytest.raises(ownership.OwnershipRefused, match=refusal):
         ownership.check_start(path)
+
+
+def test_a_scope_key_from_another_lock_authority_is_refused_like_go(tmp_path, monkeypatch, capsys):
+    """Go record.go Validate: the mirror's scopeKey is the key this process's own scope-registry
+    authority gives its socket, or the store is refused (cutover.md Record). A store bound under
+    one CODEX_SESSION_RELAY_SCOPE_DIR is refused to a writer under another, non-queueably and
+    before its owner is judged; a reader still reads it, and the binding authority still writes.
+    """
+    path = tmp_path / "state" / "relay.sqlite3"
+    socket_path = str(tmp_path / "app.sock")
+    monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", str(tmp_path / "bound"))
+    Store(path, socket_path=socket_path).close()
+    bound = ownership.mirror(path)["scopeKey"]
+    assert bound == ownership.scope_key(socket_path) and bound.startswith("isolated-")
+    before = files(path.parent)
+    monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", str(tmp_path / "other"))
+    assert ownership.scope_key(socket_path) != bound
+    for opener in (lambda: Store(path, socket_path=socket_path), lambda: Store(path),
+                   lambda: ownership.check_start(path)):
+        with pytest.raises(ownership.OwnershipRefused) as refused:
+            opener()
+        assert refused.value.detail == "scope key disagrees with lock authority"
+        assert not refused.value.queueable
+    for argv in (["--socket", socket_path, "store-challenge", "--write"],
+                 ["store-challenge", "--write"]):
+        assert cli.main(["--state", str(path.parent), *argv]) == 2
+        assert json.loads(capsys.readouterr().out) == {
+            "error": "refused", "reason": "store_owned_by_other",
+            "detail": "scope key disagrees with lock authority"}
+    assert files(path.parent) == before
+    # Another runtime's store under another authority: the scope is judged before the owner.
+    stamp(path, owner="go")
+    with pytest.raises(ownership.OwnershipRefused) as refused:
+        ownership.check_start(path)
+    assert refused.value.detail == "scope key disagrees with lock authority"
+    stamp(path, owner="python")
+    assert cli.main(["--state", str(path.parent), "store-identity"]) == 0
+    assert json.loads(capsys.readouterr().out)["store"]["storeId"] == ownership.metadata(path)["store_id"]
+    monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", str(tmp_path / "bound"))
+    Store(path, socket_path=socket_path).close()
+    assert ownership.mirror(path)["scopeKey"] == bound
+
+
+def test_an_authority_whose_home_cannot_be_found_is_refused_like_go(tmp_path, monkeypatch, capsys):
+    """An override whose ~user has no home gives this process no key to judge a bound record by.
+
+    pathlib raises RuntimeError there; validate refuses instead, as Go's record.go Validate does
+    (ownership.NoAuthorityDetail): reason store_owned_by_other, exit 2, non-queueably and before
+    the owner is judged, so a read-only form still reads the store, store-identity's probe
+    still describes it without raising, and nothing in S changes. A binding or an
+    initialization, which records a new key, still raises the RuntimeError (the host envelope).
+    """
+    path = tmp_path / "state" / "relay.sqlite3"
+    socket_path = str(tmp_path / "app.sock")
+    monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", str(tmp_path / "bound"))
+    Store(path, socket_path=socket_path).close()
+    before = files(path.parent)
+    monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", "~crw-no-such-user-31/scopes")
+    detail = "scope key cannot be judged: Could not determine home directory."
+    for opener in (lambda: Store(path, socket_path=socket_path), lambda: Store(path),
+                   lambda: ownership.check_start(path), lambda: ownership.check_stop(path)):
+        with pytest.raises(ownership.OwnershipRefused) as refused:
+            opener()
+        assert refused.value.detail == detail
+        assert not refused.value.queueable
+    refusal = {"error": "refused", "reason": "store_owned_by_other", "detail": detail}
+    for argv in (["--socket", socket_path, "store-challenge", "--write"], ["store-challenge", "--write"],
+                 ["--socket", socket_path, "service", "disable"],
+                 ["daemon", "--allow-isolated-scope", "--max-ticks", "0"]):
+        assert cli.main(["--state", str(path.parent), *argv]) == 2, argv
+        assert json.loads(capsys.readouterr().out) == refusal, argv
+    assert files(path.parent) == before
+    stamp(path, owner="go")
+    with pytest.raises(ownership.OwnershipRefused, match=re.escape(detail)):
+        ownership.check_start(path)
+    stamp(path, owner="python")
+    for argv in (["store-identity"], ["status"]):
+        assert cli.main(["--state", str(path.parent), *argv]) == 0, argv
+        answer = json.loads(capsys.readouterr().out)
+        if argv == ["store-identity"]:
+            assert answer["store"]["storeId"] == ownership.metadata(path)["store_id"]
+    with pytest.raises(RuntimeError, match="Could not determine home directory"):
+        Store(tmp_path / "fresh" / "relay.sqlite3", socket_path=socket_path)
+
+
+def test_a_socket_directory_that_becomes_a_symlink_keeps_the_recorded_scope_key(tmp_path, capsys):
+    """validate judges the scopeKey against the recorded appServerSocket as it is (Go
+    ownership.ScopeKey): the binding recorded the canonical spelling and its key, so a socket
+    directory replaced by a symlink after binding leaves the owner's store admitted to every
+    opener, the Stop path's check_stop included, rather than refused by a second resolve.
+    """
+    sockets = tmp_path / "sockets"
+    sockets.mkdir()
+    path = tmp_path / "state" / "relay.sqlite3"
+    Store(path, socket_path=str(sockets / "app.sock")).close()
+    bound = ownership.mirror(path)
+    sockets.rename(tmp_path / "moved")
+    sockets.symlink_to(tmp_path / "moved")
+    recorded = bound["appServerSocket"]
+    assert str(Path(recorded).resolve()) != recorded
+    assert ownership.scope_key(recorded) == bound["scopeKey"]
+    ownership.check_start(path)
+    ownership.check_stop(path)
+    Store(path).close()
+    assert cli.main(["--state", str(path.parent), "store-challenge", "--write"]) == 0
+    capsys.readouterr()
+    after = ownership.mirror(path)
+    assert (after["appServerSocket"], after["scopeKey"]) == (recorded, bound["scopeKey"])
+
+
+def test_the_production_scope_key_needs_no_passwd_entry(tmp_path, monkeypatch):
+    """With no CODEX_SESSION_RELAY_SCOPE_DIR the key is the socket's bare digest, which needs no
+    registry root (Go ownership.ScopeKey needs no home), so binding and validation never look up
+    the passwd entry: a host whose lookup fails still admits its store rather than raising.
+    """
+    monkeypatch.delenv("CODEX_SESSION_RELAY_SCOPE_DIR", raising=False)
+
+    def unavailable(uid):
+        raise KeyError(f"getpwuid(): uid not found: {uid}")
+
+    monkeypatch.setattr(pwd, "getpwuid", unavailable)
+    path = tmp_path / "state" / "relay.sqlite3"
+    Store(path, socket_path=str(tmp_path / "app.sock")).close()
+    record = ownership.mirror(path)
+    assert record["scopeKey"] == hashlib.sha256(record["appServerSocket"].encode()).hexdigest()[:16]
+    ownership.check_start(path)
+    ownership.check_stop(path)
+    Store(path).close()
 
 
 def test_a_gate_without_a_database_is_partial_and_never_initialized(tmp_path):
@@ -1727,6 +2143,76 @@ def test_read_only_commands_never_create_an_absent_store(tmp_path, argv):
         "detail": f"no relay store exists at {state / 'relay.sqlite3'}; a read-only command"
                   " never creates one"}
     assert not state.exists() or list(state.iterdir()) == []
+
+
+WAL_WITHOUT_INDEX = ("the store's write-ahead log holds frames and its shared-memory index is"
+                     " missing or unusable (an unclean shutdown), so its committed state cannot be"
+                     " read without creating a SQLite sidecar")
+
+
+@pytest.mark.parametrize("sidecars,owner", [
+    ("none", "python"),
+    ("empty wal", "python"),
+    ("header-only wal", "python"),
+    ("wal and index", "go"),
+    ("wal without index", None),
+    ("wal beside a directory index", None),
+    ("unexaminable wal", None),
+])
+def test_check_stop_never_judges_a_stop_from_an_owner_its_wal_superseded(database, tmp_path,
+                                                                         sidecars, owner):
+    """The read-only Stop owner read (cutover.md Lock order, Go store.InPlaceRead).
+
+    An owner change committed only to D-wal: an unclean shutdown leaves those frames beside no
+    D-shm. Reading D immutable there judged the Stop from D's stale owner; it is an error (the
+    guard's host envelope), never a verdict, and no sidecar is created. With no frame (no -wal, an
+    empty one, or only its 32-byte header) every commit is in D, read immutable; with a regular
+    index beside it the WAL is read mode=ro.
+    """
+    writer = sqlite3.connect(database, isolation_level=None)
+    crashed = tmp_path / "crashed" / "relay.sqlite3"
+    crashed.parent.mkdir(mode=0o700)
+    try:
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute("UPDATE schema_meta SET value='go' WHERE key='owner'")
+        shutil.copyfile(database, crashed)
+        wal = Path(str(database) + "-wal").read_bytes()
+        assert len(wal) > 32
+        if sidecars == "empty wal":
+            Path(str(crashed) + "-wal").write_bytes(b"")
+        elif sidecars == "header-only wal":
+            Path(str(crashed) + "-wal").write_bytes(wal[:32])
+        elif sidecars == "unexaminable wal":
+            os.symlink(Path(str(crashed) + "-wal").name, str(crashed) + "-wal")
+        elif sidecars != "none":
+            Path(str(crashed) + "-wal").write_bytes(wal)
+        if sidecars == "wal and index":
+            shutil.copyfile(str(database) + "-shm", str(crashed) + "-shm")
+        elif sidecars == "wal beside a directory index":
+            os.mkdir(str(crashed) + "-shm")
+    finally:
+        writer.close()
+    # The mirror the stopped store published, naming the copy (as ownership.physical reads it).
+    record = ownership.mirror(database)
+    record.update(database=ownership.physical(crashed),
+                  relayRPCSocket=str(crashed.parent / "control.sock"))
+    (crashed.parent / "takeover.json").write_bytes(inbox.canonical(record))
+    before = sorted(os.listdir(crashed.parent))
+    if owner is None:
+        detail = (WAL_WITHOUT_INDEX if sidecars != "unexaminable wal"
+                  else "the store's write-ahead log could not be examined: ")
+        with pytest.raises(sqlite3.OperationalError, match=re.escape(detail)):
+            ownership.stop_metadata(crashed)
+        with pytest.raises(sqlite3.OperationalError, match=re.escape(detail)):
+            ownership.check_stop(crashed)
+    else:
+        assert ownership.stop_metadata(crashed)["owner"] == owner
+        if owner == "python":
+            ownership.check_stop(crashed)  # the mirror names this runtime's own active store
+        else:
+            with pytest.raises(ownership.OwnershipRefused, match="disagrees with the durable store"):
+                ownership.check_stop(crashed)
+    assert sorted(os.listdir(crashed.parent)) == before
 
 
 def test_doctor_reports_a_stamp_without_its_mirror(database, capsys):

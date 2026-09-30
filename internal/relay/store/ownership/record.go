@@ -20,6 +20,8 @@ import (
 
 	"golang.org/x/sys/unix"
 	_ "modernc.org/sqlite"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 const Protocol = 1
@@ -142,6 +144,13 @@ func ReadRecord(path string) (Record, error) {
 	if err != nil {
 		return Record{}, refuse("read mirror: %v", err)
 	}
+	// The bytes as ownership.mirror's json.loads(bytes) decodes them: UTF-8, behind its byte
+	// order mark or not, UTF-16 or UTF-32 (json.detect_encoding).
+	text, err := pyjson.DecodeBytes(raw)
+	if err != nil {
+		return Record{}, refuse("decode mirror: %v", err)
+	}
+	raw = []byte(text)
 	var fields map[string]json.RawMessage
 	if err = json.Unmarshal(raw, &fields); err != nil {
 		return Record{}, refuse("decode mirror: %v", err)
@@ -233,9 +242,11 @@ func OpenExisting(ctx context.Context, path, mode string) (*sql.DB, error) {
 	return db, nil
 }
 
-// ScopeKey is the scope-registry key of a canonical socket path (service.py
-// ScopeRegistry.key): the first 16 hex digits of its SHA-256, namespaced as
-// isolated-<salt>- when CODEX_SESSION_RELAY_SCOPE_DIR overrides the registry root.
+// ScopeKey is the scope-registry key of a canonical socket path, hashed as given (service.py
+// canonical_scope_key, as ownership.py scope_key calls it; ScopeRegistry.key resolves first):
+// the first 16 hex digits of its SHA-256, namespaced as isolated-<salt>- when
+// CODEX_SESSION_RELAY_SCOPE_DIR overrides the registry root. Validate judges the recorded
+// appServerSocket with it as recorded, never resolved again.
 func ScopeKey(socket string) (string, error) {
 	hash := sha256.Sum256([]byte(socket))
 	key := fmt.Sprintf("%x", hash[:8])
@@ -251,16 +262,37 @@ func ScopeKey(socket string) (string, error) {
 	return fmt.Sprintf("isolated-%x-%s", salt[:4], key), nil
 }
 
+// noHome is str() of pathlib's RuntimeError for a ~ or ~user expanduser cannot resolve.
+const noHome = "Could not determine home directory."
+
+// ErrNoHome is that RuntimeError for a CODEX_SESSION_RELAY_SCOPE_DIR override whose ~ or ~user
+// has no home, which service.py resolve_scope_root raises out of every caller that needs the
+// scope registry or a new scope key (the daemon and service commands, a binding, an
+// initialization). Its text is the fence's host envelope detail for it,
+// f"{type(error).__name__}: {error}" (exit 3), so a caller that answers it unchanged answers
+// as the fence does. Validate refuses it instead (NoAuthorityDetail).
+//
+//lint:ignore ST1005 the fence's caller-visible host detail, kept byte-identical
+var ErrNoHome = errors.New("RuntimeError: " + noHome)
+
+// NoAuthorityDetail is the refusal Validate and ownership.py validate give a bound record when
+// this process's scope-registry authority gives no key for its socket (ErrNoHome): the
+// recorded key cannot be judged, so a writer is refused as under another authority, reason
+// store_owned_by_other, and a read-only form still reads the store.
+const NoAuthorityDetail = "scope key cannot be judged: " + noHome
+
 // ScopeRoot is str(Path(override).expanduser().absolute()) (service.py
 // resolve_scope_root), the spelling both runtimes salt isolated keys with and name
-// K.lock by. It is lexical: '..' and symlinks are kept, never cleaned or resolved.
+// K.lock by. It is lexical: '..' and symlinks are kept, never cleaned or resolved. A ~ or
+// ~user expanduser cannot resolve is ErrNoHome.
 func ScopeRoot(override string) (string, error) {
 	path := override
 	if strings.HasPrefix(path, "~") {
 		name, rest, _ := strings.Cut(path[1:], "/")
 		home, err := UserHome(name)
 		if err != nil {
-			return "", err
+			// The fence's host detail exactly, without the passwd lookup's own words.
+			return "", ErrNoHome
 		}
 		// pathlib joins the remaining components to the home (with_segments).
 		path = home
@@ -288,10 +320,6 @@ func JoinCwd(cwd, path string) string {
 	}
 	return cwd + "/" + path
 }
-
-// ErrNoHome is pathlib's RuntimeError("Could not determine home directory."): a ~ or ~user that
-// nothing answers.
-var ErrNoHome = errors.New("could not determine home directory")
 
 // UserHome is the home posixpath.expanduser puts in place of a leading ~name, "" naming ~ alone:
 // HOME whenever HOME is set, else this user's passwd entry (pwd.getpwuid(os.getuid())), and for a
@@ -353,6 +381,9 @@ func Validate(path string, r Record, s Stamp) error {
 			return refuse("invalid socket/scope identity")
 		}
 		key, err := ScopeKey(socket)
+		if errors.Is(err, ErrNoHome) {
+			return refuse("%s", NoAuthorityDetail)
+		}
 		if err != nil {
 			return err
 		}
@@ -493,7 +524,10 @@ func SnapshotMeta(ctx context.Context, path string) (Stamp, error) {
 }
 
 // CopySnapshot is for read-only preflight only, NOT the transfer backup. The
-// latter uses sqlite3_backup under the complete transfer barrier.
+// latter uses sqlite3_backup under the complete transfer barrier. Each source is copied as
+// ownership.metadata's shutil.copyfile copies it: a source that is a directory fails at its
+// open, naming that source (IsADirectoryError), where Go's open would succeed and the copy
+// fail later, naming the temporary destination.
 func CopySnapshot(path string) (dst string, cleanup func() error, err error) {
 	dir, err := os.MkdirTemp("", "crw-ownership-")
 	if err != nil {
@@ -513,6 +547,9 @@ func CopySnapshot(path string) (dst string, cleanup func() error, err error) {
 		}
 		if e != nil {
 			return "", nil, e
+		}
+		if info, e := src.Stat(); e == nil && info.IsDir() {
+			return "", nil, errors.Join(&os.PathError{Op: "open", Path: path + suffix, Err: unix.EISDIR}, src.Close())
 		}
 		out, e := os.OpenFile(dst+suffix, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if e != nil {

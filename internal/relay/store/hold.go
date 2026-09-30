@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"modernc.org/sqlite"
 )
@@ -182,8 +184,8 @@ var ErrWALWithoutIndex = errors.New("the store's write-ahead log holds frames an
 // creates -wal or -shm; a plain mode=ro would create both. A D-wal holding frames beside no
 // usable D-shm (ErrWALWithoutIndex), or one that cannot be examined, has no such read: immutable
 // would ignore frames that may hold commits, and mode=ro would create the index. A path that
-// cannot be resolved has none either. Python's ownership.stop_metadata reads D immutable in that
-// state.
+// cannot be resolved has none either. Python's ownership.stop_metadata applies the same rule and
+// raises in those states.
 func InPlaceRead(path string) (string, url.Values, error) {
 	resolved, err := resolvePath(path)
 	if err != nil {
@@ -268,13 +270,8 @@ func openForRead(ctx context.Context, path, socket string) (*Store, error) {
 	if storeAbsent(resolved) {
 		return nil, &RefusedError{Reason: ReasonStoreAbsent, Detail: "no relay store exists at " + pathlibSpelling(path) + "; a read-only command never creates one"}
 	}
-	if _, err = os.Lstat(resolved); errors.Is(err, os.ErrNotExist) {
-		// A partial store (a write gate or a mirror without D) is refused, never read or
-		// repaired (decision 30), in the words a writer's admission refuses it with.
-		if _, missing := ownership.Physical(resolved); missing != nil {
-			refused := &ownership.Refused{Detail: fmt.Sprintf("existing database required: %v", missing)}
-			return nil, &RefusedError{Reason: "store_owned_by_other", Detail: refused.Error(), cause: refused}
-		}
+	if err = partialStore(resolved); err != nil {
+		return nil, err
 	}
 	var refused *ownership.Refused
 	if err = checkStart(ctx, resolved); errors.As(err, &refused) {
@@ -298,6 +295,64 @@ func storeAbsent(resolved string) bool {
 		}
 	}
 	return true
+}
+
+// partialStore is the fence's refusal of a partial store, a write gate or an ownership mirror
+// beside a D that is certainly absent (lstat ENOENT), which every form refuses and none reads,
+// creates or repairs (decision 30). Its words are the fence writer's, in check_start's order:
+// the mirror is read first (ownership.mirror), and a record beside no D is refused by validate
+// (the empty stamp has no writer protocol); with no record, Admission refuses the gate it found
+// without a database. It takes no lock, so a reader never takes the gate. nil when D is present
+// or cannot be examined (the opener reports that); the caller has ruled out an absent store.
+func partialStore(resolved string) error {
+	if _, err := os.Lstat(resolved); !errors.Is(err, unix.ENOENT) {
+		return nil
+	}
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(resolved), "takeover.json"))
+	switch {
+	case errors.Is(err, unix.ENOENT):
+		return fenceRefused("partial store: write-gate.lock without a database")
+	case err != nil:
+		return fenceRefused("takeover record unreadable: " + PythonOSError(err))
+	}
+	if why := MirrorRefusal(raw); why != "" {
+		return fenceRefused(why)
+	}
+	return fenceRefused("missing or unsupported writer protocol")
+}
+
+// creating is whether a first opener is creating the store at resolved right now: D and the
+// mirror are certainly absent (lstat ENOENT; a mirror link naming no file reads as no mirror,
+// as partialStore reads it) and another opener holds the gate EX (gateHeld), as a creator holds
+// the gate it placed (placeGate, ownership.py _create_gate) until the store is whole. A
+// writer-side preflight waits for such a creator (StartPreflight); a reader never probes the
+// gate.
+func creating(resolved string) bool {
+	if _, err := os.Lstat(resolved); !errors.Is(err, unix.ENOENT) {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(resolved), "takeover.json")); !errors.Is(err, unix.ENOENT) {
+		return false
+	}
+	return gateHeld(resolved)
+}
+
+// gateHeld is whether another opener holds the gate beside resolved EX, probed once without
+// waiting: a shared lock released at once, as ownership.py _creating probes it. A gate that
+// cannot be opened or locked is held by nobody, and so is one that is not a regular file,
+// which no creator places. The open does not wait either (O_NONBLOCK): a FIFO opened read-only
+// would wait for a writer.
+func gateHeld(resolved string) bool {
+	fd, err := unix.Open(filepath.Join(filepath.Dir(resolved), "write-gate.lock"), unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return false
+	}
+	defer unix.Close(fd)
+	var gate unix.Stat_t
+	if err = unix.Fstat(fd, &gate); err != nil || gate.Mode&unix.S_IFMT != unix.S_IFREG {
+		return false
+	}
+	return errors.Is(unix.Flock(fd, unix.LOCK_SH|unix.LOCK_NB), unix.EWOULDBLOCK)
 }
 
 // checkStart is ownership.check_start without a candidate: the lock-free preflight that keeps

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,25 +32,82 @@ func admitWrite(ctx context.Context, path string) (*ownership.Admission, error) 
 // StartPreflight is ownership.check_start as cli.py main runs it before a command that opens
 // its own admitted connection (service, daemon, and the marker commands that record or
 // confirm the selected store): an absent store passes, because the writable opener creates
-// it; anything else must be Go-owned and active, or starting for the designated candidate
-// ctx carries, or it is refused before any lock, record, marker or child exists.
+// it; a partial one (a gate or a mirror without D) is refused in the words the fence's writer
+// meets it with (partialStore); anything else must be Go-owned and active, or starting for
+// the designated candidate ctx carries, or it is refused before any lock, record, marker or
+// child exists.
 // socketPath is the command's --socket as given, so the opener that completes a torn socket
 // binding is let through (cutover.md Record); one that cannot be canonicalized binds
 // nothing, and the opener reports it.
+// The store is named as every opener names it, beside Path.resolve()'s D: a dangling D link
+// alone is an absent store, which the writable opener creates through the link. A gate that
+// another opener holds EX beside no D and no mirror is a first opener of either runtime still
+// creating the store (creating), which is neither a partial store nor one to act on yet: a
+// service form changes S with no admitted open after it, so passing it would let this runtime
+// write intent for a store the creator may stamp for the other runtime. The preflight waits,
+// polling without blocking, until no opener holds the gate EX (awaitCreator), for at most
+// CreationWait, and then judges the store again from the start: the other runtime's store is
+// refused, a creator that gave up (the gate let go, no D) leaves a partial store, and a creator
+// still holding the gate at the bound is refused as a creation in progress (creationRefused).
+// ownership.py refuse_partial waits and judges alike, with the same bound and words.
 func StartPreflight(ctx context.Context, dbPath, socketPath string) error {
+	resolved := resolveLoosely(dbPath)
+	deadline := time.Now().Add(CreationWait)
+	for creating(resolved) {
+		if err := awaitCreator(ctx, resolved, deadline); err != nil {
+			return err
+		}
+	}
+	if !storeAbsent(resolved) {
+		if err := partialStore(resolved); err != nil {
+			return err
+		}
+	}
 	socket := ""
 	if socketPath != "" {
 		socket, _ = CanonicalSocket(socketPath)
 	}
-	if err := ownership.CheckStart(ctx, dbPath, socket); err != nil {
+	if err := ownership.CheckStart(ctx, resolved, socket); err != nil {
 		return &RefusedError{Reason: "store_owned_by_other", Detail: OwnershipRefusalDetail(err)}
 	}
 	return nil
 }
 
+// CreationWait bounds how long a start preflight waits for a first opener still creating the
+// store (StartPreflight; ownership.py CREATION_WAIT_SECONDS, the same 30 s). It is the bound the
+// admitted open already waits for a creation within (awaitCreation, the default busy timeout)
+// and ownership.LockWait. A variable so tests can shorten it.
+var CreationWait = 30 * time.Second
+
+// awaitCreator waits until no opener holds the gate beside resolved EX, polling every 10 ms
+// without blocking (gateHeld), as awaitCreation polls. Past deadline it refuses the command as
+// a creation still in progress; a cancelled ctx ends the wait with its error.
+func awaitCreator(ctx context.Context, resolved string, deadline time.Time) error {
+	for gateHeld(resolved) {
+		if !time.Now().Before(deadline) {
+			return creationRefused()
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	return nil
+}
+
+// creationRefused is the refusal of a start preflight whose creator still holds the gate at
+// CreationWait: non-queueable, reason store_owned_by_other, exit 2, in the words ownership.py
+// refuse_partial gives it, the bound formatted as Python's {bound:g} formats it.
+func creationRefused() error {
+	return fenceRefused("store creation in progress: write-gate.lock still held after " +
+		strconv.FormatFloat(CreationWait.Seconds(), 'g', -1, 64) + "s; retry")
+}
+
 // CheckStartLikeFence is ownership.check_start without a candidate, read in the fence's order
-// and answered with its outcomes, for the marker commands the fence runs it for: cli.py main
-// before intent-declare recording the selected store and intent-register confirming against it,
+// and answered with its outcomes, for the commands the fence runs it for ahead of anything else
+// they check: cli.py main before intent-declare recording the selected store and
+// intent-register confirming against it, and before a daemon without --socket asks for one;
 // cmd_intent_claim on the store an intent names, and declarations.Held's Store() on it for
 // intent-disposition. In order:
 //
@@ -64,13 +122,15 @@ func StartPreflight(ctx context.Context, dbPath, socketPath string) error {
 //     which never initializes a legacy one (decision 30) and refuses it there, before any
 //     marker fact exists (intent-register's hold);
 //   - a fenced store is refused where StartPreflight's judgement (ownership.CheckStart, with
-//     socketPath) refuses it, in validate's words wherever validate refuses it too.
+//     socketPath) refuses it, in validate's words wherever validate refuses it too, judged as
+//     check_start judges it: without the socket_path of a torn binding that socket's opener
+//     would complete (`unbound(...) or meta`, fenceUnbound).
 func CheckStartLikeFence(ctx context.Context, dbPath, socketPath string) error {
 	socket := ""
 	if socketPath != "" {
 		socket, _ = CanonicalSocket(socketPath)
 	}
-	return checkLikeFence(ctx, dbPath, readMetadata, func(ctx context.Context) error {
+	return checkLikeFence(ctx, dbPath, socket, readMetadata, func(ctx context.Context) error {
 		return ownership.CheckStart(ctx, dbPath, socket)
 	})
 }
@@ -81,7 +141,7 @@ func CheckStartLikeFence(ctx context.Context, dbPath, socketPath string) error {
 // of the store and no SQLite sidecar. An absent or unfenced store passes; a fenced one must be
 // this runtime's active store.
 func CheckStop(ctx context.Context, dbPath string) error {
-	return checkLikeFence(ctx, dbPath, stopMetadata, func(ctx context.Context) error {
+	return checkLikeFence(ctx, dbPath, "", stopMetadata, func(ctx context.Context) error {
 		return ownership.CheckStop(ctx, dbPath, func(ctx context.Context, path string) (ownership.Stamp, error) {
 			ro, err := OpenStopRead(ctx, path, 0)
 			if err != nil {
@@ -95,8 +155,9 @@ func CheckStop(ctx context.Context, dbPath string) error {
 
 // checkLikeFence is ownership.check_start's reading in the fence's order (CheckStartLikeFence):
 // the mirror, then the durable metadata meta reads, then judge's verdict for a fenced store,
-// worded as validate words it.
-func checkLikeFence(ctx context.Context, dbPath string, meta func(context.Context, string) (map[string]string, error), judge func(context.Context) error) error {
+// worded as validate words it. socket is the canonical socket the caller checks against ("" for
+// check_stop's socketless reading), which completes a torn binding as check_start does.
+func checkLikeFence(ctx context.Context, dbPath, socket string, meta func(context.Context, string) (map[string]string, error), judge func(context.Context) error) error {
 	resolved := resolveLoosely(dbPath)
 	raw, err := os.ReadFile(filepath.Join(filepath.Dir(resolved), "takeover.json"))
 	switch {
@@ -129,7 +190,7 @@ func checkLikeFence(ctx context.Context, dbPath string, meta func(context.Contex
 	case !errors.As(err, &refused):
 		return &pythonHostError{cause: err}
 	}
-	if why := fenceRefusal(resolved, durable, raw); why != "" {
+	if why := fenceRefusal(resolved, durable, raw, socket); why != "" {
 		return fenceRefused(why)
 	}
 	return &RefusedError{Reason: "store_owned_by_other", Detail: OwnershipRefusalDetail(err), cause: err}
@@ -186,8 +247,10 @@ func AsOwnershipRefusal(err error) error {
 	return err
 }
 
-// fenceWords is the fence's wording of the three ownership decisions Go's judge words its
-// own way, or "" for any other refusal.
+// fenceWords is the fence's wording of the ownership decisions both runtimes make that Go's
+// judge words its own way (the three the fence answers queueably, and validate's two
+// lock-authority refusals, which Go words alike but under Refused's prefix), or "" for any
+// other refusal.
 func fenceWords(detail string) string {
 	switch {
 	case strings.HasPrefix(detail, "store belongs to "):
@@ -196,6 +259,8 @@ func fenceWords(detail string) string {
 		return "only the designated candidate may enter starting"
 	case detail == "store is draining":
 		return "the relay store is draining"
+	case detail == "scope key disagrees with lock authority", detail == ownership.NoAuthorityDetail:
+		return detail
 	}
 	return ""
 }
@@ -209,6 +274,11 @@ func openFenced(ctx context.Context, path, socket string, options OpenOptions) (
 		return nil, err
 	}
 	if err = readGateless(ctx, resolved); err != nil {
+		return nil, err
+	}
+	// Whatever a creator racing this opener left has settled (awaitCreation): a gate or a
+	// mirror still without D is refused in the fence writer's words, before any lock.
+	if err = partialStore(resolved); err != nil {
 		return nil, err
 	}
 	// A binding holds the gate SH from its own EX until admission holds it SH too.

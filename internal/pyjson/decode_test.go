@@ -122,3 +122,23 @@ func surrogatesReplaced(s string) string {
 	}
 	return string(b)
 }
+
+// json.loads checks for a byte order mark only on a str argument. Bytes are decoded first
+// (utf-8-sig drops one mark), so a mark left in the decoded text is an ordinary character the
+// scanner refuses where a value was expected: json.loads(b"\xef\xbb\xbf\xef\xbb\xbf{}") raises
+// "Expecting value", json.loads("\ufeff{}") the mark's own refusal.
+func TestDecodedError_scans_a_mark_left_by_the_codec_as_a_character(t *testing.T) {
+	text, err := DecodeBytes([]byte("\xef\xbb\xbf\xef\xbb\xbf{}"))
+	if err != nil || text != "\ufeff{}" {
+		t.Fatalf("decoded %q, %v", text, err)
+	}
+	if got := DecodedError(text); got != "Expecting value: line 1 column 1 (char 0)" {
+		t.Errorf("bytes: %q", got)
+	}
+	if got := Error(text); got != "Unexpected UTF-8 BOM (decode using utf-8-sig): line 1 column 1 (char 0)" {
+		t.Errorf("str: %q", got)
+	}
+	if got := DecodedError("{}"); got != "" {
+		t.Errorf("a valid document: %q", got)
+	}
+}

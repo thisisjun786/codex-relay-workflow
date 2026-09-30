@@ -1,15 +1,16 @@
 package store
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"math/big"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
@@ -17,27 +18,43 @@ import (
 // "" when json.loads reads them as an object, otherwise the OwnershipRefused detail. It is
 // the one reading of the mirror's bytes behind doctor's ownership block and its probe.
 func MirrorRefusal(raw []byte) string {
-	if _, err := DecodeUTF8(raw); err != nil {
-		return "takeover record unreadable: UnicodeDecodeError: " + err.Error()
+	_, why := MirrorDocument(raw)
+	return why
+}
+
+// MirrorDocument is ownership.mirror's json.loads(bytes) of takeover.json: the text the bytes
+// decode to (json.detect_encoding's UTF-8, behind its byte order mark or not, UTF-16 or UTF-32,
+// pyjson.DecodeBytes), which json.loads reads as an object, or why it refuses them.
+func MirrorDocument(raw []byte) (text, why string) {
+	text, err := pyjson.DecodeBytes(raw)
+	if err != nil {
+		return "", "takeover record unreadable: UnicodeDecodeError: " + err.Error()
 	}
-	if message := PythonJSONError(string(raw)); message != "" {
-		return "takeover record unreadable: JSONDecodeError: " + message
+	if message := pyjson.DecodedError(text); message != "" {
+		return "", "takeover record unreadable: JSONDecodeError: " + message
 	}
-	// The document is valid JSON, so its first non-whitespace byte names its type.
-	if !strings.HasPrefix(strings.TrimLeft(string(raw), " \t\n\r"), "{") {
-		return "takeover record is not an object"
+	// The document is valid JSON, so its first non-whitespace character names its type.
+	if !strings.HasPrefix(strings.TrimLeft(text, " \t\n\r"), "{") {
+		return "", "takeover record is not an object"
 	}
-	return ""
+	return text, ""
 }
 
 // fenceRefusal is the detail ownership.py validate(path, meta, record) refuses with, worded
 // for this runtime as the admitted owner (no candidate, no admitted epoch): "" when validate
 // admits, or when a value cannot be read as Python reads it (the caller keeps its own words).
 // It words a refusal; whether the store is refused stays the admission preflight's decision.
-func fenceRefusal(resolved string, meta map[string]string, raw []byte) string {
+// socket is the canonical App Server socket of a check_start(path, socket=...) ("" for none):
+// a torn binding that socket's opener would complete is judged without its socket_path, as
+// check_start's `unbound(...) or meta` judges it (fenceUnbound).
+func fenceRefusal(resolved string, meta map[string]string, raw []byte, socket string) string {
 	var record map[string]any
 	if raw != nil {
-		decoder := json.NewDecoder(bytes.NewReader(raw))
+		text, err := pyjson.DecodeBytes(raw)
+		if err != nil {
+			return ""
+		}
+		decoder := json.NewDecoder(strings.NewReader(text))
 		decoder.UseNumber()
 		if decoder.Decode(&record) != nil {
 			return ""
@@ -45,6 +62,10 @@ func fenceRefusal(resolved string, meta map[string]string, raw []byte) string {
 		if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 			return ""
 		}
+	}
+	if fenceUnbound(record, meta, socket) {
+		meta = maps.Clone(meta)
+		delete(meta, "socket_path")
 	}
 	protocol, isInt := pyInt(record["protocol"])
 	if meta["writer_protocol"] != "1" || len(record) == 0 || !isInt || protocol.Cmp(big.NewInt(1)) != 0 {
@@ -63,6 +84,9 @@ func fenceRefusal(resolved string, meta map[string]string, raw []byte) string {
 	epoch, epochIsInt := pyInt(record["epoch"])
 	if _, isBool := record["rollbackAllowed"].(bool); !epochIsInt || !isBool {
 		return "mistyped ownership record"
+	}
+	if why, judged := fenceScopeRefusal(record, meta); !judged || why != "" {
+		return why
 	}
 	phase, _ := record["phase"].(string)
 	if phase != "active" && phase != "draining" && phase != "starting" {
@@ -118,6 +142,53 @@ func fenceRefusal(resolved string, meta map[string]string, raw []byte) string {
 		return "the relay store is draining"
 	}
 	return ""
+}
+
+// fenceUnbound is ownership.py unbound(meta, record, socket) for this runtime, without a
+// candidate: the mirror is an object naming no App Server socket and no scope key, schema_meta
+// records no socket_path or this canonical socket (the torn binding a crash between its commit
+// and its publication leaves), and both halves say this runtime owns the store, in phase active
+// with no transition (ownership.Unbound's rule, read from the bytes as the fence reads them).
+func fenceUnbound(record map[string]any, meta map[string]string, socket string) bool {
+	appServer, named := record["appServerSocket"]
+	recorded, bound := meta["socket_path"]
+	return socket != "" && record != nil && named && appServer == nil && record["scopeKey"] == nil &&
+		(!bound || recorded == socket) && meta["owner"] == "go" && pyStringIs(record["owner"], "go", true) &&
+		pyStringIs(record["phase"], "active", true) && record["transition"] == nil
+}
+
+// fenceScopeRefusal is validate's scope identity, in its order: the mirror's appServerSocket is
+// null exactly when schema_meta records no socket_path (and then so is scopeKey), else an
+// absolute, normalized string equal to socket_path beside a non-empty scopeKey, which must be the
+// key this process's own scope-registry authority gives that socket (ownership.ScopeKey, Python's
+// scope_key); an authority whose home cannot be found gives none (ownership.NoAuthorityDetail).
+// judged is false when that key cannot be computed here for another reason.
+func fenceScopeRefusal(record map[string]any, meta map[string]string) (why string, judged bool) {
+	recorded, hasSocket := meta["socket_path"]
+	switch socket := record["appServerSocket"].(type) {
+	case nil:
+		if record["scopeKey"] != nil || recorded != "" {
+			return "scope without socket", true
+		}
+		return "", true
+	case string:
+		key, isString := record["scopeKey"].(string)
+		if !strings.HasPrefix(socket, "/") || pythonNormpath(socket) != socket || !isString || key == "" || !hasSocket || socket != recorded {
+			return "invalid socket/scope identity", true
+		}
+		authority, err := ownership.ScopeKey(socket)
+		if errors.Is(err, ownership.ErrNoHome) {
+			return ownership.NoAuthorityDetail, true
+		}
+		if err != nil {
+			return "", false
+		}
+		if key != authority {
+			return "scope key disagrees with lock authority", true
+		}
+		return "", true
+	}
+	return "invalid socket/scope identity", true
 }
 
 // pyInt is a JSON number json.loads reads as an int (no fraction, no exponent), with its value.

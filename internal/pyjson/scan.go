@@ -18,6 +18,14 @@ func Error(doc string) string {
 	return message
 }
 
+// DecodedError is Error for the text json.loads decoded from bytes (DecodeBytes): only a str
+// argument meets json.loads' byte-order-mark check, so a U+FEFF the codec left in place (a
+// second mark behind a UTF-8 one) is scanned as the character it is, "Expecting value".
+func DecodedError(doc string) string {
+	message, _ := scanError(&pyScan{s: []rune(doc), decoded: true}, doc)
+	return message
+}
+
 // ErrorWithLimit also models the C JSON scanner's container recursion
 // budget. A zero limit leaves the caller's existing unbounded syntax check intact.
 // Recursion errors are host failures rather than JSONDecodeError/ValueError.
@@ -34,8 +42,10 @@ func ErrorWithBudget(doc string, budget int) (message string, recursion bool) {
 	return scanError(&pyScan{s: []rune(doc), maxDepth: budget, budgeted: true}, doc)
 }
 
+// scanError is json.loads' refusal of doc, with the str argument's byte-order-mark check
+// unless the text was decoded from bytes (p.decoded).
 func scanError(p *pyScan, doc string) (message string, recursion bool) {
-	if strings.HasPrefix(doc, "\ufeff") {
+	if !p.decoded && strings.HasPrefix(doc, "\ufeff") {
 		return p.format("Unexpected UTF-8 BOM (decode using utf-8-sig)", 0), false
 	}
 	end, msg, at := p.value(p.ws(0))
@@ -83,6 +93,9 @@ type pyScan struct {
 	// draw on too (ErrorWithBudget); refusedAt is the depth the scan's refusal was raised at.
 	budgeted  bool
 	refusedAt int
+	// decoded: the text json.loads decoded from bytes, which meets no byte-order-mark check
+	// (DecodedError).
+	decoded bool
 }
 
 // callExceeded is the RecursionError a C call raises with no budget left.

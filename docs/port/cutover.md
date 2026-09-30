@@ -116,6 +116,12 @@ updatedAt                diagnostic timestamp
 ```
 
 `holder`, `controller` and `transition` may be null when not applicable.
+
+Both runtimes read `S/takeover.json` as `json.loads` reads bytes: UTF-8 with or without its
+byte order mark, UTF-16 or UTF-32 (`json.detect_encoding`, `surrogatepass`), so every reader
+(admission, the preflights, `doctor`, the Stop path's owner read) accepts and refuses the same
+bytes. Both publish it as plain UTF-8.
+
 `appServerSocket` and `scopeKey` are null exactly when `schema_meta.socket_path` is absent:
 an **unbound** store, created by a socketless writable opener (crw-run's
 `--state "$RELAY_STATE" register`, a `default/` scope). An unbound store is never a takeover
@@ -123,10 +129,24 @@ subject. Otherwise `appServerSocket` is absolute, normalized and equal to
 `schema_meta.socket_path`, and `scopeKey` is the non-empty scope-registry key the binding
 process recorded for it (including the `isolated-<salt>-` namespace of an overridden registry
 root). Both runtimes refuse a record that breaks this (`scope without socket`,
-`invalid socket/scope identity`) at admission and at every revalidation. Go also refuses a
-`scopeKey` that is not the key the validating process would lock
-(`scope key disagrees with lock authority`); Python checks only that it is a non-empty string
-until the refactor-backlog item `[todo36][audit 20/24/46]` lands.
+`invalid socket/scope identity`) at admission and at every revalidation, and both refuse a
+`scopeKey` that is not the key the validating process's own scope-registry authority (its
+`CODEX_SESSION_RELAY_SCOPE_DIR`, or the production root) gives the socket
+(`scope key disagrees with lock authority`), right after the socket identity and before the
+owner is judged: a writer under another authority is refused whoever owns the store, while a
+read-only form still reads it. That key is the recorded `appServerSocket`'s, hashed as
+recorded (`ownership.ScopeKey`, `ownership.scope_key`): the binding recorded the canonical
+spelling, which is never resolved again, so a socket directory that later becomes a symlink
+leaves the record valid in both runtimes. The production authority's key has no salt, so
+neither runtime looks up the passwd entry to judge it. An override whose `~` or `~user` names
+no home gives no key (pathlib's `RuntimeError`): both runtimes refuse the record at that same
+check (`scope key cannot be judged: Could not determine home directory.`, reason
+`store_owned_by_other`, exit 2), so a read-only form still reads that store too, and what must
+record a new key or lock the scope under that override (a binding, an initialization, a
+`service` form or `daemon` on a store with no socket yet) answers the fence's host envelope,
+`RuntimeError: Could not determine home directory.` (exit 3), in both. Every launch on one
+host shares the production authority, so before todo 42 confirm that no launch environment
+(the service, the hooks, crw-run shells) sets `CODEX_SESSION_RELAY_SCOPE_DIR`.
 
 Socket binding. A writable open that passes an App Server socket `K` (canonicalized) to an
 unbound store owned by the opening runtime, in `phase=active` with `transition` null, binds
@@ -153,11 +173,20 @@ that disagrees with it. Both runtimes implement the binding: Go in `store.Open`
 `cli.py` `main`, Go runs that preflight before `daemon` and every `service` form but
 `status`: a store the other runtime owns, or one draining or starting, refuses them before
 any lock or record is written, and so does any store Go would not open (a legacy `D`
-included, which Go never initializes). The marker commands get `check_start` itself, read in
+included, which Go never initializes). A partial store refuses them too, in both runtimes
+(Read-only clients). A `daemon` without `--socket` meets `check_start` first, in `main` and in
+Go's `runDaemon` (`store.CheckStartLikeFence`), and only then is asked for its socket: a store
+the fence refuses is refused in its words (exit 2), one whose ownership read fails answers the
+fence's host error (exit 3; a `D` that is a directory fails the snapshot copy as
+`shutil.copyfile` fails it, naming `D`), and one it passes answers the usage error (exit 4),
+a `D` link loop among them: `D` is resolved as `Path.resolve()` resolves it, so the loop stays
+unresolved and reads as absent. The marker commands get `check_start` itself, read in
 the fence's order (`store.CheckStartLikeFence`): `main` runs it before the two forms that name
 the selected store (`intent-declare` without `--no-db-path`, `intent-register` without
 `--db-path`), `intent-claim` runs it on the store the intent names, and `intent-disposition`
-meets it opening that store before it publishes (`declarations.Held`). The exception is the
+meets it opening that store before it publishes (`declarations.Held`). Given the command's
+`--socket`, it judges a torn binding that socket would complete as `check_start` does, without
+its `socket_path`, so another defect of the record is the refusal it names. The exception is the
 legacy store: with no ownership key and no `takeover.json` it passes, as `check_start` lets
 it, so `intent-declare` records it and a claim or disposition is published; only a command
 that then opens it meets Go's refusal (`intent-register`'s hold, and the store record a claim
@@ -243,13 +272,15 @@ Details that matter:
   creates no SQLite sidecar (Python `ownership.check_stop`/`stop_metadata`, Go
   `store.OpenStopRead` in the native hook's `ownsGuard`). `D` is the file SQLite opens, resolved
   as its unix VFS resolves a path (a symlinked `D` keeps its sidecars beside the file it names),
-  and Go's read is refused unless SQLite names that file. With `D-wal` and `D-shm` both present
+  and Go's read is refused unless SQLite names that file. With `D-wal` beside a regular `D-shm`
   it opens `mode=ro`, which sees committed WAL frames and creates nothing; with no `D-wal`, or
-  one holding no frame, every commit is in `D` and it reads `D` with `immutable=1`. A `D-wal`
-  holding frames beside no usable `D-shm` (an unclean shutdown) has no such read, since an
-  immutable read would miss its commits: Go's read fails and the hook asks the owner rather than
-  trusting `D` (`store.InPlaceRead`; Python's `stop_metadata` still reads `D` immutable there,
-  a deferred review finding). The disposable snapshot copy
+  one holding no frame (empty, or only its 32-byte header), every commit is in `D` and it reads
+  `D` with `immutable=1`. A `D-wal` holding frames beside no usable `D-shm` (an unclean
+  shutdown; a `D-shm` that is not a regular file is none), or one that cannot be examined, has no
+  such read, since an immutable read would miss its commits: both runtimes refuse to read `D`
+  (`store.InPlaceRead`, `stop_metadata`). The native hook then asks the owner rather than
+  trusting `D`, and the fence's `guard-evaluate` answers the host error (exit 3) rather than a
+  verdict judged from `D`'s stale owner. The disposable snapshot copy
   (`metadata`, `SnapshotMeta`) stays with writers' admission and diagnostics; on a Stop it was a
   write outside the hook's root and a copy of the whole live store per turn end.
 - Two waits that another writer can hold for an unbounded time are bounded by 30 s, the
@@ -268,7 +299,10 @@ Details that matter:
   a Go writer still refuses it at once, with the refusal the fence's lock-free `check_start`
   gives that record (a draining store: queueable, so a Go `emit`, `ack` or
   `fault-notification-ack` is durably queued, Wire format), and a read-only form never waits
-  (it reads `mode=ro`). Go's inbox replay (`internal/relay/inbox`) uses the same bound.
+  (it reads `mode=ro`). Go's inbox replay (`internal/relay/inbox`) uses the same bound. The
+  start preflight of a service form or a socketed daemon waits within the same 30 s for a
+  creator that holds the gate EX beside no `D` and no mirror, polling without taking the gate;
+  past the bound it is a domain refusal, not a host error (Step 0 recovery).
 - All of them are `flock` locks (`fcntl.flock` today at daemon.py:95-144, receiver.py:660-672,
   managed.py:311-333, service.py:192-205 and 946-962). Go uses `golang.org/x/sys/unix.Flock` on
   the same permanent files. `FcntlFlock`, POSIX record locks and `lockf`-style libraries live in
@@ -311,11 +345,30 @@ precondition, and a Go opener cannot infer it from the database. If step 4 stops
 **initial stamp committed, mirror absent** (Record): writers refuse, step 5's `doctor --json`
 fails loudly with `takeover record missing`, and only the explicit mirror recovery,
 `crw relay takeover repair-mirror`, completes the publication. If a first opener dies after
-placing the gate and before creating `D`, `S` holds only `write-gate.lock` (and possibly a
-stray `S/.write-gate-*`): every writable opener refuses it non-queueably with
-`partial store: write-gate.lock without a database` (Go words it `ownership refused: existing
-database required: lstat <D>: no such file or directory`, reason `store_owned_by_other`, exit 2,
-after finding the gate unheld).
+placing the gate and before creating `D`, `S` holds only `write-gate.lock` (and possibly a stray `S/.write-gate-*`): every opener of
+either runtime, writable or read-only, refuses it non-queueably with reason
+`store_owned_by_other`, detail `partial store: write-gate.lock without a database`, exit 2 (a
+writer once no creator holds the gate, a reader without taking it), and so do the service
+commands and a daemon before they write anything into `S` or the scope registry (Read-only
+clients). A live creator is told apart by its lock: while another opener holds the gate EX
+beside no `D` and no mirror, the start preflight of a service command or a daemon
+(`ownership.refuse_partial`, `store.StartPreflight`) waits for it in both runtimes rather than
+letting it through: `service enable`, `disable` and `declare` change `S` with no admitted open
+after the preflight, so a store the creator stamps for the other runtime must be refused before
+they write. The preflight probes the gate without blocking every 10 ms until no opener holds it
+EX, for at most 30 s (`CREATION_WAIT_SECONDS`, `store.CreationWait`), then judges the store
+again from the start: an absent store passes, the store the creator left is judged by
+`check_start` (the other runtime's is refused, reason `store_owned_by_other`, detail `the relay
+store belongs to another runtime`, exit 2), and a gate let go with no `D` is the partial store
+above. A creator still holding the gate at the bound is refused non-queueably with reason
+`store_owned_by_other`, detail `store creation in progress: write-gate.lock still held after 30s;
+retry`, exit 2, in both runtimes. `S` and the scope registry are unchanged in every case.
+`service status` and the read-only forms never probe the gate and never wait.
+Each probe opens the gate without waiting too (`O_NONBLOCK`), and a gate that is not a regular
+file (a FIFO, whose read-only open would wait for a writer) is nobody's creation: refused at
+once as the partial store it is. A probe that finds the gate unheld is followed by a second
+look, in Go's order: a creation completed between the first look and the probe leaves a `D`,
+which is left to `check_start`.
 Recovery is an operator action, the only removal of a lock file this protocol allows:
 confirm that `D` and `S/takeover.json` are absent and that no process has the gate open
 (`fuser S/write-gate.lock` or `lsof` lists none), then remove `S/write-gate.lock` and any
@@ -660,11 +713,29 @@ A read-only client never creates, initializes, binds or repairs a store. When `D
 store answers `{"error": "refused", "reason": "store_absent", "detail": "no relay
 store exists at <D>; a read-only command never creates one"}` with exit 2 and leaves `S`
 uncreated, in both runtimes alike (Record). A partial store (`takeover.json` or
-`write-gate.lock` without `D`) is refused by Go with the answer its writer admission gives
-it: reason `store_owned_by_other`, detail `ownership refused: existing database required:
-lstat <D>: no such file or directory`, exit 2, and `S` unchanged. The forms that do not open the store this way (`ack-proof`,
-`dispositions-show`, `doctor`, `guard-evaluate`, `intent-show`, `managed-show`,
-`merge-evidence`, `packet-check`, `reporting-derive`, `reporting-show` and
+`write-gate.lock` without `D`) is refused by every form of both runtimes that opens the store,
+read or write, with the answer the fence's writer gives it: reason `store_owned_by_other`,
+exit 2, detail `partial store: write-gate.lock without a database` for a gate alone, and beside
+a mirror the refusal `check_start` meets first (the mirror's own when it cannot be read, else
+validate's `missing or unsupported writer protocol`). A `takeover.json` link naming no file is
+there but reads as no record, so beside no `D` it is a partial store with a gate's answer,
+gate or none, and no writer initializes a store over it. `S` is left unchanged, and a reader
+never takes the gate. The `service` forms but `status`, and a `daemon` given `--socket`, answer
+it the same way before they write `daemon.lock`, `daemon.json`, `service.json` or a scope
+claim: `check_start` passes a store whose mirror reads as no record as unfenced, so the fence's
+`main` refuses it ahead of `check_start` (`ownership.refuse_partial`), as Go's
+`store.StartPreflight` does. A gate beside no `D` and no mirror that another opener holds EX is
+a first opener still creating the store: they wait for it, within the 30 s creation bound, and
+then judge the store it left from the start, so the other runtime's is refused before anything
+lands in `S` (Step 0 recovery). A `daemon`
+without `--socket` meets `check_start` alone and then asks for its socket, in both runtimes:
+beside a mirror it is refused in `check_start`'s words, and a gate alone, or a mirror link
+naming no file, answers the usage error (exit 4). Absence is judged beside the `D` every
+opener opens, `Path.resolve()`'s, in both runtimes: a `D` link naming no file is no `D`, so alone it is an
+absent store (`store_absent` for a read-only form; a writer, service form or daemon creates the
+store through the link) and beside a gate a partial one. The forms that do not open the store
+this way (`ack-proof`, `dispositions-show`, `doctor`, `guard-evaluate`, `intent-show`,
+`managed-show`, `merge-evidence`, `packet-check`, `reporting-derive`, `reporting-show` and
 `service status`) answer an absent store in their own shape and create nothing either. Only a writer command or a daemon initializes an absent store (decision 30).
 Where a command's own argument refusal falls follows `cli.py` `main`: a read-only form's
 `Services.store` is lazy, so a handler that refuses its arguments before reaching the store
@@ -672,9 +743,6 @@ Where a command's own argument refusal falls follows `cli.py` `main`: a read-onl
 nothing, never `store_absent`; a write form's store is opened by `_ownership_preflight` before
 its handler, so its own argument refusal comes after admission: an absent store is left
 initialized and a store another runtime owns answers `store_owned_by_other` (decision 31).
-The Python half for a partial store is pending (refactor-backlog.md, Deferred review
-findings, audit 25): until it lands, the fence answers a read-only form on a gate-only or
-mirror-only store with a host error (exit 3), creating nothing.
 
 ### The live-state guard (until todo 43)
 

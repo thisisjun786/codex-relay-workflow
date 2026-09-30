@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // stateDir is an owner-only directory, as both runtimes create S (0700); t.TempDir
@@ -348,5 +350,126 @@ func Test31AsOwnershipRefusalAnswersAsAdmissionDoes(t *testing.T) {
 	other := errors.New("disk I/O error")
 	if AsOwnershipRefusal(already) != error(already) || AsOwnershipRefusal(other) != other || AsOwnershipRefusal(nil) != nil {
 		t.Fatal("a non-ownership error was rewritten")
+	}
+}
+
+// The marker commands' check_start (CheckStartLikeFence) and the service preflight answer the
+// scope identity in validate's words and order (ownership.py validate, test_fence.py
+// test_a_drifted_scope_identity_refuses_like_go and
+// test_a_scope_key_from_another_lock_authority_is_refused_like_go): a scopeKey another lock
+// authority gave the socket is refused before the owner is judged, whoever owns the store, and a
+// record whose socket names no scope is refused as an invalid identity.
+func TestCheckStartLikeFence_words_the_scope_identity_as_validate_does(t *testing.T) {
+	dir := stateDir(t)
+	path := filepath.Join(dir, "relay.sqlite3")
+	socket := filepath.Join(dir, "app.sock")
+	bound := filepath.Join(t.TempDir(), "bound")
+	t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", bound)
+	testsupport.Create(t, path, socket, "go")
+	detail := func(err error) string {
+		var refused *RefusedError
+		if !errors.As(err, &refused) || refused.Reason != "store_owned_by_other" {
+			t.Fatalf("not an ownership refusal: %#v", err)
+		}
+		return refused.Detail
+	}
+	for _, owner := range []string{"go", "python"} {
+		t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", bound)
+		testsupport.HandOver(t, path, owner)
+		want := "the relay store belongs to another runtime"
+		if owner == "go" {
+			if err := CheckStartLikeFence(t.Context(), path, socket); err != nil {
+				t.Fatalf("%s-owned store under the binding authority: %v", owner, err)
+			}
+		} else if got := detail(CheckStartLikeFence(t.Context(), path, socket)); got != want {
+			t.Fatalf("%s-owned store under the binding authority: %q", owner, got)
+		}
+		t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", filepath.Join(t.TempDir(), "other"))
+		want = "scope key disagrees with lock authority"
+		if got := detail(CheckStartLikeFence(t.Context(), path, socket)); got != want {
+			t.Errorf("%s-owned store, marker preflight under another authority: %q", owner, got)
+		}
+		if got := detail(StartPreflight(t.Context(), path, socket)); got != want {
+			t.Errorf("%s-owned store, service preflight under another authority: %q", owner, got)
+		}
+		if s, err := Open(t.Context(), path, socket); err == nil {
+			_ = s.Close()
+			t.Errorf("%s-owned store admitted a writer under another authority", owner)
+		} else if got := detail(err); got != want {
+			t.Errorf("%s-owned store, writer under another authority: %q", owner, got)
+		}
+	}
+	// A socket beside no scope key: an invalid identity, before the owner.
+	t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", bound)
+	mirror := filepath.Join(dir, "takeover.json")
+	raw, err := os.ReadFile(mirror)
+	must(t, err)
+	var record map[string]any
+	must(t, json.Unmarshal(raw, &record))
+	record["scopeKey"] = nil
+	raw, err = json.Marshal(record)
+	must(t, err)
+	must(t, os.WriteFile(mirror, raw, 0o600))
+	if got := detail(CheckStartLikeFence(t.Context(), path, socket)); got != "invalid socket/scope identity" {
+		t.Errorf("a socket with a null scope key: %q", got)
+	}
+}
+
+// check_start(path, socket=K) judges a torn binding K's opener would complete (socket_path
+// committed as K, the mirror still unbound) without that socket_path, as ownership.py's
+// `unbound(...) or meta` does, so a second defect of the owner's store is named rather than the
+// torn binding. Without a socket, or with another one, the torn binding is the refusal
+// (test_fence.py, fence_parity_test.go
+// TestSocketBinding_completes_a_torn_binding_only_for_its_socket).
+func TestCheckStartLikeFence_judges_a_torn_binding_as_its_socket_would_complete_it(t *testing.T) {
+	dir := stateDir(t)
+	path := filepath.Join(dir, "relay.sqlite3")
+	socket := filepath.Join(dir, "app.sock")
+	testsupport.Create(t, path, "", "go")
+	db, err := sql.Open("sqlite", path)
+	must(t, err)
+	_, err = db.Exec("INSERT INTO schema_meta VALUES ('socket_path', ?)", socket)
+	must(t, err)
+	must(t, db.Close())
+	detail := func(err error) string {
+		var refused *RefusedError
+		if !errors.As(err, &refused) || refused.Reason != "store_owned_by_other" {
+			t.Fatalf("not an ownership refusal: %#v", err)
+		}
+		return refused.Detail
+	}
+	if err := CheckStartLikeFence(t.Context(), path, socket); err != nil {
+		t.Fatalf("the torn binding's own socket: %v", err)
+	}
+	mirror := filepath.Join(dir, "takeover.json")
+	raw, err := os.ReadFile(mirror)
+	must(t, err)
+	var record map[string]any
+	must(t, json.Unmarshal(raw, &record))
+	record["storeId"] = "wrong"
+	raw, err = json.Marshal(record)
+	must(t, err)
+	must(t, os.WriteFile(mirror, raw, 0o600))
+	for _, check := range []struct{ socket, want string }{
+		{socket, "ownership record disagrees with the durable store"},
+		{"", "scope without socket"},
+		{filepath.Join(dir, "other.sock"), "scope without socket"},
+	} {
+		if got := detail(CheckStartLikeFence(t.Context(), path, check.socket)); got != check.want {
+			t.Errorf("socket %q: %q, want %q", check.socket, got, check.want)
+		}
+	}
+	// Another runtime's torn binding is never this runtime's to complete (unbound's owner).
+	db, err = sql.Open("sqlite", path)
+	must(t, err)
+	_, err = db.Exec("UPDATE schema_meta SET value='python' WHERE key='owner'")
+	must(t, err)
+	must(t, db.Close())
+	record["owner"] = "python"
+	raw, err = json.Marshal(record)
+	must(t, err)
+	must(t, os.WriteFile(mirror, raw, 0o600))
+	if got := detail(CheckStartLikeFence(t.Context(), path, socket)); got != "scope without socket" {
+		t.Errorf("the other runtime's torn binding: %q", got)
 	}
 }

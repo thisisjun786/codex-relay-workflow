@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -472,7 +473,13 @@ func ownsGuard(ctx context.Context, state, configuredDB string) bool {
 	if err != nil {
 		return false
 	}
-	v, err := Decode(raw)
+	// json.loads(bytes), as socket_guard reads the mirror: UTF-8 behind its byte order mark or
+	// not, UTF-16 or UTF-32 (pyjson.DecodeBytes).
+	text, err := pyjson.DecodeBytes(raw)
+	if err != nil {
+		return false
+	}
+	v, err := Decode([]byte(text))
 	if err != nil {
 		return false
 	}

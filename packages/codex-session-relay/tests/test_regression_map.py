@@ -1397,6 +1397,14 @@ FAULT_SITES = (
 # excluded, because excluding a file is how you create the one place an arming sits unseen.
 UNACCOUNTED_FAULT_OCCURRENCES = (
     ("support.py", "killed_before_commit", "defines the helper"),
+    # Wraps ownership._creating so a paused first opener completes its creation just before the
+    # real probe runs; the creator's store and its transactions run unpatched.
+    ("test_fence.py", "test_a_creation_completed_before_the_probe_is_left_to_check_start",
+     "calls setattr"),
+    # Lowers ownership.CREATION_WAIT_SECONDS so a creator that keeps its gate is refused quickly;
+    # no store or DB hook is involved.
+    ("test_fence.py", "test_a_creator_that_keeps_its_gate_past_the_bound_is_refused",
+     "calls setattr"),
     # Lowers ownership.LOCK_WAIT_SECONDS so a held .replay.lock expires quickly; no DB hook.
     ("test_fence.py", "test_a_held_replay_lock_bounds_the_writer_wait_as_a_host_error",
      "calls setattr"),
@@ -1413,6 +1421,14 @@ UNACCOUNTED_FAULT_OCCURRENCES = (
     ("test_fence.py", "test_python_control_server_bounds_the_whole_request_line", "calls setattr"),
     # Lowers ownership.LOCK_WAIT_SECONDS so a held write-gate SH expires the binding quickly.
     ("test_fence.py", "test_socket_binding_waits_for_other_writers_within_the_declared_bound",
+     "calls setattr"),
+    # Makes pwd.getpwuid fail so no production-scope key may consult the passwd entry; the
+    # store and its transactions run unpatched.
+    ("test_fence.py", "test_the_production_scope_key_needs_no_passwd_entry", "calls setattr"),
+    # Points service.production_scope_root at a scratch directory so the registry guard can be
+    # shown failing a claim there, never in the real registry; no store or DB hook is involved.
+    ("test_fence.py",
+     "test_the_registry_guard_fails_a_service_that_claims_in_the_production_registry",
      "calls setattr"),
     # Sets sys.platform to darwin so the Stop client's peer_uid reads LOCAL_PEERCRED from a
     # faked getsockopt on a real connection; no store or DB hook is involved.

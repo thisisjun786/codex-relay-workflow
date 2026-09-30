@@ -1,6 +1,9 @@
 """Owner-independent read matrix and terminal inbox replay regressions."""
 
 import json
+import os
+import shutil
+import signal
 import sqlite3
 from contextlib import redirect_stdout
 from io import StringIO
@@ -374,3 +377,156 @@ def test_read_only_commands_never_write_expired_leases_under_a_foreign_owner(exp
                 server.close()
     assert code == 0, (command, answer)
     assert rows(path) == before, command
+
+
+# The read-only forms that open the selected store through Services.store.
+PARTIAL_READS = (["status"], ["show", "--event", "absent"], ["store-identity"],
+                 ["store-challenge", "--read", "absent"], ["fault-show"], ["fault-next"],
+                 ["sync-status"], ["route-show"])
+
+
+@pytest.mark.parametrize("partial,detail", [
+    ("gate", "partial store: write-gate.lock without a database"),
+    ("mirror", "missing or unsupported writer protocol"),
+    ("gate and mirror", "missing or unsupported writer protocol"),
+    ("mirror link", "partial store: write-gate.lock without a database"),
+    ("gate and mirror link", "partial store: write-gate.lock without a database"),
+])
+def test_a_partial_store_is_refused_as_a_writer_refuses_it(tmp_path, partial, detail):
+    """A partial store (a write gate or a mirror without D) is refused, never read or repaired.
+
+    Decision 30: a read-only form answers exactly the refusal a writer's admission gives the
+    same state, reason store_owned_by_other with exit 2, rather than a host error that invites a
+    retry, and leaves S exactly as it found it. A reader never takes the gate. A takeover.json
+    link naming no file reads as no record but is there: beside no D it is partial too, and the
+    writer refuses it in the gate's words rather than initializing a store over it (Go's
+    partialStore).
+    """
+    source = tmp_path / "source" / "relay.sqlite3"
+    Store(source).close()
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    if "gate" in partial:
+        (state / "write-gate.lock").touch(mode=0o600)
+    if partial.endswith("mirror link"):
+        (state / "takeover.json").symlink_to(state / "nowhere.json")
+    elif "mirror" in partial:
+        shutil.copyfile(source.parent / "takeover.json", state / "takeover.json")
+
+    def snapshot():
+        return sorted(path.name for path in state.iterdir()), files(state)
+
+    def answer(argv):
+        output = StringIO()
+        with redirect_stdout(output):
+            code = cli.main(["--state", str(state), *argv])
+        return code, json.loads(output.getvalue())
+
+    before = snapshot()
+    refused = {"error": "refused", "reason": "store_owned_by_other", "detail": detail}
+    assert answer(["store-challenge", "--write"]) == (2, refused)
+    assert snapshot() == before
+    for argv in PARTIAL_READS:
+        assert answer(argv) == (2, refused), argv
+        assert snapshot() == before, argv
+
+
+def _cli(argv):
+    output = StringIO()
+    with redirect_stdout(output):
+        code = cli.main(argv)
+    return code, json.loads(output.getvalue())
+
+
+class _Blocked(BaseException):
+    """Raised through a blocked call: neither an OSError nor an Exception, so no handler of the
+    code under test can take it for an answer."""
+
+
+def _at_once(argv, seconds=30):
+    """_cli, failed rather than waited on when it blocks: every answer here comes at once."""
+    def blocked(_signum, _frame):
+        raise _Blocked(f"{argv} was still blocked after {seconds}s")
+
+    previous = signal.signal(signal.SIGALRM, blocked)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        return _cli(argv)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+# The service and daemon commands act on S and the scope registry before any admitted open.
+# `service start`, `restart` and `run` are left out: were the refusal lost they would spawn or
+# run a supervisor here; the Go parity test drives the rest of them.
+PARTIAL_STARTS = (["service", "enable"], ["service", "disable"], ["service", "stop"],
+                  ["service", "declare", "--forget-execution-policy"],
+                  ["daemon", "--allow-isolated-scope", "--max-ticks", "0"])
+
+
+@pytest.mark.parametrize("argv", PARTIAL_STARTS)
+@pytest.mark.parametrize("layout", ["gate", "gate-beside-a-dangling-link", "mirror-link",
+                                    "gate-beside-a-mirror-link", "fifo-gate"])
+def test_a_gate_without_a_database_is_refused_before_service_or_daemon_touch_anything(
+        tmp_path, monkeypatch, argv, layout):
+    """Go store.StartPreflight's partial-store refusal, in the fence (decision 31).
+
+    check_start passes a gate without D, or a mirror link naming no file (it reads as no
+    record), as unfenced, and no admitted open follows before a service command or the daemon
+    writes daemon.lock, daemon.json or service.json into S or a claim into the scope registry.
+    cli.main refuses it first, with a writer's words, reason store_owned_by_other and exit 2; D
+    is Path.resolve()'s, so a D link naming no file is no D. A daemon without --socket meets
+    check_start alone, which passes these stores, and then asks for its --socket, as Go's does.
+    A gate that is not a regular file (a FIFO, whose read-only open would wait for a writer) is
+    nobody's creation: the creator probe opens it without waiting and refuses it at once.
+    """
+    scopes = tmp_path / "scopes"
+    monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", str(scopes))
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    if layout.startswith("gate"):
+        (state / "write-gate.lock").touch(mode=0o600)
+    if layout == "fifo-gate":
+        os.mkfifo(state / "write-gate.lock", 0o600)
+    if layout == "gate-beside-a-dangling-link":
+        (state / "relay.sqlite3").symlink_to(state / "nowhere.sqlite3")
+    if layout.endswith("mirror-link"):
+        (state / "takeover.json").symlink_to(state / "nowhere.json")
+    before = sorted(path.name for path in state.iterdir())
+    refused = {"error": "refused", "reason": "store_owned_by_other",
+               "detail": "partial store: write-gate.lock without a database"}
+    assert _at_once(["--state", str(state), "--socket", str(tmp_path / "app.sock"), *argv]) == (
+        2, refused)
+    assert sorted(path.name for path in state.iterdir()) == before
+    assert not scopes.exists()
+    if argv[0] == "daemon":
+        assert _at_once(["--state", str(state), *argv]) == (4, {
+            "error": "usage", "detail": "this command needs --socket to reach the host"})
+        assert sorted(path.name for path in state.iterdir()) == before
+        assert not scopes.exists()
+
+
+def test_a_dangling_database_link_is_judged_as_the_file_it_names(tmp_path):
+    """D is the file every opener opens, Path.resolve()'s (Go's storeAbsent and partialStore).
+
+    A D link naming no file, beside no mirror and no gate, is an absent store: a read-only form
+    refuses it as store_absent and creates nothing through the link. Beside a gate it is a
+    partial store, refused with a writer's words rather than read (a host error, exit 3) after
+    taking the gate.
+    """
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    (state / "relay.sqlite3").symlink_to(state / "nowhere.sqlite3")
+    absent = {"error": "refused", "reason": "store_absent",
+              "detail": f"no relay store exists at {state / 'relay.sqlite3'}; a read-only command"
+                        " never creates one"}
+    for argv in PARTIAL_READS:
+        assert _cli(["--state", str(state), *argv]) == (2, absent), argv
+        assert sorted(path.name for path in state.iterdir()) == ["relay.sqlite3"], argv
+    (state / "write-gate.lock").touch(mode=0o600)
+    partial = {"error": "refused", "reason": "store_owned_by_other",
+               "detail": "partial store: write-gate.lock without a database"}
+    for argv in (*PARTIAL_READS, ["store-challenge", "--write"]):
+        assert _cli(["--state", str(state), *argv]) == (2, partial), argv
+        assert sorted(path.name for path in state.iterdir()) == ["relay.sqlite3", "write-gate.lock"], argv

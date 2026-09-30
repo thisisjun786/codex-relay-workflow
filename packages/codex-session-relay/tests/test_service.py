@@ -131,6 +131,17 @@ class ServiceTestCase(unittest.TestCase):
             scope=ScopeRegistry(Path(scopes or self.scopes), ISOLATED), store_id=store_id,
         )
 
+    def under_its_authority(self, service):
+        """This process under the scope authority `service` hands its real workers.
+
+        A real launch resolves its scope from CODEX_SESSION_RELAY_SCOPE_DIR and passes that same
+        root to every worker, so the store is bound and validated under one authority (a mirror
+        scopeKey another authority gave the socket is refused, cutover.md Record). A fixture that
+        hands the service an isolated registry explicitly binds the store under it too.
+        """
+        return mock.patch.dict(os.environ,
+                               {"CODEX_SESSION_RELAY_SCOPE_DIR": str(service.scope.root)})
+
     def holder(self, service, *, launch=None):
         """Start a child that really holds the lock and the claim, and wait until it does."""
         program = HOLDER.format(
@@ -2325,6 +2336,7 @@ class FourHourBoundary(ServiceTestCase):
         # should not rest on a path the test does not own.
         socket = os.path.join(self.tmp, "absent-app-server.sock")
         service = self.service("a", socket=socket)
+        self.enterContext(self.under_its_authority(service))
         service.enable(actor="test")
         store, relationship_id = self.assignment(service)
         before_id = service.store_id

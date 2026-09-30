@@ -257,6 +257,7 @@ class ARealWorkerReadsTheHandoffBack(CrossingFixture):
     def test_a_real_replacement_worker_records_against_the_handoff_it_found(self):
         socket = os.path.join(self.tmp, "absent-app-server.sock")
         service = self.service("a", socket=socket)
+        self.enterContext(self.under_its_authority(service))
         service.enable(actor="test")
         store, rid, event_id = self.handoff(service)
         # A second handoff, left queued, so the worker has something it must try to send.

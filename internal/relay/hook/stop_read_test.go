@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"database/sql"
+	byteorder "encoding/binary"
 	"errors"
 	"io"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"slices"
 	"testing"
 	"time"
+	"unicode/utf16"
 )
 
 // Test30StopOwnerReadCreatesNothing drives the built crw hook against a store the Go runtime
@@ -146,5 +148,53 @@ func walWithoutIndex(ctx context.Context, t *testing.T, path, statement string) 
 	}
 	if _, err = os.Lstat(path + "-shm"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("an index is left: %v", err)
+	}
+}
+
+// The native hook's owner read takes the mirror as the fence's socket_guard reads it,
+// json.loads(bytes): a Go-owned store whose takeover.json is spelled behind a UTF-8 byte order
+// mark, or in UTF-16 or UTF-32, is Go's to evaluate in-process exactly as its UTF-8 spelling is,
+// and bytes the codec refuses are never trusted.
+func TestOwnsGuardReadsTheMirrorAsJSONLoadsBytes(t *testing.T) {
+	ctx := t.Context()
+	state := t.TempDir()
+	if err := os.Chmod(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	created, err := fixtureStore(ctx, filepath.Join(state, "relay.sqlite3"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = created.Close(); err != nil {
+		t.Fatal(err)
+	}
+	mirror := filepath.Join(state, "takeover.json")
+	plain, err := os.ReadFile(mirror)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ownsGuard(ctx, state, "") {
+		t.Fatal("the UTF-8 mirror of a Go-owned store")
+	}
+	utf16le := []byte{0xff, 0xfe}
+	utf16be := []byte{}
+	for _, unit := range utf16.Encode([]rune(string(plain))) {
+		utf16le = byteorder.LittleEndian.AppendUint16(utf16le, unit)
+		utf16be = byteorder.BigEndian.AppendUint16(utf16be, unit)
+	}
+	utf32 := []byte{0xff, 0xfe, 0, 0}
+	for _, r := range string(plain) {
+		utf32 = byteorder.LittleEndian.AppendUint32(utf32, uint32(r))
+	}
+	for name, spelling := range map[string][]byte{
+		"utf-8-sig": append([]byte{0xef, 0xbb, 0xbf}, plain...), "utf-16": utf16le, "utf-16-be": utf16be, "utf-32": utf32,
+		"truncated utf-16": utf16le[:len(utf16le)-1],
+	} {
+		if err := os.WriteFile(mirror, spelling, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if owned := ownsGuard(ctx, state, ""); owned != (name != "truncated utf-16") {
+			t.Errorf("%s: ownsGuard %v", name, owned)
+		}
 	}
 }
