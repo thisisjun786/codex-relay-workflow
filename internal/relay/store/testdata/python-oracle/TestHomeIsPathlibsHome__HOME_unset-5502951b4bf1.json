@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python ce27e17f213cf90a8c88": "txt:[\"<PASSWD-HOME>\", \"<PASSWD-HOME>/x\", \"<PASSWD-HOME>/x\"]\n"
+ }
+}

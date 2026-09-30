@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func pythonStoreValue(t *testing.T, script string, args ...string) string {
@@ -18,40 +22,101 @@ func pythonStoreValue(t *testing.T, script string, args ...string) string {
 }
 
 // pythonStoreValueIn runs the repository's Python from dir, so package-local test support imports.
+// Its answer is recorded (pythonOracle).
 func pythonStoreValueIn(t *testing.T, dir, script string, args ...string) string {
+	t.Helper()
+	return pythonStoreValueWith(t, dir, nil, script, args...)
+}
+
+// pythonStoreValueWith is pythonStoreValueIn with pyoracle options for the answer.
+func pythonStoreValueWith(t *testing.T, dir string, opts []pyoracle.Option, script string, args ...string) string {
+	t.Helper()
+	isolated := isolatedEnv(t)
+	parts := append([]string{"store-value", dir, script}, keptEnvironment()...)
+	output := pythonOracle(t, append(parts, args...), func() ([]byte, error) {
+		return runPythonStore(t, isolated, dir, script, args...)
+	}, opts...)
+	return strings.TrimSpace(string(output))
+}
+
+// pythonStoreValueAfter is pythonStoreValue for a Python that needs setup (a takeover of a store Go
+// wrote, say) before it runs: setup runs only where the live Python answers.
+func pythonStoreValueAfter(t *testing.T, setup func(), script string, args ...string) string {
+	t.Helper()
+	dir := repositoryRoot(t)
+	isolated := isolatedEnv(t)
+	parts := append([]string{"store-value", dir, script}, keptEnvironment()...)
+	output := pythonOracle(t, append(parts, args...), func() ([]byte, error) {
+		setup()
+		return runPythonStore(t, isolated, dir, script, args...)
+	})
+	return strings.TrimSpace(string(output))
+}
+
+// storeEnvironment are the caller's variables that reach runPythonStore's Python: its isolated
+// HOME, XDG state and temporary root.
+var storeEnvironment = []string{"HOME", "XDG_STATE_HOME", "CODEX_SESSION_RELAY_STATE", "TMPDIR"}
+
+// keptEnvironment spells storeEnvironment as it stands, for a question's name.
+func keptEnvironment() []string {
+	out := make([]string, 0, len(storeEnvironment))
+	for _, key := range storeEnvironment {
+		value, ok := os.LookupEnv(key)
+		out = append(out, fmt.Sprintf("%s=%t:%s", key, ok, value))
+	}
+	return out
+}
+
+// runPythonStore is the live Python run behind pythonStoreValueIn: isolated is isolatedEnv's
+// environment, taken before the question is asked so that a run with and without the live Python
+// makes the same temporary directories.
+func runPythonStore(t *testing.T, isolated []string, dir, script string, args ...string) ([]byte, error) {
 	t.Helper()
 	cmd := exec.Command("uv", append([]string{"run", "--no-sync", "python", "-c", script}, args...)...)
 	cmd.Dir = dir
-	cmd.Env = append(isolatedEnv(t), "PYTHONPATH="+filepath.Join(repositoryRoot(t), "packages/codex-session-relay/src")+":"+dir)
-	// Preserve the caller's isolated HOME, XDG state and temporary root for the Python comparison.
-	for _, key := range []string{"HOME", "XDG_STATE_HOME", "CODEX_SESSION_RELAY_STATE", "TMPDIR"} {
+	cmd.Env = append(isolated, "PYTHONPATH="+filepath.Join(repositoryRoot(t), "packages/codex-session-relay/src")+":"+dir)
+	for _, key := range storeEnvironment {
 		if value, ok := os.LookupEnv(key); ok {
 			cmd.Env = append(cmd.Env, key+"="+value)
 		}
 	}
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("Python comparison: %v: %s", err, output)
+		return nil, fmt.Errorf("Python comparison: %v: %s", err, output)
 	}
-	return strings.TrimSpace(string(output))
+	return output, nil
+}
+
+// takeOverPythonStore hands the store the live Python created at path to Go. On replay nothing
+// is there, and Go's own first opener creates the store at the same spelling: the location Go
+// names is compared either way.
+func takeOverPythonStore(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Lstat(path); err == nil {
+		testsupport.HandOver(t, path, "go")
+	}
 }
 
 func TestDiscoverStateDir_adopts_python_legacy_parent_spellings(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("HOME", filepath.Join(root, "user-home"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
 	t.Setenv("CODEX_SESSION_RELAY_STATE", "")
-	if err := os.MkdirAll(filepath.Join(root, "home"), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "user-home"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(filepath.Join(root, "target"), filepath.Join(root, "link")); err != nil {
 		t.Fatal(err)
 	}
 	// "//"+root keeps its two leading slashes in str(Path()), so its legacy key is its own.
-	for _, spelling := range []string{"a/../b.sock", "~/x/../y.sock", filepath.Join(root, "link") + "/../s.sock", "/" + filepath.Join(root, "sock", "app.sock")} {
-		t.Run(spelling, func(t *testing.T) {
+	for _, c := range []struct{ name, spelling string }{
+		{"relative", "a/../b.sock"}, {"home", "~/x/../y.sock"},
+		{"through-link", filepath.Join(root, "link") + "/../s.sock"}, {"two-slashes", "/" + filepath.Join(root, "sock", "app.sock")},
+	} {
+		spelling := c.spelling
+		t.Run(c.name, func(t *testing.T) {
 			// Given: Python's old socket spelling named an existing state database.
-			want := pythonStoreValue(t, "import sys; from codex_session_relay.store import legacy_socket_scope; print(legacy_socket_scope(sys.argv[1]))", spelling)
+			want := legacyScope(t, spelling)
 			old := filepath.Join(os.Getenv("XDG_STATE_HOME"), "codex-session-relay", want)
 			if err := os.MkdirAll(old, 0700); err != nil {
 				t.Fatal(err)
@@ -67,6 +132,26 @@ func TestDiscoverStateDir_adopts_python_legacy_parent_spellings(t *testing.T) {
 			}
 		})
 	}
+}
+
+// legacyScope is Python's legacy_socket_scope of a socket spelling. The key is a digest of
+// str(Path(socket).expanduser()), which names this run's temporary directory, so what is recorded
+// is that string: the digest is taken of it as this run spells it. Where the live Python answers,
+// its own digest must be that one.
+func legacyScope(t *testing.T, spelling string) string {
+	t.Helper()
+	var answer [2]string
+	// The digest a rerun changes is read past in check mode (sameUpToNoise).
+	script := "import json, sys; from pathlib import Path; from codex_session_relay.store import legacy_socket_scope; print(json.dumps([str(Path(sys.argv[1]).expanduser()), legacy_socket_scope(sys.argv[1])]))"
+	if err := json.Unmarshal([]byte(pythonStoreValueWith(t, repositoryRoot(t), []pyoracle.Option{sameUpToNoise}, script, spelling)), &answer); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256([]byte(answer[0]))
+	scope := hex.EncodeToString(sum[:])[:16]
+	if pyoracle.Live() && answer[1] != scope {
+		t.Fatalf("legacy_socket_scope(%q) = %s, not the digest of %q", spelling, answer[1], answer[0])
+	}
+	return scope
 }
 
 func TestResolveStateDir_matches_python_absolute_with_symlink_parent(t *testing.T) {
@@ -152,7 +237,7 @@ func TestOpen_does_not_expand_tilde_like_python_store(t *testing.T) {
 	want := pythonStoreValue(t, "import os, sys; from codex_session_relay.store import Store; os.chdir(sys.argv[1]); s=Store(sys.argv[2]); print(s.locate()['realPath'])", cwd, input)
 	// When: Go takes the stopped store over and opens the same relative spelling from the same
 	// directory.
-	testsupport.HandOver(t, want, "go")
+	takeOverPythonStore(t, want)
 	t.Chdir(cwd)
 	s, err := fixtureOpen(context.Background(), input, "")
 	if err != nil {
@@ -175,7 +260,7 @@ func TestLocate_normalizes_db_path_and_absolutizes_real_path_like_python(t *test
 			if err := json.Unmarshal([]byte(want), &expected); err != nil {
 				t.Fatal(err)
 			}
-			testsupport.HandOver(t, expected[1], "go")
+			takeOverPythonStore(t, expected[1])
 			s, err := fixtureOpen(context.Background(), spelling, "")
 			if err != nil {
 				t.Fatal(err)
@@ -197,7 +282,7 @@ func TestLocate_relative_db_path_matches_python(t *testing.T) {
 	if err := json.Unmarshal([]byte(want), &expected); err != nil {
 		t.Fatal(err)
 	}
-	testsupport.HandOver(t, expected[1], "go")
+	takeOverPythonStore(t, expected[1])
 	t.Chdir(root)
 	s, err := fixtureOpen(context.Background(), input, "")
 	if err != nil {
@@ -214,7 +299,7 @@ func TestLocate_log_name_matches_python(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "relay.sqlite3")
 	want := pythonStoreValue(t, "import sys; from codex_session_relay.store import Store; s=Store(sys.argv[1]); print(s.locate()['logName'])", path)
-	testsupport.HandOver(t, path, "go")
+	takeOverPythonStore(t, path)
 	s, err := fixtureOpen(context.Background(), path, "")
 	if err != nil {
 		t.Fatal(err)
@@ -224,4 +309,10 @@ func TestLocate_log_name_matches_python(t *testing.T) {
 	if err != nil || got.LogName != want {
 		t.Fatalf("logName=%q want %q: %v", got.LogName, want, err)
 	}
+}
+
+func isolatedEnv(t *testing.T) []string {
+	t.Helper()
+	root := t.TempDir()
+	return append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+filepath.Join(root, "state"), "XDG_DATA_HOME="+filepath.Join(root, "data"), "XDG_CONFIG_HOME="+filepath.Join(root, "config"), "CODEX_HOME="+filepath.Join(root, "codex"))
 }

@@ -10,8 +10,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // pythonParityScript runs named Python test cases to completion, keeps each case's store, and
@@ -76,9 +74,13 @@ type parityStore struct {
 	Case string                       `json:"case"`
 	DB   string                       `json:"db"`
 	Raw  map[string][]json.RawMessage `json:"rows"`
+	// Store is every row of the case's store (dumpStore), which Go reads back in a store of its
+	// own (restoreStore).
+	Store storeRows `json:"store"`
 }
 
-// pythonParityStores runs the Python cases in an isolated HOME and TMPDIR under t.TempDir.
+// pythonParityStores runs the Python cases in an isolated HOME and TMPDIR under t.TempDir. What
+// they wrote is recorded (pythonOracle).
 func pythonParityStores(t *testing.T, tables []string, cases ...string) []parityStore {
 	t.Helper()
 	root := t.TempDir()
@@ -89,11 +91,30 @@ func pythonParityStores(t *testing.T, tables []string, cases ...string) []parity
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := pythonStoreValueIn(t, filepath.Join(repositoryRoot(t), "packages/codex-session-relay"), pythonParityScript, append([]string{string(encoded)}, cases...)...)
+	package_ := filepath.Join(repositoryRoot(t), "packages/codex-session-relay")
+	isolated := isolatedEnv(t)
+	args := append([]string{string(encoded)}, cases...)
 	var stores []parityStore
-	if err := json.Unmarshal([]byte(out[strings.LastIndex(out, "\n")+1:]), &stores); err != nil {
-		t.Fatalf("python output %q: %v", out, err)
-	}
+	parts := append([]string{"parity-stores", package_, pythonParityScript}, keptEnvironment()...)
+	jsonAnswer(t, append(parts, args...), &stores, func() (any, error) {
+		raw, err := runPythonStore(t, isolated, package_, pythonParityScript, args...)
+		if err != nil {
+			return nil, err
+		}
+		out := strings.TrimSpace(string(raw))
+		var stores []parityStore
+		if err := json.Unmarshal([]byte(out[strings.LastIndex(out, "\n")+1:]), &stores); err != nil {
+			return nil, fmt.Errorf("python output %q: %v", out, err)
+		}
+		for i := range stores {
+			if stores[i].Store, err = dumpStore(stores[i].DB); err != nil {
+				return nil, err
+			}
+			// Each case's store is a temporary directory of its own; the rows stand for it.
+			stores[i].DB = ""
+		}
+		return stores, nil
+	}, sameUpToNoise)
 	return stores
 }
 
@@ -399,18 +420,14 @@ func snake(field string) string {
 	return out.String()
 }
 
-// runParity opens each Python-written store with Go and reads every row of the group's tables
-// back through the typed queries; every table must have been read at least once.
+// runParity opens a Go store holding each Python-written store's rows and reads every row of the
+// group's tables back through the typed queries; every table must have been read at least once.
 func runParity(t *testing.T, tables []string, cases ...string) []parityStore {
 	t.Helper()
 	stores := pythonParityStores(t, tables, cases...)
 	compared := map[string]int{}
-	for _, python := range stores {
-		testsupport.HandOver(t, python.DB, "go")
-		s, err := fixtureOpen(context.Background(), python.DB, "")
-		if err != nil {
-			t.Fatalf("%s: Go cannot open the Python store: %v", python.Case, err)
-		}
+	for i, python := range stores {
+		s := restoreStore(t, filepath.Join(t.TempDir(), fmt.Sprintf("case-%d", i), "relay.sqlite3"), python.Store)
 		ctx := context.Background()
 		for table, raws := range python.Raw {
 			read := parityReaders[table]

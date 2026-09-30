@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python 11afa56bd0a307a91f2d": "txt:{\"z\": 1, \"a\": 2}\n"
+ }
+}

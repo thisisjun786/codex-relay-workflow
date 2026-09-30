@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python 7869399f929c345f4ddb": "txt:[\"a/../b.sock\", \"1b0ee9e84a292139\"]\n"
+ }
+}

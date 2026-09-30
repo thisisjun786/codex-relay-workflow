@@ -727,22 +727,12 @@ func (failingDrain) Drain(context.Context, ownership.Record) error {
 	return errors.New("holder did not exit")
 }
 
-// pythonCheckStart runs the retained Python fence's own preflight on the store: the
-// oracle for whether Python admission reopens after an abort.
-func pythonCheckStart(t *testing.T, path string) error {
-	t.Helper()
-	cmd := exec.Command("../../../../.venv/bin/python", "-c", "import sys\nfrom codex_session_relay import ownership\nownership.check_start(sys.argv[1])", path)
-	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	raw, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%v: %s", err, raw)
-	}
-	return nil
-}
-
 // Audit findings 2, 6, 10 / decision D2: a failure after begin and before the CAS
 // returns to the unchanged owner's active phase; after the CAS abort refuses and names
-// the recovery; the reverse transfer from a failed candidate installs a new epoch.
+// the recovery; the reverse transfer from a failed candidate installs a new epoch. The retained
+// Python fence's own preflight (ownership.check_start) judged these stores beside the Go
+// assertions until todo 44: rollback to Python closed at todo 43 (rollback_allowed=0), and the
+// Python runtime leaves in todo 44.
 func Test30AbortReturnsToActiveOwner(t *testing.T) {
 	t.Run("forward-failed-drain", func(t *testing.T) {
 		c := seed(t)
@@ -750,9 +740,6 @@ func Test30AbortReturnsToActiveOwner(t *testing.T) {
 		c.Runtime = failingDrain{}
 		if err := c.Drain(t.Context()); err == nil {
 			t.Fatal("failing drain succeeded")
-		}
-		if err := pythonCheckStart(t, c.Path); err == nil || !strings.Contains(err.Error(), "draining") {
-			t.Fatalf("Python admission open while draining: %v", err)
 		}
 		must(t, c.Abort(t.Context()))
 		must(t, c.Abort(t.Context()))
@@ -762,7 +749,6 @@ func Test30AbortReturnsToActiveOwner(t *testing.T) {
 		if r.Transition != nil {
 			t.Fatalf("initial install kept a transition: %+v", r.Transition)
 		}
-		must(t, pythonCheckStart(t, c.Path))
 		c.Runtime = modelRuntime{}
 		activeGo(t, c)
 		assertState(t, c, "go", "active", 2)
@@ -788,7 +774,6 @@ func Test30AbortReturnsToActiveOwner(t *testing.T) {
 		must(t, c.Begin(t.Context(), "go"))
 		must(t, c.Abort(t.Context()))
 		assertState(t, c, "python", "active", 3)
-		must(t, pythonCheckStart(t, c.Path))
 		activeGo(t, c)
 		assertState(t, c, "go", "active", 4)
 	})
@@ -872,22 +857,19 @@ func Test30AbortOfReverseBeginReturnsToStarting(t *testing.T) {
 		must(t, c.Begin(t.Context(), "go"))
 		assertState(t, c, "python", "draining", 3)
 		aborted(t, c, "python", 3, installed.TakeoverID)
-		if err = pythonCheckStart(t, c.Path); err == nil || !strings.Contains(err.Error(), "starting") {
-			t.Fatalf("Python admission open after aborting to starting: %v", err)
-		}
 		activeGo(t, c)
 		assertState(t, c, "go", "active", 4)
 	})
 }
 
 // Audit findings 21, 29, 52: a state directory reached through a symlink is the same
-// S in both runtimes; its mirror names the resolved S/control.sock.
+// S; its mirror names the resolved S/control.sock. (The Python fence's preflight through the
+// link was checked here until todo 44.)
 func Test30ReadRecordThroughSymlinkedState(t *testing.T) {
 	c := seed(t)
 	link := filepath.Join(t.TempDir(), "state-link")
 	must(t, os.Symlink(filepath.Dir(c.Path), link))
 	through := filepath.Join(link, "relay.sqlite3")
-	must(t, pythonCheckStart(t, through))
 	activeGo(t, c)
 	r, err := ownership.ReadRecord(through)
 	must(t, err)

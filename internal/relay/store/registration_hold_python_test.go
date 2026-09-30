@@ -12,8 +12,8 @@ import (
 // intent.registration_hold stats the store before the fence's Admission, so a store that does
 // not exist, whose directory does not, that sits below a regular file or behind a dangling
 // symlink is answered in str(OSError)'s words, and nothing is created. Both Go ports of it
-// (RegistrationHold, which intent-register runs, and HoldForWrite) answer the live Python
-// fence's bytes.
+// (RegistrationHold, which intent-register runs, and HoldForWrite) answer the Python fence's
+// bytes (recorded).
 func TestRegistrationHold_answers_an_unstattable_store_as_python_does(t *testing.T) {
 	root := t.TempDir()
 	file := filepath.Join(root, "a-file")

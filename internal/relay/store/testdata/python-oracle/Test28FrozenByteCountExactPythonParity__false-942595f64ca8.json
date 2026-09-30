@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python 739af2e8315e435dfcdc": "txt:{\"result\": [\"2923081bba4c28244289eb3d03ee5229686625840b0afad517212d2313ea6521\", [\"/artifact: frozen bytes are 1, not the claimed False\"], []]}\n"
+ }
+}

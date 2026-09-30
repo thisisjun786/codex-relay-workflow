@@ -1,0 +1,8 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python 110c5427717f01358d36": "txt:admitted\n",
+  "python 45e48b8c4632fc433865": "txt:admitted\n",
+  "python 877e633264fa9d3358ae": "txt:{\"reason\": \"store_owned_by_other\", \"detail\": \"requested socket disagrees with ownership record\"}\n"
+ }
+}

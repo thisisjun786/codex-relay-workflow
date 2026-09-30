@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python 4adb42845ed93b3c0b53": "txt:{\"result\": [\"2923081bba4c28244289eb3d03ee5229686625840b0afad517212d2313ea6521\", [], []]}\n"
+ }
+}

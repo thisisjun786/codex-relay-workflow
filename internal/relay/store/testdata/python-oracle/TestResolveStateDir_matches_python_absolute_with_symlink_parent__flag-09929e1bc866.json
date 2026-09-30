@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python 6e2b0ef547a2b192b55a": "txt:<TMP:TestResolveStateDir_matches_python_absolute_with_symlink_parent>/001/link/../st\n"
+ }
+}

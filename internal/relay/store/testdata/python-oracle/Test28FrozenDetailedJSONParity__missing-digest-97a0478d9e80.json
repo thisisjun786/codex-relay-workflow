@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python 47b0084b8178688625fc": "txt:{\"error\": \"KeyError\", \"detail\": \"'sha256'\"}\n"
+ }
+}

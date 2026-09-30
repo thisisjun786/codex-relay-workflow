@@ -1,7 +1,10 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,15 +21,20 @@ func venvPython(t *testing.T) string {
 }
 
 // pythonAt runs script with python from dir, in this test process's environment as it stands.
+// Its answer is recorded (pythonOracle).
 func pythonAt(t *testing.T, python, dir, script string, args ...string) string {
 	t.Helper()
-	command := exec.Command(python, append([]string{"-c", script}, args...)...)
-	command.Dir = dir
-	command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	raw, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("python: %v\n%s", err, raw)
-	}
+	parts := append([]string{"at", python, dir, script}, oracleEnvironmentNow()...)
+	raw := pythonOracle(t, append(parts, args...), func() ([]byte, error) {
+		command := exec.Command(python, append([]string{"-c", script}, args...)...)
+		command.Dir = dir
+		command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
+		raw, err := command.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("python: %v\n%s", err, raw)
+		}
+		return raw, nil
+	})
 	return strings.TrimSpace(string(raw))
 }
 
@@ -151,8 +159,11 @@ print(json.dumps([str(Path("~").expanduser()), str(Path("~/x").expanduser()), st
 from codex_session_relay.store import discover_state_dir
 selected = discover_state_dir(None)
 print(json.dumps([str(selected.path), selected.detail]))`
-	for _, home := range []string{"", "/", filepath.Join(root, "home") + "//", "/" + filepath.Join(root, "home")} {
-		t.Run("HOME="+home, func(t *testing.T) {
+	for _, c := range []struct{ name, home string }{
+		{"empty", ""}, {"root", "/"}, {"trailing-slashes", filepath.Join(root, "user-home") + "//"}, {"two-leading-slashes", "/" + filepath.Join(root, "user-home")},
+	} {
+		home := c.home
+		t.Run("HOME="+c.name, func(t *testing.T) {
 			t.Setenv("HOME", home)
 			var want []string
 			if err := json.Unmarshal([]byte(pythonAt(t, python, root, script)), &want); err != nil {
@@ -236,24 +247,25 @@ func TestDiscoverySpellsEveryStoreItNamesAsPythonDoes(t *testing.T) {
 	t.Chdir(root)
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Setenv("CODEX_SESSION_RELAY_STATE", "")
-	create := `import sqlite3, sys
-c = sqlite3.connect(sys.argv[1])
-c.execute("CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-if sys.argv[2]:
-    c.execute("INSERT INTO schema_meta VALUES ('socket_path', ?)", (sys.argv[2],))
-c.commit()
-c.close()`
 	discover := `import json, sys
 from codex_session_relay.store import discover_state_dir, legacy_socket_scope
 if sys.argv[1] == "legacy":
     print(legacy_socket_scope(sys.argv[2]))
 else:
     print(json.dumps(discover_state_dir(sys.argv[2]).to_record()))`
+	// A store discovery asks about: a schema_meta table, recording socket when one is given. (Python's
+	// sqlite3 wrote these until todo 44; the file is the same to either reader.)
 	store := func(dir, socket string) {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		pythonAt(t, python, root, create, filepath.Join(dir, "relay.sqlite3"), socket)
+		db, err := sql.Open("sqlite", filepath.Join(dir, "relay.sqlite3"))
+		must(t, err)
+		_, err = db.Exec("CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+		if err == nil && socket != "" {
+			_, err = db.Exec("INSERT INTO schema_meta VALUES ('socket_path', ?)", socket)
+		}
+		must(t, errors.Join(err, db.Close()))
 	}
 	compare := func(t *testing.T, socket string) StateSelection {
 		t.Helper()
@@ -276,10 +288,11 @@ else:
 		}
 		return got
 	}
-	for _, base := range []struct{ xdg, home, stores string }{
-		{"/" + filepath.Join(root, "two"), "", "two"}, {filepath.Join(root, "one"), "", "one"}, {"rel", "", "rel"}, {"", "hrel", "hrel/.local/state"},
+	for _, base := range []struct{ name, xdg, home, stores string }{
+		{"XDG_STATE_HOME=two-slashes", "/" + filepath.Join(root, "two"), "", "two"}, {"XDG_STATE_HOME=absolute", filepath.Join(root, "one"), "", "one"},
+		{"XDG_STATE_HOME=rel", "rel", "", "rel"}, {"XDG_STATE_HOME=,HOME=hrel", "", "hrel", "hrel/.local/state"},
 	} {
-		t.Run("XDG_STATE_HOME="+base.xdg+",HOME="+base.home, func(t *testing.T) {
+		t.Run(base.name, func(t *testing.T) {
 			t.Setenv("XDG_STATE_HOME", base.xdg)
 			if base.home != "" {
 				t.Setenv("HOME", base.home)
@@ -345,8 +358,9 @@ class Held:
     def __init__(self, path):
         self.path = Path(path)
 print(json.dumps([[os.path.abspath(p), os.path.dirname(os.path.abspath(p)), store_directory(Held(p)), str(Path(p).absolute()), str(Path(p).expanduser().absolute())] for p in json.loads(sys.argv[1])]))`
-	for _, cwd := range []string{filepath.Join(root, "alias", "wd"), "/"} {
-		t.Run("cwd "+cwd, func(t *testing.T) {
+	for _, c := range []struct{ name, cwd string }{{"alias-wd", filepath.Join(root, "alias", "wd")}, {"root", "/"}} {
+		cwd := c.cwd
+		t.Run("cwd "+c.name, func(t *testing.T) {
 			t.Chdir(cwd)
 			var want [][5]string
 			if err := json.Unmarshal([]byte(pythonAt(t, python, cwd, script, string(raw))), &want); err != nil {
