@@ -47,7 +47,8 @@ func TestDiscoverStateDir_adopts_python_legacy_parent_spellings(t *testing.T) {
 	if err := os.Symlink(filepath.Join(root, "target"), filepath.Join(root, "link")); err != nil {
 		t.Fatal(err)
 	}
-	for _, spelling := range []string{"a/../b.sock", "~/x/../y.sock", filepath.Join(root, "link") + "/../s.sock"} {
+	// "//"+root keeps its two leading slashes in str(Path()), so its legacy key is its own.
+	for _, spelling := range []string{"a/../b.sock", "~/x/../y.sock", filepath.Join(root, "link") + "/../s.sock", "/" + filepath.Join(root, "sock", "app.sock")} {
 		t.Run(spelling, func(t *testing.T) {
 			// Given: Python's old socket spelling named an existing state database.
 			want := pythonStoreValue(t, "import sys; from codex_session_relay.store import legacy_socket_scope; print(legacy_socket_scope(sys.argv[1]))", spelling)

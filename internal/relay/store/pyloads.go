@@ -141,9 +141,18 @@ func PythonStrip(value string) string {
 	return strings.TrimFunc(value, func(r rune) bool { return unicode.IsSpace(r) || r >= 0x1c && r <= 0x1f })
 }
 
-// PathlibSpelling is str(Path(value)): empty and "." components collapse, ".." stays. It folds
-// exactly two leading slashes to one, where pathlib keeps them (docs/port/refactor-backlog.md).
+// PathlibSpelling is str(Path(value)): empty and "." components collapse, ".." stays, and exactly
+// two leading slashes stay a root of their own where three or more fold to one.
 func PathlibSpelling(value string) string { return pathlibSpelling(value) }
+
+// Absolute is str(Path(value).absolute()) for a path already expanded: the kernel's working
+// directory (os.getcwd, never $PWD's spelling of it) prefixed to a relative path, then the
+// pathlib spelling, nothing resolved and no ".." folded.
+func Absolute(value string) (string, error) { return absolute(value) }
+
+// Home is Path.home(): HOME when it is set at all (an empty HOME is the root, trailing slashes
+// are dropped), else this user's passwd entry; ErrNoHome where neither answers.
+func Home() (string, error) { return homeDir() }
 
 // AbsoluteExpanded is str(Path(value).expanduser().absolute()): home expanded (ErrNoHome for an
 // unknown ~user), the working directory prefixed to a relative path, nothing resolved and no

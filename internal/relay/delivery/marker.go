@@ -111,11 +111,11 @@ func ResolveMarkerRoot(explicit string) (MarkerSelection, error) {
 		}
 		base, source, detail = expanded, "xdg", "XDG_STATE_HOME="+xdg
 	} else {
-		home, err := os.UserHomeDir()
+		home, err := store.Home()
 		if err != nil {
 			return MarkerSelection{}, err
 		}
-		base, source = filepath.Join(home, ".local", "state"), "home"
+		base, source = store.PathlibSpelling(strings.TrimSuffix(home, "/")+"/.local/state"), "home"
 		detail = "default under " + base
 	}
 	path, err := absolutePath(base + "/" + markerDirectoryName)
@@ -131,23 +131,9 @@ func absoluteUser(value string) (string, error) {
 	return absolutePath(expanded)
 }
 
-// absolutePath is Path.absolute(): the pathlib spelling, prefixed by the cwd when relative.
-func absolutePath(value string) (string, error) {
-	if !strings.HasPrefix(value, "/") {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return "", err
-		}
-		value = cwd + "/" + value
-	}
-	parts := []string{}
-	for _, part := range strings.Split(value, "/") {
-		if part != "" && part != "." {
-			parts = append(parts, part)
-		}
-	}
-	return "/" + strings.Join(parts, "/"), nil
-}
+// absolutePath is Path.absolute(): the pathlib spelling, prefixed by the kernel's working
+// directory when relative (store.Absolute).
+func absolutePath(value string) (string, error) { return store.Absolute(value) }
 
 // resolved is Path(value).expanduser().resolve(): symlinks followed, a missing tail kept.
 func resolved(value string) (string, error) {

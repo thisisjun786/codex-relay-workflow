@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
+
+	"golang.org/x/sys/unix"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
 type StateSelection struct {
@@ -25,7 +28,7 @@ func canonicalSocket(path string) (string, error) {
 		return "", err
 	}
 	if !filepath.IsAbs(expanded) {
-		cwd, err := os.Getwd()
+		cwd, err := unix.Getwd()
 		if err != nil {
 			return "", err
 		}
@@ -56,7 +59,7 @@ func resolvePathDepth(path string, depth int, strict bool) (string, error) {
 	}
 	absolute := path
 	if !filepath.IsAbs(path) {
-		cwd, err := os.Getwd()
+		cwd, err := unix.Getwd()
 		if err != nil {
 			return "", err
 		}
@@ -104,25 +107,10 @@ func resolvePathDepth(path string, depth int, strict bool) (string, error) {
 	return resolved, nil
 }
 
-// pathlibSpelling matches str(Path(value)): collapse empty and dot components,
-// but leave parent components for the OS to traverse after symlink resolution.
-func pathlibSpelling(value string) string {
-	absolute := strings.HasPrefix(value, "/")
-	parts := make([]string, 0)
-	for _, part := range strings.Split(value, "/") {
-		if part != "" && part != "." {
-			parts = append(parts, part)
-		}
-	}
-	result := strings.Join(parts, "/")
-	if absolute {
-		return "/" + result
-	}
-	if result == "" {
-		return "."
-	}
-	return result
-}
+// pathlibSpelling is str(Path(value)): empty and dot components collapse, parent components stay
+// for the OS to traverse after symlink resolution, and exactly two leading slashes stay a root of
+// their own, as ownership.PathlibSpelling spells them.
+func pathlibSpelling(value string) string { return ownership.PathlibSpelling(value) }
 func socketHash(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:8])
@@ -143,43 +131,60 @@ func absoluteExpanded(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !filepath.IsAbs(expanded) {
-		cwd, err := os.Getwd()
+	return absolute(expanded)
+}
+
+// absolute is str(Path(path).absolute()): the working directory as the kernel names it
+// (os.getcwd, where os.Getwd prefers a $PWD that reaches it through a symbolic link) prefixed to a
+// relative path, then the pathlib spelling. Nothing is resolved and no ".." is folded.
+func absolute(path string) (string, error) {
+	if !strings.HasPrefix(path, "/") {
+		cwd, err := unix.Getwd()
 		if err != nil {
 			return "", err
 		}
-		expanded = cwd + "/" + expanded
+		path = cwd + "/" + path
 	}
-	return pathlibSpelling(expanded), nil
+	return pathlibSpelling(path), nil
 }
 
-// ErrNoHome is pathlib's RuntimeError("Could not determine home directory.") for an unknown ~user.
-var ErrNoHome = errors.New("could not determine home directory")
+// ErrNoHome is pathlib's RuntimeError("Could not determine home directory."): an unknown ~user,
+// or a ~ when HOME is unset and this user has no passwd entry.
+var ErrNoHome = ownership.ErrNoHome
 
+// homeDir is Path.home() (ownership.UserHome): HOME when it is set at all, an empty HOME being
+// the root, else the passwd entry.
+func homeDir() (string, error) { return ownership.UserHome("") }
+
+// expandUser is Path(path).expanduser() for a path whose first character is ~: the home
+// ownership.UserHome names, joined to the rest as pathlib joins components.
 func expandUser(path string) (string, error) {
 	if !strings.HasPrefix(path, "~") {
 		return path, nil
 	}
 	name, suffix, _ := strings.Cut(path[1:], "/")
-	home := homeDir()
-	if name != "" {
-		user, err := user.Lookup(name)
-		if err != nil {
-			return "", fmt.Errorf("cannot determine home directory for %q: %w: %w", name, ErrNoHome, err)
+	home, err := ownership.UserHome(name)
+	if err != nil {
+		if name != "" {
+			return "", fmt.Errorf("cannot determine home directory for %q: %w", name, err)
 		}
-		home = user.HomeDir
+		return "", fmt.Errorf("HOME is not set and this user's passwd entry could not be read: %w", err)
 	}
-	if suffix == "" {
+	if suffix = strings.TrimLeft(suffix, "/"); suffix == "" {
 		return home, nil
 	}
-	return home + "/" + suffix, nil
+	return strings.TrimSuffix(home, "/") + "/" + suffix, nil
 }
 func DiscoverStateDir(socket string) (StateSelection, error) {
 	base := os.Getenv("XDG_STATE_HOME")
 	source := "xdg"
 	detail := "XDG_STATE_HOME=" + base
 	if base == "" {
-		base = filepath.Join(homeDir(), ".local", "state")
+		home, err := homeDir()
+		if err != nil {
+			return StateSelection{}, err
+		}
+		base = pathlibSpelling(strings.TrimSuffix(home, "/") + "/.local/state")
 		source = "home"
 		detail = "default under " + base
 	}

@@ -275,16 +275,10 @@ func fixedHome(home string) string {
 	return ""
 }
 
-// pathlibHome is str(Path(home)) for an absolute home. store.PathlibSpelling folds every run of
-// leading slashes to one, but pathlib keeps exactly two ("//" is implementation-defined in POSIX)
-// and folds three or more, so a home starting with "//" is spelled apart from its lexical join.
-func pathlibHome(home string) string {
-	spelled := store.PathlibSpelling(home)
-	if strings.HasPrefix(home, "//") && !strings.HasPrefix(home, "///") {
-		return "/" + spelled
-	}
-	return spelled
-}
+// pathlibHome is str(Path(home)) for an absolute home: pathlib keeps exactly two leading slashes
+// ("//" is implementation-defined in POSIX) and folds three or more, so a home starting with "//"
+// is spelled apart from its lexical join.
+func pathlibHome(home string) string { return store.PathlibSpelling(home) }
 
 // environOf is os.environ.get with presence over an explicit environment, the last entry winning.
 func environOf(env scope.Env) record.Environ {
