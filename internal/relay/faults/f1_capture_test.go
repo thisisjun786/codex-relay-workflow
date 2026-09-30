@@ -4,13 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"reflect"
-	"sort"
 	"strings"
 	"testing"
 )
@@ -24,28 +20,6 @@ func TestF1WholeOutput(t *testing.T) {
 				t.Fatal(e)
 			}
 			t.Cleanup(func() { _ = os.RemoveAll(home) })
-			root, e := filepath.Abs("../../..")
-			if e != nil {
-				t.Fatal(e)
-			}
-			raw := pyAnswer(t, "f1_capture.py "+action, []string{action}, pyRunPaths(t, home), func() ([]byte, error) {
-				cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/faults/testdata/f1_capture.py"), filepath.Join(home, "py"), action)
-				cmd.Dir = root
-				cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xs", "XDG_CONFIG_HOME="+home+"/xc", "CODEX_HOME="+home+"/ch", "TMPDIR=/dev/shm")
-				raw, e := cmd.CombinedOutput()
-				if e != nil {
-					return nil, fmt.Errorf("python: %v %s", e, raw)
-				}
-				return recordEvidenceDigests(raw)
-			})
-			raw, e = replayEvidenceDigests(raw)
-			if e != nil {
-				t.Fatalf("recorded Python answer: %v", e)
-			}
-			var expected map[string]any
-			if e := json.Unmarshal(raw, &expected); e != nil {
-				t.Fatal(e)
-			}
 			t.Setenv("HOME", home)
 			t.Setenv("XDG_STATE_HOME", home+"/xs")
 			t.Setenv("XDG_CONFIG_HOME", home+"/xc")
@@ -176,19 +150,6 @@ func TestF1WholeOutput(t *testing.T) {
 				t.Fatal(e)
 			}
 			checkGoldenEvidence(t, "reply and fault tables", []string{action}, runPathsOf(t, home), got)
-			if !reflect.DeepEqual(got, expected) {
-				keys := []string{}
-				for key, want := range expected["tables"].(map[string]any) {
-					if !reflect.DeepEqual(got["tables"].(map[string]any)[key], want) {
-						keys = append(keys, key)
-					}
-				}
-				sort.Strings(keys)
-				t.Errorf("different tables %v; reply go=%v python=%v", keys, got["reply"], expected["reply"])
-				for _, key := range keys {
-					t.Logf("%s go=%v python=%v", key, got["tables"].(map[string]any)[key], expected["tables"].(map[string]any)[key])
-				}
-			}
 		})
 	}
 }

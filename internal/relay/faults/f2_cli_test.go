@@ -36,14 +36,12 @@ func TestF2CLIOracle(t *testing.T) {
 				t.Fatal(e)
 			}
 			defer os.RemoveAll(home)
-			answer := pyCLIRun(t, home, "", append([]string{"--state", filepath.Join(home, "py"), "--json"}, args...), true, pyHomeEnv(home)...)
-			want, pyStderr, pyCode := []byte(answer.Stdout), []byte(answer.Stderr), answer.Code
 			var got, stderr bytes.Buffer
 			code, handled := executeAsCLI(context.Background(), append([]string{"--state", filepath.Join(home, "go"), "--json"}, args...), &got, &stderr)
-			checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), cliGolden{Code: code, Stdout: got.String(), Stderr: stderr.String()})
-			if !handled || code != pyCode || !bytes.Equal(got.Bytes(), want) || !bytes.Equal(stderr.Bytes(), pyStderr) {
-				t.Errorf("python (%d) %s; go (%d) %s; stderr %s", pyCode, want, code, got.String(), stderr.String())
+			if !handled {
+				t.Fatal("unhandled")
 			}
+			checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), cliGolden{Code: code, Stdout: got.String(), Stderr: stderr.String()})
 		})
 	}
 }

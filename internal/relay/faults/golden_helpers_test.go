@@ -1,9 +1,14 @@
 package faults
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -15,9 +20,10 @@ import (
 //
 // These tests compare Go's answers with goldens (internal/testsupport/golden) under
 // testdata/golden, one file per top-level test. The goldens began as the answers the Python
-// reference implementation gave for the same inputs; CRW_GOLDEN=update rewrites them from Go.
-// A golden keeps run-specific paths as placeholders (runPaths) and the digest of evidence that
-// names such a path as the occurrence it belongs to (evidencePlaceholders).
+// reference implementation gave for the same inputs (recorded until todo 44 and equal to Go's
+// when the goldens were written); CRW_GOLDEN=update rewrites them from Go. A golden keeps
+// run-specific paths as placeholders (runPaths) and the digest of evidence that names such a
+// path as the occurrence it belongs to (evidencePlaceholders).
 
 // goldenParents holds each running test whose subtests keep their goldens in its own file.
 var goldenParents sync.Map
@@ -105,7 +111,7 @@ func checkGoldenEvidence(t testing.TB, label string, question []string, paths ru
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := pyDecode(normalized)
+	decoded, err := decodeNumbers(normalized)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,13 +153,195 @@ func (p runPaths) neutral(words []string) []string {
 	return out
 }
 
+// testTemps holds the directory each running test's t.TempDir directories are made in.
+var testTemps = struct {
+	sync.Mutex
+	dir map[testing.TB]string
+}{dir: map[testing.TB]string{}}
+
+// testTemp is the directory t.TempDir makes t's temporary directories in.
+func testTemp(t testing.TB) string {
+	testTemps.Lock()
+	dir, ok := testTemps.dir[t]
+	testTemps.Unlock()
+	if ok {
+		return dir
+	}
+	dir = filepath.Dir(t.TempDir())
+	testTemps.Lock()
+	testTemps.dir[t] = dir
+	testTemps.Unlock()
+	t.Cleanup(func() {
+		testTemps.Lock()
+		delete(testTemps.dir, t)
+		testTemps.Unlock()
+	})
+	return dir
+}
+
+// Evidence digests.
+//
+// An occurrence's evidence_digest is the SHA-256 of its evidence as stored compactly (sorted
+// keys, no ASCII escaping, no whitespace). Evidence a sweep derives names the installation and
+// the host record by path, so its digest changes from run to run as those paths do, which a path
+// placeholder cannot follow. A golden therefore holds each digest that is its row's evidence's
+// as "<evidence-sha256:OCCURRENCE>", and a digest that is not that of its row's evidence as it is.
+
+const evidencePlaceholder = "<evidence-sha256:"
+
 // evidencePlaceholders is an answer with each evidence digest its occurrence row's evidence
-// yields replaced by that occurrence's placeholder, wherever the answer names it: evidence a
-// sweep derives names the installation and the host record by path, so its digest changes from
-// run to run as those paths do, which a path placeholder cannot follow. The digest compared is
-// faults.evidence_digest: SHA-256 over the stored evidence text with its whitespace removed.
+// yields replaced by that occurrence's placeholder, wherever the answer names it.
 func evidencePlaceholders(raw []byte) ([]byte, error) {
-	return recordEvidenceDigests(raw)
+	value, err := decodeNumbers(raw)
+	if err != nil {
+		return nil, err
+	}
+	owner := map[string]string{}
+	occurrenceEvidence(value, func(row map[string]any, id, evidence string) {
+		digest, _ := row["evidence_digest"].(string)
+		if computed, ok := storedEvidenceDigest(evidence); ok && digest != "" && computed == digest {
+			if current, seen := owner[digest]; !seen || id < current {
+				owner[digest] = id
+			}
+		}
+	})
+	if len(owner) == 0 {
+		return raw, nil
+	}
+	var pairs []string
+	for digest, id := range owner {
+		pairs = append(pairs, digest, evidencePlaceholder+id+">")
+	}
+	replacer := strings.NewReplacer(pairs...)
+	return encodeNumbers(mapStrings(value, replacer.Replace))
+}
+
+// occurrenceEvidence walks value for occurrence rows, objects with a string occurrence_id and a
+// string evidence, and calls visit with each row.
+func occurrenceEvidence(value any, visit func(row map[string]any, id, evidence string)) {
+	switch v := value.(type) {
+	case map[string]any:
+		id, idOK := v["occurrence_id"].(string)
+		evidence, evidenceOK := v["evidence"].(string)
+		if idOK && evidenceOK {
+			visit(v, id, evidence)
+		}
+		for _, item := range v {
+			occurrenceEvidence(item, visit)
+		}
+	case []any:
+		for _, item := range v {
+			occurrenceEvidence(item, visit)
+		}
+	}
+}
+
+// storedEvidenceDigest is faults.evidence_digest of evidence as a store holds it.
+func storedEvidenceDigest(evidence string) (string, bool) {
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, []byte(evidence)); err != nil {
+		return "", false
+	}
+	sum := sha256.Sum256(compact.Bytes())
+	return fmt.Sprintf("%x", sum), true
+}
+
+// mapStrings is value with f applied to every string in it.
+func mapStrings(value any, f func(string) string) any {
+	switch v := value.(type) {
+	case string:
+		return f(v)
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for key, item := range v {
+			out[key] = mapStrings(item, f)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = mapStrings(item, f)
+		}
+		return out
+	}
+	return value
+}
+
+// decodeNumbers decodes JSON keeping every number as written.
+func decodeNumbers(raw []byte) (any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, fmt.Errorf("%v: %s", err, raw)
+	}
+	return value, nil
+}
+
+// encodeNumbers encodes a value compactly: numbers as written, markup unescaped.
+func encodeNumbers(value any) ([]byte, error) {
+	var out bytes.Buffer
+	encoder := json.NewEncoder(&out)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(out.Bytes(), []byte("\n")), nil
+}
+
+// seedCLI runs a command line on the Go store in dir, as cliCall does, at the fixed time now
+// (seconds since the epoch), so the times the later answers echo are the same in every run.
+func seedCLI(t *testing.T, now float64, dir string, args ...string) (int, map[string]any) {
+	t.Helper()
+	ctx := context.WithValue(context.Background(), f1InputsKey{}, f1Inputs{clock: &testClock{now: now}})
+	var out, stderr bytes.Buffer
+	code, handled := executeAsCLI(ctx, append([]string{"--state", dir}, args...), &out, &stderr)
+	if !handled {
+		t.Fatalf("not handled: %v", args)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("%s (stderr: %s): %v", out.String(), stderr.String(), err)
+	}
+	return code, payload
+}
+
+// noticeDifference reports the first differing field of a whole-value comparison.
+func noticeDifference(path string, want, got any) string {
+	if reflect.DeepEqual(want, got) {
+		return ""
+	}
+	switch w := want.(type) {
+	case map[string]any:
+		g, ok := got.(map[string]any)
+		if !ok {
+			break
+		}
+		keys := make([]string, 0, len(w))
+		for key := range w {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if diff := noticeDifference(path+"."+key, w[key], g[key]); diff != "" {
+				return diff
+			}
+		}
+	case []any:
+		g, ok := got.([]any)
+		if !ok {
+			break
+		}
+		if len(w) != len(g) {
+			return fmt.Sprintf("%s.length: got %d want %d", path, len(g), len(w))
+		}
+		for i := range w {
+			if diff := noticeDifference(fmt.Sprintf("%s[%d]", path, i), w[i], g[i]); diff != "" {
+				return diff
+			}
+		}
+	}
+	return fmt.Sprintf("%s: got %v want %v", path, got, want)
 }
 
 // cliGolden is what a command line answered: its exit status, its stdout, its stderr where a

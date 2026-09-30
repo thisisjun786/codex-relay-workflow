@@ -4,18 +4,12 @@ import (
 	"bytes"
 	"context"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestF1ClaimCLIOracle(t *testing.T) {
 	goldenParent(t)
-	root, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
 	cases := [][][]string{
 		{{"fault-claim", "--publication", "missing", "--owner", "operator"}},
 		{{"fault-observe", "--observation", `{"schema":"fault-observation/1","product":"crw","faultClass":"delivery_stalled","severity":"broken","signature":{"recipient":"a"},"occurrenceKey":"o","scope":{},"detail":"d","evidence":[],"cleared":false}`}, {"fault-claim", "--publication", "bad", "--owner", "operator"}},
@@ -39,16 +33,7 @@ func TestF1ClaimCLIOracle(t *testing.T) {
 			for key, value := range map[string]string{"HOME": home, "XDG_STATE_HOME": home + "/xs", "XDG_CONFIG_HOME": home + "/xc", "CODEX_HOME": home + "/ch"} {
 				t.Setenv(key, value)
 			}
-			env := append(os.Environ(), "TMPDIR=/dev/shm")
 			for _, args := range steps {
-				var answer pyRun
-				pyValue(t, "f1_cli.py "+strings.Join(args, " "), args, pyRunPaths(t, home), &answer, func() (any, error) {
-					py := exec.Command("uv", append([]string{"run", "--no-sync", "python", filepath.Join(root, "internal/relay/faults/testdata/f1_cli.py"), "--state", home + "/python", "--json"}, args...)...)
-					py.Dir = root
-					py.Env = env
-					return runPython(py, false)
-				})
-				want, pyExit := []byte(answer.Stdout), answer.Code
 				var got, stderr bytes.Buffer
 				ctx := context.WithValue(context.Background(), f1InputsKey{}, f1Inputs{clock: &testClock{now: 100000}, entropy: bytes.NewReader([]byte{0, 1, 2, 3, 4, 5, 6, 7})})
 				exit, handled := executeAsCLI(ctx, append([]string{"--state", home + "/go", "--json"}, args...), &got, &stderr)
@@ -56,9 +41,6 @@ func TestF1ClaimCLIOracle(t *testing.T) {
 					t.Fatal("unhandled")
 				}
 				checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), cliGolden{Code: exit, Stdout: got.String()})
-				if pyExit != exit || !bytes.Equal(want, got.Bytes()) {
-					t.Errorf("%s: python %d %s, Go %d %s; stderr %s", strings.Join(args, " "), pyExit, want, exit, got.String(), stderr.String())
-				}
 			}
 		})
 	}

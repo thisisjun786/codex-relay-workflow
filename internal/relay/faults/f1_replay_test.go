@@ -4,12 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,7 +17,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-// Every replay compares CLI bytes and every SQLite table, including refused
+// Every replay compares CLI bytes and every SQLite table with the golden, including refused
 // transitions that commit cancellation/repointing before returning the refusal.
 func TestF1ReplayWholeCLI(t *testing.T) {
 	goldenParent(t)
@@ -102,8 +99,8 @@ func TestF1ReplayWholeCLI(t *testing.T) {
 				t.Setenv(k, v)
 			}
 			ctx := context.WithValue(context.Background(), f1InputsKey{}, f1Inputs{clock: &testClock{now: 100000}, entropy: bytes.NewReader([]byte{0, 1, 2, 3, 4, 5, 6, 7})})
-			gd, pd := home+"/go", home+"/py"
-			f1Twins(t, gd, pd)
+			gd := home + "/go"
+			f1Twin(t, gd)
 			s, e := store.Open(ctx, gd+"/relay.sqlite3", "")
 			if e != nil {
 				t.Fatal(e)
@@ -148,68 +145,28 @@ func TestF1ReplayWholeCLI(t *testing.T) {
 			if e = s.Close(); e != nil {
 				t.Fatal(e)
 			}
-			// Python's twin takes the rows Go's ledger seeded, written by Python's own writer.
-			copyRowsToPython(t, ctx, gd, pd)
 			args := make([]string, len(tc.args))
 			for i, a := range tc.args {
 				args[i] = strings.NewReplacer("$pub", pub, "$block", block).Replace(a)
 			}
-			f1ReplayCLI(t, ctx, gd, pd, args)
+			f1ReplayCLI(t, ctx, gd, args)
 		})
 	}
 }
 
-func f1ReplayCLI(t *testing.T, ctx context.Context, gd, pd string, args []string) map[string]any {
+// f1ReplayCLI runs one command line on the store in gd and compares its whole answer - its
+// streams, exit and every table after it - with the golden, which holds the rows that changed
+// since the previous command of the test on gd (f1Delta).
+func f1ReplayCLI(t *testing.T, ctx context.Context, gd string, args []string) map[string]any {
 	t.Helper()
 	if inputs, ok := ctx.Value(f1InputsKey{}).(f1Inputs); ok {
 		inputs.entropy = bytes.NewReader(bytes.Repeat([]byte{0, 1, 2, 3, 4, 5, 6, 7}, 128))
 		ctx = context.WithValue(ctx, f1InputsKey{}, inputs)
 	}
-	root, e := filepath.Abs("../../..")
-	if e != nil {
-		t.Fatal(e)
-	}
-	// Python's streams, exit and every table of its twin after the same command line: the
-	// recording holds the tables that changed since Python's previous answer on this twin.
-	before := f1PythonTables(t, pd)
-	delta := pyAnswer(t, "f1_replay.py "+strings.Join(args, " "), args, pyRunPaths(t, filepath.Dir(pd)), func() ([]byte, error) {
-		py := exec.Command("uv", append([]string{"run", "--no-sync", "python", filepath.Join(root, "internal/relay/faults/testdata/f1_replay.py"), pd}, args...)...)
-		py.Dir = root
-		raw, e := py.CombinedOutput()
-		if e != nil {
-			return nil, fmt.Errorf("python: %v %s", e, raw)
-		}
-		if raw, e = recordEvidenceDigests(raw); e != nil {
-			return nil, e
-		}
-		return f1TablesDelta(before, raw)
-	})
-	raw, e := f1ApplyDelta(t, pd, before, delta)
-	if e == nil {
-		raw, e = replayEvidenceDigests(raw)
-	}
-	if e != nil {
-		t.Fatalf("recorded Python answer: %v", e)
-	}
-	var want struct {
-		Stdout, Stderr string
-		Exit           int
-		Tables         map[string]any
-	}
-	if e = json.Unmarshal(raw, &want); e != nil {
-		t.Fatal(e)
-	}
 	var stdout, stderr bytes.Buffer
 	code, handled := executeAsCLI(ctx, append([]string{"--state", gd, "--json"}, args...), &stdout, &stderr)
-	if !handled || code != want.Exit || stdout.String() != want.Stdout || stderr.String() != want.Stderr {
-		var expectedJSON, actualJSON any
-		_ = json.Unmarshal([]byte(want.Stdout), &expectedJSON)
-		_ = json.Unmarshal(stdout.Bytes(), &actualJSON)
-		diff := noticeDifference("stdout", expectedJSON, actualJSON)
-		if code != want.Exit {
-			diff = fmt.Sprintf("exit: Go %d Python %d; %s", code, want.Exit, diff)
-		}
-		t.Errorf("whole-output comparison diff: %s\nCLI python %d %s stderr %s\nGo %d %s stderr %s", diff, want.Exit, want.Stdout, want.Stderr, code, stdout.String(), stderr.String())
+	if !handled {
+		t.Fatalf("not handled: %v", args)
 	}
 	s, e := store.Open(ctx, gd+"/relay.sqlite3", "")
 	if e != nil {
@@ -220,7 +177,7 @@ func f1ReplayCLI(t *testing.T, ctx context.Context, gd, pd string, args []string
 	if e != nil {
 		t.Fatal(e)
 	}
-	goTables := map[string]any{}
+	tables := map[string]any{}
 	for _, name := range names {
 		key := text(name, "name")
 		rows, e := s.All(ctx, "SELECT * FROM "+key+" ORDER BY rowid")
@@ -244,16 +201,13 @@ func f1ReplayCLI(t *testing.T, ctx context.Context, gd, pd string, args []string
 			t.Fatal(e)
 		}
 		if key == "schema_meta" {
-			// Each runtime's store names its own owner: the one runtime-identity difference.
-			got, want.Tables[key] = ownerNeutralRows(t, testsupport.Go, got), ownerNeutralRows(t, testsupport.Python, want.Tables[key])
+			// The store names its owning runtime: compared as the runtime-neutral owner.
+			got = ownerNeutralRows(t, testsupport.Go, got)
 		}
-		goTables[key] = got
-		if !reflect.DeepEqual(got, want.Tables[key]) {
-			t.Errorf("whole-output comparison diff: %s\nGo %s\nPython %v", noticeDifference(key, want.Tables[key], got), raw, want.Tables[key])
-		}
+		tables[key] = got
 	}
-	goDelta := f1GoldenDelta(t, gd, code, stdout.String(), stderr.String(), goTables)
-	checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, filepath.Dir(gd)), json.RawMessage(goDelta))
+	delta := f1GoldenDelta(t, gd, code, stdout.String(), stderr.String(), tables)
+	checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, filepath.Dir(gd)), json.RawMessage(delta))
 	var answer map[string]any
 	if e = json.Unmarshal(stdout.Bytes(), &answer); e != nil {
 		t.Fatal(e)
@@ -261,31 +215,31 @@ func f1ReplayCLI(t *testing.T, ctx context.Context, gd, pd string, args []string
 	return answer
 }
 
-// f1PyTwins holds, for each Python twin a running test replays commands on, every table its last
+// f1Snapshots holds, for each store a running test replays commands on, every table its last
 // answer named: its rows in rowid order, each as canonical JSON.
-var f1PyTwins = struct {
+var f1Snapshots = struct {
 	sync.Mutex
 	tables map[string]map[string][]json.RawMessage
 }{tables: map[string]map[string][]json.RawMessage{}}
 
-// f1PythonTables is what Python's last answer on the twin pd held (nothing before its first).
-func f1PythonTables(t testing.TB, pd string) map[string][]json.RawMessage {
-	f1PyTwins.Lock()
-	defer f1PyTwins.Unlock()
-	tables, ok := f1PyTwins.tables[pd]
+// f1Snapshot is what the last answer on the store in dir held (nothing before its first).
+func f1Snapshot(t testing.TB, dir string) map[string][]json.RawMessage {
+	f1Snapshots.Lock()
+	defer f1Snapshots.Unlock()
+	tables, ok := f1Snapshots.tables[dir]
 	if !ok {
 		tables = map[string][]json.RawMessage{}
-		f1PyTwins.tables[pd] = tables
+		f1Snapshots.tables[dir] = tables
 		t.Cleanup(func() {
-			f1PyTwins.Lock()
-			delete(f1PyTwins.tables, pd)
-			f1PyTwins.Unlock()
+			f1Snapshots.Lock()
+			delete(f1Snapshots.tables, dir)
+			f1Snapshots.Unlock()
 		})
 	}
 	return maps.Clone(tables)
 }
 
-// f1Delta is one recorded f1_replay.py answer: the CLI's streams and exit, and each of the twin's
+// f1Delta is one answer as a golden keeps it: the CLI's streams and exit, and each of the store's
 // tables that differs from the previous answer's (changed) or that it no longer has (dropped).
 type f1Delta struct {
 	Stdout  string                  `json:"stdout"`
@@ -305,35 +259,47 @@ type f1TableDelta struct {
 // f1Canonical is value re-encoded one way (sorted keys, numbers as written), so an unchanged row
 // reads the same in every answer.
 func f1Canonical(value json.RawMessage) (json.RawMessage, error) {
-	decoder := json.NewDecoder(bytes.NewReader(value))
-	decoder.UseNumber()
-	var decoded any
-	if err := decoder.Decode(&decoded); err != nil {
+	decoded, err := decodeNumbers(value)
+	if err != nil {
 		return nil, err
 	}
-	return pyEncode(decoded)
+	return encodeNumbers(decoded)
 }
 
-// f1TablesDelta turns f1_replay.py's whole answer into the f1Delta against before.
-func f1TablesDelta(before map[string][]json.RawMessage, raw []byte) ([]byte, error) {
+// f1GoldenDelta is Go's whole answer to one command line on the store in gd - its streams, exit
+// and every table, evidence digests as their occurrences' placeholders - as the rows that changed
+// since Go's previous answer on gd (f1Delta), and keeps the answer's tables as gd's latest.
+func f1GoldenDelta(t *testing.T, gd string, code int, stdout, stderr string, tables map[string]any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{"stdout": stdout, "stderr": stderr, "exit": code, "tables": tables})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw, err = evidencePlaceholders(raw); err != nil {
+		t.Fatal(err)
+	}
 	var whole struct {
 		Stdout string                       `json:"stdout"`
 		Stderr string                       `json:"stderr"`
 		Exit   int                          `json:"exit"`
 		Tables map[string][]json.RawMessage `json:"tables"`
 	}
-	if err := json.Unmarshal(raw, &whole); err != nil {
-		return nil, fmt.Errorf("%v: %s", err, raw)
+	if err = json.Unmarshal(raw, &whole); err != nil {
+		t.Fatal(err)
 	}
+	before := f1Snapshot(t, gd)
+	after := map[string][]json.RawMessage{}
 	delta := f1Delta{Stdout: whole.Stdout, Stderr: whole.Stderr, Exit: whole.Exit, Changed: map[string]f1TableDelta{}}
 	for name, rows := range whole.Tables {
 		old, had := before[name]
+		after[name] = []json.RawMessage{}
 		change := f1TableDelta{Length: len(rows), Rows: map[string]json.RawMessage{}}
 		for i, row := range rows {
 			canonical, err := f1Canonical(row)
 			if err != nil {
-				return nil, err
+				t.Fatal(err)
 			}
+			after[name] = append(after[name], canonical)
 			if i >= len(old) || !bytes.Equal(old[i], canonical) {
 				change.Rows[strconv.Itoa(i)] = canonical
 			}
@@ -348,65 +314,12 @@ func f1TablesDelta(before map[string][]json.RawMessage, raw []byte) ([]byte, err
 		}
 	}
 	sort.Strings(delta.Dropped)
-	return pyEncode(delta)
-}
-
-// f1ApplyDelta rebuilds f1_replay.py's whole answer from before and a recorded f1Delta, and keeps
-// its tables as the twin's latest.
-func f1ApplyDelta(t testing.TB, pd string, before map[string][]json.RawMessage, raw []byte) ([]byte, error) {
-	var delta f1Delta
-	if err := json.Unmarshal(raw, &delta); err != nil {
-		return nil, fmt.Errorf("%v: %s", err, raw)
-	}
-	tables := before
-	for name, change := range delta.Changed {
-		old := before[name]
-		rows := make([]json.RawMessage, change.Length)
-		copy(rows, old[:min(len(old), change.Length)])
-		for at, row := range change.Rows {
-			i, err := strconv.Atoi(at)
-			if err != nil || i < 0 || i >= change.Length {
-				return nil, fmt.Errorf("table %s: row %q outside its %d rows", name, at, change.Length)
-			}
-			if rows[i], err = f1Canonical(row); err != nil {
-				return nil, err
-			}
-		}
-		for i, row := range rows {
-			if row == nil {
-				return nil, fmt.Errorf("table %s: row %d is neither kept nor recorded", name, i)
-			}
-		}
-		tables[name] = rows
-	}
-	for _, name := range delta.Dropped {
-		delete(tables, name)
-	}
-	f1PyTwins.Lock()
-	f1PyTwins.tables[pd] = maps.Clone(tables)
-	f1PyTwins.Unlock()
-	return pyEncode(map[string]any{"stdout": delta.Stdout, "stderr": delta.Stderr, "exit": delta.Exit, "tables": tables})
-}
-
-// f1GoldenDelta is Go's whole answer to one command line on the twin gd - its streams, exit and
-// every table, evidence digests as their occurrences' placeholders - as the rows that changed
-// since Go's previous answer on gd (f1Delta), which the replay keeps as gd's latest.
-func f1GoldenDelta(t *testing.T, gd string, code int, stdout, stderr string, tables map[string]any) []byte {
-	t.Helper()
-	raw, err := json.Marshal(map[string]any{"stdout": stdout, "stderr": stderr, "exit": code, "tables": tables})
+	f1Snapshots.Lock()
+	f1Snapshots.tables[gd] = after
+	f1Snapshots.Unlock()
+	encoded, err := encodeNumbers(delta)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if raw, err = evidencePlaceholders(raw); err != nil {
-		t.Fatal(err)
-	}
-	before := f1PythonTables(t, gd)
-	delta, err := f1TablesDelta(before, raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = f1ApplyDelta(t, gd, before, delta); err != nil {
-		t.Fatal(err)
-	}
-	return delta
+	return encoded
 }
