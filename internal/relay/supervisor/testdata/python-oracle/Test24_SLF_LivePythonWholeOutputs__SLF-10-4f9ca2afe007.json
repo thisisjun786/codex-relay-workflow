@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "SLF-10": "txt:{\"answer\":{\"code\":\"settings_differ_after_load\",\"findings\":[{\"code\":\"settings_not_preserved\",\"expected\":{\"excludeSlashTmp\":false,\"excludeTmpdirEnvVar\":false,\"networkAccess\":false,\"type\":\"workspaceWrite\",\"writableRoots\":[\"/workspace/example/worktree\"]},\"field\":\"sandbox\",\"returned\":{\"excludeSlashTmp\":false,\"excludeTmpdirEnvVar\":false,\"networkAccess\":false,\"type\":\"workspaceWrite\",\"writableRoots\":[123]}}]},\"both\":{\"code\":\"settings_differ_after_load\",\"findings\":[{\"code\":\"settings_not_preserved\",\"expected\":{\"excludeSlashTmp\":false,\"excludeTmpdirEnvVar\":false,\"networkAccess\":false,\"type\":\"workspaceWrite\",\"writableRoots\":[123]},\"field\":\"sandbox\",\"returned\":{\"excludeSlashTmp\":false,\"excludeTmpdirEnvVar\":false,\"networkAccess\":false,\"type\":\"workspaceWrite\",\"writableRoots\":[123]}}]},\"record\":{\"detail\":\"the recorded sandbox policy cannot be read in full, so no response could confirm it\",\"reason\":\"unsupported_sandbox_type\"}}\n"
- }
-}

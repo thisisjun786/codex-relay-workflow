@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "reporting-cli": "txt:{\"code\":2,\"created\":false,\"stderr\":\"usage: codex-session-relay reporting-show [-h] --marker-root MARKER_ROOT\\n                                          --workspace WORKSPACE\\n                                          --assignment ASSIGNMENT\\n                                          --session SESSION --turn TURN\\ncodex-session-relay reporting-show: error: the following arguments are required: --turn\\n\",\"value\":\"null\"}"
- }
-}

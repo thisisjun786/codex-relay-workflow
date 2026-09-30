@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "SR-2": "txt:{\"subjects\": [\"g1:447c9717f916fc19\", \"g1:6720fbea55924664\", \"g1:447c9717f916fc19\"], \"ids\": [\"c452402fcd276144222ce6b05c76b5ad\", \"680ecdbc8a47ea4208eb8c3fd437c3e8\", \"c452402fcd276144222ce6b05c76b5ad\"]}\n"
- }
-}

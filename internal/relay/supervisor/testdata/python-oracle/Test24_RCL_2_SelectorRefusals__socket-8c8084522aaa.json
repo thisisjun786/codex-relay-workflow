@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "reporting-cli": "txt:{\"code\":4,\"created\":false,\"stderr\":\"\",\"value\":\"{\\\"detail\\\":\\\"reporting-show does not take --socket\\\",\\\"error\\\":\\\"usage\\\"}\"}"
- }
-}

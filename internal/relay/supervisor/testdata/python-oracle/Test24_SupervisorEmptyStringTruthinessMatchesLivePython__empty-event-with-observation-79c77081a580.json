@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "empty-event-with-observation": "txt:{\"code\":4,\"stderr\":\"\",\"stdout\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"the observation at '<observation>' raises no obligation, so there is nothing to stage. An event has to be a completion, a new block or a decision the user owes, and an observation has to report state unreported\\\"\\n}\\n\"}"
- }
-}

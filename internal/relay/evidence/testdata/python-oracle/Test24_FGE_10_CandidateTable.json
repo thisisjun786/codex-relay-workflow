@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "FGE-10": "txt:[[],[[\"candidate_conflicted\",\"the candidate does not merge cleanly into its base\",\"\"]],[[\"candidate_behind\",\"the candidate is behind its base and this branch requires branches to be current before merging\",\"\"]],[[\"candidate_unknown\",\"the forge reports merge state 'marvellous', which is not a state this rule recognises; an unrecognised merge state is unknown rather than clean, because a forge that adds one must not acquire a passing verdict by default\",\"\"]],[[\"candidate_draft\",\"the pull request is still a draft, so the review it reports was never actually requested; mark it ready for review before handing it over\",\"\"]],[[\"candidate_not_open\",\"this pull request is already merged, so there is nothing left to hand over\",\"\"]],[[\"candidate_blocked\",\"the forge reports this candidate blocked by its own branch rules, so something it requires is not satisfied yet\",\"\"]],[]]\n"
- }
-}

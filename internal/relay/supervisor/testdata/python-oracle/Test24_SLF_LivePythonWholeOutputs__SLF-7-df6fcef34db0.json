@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "SLF-7": "txt:[{\"detail\":\"runtimeWorkspaceRoots is str, not a list of str\",\"reason\":\"settings_mistyped\"},{\"detail\":\"runtimeWorkspaceRoots is int, not a list of str\",\"reason\":\"settings_mistyped\"},{\"detail\":\"runtimeWorkspaceRoots is a list holding int, not a list of str\",\"reason\":\"settings_mistyped\"},{\"detail\":\"environments is str, not a list of environment objects\",\"reason\":\"settings_mistyped\"},{\"detail\":\"environments[0] is str, not an object\",\"reason\":\"settings_mistyped\"},{\"detail\":\"environments[0].environmentId is int, not str\",\"reason\":\"settings_mistyped\"},{\"detail\":\"environments[0].cwd is absent, not str\",\"reason\":\"settings_mistyped\"},{\"detail\":\"environments[0].runtimeWorkspaceRoots is str, not a list of str\",\"reason\":\"settings_mistyped\"},{\"detail\":\"environments[0].runtimeWorkspaceRoots is absent, not a list of str\",\"reason\":\"settings_mistyped\"}]\n"
- }
-}

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "RC-5": "txt:{\"blank\": {\"summary\": {\"reason\": \"malformed_receipt\", \"detail\": \"a work report states its summary; a report the recipient cannot act on is the thing this record exists to replace\"}, \"next_action\": {\"reason\": \"malformed_receipt\", \"detail\": \"a work report states its next_action; a report the recipient cannot act on is the thing this record exists to replace\"}, \"repository\": {\"reason\": \"malformed_receipt\", \"detail\": \"a work report states its repository; a report the recipient cannot act on is the thing this record exists to replace\"}}, \"mapping\": {\"summary\": {\"reason\": \"malformed_receipt\", \"detail\": \"summary is a line of text, not dict\"}, \"next_action\": {\"reason\": \"malformed_receipt\", \"detail\": \"next_action is a line of text, not dict\"}, \"repository\": {\"reason\": \"malformed_receipt\", \"detail\": \"repository is a line of text, not dict\"}, \"cxc_reason\": {\"reason\": \"malformed_receipt\", \"detail\": \"cxc_reason is a line of text, not dict\"}}}\n"
- }
-}

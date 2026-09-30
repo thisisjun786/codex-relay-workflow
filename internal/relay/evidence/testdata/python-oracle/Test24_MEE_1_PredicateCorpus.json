@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "MEE-1": "txt:[[],[[\"review_unstated\",\"the review record does not state pagesRead\",\"\"]]]\n"
- }
-}

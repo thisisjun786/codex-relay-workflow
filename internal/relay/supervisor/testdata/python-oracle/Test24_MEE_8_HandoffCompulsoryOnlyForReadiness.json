@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "MEE-8": "txt:{\"detail\":\"this report names a pull request and states nothing about its checks or its review, so nothing here says the candidate is ready to hand over. Record the merge-readiness handoff, or report the work blocked if the review is not finished\",\"reason\":\"merge_evidence_required\"}\n"
- }
-}

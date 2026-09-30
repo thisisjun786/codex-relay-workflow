@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "SEV-4": "txt:[{\"detail\":\"malformed_receipt: a decision envelope cannot omit decision: <not_applicable: no user decision is being asked for>\",\"error\":\"EnvelopeRefused\",\"reason\":\"malformed_receipt\"},{\"detail\":\"malformed_receipt: a status_response envelope cannot omit correlationId: <not_applicable: this message answers nothing earlier>\",\"error\":\"EnvelopeRefused\",\"reason\":\"malformed_receipt\"}]\n"
- }
-}

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "SR-8": "txt:{\"omission\": {\"schema\": \"supervisor-obligation/1\", \"obligationId\": \"a32ac721fbd284b0cdd1bd533f5b157a\", \"kind\": \"unreported\", \"relationId\": \"rel-0123456789abcdef\", \"subject\": \"turn-7\", \"executionGeneration\": 1, \"revisionHash\": null, \"issueKey\": null, \"basis\": {\"table\": null, \"schema\": \"reporting-observation/1\", \"reason\": \"terminal_without_report\", \"turn\": \"turn-7\"}, \"detail\": \"an admitted turn settled without a report, so what it owed is still owed\"}, \"settled\": {\"reported\": null, \"in_progress\": null, \"unmanaged\": null, \"unmeasured\": null}, \"unmeasured\": {\"schema\": \"supervisor-obligation/1\", \"gap\": \"reporting_unmeasured\", \"relationId\": \"rel-0123456789abcdef\", \"reason\": \"marker_unreadable\", \"detail\": \"nothing was established about whether a report was owed here\"}, \"badRelation\": null, \"badTurn\": null, \"blankTurn\": null}\n"
- }
-}

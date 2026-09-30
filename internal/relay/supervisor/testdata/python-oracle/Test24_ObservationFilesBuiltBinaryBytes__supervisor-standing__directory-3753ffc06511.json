@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "supervisor-standing/directory": "txt:{\"code\":4,\"output\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"the observation at '<root>/directory' could not be read as a reporting-observation/1 record: IsADirectoryError: [Errno 21] Is a directory: '<root>/directory'\\\"\\n}\\n\"}"
- }
-}

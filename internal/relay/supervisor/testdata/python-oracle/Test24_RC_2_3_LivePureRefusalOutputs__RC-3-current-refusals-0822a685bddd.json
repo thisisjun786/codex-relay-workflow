@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "RC-3-current-refusals": "txt:{\"head\": {\"reason\": \"stale_mark_context\", \"detail\": \"this report is about head a1b2c3d4e5f60718293a4b5c6d7e8f9012345678 and the current head is 9999999999999999999999999999999999999999; re-report against the head under review\"}, \"generation\": {\"reason\": \"stale_generation\", \"detail\": \"this report is generation 1 and the assignment is on generation 99; it cannot answer for the current one\"}, \"current\": null}\n"
- }
-}

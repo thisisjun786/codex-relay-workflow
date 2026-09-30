@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "MEE-5": "txt:[[],[[\"malformed_evidence\",\"threadsSeen is a list of thread identifiers, not a str; a string would be counted one character at a time\",\"\"]]]\n"
- }
-}

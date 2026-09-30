@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "SR-3": "txt:{\"first\": {\"recorded\": true, \"seq\": 1}, \"second\": {\"recorded\": false, \"seq\": 1}, \"prior\": {\"seq\": 1, \"at\": \"2023-11-14T22:13:20.000000+00:00\", \"detail\": {\"kind\": \"completion\", \"relationId\": \"rel-1\", \"subject\": \"event-1\", \"messageId\": null, \"note\": \"\"}}}\n"
- }
-}

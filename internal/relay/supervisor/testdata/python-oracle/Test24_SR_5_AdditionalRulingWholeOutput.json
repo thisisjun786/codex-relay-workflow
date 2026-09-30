@@ -1,8 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "1 select": "txt:{\"schema\": \"supervisor-obligation/1\", \"obligationId\": \"c9ad57a34d7ea4b1ad4771ccd229f2f2\", \"kind\": \"completion\", \"standing\": \"standing\", \"dischargeReason\": \"no Linear record was enqueued for this, so nothing the supervisor reads carries it\", \"priorReport\": null, \"recipient\": {\"contactable\": null, \"asked\": false, \"reason\": \"no recipient was named, so deliverability was not part of this question\"}, \"report\": true, \"reason\": \"deliverability_was_not_asked_about\"}\n",
-  "2 select": "txt:{\"schema\": \"supervisor-obligation/1\", \"obligationId\": \"c9ad57a34d7ea4b1ad4771ccd229f2f2\", \"kind\": \"completion\", \"standing\": \"standing\", \"dischargeReason\": \"the Linear record is failed rather than confirmed\", \"priorReport\": null, \"recipient\": {\"contactable\": null, \"asked\": false, \"reason\": \"no recipient was named, so deliverability was not part of this question\"}, \"report\": true, \"reason\": \"deliverability_was_not_asked_about\"}\n",
-  "3 select": "txt:{\"schema\": \"supervisor-obligation/1\", \"obligationId\": \"c9ad57a34d7ea4b1ad4771ccd229f2f2\", \"kind\": \"completion\", \"standing\": \"standing\", \"dischargeReason\": \"the current ruling's record is on doc-2, which is no longer the target for this relationship\", \"priorReport\": null, \"recipient\": {\"contactable\": null, \"asked\": false, \"reason\": \"no recipient was named, so deliverability was not part of this question\"}, \"report\": true, \"reason\": \"deliverability_was_not_asked_about\"}\n"
- }
-}

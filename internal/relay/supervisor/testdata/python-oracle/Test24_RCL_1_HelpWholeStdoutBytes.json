@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "rcl": "txt:{\"code\":0,\"created\":false,\"stderr\":\"\",\"stdout\":\"usage: codex-session-relay reporting-show [-h] --marker-root MARKER_ROOT\\n                                          --workspace WORKSPACE\\n                                          --assignment ASSIGNMENT\\n                                          --session SESSION --turn TURN\\n\\noptions:\\n  -h, --help            show this help message and exit\\n  --marker-root MARKER_ROOT\\n  --workspace WORKSPACE\\n  --assignment ASSIGNMENT\\n  --session SESSION\\n  --turn TURN\\n\"}"
- }
-}

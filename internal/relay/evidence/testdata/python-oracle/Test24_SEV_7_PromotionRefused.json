@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "SEV-7": "txt:[[\"applied\"],[]]\n"
- }
-}

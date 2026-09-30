@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "SEV-2": "txt:[\"705dbc11acfcee08816aa66375e31b5d\",\"705dbc11acfcee08816aa66375e31b5d\",\"aea1b1cba459139a097bf38ab564254a\"]\n"
- }
-}

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "MEE-14": "txt:[{\"detail\":\"a required check name contains a character that cannot be encoded as UTF-8, so it cannot be measured against the message budget or sent\",\"reason\":\"malformed_receipt\"},{\"detail\":\"a required check name is one line: a line break in it is spliced into the message and adds a line to the protocol rather than wrapping. Put longer detail in the evidence or the unresolved items\",\"reason\":\"malformed_receipt\"},{\"detail\":\"a required check name is 400 bytes and the limit is 300; a required line cannot be shortened at render time without losing what it exists to say, and a render that fails inside the delivery claim is a delivery that never goes out. Put the detail in the deliverables or the evidence and keep this line to the point\",\"reason\":\"malformed_receipt\"}]\n"
- }
-}

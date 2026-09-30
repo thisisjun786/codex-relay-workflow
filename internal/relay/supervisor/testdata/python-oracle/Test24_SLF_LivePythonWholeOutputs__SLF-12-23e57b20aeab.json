@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "SLF-12": "txt:{\"comparison\":{\"code\":null,\"findings\":[]},\"usable\":{\"ok\":null}}\n"
- }
-}

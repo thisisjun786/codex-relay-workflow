@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "FGE-8": "txt:[[[\"required_undeclared\",\"the record does not state which checks this branch requires, so a failing required check cannot be told from a failing optional one; read the branch protection and declare the names, or declare an empty list to say it requires none\",\"\"]],[]]\n"
- }
-}

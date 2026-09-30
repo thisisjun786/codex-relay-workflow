@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "1 select": "txt:{\"schema\": \"supervisor-obligation/1\", \"obligationId\": \"c9ad57a34d7ea4b1ad4771ccd229f2f2\", \"kind\": \"completion\", \"standing\": \"standing\", \"dischargeReason\": \"no coordination_document target is configured for this relationship, so there is no record the supervisor reads\", \"priorReport\": null, \"recipient\": {\"deliverable\": \"yes\", \"observedAt\": \"not-a-date\", \"contactable\": null, \"reason\": \"the observation carries no readable time, so its age is unmeasured\"}, \"report\": false, \"reason\": \"recipient_contactability_unmeasured\"}\n"
- }
-}

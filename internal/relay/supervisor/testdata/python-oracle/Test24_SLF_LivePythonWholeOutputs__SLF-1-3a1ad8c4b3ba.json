@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "SLF-1": "txt:{\"accepted\":{\"code\":null,\"findings\":[]},\"drift\":{\"code\":\"settings_differ_after_load\",\"findings\":[{\"code\":\"settings_not_preserved\",\"expected\":\"gpt\",\"field\":\"model\",\"returned\":\"other\"}]},\"resume\":{\"excludeTurns\":true,\"threadId\":\"thread-1\"}}\n"
- }
-}

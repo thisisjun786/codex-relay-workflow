@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "FGE-11": "txt:[[{\"runId\":\"1\"}]]\n"
- }
-}

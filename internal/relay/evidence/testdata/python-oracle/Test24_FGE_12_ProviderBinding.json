@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "FGE-12": "txt:[[[\"checks_stale\",\"these required checks have no successful run from the integration the branch rule names: ['dev-gate (integration 42)']\",\"dev-gate\"]],[]]\n"
- }
-}

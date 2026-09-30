@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "SLF-4": "txt:{\"accepted\":{\"code\":null,\"findings\":[]},\"resume\":{\"excludeTurns\":true,\"threadId\":\"sup-thread\"},\"settingsFreeResume\":true}\n"
- }
-}

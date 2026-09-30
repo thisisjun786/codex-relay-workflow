@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "1 envelope": "txt:{\"value\": null, \"error\": \"malformed_receipt: a decision envelope cannot omit decision: <not_applicable: no user decision is being asked for>\"}\n"
- }
-}

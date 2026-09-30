@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "SEV-13": "txt:{\"absent\":\"unknown\",\"detail\":\"no Linear scope was read\"}\n"
- }
-}

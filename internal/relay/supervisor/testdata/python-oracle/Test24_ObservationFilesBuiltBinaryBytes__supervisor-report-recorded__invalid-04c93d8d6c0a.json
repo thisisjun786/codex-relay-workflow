@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "supervisor-report-recorded/invalid": "txt:{\"code\":4,\"output\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"the observation at '<root>/invalid' could not be read as a reporting-observation/1 record: JSONDecodeError: Expecting value: line 1 column 1 (char 0)\\\"\\n}\\n\"}"
- }
-}

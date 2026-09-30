@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "unreadable-observation": "txt:{\"code\":4,\"stdout\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"the observation at '<fixture>/broken.json' could not be read as a reporting-observation/1 record: UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte\\\"\\n}\\n\"}"
- }
-}

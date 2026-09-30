@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "unknown-ledger": "txt:{\"receipts\": [{\"error\": \"ValueError\", \"detail\": \"managed start requires an observed bridge ledger identity\"}], \"effects\": [0, 0], \"tables\": {\"managed_start_requests\": [], \"relationships\": [], \"generations\": [], \"canonical_criteria\": [], \"verification_mode\": [], \"authorized_settings\": [], \"generation_turns\": []}, \"ledger\": {\"path\": \"<root>/workspace/test-operations-ledger\", \"device\": 4242, \"inode\": 777000}, \"scope\": null, \"orderedReceipts\": [\"{\\\"error\\\":\\\"ValueError\\\",\\\"detail\\\":\\\"managed start requires an observed bridge ledger identity\\\"}\"]}"
- }
-}

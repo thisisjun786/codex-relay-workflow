@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "FGE-7": "txt:[\"unknown\",[{\"code\":\"enumeration_truncated\",\"detail\":\"the check runs connection was still unfinished after 1 pages, so what was read is a prefix; a prefix of a list is not a count of the list\"}],\"not_ready\",[{\"code\":\"checks_stale\",\"detail\":\"required check 'dev-gate' (run 'check-run:5000') concluded 'failure' on its newest attempt\"}],\"unknown\",[{\"code\":\"enumeration_truncated\",\"detail\":\"the workflow runs connection was still unfinished after 1 pages, so what was read is a prefix; a prefix of a list is not a count of the list\"}],\"not_ready\",[{\"code\":\"checks_stale\",\"detail\":\"required check 'dev-gate' (run 'status:dev-gate') concluded 'pending' on its newest attempt\"}]]\n"
- }
-}

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "empty-recipient": "txt:{\"code\":0,\"stderr\":\"\",\"stdout\":\"{\\n  \\\"schema\\\": \\\"relay-supervisor-channel/1\\\",\\n  \\\"projectKey\\\": \\\"p\\\",\\n  \\\"staged\\\": [],\\n  \\\"refused\\\": [],\\n  \\\"gaps\\\": [],\\n  \\\"limits\\\": \\\"staging is not sending and sending is not reading. Each message here has to be sent and read back before anything says it arrived, and a readback shows arrival rather than that a supervisor read it\\\"\\n}\\n\"}"
- }
-}

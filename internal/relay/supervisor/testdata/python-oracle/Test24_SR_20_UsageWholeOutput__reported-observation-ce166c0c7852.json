@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "reported-observation": "txt:{\"code\":4,\"stdout\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"the observation at '<fixture>/reported.json' raises no obligation: an event has to be a completion, a new block or a decision the user owes, and an observation has to report state unreported. There is nothing here to record a report against\\\"\\n}\\n\"}"
- }
-}

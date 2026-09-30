@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "1 select_event": "txt:{\"schema\": \"supervisor-obligation/1\", \"report\": false, \"reason\": \"no_meaningful_transition\", \"obligationId\": null, \"detail\": \"this event is not a completion, a new block or a decision the user owes\", \"candidate\": \"event-1\"}\n"
- }
-}

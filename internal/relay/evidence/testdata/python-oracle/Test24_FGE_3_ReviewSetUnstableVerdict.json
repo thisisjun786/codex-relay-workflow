@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "FGE-3": "txt:[[\"unknown\",[{\"code\":\"review_set_unstable\",\"detail\":\"the review threads were read twice and the two readings disagree about which threads exist or which are resolved, so no stable set of them was observed and the zero this would have reported is not a count\"}]],[\"unknown\",[{\"code\":\"review_set_unstable\",\"detail\":\"the review threads were read twice and the two readings disagree about which threads exist or which are resolved, so no stable set of them was observed and the zero this would have reported is not a count\"}]]]\n"
- }
-}

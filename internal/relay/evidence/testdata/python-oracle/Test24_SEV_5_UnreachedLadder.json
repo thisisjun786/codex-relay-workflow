@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "SEV-5": "txt:{\"agreed\":{\"detail\":\"a report upward is transported and read back, and nothing here records that a supervisor agreed, applied or verified anything; what became of it is read from the Linear record, confirmed\",\"source\":null,\"state\":\"not_applicable\"},\"applied\":{\"detail\":\"a report upward is transported and read back, and nothing here records that a supervisor agreed, applied or verified anything; what became of it is read from the Linear record, confirmed\",\"source\":null,\"state\":\"not_applicable\"},\"received\":{\"detail\":\"nothing readable answered yet\",\"source\":null,\"state\":\"unmeasured\"},\"transport_accepted\":{\"detail\":\"nothing readable answered yet\",\"source\":null,\"state\":\"unmeasured\"},\"verified\":{\"detail\":\"a report upward is transported and read back, and nothing here records that a supervisor agreed, applied or verified anything; what became of it is read from the Linear record, confirmed\",\"source\":null,\"state\":\"not_applicable\"}}\n"
- }
-}
