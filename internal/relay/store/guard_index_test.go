@@ -5,11 +5,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"maps"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 	"modernc.org/sqlite"
 )
 
@@ -113,6 +117,9 @@ type pythonGuardSurface struct {
 	Raw         *pyError       `json:"raw"`
 	Transaction *pyError       `json:"transaction"`
 	ForcedLeft  int            `json:"forcedRowsLeft"`
+	// Store is every row of the index's store (dumpStore), which Go reads back in a store of its
+	// own (restoreStore).
+	Store storeRows `json:"store"`
 }
 
 type pyError struct {
@@ -121,19 +128,56 @@ type pyError struct {
 	Code    int    `json:"code"`
 }
 
-func pythonGuardSurfaces(t *testing.T) map[string]pythonGuardSurface {
+// pythonGuardSurfaceOf is what Python surfaced for index, recorded (pythonOracle): the script
+// drives every index, and the one asked for is kept with the rows of its store.
+func pythonGuardSurfaceOf(t *testing.T, index string) pythonGuardSurface {
 	t.Helper()
 	root := t.TempDir()
 	t.Setenv("HOME", root)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
 	t.Setenv("TMPDIR", root)
-	out := pythonStoreValue(t, pythonGuardScript, root)
-	var surfaces map[string]pythonGuardSurface
-	if err := json.Unmarshal([]byte(out[strings.LastIndex(out, "\n")+1:]), &surfaces); err != nil {
-		t.Fatalf("python output %q: %v", out, err)
-	}
-	return surfaces
+	dir := repositoryRoot(t)
+	isolated := isolatedEnv(t)
+	var surface pythonGuardSurface
+	parts := append([]string{"guard-surface", dir, pythonGuardScript, index}, keptEnvironment()...)
+	jsonAnswer(t, append(parts, root), &surface, func() (any, error) {
+		raw, err := runPythonStore(t, isolated, dir, pythonGuardScript, root)
+		if err != nil {
+			return nil, err
+		}
+		out := strings.TrimSpace(string(raw))
+		var surfaces map[string]pythonGuardSurface
+		if err := json.Unmarshal([]byte(out[strings.LastIndex(out, "\n")+1:]), &surfaces); err != nil {
+			return nil, fmt.Errorf("python output %q: %v", out, err)
+		}
+		surface, ok := surfaces[index]
+		if !ok {
+			return nil, fmt.Errorf("python surfaced nothing for %s", index)
+		}
+		if surface.Store, err = dumpStore(surface.DB); err != nil {
+			return nil, err
+		}
+		surface.DB = ""
+		return surface, nil
+	}, sameGuardVerdict)
+	return surface
 }
+
+// sameGuardVerdict is check mode's comparison for a guard surface. Which racer wins, and so the
+// rows the store holds and the first row the forced one copies, differs from run to run by design;
+// what Python surfaced does not.
+var sameGuardVerdict = pyoracle.SameWhen(func(recorded, live []byte) bool {
+	verdict := func(raw []byte) (any, error) {
+		var s pythonGuardSurface
+		if err := json.Unmarshal(raw, &s); err != nil {
+			return nil, err
+		}
+		return []any{s.APIRace, s.APIRefusals, s.Raw, s.Transaction, s.ForcedLeft, slices.Sorted(maps.Keys(s.Row))}, nil
+	}
+	a, errA := verdict(recorded)
+	b, errB := verdict(live)
+	return errA == nil && errB == nil && reflect.DeepEqual(a, b)
+})
 
 // guardIndexes are store.py GUARD_INDEXES with the table each guards.
 var guardIndexes = map[string]string{
@@ -152,7 +196,7 @@ func runGuard(t *testing.T, index string) {
 	// Given: Python's writer API, raced from eight connections, never reached the index (every
 	// racer refused with a reason, queued or replayed), and Python's raw write of the second live
 	// row raised sqlite3.IntegrityError 2067, bare and inside Store.transaction(), keeping nothing.
-	python := pythonGuardSurfaces(t)[index]
+	python := pythonGuardSurfaceOf(t, index)
 	if len(python.APIRace) != 0 {
 		t.Fatalf("Python's writer API reached %s under a race: %v", index, python.APIRace)
 	}
@@ -164,12 +208,9 @@ func runGuard(t *testing.T, index string) {
 	if python.ForcedLeft != 0 {
 		t.Fatalf("Python kept %d forced rows", python.ForcedLeft)
 	}
-	// When: Go takes the stopped Python-written store over, opens it and writes the same row
+	// When: Go opens a store holding the rows Python's store held and writes the same row
 	// through the typed insert, bare and inside Transaction.
-	testsupport.HandOver(t, python.DB, "go")
-	s, err := fixtureOpen(context.Background(), python.DB, "")
-	must(t, err)
-	defer func() { must(t, s.Close()) }()
+	s := restoreStore(t, filepath.Join(t.TempDir(), "restored", "relay.sqlite3"), python.Store)
 	ctx := context.Background()
 	insert := guardInsert(t, table, python.Row)
 	bare := insert(ctx, s)

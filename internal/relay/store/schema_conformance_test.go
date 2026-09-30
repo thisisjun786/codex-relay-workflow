@@ -6,8 +6,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -65,31 +68,42 @@ type deliveryRecordStore struct {
 	Expect       string `json:"expect"`
 	Relationship string `json:"relationship"`
 	Child        string `json:"child"`
+	// Store is every row of the scenario's store (dumpStore), which Go reads back in a store of
+	// its own (restoreStore).
+	Store storeRows `json:"store"`
 }
 
+// pythonDeliveryRecords is what each scenario wrote, recorded (pythonOracle).
 func pythonDeliveryRecords(t *testing.T) []deliveryRecordStore {
 	t.Helper()
 	root := t.TempDir()
 	t.Setenv("HOME", root)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
 	t.Setenv("TMPDIR", root)
-	out := pythonStoreValueIn(t, filepath.Join(repositoryRoot(t), "packages/codex-session-relay"), pythonDeliveryRecordsScript)
+	package_ := filepath.Join(repositoryRoot(t), "packages/codex-session-relay")
+	isolated := isolatedEnv(t)
 	var stores []deliveryRecordStore
-	if err := json.Unmarshal([]byte(out[strings.LastIndex(out, "\n")+1:]), &stores); err != nil {
-		t.Fatalf("python output %q: %v", out, err)
-	}
+	parts := append([]string{"delivery-records", package_, pythonDeliveryRecordsScript}, keptEnvironment()...)
+	jsonAnswer(t, parts, &stores, func() (any, error) {
+		raw, err := runPythonStore(t, isolated, package_, pythonDeliveryRecordsScript)
+		if err != nil {
+			return nil, err
+		}
+		out := strings.TrimSpace(string(raw))
+		var stores []deliveryRecordStore
+		if err := json.Unmarshal([]byte(out[strings.LastIndex(out, "\n")+1:]), &stores); err != nil {
+			return nil, fmt.Errorf("python output %q: %v", out, err)
+		}
+		for i := range stores {
+			if stores[i].Store, err = dumpStore(stores[i].DB); err != nil {
+				return nil, err
+			}
+			// Each scenario's store is a temporary directory of its own; the rows stand for it.
+			stores[i].DB = ""
+		}
+		return stores, nil
+	}, sameUpToNoise)
 	return stores
-}
-
-func openRecorded(t *testing.T, path string) *Store {
-	t.Helper()
-	testsupport.HandOver(t, path, "go")
-	s, err := fixtureOpen(context.Background(), path, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
-	return s
 }
 
 func TestSchemaConformance_python_properties(t *testing.T) {
@@ -145,8 +159,9 @@ func TestSchemaConformance_python_properties(t *testing.T) {
 	// Receipts: every producer and outcome branch, as persisted by the Go intake.
 	test = "test_every_producer_and_outcome_branch_validates"
 	receipts := f.conformanceReceipts(t)
-	for label, record := range receipts {
-		positive("completion-receipt", label, record)
+	// In label order: the validator's recorded verdicts are asked for under the cases in order.
+	for _, label := range slices.Sorted(maps.Keys(receipts)) {
+		positive("completion-receipt", label, receipts[label])
 	}
 	ready := receipts["child ready_for_review"]
 	test = "test_negatives_are_rejected/completion-receipt"
@@ -172,10 +187,11 @@ func TestSchemaConformance_python_properties(t *testing.T) {
 	negative("completion-receipt", "daemon failed on an interrupted turn", mutated(t, daemon, func(r map[string]any) { r["turnRef"].(map[string]any)["turnStatus"] = "interrupted" }))
 
 	// Attempts, acknowledgements and verdicts are produced by the delivery layer (todo 21);
-	// here Go reads what the real Python services persisted and validates the stored records.
+	// here Go reads what the real Python services persisted (recorded rows, restored into a Go
+	// store) and validates the stored records.
 	var dispatched, acceptedAck, verifiedVerdict string
-	for _, recorded := range pythonDeliveryRecords(t) {
-		s := openRecorded(t, recorded.DB)
+	for i, recorded := range pythonDeliveryRecords(t) {
+		s := restoreStore(t, filepath.Join(t.TempDir(), fmt.Sprintf("scenario-%d", i), "relay.sqlite3"), recorded.Store)
 		switch recorded.Kind {
 		case "attempt":
 			test = "test_every_delivery_state_branch_validates"
@@ -417,8 +433,7 @@ func TestRelationshipRecord_matches_python_contract_record(t *testing.T) {
 	if err := f.store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	testsupport.HandOver(t, f.store.Path, "python")
-	want := pythonStoreValue(t, `import json, sys
+	want := pythonStoreValueAfter(t, func() { testsupport.HandOver(t, f.store.Path, "python") }, `import json, sys
 from codex_session_relay.clock import FakeClock
 from codex_session_relay.registry import Registry, contract_record
 from codex_session_relay.store import Store

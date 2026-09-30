@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,12 +28,17 @@ func pythonFence(t *testing.T, stdin, script string, args ...string) *exec.Cmd {
 	return command
 }
 
+// pythonOutput is what the fence prints for script; its answer is recorded (pythonOracle).
 func pythonOutput(t *testing.T, script string, args ...string) string {
 	t.Helper()
-	raw, err := pythonFence(t, "", script, args...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("python: %v\n%s", err, raw)
-	}
+	parts := append([]string{"fence", script}, oracleEnvironmentNow()...)
+	raw := pythonOracle(t, append(parts, args...), func() ([]byte, error) {
+		raw, err := pythonFence(t, "", script, args...).CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("python: %v\n%s", err, raw)
+		}
+		return raw, nil
+	})
 	return strings.TrimSpace(string(raw))
 }
 
@@ -115,9 +121,19 @@ func Test30SocketBindingBindsAnUnboundStoreOnce(t *testing.T) {
 	if !reflect.DeepEqual(unchanged, before) {
 		t.Fatalf("binding changed more than the socket:\nbefore %+v\nafter  %+v", before, after)
 	}
-	// The same key the Python fence records for that socket in this environment.
-	if want := pythonOutput(t, "import sys\nfrom codex_session_relay import ownership\nprint(ownership.scope_key(sys.argv[1]))", app); *after.ScopeKey != want {
-		t.Fatalf("scope key %q, the fence records %q", *after.ScopeKey, want)
+	// The key is the one the Python fence records for a socket: ownership.scope_key, asked of a
+	// fixed socket path under no scope-registry override and under a fixed one, since the key
+	// is a digest of the path and of the override's root, and this run's temporary directory is
+	// in app's and in the isolation's override.
+	const fixedSocket = "/crw-test/app.sock"
+	for _, scopes := range []struct{ name, dir string }{{"no-override", ""}, {"override", "/crw-test/scopes"}} {
+		t.Run("scope-key-"+scopes.name, func(t *testing.T) {
+			t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", scopes.dir)
+			want, err := ownership.ScopeKey(fixedSocket)
+			if python := pythonOutput(t, "import sys\nfrom codex_session_relay import ownership\nprint(ownership.scope_key(sys.argv[1]))", fixedSocket); err != nil || python != want {
+				t.Fatalf("scope key of %s %q (%v), the fence records %q", fixedSocket, want, err, python)
+			}
+		})
 	}
 
 	// Socketless and same-socket opens keep working; another socket is refused, unchanged.

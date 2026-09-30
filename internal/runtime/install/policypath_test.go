@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,12 +20,14 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // pythonBridgeRecord is the record scripts/crw_runtime/bridgerecord.document builds for these
 // fields and a policy at the raw path policy (os.fsdecode of its bytes), as json.dumps(indent=2,
-// sort_keys=True) writes it.
-func pythonBridgeRecord(t *testing.T, fields record.Object, policy, digest string) string {
+// sort_keys=True) writes it. Python's answer is recorded (pyoracle), with each run-specific
+// directory in dirs spelled as its placeholder.
+func pythonBridgeRecord(t *testing.T, fields record.Object, policy, digest string, dirs ...pyoracle.Option) string {
 	t.Helper()
 	given, err := json.Marshal(map[string]any{"command": record.Get(fields, "bridgeExecutable"), "args": record.Get(fields, "args"),
 		"name": record.Get(fields, "serverName"), "issue": record.Get(fields, "installedBy"), "pathHex": hex.EncodeToString([]byte(policy)), "digest": digest})
@@ -39,15 +42,18 @@ document = bridgerecord.document(command=given["command"], arguments=given["args
     execution_policy={"path": os.fsdecode(bytes.fromhex(given["pathHex"])), "digest": given["digest"]})
 sys.stdout.write(json.dumps(document, indent=2, sort_keys=True) + "\n")
 `
-	cmd := exec.Command(hostPython(), "-c", script, filepath.Join(golden.Root(), "scripts"))
-	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	cmd.Stdin = bytes.NewReader(given)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("bridgerecord.document: %v\n%s", err, stderr.String())
-	}
+	out := pyoracle.Answer(t, "bridgerecord.document", func() ([]byte, error) {
+		cmd := exec.Command(hostPython(), "-c", script, filepath.Join(golden.Root(), "scripts"))
+		cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
+		cmd.Stdin = bytes.NewReader(given)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("bridgerecord.document: %v\n%s", err, stderr.String())
+		}
+		return out, nil
+	}, dirs...)
 	return string(out)
 }
 
@@ -57,7 +63,6 @@ sys.stdout.write(json.dumps(document, indent=2, sort_keys=True) + "\n")
 // bridgerecord.document and json.dumps write for the same input. Both packaged launchers, which
 // fs-encode the path back, then start the Go bridge under that policy.
 func TestRegisterMCPRecordsANonUTF8PolicyPathAsPythonDoes(t *testing.T) {
-	needsPython(t)
 	h := newHost(t)
 	h.mustInstall(t, "install", archive(t, "0.9.0", ""))
 	policy := filepath.Join(h.home, "pol\x80icy.json")
@@ -79,13 +84,19 @@ func TestRegisterMCPRecordsANonUTF8PolicyPathAsPythonDoes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := pythonBridgeRecord(t, decoded.(record.Object), policy, digest); got != want {
+	if want := pythonBridgeRecord(t, decoded.(record.Object), policy, digest,
+		pyoracle.Substitute(h.home, "<HOME>"), pyoracle.Substitute(filepath.Dir(h.fake.SocketPath), "<SOCKET-DIR>")); got != want {
 		t.Fatalf("record:\n%s\nPython's bridgerecord:\n%s", got, want)
 	}
 
 	// Both launchers: the native crw-bridge.sh the package declares, whose Go launcher
-	// fs-encodes the path with the same reading.FSEncode, and the legacy crw_bridge_mcp.py.
+	// fs-encodes the path with the same reading.FSEncode, and the legacy crw_bridge_mcp.py where
+	// this host has a python3 to run it (runnablePython3).
 	for _, launcher := range bridgeLaunchers {
+		if launcher.python && runnablePython3() == "" {
+			t.Logf("%s: not started, no python3 that runs on PATH", launcher.name)
+			continue
+		}
 		dir, argv := launcher.place(t, h)
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		started := exercise.ArgvIn(ctx, dir, argv, scope.Env(homeOnly))

@@ -1,13 +1,11 @@
 package store
 
 import (
-	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // pythonDeliveryScript drives the real Python DeliveryService over a fresh store under
@@ -76,7 +74,8 @@ type pythonDelivery struct {
 	DeliveryState string          `json:"deliveryState"`
 }
 
-// pythonDeliveryStore returns what Python recorded and the same database opened by Go.
+// pythonDeliveryStore returns what Python recorded and a Go store holding the rows Python's
+// store held (restoreStore). Both are recorded (pythonOracle).
 func pythonDeliveryStore(t *testing.T, scenario string) (pythonDelivery, *Store) {
 	t.Helper()
 	root := t.TempDir()
@@ -84,22 +83,30 @@ func pythonDeliveryStore(t *testing.T, scenario string) (pythonDelivery, *Store)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
 	t.Setenv("TMPDIR", root)
 	package_ := filepath.Join(repositoryRoot(t), "packages/codex-session-relay")
-	out := pythonStoreValueIn(t, package_, pythonDeliveryScript, scenario)
-	var got pythonDelivery
-	if err := json.Unmarshal([]byte(out[strings.LastIndex(out, "\n")+1:]), &got); err != nil {
-		t.Fatalf("python output %q: %v", out, err)
+	isolated := isolatedEnv(t)
+	var answer struct {
+		Delivery pythonDelivery `json:"delivery"`
+		Rows     storeRows      `json:"rows"`
 	}
-	testsupport.HandOver(t, got.DB, "go")
-	s, err := fixtureOpen(context.Background(), got.DB, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := s.Close(); err != nil {
-			t.Error(err)
+	parts := append([]string{"delivery-store", package_, pythonDeliveryScript, scenario}, keptEnvironment()...)
+	jsonAnswer(t, parts, &answer, func() (any, error) {
+		raw, err := runPythonStore(t, isolated, package_, pythonDeliveryScript, scenario)
+		if err != nil {
+			return nil, err
 		}
-	})
-	return got, s
+		out := strings.TrimSpace(string(raw))
+		var got pythonDelivery
+		if err := json.Unmarshal([]byte(out[strings.LastIndex(out, "\n")+1:]), &got); err != nil {
+			return nil, fmt.Errorf("python output %q: %v", out, err)
+		}
+		rows, err := dumpStore(got.DB)
+		// Python's store is a temporary directory of its own; the rows stand for it.
+		got.DB = ""
+		return map[string]any{"delivery": got, "rows": rows}, err
+	}, sameUpToNoise)
+	got := answer.Delivery
+	got.DB = filepath.Join(root, "restored", "relay.sqlite3")
+	return got, restoreStore(t, got.DB, answer.Rows)
 }
 
 func requestToken(message string) string {

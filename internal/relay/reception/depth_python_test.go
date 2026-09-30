@@ -8,8 +8,12 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
+// consoleDepthProblem is what the Python console answers for a document nested depth deep at
+// site, reduced to its recursion problem. It runs live only when pyoracle records or checks.
 func consoleDepthProblem(t *testing.T, site string, depth int) string {
 	t.Helper()
 	root, _ := filepath.Abs("../../..")
@@ -109,7 +113,9 @@ func Test23JSONDepthBoundaryMatchesPython(t *testing.T) {
 	for _, site := range []string{"packet", "ledger", "settings", "declaration", "policy"} {
 		for _, depth := range []int{9997, 9998, 9999} {
 			t.Run(site+"/"+strconv.Itoa(depth), func(t *testing.T) {
-				want := consoleDepthProblem(t, site, depth)
+				want := string(pyoracle.Answer(t, "problem", func() ([]byte, error) {
+					return []byte(consoleDepthProblem(t, site, depth)), nil
+				}))
 				raw := []byte(strings.Repeat("[", depth) + "0" + strings.Repeat("]", depth))
 				var got string
 				switch site {

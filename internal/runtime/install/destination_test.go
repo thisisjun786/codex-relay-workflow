@@ -1,10 +1,8 @@
 package install_test
 
 import (
-	"bytes"
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -273,8 +271,9 @@ func TestARollbackHoldsItsTargetsDirectoryLock(t *testing.T) {
 }
 
 // A claim runtime_install.py must read stays in its shape: settling the STAGING claim of a Python
-// venv a rollback returns to writes COMPLETE with writtenBy runtime_install.py, which Python's
-// own staging.shape accepts.
+// venv a rollback returns to writes COMPLETE with writtenBy runtime_install.py. (That Python's
+// own staging.shape accepts it was checked here until todo 44: rollback to Python closed at todo
+// 43, rollback_allowed=0, and the Python installer leaves in todo 44.)
 func TestAClaimRuntimeInstallPyWroteStaysOneItCanRead(t *testing.T) {
 	h := newHost(t)
 	venv, _ := h.pythonEraHost(t)
@@ -287,15 +286,5 @@ func TestAClaimRuntimeInstallPyWroteStaysOneItCanRead(t *testing.T) {
 	claim := readFile(t, staging.ClaimPath(venv))
 	if !strings.Contains(claim, `"writtenBy": "runtime_install.py"`) || !strings.Contains(claim, `"state": "COMPLETE"`) {
 		t.Fatalf("claim:\n%s", claim)
-	}
-	if hostPython() == "" {
-		return
-	}
-	cmd := exec.Command(hostPython(), "-c", "import json, sys\nsys.path.insert(0, sys.argv[1])\nfrom crw_runtime import staging\nstaging.shape(json.load(open(sys.argv[2])))", filepath.Join(golden.Root(), "scripts"), staging.ClaimPath(venv))
-	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("runtime_install.py's staging.shape refuses the claim: %v\n%s", err, stderr.String())
 	}
 }

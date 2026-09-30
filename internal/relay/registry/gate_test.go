@@ -3,6 +3,7 @@ package registry
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // gateAnswers runs delivery.authorized_settings' Go port over testdata/gate_cases.json (each row
@@ -288,7 +290,7 @@ func Test25_CLI23_a_write_forms_own_refusal_comes_after_its_store(t *testing.T) 
 		}
 		return names
 	}
-	for _, c := range []struct {
+	for i, c := range []struct {
 		argv    []string
 		created bool
 	}{
@@ -301,24 +303,34 @@ func Test25_CLI23_a_write_forms_own_refusal_comes_after_its_store(t *testing.T) 
 		goState, pyState := filepath.Join(home, "go"), filepath.Join(home, "python")
 		var goOut, goErr bytes.Buffer
 		goCode := Execute(ctx(), append([]string{"--state", goState}, c.argv...), &goOut, &goErr)
-		oracle := exec.Command(filepath.Join(root, ".venv/bin/python"), append([]string{"-m", "codex_session_relay.cli", "--state", pyState}, c.argv...)...)
-		oracle.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xs", "XDG_CONFIG_HOME="+home+"/xc", "CODEX_HOME="+home+"/ch")
-		var pyOut bytes.Buffer
-		oracle.Stdout = &pyOut
-		pyCode := 0
-		if err := oracle.Run(); err != nil {
-			exit, ok := err.(*exec.ExitError)
-			if !ok {
-				t.Fatal(err)
-			}
-			pyCode = exit.ExitCode()
+		// What Python printed, its exit and what it left in its own state directory, recorded
+		// (pyoracle) with the directory spelled <STATE> and the home <HOME>.
+		var py struct {
+			Code   int      `json:"code"`
+			Stdout string   `json:"stdout"`
+			Names  []string `json:"names"`
 		}
+		pyoracle.JSON(t, fmt.Sprintf("case-%d %s", i, c.argv[0]), &py, func() (any, error) {
+			oracle := exec.Command(filepath.Join(root, ".venv/bin/python"), append([]string{"-m", "codex_session_relay.cli", "--state", pyState}, c.argv...)...)
+			oracle.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xs", "XDG_CONFIG_HOME="+home+"/xc", "CODEX_HOME="+home+"/ch")
+			var pyOut bytes.Buffer
+			oracle.Stdout = &pyOut
+			pyCode := 0
+			if err := oracle.Run(); err != nil {
+				exit, ok := err.(*exec.ExitError)
+				if !ok {
+					return nil, err
+				}
+				pyCode = exit.ExitCode()
+			}
+			return map[string]any{"code": pyCode, "stdout": strings.ReplaceAll(pyOut.String(), pyState, "<STATE>"), "names": listing(pyState)}, nil
+		}, pyoracle.Substitute(home, "<HOME>"))
 		goStdout := strings.ReplaceAll(goOut.String(), goState, "<STATE>")
-		pyStdout := strings.ReplaceAll(pyOut.String(), pyState, "<STATE>")
+		pyCode, pyStdout := py.Code, py.Stdout
 		if goCode != pyCode || goStdout != pyStdout {
 			t.Errorf("%v: go exit %d %q, python exit %d %q", c.argv[0], goCode, goStdout, pyCode, pyStdout)
 		}
-		goNames, pyNames := listing(goState), listing(pyState)
+		goNames, pyNames := listing(goState), py.Names
 		if !reflect.DeepEqual(goNames, pyNames) || (goNames != nil) != c.created {
 			t.Errorf("%v: go left %v, python left %v; a store expected: %t", c.argv[0], goNames, pyNames, c.created)
 		}

@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -129,14 +130,19 @@ func TestTransaction_rolls_back_when_process_dies_before_commit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/store/testdata/crash_capture.py"), filepath.Join(t.TempDir(), "python.sqlite3"))
-	cmd.Dir = repo
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Python %v\n%s", err, out)
-	}
+	// Python's own store, crashed the same way (testdata/crash_capture.py); its answer is recorded.
+	python := filepath.Join(t.TempDir(), "python.sqlite3")
+	out := pythonOracle(t, []string{"crash-capture", python}, func() ([]byte, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/store/testdata/crash_capture.py"), python)
+		cmd.Dir = repo
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("Python %v\n%s", err, out)
+		}
+		return out, nil
+	})
 	var want any
 	if err := json.Unmarshal(out, &want); err != nil {
 		t.Fatal(err)

@@ -30,6 +30,12 @@ func hookHome(t *testing.T, budget float64) string {
 			t.Error(err)
 		}
 	})
+	return hookHomeAt(t, home, budget)
+}
+
+// hookHomeAt writes hookHome's settings into home.
+func hookHomeAt(t *testing.T, home string, budget float64) string {
+	t.Helper()
 	config := Object{{Key: "configVersion", Value: int64(1)}, {Key: "mode", Value: "observe"}, {Key: "relayExecutable", Value: filepath.Join(home, "never-run")}, {Key: "markerRoot", Value: filepath.Join(home, "markers")}, {Key: "dbPath", Value: filepath.Join(home, "state/relay.sqlite3")}, {Key: "timeoutSeconds", Value: budget}, {Key: "journalRoot", Value: filepath.Join(home, "journal")}}
 	writeTest(t, filepath.Join(home, ConfigName), []byte(evidence.Dumps(config, false, false, true)))
 	writeTest(t, filepath.Join(home, "never-run"), []byte("must not execute"))

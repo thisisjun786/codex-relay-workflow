@@ -136,112 +136,77 @@ func startServing(t *testing.T, home string, python bool) (*ProcessHandle, *Proc
 	}
 	return supervisor, worker
 }
+
+// Test29StartStopAndSecondStart: a second start of a running Go service is refused without
+// touching the live launch, and an escalated stop answers as a plain stop. The Python service
+// this was once compared with left with the Python runtime (todo 44); the stop is judged against
+// pythonPlainStops, the stop it answered.
 func Test29StartStopAndSecondStart(t *testing.T) {
 	home := t.TempDir()
-	var pythonSecond, pythonStop capture
-	var pythonFiles map[string]string
-	for _, python := range []bool{true, false} {
-		t.Run(fmt.Sprint(python), func(t *testing.T) {
-			supervisor, worker := startServing(t, home, python)
-			recordPath := filepath.Join(home, "state", "daemon.json")
-			before, err := os.ReadFile(recordPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			children, err := os.ReadFile(fmt.Sprintf("/proc/%d/task/%d/children", supervisor.PID, supervisor.PID))
-			if err != nil {
-				t.Fatal(err)
-			}
-			second := invoke(t, home, python, "--socket", home+"/socket", "service", "start", "--allow-isolated-scope")
-			after, err := os.ReadFile(recordPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			nextChildren, err := os.ReadFile(fmt.Sprintf("/proc/%d/task/%d/children", supervisor.PID, supervisor.PID))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if second.Code != 2 || get(runtimeObject(t, second), "reason") != "already_running" || !bytes.Equal(before, after) || !bytes.Equal(children, nextChildren) || worker.Wait(0) || supervisor.Wait(0) {
-				t.Fatalf("second start changed live launch: %+v", second)
-			}
-			// Duplicate-start equality does not depend on the later stop result.
-			if python {
-				pythonSecond = second
-			} else {
-				compare(t, pythonSecond, second)
-			}
-			// Freezing forces worker escalation, but SIGKILL can still expose
-			// Python's zombie-leader/held-lock race (decision 27).
-			stopObserved(t, worker)
-			stop := invoke(t, home, python, "--socket", home+"/socket", "service", "stop")
-			t.Logf("escalated stop: %+v supervisorExitObserved=%v workerExitObserved=%v", stop, supervisor.Wait(0), worker.Wait(0))
-			state := files(t, home, writtenBy(python))
-			if python {
-				pythonStop = stop
-				pythonFiles = state
-			} else {
-				pythonOK := pythonStop.Code == 0 && get(runtimeObject(t, pythonStop), "ok") == true
-				if err := plainStopProblem(pythonOK, stop, map[capture]bool{plainStopShape(pythonStop): true}); err != nil {
-					t.Error(err)
-				}
-				if !pythonOK {
-					t.Log("Python non-ok stop: omit stop-state equality; duplicate-start equality was checked")
-					return
-				}
-				for _, name := range []string{"daemon.json", "daemon.log", "service.json", "worker-policy.json"} {
-					if pythonFiles[name] != state[name] {
-						t.Errorf("%s\nPython %s\nGo %s", name, pythonFiles[name], state[name])
-					}
-				}
-			}
-		})
-		resetRuntime(t, home)
+	supervisor, worker := startServing(t, home, false)
+	recordPath := filepath.Join(home, "state", "daemon.json")
+	before, err := os.ReadFile(recordPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	children, err := os.ReadFile(fmt.Sprintf("/proc/%d/task/%d/children", supervisor.PID, supervisor.PID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := invoke(t, home, false, "--socket", home+"/socket", "service", "start", "--allow-isolated-scope")
+	after, err := os.ReadFile(recordPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextChildren, err := os.ReadFile(fmt.Sprintf("/proc/%d/task/%d/children", supervisor.PID, supervisor.PID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Code != 2 || get(runtimeObject(t, second), "reason") != "already_running" || second.Err != "" || !bytes.Equal(before, after) || !bytes.Equal(children, nextChildren) || worker.Wait(0) || supervisor.Wait(0) {
+		t.Fatalf("second start changed live launch: %+v", second)
+	}
+	// Freezing forces worker escalation.
+	stopObserved(t, worker)
+	stop := invoke(t, home, false, "--socket", home+"/socket", "service", "stop")
+	t.Logf("escalated stop: %+v supervisorExitObserved=%v workerExitObserved=%v", stop, supervisor.Wait(0), worker.Wait(0))
+	if err := plainStopProblem(true, stop, pythonPlainStops); err != nil {
+		t.Error(err)
 	}
 }
 
 // Both workers arm PR_SET_PDEATHSIG=SIGTERM (service.py:299-322). Freezing
 // before supervisor death proves the flock survives WHILE the worker lives;
 // an unfrozen worker is expected to exit, not to remain a permanent orphan.
+// (The Python service's half of this test left with the Python runtime, todo 44.)
 func Test29OrphanKeepsInheritedLocks(t *testing.T) {
 	home := t.TempDir()
-	var pythonStatus capture
-	for _, python := range []bool{true, false} {
-		t.Run(fmt.Sprint(python), func(t *testing.T) {
-			supervisor, worker := startServing(t, home, python)
-			stopObserved(t, worker)
-			if !supervisor.Send(unix.SIGKILL) || !supervisor.Wait(5*time.Second) {
-				t.Fatal("supervisor did not exit")
-			}
-			if worker.Wait(0) {
-				t.Fatal("stopped worker exited")
-			}
-			if !lockHeld(filepath.Join(home, "state", "daemon.lock")) {
-				t.Fatal("supervisor released worker's daemon lock")
-			}
-			scope := &ScopeRegistry{Root: home + "/scopes", Authority: "isolated"}
-			if !lockHeld(scope.path(home+"/socket", ".lock")) {
-				t.Fatal("supervisor released worker's scope lock")
-			}
-			status := invoke(t, home, python, "--socket", home+"/socket", "service", "status")
-			r := runtimeObject(t, status)
-			if get(r, "running") != true || get(r, "lock") != "held" {
-				t.Fatal(status)
-			}
-			if python {
-				pythonStatus = status
-			} else {
-				compare(t, pythonStatus, status)
-			}
-			second := invoke(t, home, python, "--socket", home+"/socket", "service", "start", "--allow-isolated-scope")
-			if get(runtimeObject(t, second), "reason") != "already_running" {
-				t.Fatal(second)
-			}
-			worker.Send(unix.SIGKILL)
-			if !worker.Wait(5 * time.Second) {
-				t.Fatal("worker did not exit")
-			}
-		})
-		resetRuntime(t, home)
+	supervisor, worker := startServing(t, home, false)
+	stopObserved(t, worker)
+	if !supervisor.Send(unix.SIGKILL) || !supervisor.Wait(5*time.Second) {
+		t.Fatal("supervisor did not exit")
+	}
+	if worker.Wait(0) {
+		t.Fatal("stopped worker exited")
+	}
+	if !lockHeld(filepath.Join(home, "state", "daemon.lock")) {
+		t.Fatal("supervisor released worker's daemon lock")
+	}
+	scope := &ScopeRegistry{Root: home + "/scopes", Authority: "isolated"}
+	if !lockHeld(scope.path(home+"/socket", ".lock")) {
+		t.Fatal("supervisor released worker's scope lock")
+	}
+	status := invoke(t, home, false, "--socket", home+"/socket", "service", "status")
+	r := runtimeObject(t, status)
+	if status.Code != 0 || status.Err != "" || get(r, "running") != true || get(r, "lock") != "held" {
+		t.Fatal(status)
+	}
+	second := invoke(t, home, false, "--socket", home+"/socket", "service", "start", "--allow-isolated-scope")
+	if get(runtimeObject(t, second), "reason") != "already_running" {
+		t.Fatal(second)
+	}
+	worker.Send(unix.SIGKILL)
+	if !worker.Wait(5 * time.Second) {
+		t.Fatal("worker did not exit")
 	}
 }
 func storeSelection(home string) store.StateSelection {
@@ -275,19 +240,20 @@ func Test29StopEscalatesAndRefusesForeign(t *testing.T) {
 }
 
 // Decision 42: a service supervisor interrupted by itself stops, and its worker with it, in
-// both runtimes. Python's KeyboardInterrupt ends the supervisor and PR_SET_PDEATHSIG then its
-// worker; Go passes the interrupt on and exits after its worker, clearing both identities.
+// both runtimes. Python's KeyboardInterrupt ended the supervisor and PR_SET_PDEATHSIG then its
+// worker (its case left with the Python runtime, todo 44); Go passes the interrupt on and exits
+// after its worker, clearing both identities.
 // Interrupted together, as a Go-owner drain or a terminal's process group does it, the Go
 // worker absorbs the repeat and stops through its own cleanup (control.sock unbound), not by
 // SIGINT's default disposition.
 func Test42InterruptedSupervisorStopsItsWorker(t *testing.T) {
 	for _, tc := range []struct {
-		name         string
-		python, both bool
-	}{{"python", true, false}, {"go", false, false}, {"go-interrupted-together", false, true}} {
+		name string
+		both bool
+	}{{"go", false}, {"go-interrupted-together", true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
-			supervisor, worker := startServing(t, home, tc.python)
+			supervisor, worker := startServing(t, home, false)
 			if !supervisor.Send(unix.SIGINT) {
 				t.Fatal(supervisor.Detail)
 			}
@@ -305,9 +271,6 @@ func Test42InterruptedSupervisorStopsItsWorker(t *testing.T) {
 				if lockHeld(lock) {
 					t.Fatalf("%s is still held", lock)
 				}
-			}
-			if tc.python {
-				return
 			}
 			r := read(filepath.Join(home, "state", "daemon.json"))
 			if get(r, "pid") != nil || get(r, "workerPid") != nil || get(r, "lastExit") == nil || num(get(r, "lastExit")) < 0 || get(r, "nextRestartAt") != nil {

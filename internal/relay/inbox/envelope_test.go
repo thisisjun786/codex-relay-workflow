@@ -7,11 +7,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // repo is the repository root, from this package's directory.
@@ -63,7 +66,8 @@ func TestEnvelope_is_byte_identical_to_the_python_goldens(t *testing.T) {
 	}
 }
 
-// The envelope's edge arguments against the live fence (inbox.envelope, one Python process):
+// The envelope's edge arguments against the fence (inbox.envelope, one Python process, its answer
+// recorded by pyoracle):
 // append lists, store_true, non-default and arbitrary-precision integers, explicit defaults
 // (omitted), argparse's int spellings, empty strings, non-ASCII, U+2028, quotes, backslashes and
 // control characters, percent-encoded identifiers, the 200-character boundary, and the usage
@@ -112,17 +116,20 @@ for case in json.load(sys.stdin):
         out.append({"usage": str(error)})
 json.dump(out, sys.stdout)
 `
-	python := exec.Command(filepath.Join(repo, ".venv", "bin", "python"), "-c", script)
-	python.Stdin = bytes.NewReader(input)
-	python.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	output, err := python.Output()
-	if err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) {
-			t.Fatalf("%v: %s", err, exit.Stderr)
+	output := pyoracle.Answer(t, "edges", func() ([]byte, error) {
+		python := exec.Command(filepath.Join(repo, ".venv", "bin", "python"), "-c", script)
+		python.Stdin = bytes.NewReader(input)
+		python.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
+		output, err := python.Output()
+		if err != nil {
+			var exit *exec.ExitError
+			if errors.As(err, &exit) {
+				return nil, fmt.Errorf("%v: %s", err, exit.Stderr)
+			}
+			return nil, err
 		}
-		t.Fatal(err)
-	}
+		return output, nil
+	})
 	var want []struct{ Raw, Usage string }
 	if err = json.Unmarshal(output, &want); err != nil || len(want) != len(edges) {
 		t.Fatalf("%v: %s", err, output)

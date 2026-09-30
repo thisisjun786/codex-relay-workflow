@@ -3,6 +3,7 @@ package hook
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func Test33EventKeyGolden(t *testing.T) {
@@ -42,7 +44,7 @@ func Test33EventKeyGolden(t *testing.T) {
 	}
 }
 func Test33TranscriptIdentityPython(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join(testRoot, "packages/codex-session-relay/tests/fixtures/stop_event_r1.json"))
+	raw, err := os.ReadFile("testdata/stop_event_r1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,12 +70,15 @@ func Test33TranscriptIdentityPython(t *testing.T) {
 				t.Fatal(err)
 			}
 			key, identity := EventIdentity(context.Background(), stop)
-			cmd := exec.Command(python(t), "-c", "import json,sys;from codex_session_relay.stopadapter import event_identity;print(json.dumps(event_identity(json.load(sys.stdin))))")
-			cmd.Stdin = strings.NewReader(string(payload))
-			want, err := cmd.CombinedOutput()
-			if err != nil {
-				t.Fatalf("%v %s", err, want)
-			}
+			want := pyoracle.Answer(t, "event_identity", func() ([]byte, error) {
+				cmd := exec.Command(python(t), "-c", "import json,sys;from codex_session_relay.stopadapter import event_identity;print(json.dumps(event_identity(json.load(sys.stdin))))")
+				cmd.Stdin = strings.NewReader(string(payload))
+				want, err := cmd.CombinedOutput()
+				if err != nil {
+					return nil, fmt.Errorf("%v %s", err, want)
+				}
+				return want, nil
+			}, pyoracle.Substitute(home, "<HOME>"))
 			actual := []any{nullable(key), identity}
 			var normalized any
 			encoded := evidence.Dumps(actual, false, false, true)

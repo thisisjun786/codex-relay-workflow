@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,12 +23,17 @@ func TestOpen_matches_python_schema_when_fresh(t *testing.T) {
 	root := t.TempDir()
 	pythonDB := filepath.Join(root, "python", "relay.sqlite3")
 	goDB := filepath.Join(root, "go", "relay.sqlite3")
-	cmd := exec.Command("uv", "run", "--no-sync", "python", "-c", "from codex_session_relay.store import Store; import sys; Store(sys.argv[1])", pythonDB)
-	cmd.Dir = repositoryRoot(t)
-	cmd.Env = append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+filepath.Join(root, "xdg"), "XDG_DATA_HOME="+filepath.Join(root, "data"), "XDG_CONFIG_HOME="+filepath.Join(root, "config"), "CODEX_HOME="+filepath.Join(root, "codex"), "PYTHONPATH="+filepath.Join(repositoryRoot(t), "packages/codex-session-relay/src"))
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("python Store: %v: %s", err, output)
-	}
+	// Python's schema, as SQLite persists it, is recorded (pythonOracle).
+	var want []string
+	jsonAnswer(t, []string{"fresh-schema"}, &want, func() (any, error) {
+		cmd := exec.Command("uv", "run", "--no-sync", "python", "-c", "from codex_session_relay.store import Store; import sys; Store(sys.argv[1])", pythonDB)
+		cmd.Dir = repositoryRoot(t)
+		cmd.Env = append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+filepath.Join(root, "xdg"), "XDG_DATA_HOME="+filepath.Join(root, "data"), "XDG_CONFIG_HOME="+filepath.Join(root, "config"), "CODEX_HOME="+filepath.Join(root, "codex"), "PYTHONPATH="+filepath.Join(repositoryRoot(t), "packages/codex-session-relay/src"))
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("python Store: %v: %s", err, output)
+		}
+		return master(t, pythonDB), nil
+	})
 	// When: Go initializes its own database.
 	store, err := fixtureOpen(ctx, goDB, "")
 	if err != nil {
@@ -35,7 +41,6 @@ func TestOpen_matches_python_schema_when_fresh(t *testing.T) {
 	}
 	defer store.Close()
 	// Then: SQLite's persisted CREATE text is byte-identical.
-	want := master(t, pythonDB)
 	got := master(t, goDB)
 	if !reflect.DeepEqual(got, want) {
 		for i := range got {

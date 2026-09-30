@@ -235,6 +235,15 @@ func files(t *testing.T, home string, writer testsupport.Runtime) map[string]str
 	}
 	return out
 }
+
+// consoleAnswer is what one runtime's console run answered and the state files it left.
+type consoleAnswer struct {
+	Capture capture           `json:"capture"`
+	Files   map[string]string `json:"files"`
+}
+
+// Test29ConsoleParity runs each console command in both runtimes over the same home; Python's
+// answer and files are recorded (pythonHalf).
 func Test29ConsoleParity(t *testing.T) {
 	cases := [][]string{{"service", "status"}, {"service", "enable", "--actor", "tester"}, {"service", "disable"}, {"service", "stop"}, {"service", "declare", "--forget-execution-policy"}, {"service", "start"}, {"service", "restart"}, {"service", "run"}, {"daemon"}, {"--socket", "/absent", "daemon", "--deadline", "nan"}, {"--socket", "/absent", "daemon", "--deadline", "0", "--deadline-monotonic", "0"}, {"--socket", "/absent", "daemon", "--deadline-monotonic", "0"}, {"--socket", "/absent", "daemon", "--max-ticks", "0", "--allow-isolated-scope"}, {"--socket", "/absent", "daemon", "--max-ticks", "1", "--allow-isolated-scope"}}
 	cases = append(cases,
@@ -247,13 +256,15 @@ func Test29ConsoleParity(t *testing.T) {
 	for i, args := range cases {
 		t.Run(fmt.Sprintf("%02d_%s", i, strings.Join(args, "_")), func(t *testing.T) {
 			home := t.TempDir()
-			want := invoke(t, home, true, args...)
-			wf := files(t, home, testsupport.Python)
-			resetRuntime(t, home)
+			var python consoleAnswer
+			pythonHalf(t, home, "python", true, &python, func() (any, error) {
+				want := invoke(t, home, true, args...)
+				return consoleAnswer{pythonCapture(want), files(t, home, testsupport.Python)}, nil
+			})
 			got := invoke(t, home, false, args...)
 			gf := files(t, home, testsupport.Go)
-			compare(t, want, got)
-			wb, _ := json.Marshal(wf)
+			compare(t, python.Capture, got)
+			wb, _ := json.Marshal(python.Files)
 			gb, _ := json.Marshal(gf)
 			if !bytes.Equal(wb, gb) {
 				t.Fatalf("persisted files\nPython %s\nGo %s", wb, gb)
@@ -268,7 +279,11 @@ func Test29CLIShape(t *testing.T) {
 			args := append(append([]string{}, command...), suffix...)
 			t.Run(strings.Join(args, "_"), func(t *testing.T) {
 				home := t.TempDir()
-				compare(t, invoke(t, home, true, args...), invoke(t, home, false, args...))
+				var want capture
+				pythonHalf(t, home, "python", false, &want, func() (any, error) {
+					return pythonCapture(invoke(t, home, true, args...)), nil
+				})
+				compare(t, want, invoke(t, home, false, args...))
 			})
 		}
 	}

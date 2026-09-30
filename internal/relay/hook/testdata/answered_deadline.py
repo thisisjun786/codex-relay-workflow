@@ -10,6 +10,8 @@ from unittest import mock
 from codex_session_relay import guard, stopadapter
 
 home = Path(sys.argv[1])
+# python: Python's answer and hook files alone, recorded by the Go test (pyoracle).
+PYTHON_ONLY = sys.argv[2:] == ['python']
 native = sys.stdin.read()
 config = json.loads((home / 'crw-completion-hook.json').read_text())
 payload = (home / 'stop.json').read_bytes()
@@ -35,6 +37,9 @@ with mock.patch.object(stopadapter, 'time', SimpleNamespace(monotonic=lambda: cl
         contextlib.redirect_stdout(stdout):
     stopadapter.main()
 assert verdicts[0]['decision'] == 'block'
+if PYTHON_ONLY:
+    print(json.dumps(dict(stdout=stdout.getvalue(), files={p.name: p.read_text() for p in paths})))
+    sys.exit()
 assert stdout.getvalue() == native and native
 assert before == {str(p): p.read_bytes() for p in paths}
 print(json.dumps(dict(equal=True, stdout=native, hold_and_observation_bytes_equal=True)))

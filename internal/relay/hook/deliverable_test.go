@@ -1,13 +1,11 @@
 package hook
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -15,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // deliverableStateCase stages one stored receipt's deliverable. refer, when set, is the frozen
@@ -207,7 +206,9 @@ func TestDeliverableStateAnswersAsTheGuard(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			base := t.TempDir()
+			// A fixed length: a decoder's refusal of a MANIFEST.json counts its position past the
+			// paths it names.
+			base := fixedLengthDir(t, t.TempDir(), 200)
 			work := filepath.Join(base, "work")
 			if err := os.Mkdir(work, 0o700); err != nil {
 				t.Fatal(err)
@@ -246,7 +247,8 @@ func TestDeliverableStateAnswersAsTheGuard(t *testing.T) {
 				record = c.claimed
 			}
 			raw := []byte(fmt.Sprintf(`{"payload": {"manifest": [%s], "revisionHash": %s}, "reference": %s, "roots": %s}`, record, quote(revision), quote(named), quote([]string{work})))
-			cmd := exec.Command(python(t), "-c", `import json, sys
+			want := pyoracle.Answer(t, "deliverable_state", func() ([]byte, error) {
+				return pythonScript(t, nil, raw, "-c", `import json, sys
 from codex_session_relay.guard import deliverable_state
 spec = json.load(sys.stdin)
 try:
@@ -255,11 +257,7 @@ except Exception as error:
     # An exception its except clauses do not name leaves deliverable_state.
     answer = ["raised", type(error).__name__ + ": " + str(error)]
 print(json.dumps(answer))`)
-			cmd.Stdin = bytes.NewReader(raw)
-			want, err := cmd.Output()
-			if err != nil {
-				t.Fatalf("python: %v", err)
-			}
+			}, pyoracle.Substitute(base, "<BASE>"))
 			spec, err := Decode(raw)
 			if err != nil {
 				t.Fatal(err)

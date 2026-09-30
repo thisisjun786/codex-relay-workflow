@@ -135,6 +135,16 @@ def compare(native: Path, edge: str, module: str) -> None:
         for child in children:
             child.wait(timeout=10)
         assert db_snapshot(home) == before, 'guard changed the relay store'
+        if str(native) == '-':
+            # Python's side alone, recorded by the Go test (internal/testsupport/pyoracle).
+            expected = snapshot(home)
+            if edge == 'guard_timeout':
+                expected['rows'][0].pop('detail')
+            assert 'hold.json' in expected['records'], expected
+            assert expected['records']['1.json']['value']['decisionState'] == 'hold_in_flight', expected
+            assert answers[1] == ''
+            print(json.dumps(dict(stdout=answers, snapshot=expected)))
+            return
         go = json.loads((native / 'result.json').read_text())
         assert answers == go['stdout'], (edge, module, answers, go)
         expected, actual = snapshot(home), snapshot(native)

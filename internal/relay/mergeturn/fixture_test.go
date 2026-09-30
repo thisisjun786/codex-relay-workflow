@@ -444,7 +444,7 @@ func reasonOf(err error) string {
 
 func nullInt(v int64) sql.NullInt64 { return sql.NullInt64{Int64: v, Valid: true} }
 
-// readFixture reads one of the Python suite's shared fixture files.
+// readFixture reads a fixture the Python suite shared, copied into testdata.
 func readFixture(name string) ([]byte, error) {
-	return os.ReadFile(filepath.Join("..", "..", "..", "packages", "codex-session-relay", "tests", "fixtures", name))
+	return os.ReadFile(filepath.Join("testdata", name))
 }

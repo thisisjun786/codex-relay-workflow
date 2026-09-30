@@ -147,6 +147,7 @@ func TestRetentionScanReadsTheWiringSurfaces(t *testing.T) {
 		}
 	}
 	write(t, filepath.Join(h.codex, "crw-stop-hook.py"), "#!/usr/bin/env python3\n", 0o600)
+	h.pythonFirstOnPath(t)
 	write(t, filepath.Join(h.codex, "hooks.json"), `{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "bash '/x/state.sh' session", "timeout": 10}]}],
  "Stop": [{"hooks": [{"type": "command", "command": "/usr/bin/python3 /checkout/scripts/completion_hook.py", "timeout": 30}]}]}}`, 0o600)
 	write(t, filepath.Join(h.codex, "config.toml"), "model = \"x\"\n\n[mcp_servers.codex-thread-bridge]\ncommand = \""+filepath.Join(h.current(), "bin", "codex-thread-bridge")+"\"\n\n[mcp_servers.legacy]\ncommand = \"python3\"\nargs = [\"-m\", \"legacy_server\", \"/opt/legacy/server.py\"]\n", 0o600)
@@ -169,6 +170,16 @@ func TestRetentionScanReadsTheWiringSurfaces(t *testing.T) {
 	if record.Get(report, "longestHookTimeoutSeconds") != float64(30) {
 		t.Fatalf("the longest Stop hook timeout is the user's 30 s: %v", record.Get(report, "longestHookTimeoutSeconds"))
 	}
+}
+
+// pythonFirstOnPath puts a Python interpreter image named python3 (realPython) first on the PATH
+// the scan resolves bare command words with. The pre-native declarations name a bare python3, and
+// what this host's own PATH holds under that name may be anything or nothing.
+func (h *host) pythonFirstOnPath(t *testing.T) {
+	t.Helper()
+	bin := filepath.Join(h.home, "python-bin")
+	realPython(t, bin, "python3")
+	h.env = scope.Env{"HOME=" + h.home, "XDG_STATE_HOME=" + h.state, "CODEX_HOME=" + h.codex, "PATH=" + bin + ":" + os.Getenv("PATH")}
 }
 
 // A journal row inside twice the longest hook timeout is a live hold; one outside it is not.
