@@ -10,8 +10,8 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-// TestMain removes the crw binary the CLI tests may build (testsupport.CRW) and the Python
-// capture trees, once per package run.
+// TestMain removes the crw binary the CLI tests may build (testsupport.CRW) and the
+// process-lifetime parity trees (processParityTree), once per package run.
 func TestMain(m *testing.M) {
 	root, err := os.MkdirTemp("", "crw-delivery-tests-")
 	if err != nil {
@@ -37,12 +37,6 @@ func TestMain(m *testing.M) {
 	}
 	code := m.Run()
 	releaseParityTrees()
-	for _, path := range captureCleanups {
-		if err := testsupport.RemoveTempTree(path); err != nil {
-			fmt.Fprintln(os.Stderr, "cleanup Python capture:", err)
-			code = 1
-		}
-	}
 	if err := errors.Join(testsupport.RemoveTempTree(root), testsupport.RemoveCRW()); err != nil {
 		fmt.Fprintln(os.Stderr, "cleanup isolated state:", err)
 		code = 1

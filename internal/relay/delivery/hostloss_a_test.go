@@ -8,8 +8,8 @@ import (
 )
 
 // test_host_lost_turn.py HLT-1..HLT-29. Each Test21_HLT<n> runs the Go twin of every Python test
-// the property lists (as a subtest named after it), in the Python test's own tree, and compares
-// every asserted value, the delivery tables and the sends with what Python produced
+// the property lists (as a subtest named after it), in that test's tree, and checks every asserted
+// value, the delivery tables and the sends against the golden, which began as what Python produced
 // (hostloss_harness_test.go).
 
 const hlt = "test_host_lost_turn"

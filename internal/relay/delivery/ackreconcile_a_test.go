@@ -7,9 +7,9 @@ import (
 )
 
 // test_ack_reconcile.py ACR-1..ACR-23. Each Test21_ACR<n> runs the Go twin of every Python test the
-// property lists (a subtest per Python test), in the Python test's own tree, and compares every
-// asserted value, the delivery tables and the sends with what Python produced
-// (hostloss_harness_test.go mirror + testdata/capture.py).
+// property lists (a subtest per Python test), in that test's tree, and checks every asserted
+// value, the delivery tables and the sends against the golden, which began as what Python produced
+// (hostloss_harness_test.go mirror).
 
 const acr = "test_ack_reconcile"
 

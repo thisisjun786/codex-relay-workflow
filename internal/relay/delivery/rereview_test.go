@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"slices"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // test_rereview_deadlock.py RRD-1..RRD-9, mirrored test for test (hostloss_harness_test.go mirror
@@ -12,7 +14,7 @@ import (
 // decided-not-replayed path, the verdict_superseded journal) is delivery's ack.go. The assignment
 // view the tests read state through is todo 25's (registry.AssignmentView on codex/crw-154-registry);
 // rrState below reads the same rows by assignment.py's _resolve for the states these tests reach,
-// and rrMark writes AssignmentView.mark's rows (the journal row is compared with Python's).
+// and rrMark writes AssignmentView.mark's rows (the journal row is checked against the golden).
 
 const rrd = "test_rereview_deadlock"
 
@@ -177,16 +179,17 @@ func (h *hl) rrMark(event, evidence, actor string) {
 // reviewTables are the review-side tables the re-review paths write, beyond mirror's delivery tables.
 var reviewTables = []string{"verification_claims", "claim_context", "verdict_context", "canonical_criteria", "verification_mode", "assignment_marks", "relationships"}
 
-// rrMirror is mirror plus a row-for-row comparison of reviewTables with Python's.
+// rrMirror is mirror plus a golden check of reviewTables, row for row.
 func rrMirror(t *testing.T, name string, body func(h *hl)) {
 	t.Helper()
 	mirror(t, rrd, name, func(h *hl) {
 		body(h)
 		got := normalizeJSON(t, h.tables()).(map[string]any)
-		want := normalizeJSON(t, h.python.Tables).(map[string]any)
+		rows := map[string]any{}
 		for _, n := range reviewTables {
-			requireSameJSON(t, "table "+n, got[n], want[n])
+			rows[n] = got[n]
 		}
+		golden.CheckJSON(t, rrd+"/"+name+" review tables", rows, golden.Substitute(h.tree, "<tree>"))
 	})
 }
 
