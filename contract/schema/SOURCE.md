@@ -1,6 +1,8 @@
 # Frozen contract schemas
 
-Byte copies of the five schemas from the cross-session communication contract v1.
+Byte copies of the five schemas from the cross-session communication contract v1. The Python
+relay carried the same five under `packages/codex-session-relay/src/codex_session_relay/schema/`
+with this note until todo 44 removed its source; the copies here are the ones that remain.
 
 | File | sha256 |
 |---|---|
@@ -13,5 +15,5 @@ Byte copies of the five schemas from the cross-session communication contract v1
 Contract bundle revision c37d332e2daba95c9ef47adf00a82bc9c6a539ab62538f0ad857561e470d2989.
 
 These are the child-to-parent direction. The parent-to-child revision request is a relay-owned
-record with no schema here, because contract v1 defines none for that direction; see
-docs/protocol-v1.md.
+record with no schema here, because contract v1 defines none for that direction; see the relay's
+protocol-v1.md (packages/codex-session-relay/docs until todo 44 moves the relay docs).
