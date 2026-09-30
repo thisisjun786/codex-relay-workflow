@@ -28,20 +28,20 @@ differ, when a line count differs from `wc -l`, when an owning issue is missing,
 
 ## Files
 
-Total non-test lines: 95765
+Total non-test lines: 96047
 
 | path | lines | invoked | runs | owner | disposition | consumer_search | removal_trigger |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `packages/codex-session-relay/src/codex_session_relay/control.py` | 211 | imported by CLI supervisor | end user + relay host | CRW-156 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/control.py` | 244 | imported by CLI supervisor | end user + relay host | CRW-156 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/inbox.py` | 239 | imported by CLI admission/recovery | end user + relay host | CRW-152 | port | - | - |
-| `packages/codex-session-relay/src/codex_session_relay/ownership.py` | 468 | imported by Store, registration, service, bridge ledger | end user + relay host | CRW-152 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/ownership.py` | 625 | imported by Store, registration, service, bridge ledger | end user + relay host | CRW-152 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/takeover.py` | 132 | imported by service run candidate entry point | relay host | CRW-152 | port | - | - |
-| `packages/codex-session-relay/src/codex_session_relay/ack.py` | 1094 | imported by cli, supervisorchannel | relay host | CRW-153 | port | - | - |
-| `packages/codex-session-relay/src/codex_session_relay/admission.py` | 205 | imported by cli, daemon, managed, omitted, receipts | relay host | CRW-153 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/ack.py` | 1098 | imported by cli, supervisorchannel | relay host | CRW-153 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/admission.py` | 209 | imported by cli, daemon, managed, omitted, receipts | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/assignment.py` | 1163 | imported by cli, delivery, dispositions, faultsweep, linkage, reconcile | relay host | CRW-154 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/bridge_adapter.py` | 1321 | imported by cli; imports the bridge in-process (:875-900) | relay host | CRW-154 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/capacity.py` | 594 | imported by cli | relay host | CRW-154 | port | - | - |
-| `packages/codex-session-relay/src/codex_session_relay/cli.py` | 6135 | console script `codex-session-relay` (cli:main); `python -m codex_session_relay.cli` re-exec target of service.py:1680/1779 and supervisorchannel.py:205; run by skills, stopadapter guard call, crw_runtime.scope | end user + relay host | CRW-150 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/cli.py` | 6158 | console script `codex-session-relay` (cli:main); `python -m codex_session_relay.cli` re-exec target of service.py:1728/1827 and supervisorchannel.py:206; run by skills, stopadapter guard call, crw_runtime.scope | end user + relay host | CRW-150 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/clock.py` | 34 | imported by cli | relay host | CRW-152 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/completion.py` | 518 | imported by routing | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/coordination.py` | 129 | imported by capacity, editregion, mergeturn | relay host | CRW-154 | port | - | - |
@@ -62,9 +62,9 @@ Total non-test lines: 95765
 | `packages/codex-session-relay/src/codex_session_relay/faultsweep.py` | 1656 | imported by cli, daemon, delivery | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/forge.py` | 1222 | imported by cli, mergetarget; spawns `gh` (:160) | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/guard.py` | 1174 | imported by cli (`guard`/`guard-evaluate`), omitted | end user + relay host | CRW-153 | port | - | - |
-| `packages/codex-session-relay/src/codex_session_relay/hostadapter.py` | 322 | imported by bridge_adapter, cli, fakehost, hostloss, reconcile | relay host | CRW-154 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/hostadapter.py` | 344 | imported by bridge_adapter, cli, fakehost, hostloss, reconcile | relay host | CRW-154 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/hostloss.py` | 604 | imported by daemon, reconcile | relay host | CRW-153 | port | - | - |
-| `packages/codex-session-relay/src/codex_session_relay/identity.py` | 184 | imported by 17 relay modules | relay host | CRW-152 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/identity.py` | 185 | imported by 17 relay modules | relay host | CRW-152 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/__init__.py` | 11 | package init; `__version__`, `NO_DELIVERABLE` imported by 13 modules (faultsweep reads `__version__`) | relay host | CRW-150 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/intake.py` | 646 | imported by digest, routing | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/intent.py` | 1363 | imported by cli, faultnotice, guard, managed, omitted, supervision; `registration_hold()` opens the DB directly (:808) | relay host | CRW-153 | port | - | - |
@@ -72,7 +72,7 @@ Total non-test lines: 95765
 | `packages/codex-session-relay/src/codex_session_relay/lifecycle.py` | 131 | imported by delivery, faultnotice, managed, supervisorchannel | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/linkage.py` | 2448 | imported by assignment, cli, receiver, registry, rolepolicy | relay host | CRW-154 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/managed.py` | 707 | imported by cli; imports bridge settings (:66) | relay host | CRW-154 | port | - | - |
-| `packages/codex-session-relay/src/codex_session_relay/manifest.py` | 363 | imported by cli, guard, receipts | relay host | CRW-154 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/manifest.py` | 368 | imported by cli, guard, receipts | relay host | CRW-154 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/marker.py` | 486 | imported by cli, faultsweep, guard, intent, managed, omitted | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/mergeevidence.py` | 515 | imported by forge, mergeturn, report | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/mergetarget.py` | 192 | imported by cli, mergeturn; spawns `git` (:95) | relay host | CRW-154 | port | - | - |
@@ -94,12 +94,12 @@ Total non-test lines: 95765
 | `packages/codex-session-relay/src/codex_session_relay/routes.py` | 287 | imported by completion, digest, intake, projects, routing | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/routing.py` | 282 | imported by cli | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/scope.py` | 418 | imported by daemon, delivery, editregion, manifest, receipts; Linux F_SETLEASE (:194-216) | relay host | CRW-154 | port | - | - |
-| `packages/codex-session-relay/src/codex_session_relay/service.py` | 2194 | imported by cli (`daemon`, `service ...`); spawns the daemon worker | relay host | CRW-155 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/service.py` | 2204 | imported by cli (`daemon`, `service ...`); spawns the daemon worker | relay host | CRW-155 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/settings.py` | 866 | imported by assignment, bridge_adapter, cli, fakehost, faultsweep, managed, packets, receiver, registry | relay host | CRW-154 | port | - | - |
-| `packages/codex-session-relay/src/codex_session_relay/stopadapter.py` | 1376 | console script `crw-completion-hook` (stopadapter:main); started by the plugin launcher crw_stop_hook.py via `adapterEntryPoint` at every Stop | end user + relay host | CRW-156 | port | - | - |
-| `packages/codex-session-relay/src/codex_session_relay/store.py` | 2954 | imported by bridge_adapter, cli, declarations, dispositions, omitted, service, supervisorchannel | relay host | CRW-152 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/stopadapter.py` | 1385 | console script `crw-completion-hook` (stopadapter:main); started by the plugin launcher crw_stop_hook.py via `adapterEntryPoint` at every Stop | end user + relay host | CRW-156 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/store.py` | 2961 | imported by bridge_adapter, cli, declarations, dispositions, omitted, service, supervisorchannel | relay host | CRW-152 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/supervision.py` | 743 | imported by cli, delivery, faultnotice, faults, supervisorchannel | relay host | CRW-153 | port | - | - |
-| `packages/codex-session-relay/src/codex_session_relay/supervisorchannel.py` | 3257 | imported by assignment, cli, daemon, faultnotice, faults; renders the relay launcher tuple (:205) | relay host | CRW-153 | port | - | - |
+| `packages/codex-session-relay/src/codex_session_relay/supervisorchannel.py` | 3248 | imported by assignment, cli, daemon, faultnotice, faults; renders the relay launcher tuple (:206) | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/sync.py` | 899 | imported by cli, faults, receiver, supervision | relay host | CRW-153 | port | - | - |
 | `packages/codex-session-relay/src/codex_session_relay/transport.py` | 198 | imported by 13 relay modules (ack, delivery, reconcile, ...) | relay host | CRW-154 | port | - | - |
 | `packages/codex-thread-bridge/scripts/check_connection.py` | 60 | components.json `exerciseScript`; spawned by runtime_install.py `measure` (:4539) and `observe_app_server` (:1429) | relay host | CRW-151 | retire-with-evidence | `grep -rn check_connection` over scripts/, docs/, packages/*/README.md, scripts/crw_runtime/components.json (consumers: components.json:19, runtime_install.py:1429/4539, docs/runtime-install.md:81/1336, packages/codex-thread-bridge/README.md:635) | todo 37 components definition v2 replaces `exerciseScript` with `exerciseCommand` (`crw bridge` MCP `tools/list`); file deleted in todo 44 (CRW-141) |
@@ -118,7 +118,7 @@ Total non-test lines: 95765
 | `plugins/crw/skills/crw-run/scripts/start_policy.py` | 289 | skill instruction (start-policy.md:114) + CI (scripts/ci/contracts.py:18 `selftest`) | end user + relay host | CRW-156 | port | - | - |
 | `plugins/crw/wiring/crw_bridge_mcp.py` | 239 | MCP: mcp.json `python3 ./wiring/crw_bridge_mcp.py` (cwd plugin root); exec's the pointer-named bridge (:230-232) | end user + relay host | CRW-156 | retire-with-evidence | `grep -rn crw_bridge_mcp` over plugins/, scripts/, docs/ (consumers: mcp.json:6, crw_transition/steps.py:40/764, test_plugin_wiring) + host scan of `~/.codex/plugins/cache/crw/crw/*/.mcp.json`/`wiring/*` and `~/.codex/config.toml` command strings | todo 34 switched mcp.json to `sh ./wiring/crw-bridge.sh` and ported the record contract to `codex-thread-bridge --plugin-launch` (internal/pluginwiring, decision 26), so only sessions that cached the older declaration start it; deleted in todo 44 only after todo 43's retention scan reports no live or resumable reference |
 | `plugins/crw/wiring/crw_stop_hook.py` | 156 | Stop hook: `python3 -c <bootstrap>` in hooks/stop-recording-completion.json:8 exec's it (or its copy `<CODEX_HOME>/crw-stop-hook.py`); spawns `adapterInterpreter adapterEntryPoint` (:141) | end user + relay host | CRW-156 | retire-with-evidence | `grep -rn crw_stop_hook` and `grep -rn crw-stop-hook` over plugins/, scripts/, docs/ (consumers: stop-recording-completion.json:8, crw_runtime/completion.py:107/437-438 LAUNCHER_SOURCE, crw_transition/steps.py:40, docs/plugin-packaging.md:375) + host scan of cached `wiring/*` and `<CODEX_HOME>/crw-stop-hook.py` | todo 34 changed the hook command to the `crw hook --plugin-launch; exit 0` shell string (decision 26), so only turns whose command was fixed before it run it; deleted in todo 44 only after todo 43's retention scan reports no live or resumable turn whose fixed hook command still names it |
-| `scripts/check_operations_contract.py` | 260 | CI: scripts/ci/contracts.py:12 (operations fixtures replay) | dev/CI | CRW-160 | port | - | - |
+| `scripts/check_operations_contract.py` | 276 | CI: scripts/ci/contracts.py:12 (operations fixtures replay) | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/contracts.py` | 43 | CI: ci.yml:55 `python3 scripts/ci/contracts.py` | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/gate.py` | 45 | CI: ci.yml:122 required-checks gate | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/packages.py` | 331 | CI: ci.yml:104 per-package pytest (RELAY_CONFORMANCE_REQUIRED=1) | dev/CI | CRW-160 | port | - | - |
@@ -185,13 +185,13 @@ disappear from the product path.
 | `plugins/crw/wiring/crw_stop_hook.py:141` | `adapterInterpreter adapterEntryPoint <settings>` = stopadapter.py | Python | kept for the IS-7 window: the settings todo 38 writes name `/usr/bin/env` and `current/bin/crw-completion-hook`, so a cached bootstrap reaches the Go hook (`TestLegacyStopLaunchersReachTheGoHook`, and from an installed cache through the packaged launcher and the `<CODEX_HOME>/crw-stop-hook.py` copy in `internal/runtime/integration`, todo 40); the native command needs no such spawn, `crw hook` is the adapter |
 | `plugins/crw/wiring/crw_bridge_mcp.py:230` | `os.execv` of the pointer-named `codex-thread-bridge` | Python console script until todo 38, then Go | `codex-thread-bridge --plugin-launch` reads the record and execs its own executable as the bridge (internal/pluginwiring, decision 26); a session that cached the older declaration still runs this, reaching the Go bridge the record names |
 | `plugins/crw/wiring/crw_bridge_mcp.py:232` | `os.execve` of the same, with execution-policy env | Python console script until todo 38, then Go | the same exec with the policy variables added (decision 26) |
-| `packages/codex-session-relay/src/codex_session_relay/stopadapter.py:472` | relay CLI `guard --socket --db-path --mode` | Python console script | in-process guard or `S/control.sock` (todo 33) |
-| `packages/codex-session-relay/src/codex_session_relay/service.py:1680` | argv `[sys.executable, -m, codex_session_relay.cli, ...]` (supervisor) | Python self re-exec | `os.Executable()` (todo 29) |
-| `packages/codex-session-relay/src/codex_session_relay/service.py:1741` | `Popen` of the :1680 argv, detached, log to `daemon.log` | Python self re-exec | same |
-| `packages/codex-session-relay/src/codex_session_relay/service.py:1779` | argv `[sys.executable, -m, codex_session_relay.cli, ...]` (worker) | Python self re-exec | `os.Executable()` (todo 29) |
-| `packages/codex-session-relay/src/codex_session_relay/service.py:1799` | `Popen` of the :1779 argv | Python self re-exec | same |
-| `packages/codex-session-relay/src/codex_session_relay/supervisorchannel.py:205` | returns `(sys.executable, -m, codex_session_relay.cli)` as the relay launcher written into delivered lines | Python self reference | `crw relay` path (todo 24) |
-| `packages/codex-session-relay/src/codex_session_relay/cli.py:5463` | prints `sys.executable -m codex_session_relay.cli` as a hint | Python self reference | `os.Executable()` (todo 8/20) |
+| `packages/codex-session-relay/src/codex_session_relay/stopadapter.py:645` | relay CLI `guard --socket --db-path --mode` | Python console script | in-process guard or `S/control.sock` (todo 33) |
+| `packages/codex-session-relay/src/codex_session_relay/service.py:1728` | argv `[sys.executable, -m, codex_session_relay.cli, ...]` (supervisor) | Python self re-exec | `os.Executable()` (todo 29) |
+| `packages/codex-session-relay/src/codex_session_relay/service.py:1789` | `Popen` of the :1728 argv, detached, log to `daemon.log` | Python self re-exec | same |
+| `packages/codex-session-relay/src/codex_session_relay/service.py:1827` | argv `[sys.executable, -m, codex_session_relay.cli, ...]` (worker) | Python self re-exec | `os.Executable()` (todo 29) |
+| `packages/codex-session-relay/src/codex_session_relay/service.py:1847` | `Popen` of the :1827 argv | Python self re-exec | same |
+| `packages/codex-session-relay/src/codex_session_relay/supervisorchannel.py:206` | returns `(sys.executable, -m, codex_session_relay.cli)` as the relay launcher written into delivered lines | Python self reference | `crw relay` path (todo 24) |
+| `packages/codex-session-relay/src/codex_session_relay/cli.py:5689` | prints `sys.executable -m codex_session_relay.cli` as a hint | Python self reference | `os.Executable()` (todo 8/20) |
 | `packages/codex-session-relay/src/codex_session_relay/forge.py:160` | `gh` | non-Python, stays | `exec.Command("gh")` (todo 24) |
 | `packages/codex-session-relay/src/codex_session_relay/mergetarget.py:95` | `git` | non-Python, stays | `exec.Command("git")` (todo 26) |
 | `packages/codex-thread-bridge/src/codex_thread_bridge/worktrees.py:20` | `git worktree add ...` | non-Python, stays | `exec.Command("git")` (todo 15) |
@@ -275,8 +275,8 @@ hook` (todo 38), which never registers an interpreter.
   bridge.Bridge), `managed.py:66` (settings), `rolepolicy.py:176` (execution); the bridge
   `settings` module is also imported by relay assignment, cli, fakehost, faultsweep, packets,
   receiver and registry. The bridge cannot ship as a separate process from the relay.
-- The daemon re-launches its own interpreter (`service.py:1680`, `:1779`,
-  `supervisorchannel.py:205`), so the relay CLI and daemon are one program.
+- The daemon re-launches its own interpreter (`service.py:1728`, `:1827`,
+  `supervisorchannel.py:206`), so the relay CLI and daemon are one program.
 - `scripts/runtime_install.py`, `trial_startup.py`, `stop_events.py` and
   `completion_hook.py` all import `crw_runtime`; the package outlives the product Python until
   its last importer goes (todo 44 for the product and installer, the step before todo 48 for

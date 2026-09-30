@@ -46,9 +46,9 @@ read by `hook_probe.py` through `scripts/ci/contracts.py`, not by a test file; t
 ## Totals
 
 Files: 122
-Tests: 5804
-Class A: files=16 tests=634
-Class B: files=88 tests=3383
+Tests: 5820
+Class A: files=16 tests=646
+Class B: files=88 tests=3387
 Class C: files=18 tests=1787
 
 ## Todo 15 bridge property progress (2026-09-25)
@@ -330,8 +330,8 @@ executables `PATH` and the installer's settings name, which are classified where
 
 | path | tests | class | family | fixtures | owner | destination | coupling |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `packages/codex-session-relay/tests/test_fence_readonly.py` | 10 | B | foreign-owner read matrix, the owner's fault-next lease expiry and terminal inbox replay | takeover-inbox legacy golden; ChannelTestCase | todo 31/36 CRW-152 | go-test: internal/relay/store read-only and inbox | - |
-| `packages/codex-session-relay/tests/test_fence.py` | 62 | A | ownership fence, first-socket store binding, decision 25 ingress and inbox replay, Python control socket, one receipt read per Stop, marker-only Stops ask no owner | contract/golden/takeover-inbox | todo 31/36 CRW-152 | go-test: internal/relay/store takeover protocol and socket binding + go-test: internal/relay/cli fence parity + go-test: internal/relay/hook control socket (todo 33) + go-test: internal/relay/inbox and internal/relay/cli inbox (todo 31) | - |
+| `packages/codex-session-relay/tests/test_fence_readonly.py` | 13 | B | foreign-owner read matrix, the owner's fault-next lease expiry and terminal inbox replay | takeover-inbox legacy golden; ChannelTestCase | todo 31/36 CRW-152 | go-test: internal/relay/store read-only and inbox | - |
+| `packages/codex-session-relay/tests/test_fence.py` | 74 | A | ownership fence, first-socket store binding, decision 25 ingress and inbox replay, Python control socket, one receipt read per Stop, marker-only Stops ask no owner | contract/golden/takeover-inbox | todo 31/36 CRW-152 | go-test: internal/relay/store takeover protocol and socket binding + go-test: internal/relay/cli fence parity + go-test: internal/relay/hook control socket (todo 33) + go-test: internal/relay/inbox and internal/relay/cli inbox (todo 31) | - |
 | `packages/codex-session-relay/tests/test_takeover_candidate.py` | 14 | A | decision 28 private designation, bounded channel frames, ready only after recovery and the control socket, durable activation | isolated SQLite and inherited socketpair | todo 30/36 CRW-152 | go-test: internal/relay/service candidate protocol | - |
 | `packages/codex-session-relay/tests/test_ack_disposition_race.py` | 5 | B | two processes acknowledging one event; which may win | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
 | `packages/codex-session-relay/tests/test_ack_reconcile.py` | 42 | B | ACK, verdicts, reconciliation and restart recovery | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
@@ -412,7 +412,7 @@ executables `PATH` and the installer's settings name, which are classified where
 | `packages/codex-session-relay/tests/test_settings_hold_naming.py` | 31 | B | settings hold names reason and recovery (CRW-235) | - | todo 25 / CRW-154 | go-test: `internal/relay/registry` (todo 25) | - |
 | `packages/codex-session-relay/tests/test_settings_preservation.py` | 36 | B | execution settings carried; refuse to send without them | - | todo 25 / CRW-154 | go-test: `internal/relay/registry` (todo 25) + go-test: `internal/relay/store` (todo 19: typed queries, guard-index refusals and Python-store parity for the tables this file writes) | - |
 | `packages/codex-session-relay/tests/test_stop_adapter.py` | 18 | A | Stop adapter process: stdin, settings, exit, concurrency, fallback guard deadline | `packages/codex-session-relay/tests/fixtures/stop_event_r1.json` | todo 33 / CRW-156 | corpus: hook | - |
-| `packages/codex-session-relay/tests/test_store.py` | 65 | B | durable store: a failed transition is never a success | - | todo 18 / CRW-152 | go-test: `internal/relay/store` (todo 18) | - |
+| `packages/codex-session-relay/tests/test_store.py` | 66 | B | durable store: a failed transition is never a success | - | todo 18 / CRW-152 | go-test: `internal/relay/store` (todo 18) | - |
 | `packages/codex-session-relay/tests/test_store_reception.py` | 74 | B | packet-check --receiver against a real store | - | todo 23 / CRW-153 | go-test: `internal/relay/reception` (todo 23) | - |
 | `packages/codex-session-relay/tests/test_supersession.py` | 22 | B | stale event stopped before the send | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
 | `packages/codex-session-relay/tests/test_supervisor_autosend.py` | 22 | B | daemon tick stages and sends what the supervisor is owed | - | todo 24 / CRW-153 | go-test: `internal/relay/supervisor` Test24_AUT_1,3,4,5,7,8; AUT-2,6,9,10,11 carried to todo 29 daemon loop/cmd/cadence | - |
