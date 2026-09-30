@@ -105,9 +105,10 @@ func Test47_SCOPE_1_SelectionFollowsPathClass(t *testing.T) {
 		}
 	})
 	t.Run("retired paths", func(t *testing.T) {
-		// Todo 44 deleted the Python workspace, the corpus's Python runner and the root skills link;
-		// a change that brings one back is unregistered until a verification mapping is added.
-		for _, path := range []string{"pyproject.toml", "uv.lock", "conftest.py", "skills"} {
+		// Todo 44 deleted the Python workspace and the corpus's Python runner; a change that brings one
+		// back is unregistered until a verification mapping is added. The root skills link, deleted in the
+		// same change as this map edit, stays classified until that deletion has landed on the base.
+		for _, path := range []string{"pyproject.toml", "uv.lock", "conftest.py"} {
 			if got := Classify(path); got != "unknown" {
 				t.Errorf("Classify(%q) = %q, want unknown", path, got)
 			}
