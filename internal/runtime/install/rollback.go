@@ -7,7 +7,6 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/pointer"
@@ -279,28 +278,18 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 	if err := ctx.Err(); err != nil {
 		return append(base, field("refused", interrupted(err)), field("settings", transition.report), field("note", "the pointer was not moved.")), Refused
 	}
-	committed, err := commitSelection(ctx, o.RecordPath, definition.Version, delta)
-	if err != nil || !committed.Usable() {
-		return append(base, field("refused", "the selection could not be committed: "+commitDetail(committed, err)), field("settings", transition.report),
+	outgoingObject, _ := outgoingBefore.(Object)
+	s := swap(ctx, o, pointerPath, environment, delta, moving, before, ownedBefore, current, outgoingObject)
+	if s.commitFailed() {
+		return append(base, field("refused", "the selection could not be committed: "+commitDetail(s.committed, s.commitErr)), field("settings", transition.report),
 			field("note", "the pointer was not moved.")), Refused
 	}
-	var placeErr error
-	if moving {
-		placeErr = placePointer(pointerPath, environment)
-	}
-	landed, why := landedAt(pointerPath, environment)
-	if placeErr != nil || !landed {
-		detail := "the pointer does not reach " + environment + " after it was placed: " + why
-		if placeErr != nil {
-			detail = "the pointer could not be placed: " + store.PythonOSError(placeErr)
-		}
+	if !s.landed {
 		var putBack any = "this run did not move the pointer"
 		if moving {
-			putBack = restorePointer(o, pointerPath, before, environment, ownedBefore)
+			putBack = s.pointerRestored
 		}
-		outgoingObject, _ := outgoingBefore.(Object)
-		restored := restoreSelection(o, current, selection, outgoingObject)
-		return append(base, field("refused", detail), field("pointerRestored", putBack), field("selectionRestored", restored), field("settings", transition.report),
+		return append(base, field("refused", s.placement(environment)), field("pointerRestored", putBack), field("selectionRestored", s.restored), field("settings", transition.report),
 			field("note", "the selection and the pointer were put back to what this run found.")), Refused
 	}
 	left := settleLeft(o, leaving, environment)
@@ -320,7 +309,7 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 	return Object{
 		field("command", "rollback"), field("applied", true), field("environment", environment), field("kind", kind), field("moved", moving),
 		field("pointer", Object{field("path", pointerPath), field("target", environment), field("previousTarget", previousTarget)}),
-		field("selected", record.Get(committed.Value.(Object), "selected")), field("previousSelection", current), field("outgoing", outgoing),
+		field("selected", record.Get(s.committed.Value.(Object), "selected")), field("previousSelection", current), field("outgoing", outgoing),
 		field("swapGate", orNull(gate)), field("secondOwner", owners), field("settings", transition.report), field("claim", orNull(claim)), field("leftClaim", orNull(left)),
 		field("note", "the pointer names the runtime the record selects again, read back after the move. The runtime it left is still installed and is now the outgoing selection, so rolling back again returns to it. A process already started keeps the runtime it started in."),
 	}, code
@@ -361,8 +350,9 @@ func selectedRuntime(rec Object) string {
 	return ""
 }
 
-// leftSelection is the selection of the runtime the pointer names - the one a moving rollback
-// leaves - when the record lists every component there; otherwise the record's selection.
+// leftSelection is the selection of the runtime the pointer names - the one a promotion or a
+// moving rollback moves the host off - when the record lists every component there; otherwise
+// the record's selection.
 func leftSelection(rec Object, pointerPath string, current Object) Object {
 	target, ok := pointerTarget(pointerPath)
 	if !ok || selectsEvery(rec, target) {

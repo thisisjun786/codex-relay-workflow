@@ -610,26 +610,6 @@ func selectedInstall(rec Object, name string) Object {
 	return nil
 }
 
-// leavingSelection is the selection of the runtime the pointer names - the one a promotion moves
-// the host off - when the record lists every component there; otherwise the record's selection.
-// It is rollback.go's leftSelection, repeated here so that a promotion and a moving rollback record
-// the same outgoing (docs/port/refactor-backlog.md).
-func leavingSelection(rec Object, pointerPath string, current Object) Object {
-	target, ok := pointerTarget(pointerPath)
-	if !ok || selectsEvery(rec, target) {
-		return current
-	}
-	left := Object{}
-	for _, c := range definition.Components {
-		installs := installsAt(rec, c.Name, target)
-		if len(installs) == 0 {
-			return current
-		}
-		left = append(left, field(c.Name, record.Get(installs[len(installs)-1], "location")))
-	}
-	return left
-}
-
 // outgoingOf is what is selected when a promotion starts, and whether its bytes are still there:
 // the rollback baseline the promotion records.
 func outgoingOf(selected Object) Object {
@@ -735,32 +715,24 @@ func (r *run) promote(installs, measurement Object) (Object, int) {
 	for _, f := range installs {
 		selection = append(selection, field(f.Key, record.Get(f.Value.(Object), "location")))
 	}
-	outgoing := outgoingOf(leavingSelection(rec, r.pointerPath, previous))
+	outgoing := outgoingOf(leftSelection(rec, r.pointerPath, previous))
 	if err := r.ctx.Err(); err != nil {
 		r.step("commit the selection", false, field("detail", interrupted(err)))
 		return r.failed("commit the selection", failure{err: err, settings: transition.report})
 	}
-	promoted, err := commitSelection(r.ctx, r.o.RecordPath, definition.Version, record.Delta{
+	s := swap(r.ctx, r.o, r.pointerPath, r.environment, record.Delta{
 		Select:   selection,
 		Pointer:  Object{field("path", r.pointerPath), field("recordedAt", r.o.stamp()), field("recordedBy", r.o.Issue)},
 		Outgoing: &record.Outgoing{Value: outgoing},
-	})
-	if err != nil || !promoted.Usable() {
-		r.step("commit the selection", false, field("detail", commitDetail(promoted, err)))
-		return r.failed("commit the selection", failure{reading: &promoted, err: err, settings: transition.report})
+	}, true, before, ownedBefore, previous, outgoingBefore)
+	if s.commitFailed() {
+		r.step("commit the selection", false, field("detail", commitDetail(s.committed, s.commitErr)))
+		return r.failed("commit the selection", failure{reading: &s.committed, err: s.commitErr, settings: transition.report})
 	}
-	placeErr := placePointer(r.pointerPath, r.environment)
-	landed, why := landedAt(r.pointerPath, r.environment)
-	if placeErr != nil || !landed {
-		detail := "the pointer does not reach this runtime after it was placed: " + why
-		if placeErr != nil {
-			detail = "the pointer could not be placed: " + store.PythonOSError(placeErr)
-		}
-		r.step("replace the owned pointer", false, field("detail", detail))
-		putBack := restorePointer(r.o, r.pointerPath, before, r.environment, ownedBefore)
-		r.step("put the pointer back", record.Get(putBack, "verified") == true, field("detail", record.Get(putBack, "detail")))
-		restored := restoreSelection(r.o, previous, selection, outgoingBefore)
-		return r.failed("replace the owned pointer", failure{restored: restored, pointerRestored: putBack, settings: transition.report})
+	if !s.landed {
+		r.step("replace the owned pointer", false, field("detail", s.placement("this runtime")))
+		r.step("put the pointer back", record.Get(s.pointerRestored, "verified") == true, field("detail", record.Get(s.pointerRestored, "detail")))
+		return r.failed("replace the owned pointer", failure{restored: s.restored, pointerRestored: s.pointerRestored, settings: transition.report})
 	}
 	var previousTarget any
 	if before.Target != "" {
@@ -775,7 +747,7 @@ func (r *run) promote(installs, measurement Object) (Object, int) {
 	locked = false
 
 	settled := settleClaim(r.o, r.environment, r.o.Issue)
-	current := promoted.Value.(Object)
+	current := s.committed.Value.(Object)
 	code := OK
 	if record.Get(settled, "settled") != true {
 		code = Incomplete
@@ -852,19 +824,15 @@ func (r *run) resume() (Object, int) {
 		return refusedResult(r.command, transition.refused, "nothing was written.", field("environment", r.environment), field("settings", transition.report))
 	}
 	if names == nil || !*names {
-		// The placement is recorded before the link moves (OPS-4.4: a transition is committed
-		// before its side effect), and put back with it when the move does not land.
-		if written, err := commitSelection(r.ctx, r.o.RecordPath, definition.Version, record.Delta{Pointer: Object{field("path", r.pointerPath), field("recordedAt", r.o.stamp()), field("recordedBy", r.o.Issue)}}); err != nil || !written.Usable() {
-			return refusedResult(r.command, "the pointer ownership could not be recorded: "+commitDetail(written, err), "the pointer was not moved.", field("environment", r.environment), field("settings", transition.report))
+		// The placement is recorded before the link moves, and put back with it when the move does
+		// not land; the selection stays as the interrupted run committed it.
+		s := swap(r.ctx, r.o, r.pointerPath, r.environment, record.Delta{Pointer: Object{field("path", r.pointerPath), field("recordedAt", r.o.stamp()), field("recordedBy", r.o.Issue)}},
+			true, before, ownedBefore, nil, nil)
+		if s.commitFailed() {
+			return refusedResult(r.command, "the pointer ownership could not be recorded: "+commitDetail(s.committed, s.commitErr), "the pointer was not moved.", field("environment", r.environment), field("settings", transition.report))
 		}
-		placeErr := placePointer(r.pointerPath, r.environment)
-		if landed, why := landedAt(r.pointerPath, r.environment); placeErr != nil || !landed {
-			putBack := restorePointer(r.o, r.pointerPath, before, r.environment, ownedBefore)
-			detail := "the pointer does not reach this runtime after it was placed: " + why
-			if placeErr != nil {
-				detail = "the pointer could not be placed: " + store.PythonOSError(placeErr)
-			}
-			return refusedResult(r.command, detail, "the pointer and its ownership were put back; the selection stays as the interrupted run committed it.", field("environment", r.environment), field("pointerRestored", putBack), field("settings", transition.report))
+		if !s.landed {
+			return refusedResult(r.command, s.placement("this runtime"), "the pointer and its ownership were put back; the selection stays as the interrupted run committed it.", field("environment", r.environment), field("pointerRestored", s.pointerRestored), field("settings", transition.report))
 		}
 	}
 	r.step("replace the owned pointer", true, field("target", r.environment))
