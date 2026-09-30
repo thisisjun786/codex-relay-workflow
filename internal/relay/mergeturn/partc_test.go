@@ -241,7 +241,7 @@ func Test26_MTN_15_the_pull_request_state_decides_an_unknown_outcome(t *testing.
 	})
 }
 
-// crossed is tests/fixtures/merge_turn_crossed_handoff.json, loaded from the Python tree.
+// crossed is testdata/merge_turn_crossed_handoff.json, the Python suite's tests/fixtures file.
 type crossed struct {
 	Repository string `json:"repository"`
 	BaseRef    string `json:"baseRef"`

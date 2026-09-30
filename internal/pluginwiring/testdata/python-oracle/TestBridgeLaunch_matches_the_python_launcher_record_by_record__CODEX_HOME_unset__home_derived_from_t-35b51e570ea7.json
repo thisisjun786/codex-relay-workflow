@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "launch": "txt:exit 2\nstdout 0\nstderr 498\ncrw bridge launcher: no record at <ROOT>/.codex/crw-bridge-mcp.json (resolved from the installed package location <ROOT>/.codex/plugins/cache/crw/crw/0.4.0/wiring/crw-bridge.sh). Which command writes it depends on who owns this server. If this host registers the bridge in its Codex configuration, run runtime_install.py register-mcp --apply and this launcher will stand down for that registration. If the package is to own it, add --owner plugin. Either way this package never installs a runtime.\n"
+ }
+}

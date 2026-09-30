@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "launch": "txt:exit 2\nstdout 0\nstderr 274\ncrw bridge launcher: the record at <ROOT>/.codex/crw-bridge-mcp.json is version 3, and this package reads versions 1 and 2. Rewrite it with the runtime_install.py that ships with this package rather than starting a runtime under a contract this launcher does not implement.\n"
+ }
+}

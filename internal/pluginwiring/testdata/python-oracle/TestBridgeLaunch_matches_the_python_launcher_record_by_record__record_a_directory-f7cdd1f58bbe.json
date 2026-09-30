@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "launch": "txt:exit 2\nstdout 0\nstderr 107\ncrw bridge launcher: the record at <ROOT>/.codex/crw-bridge-mcp.json could not be read: not a regular file\n"
+ }
+}

@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "launch": "txt:exit 2\nstdout 0\nstderr 486\ncrw bridge launcher: the execution policy the record at <ROOT>/.codex/crw-bridge-mcp.json names could not be read (<ROOT>/execution-policy.json.gone: [Errno 2] No such file or directory: '<ROOT>/execution-policy.json.gone'). The bridge is not started without it, because it would then check no role. Run runtime_install.py register-mcp --owner plugin --execution-policy <file> again after moving <ROOT>/.codex/crw-bridge-mcp.json aside, so the record names the policy as it now stands.\n"
+ }
+}

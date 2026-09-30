@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "refusals": "txt:[\"execution_policy_unreadable: 'x\\\\xa0y' is not a role; supported are ['child', 'parent', 'supervisor']\", \"execution_policy_unreadable: \\\"it's\\\" is not a role; supported are ['child', 'parent', 'supervisor']\", \"execution_policy_unreadable: 'a\\\\\\\\b' is not a role; supported are ['child', 'parent', 'supervisor']\", \"execution_policy_unreadable: 'l\\\\u2028s\\\\u200b' is not a role; supported are ['child', 'parent', 'supervisor']\", \"execution_policy_unreadable: duplicate key 'a\\\\\\\\b\\\\xa0' in the execution policy\", \"execution_policy_unreadable: 's\\\\udcff' is not a role; supported are ['child', 'parent', 'supervisor']\", \"execution_policy_unreadable: 's\\\\udcff' is not a role; supported are ['child', 'parent', 'supervisor']\", \"execution_policy_unreadable: '\\\\ud800x\\\\udfff' is not a role; supported are ['child', 'parent', 'supervisor']\", \"execution_policy_unreadable: duplicate key '\\\\udcff' in the execution policy\"]\n"
+ }
+}

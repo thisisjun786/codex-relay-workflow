@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func setup(t *testing.T) *Service {
@@ -71,12 +73,15 @@ func Test26_target_derivation_matches_live_python(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		cmd := exec.Command("uv", "run", "--no-sync", "python", "-c", "from codex_session_relay.mergeturn import target_key; import sys; print(target_key(*sys.argv[1:]))", pair[0], pair[1])
-		cmd.Dir = filepath.Join("..", "..", "..")
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("Python derivation: %v: %s", err, out)
-		}
+		out := pyoracle.Answer(t, pair[0]+" "+pair[1], func() ([]byte, error) {
+			cmd := exec.Command("uv", "run", "--no-sync", "python", "-c", "from codex_session_relay.mergeturn import target_key; import sys; print(target_key(*sys.argv[1:]))", pair[0], pair[1])
+			cmd.Dir = filepath.Join("..", "..", "..")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				return nil, fmt.Errorf("Python derivation: %v: %s", err, out)
+			}
+			return out, nil
+		})
 		if got != string(bytes.TrimSpace(out)) {
 			t.Fatalf("derivation differs for %q: Go %s, Python %s", pair, got, out)
 		}

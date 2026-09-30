@@ -1,0 +1,8 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "case-0 settings-record": "txt:{\"code\":4,\"names\":[\"relay.sqlite3\",\"takeover.json\",\"write-gate.lock\"],\"stdout\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"--clear-exception drops the citation and --exception records one; state one\\\"\\n}\\n\"}",
+  "case-1 register": "txt:{\"code\":2,\"names\":null,\"stdout\":\"\"}",
+  "case-2 register": "txt:{\"code\":3,\"names\":[\"relay.sqlite3\",\"takeover.json\",\"write-gate.lock\"],\"stdout\":\"{\\n  \\\"error\\\": \\\"host\\\",\\n  \\\"detail\\\": \\\"FileNotFoundError: [Errno 2] No such file or directory: '/nonexistent/settings.json'\\\"\\n}\\n\"}"
+ }
+}

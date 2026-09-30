@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "dispositions-show": "txt:usage: codex-session-relay dispositions-show [-h] (--project PROJECT |\n                                             --relationship RELATIONSHIP)\ncodex-session-relay dispositions-show: error: one of the arguments --project --relationship is required\n"
+ }
+}

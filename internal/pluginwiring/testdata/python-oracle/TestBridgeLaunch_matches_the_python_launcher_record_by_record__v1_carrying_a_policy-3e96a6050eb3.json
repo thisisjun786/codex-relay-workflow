@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "launch": "txt:exit 2\nstdout 0\nstderr 221\ncrw bridge launcher: the record at <ROOT>/.codex/crw-bridge-mcp.json is version 1 and names an execution policy, which only a version 2 record carries. Starting it as version 1 would start the bridge without that policy.\n"
+ }
+}
