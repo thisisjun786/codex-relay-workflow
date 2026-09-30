@@ -1,0 +1,87 @@
+[
+ {
+  "operation": "read_policy",
+  "arguments": [
+   [
+    {
+     "schema": "routing-policy/1",
+     "policy": "project_creation",
+     "enabled": true,
+     "minIndependentFixes": 2,
+     "requireSharedGoal": true,
+     "requireCompletionCriteria": true,
+     "basis": "CRW-206, Jun 2026-09-22"
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "read_policy",
+  "arguments": [
+   [
+    {
+     "schema": "routing-policy/1",
+     "policy": "project_creation",
+     "enabled": true,
+     "minIndependentFixes": 2,
+     "requireSharedGoal": false,
+     "requireCompletionCriteria": true,
+     "basis": "CRW-206, Jun 2026-09-22"
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "read_policy",
+  "arguments": [
+   [
+    {
+     "schema": "routing-policy/1",
+     "policy": "project_creation",
+     "enabled": true,
+     "minIndependentFixes": 2,
+     "requireSharedGoal": true,
+     "requireCompletionCriteria": false,
+     "basis": "CRW-206, Jun 2026-09-22"
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "read_policy",
+  "arguments": [
+   [
+    {
+     "schema": "routing-policy/1",
+     "policy": "project_creation",
+     "enabled": true,
+     "minIndependentFixes": 1,
+     "requireSharedGoal": true,
+     "requireCompletionCriteria": true,
+     "basis": "CRW-206, Jun 2026-09-22"
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "read_policy",
+  "arguments": [
+   [
+    {
+     "schema": "routing-policy/1",
+     "policy": "project_creation",
+     "enabled": true,
+     "minIndependentFixes": 2,
+     "requireSharedGoal": true,
+     "requireCompletionCriteria": true,
+     "basis": ""
+    }
+   ],
+   {}
+  ]
+ }
+]

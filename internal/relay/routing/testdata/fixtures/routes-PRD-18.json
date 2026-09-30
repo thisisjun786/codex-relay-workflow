@@ -1,0 +1,1400 @@
+[
+ {
+  "operation": "reset",
+  "args": [],
+  "kwargs": {}
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "held",
+   "stage": "held",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": "no_project",
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "notice",
+   "goal": "offline_sync"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "get",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "held",
+   "stage": "held",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": "no_project",
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "offline_sync"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "get",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "held",
+   "stage": "held",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": "no_project",
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "notice",
+   "goal": "offline_sync"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "get",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "held",
+   "stage": "held",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": "no_project",
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "broken",
+   "goal": "offline_sync"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "get",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "held",
+   "stage": "held",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": "no_project",
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "offline_sync"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "get",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "held",
+   "stage": "held",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": "no_project",
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "notice",
+   "goal": "offline_sync"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "get",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "store_incident",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": null,
+    "workspace": null,
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "degraded",
+    "expected": null,
+    "origin": "observed",
+    "occurrenceKey": "k0",
+    "observedAt": null,
+    "context": {
+     "currentIssue": null,
+     "run": null,
+     "session": null,
+     "regressionOf": null
+    },
+    "cause": null,
+    "goal": null,
+    "detail": {
+     "impact": null,
+     "expected": null,
+     "actual": null,
+     "reproduction": null,
+     "owner": null,
+     "nextAction": null
+    },
+    "evidence": []
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "store_incident",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": null,
+    "workspace": null,
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "degraded",
+    "expected": null,
+    "origin": "observed",
+    "occurrenceKey": "k1",
+    "observedAt": null,
+    "context": {
+     "currentIssue": null,
+     "run": null,
+     "session": null,
+     "regressionOf": null
+    },
+    "cause": null,
+    "goal": null,
+    "detail": {
+     "impact": null,
+     "expected": null,
+     "actual": null,
+     "reproduction": null,
+     "owner": null,
+     "nextAction": null
+    },
+    "evidence": []
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "store_incident",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": null,
+    "workspace": null,
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "degraded",
+    "expected": null,
+    "origin": "observed",
+    "occurrenceKey": "k2",
+    "observedAt": null,
+    "context": {
+     "currentIssue": null,
+     "run": null,
+     "session": null,
+     "regressionOf": null
+    },
+    "cause": null,
+    "goal": null,
+    "detail": {
+     "impact": null,
+     "expected": null,
+     "actual": null,
+     "reproduction": null,
+     "owner": null,
+     "nextAction": null
+    },
+    "evidence": []
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "store_incident",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": null,
+    "workspace": null,
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "degraded",
+    "expected": null,
+    "origin": "observed",
+    "occurrenceKey": "k3",
+    "observedAt": null,
+    "context": {
+     "currentIssue": null,
+     "run": null,
+     "session": null,
+     "regressionOf": null
+    },
+    "cause": null,
+    "goal": null,
+    "detail": {
+     "impact": null,
+     "expected": null,
+     "actual": null,
+     "reproduction": null,
+     "owner": null,
+     "nextAction": null
+    },
+    "evidence": []
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "store_incident",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": null,
+    "workspace": null,
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "degraded",
+    "expected": null,
+    "origin": "observed",
+    "occurrenceKey": "k4",
+    "observedAt": null,
+    "context": {
+     "currentIssue": null,
+     "run": null,
+     "session": null,
+     "regressionOf": null
+    },
+    "cause": null,
+    "goal": null,
+    "detail": {
+     "impact": null,
+     "expected": null,
+     "actual": null,
+     "reproduction": null,
+     "owner": null,
+     "nextAction": null
+    },
+    "evidence": []
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "store_incident",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": null,
+    "workspace": null,
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "degraded",
+    "expected": null,
+    "origin": "observed",
+    "occurrenceKey": "k5",
+    "observedAt": null,
+    "context": {
+     "currentIssue": null,
+     "run": null,
+     "session": null,
+     "regressionOf": null
+    },
+    "cause": null,
+    "goal": null,
+    "detail": {
+     "impact": null,
+     "expected": null,
+     "actual": null,
+     "reproduction": null,
+     "owner": null,
+     "nextAction": null
+    },
+    "evidence": []
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "store_incident",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": null,
+    "workspace": null,
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "degraded",
+    "expected": null,
+    "origin": "observed",
+    "occurrenceKey": "k6",
+    "observedAt": null,
+    "context": {
+     "currentIssue": null,
+     "run": null,
+     "session": null,
+     "regressionOf": null
+    },
+    "cause": null,
+    "goal": null,
+    "detail": {
+     "impact": null,
+     "expected": null,
+     "actual": null,
+     "reproduction": null,
+     "owner": null,
+     "nextAction": null
+    },
+    "evidence": []
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "store_incident",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": null,
+    "workspace": null,
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "degraded",
+    "expected": null,
+    "origin": "observed",
+    "occurrenceKey": "k7",
+    "observedAt": null,
+    "context": {
+     "currentIssue": null,
+     "run": null,
+     "session": null,
+     "regressionOf": null
+    },
+    "cause": null,
+    "goal": null,
+    "detail": {
+     "impact": null,
+     "expected": null,
+     "actual": null,
+     "reproduction": null,
+     "owner": null,
+     "nextAction": null
+    },
+    "evidence": []
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "store_incident",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": null,
+    "workspace": null,
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "degraded",
+    "expected": null,
+    "origin": "observed",
+    "occurrenceKey": "k8",
+    "observedAt": null,
+    "context": {
+     "currentIssue": null,
+     "run": null,
+     "session": null,
+     "regressionOf": null
+    },
+    "cause": null,
+    "goal": null,
+    "detail": {
+     "impact": null,
+     "expected": null,
+     "actual": null,
+     "reproduction": null,
+     "owner": null,
+     "nextAction": null
+    },
+    "evidence": []
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "store_incident",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": null,
+    "workspace": null,
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "degraded",
+    "expected": null,
+    "origin": "observed",
+    "occurrenceKey": "k9",
+    "observedAt": null,
+    "context": {
+     "currentIssue": null,
+     "run": null,
+     "session": null,
+     "regressionOf": null
+    },
+    "cause": null,
+    "goal": null,
+    "detail": {
+     "impact": null,
+     "expected": null,
+     "actual": null,
+     "reproduction": null,
+     "owner": null,
+     "nextAction": null
+    },
+    "evidence": []
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "store_incident",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": null,
+    "workspace": null,
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "degraded",
+    "expected": null,
+    "origin": "observed",
+    "occurrenceKey": "k10",
+    "observedAt": null,
+    "context": {
+     "currentIssue": null,
+     "run": null,
+     "session": null,
+     "regressionOf": null
+    },
+    "cause": null,
+    "goal": null,
+    "detail": {
+     "impact": null,
+     "expected": null,
+     "actual": null,
+     "reproduction": null,
+     "owner": null,
+     "nextAction": null
+    },
+    "evidence": []
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "store_incident",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": null,
+    "workspace": null,
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "degraded",
+    "expected": null,
+    "origin": "observed",
+    "occurrenceKey": "k11",
+    "observedAt": null,
+    "context": {
+     "currentIssue": null,
+     "run": null,
+     "session": null,
+     "regressionOf": null
+    },
+    "cause": null,
+    "goal": null,
+    "detail": {
+     "impact": null,
+     "expected": null,
+     "actual": null,
+     "reproduction": null,
+     "owner": null,
+     "nextAction": null
+    },
+    "evidence": []
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "store_incident",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": null,
+    "workspace": null,
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "degraded",
+    "expected": null,
+    "origin": "observed",
+    "occurrenceKey": "k12",
+    "observedAt": null,
+    "context": {
+     "currentIssue": null,
+     "run": null,
+     "session": null,
+     "regressionOf": null
+    },
+    "cause": null,
+    "goal": null,
+    "detail": {
+     "impact": null,
+     "expected": null,
+     "actual": null,
+     "reproduction": null,
+     "owner": null,
+     "nextAction": null
+    },
+    "evidence": []
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "store_incident",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": null,
+    "workspace": null,
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "degraded",
+    "expected": null,
+    "origin": "observed",
+    "occurrenceKey": "k13",
+    "observedAt": null,
+    "context": {
+     "currentIssue": null,
+     "run": null,
+     "session": null,
+     "regressionOf": null
+    },
+    "cause": null,
+    "goal": null,
+    "detail": {
+     "impact": null,
+     "expected": null,
+     "actual": null,
+     "reproduction": null,
+     "owner": null,
+     "nextAction": null
+    },
+    "evidence": []
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "store_incident",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": null,
+    "workspace": null,
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "degraded",
+    "expected": null,
+    "origin": "observed",
+    "occurrenceKey": "k14",
+    "observedAt": null,
+    "context": {
+     "currentIssue": null,
+     "run": null,
+     "session": null,
+     "regressionOf": null
+    },
+    "cause": null,
+    "goal": null,
+    "detail": {
+     "impact": null,
+     "expected": null,
+     "actual": null,
+     "reproduction": null,
+     "owner": null,
+     "nextAction": null
+    },
+    "evidence": []
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "store_incident",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": null,
+    "workspace": null,
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "degraded",
+    "expected": null,
+    "origin": "observed",
+    "occurrenceKey": "k15",
+    "observedAt": null,
+    "context": {
+     "currentIssue": null,
+     "run": null,
+     "session": null,
+     "regressionOf": null
+    },
+    "cause": null,
+    "goal": null,
+    "detail": {
+     "impact": null,
+     "expected": null,
+     "actual": null,
+     "reproduction": null,
+     "owner": null,
+     "nextAction": null
+    },
+    "evidence": []
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "store_incident",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": null,
+    "workspace": null,
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "degraded",
+    "expected": null,
+    "origin": "observed",
+    "occurrenceKey": "k16",
+    "observedAt": null,
+    "context": {
+     "currentIssue": null,
+     "run": null,
+     "session": null,
+     "regressionOf": null
+    },
+    "cause": null,
+    "goal": null,
+    "detail": {
+     "impact": null,
+     "expected": null,
+     "actual": null,
+     "reproduction": null,
+     "owner": null,
+     "nextAction": null
+    },
+    "evidence": []
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "store_incident",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": null,
+    "workspace": null,
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "degraded",
+    "expected": null,
+    "origin": "observed",
+    "occurrenceKey": "k17",
+    "observedAt": null,
+    "context": {
+     "currentIssue": null,
+     "run": null,
+     "session": null,
+     "regressionOf": null
+    },
+    "cause": null,
+    "goal": null,
+    "detail": {
+     "impact": null,
+     "expected": null,
+     "actual": null,
+     "reproduction": null,
+     "owner": null,
+     "nextAction": null
+    },
+    "evidence": []
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "store_incident",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": null,
+    "workspace": null,
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "degraded",
+    "expected": null,
+    "origin": "observed",
+    "occurrenceKey": "k18",
+    "observedAt": null,
+    "context": {
+     "currentIssue": null,
+     "run": null,
+     "session": null,
+     "regressionOf": null
+    },
+    "cause": null,
+    "goal": null,
+    "detail": {
+     "impact": null,
+     "expected": null,
+     "actual": null,
+     "reproduction": null,
+     "owner": null,
+     "nextAction": null
+    },
+    "evidence": []
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "store_incident",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": null,
+    "workspace": null,
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "degraded",
+    "expected": null,
+    "origin": "observed",
+    "occurrenceKey": "k19",
+    "observedAt": null,
+    "context": {
+     "currentIssue": null,
+     "run": null,
+     "session": null,
+     "regressionOf": null
+    },
+    "cause": null,
+    "goal": null,
+    "detail": {
+     "impact": null,
+     "expected": null,
+     "actual": null,
+     "reproduction": null,
+     "owner": null,
+     "nextAction": null
+    },
+    "evidence": []
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "incidents",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "store_incident",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": null,
+    "workspace": null,
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "replayed",
+    "severity": "degraded",
+    "expected": null,
+    "origin": "observed",
+    "occurrenceKey": "k4",
+    "observedAt": null,
+    "context": {
+     "currentIssue": null,
+     "run": null,
+     "session": null,
+     "regressionOf": null
+    },
+    "cause": null,
+    "goal": null,
+    "detail": {
+     "impact": null,
+     "expected": null,
+     "actual": null,
+     "reproduction": null,
+     "owner": null,
+     "nextAction": null
+    },
+    "evidence": []
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "incidents",
+  "args": [
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "tables",
+  "args": [],
+  "kwargs": {}
+ },
+ {
+  "operation": "reset",
+  "args": [],
+  "kwargs": {}
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "00000000000000000000000000000000",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "held",
+   "stage": "held",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": "no_project",
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "offline_sync"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "11111111111111111111111111111111",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "held",
+   "stage": "held",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": "no_project",
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "offline_sync"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "22222222222222222222222222222222",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "held",
+   "stage": "held",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": "no_project",
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "offline_sync"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "33333333333333333333333333333333",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "held",
+   "stage": "held",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": "no_project",
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "offline_sync"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "44444444444444444444444444444444",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "held",
+   "stage": "held",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": "no_project",
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "offline_sync"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "listing",
+  "args": [],
+  "kwargs": {
+   "limit": 3
+  }
+ },
+ {
+  "operation": "listing",
+  "args": [],
+  "kwargs": {
+   "limit": 3,
+   "after": 3
+  }
+ },
+ {
+  "operation": "tables",
+  "args": [],
+  "kwargs": {}
+ },
+ {
+  "operation": "reset",
+  "args": [],
+  "kwargs": {}
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "held",
+   "stage": "held",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": "no_project",
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "offline_sync"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "sql",
+  "args": [
+   "UPDATE incident_routes SET target = ? WHERE fault_id = ?",
+   [
+    "{\"team\": \"ALN\", \"surprise\": 1}",
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "get",
+  "args": [
+   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "tables",
+  "args": [],
+  "kwargs": {}
+ },
+ {
+  "operation": "reset",
+  "args": [],
+  "kwargs": {}
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "held",
+   "stage": "held",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": "no_project",
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "offline_sync"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "held",
+   "stage": "held",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": "no_project",
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": null
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "get",
+  "args": [
+   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "held",
+   "stage": "held",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": "no_project",
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "fast_search"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "held",
+   "stage": "held",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": null,
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "get",
+  "args": [
+   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "tables",
+  "args": [],
+  "kwargs": {}
+ }
+]

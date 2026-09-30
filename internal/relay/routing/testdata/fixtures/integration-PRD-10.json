@@ -1,0 +1,530 @@
+[
+ {
+  "operation": "reset",
+  "args": [],
+  "kwargs": {},
+  "scenario": "test_a_binding_for_an_unregistered_product_is_refused"
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "alpha-notes",
+    "workspace": "example-ws",
+    "team": "ALN",
+    "familyLabel": "제품:Alpha Notes",
+    "repositories": [
+     "example-org/alpha-notes"
+    ],
+    "surfaces": {
+     "dev_run": {
+      "method": "CRW managed run tool results",
+      "active": true
+     },
+     "verification": {
+      "method": "CRW verification verdicts",
+      "active": true
+     },
+     "user_report": {
+      "method": "reports filed through the parent",
+      "active": true
+     }
+    },
+    "testTarget": {
+     "team": "TST",
+     "project": "proj-test"
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "omega",
+    "kind": "project",
+    "ref": "proj-x",
+    "title": "proj-x title",
+    "state": "active",
+    "components": [],
+    "source": "linear readback"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "reset",
+  "args": [],
+  "kwargs": {},
+  "scenario": "test_a_test_binding_off_the_test_target_is_refused"
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "alpha-notes",
+    "workspace": "example-ws",
+    "team": "ALN",
+    "familyLabel": "제품:Alpha Notes",
+    "repositories": [
+     "example-org/alpha-notes"
+    ],
+    "surfaces": {
+     "dev_run": {
+      "method": "CRW managed run tool results",
+      "active": true
+     },
+     "verification": {
+      "method": "CRW verification verdicts",
+      "active": true
+     },
+     "user_report": {
+      "method": "reports filed through the parent",
+      "active": true
+     }
+    },
+    "testTarget": {
+     "team": "TST",
+     "project": "proj-test"
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-3",
+    "title": "ALN-3 title",
+    "state": "open",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback",
+    "project": "proj-aln-editor",
+    "test": true
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-50",
+    "title": "ALN-50 title",
+    "state": "open",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback",
+    "project": "proj-test",
+    "test": true
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "TST-5",
+    "title": "TST-5 title",
+    "state": "open",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback",
+    "project": "proj-test",
+    "test": true
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "reset",
+  "args": [],
+  "kwargs": {},
+  "scenario": "test_a_rebind_replaces_the_snapshot"
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "alpha-notes",
+    "workspace": "example-ws",
+    "team": "ALN",
+    "familyLabel": "제품:Alpha Notes",
+    "repositories": [
+     "example-org/alpha-notes"
+    ],
+    "surfaces": {
+     "dev_run": {
+      "method": "CRW managed run tool results",
+      "active": true
+     },
+     "verification": {
+      "method": "CRW verification verdicts",
+      "active": true
+     },
+     "user_report": {
+      "method": "reports filed through the parent",
+      "active": true
+     }
+    },
+    "testTarget": {
+     "team": "TST",
+     "project": "proj-test"
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-3",
+    "title": "ALN-3 title",
+    "state": "open",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-3",
+    "title": "ALN-3 title",
+    "state": "done",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bindings",
+  "args": [
+   "alpha-notes"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "reset",
+  "args": [],
+  "kwargs": {},
+  "scenario": "test_show_lists_bindings_coverage_and_the_absent_policy"
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "alpha-notes",
+    "workspace": "example-ws",
+    "team": "ALN",
+    "familyLabel": "제품:Alpha Notes",
+    "repositories": [
+     "example-org/alpha-notes"
+    ],
+    "surfaces": {
+     "dev_run": {
+      "method": "CRW managed run tool results",
+      "active": true
+     },
+     "verification": {
+      "method": "CRW verification verdicts",
+      "active": true
+     },
+     "user_report": {
+      "method": "reports filed through the parent",
+      "active": true
+     }
+    },
+    "testTarget": {
+     "team": "TST",
+     "project": "proj-test"
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "project",
+    "ref": "proj-aln-editor",
+    "title": "proj-aln-editor title",
+    "state": "active",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.show_products",
+  "args": [
+   "alpha-notes"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "reset",
+  "args": [],
+  "kwargs": {},
+  "scenario": "test_the_run_issue_is_read_from_the_relays_own_relationship"
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "alpha-notes",
+    "workspace": "example-ws",
+    "team": "ALN",
+    "familyLabel": "제품:Alpha Notes",
+    "repositories": [
+     "example-org/alpha-notes"
+    ],
+    "surfaces": {
+     "dev_run": {
+      "method": "CRW managed run tool results",
+      "active": true
+     },
+     "verification": {
+      "method": "CRW verification verdicts",
+      "active": true
+     },
+     "user_report": {
+      "method": "reports filed through the parent",
+      "active": true
+     }
+    },
+    "testTarget": {
+     "team": "TST",
+     "project": "proj-test"
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "sql",
+  "args": [
+   "INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, parent_cwd, parent_cxc_session, child_task_id, child_host_id, child_cwd, child_cxc_session, execution_generation, artifact_roots, allowed_recipients, scope_ref, supersedes, superseded_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?)",
+   [
+    "rel-f678be0af228673c",
+    "ALN-3",
+    "active",
+    "01parent-task",
+    "host-a",
+    "/parent",
+    "cxc-parent",
+    "01child-task",
+    "host-a",
+    "<tmpdir>/python-temporary-1/work",
+    "cxc-child",
+    1,
+    "[\"<tmpdir>/python-temporary-1/work\"]",
+    "[\"01parent-task\"]",
+    null,
+    null,
+    "2023-11-14T22:13:20.000000+00:00",
+    "2023-11-14T22:13:20.000000+00:00"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "sql",
+  "args": [
+   "INSERT INTO generations (relationship_id, execution_generation, dispatch_request_id, anchor_state, dispatch_turn_id, reason, opened_at, bound_at) VALUES (?,?,?,?,?,?,?,?)",
+   [
+    "rel-f678be0af228673c",
+    1,
+    "dispatch-1",
+    "bound",
+    "turn-dispatch-1",
+    "initial_assignment",
+    "2023-11-14T22:13:20.000000+00:00",
+    "2023-11-14T22:13:20.000000+00:00"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "sql",
+  "args": [
+   "INSERT INTO journal (at, kind, subject, detail) VALUES (?,?,?,?)",
+   [
+    "2023-11-14T22:13:20.000000+00:00",
+    "relationship_registered",
+    "rel-f678be0af228673c",
+    "{\"issueKey\": \"ALN-3\"}"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "sql",
+  "args": [
+   "INSERT INTO authorized_settings (task_id, settings, source, recorded_at) VALUES (?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET settings = excluded.settings,   source = excluded.source, recorded_at = excluded.recorded_at",
+   [
+    "01parent-task",
+    "{\"approvalPolicy\": \"never\", \"cwd\": \"/parent\", \"environments\": [{\"cwd\": \"/parent\", \"environmentId\": \"local\", \"runtimeWorkspaceRoots\": [\"/parent\"]}], \"model\": \"anthropic/claude-opus-5\", \"reasoningEffort\": \"xhigh\", \"runtimeWorkspaceRoots\": [\"/parent\"], \"sandbox\": {\"excludeSlashTmp\": false, \"excludeTmpdirEnvVar\": false, \"networkAccess\": false, \"type\": \"workspaceWrite\", \"writableRoots\": []}}",
+    "creation_result",
+    "2023-11-14T22:13:20.000000+00:00"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "sql",
+  "args": [
+   "INSERT INTO journal (at, kind, subject, detail) VALUES (?,?,?,?)",
+   [
+    "2023-11-14T22:13:20.000000+00:00",
+    "settings_recorded",
+    "01parent-task",
+    "{\"source\": \"creation_result\"}"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "sql",
+  "args": [
+   "INSERT INTO authorized_settings (task_id, settings, source, recorded_at) VALUES (?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET settings = excluded.settings,   source = excluded.source, recorded_at = excluded.recorded_at",
+   [
+    "01child-task",
+    "{\"approvalPolicy\": \"never\", \"cwd\": \"<tmpdir>/python-temporary-1/work\", \"environments\": [{\"cwd\": \"<tmpdir>/python-temporary-1/work\", \"environmentId\": \"local\", \"runtimeWorkspaceRoots\": [\"<tmpdir>/python-temporary-1/work\"]}], \"model\": \"anthropic/claude-opus-5\", \"reasoningEffort\": \"xhigh\", \"runtimeWorkspaceRoots\": [\"<tmpdir>/python-temporary-1/work\"], \"sandbox\": {\"excludeSlashTmp\": false, \"excludeTmpdirEnvVar\": false, \"networkAccess\": false, \"type\": \"workspaceWrite\", \"writableRoots\": []}}",
+    "creation_result",
+    "2023-11-14T22:13:20.000000+00:00"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "sql",
+  "args": [
+   "INSERT INTO journal (at, kind, subject, detail) VALUES (?,?,?,?)",
+   [
+    "2023-11-14T22:13:20.000000+00:00",
+    "settings_recorded",
+    "01child-task",
+    "{\"source\": \"creation_result\"}"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "router.run_issue",
+  "args": [
+   "rel-f678be0af228673c"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.run_issue",
+  "args": [
+   "rel-unknown"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ }
+]

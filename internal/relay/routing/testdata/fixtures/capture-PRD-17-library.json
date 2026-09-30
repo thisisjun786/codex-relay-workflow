@@ -1,0 +1,54 @@
+[
+ {
+  "operation": "read_classification",
+  "arguments": [
+   [
+    {
+     "product": "beta-meter",
+     "by": "llm:model-x",
+     "goal": {
+      "key": "billing_ok"
+     }
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "read_classification",
+  "arguments": [
+   [
+    {
+     "product": "beta-meter",
+     "by": "somebody"
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "read_classification",
+  "arguments": [
+   [
+    {
+     "product": "beta:meter",
+     "by": "operator"
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "read_classification",
+  "arguments": [
+   [
+    {
+     "product": "beta-meter",
+     "by": "operator",
+     "severity": "broken"
+    }
+   ],
+   {}
+  ]
+ }
+]

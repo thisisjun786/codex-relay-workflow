@@ -1,0 +1,141 @@
+[
+ {
+  "operation": "reset",
+  "args": [],
+  "kwargs": {},
+  "scenario": "test_classifying_into_a_product_that_does_not_watch_the_surface_is_refused"
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "alpha-notes",
+    "workspace": "example-ws",
+    "team": "ALN",
+    "familyLabel": "제품:Alpha Notes",
+    "repositories": [
+     "example-org/alpha-notes"
+    ],
+    "surfaces": {
+     "dev_run": {
+      "method": "CRW managed run tool results",
+      "active": true
+     },
+     "verification": {
+      "method": "CRW verification verdicts",
+      "active": true
+     },
+     "user_report": {
+      "method": "reports filed through the parent",
+      "active": true
+     }
+    },
+    "testTarget": {
+     "team": "TST",
+     "project": "proj-test"
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "beta-meter",
+    "workspace": "example-ws",
+    "team": "BTM",
+    "familyLabel": "제품:Beta Meter",
+    "repositories": [
+     "example-org/beta-meter"
+    ],
+    "surfaces": {
+     "real_use": {
+      "method": "error events the product forwards",
+      "active": true
+     },
+     "user_report": {
+      "method": "support inbox forwarded by the parent",
+      "active": false
+     }
+    },
+    "triageProject": "proj-btm-triage"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "sql",
+  "args": [
+   "INSERT INTO incident_routes (fault_id, product_key, workspace, disposition, stage,  target, origin, claimed_severity, goal, classification, superseded_by, detail,  created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(fault_id) DO UPDATE SET product_key = excluded.product_key,   workspace = excluded.workspace, disposition = excluded.disposition,   stage = excluded.stage, target = excluded.target, origin = excluded.origin,   claimed_severity = CASE     WHEN 'broken' IN (excluded.claimed_severity, incident_routes.claimed_severity)       THEN 'broken'     WHEN 'degraded' IN (excluded.claimed_severity, incident_routes.claimed_severity)       THEN 'degraded'     ELSE incident_routes.claimed_severity END,   goal = CASE WHEN ? THEN excluded.goal ELSE incident_routes.goal END,   classification = COALESCE(excluded.classification, incident_routes.classification),   superseded_by = COALESCE(excluded.superseded_by, incident_routes.superseded_by),   detail = excluded.detail, updated_at = excluded.updated_at",
+   [
+    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "unclassified",
+    "example-ws",
+    "pending_classification",
+    "pending_classification",
+    "{\"cause\":null,\"hold\":null,\"labels\":[],\"obligations\":[],\"owner\":null,\"project\":null,\"relate\":[],\"team\":null,\"unverifiedCause\":null}",
+    "observed",
+    "broken",
+    null,
+    null,
+    null,
+    "",
+    "2023-11-14T22:13:20.000000+00:00",
+    "2023-11-14T22:13:20.000000+00:00",
+    0
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "sql",
+  "args": [
+   "INSERT INTO route_incidents (incident_id, fault_id, record, recorded_at,  recorded_seq) VALUES (?,?,?,?,?) ON CONFLICT(incident_id) DO NOTHING",
+   [
+    "069482665cba4e3172582291af4ea006",
+    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "{\"cause\":null,\"component\":\"editor\",\"context\":{\"currentIssue\":null,\"regressionOf\":null,\"run\":null,\"session\":null},\"detail\":{\"actual\":null,\"expected\":null,\"impact\":null,\"nextAction\":null,\"owner\":null,\"reproduction\":null},\"evidence\":[],\"expected\":null,\"goal\":null,\"observedAt\":null,\"occurrenceKey\":\"run-1\",\"origin\":\"observed\",\"phase\":\"development\",\"product\":null,\"repository\":\"example-org/nobody\",\"schema\":\"product-incident/1\",\"severity\":\"broken\",\"surface\":\"dev_run\",\"symptom\":\"cursor_jump\",\"workspace\":null}",
+    "2023-11-14T22:13:20.000000+00:00",
+    1
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "sql",
+  "args": [
+   "DELETE FROM route_incidents WHERE fault_id = ? AND incident_id NOT IN  (SELECT incident_id FROM route_incidents WHERE fault_id = ?    ORDER BY recorded_seq DESC LIMIT ?)",
+   [
+    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    16
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "router.classify",
+  "args": [
+   "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+   {
+    "product": "beta-meter",
+    "by": "operator"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ }
+]

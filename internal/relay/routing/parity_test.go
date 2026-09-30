@@ -1,7 +1,6 @@
 package routing
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -9,17 +8,14 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"regexp"
-	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 func TestMain(m *testing.M) {
@@ -49,7 +45,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	env := map[string]string{"HOME": home, "XDG_STATE_HOME": filepath.Join(home, "state"), "XDG_CONFIG_HOME": filepath.Join(home, "config"), "XDG_DATA_HOME": filepath.Join(home, "data"), "CODEX_HOME": filepath.Join(home, "codex"), "CODEX_SESSION_RELAY_STATE": filepath.Join(home, "relay"), "CODEX_SESSION_RELAY_SCOPE_DIR": filepath.Join(home, "scope"), "TMPDIR": filepath.Join(home, "tmp"), "UV_CACHE_DIR": filepath.Join(home, "uv-cache"), "UV_PYTHON_DOWNLOADS": "never"}
+	env := map[string]string{"HOME": home, "XDG_STATE_HOME": filepath.Join(home, "state"), "XDG_CONFIG_HOME": filepath.Join(home, "config"), "XDG_DATA_HOME": filepath.Join(home, "data"), "CODEX_HOME": filepath.Join(home, "codex"), "CODEX_SESSION_RELAY_STATE": filepath.Join(home, "relay"), "CODEX_SESSION_RELAY_SCOPE_DIR": filepath.Join(home, "scope"), "TMPDIR": filepath.Join(home, "tmp")}
 	for k, v := range env {
 		if err := os.Setenv(k, v); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -101,69 +97,20 @@ func restoreNumbers(value any) any {
 	return value
 }
 
-// pythonTemporaries names each temporary directory the Python scenarios made under TMPDIR by its
-// order of first appearance instead of its random name, so the answer is the same on every run.
-// The directories are gone when Python exits; Go only ever sees their names.
-func pythonTemporaries(raw []byte) []byte {
-	tmp := os.Getenv("TMPDIR")
-	if tmp == "" {
-		return raw
-	}
-	names := map[string]string{}
-	return regexp.MustCompile(regexp.QuoteMeta(tmp)+`/[A-Za-z0-9._-]+`).ReplaceAllFunc(raw, func(path []byte) []byte {
-		name, ok := names[string(path)]
-		if !ok {
-			name = fmt.Sprintf("%s/python-temporary-%d", tmp, len(names)+1)
-			names[string(path)] = name
-		}
-		return []byte(name)
-	})
-}
-
-// scenarioAnswer returns what a Python scenario capture script printed for property: the
-// recording by default, a live run under CRW_PYTHON_ORACLE=record or check (see pyoracle).
-func scenarioAnswer(t *testing.T, script, property string, capture func() ([]byte, error)) []byte {
-	t.Helper()
-	_, file, _, _ := runtime.Caller(0)
-	return pyoracle.AnswerInterned(t, script+" "+property, func() ([]byte, error) {
-		raw, err := capture()
-		return pythonTemporaries(raw), err
-	}, pyoracle.Substitute(filepath.Clean(filepath.Join(filepath.Dir(file), "../../..")), "<repo>"), pyoracle.Substitute(os.Getenv("TMPDIR"), "<tmpdir>"))
-}
-
 func pythonReplay(t *testing.T, property string) {
 	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller")
-	}
-	root := filepath.Clean(filepath.Join(filepath.Dir(file), "../../.."))
-	raw := scenarioAnswer(t, "capture.py", property, func() ([]byte, error) {
-		cmd := exec.Command("uv", "run", "--no-sync", "--no-project", "python3", filepath.Join(root, "internal/relay/routing/testdata/capture.py"), property)
-		cmd.Dir = root
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		raw, err := cmd.Output()
-		if err != nil {
-			return nil, fmt.Errorf("Python %s: %v\n%s", property, err, stderr.String())
-		}
-		return raw, nil
-	})
 	var records []struct {
 		Operation string
 		Arguments []any
-		Expected  string
 	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	if err := dec.Decode(&records); err != nil {
-		t.Fatalf("capture: %v\n%s", err, raw)
-	}
+	scenarioInputs(t, "capture-"+property+".json", &records)
 	if len(records) == 0 {
-		t.Fatal("oracle captured no calls")
+		t.Fatal("the scenario made no calls")
 	}
 	for i, r := range records {
-		t.Run(fmt.Sprintf("%03d_%s", i, r.Operation), func(t *testing.T) {
+		name := fmt.Sprintf("%03d_%s", i, r.Operation)
+		var got string
+		if !t.Run(name, func(t *testing.T) {
 			args := list(restoreNumbers(r.Arguments[0]))
 			kwargs := object(restoreNumbers(r.Arguments[1]))
 			value, err := replayCall(t, r.Operation, args, kwargs)
@@ -174,11 +121,11 @@ func pythonReplay(t *testing.T, property string) {
 				}
 				value = Object{"error": "refused", "reason": refusal.Reason, "detail": refusal.Error()}
 			}
-			got := evidence.Dumps(value, false, true, false)
-			if got != r.Expected {
-				t.Fatalf("complete Python result differs\noperation: %s\narguments: %s\nPython: %s\nGo:     %s", r.Operation, evidence.Dumps(args, false, true, false), r.Expected, got)
-			}
-		})
+			got = evidence.Dumps(value, false, true, false)
+		}) {
+			continue
+		}
+		golden.Check(t, name, []byte(got), goldenPaths()...)
 	}
 }
 func replayCall(t *testing.T, name string, args []any, kwargs Object) (any, error) {

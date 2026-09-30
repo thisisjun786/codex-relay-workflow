@@ -3,17 +3,15 @@ package routing
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 type integrationClock struct {
@@ -50,7 +48,7 @@ func tablesJSON(ctx context.Context, s *store.Store) (string, error) {
 
 // retiredLedgerScenarios are the recorded PRD-13 scenarios that ran with the ledger contract
 // absent and whose answers are its route_ledger_pending refusal. The Go runtime always carries
-// the ledger contract, so that refusal is unreachable and was retired in wave R1; the recording
+// the ledger contract, so that refusal is unreachable and was retired in wave R1; the fixture
 // keeps them, and the replay skips them. The other PRD-13 scenarios answer the same with the
 // contract present.
 var retiredLedgerScenarios = map[string]bool{
@@ -61,36 +59,23 @@ var retiredLedgerScenarios = map[string]bool{
 
 func integrationReplay(t *testing.T, property string) {
 	t.Helper()
-	_, file, _, _ := runtime.Caller(0)
-	script := filepath.Join(filepath.Dir(file), "testdata/integration_capture.py")
-	raw := scenarioAnswer(t, "integration_capture.py", property, func() ([]byte, error) {
-		cmd := exec.Command("uv", "run", "--no-sync", "--no-project", "python3", script, property, filepath.Join(filepath.Dir(file), "testdata/properties.md"))
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		raw, err := cmd.Output()
-		if err != nil {
-			return nil, fmt.Errorf("Python %s: %v\n%s", property, err, stderr.String())
-		}
-		return raw, nil
-	})
+	// Wire, Tables and TransactionReads say what the scenario compared besides the reply: the
+	// reply's wire bytes, the whole tables after the call and the reads the call made inside the
+	// decision transaction.
 	var records []struct {
-		Operation                               string
-		Args                                    []any
-		Kwargs                                  Object
-		Expected, Wire, Tables, Stamp, Scenario string
-		Now                                     float64
-		PageSize                                int64
-		PageInjection                           bool
-		Failure                                 string
-		TransactionReads                        []any
+		Operation                      string
+		Args                           []any
+		Kwargs                         Object
+		Stamp, Scenario                string
+		Now                            float64
+		PageSize                       int64
+		PageInjection                  bool
+		Failure                        string
+		Wire, Tables, TransactionReads bool
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	if err := decoder.Decode(&records); err != nil {
-		t.Fatal(err)
-	}
+	scenarioInputs(t, "integration-"+property+".json", &records)
 	if len(records) == 0 {
-		t.Fatal("oracle captured no calls")
+		t.Fatal("the scenario made no calls")
 	}
 	root := t.TempDir()
 	var s *store.Store
@@ -103,6 +88,7 @@ func integrationReplay(t *testing.T, property string) {
 			}
 		}
 	}()
+	trail := &tableTrail{}
 	retired := false
 	for i, record := range records {
 		if record.Operation == "reset" {
@@ -111,7 +97,10 @@ func integrationReplay(t *testing.T, property string) {
 		if retired {
 			continue
 		}
-		ok := t.Run(fmt.Sprintf("%03d_%s", i, record.Operation), func(t *testing.T) {
+		name := fmt.Sprintf("%03d_%s", i, record.Operation)
+		var reply, wire, tables string
+		reads := []any{}
+		ok := t.Run(name, func(t *testing.T) {
 			clock.stamp, clock.now = record.Stamp, record.Now
 			entropy := make([]byte, 256)
 			for i := range entropy {
@@ -122,7 +111,6 @@ func integrationReplay(t *testing.T, property string) {
 			kw := object(restoreNumbers(record.Kwargs))
 			var answer any
 			var err error
-			reads := []any{}
 			if router != nil {
 				router.test.decisionRead = func(ctx context.Context, name string) { reads = append(reads, []any{name, s.InTransaction(ctx)}) }
 			}
@@ -172,71 +160,35 @@ func integrationReplay(t *testing.T, property string) {
 					answer = Object{"error": "RuntimeError", "detail": detail}
 				}
 			}
-			if record.TransactionReads != nil && !equal(record.TransactionReads, reads) {
-				t.Fatalf("transaction reads differ\nPython: %s\nGo: %s", evidence.Dumps(record.TransactionReads, false, true, false), evidence.Dumps(reads, false, true, false))
-			}
-			got := evidence.Dumps(answer, false, true, false)
-			if got != record.Expected {
-				t.Fatalf("whole reply differs\nargs=%s kw=%s\nPython: %s\nGo:     %s", evidence.Dumps(args, false, true, false), evidence.Dumps(kw, false, true, false), record.Expected, got)
-			}
+			reply = evidence.Dumps(answer, false, true, false)
 			commands := map[string]string{"router.register_product": "product-register", "router.bind": "product-bind", "router.set_policy": "route-policy", "router.show_products": "product-show", "router.intake": "route-intake", "router.classify": "route-classify", "router.reconcile": "route-reconcile", "router.evaluate_projects": "route-projects", "router.check_completion": "completion-check", "router.digest": "route-digest", "router.show": "route-show"}
-			if command := commands[record.Operation]; record.Wire != "" && command != "" {
-				wire := evidence.Dumps(CommandRecord(command, answer), false, false, true)
-				if wire != record.Wire {
-					t.Fatalf("reply wire bytes differ\nPython: %s\nGo:     %s", record.Wire, wire)
-				}
+			if command := commands[record.Operation]; record.Wire && command != "" {
+				wire = evidence.Dumps(CommandRecord(command, answer), false, false, true)
 			}
-			if record.Tables != "" {
-				got, err := tablesJSON(ctx, s)
+			if record.Tables {
+				tables, err = tablesJSON(ctx, s)
 				if err != nil {
 					t.Fatal(err)
-				}
-				if got != record.Tables {
-					var py, goValue any
-					d := json.NewDecoder(strings.NewReader(record.Tables))
-					d.UseNumber()
-					if err := d.Decode(&py); err != nil {
-						t.Fatal(err)
-					}
-					d = json.NewDecoder(strings.NewReader(got))
-					d.UseNumber()
-					if err := d.Decode(&goValue); err != nil {
-						t.Fatal(err)
-					}
-					t.Fatalf("persisted tables differ: %s", firstDifference("tables", py, goValue))
 				}
 			}
 		})
 		if !ok {
 			return
 		}
+		opts := goldenPaths()
+		golden.Check(t, name+" reply", []byte(reply), opts...)
+		if record.TransactionReads {
+			golden.Check(t, name+" transaction reads", []byte(evidence.Dumps(reads, false, true, false)), opts...)
+		}
+		if wire != "" {
+			golden.Check(t, name+" wire", []byte(wire), opts...)
+		}
+		if record.Tables {
+			trail.check(t, name+" tables", tables, opts...)
+		}
 	}
 }
-func firstDifference(path string, want, got any) string {
-	if equal(want, got) {
-		return ""
-	}
-	switch w := want.(type) {
-	case map[string]any:
-		g := object(got)
-		for _, k := range sortedKeys(w) {
-			if d := firstDifference(path+"."+k, w[k], g[k]); d != "" {
-				return d
-			}
-		}
-	case []any:
-		g := list(got)
-		if len(w) != len(g) {
-			return fmt.Sprintf("%s.length Python=%d Go=%d", path, len(w), len(g))
-		}
-		for i := range w {
-			if d := firstDifference(fmt.Sprintf("%s[%d]", path, i), w[i], g[i]); d != "" {
-				return d
-			}
-		}
-	}
-	return fmt.Sprintf("%s\nPython: %s\nGo:     %s", path, evidence.Dumps(want, false, true, false), evidence.Dumps(got, false, true, false))
-}
+
 func integrationCall(ctx context.Context, r *Router, name string, a []any, k Object) (any, error) {
 	arg := func(i int) any {
 		if i < len(a) {

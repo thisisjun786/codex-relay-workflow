@@ -1,0 +1,1221 @@
+[
+ {
+  "operation": "reset",
+  "args": [],
+  "kwargs": {},
+  "scenario": "test_a_completed_defect_that_comes_back_reopens_its_own_issue_and_comments_there"
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "alpha-notes",
+    "workspace": "example-ws",
+    "team": "ALN",
+    "familyLabel": "product:alpha-notes",
+    "repositories": [
+     "example-org/alpha-notes"
+    ],
+    "surfaces": {
+     "dev_run": {
+      "method": "CRW managed run tool results",
+      "active": true
+     },
+     "verification": {
+      "method": "CRW verification verdicts",
+      "active": true
+     },
+     "user_report": {
+      "method": "reports forwarded by the parent",
+      "active": true
+     }
+    },
+    "testTarget": {
+     "team": "TST",
+     "project": "proj-test"
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "beta-meter",
+    "workspace": "example-ws",
+    "team": "BTM",
+    "familyLabel": "product:beta-meter",
+    "repositories": [
+     "example-org/beta-meter"
+    ],
+    "surfaces": {
+     "real_use": {
+      "method": "error events the product forwards",
+      "active": true
+     },
+     "user_report": {
+      "method": "support inbox",
+      "active": false
+     }
+    },
+    "triageProject": "proj-btm-triage"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "gamma-kit",
+    "workspace": "example-ws",
+    "team": "GMK",
+    "familyLabel": "product:gamma-kit",
+    "repositories": [
+     "example-org/gamma-kit"
+    ],
+    "surfaces": {
+     "real_use": {
+      "method": "error events the product forwards",
+      "active": true
+     }
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "project",
+    "ref": "proj-aln-editor",
+    "title": "proj-aln-editor",
+    "state": "active",
+    "components": [
+     "editor",
+     "sync"
+    ],
+    "source": "linear readback"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-3",
+    "title": "ALN-3",
+    "state": "open",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback",
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-7",
+    "title": "ALN-7",
+    "state": "open",
+    "components": [
+     "sync"
+    ],
+    "source": "linear readback",
+    "symptoms": [
+     "conflict_lost"
+    ],
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-9",
+    "title": "ALN-9",
+    "state": "done",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback",
+    "symptoms": [
+     "save_mismatch"
+    ],
+    "fixRef": "PR#12",
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.intake",
+  "args": [
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": "example-org/alpha-notes",
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "save_mismatch",
+    "severity": "broken",
+    "occurrenceKey": "again-1",
+    "detail": {
+     "impact": "the cursor jumps",
+     "expected": "stays",
+     "actual": "jumps",
+     "reproduction": "type fast"
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.next",
+  "args": [],
+  "kwargs": {
+   "limit": 50
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.claim",
+  "args": [
+   "f6921301455d85cdd121e3ddbb9ec855"
+  ],
+  "kwargs": {
+   "owner": "holder"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.operation",
+  "args": [
+   "f6921301455d85cdd121e3ddbb9ec855"
+  ],
+  "kwargs": {
+   "claim_token": "0001020304050607"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.complete",
+  "args": [
+   "f6921301455d85cdd121e3ddbb9ec855"
+  ],
+  "kwargs": {
+   "claim_token": "0001020304050607",
+   "readback": "<!-- relay-fault:f6921301455d85cdd121e3ddbb9ec855 -->\nblockFormat: v1\npublicationId: f6921301455d85cdd121e3ddbb9ec855\nfaultId: 45e77bc1d6d8e6a8f36527bf6a11ecf3\nproduct: alpha-notes\nfaultClass: product_defect\ntrigger: open\ncycle: 1\nidentityDigest: bb89da4c184362030d6e079360f7eea7a7cdd53ba311fd258cc2bbeefddea383\nsummarySha256: d9e29a8b38dd2ec6361ccb0079f70fab50b77d4944c00ed6e8b2c17216a3e6da\n\n```text\n[alpha-notes] product_defect: component=editor symptom=save_mismatch\n\nThe relay recorded a broken fault in its product path and is filing it once.\n\nfault: 45e77bc1d6d8e6a8f36527bf6a11ecf3\nclass: product_defect  component: product  severity: broken\ndomain: component=editor symptom=save_mismatch\nobserved: 1 occurrence(s), first 2023-11-14T22:13:20.000000+00:00, most recent 2023-11-14T22:13:20.000000+00:00\ndetail: surface: dev_run  phase: development  origin: observed\nimpact: the cursor jumps\nexpected: stays\nactual: jumps\nreproduce with: type fast\nexecution: not approved. Filing this starts no work; approval, assignment, the fix and reverification are separate steps.\n\nevidence, as observed at the time:\n- 2023-11-14T22:13:20.000000+00:00 again-1\n\nRecorded by codex-session-relay. The occurrence count counts observations, not incidents: a source that overwrites its own history is observed once per sweep, not once per failure.\npublication: f6921301455d85cdd121e3ddbb9ec855\n```\n<!-- /relay-fault:f6921301455d85cdd121e3ddbb9ec855 -->"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.claim",
+  "args": [
+   "3390e44804ddafe959e553a03819c804"
+  ],
+  "kwargs": {
+   "owner": "holder"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.operation",
+  "args": [
+   "3390e44804ddafe959e553a03819c804"
+  ],
+  "kwargs": {
+   "claim_token": "0001020304050607"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.complete",
+  "args": [
+   "3390e44804ddafe959e553a03819c804"
+  ],
+  "kwargs": {
+   "claim_token": "0001020304050607",
+   "observed": {
+    "issue": "ALN-9",
+    "projectId": "proj-aln-editor",
+    "open": false,
+    "relations": [],
+    "labels": []
+   }
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.claim",
+  "args": [
+   "0e33bc1168e50c405f33828ccea1916e"
+  ],
+  "kwargs": {
+   "owner": "holder"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.operation",
+  "args": [
+   "0e33bc1168e50c405f33828ccea1916e"
+  ],
+  "kwargs": {
+   "claim_token": "0001020304050607"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.complete",
+  "args": [
+   "0e33bc1168e50c405f33828ccea1916e"
+  ],
+  "kwargs": {
+   "claim_token": "0001020304050607",
+   "observed": {
+    "issue": "ALN-9",
+    "projectId": "proj-aln-editor",
+    "open": true,
+    "relations": [],
+    "labels": []
+   }
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.next",
+  "args": [],
+  "kwargs": {
+   "limit": 50
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.reconcile",
+  "args": [],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.next",
+  "args": [],
+  "kwargs": {
+   "limit": 50
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "reset",
+  "args": [],
+  "kwargs": {},
+  "scenario": "test_a_regression_gets_a_follow_up_linked_to_the_fixed_issue_and_its_label"
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "alpha-notes",
+    "workspace": "example-ws",
+    "team": "ALN",
+    "familyLabel": "product:alpha-notes",
+    "repositories": [
+     "example-org/alpha-notes"
+    ],
+    "surfaces": {
+     "dev_run": {
+      "method": "CRW managed run tool results",
+      "active": true
+     },
+     "verification": {
+      "method": "CRW verification verdicts",
+      "active": true
+     },
+     "user_report": {
+      "method": "reports forwarded by the parent",
+      "active": true
+     }
+    },
+    "testTarget": {
+     "team": "TST",
+     "project": "proj-test"
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "beta-meter",
+    "workspace": "example-ws",
+    "team": "BTM",
+    "familyLabel": "product:beta-meter",
+    "repositories": [
+     "example-org/beta-meter"
+    ],
+    "surfaces": {
+     "real_use": {
+      "method": "error events the product forwards",
+      "active": true
+     },
+     "user_report": {
+      "method": "support inbox",
+      "active": false
+     }
+    },
+    "triageProject": "proj-btm-triage"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "gamma-kit",
+    "workspace": "example-ws",
+    "team": "GMK",
+    "familyLabel": "product:gamma-kit",
+    "repositories": [
+     "example-org/gamma-kit"
+    ],
+    "surfaces": {
+     "real_use": {
+      "method": "error events the product forwards",
+      "active": true
+     }
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "project",
+    "ref": "proj-aln-editor",
+    "title": "proj-aln-editor",
+    "state": "active",
+    "components": [
+     "editor",
+     "sync"
+    ],
+    "source": "linear readback"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-3",
+    "title": "ALN-3",
+    "state": "open",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback",
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-7",
+    "title": "ALN-7",
+    "state": "open",
+    "components": [
+     "sync"
+    ],
+    "source": "linear readback",
+    "symptoms": [
+     "conflict_lost"
+    ],
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-9",
+    "title": "ALN-9",
+    "state": "done",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback",
+    "symptoms": [
+     "save_mismatch"
+    ],
+    "fixRef": "PR#12",
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.intake",
+  "args": [
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": "example-org/alpha-notes",
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "save_dropped",
+    "severity": "broken",
+    "occurrenceKey": "run-1:step-1",
+    "detail": {
+     "impact": "the cursor jumps",
+     "expected": "stays",
+     "actual": "jumps",
+     "reproduction": "type fast"
+    },
+    "context": {
+     "regressionOf": "PR#12"
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.next",
+  "args": [],
+  "kwargs": {
+   "limit": 50
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.claim",
+  "args": [
+   "b796f0240c5f203c316e5223d7f1baf8"
+  ],
+  "kwargs": {
+   "owner": "holder"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.operation",
+  "args": [
+   "b796f0240c5f203c316e5223d7f1baf8"
+  ],
+  "kwargs": {
+   "claim_token": "0001020304050607"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.complete",
+  "args": [
+   "b796f0240c5f203c316e5223d7f1baf8"
+  ],
+  "kwargs": {
+   "claim_token": "0001020304050607",
+   "readback": "<!-- relay-fault:b796f0240c5f203c316e5223d7f1baf8 -->\nblockFormat: v1\npublicationId: b796f0240c5f203c316e5223d7f1baf8\nfaultId: 0bdab1b393325d008cf7dbb1d62c508a\nproduct: alpha-notes\nfaultClass: product_defect\ntrigger: open\ncycle: 1\nidentityDigest: 7b603573bc3548711fb4412670939b5de33e83d24cfb8d7fd0a0f1a97aa646c8\nsummarySha256: 3b2a3eab9e552ef1b4a111947f03caf094a5cd2ced5c6a52b726862902639b8f\n\n```text\n[alpha-notes] product_defect: component=editor symptom=save_dropped\n\nThe relay recorded a broken fault in its product path and is filing it once.\n\nfault: 0bdab1b393325d008cf7dbb1d62c508a\nclass: product_defect  component: product  severity: broken\ndomain: component=editor symptom=save_dropped\nobserved: 1 occurrence(s), first 2023-11-14T22:13:20.000000+00:00, most recent 2023-11-14T22:13:20.000000+00:00\nclears when: a later reading of the same product, component and symptom that finds it gone, or the fix and reverification loop\ndetail: surface: dev_run  phase: development  origin: observed\nimpact: the cursor jumps\nexpected: stays\nactual: jumps\nreproduce with: type fast\nexecution: not approved. Filing this starts no work; approval, assignment, the fix and reverification are separate steps.\n\nevidence, as observed at the time:\n- 2023-11-14T22:13:20.000000+00:00 run-1:step-1\n\nRecorded by codex-session-relay. The occurrence count counts observations, not incidents: a source that overwrites its own history is observed once per sweep, not once per failure.\npublication: b796f0240c5f203c316e5223d7f1baf8\n```\n<!-- /relay-fault:b796f0240c5f203c316e5223d7f1baf8 -->",
+   "external_ref": "ALN-100",
+   "project_ref": "proj-aln-editor"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.next",
+  "args": [],
+  "kwargs": {
+   "limit": 50
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.reconcile",
+  "args": [],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.next",
+  "args": [],
+  "kwargs": {
+   "limit": 50
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.claim",
+  "args": [
+   "88306fcc812dca39570a104f3d0c7d1e"
+  ],
+  "kwargs": {
+   "owner": "holder"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.operation",
+  "args": [
+   "88306fcc812dca39570a104f3d0c7d1e"
+  ],
+  "kwargs": {
+   "claim_token": "0001020304050607"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.complete",
+  "args": [
+   "88306fcc812dca39570a104f3d0c7d1e"
+  ],
+  "kwargs": {
+   "claim_token": "0001020304050607",
+   "observed": {
+    "issue": "ALN-100",
+    "projectId": "proj-aln-editor",
+    "open": true,
+    "relations": [],
+    "labels": [
+     "example-org/alpha-notes"
+    ]
+   }
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.claim",
+  "args": [
+   "b3553621a074ba473bc87d72ec23f9af"
+  ],
+  "kwargs": {
+   "owner": "holder"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.operation",
+  "args": [
+   "b3553621a074ba473bc87d72ec23f9af"
+  ],
+  "kwargs": {
+   "claim_token": "0001020304050607"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.complete",
+  "args": [
+   "b3553621a074ba473bc87d72ec23f9af"
+  ],
+  "kwargs": {
+   "claim_token": "0001020304050607",
+   "observed": {
+    "issue": "ALN-100",
+    "projectId": "proj-aln-editor",
+    "open": true,
+    "relations": [
+     {
+      "issue": "ALN-9",
+      "type": "related"
+     }
+    ],
+    "labels": [
+     "example-org/alpha-notes"
+    ]
+   }
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.next",
+  "args": [],
+  "kwargs": {
+   "limit": 50
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.get",
+  "args": [
+   "0bdab1b393325d008cf7dbb1d62c508a"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.reconcile",
+  "args": [],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "reset",
+  "args": [],
+  "kwargs": {},
+  "scenario": "test_an_owner_bound_after_a_create_was_queued_takes_the_defect_instead"
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "alpha-notes",
+    "workspace": "example-ws",
+    "team": "ALN",
+    "familyLabel": "product:alpha-notes",
+    "repositories": [
+     "example-org/alpha-notes"
+    ],
+    "surfaces": {
+     "dev_run": {
+      "method": "CRW managed run tool results",
+      "active": true
+     },
+     "verification": {
+      "method": "CRW verification verdicts",
+      "active": true
+     },
+     "user_report": {
+      "method": "reports forwarded by the parent",
+      "active": true
+     }
+    },
+    "testTarget": {
+     "team": "TST",
+     "project": "proj-test"
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "beta-meter",
+    "workspace": "example-ws",
+    "team": "BTM",
+    "familyLabel": "product:beta-meter",
+    "repositories": [
+     "example-org/beta-meter"
+    ],
+    "surfaces": {
+     "real_use": {
+      "method": "error events the product forwards",
+      "active": true
+     },
+     "user_report": {
+      "method": "support inbox",
+      "active": false
+     }
+    },
+    "triageProject": "proj-btm-triage"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "gamma-kit",
+    "workspace": "example-ws",
+    "team": "GMK",
+    "familyLabel": "product:gamma-kit",
+    "repositories": [
+     "example-org/gamma-kit"
+    ],
+    "surfaces": {
+     "real_use": {
+      "method": "error events the product forwards",
+      "active": true
+     }
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "project",
+    "ref": "proj-aln-editor",
+    "title": "proj-aln-editor",
+    "state": "active",
+    "components": [
+     "editor",
+     "sync"
+    ],
+    "source": "linear readback"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-3",
+    "title": "ALN-3",
+    "state": "open",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback",
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-7",
+    "title": "ALN-7",
+    "state": "open",
+    "components": [
+     "sync"
+    ],
+    "source": "linear readback",
+    "symptoms": [
+     "conflict_lost"
+    ],
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-9",
+    "title": "ALN-9",
+    "state": "done",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback",
+    "symptoms": [
+     "save_mismatch"
+    ],
+    "fixRef": "PR#12",
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.intake",
+  "args": [
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": "example-org/alpha-notes",
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "scroll_lock",
+    "severity": "broken",
+    "occurrenceKey": "run-1:step-1",
+    "detail": {
+     "impact": "the cursor jumps",
+     "expected": "stays",
+     "actual": "jumps",
+     "reproduction": "type fast"
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-11",
+    "title": "ALN-11",
+    "state": "open",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback",
+    "symptoms": [
+     "scroll_lock"
+    ],
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.next",
+  "args": [],
+  "kwargs": {
+   "limit": 50
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.claim",
+  "args": [
+   "237c29de3470d1736166df2863a1fd16"
+  ],
+  "kwargs": {
+   "owner": "holder"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.operation",
+  "args": [
+   "237c29de3470d1736166df2863a1fd16"
+  ],
+  "kwargs": {
+   "claim_token": "0001020304050607"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.complete",
+  "args": [
+   "237c29de3470d1736166df2863a1fd16"
+  ],
+  "kwargs": {
+   "claim_token": "0001020304050607",
+   "readback": "<!-- relay-fault:237c29de3470d1736166df2863a1fd16 -->\nblockFormat: v1\npublicationId: 237c29de3470d1736166df2863a1fd16\nfaultId: cced55718da409e7c6dd938fd30dff0f\nproduct: alpha-notes\nfaultClass: product_defect\ntrigger: open\ncycle: 1\nidentityDigest: b04bcea2a9b06d1c846b687c20b59371f0237d0a5ab9bbabcbc967710fc34ed4\nsummarySha256: 1441ff3076c7a4d6860f53822e599b9001c1e2c4874dab673ab122c5fb665954\n\n```text\n[alpha-notes] product_defect: component=editor symptom=scroll_lock\n\nThe relay recorded a broken fault in its product path and is filing it once.\n\nfault: cced55718da409e7c6dd938fd30dff0f\nclass: product_defect  component: product  severity: broken\ndomain: component=editor symptom=scroll_lock\nobserved: 1 occurrence(s), first 2023-11-14T22:13:20.000000+00:00, most recent 2023-11-14T22:13:20.000000+00:00\ndetail: surface: dev_run  phase: development  origin: observed\nimpact: the cursor jumps\nexpected: stays\nactual: jumps\nreproduce with: type fast\nexecution: not approved. Filing this starts no work; approval, assignment, the fix and reverification are separate steps.\n\nevidence, as observed at the time:\n- 2023-11-14T22:13:20.000000+00:00 run-1:step-1\n\nRecorded by codex-session-relay. The occurrence count counts observations, not incidents: a source that overwrites its own history is observed once per sweep, not once per failure.\npublication: 237c29de3470d1736166df2863a1fd16\n```\n<!-- /relay-fault:237c29de3470d1736166df2863a1fd16 -->"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.claim",
+  "args": [
+   "573ce667119e1565201db93f48989846"
+  ],
+  "kwargs": {
+   "owner": "holder"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.operation",
+  "args": [
+   "573ce667119e1565201db93f48989846"
+  ],
+  "kwargs": {
+   "claim_token": "0001020304050607"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.complete",
+  "args": [
+   "573ce667119e1565201db93f48989846"
+  ],
+  "kwargs": {
+   "claim_token": "0001020304050607",
+   "observed": {
+    "issue": "ALN-11",
+    "projectId": "proj-aln-editor",
+    "open": false,
+    "relations": [],
+    "labels": []
+   }
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.next",
+  "args": [],
+  "kwargs": {
+   "limit": 50
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.get",
+  "args": [
+   "cced55718da409e7c6dd938fd30dff0f"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ }
+]

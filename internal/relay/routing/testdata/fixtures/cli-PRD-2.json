@@ -1,0 +1,18 @@
+{
+ "records": [
+  {
+   "args": [
+    "route-policy",
+    "--record",
+    "{\"schema\": \"routing-policy/1\", \"policy\": \"project_creation\", \"enabled\": true, \"minIndependentFixes\": 2, \"requireSharedGoal\": true, \"requireCompletionCriteria\": true, \"basis\": \"\"}"
+   ]
+  },
+  {
+   "args": [
+    "route-policy",
+    "--record",
+    "{\"schema\": \"routing-policy/1\", \"policy\": \"project_creation\", \"enabled\": true, \"minIndependentFixes\": 2, \"requireSharedGoal\": true, \"requireCompletionCriteria\": true, \"basis\": \"CRW-206, Jun 2026-09-22\"}"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,47 @@
+[
+ {
+  "args": {
+   "project": "PRJ-1",
+   "reader": true,
+   "fixed": "merged",
+   "attached": [
+    "r1"
+   ],
+   "outstanding": [],
+   "owners": [
+    {
+     "taskId": "p"
+    }
+   ]
+  }
+ },
+ {
+  "args": {
+   "project": "PRJ-1",
+   "reader": true,
+   "fixed": "verifying",
+   "attached": [
+    "r1"
+   ],
+   "outstanding": [
+    "r1"
+   ],
+   "owners": [
+    {
+     "taskId": "p"
+    }
+   ]
+  }
+ },
+ {
+  "args": {
+   "project": "PRJ-1",
+   "reader": true,
+   "fixed": "merged",
+   "attached": [],
+   "outstanding": [],
+   "owners": [],
+   "readError": "RuntimeError: store gone"
+  }
+ }
+]

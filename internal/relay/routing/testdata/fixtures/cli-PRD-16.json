@@ -1,0 +1,18 @@
+{
+ "records": [
+  {
+   "args": [
+    "product-register",
+    "--record",
+    "{not json"
+   ]
+  },
+  {
+   "args": [
+    "product-register",
+    "--record",
+    "@<state>/absent.json"
+   ]
+  }
+ ]
+}

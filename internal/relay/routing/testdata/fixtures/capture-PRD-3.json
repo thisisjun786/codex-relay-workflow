@@ -1,0 +1,53 @@
+[
+ {
+  "operation": "read_binding",
+  "arguments": [
+   [
+    {
+     "schema": "product-binding/1",
+     "product": "alpha-notes",
+     "kind": "issue",
+     "ref": "ALN-20",
+     "title": "ALN-20 title",
+     "state": "open",
+     "components": [],
+     "source": "linear readback",
+     "followUpOf": [
+      {
+       "issue": "ALN-9",
+       "checks": [
+        "install",
+        "install"
+       ]
+      }
+     ]
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "read_binding",
+  "arguments": [
+   [
+    {
+     "schema": "product-binding/1",
+     "product": "alpha-notes",
+     "kind": "issue",
+     "ref": "ALN-21",
+     "title": "ALN-21 title",
+     "state": "open",
+     "components": [],
+     "source": "linear readback",
+     "followUpOf": [
+      {
+       "issue": "ALN-9",
+       "checks": []
+      }
+     ]
+    }
+   ],
+   {}
+  ]
+ }
+]

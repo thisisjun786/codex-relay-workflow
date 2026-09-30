@@ -1,0 +1,564 @@
+[
+ {
+  "operation": "attention",
+  "arguments": [
+   [
+    {
+     "stage": "pending_classification",
+     "disposition": "new_issue",
+     "hold": null,
+     "project": "p",
+     "claimedSeverity": "notice",
+     "state": "open",
+     "severity": "degraded",
+     "occurrenceCount": 1,
+     "externalRef": "ALN-1",
+     "linkState": "linked"
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "attention",
+  "arguments": [
+   [
+    {
+     "stage": "held",
+     "disposition": "new_issue",
+     "hold": "no_project",
+     "project": "p",
+     "claimedSeverity": "notice",
+     "state": "open",
+     "severity": "degraded",
+     "occurrenceCount": 1,
+     "externalRef": "ALN-1",
+     "linkState": "linked"
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "attention",
+  "arguments": [
+   [
+    {
+     "stage": "filed",
+     "disposition": "new_issue",
+     "hold": null,
+     "project": "p",
+     "claimedSeverity": "notice",
+     "state": "open",
+     "severity": "degraded",
+     "occurrenceCount": 1,
+     "externalRef": "ALN-1",
+     "linkState": "unlinked"
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "attention",
+  "arguments": [
+   [
+    {
+     "stage": "filed",
+     "disposition": "completion_mismatch",
+     "hold": null,
+     "project": "p",
+     "claimedSeverity": "notice",
+     "state": "open",
+     "severity": "degraded",
+     "occurrenceCount": 1,
+     "externalRef": "ALN-1",
+     "linkState": "linked"
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "attention",
+  "arguments": [
+   [
+    {
+     "stage": "filed",
+     "disposition": "completion_mismatch",
+     "hold": null,
+     "project": "p",
+     "claimedSeverity": "notice",
+     "state": "resolved",
+     "severity": "degraded",
+     "occurrenceCount": 1,
+     "externalRef": "ALN-1",
+     "linkState": "linked"
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "attention",
+  "arguments": [
+   [
+    {
+     "stage": "filed",
+     "disposition": "project_proposal",
+     "hold": null,
+     "project": null,
+     "claimedSeverity": "notice",
+     "state": "observed",
+     "severity": "degraded",
+     "occurrenceCount": 1,
+     "externalRef": "ALN-1",
+     "linkState": "linked"
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "attention",
+  "arguments": [
+   [
+    {
+     "stage": "filed",
+     "disposition": "project_proposal",
+     "hold": null,
+     "project": "proj-new",
+     "claimedSeverity": "notice",
+     "state": "observed",
+     "severity": "degraded",
+     "occurrenceCount": 1,
+     "externalRef": "ALN-1",
+     "linkState": "linked"
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "attention",
+  "arguments": [
+   [
+    {
+     "stage": "observed",
+     "disposition": "project_proposal",
+     "hold": null,
+     "project": null,
+     "claimedSeverity": "notice",
+     "state": "observed",
+     "severity": "degraded",
+     "occurrenceCount": 1,
+     "externalRef": "ALN-1",
+     "linkState": "linked"
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "attention",
+  "arguments": [
+   [
+    {
+     "stage": "filed",
+     "disposition": "new_issue",
+     "hold": null,
+     "project": "p",
+     "claimedSeverity": "notice",
+     "state": "open",
+     "severity": "degraded",
+     "occurrenceCount": 1,
+     "externalRef": "ALN-1",
+     "linkState": "linked"
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "read_registry",
+  "arguments": [
+   [
+    {
+     "schema": "product-registry/1",
+     "product": "alpha-notes",
+     "workspace": "example-ws",
+     "team": "ALN",
+     "familyLabel": "제품:Alpha Notes",
+     "repositories": [
+      "example-org/alpha-notes"
+     ],
+     "surfaces": {
+      "dev_run": {
+       "method": "CRW managed run tool results",
+       "active": true
+      },
+      "verification": {
+       "method": "CRW verification verdicts",
+       "active": true
+      },
+      "user_report": {
+       "method": "reports filed through the parent",
+       "active": true
+      }
+     },
+     "testTarget": {
+      "team": "TST",
+      "project": "proj-test"
+     }
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "read_binding",
+  "arguments": [
+   [
+    {
+     "schema": "product-binding/1",
+     "product": "alpha-notes",
+     "kind": "project",
+     "ref": "proj-aln-editor",
+     "title": "proj-aln-editor title",
+     "state": "active",
+     "components": [
+      "editor",
+      "sync"
+     ],
+     "source": "linear readback"
+    },
+    {
+     "schema": "product-registry/1",
+     "product": "alpha-notes",
+     "workspace": "example-ws",
+     "team": "ALN",
+     "familyLabel": "제품:Alpha Notes",
+     "repositories": [
+      "example-org/alpha-notes"
+     ],
+     "surfaces": {
+      "dev_run": {
+       "method": "CRW managed run tool results",
+       "active": true
+      },
+      "user_report": {
+       "method": "reports filed through the parent",
+       "active": true
+      },
+      "verification": {
+       "method": "CRW verification verdicts",
+       "active": true
+      }
+     },
+     "triageProject": null,
+     "testTarget": {
+      "team": "TST",
+      "project": "proj-test"
+     }
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "read_binding",
+  "arguments": [
+   [
+    {
+     "schema": "product-binding/1",
+     "product": "alpha-notes",
+     "kind": "issue",
+     "ref": "ALN-3",
+     "title": "ALN-3 title",
+     "state": "open",
+     "components": [
+      "editor"
+     ],
+     "source": "linear readback",
+     "project": "proj-aln-editor"
+    },
+    {
+     "schema": "product-registry/1",
+     "product": "alpha-notes",
+     "workspace": "example-ws",
+     "team": "ALN",
+     "familyLabel": "제품:Alpha Notes",
+     "repositories": [
+      "example-org/alpha-notes"
+     ],
+     "surfaces": {
+      "dev_run": {
+       "method": "CRW managed run tool results",
+       "active": true
+      },
+      "user_report": {
+       "method": "reports filed through the parent",
+       "active": true
+      },
+      "verification": {
+       "method": "CRW verification verdicts",
+       "active": true
+      }
+     },
+     "triageProject": null,
+     "testTarget": {
+      "team": "TST",
+      "project": "proj-test"
+     }
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "read_binding",
+  "arguments": [
+   [
+    {
+     "schema": "product-binding/1",
+     "product": "alpha-notes",
+     "kind": "issue",
+     "ref": "ALN-7",
+     "title": "ALN-7 title",
+     "state": "open",
+     "components": [
+      "sync"
+     ],
+     "source": "linear readback",
+     "symptoms": [
+      "conflict_lost"
+     ],
+     "project": "proj-aln-editor"
+    },
+    {
+     "schema": "product-registry/1",
+     "product": "alpha-notes",
+     "workspace": "example-ws",
+     "team": "ALN",
+     "familyLabel": "제품:Alpha Notes",
+     "repositories": [
+      "example-org/alpha-notes"
+     ],
+     "surfaces": {
+      "dev_run": {
+       "method": "CRW managed run tool results",
+       "active": true
+      },
+      "user_report": {
+       "method": "reports filed through the parent",
+       "active": true
+      },
+      "verification": {
+       "method": "CRW verification verdicts",
+       "active": true
+      }
+     },
+     "triageProject": null,
+     "testTarget": {
+      "team": "TST",
+      "project": "proj-test"
+     }
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "read_binding",
+  "arguments": [
+   [
+    {
+     "schema": "product-binding/1",
+     "product": "alpha-notes",
+     "kind": "issue",
+     "ref": "ALN-9",
+     "title": "ALN-9 title",
+     "state": "done",
+     "components": [
+      "editor"
+     ],
+     "source": "linear readback",
+     "symptoms": [
+      "save_roundtrip_mismatch"
+     ],
+     "fixRef": "PR#12",
+     "project": "proj-aln-editor"
+    },
+    {
+     "schema": "product-registry/1",
+     "product": "alpha-notes",
+     "workspace": "example-ws",
+     "team": "ALN",
+     "familyLabel": "제품:Alpha Notes",
+     "repositories": [
+      "example-org/alpha-notes"
+     ],
+     "surfaces": {
+      "dev_run": {
+       "method": "CRW managed run tool results",
+       "active": true
+      },
+      "user_report": {
+       "method": "reports filed through the parent",
+       "active": true
+      },
+      "verification": {
+       "method": "CRW verification verdicts",
+       "active": true
+      }
+     },
+     "triageProject": null,
+     "testTarget": {
+      "team": "TST",
+      "project": "proj-test"
+     }
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "attention",
+  "arguments": [
+   [
+    {
+     "stage": "filed",
+     "disposition": "new_issue",
+     "hold": null,
+     "project": "proj-aln-editor",
+     "state": "open",
+     "linkState": "unlinked",
+     "unverifiedCause": {
+      "product": "crw",
+      "faultId": "00000000000000000000000000000000",
+      "why": "unverified"
+     }
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "attention",
+  "arguments": [
+   [
+    {
+     "stage": "filed",
+     "disposition": "new_issue",
+     "hold": null,
+     "project": "proj-aln-editor",
+     "state": "open",
+     "linkState": "linked",
+     "unverifiedCause": {
+      "product": "crw",
+      "faultId": "00000000000000000000000000000000",
+      "why": "unverified"
+     }
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "attention",
+  "arguments": [
+   [
+    {
+     "stage": "filed",
+     "disposition": "new_issue",
+     "hold": null,
+     "project": "proj-aln-editor",
+     "state": "open",
+     "linkState": "linked",
+     "unverifiedCause": null
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "attention",
+  "arguments": [
+   [
+    {
+     "stage": "filed",
+     "disposition": "project_proposal",
+     "hold": null,
+     "project": null,
+     "state": "observed",
+     "linkState": "none"
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "attention",
+  "arguments": [
+   [
+    {
+     "stage": "filed",
+     "disposition": "project_proposal",
+     "hold": null,
+     "project": null,
+     "state": "open",
+     "linkState": "none"
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "attention",
+  "arguments": [
+   [
+    {
+     "stage": "filed",
+     "disposition": "project_proposal",
+     "hold": null,
+     "project": null,
+     "state": "fix_pending",
+     "linkState": "none"
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "attention",
+  "arguments": [
+   [
+    {
+     "stage": "filed",
+     "disposition": "project_proposal",
+     "hold": null,
+     "project": null,
+     "state": "resolved",
+     "linkState": "none"
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "attention",
+  "arguments": [
+   [
+    {
+     "stage": "filed",
+     "disposition": "project_proposal",
+     "hold": null,
+     "project": null,
+     "state": "withdrawn",
+     "linkState": "none"
+    }
+   ],
+   {}
+  ]
+ }
+]

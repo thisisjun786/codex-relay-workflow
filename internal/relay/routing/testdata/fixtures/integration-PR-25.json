@@ -1,0 +1,13 @@
+[
+ {
+  "operation": "reset",
+  "args": [],
+  "kwargs": {},
+  "scenario": "test_the_port_binds_and_routing_registered_its_classes_and_kind"
+ },
+ {
+  "operation": "registry-installed",
+  "args": [],
+  "kwargs": {}
+ }
+]

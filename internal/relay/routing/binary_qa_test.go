@@ -3,41 +3,31 @@ package routing
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"os"
+	"fmt"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // Both entry points execute the production dispatcher and handlers. The test-only build
-// overlay supplies the same clock as Python; no timestamps or persisted JSON are normalized.
+// overlay supplies the scenario's fixed clock; no timestamps or persisted JSON are normalized.
 func Test23_BuiltCommandRoundTrips(t *testing.T) { binaryRoundTrips(t, "qa") }
 func Test23_PR_18_BuiltProjectKind(t *testing.T) { binaryRoundTrips(t, "project-kind") }
 func binaryRoundTrips(t *testing.T, mode string) {
 	builtBinary(t)
-	// Python answers once; each entry point replays that answer against its own state directory.
-	pythonState := filepath.Join(t.TempDir(), "state")
-	answer := oracleScript(t, "cli_capture.py", mode, pythonState)
-	if err := os.RemoveAll(pythonState); err != nil {
-		t.Fatal(err)
-	}
+	// Each entry point runs the scenario against its own state directory and answers what the
+	// one golden holds.
 	for _, alias := range []bool{false, true} {
-		t.Run(map[bool]string{false: "crw relay", true: "codex-session-relay"}[alias], func(t *testing.T) {
-			state := filepath.Join(t.TempDir(), "state")
-			raw := bytes.ReplaceAll(answer, []byte(pythonState), []byte(state))
-			var records []struct {
-				Args                   []string
-				Code                   int
-				Stdout, Stderr, Tables string
-			}
-			if err := json.Unmarshal(raw, &records); err != nil {
-				t.Fatal(err)
-			}
-			for _, record := range records {
+		state := filepath.Join(t.TempDir(), "state")
+		var scenario cliScenario
+		scenarioInputs(t, "cli-"+mode+".json", &scenario, [2]string{state, "<state>"})
+		replies := make([]cliReply, len(scenario.Records))
+		tables := make([]string, len(scenario.Records))
+		if !t.Run(map[bool]string{false: "crw relay", true: "codex-session-relay"}[alias], func(t *testing.T) {
+			for i, record := range scenario.Records {
 				path := clockBinary
 				argv := []string{"relay", "--state", state}
 				if alias {
@@ -55,14 +45,12 @@ func binaryRoundTrips(t *testing.T, mode string) {
 						t.Fatal(err)
 					}
 				}
-				if code != record.Code || stdout.String() != record.Stdout || stderr.String() != record.Stderr {
-					t.Fatalf("built %s differs exit Python=%d Go=%d\nPython: %s\nGo: %s\nstderr: %s", record.Args[0], record.Code, code, record.Stdout, stdout.String(), stderr.String())
-				}
+				replies[i] = cliReply{code, stdout.String(), stderr.String()}
 				s, err := store.Open(context.Background(), filepath.Join(state, "relay.sqlite3"), "")
 				if err != nil {
 					t.Fatal(err)
 				}
-				got, err := tablesJSON(context.Background(), s)
+				tables[i], err = tablesJSON(context.Background(), s)
 				closeErr := s.Close()
 				if err != nil {
 					t.Fatal(err)
@@ -70,21 +58,16 @@ func binaryRoundTrips(t *testing.T, mode string) {
 				if closeErr != nil {
 					t.Fatal(closeErr)
 				}
-				if got != record.Tables {
-					var want, actual any
-					d := json.NewDecoder(strings.NewReader(record.Tables))
-					d.UseNumber()
-					if err := d.Decode(&want); err != nil {
-						t.Fatal(err)
-					}
-					d = json.NewDecoder(strings.NewReader(got))
-					d.UseNumber()
-					if err := d.Decode(&actual); err != nil {
-						t.Fatal(err)
-					}
-					t.Fatal(firstDifference("tables", want, actual))
-				}
 			}
-		})
+		}) {
+			continue
+		}
+		opts := goldenPaths([2]string{state, "<state>"})
+		trail := &tableTrail{}
+		for i, record := range scenario.Records {
+			key := fmt.Sprintf("%02d %s", i, record.Args[0])
+			golden.CheckJSON(t, key+" reply", replies[i], opts...)
+			trail.check(t, key+" tables", tables[i], opts...)
+		}
 	}
 }

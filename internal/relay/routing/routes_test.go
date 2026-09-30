@@ -1,18 +1,15 @@
 package routing
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 type routeClock string
@@ -21,30 +18,13 @@ func (c routeClock) ISO() string { return string(c) }
 
 func routeReplay(t *testing.T, property string) {
 	t.Helper()
-	_, file, _, _ := runtime.Caller(0)
-	script := filepath.Join(filepath.Dir(file), "testdata/routes_capture.py")
-	raw := scenarioAnswer(t, "routes_capture.py", property, func() ([]byte, error) {
-		cmd := exec.Command("uv", "run", "--no-sync", "--no-project", "python3", script, property)
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		raw, err := cmd.Output()
-		if err != nil {
-			return nil, fmt.Errorf("Python: %v\n%s", err, stderr.String())
-		}
-		return raw, nil
-	})
 	var records []struct {
 		Operation string
 		Args      []any
 		Kwargs    Object
 		Stamp     string
-		Expected  string
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	if err := decoder.Decode(&records); err != nil {
-		t.Fatal(err)
-	}
+	scenarioInputs(t, "routes-"+property+".json", &records)
 	ctx := context.Background()
 	stateRoot := t.TempDir()
 	var s *store.Store
@@ -56,8 +36,9 @@ func routeReplay(t *testing.T, property string) {
 		}
 	}()
 	for i, record := range records {
-		record := record
-		t.Run(fmt.Sprintf("%03d_%s", i, record.Operation), func(t *testing.T) {
+		name := fmt.Sprintf("%03d_%s", i, record.Operation)
+		var got string
+		if !t.Run(name, func(t *testing.T) {
 			args, kw := record.Args, record.Kwargs
 			r := RouteStore{Store: s, Clock: routeClock(record.Stamp)}
 			var answer any
@@ -152,14 +133,11 @@ func routeReplay(t *testing.T, property string) {
 				}
 				answer = Object{"error": "refused", "reason": refusal.Reason, "detail": refusal.Error()}
 			}
-			got := evidence.Dumps(answer, false, true, false)
-			if got != record.Expected {
-				t.Fatalf("whole output differs\nPython: %s\nGo:     %s", record.Expected, got)
-			}
-		})
-		if t.Failed() {
+			got = evidence.Dumps(answer, false, true, false)
+		}) {
 			return
 		}
+		golden.Check(t, name, []byte(got), goldenPaths()...)
 	}
 }
 func Test23_PRD_18_RouteRows(t *testing.T)        { routeReplay(t, "PRD-18") }
