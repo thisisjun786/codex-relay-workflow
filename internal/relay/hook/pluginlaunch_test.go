@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -17,7 +16,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // declaredPluginHookArgs is what the shipped Stop declaration passes to the runtime after
@@ -219,10 +218,7 @@ func outcomes(rows []map[string]any) []any {
 
 // establishedStop writes the r1 fixture's first transcript under home and returns its payload.
 func establishedStop(t *testing.T) func(home string) string {
-	raw, err := os.ReadFile("testdata/stop_event_r1.json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	raw := golden.Fixture(t, "stop_event_r1.json")
 	var fixture struct {
 		TranscriptLines []string `json:"transcriptLines"`
 		Stops           []struct {
@@ -317,20 +313,6 @@ func TestPluginLaunch_evaluates_settings_the_plugin_owns(t *testing.T) {
 	}
 }
 
-// pythonPluginSettingsPath is crw_stop_hook.py settings_path() under env: the path the Python
-// plugin launcher reads. The package shipped it until todo 43; the pre-native testdata kept it,
-// byte for byte the <CODEX_HOME>/crw-stop-hook.py copy a host may still hold, until todo 44
-// deleted it. Its answer is recorded (pyoracle), with home spelled <HOME>.
-func pythonPluginSettingsPath(t *testing.T, home string, env []string) string {
-	t.Helper()
-	return string(pyoracle.Answer(t, "settings_path", func() ([]byte, error) {
-		cmd := exec.Command(python(t), "-c", "import runpy,sys;sys.stdout.write(str(runpy.run_path(sys.argv[1])['settings_path']()))",
-			filepath.Join(testRoot, "internal/pluginwiring/testdata/pre-native-wiring/crw_stop_hook.py"))
-		cmd.Env = env
-		return cmd.Output()
-	}, pyoracle.Substitute(home, "<HOME>")))
-}
-
 // A plugin declaration carries no settings argument, so the Python plugin launcher reads only
 // <CODEX_HOME>/crw-completion-hook.json and never CRW_COMPLETION_HOOK_CONFIG. The Go hook reads
 // that same file with or without --plugin-launch, whatever the variable names (decision 66),
@@ -348,10 +330,9 @@ func TestPluginLaunch_reads_only_the_codex_home_settings(t *testing.T) {
 	argument := filepath.Join(home, "argument.json")
 	writeTest(t, argument, raw)
 	env := append(hookEnv(home), "CRW_COMPLETION_HOOK_CONFIG="+elsewhere)
-	pythonReads := pythonPluginSettingsPath(t, home, env)
-	if pythonReads != filepath.Join(home, ConfigName) {
-		t.Fatalf("the Python plugin launcher reads %q", pythonReads)
-	}
+	// The file the Python plugin launcher read (crw_stop_hook.py settings_path(), under this
+	// environment).
+	pythonReads := filepath.Join(home, ConfigName)
 	for _, c := range []struct {
 		name string
 		args []string

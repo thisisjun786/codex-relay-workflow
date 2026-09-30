@@ -19,48 +19,24 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// review is one run of review_parity.py's group against the native hook. The script's Python
-// side (review_parity.py python) is recorded (pyoracle): in order, each pair's Python answer and
-// snapshot, each Python CLI outcome. This side runs the native hook through the same scenario
-// and compares each step with the recorded one.
+// review is one run of review_parity.py's group against the native hook: the native hook runs
+// through the group's scenario and its steps, in order (each pair's stdout and snapshot, each CLI
+// outcome, each lone snapshot), are the group's golden, which began as the steps of the script's
+// Python side (review_parity.py python).
 type review struct {
-	t        *testing.T
-	base     string
-	recorded []any
+	t     *testing.T
+	base  string
+	steps []any
 }
 
 // reviewPython runs review_parity.py group id.
 func reviewPython(t *testing.T, id string) {
 	t.Helper()
 	base := hookHome(t, 5)
-	raw := pyoracle.Answer(t, id, func() ([]byte, error) {
-		out, err := pythonScript(t, nil, nil, "testdata/review_parity.py", "-", testRoot, base, id, "python")
-		if err != nil {
-			return nil, err
-		}
-		// The native side lays its homes out afresh.
-		for _, name := range []string{"journal", "crw-completion-hook"} {
-			_ = os.RemoveAll(filepath.Join(base, name))
-		}
-		entries, _ := os.ReadDir(base)
-		for _, entry := range entries {
-			if entry.IsDir() {
-				if err := os.RemoveAll(filepath.Join(base, entry.Name())); err != nil {
-					return nil, err
-				}
-			}
-		}
-		return []byte(canonicalJSON(t, out)), nil
-	}, pyoracle.Substitute(base, "<BASE>"), pyoracle.Substitute(testRoot, "<REPO>"))
-	decoded, err := Decode(raw)
-	if err != nil {
-		t.Fatalf("%v: %s", err, raw)
-	}
-	recorded, _ := evidence.List(decoded)
-	r := &review{t: t, base: base, recorded: recorded}
+	r := &review{t: t, base: base}
 	switch id {
 	case "D1", "D2":
 		r.paths(id)
@@ -88,23 +64,10 @@ func reviewPython(t *testing.T, id string) {
 	default:
 		t.Fatal(id)
 	}
-	if len(r.recorded) != 0 {
-		t.Fatalf("%d recorded Python steps left unread", len(r.recorded))
-	}
-}
-
-// take is the next recorded Python step, which must be of kind.
-func (r *review) take(kind string) Object {
-	r.t.Helper()
-	if len(r.recorded) == 0 {
-		r.t.Fatalf("no recorded Python %s step left", kind)
-	}
-	step := object(r.recorded[0])
-	r.recorded = r.recorded[1:]
-	if get(step, "kind") != kind {
-		r.t.Fatalf("the recorded Python step is %v, not %s", get(step, "kind"), kind)
-	}
-	return step
+	// A snapshot that lists directories names the journal's day directory, the run's date: the
+	// golden spells it journal/<DAY>, so it holds on any day.
+	steps := journalDay.ReplaceAllString(evidence.DumpsIndent(r.steps, 2, true, true), "journal/<DAY>")
+	golden.Check(t, id, []byte(steps+"\n"), golden.Substitute(base, "<BASE>"), golden.Substitute(testRoot, "<REPO>"))
 }
 
 // reviewHome is review_parity.py setup(name): a home, its settings, a transcript and the Stop.
@@ -322,12 +285,6 @@ func (r *review) snapshot(home string, directories bool) Object {
 // directories names; it is the run's date, not anything the hook decides.
 var journalDay = regexp.MustCompile(`journal/[0-9]{8}`)
 
-// snapshotText is a snapshot as compared: its JSON with the journal's day directory spelled
-// journal/<DAY>, so a recorded snapshot compares on any later day.
-func snapshotText(v any) string {
-	return journalDay.ReplaceAllString(evidence.Dumps(v, false, true, true), "journal/<DAY>")
-}
-
 func clearReview(t *testing.T, home string) {
 	for _, name := range []string{"journal", "crw-completion-hook"} {
 		if err := os.RemoveAll(filepath.Join(home, name)); err != nil {
@@ -337,7 +294,7 @@ func clearReview(t *testing.T, home string) {
 }
 
 // pair is the native half of review_parity.py pair(): the hook answering through a peer, its
-// stdout and snapshot compared with the recorded Python pair; it answers the snapshot.
+// stdout and snapshot a step; it answers the snapshot.
 func (r *review) pair(h reviewHome, payload Object, args []string, mask int, directories, withPeer bool) Object {
 	r.t.Helper()
 	return r.pairInput(h, payload, args, mask, directories, withPeer)
@@ -346,7 +303,6 @@ func (r *review) pair(h reviewHome, payload Object, args []string, mask int, dir
 func (r *review) pairInput(h reviewHome, payload any, args []string, mask int, directories, withPeer bool) Object {
 	t := r.t
 	t.Helper()
-	want := r.take("pair")
 	var stdout string
 	if withPeer {
 		stop := r.peer(filepath.Join(filepath.Dir(text(get(h.cfg, "dbPath"))), "control.sock"), reviewRelease)
@@ -356,27 +312,19 @@ func (r *review) pairInput(h reviewHome, payload any, args []string, mask int, d
 		stdout = r.invoke(h, payload, args, mask)
 	}
 	got := r.snapshot(h.home, directories)
-	if stdout != get(want, "stdout") {
-		t.Fatalf("stdout %q, Python %q", stdout, get(want, "stdout"))
-	}
-	if g, w := snapshotText(got), snapshotText(get(want, "snapshot")); g != w {
-		t.Fatalf("snapshot\n go     %s\n python %s", g, w)
-	}
+	r.steps = append(r.steps, Object{{Key: "kind", Value: "pair"}, {Key: "stdout", Value: stdout}, {Key: "snapshot", Value: got}})
 	return got
 }
 
-// cli compares the native relay CLI's outcome for args and input with the recorded Python one.
+// cli is the native relay CLI's outcome for args and input, a step.
 func (r *review) cli(h reviewHome, args []string, input string) outcomeBytes {
 	t := r.t
 	t.Helper()
-	want := r.take("cli")
 	command := exec.Command(binary(t), append([]string{"relay"}, args...)...)
 	command.Env = h.environ()
 	command.Stdin = strings.NewReader(input)
 	got := runOutcome(t, command)
-	if code, _ := get(want, "code").(int64); got != (outcomeBytes{int(code), text(get(want, "stdout")), text(get(want, "stderr"))}) {
-		t.Fatalf("relay %q: %+v\nPython %s", args, got, evidence.Dumps(want, false, true, true))
-	}
+	r.steps = append(r.steps, Object{{Key: "kind", Value: "cli"}, {Key: "code", Value: int64(got.Code)}, {Key: "stdout", Value: got.Stdout}, {Key: "stderr", Value: got.Stderr}})
 	return got
 }
 
@@ -387,11 +335,10 @@ func (r *review) paths(group string) {
 		cases = []string{"relative_arg", "relative_home", "lexical", "symlink"}
 	}
 	// The settings argument and CRW_COMPLETION_HOOK_CONFIG are retired (decision 66): the
-	// cases that read settings through either are skipped, their recorded answers consumed.
+	// cases that read settings through either are skipped.
 	retired := map[string]bool{"env": true, "argv_over_env": true, "empty_arg": true, "relative_arg": true, "lexical": true, "symlink": true}
 	for _, name := range cases {
 		if retired[name] {
-			r.take("pair")
 			t.Log(name, "retired")
 			continue
 		}
@@ -523,12 +470,8 @@ func (r *review) dialErrors() {
 		}
 		h.cfg = set(h.cfg, "dbPath", filepath.Join(state, "relay.sqlite3"))
 		h.writeSettings(t)
-		want := r.take("snapshot")
 		r.invoke(h, h.payload, nil, 0o022)
-		if g, w := snapshotText(r.snapshot(h.home, false)), snapshotText(get(want, "snapshot")); g != w {
-			t.Fatalf("%v\n go     %s\n python %s", number, g, w)
-		}
-		t.Log(number, "row equal")
+		r.steps = append(r.steps, Object{{Key: "kind", Value: "snapshot"}, {Key: "snapshot", Value: r.snapshot(h.home, false)}})
 	}
 }
 

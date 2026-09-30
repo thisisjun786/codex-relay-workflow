@@ -4,20 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 func Test33ReviewD1(t *testing.T)      { reviewPython(t, "D1") }
@@ -30,30 +27,15 @@ func Test33ReviewD9Large(t *testing.T) { reviewPython(t, "D9") }
 func Test33ReviewD10(t *testing.T)     { reviewPython(t, "D10") }
 
 // The settings path is the Codex home's, as the retired status reading's configuration cell named
-// it (completion.status; recorded).
+// it (completion.status), the golden. The settings override Python's status read
+// (CRW_COMPLETION_HOOK_CONFIG) is retired, decision 66; the reading with it unset is compared.
 func Test33ReviewD1Status(t *testing.T) {
 	home := t.TempDir()
-	// The settings override Python's status read (CRW_COMPLETION_HOOK_CONFIG) is retired, decision
-	// 66; the reading with it unset is compared.
-	for _, override := range []string{""} {
-		env := map[string]string{"CODEX_HOME": home, "CRW_COMPLETION_HOOK_CONFIG": override}
-		path, err := configurationPath("", env)
-		if err != nil {
-			t.Fatal(err)
-		}
-		script := `import json,sys;sys.path.insert(0,sys.argv[1]);from crw_runtime import completion;e=json.loads(sys.argv[2]);s=completion.status(environ=e);print(json.dumps({'configuration':s['configuration']['configuration'],'value':s['configuration']['value']}))`
-		raw, _ := json.Marshal(env)
-		out := pyoracle.Answer(t, "override="+strconv.FormatBool(override != ""), func() ([]byte, error) {
-			return pythonScript(t, nil, nil, "-c", script, filepath.Join(testRoot, "scripts"), string(raw))
-		}, pyoracle.Substitute(home, "<HOME>"))
-		var want map[string]any
-		if err := json.Unmarshal(out, &want); err != nil {
-			t.Fatal(err)
-		}
-		if path != want["configuration"] {
-			t.Fatal(path, want)
-		}
+	path, err := configurationPath("", map[string]string{"CODEX_HOME": home, "CRW_COMPLETION_HOOK_CONFIG": ""})
+	if err != nil {
+		t.Fatal(err)
 	}
+	golden.Check(t, "configuration", []byte(path), golden.Substitute(home, "<HOME>"))
 }
 
 func Test33ReviewD3Keys(t *testing.T) {
@@ -67,14 +49,10 @@ func Test33ReviewD3Keys(t *testing.T) {
 				t.Fatal(err)
 			}
 			v := value.([]any)
+			// The key and the values' compact bytes, which began as stopadapter.event_key's and
+			// json.dumps's.
 			key := EventKey(v[0], v[1], v[2], v[3])
-			out := pyoracle.Answer(t, raw, func() ([]byte, error) {
-				return pythonScript(t, nil, nil, "-c", `import json,sys;from codex_session_relay.stopadapter import event_key;v=json.loads(sys.argv[1]);print(event_key(*v));print(json.dumps(v,separators=(',',':')))`, raw)
-			})
-			want := key + "\n" + evidence.Dumps(v, true, false, true) + "\n"
-			if string(out) != want {
-				t.Fatalf("%s != %s", out, want)
-			}
+			golden.Check(t, raw, []byte(key+"\n"+evidence.Dumps(v, true, false, true)+"\n"))
 		}
 	}
 	for _, raw := range []string{`{"x":"NaN", "y":0,"s":"\\\"Infinity", "z":-Infinity}`, `[NaN,0,"\ud800",Infinity]`} {
@@ -82,12 +60,7 @@ func Test33ReviewD3Keys(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		out := pyoracle.Answer(t, raw, func() ([]byte, error) {
-			return pythonScript(t, nil, nil, "-c", `import json,sys;print(json.dumps(json.loads(sys.argv[1]),separators=(',',':')))`, raw)
-		})
-		if string(out) != evidence.Dumps(v, true, false, true)+"\n" {
-			t.Fatalf("%s %v", out, v)
-		}
+		golden.Check(t, raw, []byte(evidence.Dumps(v, true, false, true)+"\n"))
 	}
 }
 
@@ -95,17 +68,8 @@ func Test33ReviewD4Complaints(t *testing.T) {
 	base := Object{{Key: "configVersion", Value: int64(1)}, {Key: "relayExecutable", Value: "/relay"}, {Key: "markerRoot", Value: "/markers"}, {Key: "mode", Value: "observe"}, {Key: "owner", Value: "plugin"}, {Key: "adapterInterpreter", Value: "/python"}, {Key: "adapterEntryPoint", Value: "/entry"}}
 	for _, budget := range []any{int64(7), 7.0001, int64(8), int64(9), true, math.NaN(), math.Inf(1), math.Inf(-1), json.Number("999999999999999999999999")} {
 		cfg := set(append(Object{}, base...), "timeoutSeconds", budget)
-		settings := evidence.Dumps(cfg, false, false, true)
-		out := pyoracle.Answer(t, settings, func() ([]byte, error) {
-			return pythonScript(t, nil, nil, "-c", `import json,sys;sys.path.insert(0,sys.argv[1]);from crw_runtime.completion import complaints;print(json.dumps(complaints(json.loads(sys.argv[2]))))`, filepath.Join(testRoot, "scripts"), settings)
-		})
-		var want []string
-		if err := json.Unmarshal(out, &want); err != nil {
-			t.Fatal(err)
-		}
-		if got := Complaints(cfg); !reflect.DeepEqual(got, want) {
-			t.Fatal(budget, got, want)
-		}
+		// The complaints are the golden, which began as completion.complaints's.
+		golden.CheckJSON(t, evidence.Dumps(cfg, false, false, true), Complaints(cfg))
 	}
 }
 
@@ -143,91 +107,12 @@ func Test33ReviewD9Late(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("hook did not finish")
 	}
+	// Python's entry point, given the same delayed bytes, reached invoke_guard and journaled
+	// guard_answered; Go does not reach the guard.
 	rows := rowsAt(t, home)
 	if len(rows) != 1 || rows[0]["adapterOutcome"] != "stdin_unreadable" {
 		t.Fatal(rows)
 	}
-	// Signal exactly when the Python entry point starts its stdin read, then supply the same
-	// delayed bytes. Python reaches invoke_guard; Go does not. The outcome of the row Python
-	// journals is recorded (pyoracle).
-	outcomes := pyoracle.Answer(t, "python_outcomes", func() ([]byte, error) {
-		return pythonLateStdin(t, home)
-	})
-	if string(outcomes) != `["guard_answered"]` {
-		t.Fatalf("Python journaled %s", outcomes)
-	}
-}
-
-// pythonLateStdin runs Python's completion_hook in home with its stdin arriving 300ms after it
-// starts reading, and answers the adapterOutcome of each row it journaled.
-func pythonLateStdin(t *testing.T, home string) ([]byte, error) {
-	before := map[string]bool{}
-	paths, _ := filepath.Glob(filepath.Join(home, "journal", "[0-9]*", "*.json"))
-	for _, path := range paths {
-		before[path] = true
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, python(t), "-c", `import sys,runpy,os
-sys.path.insert(0,sys.argv[1])
-from crw_runtime import completion
-from unittest.mock import patch
-class Input:
- @property
- def buffer(self): return self
- def read(self):
-  os.write(2,b'R')
-  return sys.__stdin__.buffer.read()
-sys.stdin=Input();sys.argv=['completion_hook.py']
-with patch.object(completion,'invoke_guard',return_value={'ending':'exited','code':0,'stdout':'{"decision":"release","state":"unmanaged","hook_output":{}}','stderr':'','elapsedMs':0,'detail':None}):
- runpy.run_module('completion_hook',run_name='__main__')`, filepath.Join(testRoot, "scripts"))
-	cmd.Env = hookEnv(home)
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, err
-	}
-	if err = cmd.Start(); err != nil {
-		return nil, err
-	}
-	var signal [1]byte
-	if _, err = io.ReadFull(stderr, signal[:]); err != nil || signal[0] != 'R' {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		return nil, fmt.Errorf("the Python entry point did not start reading: %v %q", err, signal)
-	}
-	timer := time.NewTimer(300 * time.Millisecond)
-	defer timer.Stop()
-	<-timer.C
-	if _, err = io.WriteString(stdin, `{}`); err != nil {
-		return nil, err
-	}
-	if err = stdin.Close(); err != nil {
-		return nil, err
-	}
-	if err = cmd.Wait(); err != nil {
-		return nil, err
-	}
-	outcomes := []any{}
-	paths, _ = filepath.Glob(filepath.Join(home, "journal", "[0-9]*", "*.json"))
-	for _, path := range paths {
-		if before[path] {
-			continue
-		}
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return nil, err
-		}
-		var row map[string]any
-		if err = json.Unmarshal(raw, &row); err != nil {
-			return nil, err
-		}
-		outcomes = append(outcomes, row["adapterOutcome"])
-	}
-	return json.Marshal(outcomes)
 }
 
 type signalledReader struct {

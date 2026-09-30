@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // An event-driven deadline: expiration happens at the exact journal write,
@@ -111,41 +110,20 @@ func Test33LateVerdictPython(t *testing.T) {
 				rows, _ := evidence.List(get(actual, "rows"))
 				rows[0] = withoutKeys(object(rows[0]), "detail")
 			}
-			// Python's adapter, the console module and the script, through the same edge in a
-			// home of its own (late_verdict.py compare -): its answers and snapshot are recorded
-			// (pyoracle).
-			for _, module := range []string{"console", "script"} {
-				raw := pyoracle.Answer(t, module, func() ([]byte, error) {
-					out, err := pythonScript(t, nil, nil, "testdata/late_verdict.py", "compare", "-", edge, module, testRoot)
-					if err != nil {
-						return nil, err
-					}
-					return []byte(canonicalJSON(t, out)), nil
-				})
-				want, err := decodeObject(raw)
-				if err != nil {
-					t.Fatalf("%v: %s", err, raw)
-				}
-				if g, w := evidence.Dumps(answers, false, true, true), evidence.Dumps(get(want, "stdout"), false, true, true); g != w {
-					t.Fatalf("%s: go %s python %s", module, g, w)
-				}
-				if g, w := evidence.Dumps(actual, false, true, true), evidence.Dumps(get(want, "snapshot"), false, true, true); g != w {
-					t.Fatalf("%s:\n go     %s\n python %s", module, g, w)
-				}
-			}
+			// Both Stops' answers and the snapshot are the goldens, which began as what Python's
+			// adapter, the console module and the script alike, answered and left through the same
+			// edge in a home of its own (late_verdict.py compare).
+			goldenDumps(t, "stdout", answers, true)
+			goldenDumps(t, "snapshot", actual, true)
 		})
 	}
 }
 
 // lateVerdictFixture lays late_verdict.py setup's fixture out under home: the published
-// markers, an empty store, the settings and the Stop. Python lays it out; it is recorded
-// (pythonFixture).
-func lateVerdictFixture(t *testing.T, home string) *fixtureNames {
+// markers, an empty store, the settings and the Stop.
+func lateVerdictFixture(t *testing.T, home string) {
 	t.Helper()
-	_, names := pythonFixture(t, "setup", home, func() ([]byte, error) {
-		return pythonScript(t, nil, nil, "testdata/late_verdict.py", "setup", home)
-	}, nil)
-	return names
+	layFixture(t, "late-verdict", home)
 }
 
 // lateVerdictSnapshot is late_verdict.py snapshot(): the journal rows (by guard state) and the

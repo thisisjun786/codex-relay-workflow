@@ -3,8 +3,6 @@ package hook
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"maps"
 	"net"
 	"os"
 	"path/filepath"
@@ -12,7 +10,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 type gatedAnswer struct {
@@ -85,9 +83,8 @@ func Test33AnsweredDeadlinePython(t *testing.T) {
 			t.Error("Run returned before the accepted block was written")
 		}
 	})
-	// Compare the actual output with Python's block from the same real guard fixture:
-	// answered_deadline.py python, run where this hook ran, answers its stdout and the hold and
-	// observation files its guard published, recorded (pyoracle). Reservations and observation
+	// The block and the hold and observation files the real guard published, from the same real
+	// guard fixture Python's adapter answered (answered_deadline.py): reservations and observation
 	// files remain real, not mocked.
 	paths, err := filepath.Glob(filepath.Join(home, "markers", "*", "*", "hook", "s", "t", "*.json"))
 	if err != nil || len(paths) != 2 {
@@ -101,20 +98,8 @@ func Test33AnsweredDeadlinePython(t *testing.T) {
 		}
 		files[filepath.Base(path)] = string(raw)
 	}
-	if _, ok := files["hold.json"]; !ok {
-		t.Fatal(paths)
+	if _, ok := files["hold.json"]; !ok || output == "" {
+		t.Fatal(paths, output)
 	}
-	raw := pyoracle.Answer(t, "python", func() ([]byte, error) {
-		return pythonScript(t, nil, []byte(output), "testdata/answered_deadline.py", home, "python")
-	}, pyoracle.Substitute(home, "<HOME>"))
-	var python struct {
-		Stdout string            `json:"stdout"`
-		Files  map[string]string `json:"files"`
-	}
-	if err := json.Unmarshal(raw, &python); err != nil {
-		t.Fatalf("%v: %s", err, raw)
-	}
-	if output == "" || python.Stdout != output || !maps.Equal(python.Files, files) {
-		t.Fatalf("go %q %v\npython %q %v", output, files, python.Stdout, python.Files)
-	}
+	golden.CheckJSON(t, "block", map[string]any{"stdout": output, "files": files}, golden.Substitute(home, "<HOME>"))
 }

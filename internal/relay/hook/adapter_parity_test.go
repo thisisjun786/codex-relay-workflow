@@ -17,33 +17,20 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// The native hook and the Python adapter through their process entry points
-// (adapter_compare.py): stdout, exit, the journal rows and the claim and outcome files agree
-// scenario by scenario. Python's side (adapter_compare.py python) is recorded (pyoracle); this
-// test runs the native side as the script ran it.
+// The native hook through its process entry point, scenario by scenario as the retired Python
+// adapter's comparison (adapter_compare.py) ran it: stdout, exit, the journal rows and the claim
+// and outcome files are each scenario's golden, which began as the Python adapter's answers.
 func Test33AdapterBinaryPython(t *testing.T) {
 	tree := t.TempDir()
-	raw := pyoracle.Answer(t, "python", func() ([]byte, error) {
-		python := t.TempDir()
-		return pythonScript(t, nil, nil, "testdata/adapter_compare.py", "-", python, testRoot, "python")
-	})
-	decoded, err := Decode(raw)
-	if err != nil {
-		t.Fatalf("%v: %s", err, raw)
-	}
-	recorded, ok := evidence.List(decoded)
-	if !ok || len(recorded) != 8 {
-		t.Fatalf("recorded %d QA cases: %s", len(recorded), raw)
-	}
 	release := Object{{Key: "decision", Value: "release"}, {Key: "state", Value: "unmanaged"}, {Key: "hook_output", Value: Object{}}}
 	hold := Object{{Key: "decision", Value: "block"}, {Key: "state", Value: "receipt_missing"}, {Key: "observation", Value: "receipt_missing"},
 		{Key: "assignmentId", Value: strings.Repeat("a", 64)}, {Key: "counters", Value: Object{{Key: "holdsThisTurn", Value: int64(0)}}},
 		{Key: "recordedAs", Value: "hook/s/t/0"}, {Key: "hook_output", Value: Object{{Key: "decision", Value: "block"}, {Key: "reason", Value: "verify the child"}, {Key: "continue", Value: true}}}}
 	notUTF8 := filepath.Join(tree, "not-utf8-\xff")
-	for i, c := range []struct {
+	for _, c := range []struct {
 		name     string
 		response Object
 		base     string
@@ -53,10 +40,6 @@ func Test33AdapterBinaryPython(t *testing.T) {
 		if c.base != tree {
 			scenario += " under a directory that is not UTF-8"
 		}
-		want := object(recorded[i])
-		if get(want, "scenario") != scenario {
-			t.Fatalf("recorded case %d is %v, not %s", i, get(want, "scenario"), scenario)
-		}
 		got := nativeAdapterRun(t, c.name, c.response, c.base)
 		if c.name == "timeout" {
 			// Decision 24: native cancellation has no process group. Diagnostic prose is
@@ -64,10 +47,7 @@ func Test33AdapterBinaryPython(t *testing.T) {
 			rows, _ := evidence.List(get(got, "rows"))
 			rows[0] = withoutKeys(object(rows[0]), "detail")
 		}
-		if g, w := evidence.Dumps(got, false, true, true), evidence.Dumps(get(want, "python"), false, true, true); g != w {
-			t.Fatalf("%s:\n go     %s\n python %s", scenario, g, w)
-		}
-		t.Logf("%s: stdout, exit, journal and claim/outcome files equal", scenario)
+		goldenDumps(t, scenario, got, true)
 	}
 }
 
@@ -107,11 +87,7 @@ func nativeAdapterRun(t *testing.T, name string, response Object, base string) O
 	default:
 		writeTest(t, filepath.Join(home, ConfigName), []byte(evidence.Dumps(settings, false, false, true)))
 	}
-	fixtureRaw, err := os.ReadFile("testdata/stop_event_r1.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	fixture, err := decodeObject(fixtureRaw)
+	fixture, err := decodeObject(golden.Fixture(t, "stop_event_r1.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

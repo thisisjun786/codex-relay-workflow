@@ -2,7 +2,6 @@ package hook
 
 import (
 	"bytes"
-	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func nativeJournalFixture(t *testing.T) (string, Object) {
@@ -52,7 +50,6 @@ func Test33NativeJournalReader(t *testing.T) {
 	cases := []mutation{
 		{"identityScanMs", int64(0), false}, {"adapterOutcome", "guard_timed_out", false}, {"errno", nil, true}, {"errno", "ETIMEDOUT", false}, {"errno", "EPERM", false}, {"held", true, false}, {"guardInvoked", false, false}, {"processEnding", "timed_out", false}, {"eventKey", strings.Repeat("a", 64), false}, {"eventIdentity", Object{}, false}, {"acceptedAs", "accepted/x.json", false}, {"guardStderr", "unexpected", false}, {"exitCode", int64(0), false}, {"signal", int64(9), false}, {"guardDecision", "release", false}, {"guardState", "unmanaged", false}, {"assignmentId", "a", false}, {"guardRecordedAs", "hook/s/t/0", false}, {"guardMode", nil, false}, {"sessionId", nil, true}, {"stopHookActive", nil, true}, {"recordVersion", true, false}, {"elapsedMs", true, false}, {"guardElapsedMs", int64(-1), false}, {"at", "2026-99-99T00:00:00Z", false}, {"configuration", "relative", false}, {"detail", "unreachable", false}, {"fault", "extra", false}, {"counters", Object{}, false}, {"observation", "unmanaged", false},
 	}
-	inputs := []any{row}
 	for _, test := range cases {
 		copy := append(Object{}, row...)
 		if test.remove {
@@ -68,25 +65,6 @@ func Test33NativeJournalReader(t *testing.T) {
 		}
 		if NativePrescanUnreachable(copy) {
 			t.Fatalf("neighbour admitted: %s=%v", test.key, test.value)
-		}
-		inputs = append(inputs, copy)
-	}
-	// Python's reader over the same rows (completion._row_shape) is recorded (pyoracle): the
-	// native row and each neighbour.
-	script := `import json,sys;sys.path.insert(0,sys.argv[1]);from crw_runtime import completion;print(json.dumps([completion._row_shape(v) for v in json.load(sys.stdin)]))`
-	out := pyoracle.Answer(t, "row_shape", func() ([]byte, error) {
-		return pythonScript(t, nil, []byte(evidence.Dumps(inputs, false, false, true)), "-c", script, filepath.Join(testRoot, "scripts"))
-	})
-	var answers []bool
-	if err := json.Unmarshal(out, &answers); err != nil {
-		t.Fatal(err)
-	}
-	if len(answers) != len(inputs) {
-		t.Fatal(answers)
-	}
-	for i, answer := range answers {
-		if answer != (i == 0) {
-			t.Fatalf("Python/Go mismatch %d: %s", i, out)
 		}
 	}
 	original, err := os.ReadFile(path)
@@ -122,8 +100,8 @@ func Test33NativeJournalDetailErrnos(t *testing.T) {
 // A socket or settings path whose name holds a byte that is not UTF-8 is spelled as Python holds
 // it, the lone surrogate surrogateescape makes of the byte, and such a path is one the system
 // takes: the native pre-scan row a relay state directory like that leaves is still the exempt
-// one. A surrogate that stands for no byte is not a path. Every row is judged by the Python
-// reader too, its answers recorded (pyoracle).
+// one. A surrogate that stands for no byte is not a path. (The Python reader,
+// completion._native_prescan_unreachable, judged every row as want says until todo 44.)
 func Test33NativeJournalPathsWhoseNamesAreNotUTF8(t *testing.T) {
 	_, row := nativeJournalFixture(t)
 	prefix := "the configured runtime could not be run: [Errno 2] No such file or directory: "
@@ -144,24 +122,9 @@ func Test33NativeJournalPathsWhoseNamesAreNotUTF8(t *testing.T) {
 		{"settings under a Codex home holding 0xff", configuration("/tmp/c\xed\xb3\xbf/" + ConfigName), true},
 		{"settings under a surrogate that is no byte", configuration("/tmp/c\xed\xa0\x80/" + ConfigName), false},
 	}
-	inputs := make([]any, len(cases))
-	for i, c := range cases {
+	for _, c := range cases {
 		if got := NativePrescanUnreachable(c.row); got != c.want {
 			t.Errorf("%s: %v, want %v (%v)", c.name, got, c.want, get(c.row, "detail"))
-		}
-		inputs[i] = c.row
-	}
-	script := `import json,sys;sys.path.insert(0,sys.argv[1]);from crw_runtime import completion;print(json.dumps([completion._native_prescan_unreachable(v) for v in json.load(sys.stdin)]))`
-	out := pyoracle.Answer(t, "native_prescan_unreachable", func() ([]byte, error) {
-		return pythonScript(t, nil, []byte(evidence.Dumps(inputs, false, false, true)), "-c", script, filepath.Join(testRoot, "scripts"))
-	})
-	var answers []bool
-	if err := json.Unmarshal(out, &answers); err != nil || len(answers) != len(cases) {
-		t.Fatalf("%v %s", err, out)
-	}
-	for i, c := range cases {
-		if answers[i] != c.want {
-			t.Errorf("%s: Python reads %v, want %v", c.name, answers[i], c.want)
 		}
 	}
 }
