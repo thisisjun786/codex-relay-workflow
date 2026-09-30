@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,7 +14,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // observationSeed is the fixture both runtimes' stores hold before the daemon ticks.
@@ -26,54 +24,32 @@ var observationSeed = []string{
 
 const observationStaged = "INSERT INTO events(event_id,relationship_id,execution_generation,revision_hash,outcome,producer,turn_thread_id,turn_id,turn_status,receipt,first_seen_at,last_seen_at,stage) VALUES('staged-event','r',1,'revision','ready_for_review','child','child','anchor','inProgress','{}','2023-11-14T22:13:20Z','2023-11-14T22:13:20Z','staged')"
 
-// seedObservation writes the fixture through the store writer of the runtime under test, into
-// the store that runtime owns: each store is its own runtime's from creation, so the two
-// stores' schema_meta differ by the owner alone.
-func seedObservation(t *testing.T, home, socket string, staged, python bool) {
+// seedObservation writes the fixture through Go's store writer into the store Go owns from its
+// creation.
+func seedObservation(t *testing.T, home, socket string, staged bool) {
 	t.Helper()
 	statements := append([]string{}, observationSeed...)
 	if staged {
 		statements = append(statements, observationStaged)
 	}
-	path := home + "/state/relay.sqlite3"
-	if !python {
-		prepareParityOwnership(t, home, false, []string{"--socket", socket})
-		defer inRuntimeScope(t, home)()
-		s, err := store.Open(context.Background(), path, socket)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, statement := range statements {
-			if _, err = s.DB.Exec(statement); err != nil {
-				t.Fatal(errors.Join(err, s.Close()))
-			}
-		}
-		if err = s.Close(); err != nil {
-			t.Fatal(err)
-		}
-		return
-	}
-	encoded, err := json.Marshal(statements)
+	prepareParityOwnership(t, home)
+	defer inRuntimeScope(t, home)()
+	s, err := store.Open(context.Background(), home+"/state/relay.sqlite3", socket)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(filepath.Join(testRoot, ".venv/bin/python"), "-c", `import json, sys
-from codex_session_relay.store import Store
-s=Store(sys.argv[1], socket_path=sys.argv[2])
-try:
- for statement in json.loads(sys.argv[3]):
-  s.db.execute(statement)
-finally:
- s.close()
-`, path, socket, string(encoded))
-	cmd.Env = environment(home)
-	if raw, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("seed: %v %s", err, raw)
+	for _, statement := range statements {
+		if _, err = s.DB.Exec(statement); err != nil {
+			t.Fatal(errors.Join(err, s.Close()))
+		}
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
-// observationAnswer is one runtime's daemon tick over the seeded store: its answer, its tables and
-// its state files.
+// observationAnswer is the daemon's tick over the seeded store: its answer, its tables and its
+// state files.
 type observationAnswer struct {
 	Capture capture           `json:"capture"`
 	Tables  string            `json:"tables"`
@@ -114,9 +90,9 @@ func Test29ObservationConsoleTables(t *testing.T) {
 			})
 			host.Handle("thread/goal/get", func(json.RawMessage) fakehost.Reply { return fakehost.Reply{Result: map[string]any{"goal": nil}} })
 			args := []string{"--socket", host.SocketPath, "daemon", "--max-ticks", "1", "--allow-isolated-scope"}
-			seedObservation(t, home, host.SocketPath, staged, false)
-			got := invokeFixed(home, false, args)
-			checkAnswer(t, home, "answer", observationAnswer{normalizedCapture(got), withoutEvidenceDigests(t, home, tables(t, home, testsupport.Go)), files(t, home, testsupport.Go)}, host.SocketPath)
+			seedObservation(t, home, host.SocketPath, staged)
+			got := invokeFixed(home, args)
+			checkAnswer(t, home, "answer", observationAnswer{normalizedCapture(got), withoutEvidenceDigests(t, home, tables(t, home)), files(t, home)}, host.SocketPath)
 		})
 	}
 }

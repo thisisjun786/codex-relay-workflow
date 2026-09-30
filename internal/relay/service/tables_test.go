@@ -5,11 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-// tickAnswer is one runtime's console answer and its tables.
+// tickAnswer is the daemon's console answer and its tables.
 type tickAnswer struct {
 	Capture capture `json:"capture"`
 	Tables  string  `json:"tables"`
@@ -18,8 +16,8 @@ type tickAnswer struct {
 func Test29EmptyTickTableParity(t *testing.T) {
 	home := t.TempDir()
 	args := []string{"--socket", home + "/socket", "daemon", "--max-ticks", "1", "--allow-isolated-scope"}
-	got := invoke(t, home, false, args...)
-	checkAnswer(t, home, "answer", tickAnswer{normalizedCapture(got), tables(t, home, testsupport.Go)})
+	got := invoke(t, home, args...)
+	checkAnswer(t, home, "answer", tickAnswer{normalizedCapture(got), tables(t, home)})
 }
 func Test29LaunchPolicyPersistence(t *testing.T) {
 	home := t.TempDir()
@@ -31,11 +29,11 @@ func Test29LaunchPolicyPersistence(t *testing.T) {
 	steps := [][]string{{"service", "declare", "--execution-policy", policy}, {"service", "status"}, {"service", "declare", "--forget-execution-policy"}}
 	var answers []consoleAnswer
 	for _, args := range steps {
-		result := invoke(t, home, false, args...)
+		result := invoke(t, home, args...)
 		if result.Code != 0 {
 			t.Fatalf("%s refused: %+v", strings.Join(args, " "), result)
 		}
-		answers = append(answers, consoleAnswer{normalizedCapture(result), files(t, home, testsupport.Go)})
+		answers = append(answers, consoleAnswer{normalizedCapture(result), files(t, home)})
 	}
 	checkAnswer(t, home, "answer", answers)
 }

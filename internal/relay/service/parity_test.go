@@ -27,15 +27,11 @@ func environment(home string) []string {
 	}
 	return env
 }
-func invoke(t *testing.T, home string, python bool, args ...string) capture {
+func invoke(t *testing.T, home string, args ...string) capture {
 	t.Helper()
-	prepareParityOwnership(t, home, python, args)
+	prepareParityOwnership(t, home)
 	program := filepath.Join(filepath.Dir(testBinary), "codex-session-relay")
 	argv := append([]string{"--state", home + "/state"}, args...)
-	if python {
-		program = testPython
-		argv = append([]string{"--state", home + "/state"}, args...)
-	}
 	cmd := exec.Command(program, argv...)
 	cmd.Env = environment(home)
 	var out, stderr bytes.Buffer
@@ -51,14 +47,14 @@ func invoke(t *testing.T, home string, python bool, args ...string) capture {
 	return capture{out.String(), stderr.String(), cmd.ProcessState.ExitCode()}
 }
 
-// prepareParityOwnership puts the state directory into the ownership state a host running
-// the runtime under test has at this step, and nothing more:
-//   - an absent store stays absent: each runtime's own absent-store initializer creates it;
-//   - a store an earlier invocation left behind that the other runtime owns is that store after
-//     a completed takeover to the runtime under test.
+// prepareParityOwnership puts the state directory into the ownership state a host running Go
+// has at this step, and nothing more:
+//   - an absent store stays absent: Go's own absent-store initializer creates it;
+//   - a store an earlier invocation left behind is that store after a completed takeover to Go
+//     (a no-op on the store Go owns, which it still validates as fenced).
 //
 // The scope key a helper stamps is the one the runtime computes in the environment it runs in.
-func prepareParityOwnership(t *testing.T, home string, python bool, args []string) {
+func prepareParityOwnership(t *testing.T, home string) {
 	t.Helper()
 	path := filepath.Join(home, "state/relay.sqlite3")
 	info, err := os.Stat(path)
@@ -71,11 +67,7 @@ func prepareParityOwnership(t *testing.T, home string, python bool, args []strin
 		return
 	}
 	defer inRuntimeScope(t, home)()
-	owner := "go"
-	if python {
-		owner = "python"
-	}
-	testsupport.HandOver(t, path, owner)
+	testsupport.HandOver(t, path, "go")
 }
 
 // inRuntimeScope gives this process the scope registry root environment(home) gives both
@@ -120,16 +112,8 @@ func normalize(raw string) string {
 // is that runtime's own.
 var processRecords = map[string]bool{"daemon.json": true, "worker-policy.json": true}
 
-// writtenBy is the runtime an invoke(..., python, ...) ran.
-func writtenBy(python bool) testsupport.Runtime {
-	if python {
-		return testsupport.Python
-	}
-	return testsupport.Go
-}
-
-// files reads the state files writer, the runtime that ran against home, left behind.
-func files(t *testing.T, home string, writer testsupport.Runtime) map[string]string {
+// files reads the state files the runs against home left behind.
+func files(t *testing.T, home string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
 	for _, name := range []string{"daemon.json", "daemon.log", "launch-policy.json", "service.json", "worker-policy.json"} {
@@ -137,7 +121,7 @@ func files(t *testing.T, home string, writer testsupport.Runtime) map[string]str
 		if err == nil {
 			text := string(raw)
 			if processRecords[name] {
-				text = testsupport.RuntimeIdentityText(t, writer, text)
+				text = testsupport.RuntimeIdentityText(t, testsupport.Go, text)
 			}
 			out[name] = normalize(text)
 		} else if !os.IsNotExist(err) {
@@ -153,7 +137,7 @@ func files(t *testing.T, home string, writer testsupport.Runtime) map[string]str
 		if err != nil {
 			t.Fatal(err)
 		}
-		out["scopes/"+filepath.Base(path)] = normalize(testsupport.RuntimeIdentityText(t, writer, string(raw)))
+		out["scopes/"+filepath.Base(path)] = normalize(testsupport.RuntimeIdentityText(t, testsupport.Go, string(raw)))
 	}
 	return out
 }
@@ -178,8 +162,8 @@ func Test29ConsoleParity(t *testing.T) {
 	for i, args := range cases {
 		t.Run(fmt.Sprintf("%02d_%s", i, strings.Join(args, "_")), func(t *testing.T) {
 			home := t.TempDir()
-			got := invoke(t, home, false, args...)
-			checkAnswer(t, home, "answer", consoleAnswer{normalizedCapture(got), files(t, home, testsupport.Go)})
+			got := invoke(t, home, args...)
+			checkAnswer(t, home, "answer", consoleAnswer{normalizedCapture(got), files(t, home)})
 		})
 	}
 }
@@ -190,7 +174,7 @@ func Test29CLIShape(t *testing.T) {
 			args := append(append([]string{}, command...), suffix...)
 			t.Run(strings.Join(args, "_"), func(t *testing.T) {
 				home := t.TempDir()
-				checkAnswer(t, home, "answer", normalizedCapture(invoke(t, home, false, args...)))
+				checkAnswer(t, home, "answer", normalizedCapture(invoke(t, home, args...)))
 			})
 		}
 	}

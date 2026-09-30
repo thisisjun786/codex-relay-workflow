@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"golang.org/x/sys/unix"
 )
 
@@ -161,10 +160,9 @@ type reapAnswer struct {
 	Tables  string            `json:"tables"`
 }
 
-// reapStop enables the service with the runtime python selects, publishes a Go record naming a
-// live, independently reaped supervisor and a controlled worker in state, and stops it with
-// that runtime.
-func reapStop(t *testing.T, home, state string, python bool) reapAnswer {
+// reapStop enables the service, publishes a Go record naming a live, independently reaped
+// supervisor and a controlled worker in state, and stops it.
+func reapStop(t *testing.T, home, state string) reapAnswer {
 	t.Helper()
 	worker, ticks := controlledWorker(t, state)
 	// A live, independently reaped supervisor makes stop take its ordinary
@@ -184,7 +182,7 @@ func reapStop(t *testing.T, home, state string, python bool) reapAnswer {
 		}
 	})
 	handle := process(t, supervisor.Process.Pid)
-	enabled := invoke(t, home, python, "service", "enable")
+	enabled := invoke(t, home, "service", "enable")
 	if enabled.Code != 0 {
 		t.Fatal(enabled)
 	}
@@ -198,14 +196,14 @@ func reapStop(t *testing.T, home, state string, python bool) reapAnswer {
 	if err = s.WriteRecord(record); err != nil {
 		t.Fatal(err)
 	}
-	result := invoke(t, home, python, "--socket", home+"/socket", "service", "stop")
+	result := invoke(t, home, "--socket", home+"/socket", "service", "stop")
 	answer := runtimeObject(t, result)
 	if result.Code != 0 || get(answer, "worker") != state || !handle.Wait(0) {
 		t.Fatalf("%s: %+v", state, result)
 	}
-	// daemon.json is the record s.NewRecord (Go) wrote above in both runs; either
-	// runtime's stop only adds to it, so its build is Go's own (null) on both sides.
-	actualFiles := files(t, home, testsupport.Go)
+	// daemon.json is the record s.NewRecord (Go) wrote above; stop only adds to it, so its
+	// build is Go's own (null).
+	actualFiles := files(t, home)
 	raw, err := os.ReadFile(home + "/state/stop.request")
 	if err != nil {
 		t.Fatal(err)
@@ -216,7 +214,7 @@ func reapStop(t *testing.T, home, state string, python bool) reapAnswer {
 		t.Fatal(err)
 	}
 	actualFiles["daemon.lock"] = string(raw)
-	return reapAnswer{normalizedCapture(result), actualFiles, tables(t, home, writtenBy(python))}
+	return reapAnswer{normalizedCapture(result), actualFiles, tables(t, home)}
 }
 
 // Test29D1DeterministicReapStates stops a worker that is already gone, or exited and unreaped,
@@ -227,14 +225,14 @@ func Test29D1DeterministicReapStates(t *testing.T) {
 		t.Run(state, func(t *testing.T) {
 			home := t.TempDir()
 			t.Run("false", func(t *testing.T) {
-				checkAnswer(t, home, "answer", reapStop(t, home, state, false))
+				checkAnswer(t, home, "answer", reapStop(t, home, state))
 			})
 		})
 	}
 }
 func installationForBinary(t *testing.T, home string) string {
 	t.Helper()
-	result := invoke(t, home, false, "service", "status")
+	result := invoke(t, home, "service", "status")
 	return text(get(runtimeObject(t, result), "installationId"))
 }
 
@@ -259,7 +257,7 @@ func Test29D1TerminationCadence(t *testing.T) {
 // running; tests/test_service.py holds the same case for it.
 func Test29D1StopWaitsForEveryThreadOfTheWorker(t *testing.T) {
 	home := t.TempDir()
-	if enabled := invoke(t, home, false, "service", "enable"); enabled.Code != 0 {
+	if enabled := invoke(t, home, "service", "enable"); enabled.Code != 0 {
 		t.Fatal(enabled)
 	}
 	s, err := New(context.Background(), storeSelection(home), home+"/socket")

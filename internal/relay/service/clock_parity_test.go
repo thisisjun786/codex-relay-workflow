@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-// Timestamp-derived occurrence IDs cannot be normalized: pin the injected domain
-// clocks on both sides, while still executing the unchanged Python console script.
-func fixedClockRuntime(t *testing.T) func(string, bool, []string) capture {
+// Timestamp-derived occurrence IDs cannot be normalized: pin the injected domain clocks of a
+// relay built for the purpose (the Python console script's were pinned alike until todo 44).
+func fixedClockRuntime(t *testing.T) func(string, []string) capture {
 	t.Helper()
 	bin := filepath.Join(filepath.Dir(testBinary), "clock", "codex-session-relay")
 	if err := os.MkdirAll(filepath.Dir(bin), 0700); err != nil {
@@ -33,22 +33,10 @@ func fixedClockRuntime(t *testing.T) func(string, bool, []string) capture {
 	if err = os.WriteFile(fixed, raw, 0700); err != nil {
 		t.Fatal(err)
 	}
-	hooks := t.TempDir()
-	if err = os.WriteFile(filepath.Join(hooks, "sitecustomize.py"), []byte("from codex_session_relay import clock\nclock.SystemClock = lambda: clock.FakeClock(1700000000)\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	return func(home string, python bool, args []string) capture {
-		prepareParityOwnership(t, home, python, args)
-		program := fixed
-		argv := append([]string{"relay", "--state", home + "/state"}, args...)
-		env := environment(home)
-		if python {
-			program = testPython
-			argv = append([]string{"--state", home + "/state"}, args...)
-			env = environmentSet(env, "PYTHONPATH", hooks+string(os.PathListSeparator)+os.Getenv("PYTHONPATH"))
-		}
-		cmd := exec.Command(program, argv...)
-		cmd.Env = env
+	return func(home string, args []string) capture {
+		prepareParityOwnership(t, home)
+		cmd := exec.Command(fixed, append([]string{"relay", "--state", home + "/state"}, args...)...)
+		cmd.Env = environment(home)
 		var out, stderr bytes.Buffer
 		cmd.Stdout = &out
 		cmd.Stderr = &stderr

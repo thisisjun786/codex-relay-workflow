@@ -142,9 +142,8 @@ func normalizedCapture(c capture) capture {
 // tables is every table/column/value of home's store, including persisted JSON bytes (SQLite page
 // layout, freelists and WAL checkpoints are not logical table contents): every table's rows in
 // rowid order as Python's sqlite3 returned them through json.dumps, the time columns the relay
-// writes as numbers spelled EPOCH_TIME. writer is the runtime that ran against home, so the one
-// runtime-identity row, schema_meta's owner, must be its own.
-func tables(t *testing.T, home string, writer testsupport.Runtime) string {
+// writes as numbers spelled EPOCH_TIME.
+func tables(t *testing.T, home string) string {
 	t.Helper()
 	path := filepath.Join(home, "state", "relay.sqlite3")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -214,19 +213,19 @@ func tables(t *testing.T, home string, writer testsupport.Runtime) string {
 		}
 		data[name] = table
 	}
-	return tableText(t, data, writer)
+	return tableText(t, data)
 }
 
-// tableText is the comparable text of a table dump: the random store_id and the owner row made
+// tableText is the comparable text of a table dump: the random store_id and Go's owner row made
 // runtime-neutral, then normalized.
-func tableText(t *testing.T, data map[string][][]any, writer testsupport.Runtime) string {
+func tableText(t *testing.T, data map[string][][]any) string {
 	t.Helper()
 	for _, row := range data["schema_meta"] {
 		if row[0] == "store_id" {
 			row[1] = "RANDOM_STORE_ID"
 		}
 		if key, ok := row[0].(string); ok {
-			row[1] = testsupport.OwnerNeutral(t, writer, key, row[1])
+			row[1] = testsupport.OwnerNeutral(t, testsupport.Go, key, row[1])
 		}
 	}
 	raw, err := json.MarshalIndent(data, "", "  ")

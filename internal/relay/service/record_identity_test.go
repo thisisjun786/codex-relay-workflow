@@ -51,7 +51,7 @@ func firstField(t *testing.T, o Object, what string) (string, any) {
 func Test29GoRecordsCarryANullFenceBuildThePythonFenceReads(t *testing.T) {
 	home := t.TempDir()
 	socket := home + "/socket"
-	supervisor, worker := startServing(t, home, false)
+	supervisor, worker := startServing(t, home)
 	record := read(filepath.Join(home, "state", "daemon.json"))
 	scope := (&ScopeRegistry{Root: home + "/scopes", Authority: "isolated"}).Read(socket)
 	receipt := read(filepath.Join(home, "state", "worker-policy.json"))

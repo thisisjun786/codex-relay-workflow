@@ -3,8 +3,6 @@ package service
 import (
 	"strings"
 	"testing"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // Test29ServiceBoundedRunConsole runs an enabled service with a spent or refused bound and checks
@@ -14,11 +12,11 @@ func Test29ServiceBoundedRunConsole(t *testing.T) {
 		t.Run(strings.Join(tail, "_"), func(t *testing.T) {
 			home := t.TempDir()
 			args := append([]string{"--socket", home + "/socket", "service", "run", "--allow-isolated-scope"}, tail...)
-			if r := invoke(t, home, false, "service", "enable"); r.Code != 0 {
+			if r := invoke(t, home, "service", "enable"); r.Code != 0 {
 				t.Fatal(r)
 			}
-			r := invoke(t, home, false, args...)
-			checkAnswer(t, home, "answer", consoleAnswer{normalizedCapture(r), files(t, home, testsupport.Go)})
+			r := invoke(t, home, args...)
+			checkAnswer(t, home, "answer", consoleAnswer{normalizedCapture(r), files(t, home)})
 		})
 	}
 }

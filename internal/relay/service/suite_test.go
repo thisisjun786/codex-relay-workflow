@@ -10,7 +10,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-var testRoot, testBinary, testPython string
+var testRoot, testBinary string
 var buildEnvironment []string
 
 func TestMain(m *testing.M) {
@@ -23,7 +23,6 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	testRoot = root
-	testPython = filepath.Join(root, ".venv/bin/codex-session-relay")
 	home, err := os.MkdirTemp("", "crw-service-test-")
 	if err != nil {
 		panic(err)
@@ -48,13 +47,6 @@ func TestMain(m *testing.M) {
 		if err = os.Setenv(key, filepath.Join(home, key)); err != nil {
 			panic(err)
 		}
-	}
-	if err = os.Setenv("PYTHONPATH", filepath.Join(home, "installation")); err != nil {
-		panic(err)
-	}
-	// Python children import the bridge from the checkout; they never write bytecode there.
-	if err = os.Setenv("PYTHONDONTWRITEBYTECODE", "1"); err != nil {
-		panic(err)
 	}
 	code := m.Run()
 	if err = errors.Join(os.RemoveAll(home), testsupport.RemoveCRW()); err != nil {
