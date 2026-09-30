@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python": "txt:{\"exit\":2,\"left\":null,\"stdout\":\"{\\n  \\\"ok\\\": false,\\n  \\\"reason\\\": \\\"bad_invocation\\\",\\n  \\\"detail\\\": \\\"--scope chooses between the scopes one TASK owns, so it goes with --task. With --issue or --relationship the starting scope is already decided and --scope would be silently ignored.\\\"\\n}\\n\"}"
+ }
+}

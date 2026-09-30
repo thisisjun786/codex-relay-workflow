@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "go-shaped record": "txt:{\"code\":0,\"stderr\":\"\",\"stdout\":\"contract: 79 clause ids, 49 normative\\nfixtures: 36 scenarios, 56 distinct clause citations\\nOK every clause cited by any fixture exists, every normative clause is cited, every scenario states all four parts, and both example records match the fields the contract declares. This is citation and shape only: it does not read any fixture for meaning.\\n\"}"
+ }
+}

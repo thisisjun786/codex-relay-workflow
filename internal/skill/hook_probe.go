@@ -465,26 +465,21 @@ func replayHook(args []string, stdout, stderr io.Writer) int {
 	} else {
 		fmt.Fprintf(stdout, "documented traces backed by a fixture: %d/%d\n", len(traceIDs), len(traceIDs))
 	}
-	sites, e := pythonReturnSites(bundledSkillFiles)
-	if e != nil {
-		fmt.Fprintf(stderr, "Probe failed: %s. Nothing was written.\n", e)
-		return 3
-	}
 	missingReturns := make([]hookReplaySite, 0)
-	for _, site := range sites {
-		if !reached.reached[site.key] {
+	for _, site := range hookReturnSites {
+		if !reached.reached[site.key()] {
 			missingReturns = append(missingReturns, site)
 		}
 	}
 	sort.Slice(missingReturns, func(i, j int) bool {
 		if missingReturns[i].function == missingReturns[j].function {
-			return missingReturns[i].line < missingReturns[j].line
+			return missingReturns[i].ordinal < missingReturns[j].ordinal
 		}
 		return missingReturns[i].function < missingReturns[j].function
 	})
-	fmt.Fprintf(stdout, "return-site coverage: %d/%d sites reached\n", len(sites)-len(missingReturns), len(sites))
+	fmt.Fprintf(stdout, "return-site coverage: %d/%d sites reached\n", len(hookReturnSites)-len(missingReturns), len(hookReturnSites))
 	for _, site := range missingReturns {
-		fmt.Fprintf(stdout, "  UNREACHED %s:%d  %s\n", site.function, site.line, site.source)
+		fmt.Fprintf(stdout, "  UNREACHED %s#%d  %s\n", site.function, site.ordinal, site.label)
 	}
 	if len(missingReturns) > 0 {
 		if allow {

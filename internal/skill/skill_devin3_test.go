@@ -6,6 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,7 +30,7 @@ func runSkillPair(t *testing.T, binary, family string, args []string, stdin []by
 	gocli := exec.Command(binary, append([]string{"skill", family}, args...)...)
 	gocli.Env = oracleEnv("TMPDIR=/var/tmp")
 	gocli.Stdin = bytes.NewReader(stdin)
-	return captureSkillProcess(t, python), captureSkillProcess(t, gocli)
+	return pythonProcess(t, "", python), captureSkillProcess(t, gocli)
 }
 
 func requireSkillPairParity(t *testing.T, python, gocli skillProcessResult) {
@@ -69,6 +72,7 @@ func hashed(s string) string {
 }
 
 func TestHookProbeRoundThreeSelectionLivePython(t *testing.T) {
+	pythonOracleRoot(t)
 	binary := buildHookProbeCLI(t)
 	cases := []struct {
 		name, state string
@@ -118,6 +122,7 @@ func TestHookProbeRoundThreeSelectionLivePython(t *testing.T) {
 }
 
 func TestSkillUnreadableInputsLivePython(t *testing.T) {
+	pythonOracleRoot(t)
 	binary := buildHookProbeCLI(t)
 	dir := t.TempDir()
 	write := func(name string, content []byte) string {
@@ -145,7 +150,11 @@ func TestSkillUnreadableInputsLivePython(t *testing.T) {
 		runs = append(runs, run{"parent-title", []string{"decide"}, path}, run{"parent-title", []string{"readback"}, path}, run{"start-policy", []string{"check"}, path})
 	}
 	for _, r := range runs {
-		t.Run(r.family+" "+strings.Join(r.args, " ")+" <"+filepath.Base(r.stdin), func(t *testing.T) {
+		named := make([]string, len(r.args))
+		for i, arg := range r.args {
+			named[i] = strings.TrimPrefix(arg, dir+string(filepath.Separator))
+		}
+		t.Run(r.family+" "+strings.Join(named, " ")+" <"+filepath.Base(r.stdin), func(t *testing.T) {
 			var stdin []byte
 			if r.stdin != "" {
 				stdin, _ = os.ReadFile(r.stdin)
@@ -161,6 +170,7 @@ func TestSkillUnreadableInputsLivePython(t *testing.T) {
 }
 
 func TestSkillReplayUnreadableFixturesLivePython(t *testing.T) {
+	pythonOracleRoot(t)
 	binary := buildHookProbeCLI(t)
 	copyDir := func(t *testing.T, from string) string {
 		t.Helper()
@@ -170,7 +180,8 @@ func TestSkillReplayUnreadableFixturesLivePython(t *testing.T) {
 		}
 		return to
 	}
-	bundled := func(name string) string { return filepath.Join(repositoryRoot(), "plugins", defaultFixture(name)) }
+	inputs := pythonInputs(t)
+	bundled := func(name string) string { return filepath.Join(inputs, name) }
 	unreadable := func(t *testing.T, path string) {
 		t.Helper()
 		if err := os.Chmod(path, 0); err != nil {
@@ -211,8 +222,8 @@ func TestSkillReplayUnreadableFixturesLivePython(t *testing.T) {
 			if test.fixtures == "host" {
 				args = []string{"replay", "--host-fixtures", dir}
 			}
-			// When both real commands replay it.
-			python, gocli := runSkillPair(t, binary, test.family, args, nil)
+			// When both real commands replay it, every other path at the frozen inputs.
+			python, gocli := runSkillPair(t, binary, test.family, frozenReplayArgs(inputs, test.family, args), nil)
 			// Then neither passes, and both fail identically.
 			if python.exit == 0 {
 				t.Fatalf("Python passed a bad fixture: %+v", python)
@@ -224,6 +235,7 @@ func TestSkillReplayUnreadableFixturesLivePython(t *testing.T) {
 
 // 4124181621: the printed self-check is computed by a real oracle self-check.
 func TestHookOracleSelfCheckLivePython(t *testing.T) {
+	pythonOracleRoot(t)
 	root := repositoryRoot()
 	script := filepath.Join(root, "plugins", "crw", "skills", "crw-run", "scripts", "hook_probe.py")
 	pythonSelfCheck := func(t *testing.T, compared []string) string {
@@ -235,11 +247,7 @@ m.COMPARED_KEYS=tuple(json.loads(%q))
 print(json.dumps(m._oracle_self_check(),separators=(",",":")))`, script, string(keys))
 		command := exec.Command(filepath.Join(root, ".venv", "bin", "python"), "-c", code)
 		command.Env = oracleEnv("PYTHONDONTWRITEBYTECODE=1")
-		output, err := command.Output()
-		if err != nil {
-			t.Fatal(err)
-		}
-		return strings.TrimSpace(string(output))
+		return strings.TrimSpace(string(pythonOutput(t, "self-check", command)))
 	}
 	without := func(key string) []string {
 		return slices.DeleteFunc(slices.Clone(hookComparedKeys), func(k string) bool { return k == key })
@@ -284,7 +292,7 @@ func TestHookReplayReachMatchesPythonTracer(t *testing.T) {
 	root := repositoryRoot()
 	scripts := filepath.Join(root, "plugins", "crw", "skills", "crw-run", "scripts")
 	fixtures := t.TempDir()
-	if output, err := exec.Command("cp", "-r", filepath.Join(scripts, "fixtures", "decisions")+"/.", fixtures).CombinedOutput(); err != nil {
+	if output, err := exec.Command("cp", "-r", filepath.Join(pythonInputs(t), "decisions")+"/.", fixtures).CombinedOutput(); err != nil {
 		t.Fatalf("%v %s", err, output)
 	}
 	for name, mutate := range map[string]func(o, current, older map[string]any){
@@ -321,10 +329,7 @@ for path in m.load_fixtures(%q):
 print(json.dumps(out,sort_keys=True))`, filepath.Join(scripts, "hook_probe.py"), fixtures)
 	command := exec.Command(filepath.Join(root, ".venv", "bin", "python"), "-c", code)
 	command.Env = oracleEnv("PYTHONDONTWRITEBYTECODE=1")
-	output, err := command.Output()
-	if err != nil {
-		t.Fatal(err)
-	}
+	output := pythonOutput(t, "reached return sites per fixture observation", command)
 	var python map[string][]string
 	if err := json.Unmarshal(output, &python); err != nil {
 		t.Fatal(err)
@@ -375,32 +380,74 @@ print(json.dumps(out,sort_keys=True))`, filepath.Join(scripts, "hook_probe.py"),
 	}
 }
 
-// 4124181982: parentReasons, parentMatches and the readback states are the sets Python derives.
-func TestParentTitleVocabularyMatchesPythonSource(t *testing.T) {
-	root := repositoryRoot()
-	code := fmt.Sprintf(`import importlib.util,json
-s=importlib.util.spec_from_file_location("parent_title",%q);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
-print(json.dumps({"reasons":m.reachable_reasons(),"matches":sorted(m.MATCHES),"readback":sorted(m.READBACK)},sort_keys=True))`,
-		filepath.Join(root, "plugins", "crw", "skills", "crw-run", "scripts", "parent_title.py"))
-	command := exec.Command(filepath.Join(root, ".venv", "bin", "python"), "-c", code)
-	command.Env = oracleEnv("PYTHONDONTWRITEBYTECODE=1")
-	output, err := command.Output()
+// 4124181982: parentReasons, parentMatches and parentReadback are the denominators title replay
+// counts, so each must be exactly what parent_title.go can answer: the reason and decision every
+// titleResult call returns, every matched value it passes or assigns, and every state
+// titleReadback returns. They are derived here from the Go source, as the reference derived its
+// own from its module, so a reason added without its table entry fails.
+func TestParentTitleVocabularyMatchesItsSource(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, filepath.Join(repositoryRoot(), "internal", "skill", "parent_title.go"), nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var python struct {
-		Reasons  map[string]string `json:"reasons"`
-		Matches  []string          `json:"matches"`
-		Readback []string          `json:"readback"`
+	reasons, matches, readback := map[string]string{}, map[string]bool{}, map[string]bool{}
+	literal := func(expr ast.Expr, what string) string {
+		value, ok := stringLiteral(expr)
+		if !ok {
+			t.Errorf("%s: %s is not a string literal", fset.Position(expr.Pos()), what)
+		}
+		return value
 	}
-	if err := json.Unmarshal(output, &python); err != nil {
-		t.Fatal(err)
+	ast.Inspect(file, func(node ast.Node) bool {
+		switch node := node.(type) {
+		case *ast.CallExpr:
+			if name, ok := node.Fun.(*ast.Ident); !ok || name.Name != "titleResult" {
+				return true
+			}
+			decision, reason := literal(node.Args[0], "decision"), literal(node.Args[1], "reason")
+			if previous, seen := reasons[reason]; seen && previous != decision {
+				t.Errorf("%s: %s is answered as both %s and %s", fset.Position(node.Pos()), reason, previous, decision)
+			}
+			reasons[reason] = decision
+			if matched, ok := stringLiteral(node.Args[6]); ok {
+				matches[matched] = true
+			}
+		case *ast.AssignStmt:
+			for i, target := range node.Lhs {
+				if name, ok := target.(*ast.Ident); ok && name.Name == "matched" && i < len(node.Rhs) {
+					matches[literal(node.Rhs[i], "matched")] = true
+				}
+			}
+		case *ast.FuncDecl:
+			if node.Name.Name != "titleReadback" {
+				return true
+			}
+			ast.Inspect(node.Body, func(inner ast.Node) bool {
+				if ret, ok := inner.(*ast.ReturnStmt); ok && len(ret.Results) == 1 {
+					readback[literal(ret.Results[0], "readback state")] = true
+				}
+				return true
+			})
+		}
+		return true
+	})
+	set := func(values []string) map[string]bool {
+		out := map[string]bool{}
+		for _, value := range values {
+			out[value] = true
+		}
+		return out
 	}
-	matches := slices.Sorted(slices.Values(parentMatches))
-	readback := slices.Sorted(slices.Values(parentReadback))
-	// Given the live Python module, then every Go denominator equals the one Python derives.
-	if !reflect.DeepEqual(parentReasons, python.Reasons) || !reflect.DeepEqual(matches, python.Matches) || !reflect.DeepEqual(readback, python.Readback) {
-		t.Fatalf("title vocabulary drifted\nGo reasons %v matches %v readback %v\nPython %s", parentReasons, matches, readback, output)
+	// Given parent_title.go, then every denominator equals what its source can answer.
+	if !reflect.DeepEqual(parentReasons, reasons) {
+		t.Errorf("parentReasons %v, source answers %v", parentReasons, reasons)
+	}
+	if !reflect.DeepEqual(set(parentMatches), matches) || len(parentMatches) != len(matches) {
+		t.Errorf("parentMatches %v, source answers %v", parentMatches, matches)
+	}
+	if !reflect.DeepEqual(set(parentReadback), readback) || len(parentReadback) != len(readback) {
+		t.Errorf("parentReadback %v, source answers %v", parentReadback, readback)
 	}
 }
 

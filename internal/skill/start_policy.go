@@ -171,6 +171,50 @@ type selfCase struct {
 
 var selfCases = []selfCase{{"the declared default", []string{"run_mode: goal-free-run", "observation_path: event-driven-idle"}, true}, {"a transitional record", []string{"run_mode: goal-free-run", "observation_path: blocked"}, true}, {"backticked and bulleted", []string{"- `run_mode`: `loop`", "- `observation_path`: `active-observation`"}, true}, {"decorated with trailing punctuation", []string{"`run_mode`: `loop`,", "`observation_path`: `blocked`."}, true}, {"bold markdown", []string{"- **run_mode**: **loop**", "- **observation_path**: **blocked**"}, true}, {"an unmatched marker", []string{"run_mode: loop_", "observation_path: blocked"}, false}, {"a mismatched pair", []string{"run_mode: *loop_", "observation_path: blocked"}, false}, {"a decorated field name", []string{"run_mode: loop", "observation_path_: blocked"}, false}, {"the same value stated twice", []string{"run_mode: loop", "observation_path: blocked", "run_mode: loop"}, true}, {"a stale pair above a current one", []string{"run_mode: goal-free-run", "observation_path: event-driven-idle", "run_mode: blocked", "observation_path: blocked"}, false}, {"parent G", []string{"run_mode: relay_only", "observation_path: relay"}, false}, {"parent H", []string{"run_mode: goal_free", "observation_path: relay"}, false}, {"parent I", []string{"run_mode: run_only", "observation_path: relay"}, false}, {"parent J", []string{"run_mode: relay_only", "observation_path: relay"}, false}, {"a parked parent given a running parent's path", []string{"run_mode: blocked", "observation_path: event-driven-idle"}, false}, {"nothing recorded", []string{"scope: this-run"}, false}, {"a re-adjudicated field keeping its history", []string{"run_mode: goal-free-run", "run_mode (superseded): loop", "observation_path: event-driven-idle"}, true}, {"history on both fields", []string{"run_mode: goal-free-run", "run_mode (superseded): loop", "observation_path: event-driven-idle", "observation_path (superseded): active-observation"}, true}, {"a qualifier this reader does not know", []string{"run_mode: goal-free-run", "run_mode (previous): loop", "observation_path: event-driven-idle"}, false}, {"history marked in the wrong case", []string{"run_mode: goal-free-run", "run_mode (SUPERSEDED): loop", "observation_path: event-driven-idle"}, false}, {"history marked with extra spacing", []string{"run_mode: goal-free-run", "run_mode ( superseded ): loop", "observation_path: event-driven-idle"}, false}}
 
+// startPolicySelftest checks the vocabulary v was read as and replays selfCases against it,
+// appending one line per result to out.
+func startPolicySelftest(v vocabulary, out *[]string) bool {
+	if strings.Join(v.modes, "|") != "goal-free-run|loop|blocked" || strings.Join(v.paths, "|") != "event-driven-idle|active-observation|blocked" {
+		*out = append(*out, fmt.Sprintf("vocabulary drifted: parsed %v and %v, expected %v and %v", v.modes, v.paths, []string{"goal-free-run", "loop", "blocked"}, []string{"event-driven-idle", "active-observation", "blocked"}))
+		return false
+	}
+	ok := true
+	*out = append(*out, "vocabulary: 3 run modes and 3 observation paths, as declared")
+	for _, c := range selfCases {
+		var discard []string
+		got := checkPolicy(readPolicy(c.lines), v, &discard)
+		status := "ok"
+		if got != c.want {
+			status = "FAILED"
+			ok = false
+		}
+		answer := "rejected"
+		if got {
+			answer = "accepted"
+		}
+		*out = append(*out, status+": "+c.name+" -> "+answer)
+	}
+	return ok
+}
+
+// StartPolicySelftest is `crw skill start-policy selftest` over contract, the bytes of a
+// start-policy.md, instead of the copy built into crw: the repository's offline contract check
+// (`crw-dev ci contracts`) judges the checkout's contract, not the one a binary was built with.
+func StartPolicySelftest(contract []byte, stdout, stderr io.Writer) int {
+	v, e := parseVocabulary(string(contract))
+	if e != nil {
+		fmt.Fprintln(stderr, e)
+		return 2
+	}
+	var out []string
+	ok := startPolicySelftest(v, &out)
+	fmt.Fprintln(stdout, strings.TrimRight(strings.Join(out, "\n"), "\n"))
+	if ok {
+		return 0
+	}
+	return 1
+}
+
 func runStartPolicy(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return argparseMissing(stderr, "crw skill start-policy", "mode")
@@ -210,26 +254,7 @@ func runStartPolicy(args []string, stdin io.Reader, stdout, stderr io.Writer) in
 		}
 		ok = checkPolicy(readPolicy(strings.Split(text, "\n")), v, &out)
 	case "selftest":
-		if strings.Join(v.modes, "|") != "goal-free-run|loop|blocked" || strings.Join(v.paths, "|") != "event-driven-idle|active-observation|blocked" {
-			out = append(out, fmt.Sprintf("vocabulary drifted: parsed %v and %v, expected %v and %v", v.modes, v.paths, []string{"goal-free-run", "loop", "blocked"}, []string{"event-driven-idle", "active-observation", "blocked"}))
-			ok = false
-		} else {
-			out = append(out, "vocabulary: 3 run modes and 3 observation paths, as declared")
-			for _, c := range selfCases {
-				var discard []string
-				got := checkPolicy(readPolicy(c.lines), v, &discard)
-				status := "ok"
-				if got != c.want {
-					status = "FAILED"
-					ok = false
-				}
-				answer := "rejected"
-				if got {
-					answer = "accepted"
-				}
-				out = append(out, status+": "+c.name+" -> "+answer)
-			}
-		}
+		ok = startPolicySelftest(v, &out)
 	default:
 		return invalidChoice(stderr, "crw skill start-policy", "mode", args[0], "vocabulary", "check", "selftest")
 	}

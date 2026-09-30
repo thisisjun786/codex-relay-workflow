@@ -717,12 +717,14 @@ The allow and hold table above is executable. Every row, plus the binding race, 
 combinations and the bound-reached cases, is a fixture under `../scripts/fixtures/decisions`, and
 `crw skill hook-probe replay` checks each against its recorded expectation.
 
-Replay also measures return-site coverage: it reads its own decision functions' return statements
-from the module AST, traces which ones the fixtures actually execute, and exits non-zero naming any
-that no fixture reached. The denominator is derived rather than declared, so a return added later
-enters it whether or not anyone remembers. This is return-site coverage, not branch coverage, which
-would need branch instrumentation. `--allow-unreached` reports the gap and waives only that gap; a
-fixture mismatch is never waived.
+Replay also measures return-site coverage: every return of its decision functions carries a marker
+naming the function and the return's ordinal, replay records which markers the fixtures actually
+execute, and it exits non-zero naming any return no fixture reached. The denominator is a table in
+`internal/skill` (`hookReturnSites`), and a Go test derives the set of markers from the Go source
+and fails when the two differ, so a return added later cannot stay out of the denominator and a
+removed one cannot linger in it. This is return-site coverage, not branch coverage, which would need
+branch instrumentation. `--allow-unreached` reports the gap and waives only that gap; a fixture
+mismatch is never waived.
 
 Replay proves three things and no more: that this decision function agrees with expectations written
 alongside it, that no return site in it goes unexercised, and that the recorded host observations

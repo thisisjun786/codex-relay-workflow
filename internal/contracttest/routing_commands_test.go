@@ -3,15 +3,18 @@ package contracttest
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // No existing cli-shape or hook fixture names a routing command. This boundary suite
-// therefore derives their help/error cases from the live parser, without a skip path.
+// therefore derives their help/error cases from the Python parser, without a skip path.
 func TestRoutingCommandsPythonArgparseBytes(t *testing.T) {
 	root, err := Root()
 	if err != nil {
@@ -22,15 +25,20 @@ func TestRoutingCommandsPythonArgparseBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	home := t.TempDir()
-	script := filepath.Join(root, "internal/relay/routing/testdata/cli_capture.py")
-	cmd := exec.Command("uv", "run", "--no-sync", "--no-project", "python3", script, "argv", home)
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/state", "XDG_CONFIG_HOME="+home+"/config", "CODEX_HOME="+home+"/codex", "UV_PYTHON_DOWNLOADS=never")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	raw, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("Python %v %s", err, stderr.String())
-	}
+	// The Python parser's own help and refusal bytes for every routing command line it derives
+	// (recorded, internal/testsupport/pyoracle).
+	raw := pyoracle.Answer(t, "argv", func() ([]byte, error) {
+		script := filepath.Join(root, "internal/relay/routing/testdata/cli_capture.py")
+		cmd := exec.Command("uv", "run", "--no-sync", "--no-project", "python3", script, "argv", home)
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/state", "XDG_CONFIG_HOME="+home+"/config", "CODEX_HOME="+home+"/codex", "UV_PYTHON_DOWNLOADS=never")
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		raw, err := cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("python: %w %s", err, stderr.String())
+		}
+		return raw, nil
+	}, pyoracle.Substitute(home, "<HOME>"), pyoracle.Substitute(root, "<ROOT>"))
 	var cases []struct {
 		Command        string
 		Args           []string

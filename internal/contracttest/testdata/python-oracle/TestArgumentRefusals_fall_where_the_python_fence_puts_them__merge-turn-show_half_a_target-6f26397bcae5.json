@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python": "txt:{\"exit\":2,\"left\":null,\"stdout\":\"{\\n  \\\"ok\\\": false,\\n  \\\"reason\\\": \\\"bad_invocation\\\",\\n  \\\"detail\\\": \\\"a target is a repository AND a base ref; --repository and --base-ref are given together or not at all\\\"\\n}\\n\"}"
+ }
+}

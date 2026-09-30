@@ -11,14 +11,16 @@ import (
 )
 
 func TestHookHostMutationsLivePython(t *testing.T) {
+	pythonOracleRoot(t)
 	crw := filepath.Join(t.TempDir(), "crw")
 	build := exec.Command("go", "build", "-o", crw, "./cmd/crw")
 	build.Dir = repositoryRoot()
 	if result := captureSkillProcess(t, build); result.exit != 0 {
 		t.Fatalf("build failed: %+v", result)
 	}
-	host := diskSkillPath(defaultFixture("host"))
-	contractPath := diskSkillPath(defaultContract("hook-contract.md"))
+	inputs := pythonInputs(t)
+	host := filepath.Join(inputs, "host")
+	contractPath := filepath.Join(inputs, "hook-contract.md")
 	for _, name := range []string{"missing capability", "wrong pair", "wrong version", "missing required fields", "delivered fields", "missing types", "type fields", "unknown type", "missing rows", "extra row", "row question", "row status", "row observed", "row evidence", "unresolved row", "duplicate packet", "unreadable packet", "invalid observation"} {
 		t.Run(name, func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "host")
@@ -101,7 +103,7 @@ func TestHookHostMutationsLivePython(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			args := []string{"replay", "--host-fixtures", dir, "--contract", contract}
+			args := []string{"replay", "--fixtures", filepath.Join(inputs, "decisions"), "--host-fixtures", dir, "--contract", contract}
 			python := runHookProbePython(t, args...)
 			if python.exit != 1 || !strings.Contains(python.stdout, "HOST OBSERVATION:") {
 				t.Fatalf("Python mutation was not rejected: %+v", python)
@@ -109,12 +111,8 @@ func TestHookHostMutationsLivePython(t *testing.T) {
 			program := "import importlib.util,json,sys; s=importlib.util.spec_from_file_location('probe',sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(json.dumps(m.check_host_observations(sys.argv[2],sys.argv[3])))"
 			command := exec.Command(filepath.Join(repositoryRoot(), ".venv/bin/python"), "-c", program, filepath.Join(repositoryRoot(), "plugins/crw/skills/crw-run/scripts/hook_probe.py"), dir, contract)
 			command.Env = oracleEnv("PYTHONDONTWRITEBYTECODE=1")
-			result := captureSkillProcess(t, command)
-			if result.exit != 0 {
-				t.Fatalf("host oracle failed: %+v", result)
-			}
 			var expected []json.RawMessage
-			if err := json.Unmarshal([]byte(result.stdout), &expected); err != nil {
+			if err := json.Unmarshal(pythonOutput(t, "check_host_observations", command), &expected); err != nil {
 				t.Fatal(err)
 			}
 			var count int

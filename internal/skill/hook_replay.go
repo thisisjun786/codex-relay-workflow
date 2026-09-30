@@ -20,61 +20,6 @@ func (r *hookReplayReach) Reach(function string, ordinal int) {
 	r.reached[function+":"+fmt.Sprint(ordinal)] = true
 }
 
-type hookReplaySite struct {
-	key, function, source string
-	line                  int
-}
-
-func pythonReturnSites(fsys fs.FS) ([]hookReplaySite, error) {
-	raw, err := fs.ReadFile(fsys, "crw/skills/crw-run/scripts/hook_probe.py")
-	if err != nil {
-		return nil, err
-	}
-	return parsePythonReturns(string(raw)), nil
-}
-
-func parsePythonReturns(source string) []hookReplaySite {
-	targets := map[string]bool{"observe_state": true, "decide": true, "derive_assignment_state": true, "identity_contested": true, "classify_declaration": true, "_correlated": true, "_correlation_problem": true, "_covered": true, "_ambiguity_resolved": true, "resolve_assignment": true, "selected_marker": true, "_claimant": true}
-	lines := strings.Split(source, "\n")
-	var sites []hookReplaySite
-	function, bodyIndent, nestedIndent, ordinal := "", -1, -1, 0
-	for index, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		indent := len(line) - len(strings.TrimLeft(line, " "))
-		if strings.HasPrefix(trimmed, "def ") {
-			name := strings.SplitN(strings.TrimPrefix(trimmed, "def "), "(", 2)[0]
-			if targets[name] {
-				function, bodyIndent, nestedIndent, ordinal = name, indent, -1, 0
-			} else if function != "" {
-				if indent <= bodyIndent {
-					function = ""
-				} else {
-					nestedIndent = indent
-				}
-			}
-			continue
-		}
-		if function == "" || trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		if indent <= bodyIndent {
-			function = ""
-			continue
-		}
-		if nestedIndent >= 0 {
-			if indent > nestedIndent {
-				continue
-			}
-			nestedIndent = -1
-		}
-		if strings.HasPrefix(trimmed, "return ") {
-			ordinal++
-			sites = append(sites, hookReplaySite{key: function + ":" + fmt.Sprint(ordinal), function: function, line: index + 1, source: trimmed})
-		}
-	}
-	return sites
-}
-
 func explicitSkillFS(path string) (fs.FS, string) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
