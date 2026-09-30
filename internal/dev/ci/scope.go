@@ -66,7 +66,7 @@ func Classify(path string) string {
 	if scopeDocs[path] || (posixParentIsDocs(path) && strings.HasSuffix(path, ".md")) {
 		return "docs"
 	}
-	if strings.HasPrefix(path, "plugins/crw/skills/") {
+	if path == "skills" || strings.HasPrefix(path, "plugins/crw/skills/") {
 		return "skill"
 	}
 	if scopeFull[path] {

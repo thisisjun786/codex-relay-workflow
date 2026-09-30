@@ -68,9 +68,10 @@ class ScopeTests(unittest.TestCase):
                 self.assertEqual(scope.classify(path), "full")
 
     def test_retired_paths_are_unregistered(self):
-        # Todo 44 deleted the Python workspace, the corpus's Python runner and the root skills
-        # link; a change that brings one back is unregistered until a verification mapping is added.
-        for path in ("pyproject.toml", "uv.lock", "conftest.py", "skills"):
+        # Todo 44 deleted the Python workspace and the corpus's Python runner; a change that brings
+        # one back is unregistered until a verification mapping is added. The root skills link, deleted
+        # in the same change as this map edit, stays classified until that deletion has landed.
+        for path in ("pyproject.toml", "uv.lock", "conftest.py"):
             with self.subTest(path=path):
                 self.assertEqual(scope.classify(path), "unknown")
 
