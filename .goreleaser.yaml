@@ -15,7 +15,10 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X main.version={{ .Version }}
+      # sourceTree is the git tree of the commit the binaries are built from (decision 34): the
+      # release workflow sets SOURCE_TREE from `git rev-parse HEAD^{tree}` on a clean checkout,
+      # and the fault sweepers read it from the host record as the installed revision.
+      - -s -w -X main.version={{ .Version }} -X github.com/thisisjun786/codex-relay-workflow/internal/runtime/record.sourceTree={{ .Env.SOURCE_TREE }}
     mod_timestamp: "{{ .CommitTimestamp }}"
     goos: [linux, darwin]
     goarch: [amd64, arm64]

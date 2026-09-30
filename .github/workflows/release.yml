@@ -142,6 +142,22 @@ jobs:
             echo '::error::Configure RELEASE_TOKEN before publishing (Contents and Workflows write; Actions read).'
             exit 1
           fi
+      - id: release-go-snapshot-tree
+        name: Stamp the binaries with the source tree
+        run: |
+          set -euo pipefail
+          # The binaries carry HEAD's tree as their installed revision (decision 34), and only
+          # a clean checkout is HEAD's tree.
+          [[ -z "$(git status --porcelain)" ]] || {
+            echo '::error::The checkout has changes, so the binaries would not be built from its tree.'
+            exit 1
+          }
+          tree=$(git rev-parse 'HEAD^{tree}')
+          [[ "$tree" =~ ^[0-9a-f]{40}$ ]] || {
+            echo '::error::The checkout names no tree to stamp.'
+            exit 1
+          }
+          echo "SOURCE_TREE=$tree" >> "$GITHUB_ENV"
       - name: Set up the pinned Go toolchain
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -313,6 +329,22 @@ jobs:
             echo '::error::The release tag does not identify the released commit; binaries were not published.'
             exit 1
           }
+      - id: release-go-tree
+        name: Stamp the binaries with the source tree
+        run: |
+          set -euo pipefail
+          # The binaries carry HEAD's tree as their installed revision (decision 34), and only
+          # a clean checkout is HEAD's tree.
+          [[ -z "$(git status --porcelain)" ]] || {
+            echo '::error::The checkout has changes, so the binaries would not be built from its tree.'
+            exit 1
+          }
+          tree=$(git rev-parse 'HEAD^{tree}')
+          [[ "$tree" =~ ^[0-9a-f]{40}$ ]] || {
+            echo '::error::The checkout names no tree to stamp.'
+            exit 1
+          }
+          echo "SOURCE_TREE=$tree" >> "$GITHUB_ENV"
       - name: Set up the pinned Go toolchain
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:

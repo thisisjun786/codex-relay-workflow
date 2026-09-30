@@ -1520,9 +1520,10 @@ root) from the tree `make build`/`make dist` stamp with
 `-X .../internal/runtime/record.sourceTree=$(git rev-parse HEAD^{tree})`, and only when the
 working tree is clean (`git status --porcelain` empty, the test behind Go's own `vcs.modified`):
 a build with a modified tracked file or an untracked one is not built from HEAD's tree, so it
-stamps nothing. A binary built without the stamp - a build from a dirty tree, and today every
-GoReleaser release build, until todo 44 adds the stamp to the release workflow - records null
-trees, and both sweepers then report "this copy's install entry records
+stamps nothing. GoReleaser release builds carry the same stamp since todo 44 (`.goreleaser.yaml`
+reads `SOURCE_TREE`, which the release workflow sets from `git rev-parse HEAD^{tree}` in a step
+that refuses a checkout with changes). A binary built without the stamp - a build from a dirty
+tree, and every GoReleaser release build before todo 44 - records null trees, and both sweepers then report "this copy's install entry records
 an incomplete revision (repositoryTree, subdirectoryTree missing or malformed), which identifies
 nothing" rather than a revision nobody measured. Component-level facts are carried through when
 present and never written. The `outgoing` key has a reader again: `crw install` writes the
