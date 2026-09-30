@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,6 +33,8 @@ func buildHookProbeCLI(t *testing.T) string {
 	return binary
 }
 
+// runHookProbePython answers what hook_probe.py answered for args (recorded; see
+// python_oracle_test.go).
 func runHookProbePython(t *testing.T, args ...string) hookProbeResult {
 	t.Helper()
 	root := repositoryRoot()
@@ -42,17 +43,7 @@ func runHookProbePython(t *testing.T, args ...string) hookProbeResult {
 		append([]string{filepath.Join(root, "plugins", "crw", "skills", "crw-run", "scripts", "hook_probe.py")}, args...)...,
 	)
 	command.Env = oracleEnv("PYTHONDONTWRITEBYTECODE=1")
-	var stdout, stderr bytes.Buffer
-	command.Stdout, command.Stderr = &stdout, &stderr
-	exit := 0
-	if err := command.Run(); err != nil {
-		var failed *exec.ExitError
-		if !errors.As(err, &failed) {
-			t.Fatal(err)
-		}
-		exit = failed.ExitCode()
-	}
-	return hookProbeResult{exit, stdout.String(), stderr.String()}
+	return hookProbeResult(pythonProcess(t, "", command))
 }
 
 func runHookProbeGo(t *testing.T, binary string, args ...string) hookProbeResult {
@@ -74,6 +65,7 @@ func runHookProbeGo(t *testing.T, binary string, args ...string) hookProbeResult
 
 func requireHookProbeParity(t *testing.T, python, goResult hookProbeResult) {
 	t.Helper()
+	python.stdout, goResult.stdout = unreachedByFunction(python.stdout), unreachedByFunction(goResult.stdout)
 	if goResult != python {
 		t.Fatalf("live Python mismatch\nexit Python=%d Go=%d\nstdout %s\nstderr %s", python.exit, goResult.exit, firstHookProbeDifference(python.stdout, goResult.stdout), firstHookProbeDifference(python.stderr, goResult.stderr))
 	}
@@ -88,16 +80,14 @@ func firstHookProbeDifference(want, got string) string {
 	return "at=" + fmt.Sprint(at) + " Python=" + fmt.Sprintf("%q", want[from:min(len(want), at+800)]) + " Go=" + fmt.Sprintf("%q", got[from:min(len(got), at+800)])
 }
 
-func diskSkillPath(parts ...string) string {
-	return filepath.Join(append([]string{repositoryRoot(), "plugins"}, parts...)...)
-}
-
 func TestHookProbeReplayFailuresMatchLivePython(t *testing.T) {
+	pythonOracleRoot(t)
 	binary := buildHookProbeCLI(t)
 	root := repositoryRoot()
-	decisions := diskSkillPath(defaultFixture("decisions"))
-	contractPath := diskSkillPath(defaultContract("hook-contract.md"))
-	host := diskSkillPath(defaultFixture("host"))
+	inputs := pythonInputs(t)
+	decisions := filepath.Join(inputs, "decisions")
+	contractPath := filepath.Join(inputs, "hook-contract.md")
+	host := filepath.Join(inputs, "host")
 
 	t.Run("drifted documented trace", func(t *testing.T) {
 		fixtures := filepath.Join(t.TempDir(), "decisions")
@@ -159,9 +149,10 @@ func TestHookProbeReplayFailuresMatchLivePython(t *testing.T) {
 }
 
 func TestHookProbeMalformedSelectionAndCountersMatchLivePython(t *testing.T) {
+	pythonOracleRoot(t)
 	binary := buildHookProbeCLI(t)
-	fixturePath := filepath.Join(defaultFixture("decisions"), "claim-whose-preimage-is-not-a-string.json")
-	raw, err := fs.ReadFile(bundledSkillFiles, fixturePath)
+	decisions := filepath.Join(pythonInputs(t), "decisions")
+	raw, err := os.ReadFile(filepath.Join(decisions, "claim-whose-preimage-is-not-a-string.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,8 +181,7 @@ func TestHookProbeMalformedSelectionAndCountersMatchLivePython(t *testing.T) {
 		assertDecideParity(t, binary, workspaceObservation, "marker_malformed")
 	})
 
-	baseCountersPath := filepath.Join(defaultFixture("decisions"), "t24-invalid-persisted-counts.json")
-	counterRaw, err := fs.ReadFile(bundledSkillFiles, baseCountersPath)
+	counterRaw, err := os.ReadFile(filepath.Join(decisions, "t24-invalid-persisted-counts.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

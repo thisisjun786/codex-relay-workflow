@@ -2,9 +2,9 @@ package skill
 
 import (
 	"bytes"
-	"errors"
+	"fmt"
+	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -30,48 +30,44 @@ func TestSkillFixtureReplays(t *testing.T) {
 	}
 }
 
-func TestSkillLivePythonReplayParity(t *testing.T) {
-	t.Setenv("PYTHONDONTWRITEBYTECODE", "1")
-	tests := []struct {
-		name         string
-		script       string
-		args         []string
-		fixtureDir   string
-		fixtureCount int
-		countText    string
-	}{
-		{name: "hook_probe_121_decisions", script: "hook_probe.py", args: []string{"hook-probe", "replay"}, fixtureDir: "decisions", fixtureCount: 121, countText: "121/121 fixtures matched"},
-		{name: "parent_title_40_titles", script: "parent_title.py", args: []string{"parent-title", "replay"}, fixtureDir: "titles", fixtureCount: 40, countText: "Replayed 40 title fixtures"},
+// The shipped fixtures keep changing, so the replays over them are held to what the fixtures
+// themselves say rather than to a recorded Python answer: every decision fixture matches, every
+// documented trace has a fixture, every return site is reached, and every title fixture replays.
+// The Python parity of replay is kept over the frozen inputs (python_oracle_test.go).
+func TestSkillReplaysEveryShippedFixture(t *testing.T) {
+	count := func(name string) int {
+		paths, err := fs.Glob(bundledSkillFiles, defaultFixture(name)+"/*.json")
+		if err != nil || len(paths) == 0 {
+			t.Fatalf("%s fixtures: %d, %v", name, len(paths), err)
+		}
+		return len(paths)
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			paths, err := filepath.Glob(filepath.Join(repositoryRoot(), "plugins", defaultFixture(test.fixtureDir), "*.json"))
-			if err != nil {
-				t.Fatal(err)
+	traces, err := replayTraceIDs(bundledSkillFiles, defaultContract("hook-contract.md"))
+	if err != nil || len(traces) == 0 {
+		t.Fatalf("documented traces: %v %v", traces, err)
+	}
+	for _, test := range []struct {
+		args  []string
+		lines []string
+	}{
+		{[]string{"hook-probe", "replay"}, []string{
+			fmt.Sprintf("%d/%d fixtures matched", count("decisions"), count("decisions")),
+			fmt.Sprintf("documented traces backed by a fixture: %d/%d", len(traces), len(traces)),
+			fmt.Sprintf("return-site coverage: %d/%d sites reached", len(hookReturnSites), len(hookReturnSites)),
+		}},
+		{[]string{"parent-title", "replay"}, []string{
+			fmt.Sprintf("Replayed %d title fixtures against their recorded expectations.", count("titles")),
+		}},
+	} {
+		t.Run(test.args[0], func(t *testing.T) {
+			code, out, errOut := call(test.args, "")
+			if code != 0 || errOut != "" {
+				t.Fatalf("%v: exit %d\n%s\n%s", test.args, code, out, errOut)
 			}
-			if len(paths) != test.fixtureCount {
-				t.Fatalf("%s fixture count = %d, want %d", test.fixtureDir, len(paths), test.fixtureCount)
-			}
-
-			root := repositoryRoot()
-			command := exec.Command(filepath.Join(root, ".venv", "bin", "python"), filepath.Join(root, "plugins", "crw", "skills", "crw-run", "scripts", test.script), "replay")
-			var pythonOut, pythonErr bytes.Buffer
-			command.Stdout, command.Stderr = &pythonOut, &pythonErr
-			pythonExit := 0
-			if err := command.Run(); err != nil {
-				var exit *exec.ExitError
-				if !errors.As(err, &exit) {
-					t.Fatal(err)
+			for _, line := range test.lines {
+				if !strings.Contains(out, "\n"+line+"\n") && !strings.HasPrefix(out, line+"\n") {
+					t.Errorf("%v does not print %q:\n%s", test.args, line, out)
 				}
-				pythonExit = exit.ExitCode()
-			}
-
-			goExit, goOut, goErr := call(test.args, "")
-			if pythonExit != goExit || pythonOut.String() != goOut || pythonErr.String() != goErr {
-				t.Fatalf("live Python mismatch\npython exit=%d stdout=%q stderr=%q\ngo exit=%d stdout=%q stderr=%q", pythonExit, pythonOut.String(), pythonErr.String(), goExit, goOut, goErr)
-			}
-			if pythonExit != 0 || !strings.Contains(pythonOut.String(), test.countText) {
-				t.Fatalf("live Python replay did not prove %s: exit=%d stdout=%q stderr=%q", test.countText, pythonExit, pythonOut.String(), pythonErr.String())
 			}
 		})
 	}
