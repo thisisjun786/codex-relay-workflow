@@ -2936,3 +2936,32 @@ Evidence: `contract/schema/relay-exit-codes.json`; `internal/contract/exit_codes
 `internal/contract/generate/main_test.go`; `internal/relay/routing/router.go` (`Router`,
 `routerSeams`), `integration_test.go` (`retiredLedgerScenarios`, `Test23_PRD_13_LedgerGate`);
 `git grep -n` for each removed reason prints only history; docs/relay/product-routing.md "Status".
+
+## 59. `crw doctor retention-scan` is retired; `crw install remove` keeps its registration and relay-record readers (refactor R1)
+
+Decision: `crw doctor retention-scan` and everything only it read are deleted: the Stop-event
+claims (row 1), the journal window (row 2), the managed-start lock holders (row 6), the resumable
+threads it asked the App Server for (row 7), the pointer-target row (row 11), the Python-reference
+report, the live holds and `clear`. `crw doctor retention-scan` is now an unknown argument of
+`crw doctor` (exit 2). What `crw install remove` (and the reclaim of an abandoned staging) reads
+before it deletes a runtime is kept as it was: `doctor.RegisteredMatching` reads the registration
+rows 4, 5, 8, 9 and 10 with the same readers, shell grammar and unreadable texts, and
+`doctor.RecordedDaemons` the relay records of row 3; a registration remove finds still carries its
+`row` and `surface` as the scan numbered and named them. `doctor.RetentionOptions` is
+`doctor.ScanOptions`, without the clock and the App Server socket only the scan read, and the
+unused `doctor.RegisteredInside` is deleted.
+
+Why: the scan was the clearance todo 43 waited on before removing any Python path. The owner's
+relay host has no Python runtime, venv or `<CODEX_HOME>/crw-stop-hook.py` shim left (verified
+2026-10-01), no skill, hook, wiring file or relay-emitted text runs the command, and the owner
+approved removing it (todo 45 reads a host with `grep` and `ps`). Its readers of the host's
+registrations and relay records are what `crw install remove`'s in-use rule rests on, so they stay.
+
+Cost: nothing in the product reports whether a turn that started before a replacement may still
+hold a replaced hook command; docs/runtime-install.md "Removing a runtime" says to wait for those
+turns, as the turn-command cache measurement bounds them (one turn).
+
+Evidence: `internal/runtime/doctor/scan.go`, `references.go`, `cli.go`; `scan_test.go` (the
+retention scan's tests of rows 3, 4, 5, 9 and 10, ported to `RegisteredMatching` and
+`RecordedDaemons`); `internal/runtime/install` remove and reclaim tests; docs/runtime-install.md
+"What remove reads", docs/port/cutover.md "Retention scan surface".

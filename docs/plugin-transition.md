@@ -48,7 +48,7 @@ What the tool did that is still needed has another home:
 | `check-declaration --package` | `crw-dev ci plugin --payload <dir> --json`, before and after `codex plugin add`; see [before you add or update](plugin-packaging.md#before-you-add-or-update-on-a-host-that-gates-the-bridge) |
 | `swap-state` | `crw install status` |
 | `disable` as the repair for a refused bridge record | move the record aside by hand, then register again |
-| the launcher half of `remove` | `install.RemoveLauncher` in `internal/runtime/install`: it deletes `<CODEX_HOME>/crw-stop-hook.py` only while the file carries the launcher marker, proves the marker again under the launcher's own lock, and never touches the settings. The cutover calls it once the retention scan is clear |
+| the launcher half of `remove` | `install.RemoveLauncher` in `internal/runtime/install`: it deletes `<CODEX_HOME>/crw-stop-hook.py` only while the file carries the launcher marker, proves the marker again under the launcher's own lock, and never touches the settings. The operator removes the copy once no turn can still hold the bootstrap |
 | making the skill links | `crw-dev skills link --apply` (see [README](../README.md#install)) |
 
 `scripts/crw_transition/inventory.py` stayed until todo 44 removed the Python installer, because

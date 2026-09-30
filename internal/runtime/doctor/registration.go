@@ -335,7 +335,7 @@ func (j judge) stopHooks(into *componentRegistrations, path, settings string) {
 	}
 }
 
-// stopCommand judges one Stop command line through the retention scan's reader
+// stopCommand judges one Stop command line through the registration readings' reader
 // (readStopCommand: its allowlisted grammar, with exec, env and sh -c programs followed): each
 // command in it that runs a Stop adapter is judged, and a command whose hooks cannot all be told
 // (a word or construct outside the grammar, a script that may run the adapter itself) is

@@ -365,12 +365,12 @@ func runningOrRegistered(ctx context.Context, o Options, d *runtimeDir) (*use, O
 		return &use{"what a live process runs could not be read, so it cannot be ruled out that it runs out of this directory", "unreadableProcesses", unruled,
 			byHand(d, " once none of the processes named in unreadableProcesses (each with its pid, its uid and why it could not be ruled out) runs out of it")}, nil
 	}
-	retention := doctor.RetentionOptions{Env: o.Env, CodexHome: o.CodexHome, Destination: o.Dest, Proc: o.proc(), ScopeRegistry: o.ScopeRegistry}
-	daemons := doctor.RecordedDaemons(retention, o.State)
+	host := doctor.ScanOptions{Env: o.Env, CodexHome: o.CodexHome, Destination: o.Dest, Proc: o.proc(), ScopeRegistry: o.ScopeRegistry}
+	daemons := doctor.RecordedDaemons(host, o.State)
 	if len(daemons.Unreadable) > 0 {
 		return &use{"a relay daemon record could not be read, so whether a daemon it records still runs out of this directory was not established", "unreadable", strs(daemons.Unreadable), ""}, nil
 	}
-	registered, unreadable := doctor.RegisteredMatching(ctx, retention, func(path, resolves string) string {
+	registered, unreadable := doctor.RegisteredMatching(ctx, host, func(path, resolves string) string {
 		switch {
 		case d.holds(path):
 			return path

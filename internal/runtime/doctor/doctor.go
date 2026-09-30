@@ -1,6 +1,7 @@
 // Package doctor is `crw doctor`: the host-level diagnosis (runtime_install.py diagnose,
-// ported by property) and `crw doctor retention-scan`, distinct from the relay's own
-// `crw relay doctor`. It writes nothing.
+// ported by property), distinct from the relay's own `crw relay doctor`, and the readings of the
+// host's registrations and relay records `crw install remove` rests on (RegisteredMatching,
+// RecordedDaemons). It writes nothing.
 //
 // It reports which runtime the owned pointer selects (a Go binary or a Python venv) from the
 // pointer target, pyvenv.cfg and the host record's selected map, without any interpreter,

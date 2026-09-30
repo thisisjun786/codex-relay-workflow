@@ -9,43 +9,22 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/pointer"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
 )
 
-// RegisteredInside is every path the host's registrations name inside directory, and everything
-// those registrations hold that could not be read or judged. The registrations are the retention
-// scan's registration rows, read by the scan's own readers: every crw-*.json settings record
-// (row 4: the Stop settings' relayExecutable, adapterEntryPoint and adapterInterpreter, the
-// bridge record's bridgeExecutable), the cached plugin declarations (row 5), the
-// crw-stop-hook.py launcher copy (row 8), hooks.json (row 9) and config.toml's mcp_servers
-// (row 10), and the settings document each Stop command there reads when it is not one of
-// row 4's. A path counts when it lies inside directory as written or once every link (the owned
-// pointer included) is followed, and so does each interpreter and script a reference is followed
-// through. What the host starts from one of these is started afresh by each new session, so no
-// process table shows it between sessions. It writes nothing.
-func RegisteredInside(ctx context.Context, o RetentionOptions, directory string) (inside []any, unreadable []string) {
-	root, err := record.Resolve(directory)
-	if err != nil {
-		return nil, []string{directory + ": the directory could not be resolved: " + err.Error()}
-	}
-	spelled := filepath.Clean(directory)
-	return RegisteredMatching(ctx, o, func(path, resolves string) string {
-		switch {
-		case filepath.IsAbs(path) && record.Within(filepath.Clean(path), spelled):
-			return filepath.Clean(path)
-		case resolves != "" && record.Within(resolves, root):
-			return resolves
-		}
-		return ""
-	})
-}
-
-// RegisteredMatching is RegisteredInside with the question put by the caller: inside answers,
-// for a path a registration names (absolute, as written) and what it resolves to ("" when it
-// could not be resolved), the path it counts as inside, or "" when it does not count. A caller
-// that knows a directory by its file identity rather than its spelling asks through it.
-func RegisteredMatching(ctx context.Context, o RetentionOptions, inside func(path, resolves string) string) (found []any, unreadable []string) {
+// RegisteredMatching is every path the host's registrations name that inside counts, and
+// everything those registrations hold that could not be read or judged. The registrations are
+// every crw-*.json settings record (row 4: the Stop settings' relayExecutable, adapterEntryPoint
+// and adapterInterpreter, the bridge record's bridgeExecutable), the cached plugin declarations
+// (row 5), the crw-stop-hook.py launcher copy (row 8), hooks.json (row 9) and config.toml's
+// mcp_servers (row 10), and the settings document each Stop command there reads when it is not
+// one of row 4's; the row numbers are the retired retention scan's (decision 59). inside
+// answers, for a path a registration names (absolute, as written) and what it resolves to (""
+// when it could not be resolved), the path it counts as, or "" when it does not count; each
+// interpreter and script a reference is followed through is asked too. What the host starts from
+// one of these is started afresh by each new session, so no process table shows it between
+// sessions. It writes nothing.
+func RegisteredMatching(ctx context.Context, o ScanOptions, inside func(path, resolves string) string) (found []any, unreadable []string) {
 	if o.CodexHome == "" {
 		o.CodexHome = CodexHome(o.Env)
 	}
@@ -65,7 +44,7 @@ func RegisteredMatching(ctx context.Context, o RetentionOptions, inside func(pat
 		}
 		seen[key] = true
 		found = append(found, Object{
-			{Key: "row", Value: int64(row)}, {Key: "surface", Value: Surfaces[row-1].Name}, {Key: "source", Value: source},
+			{Key: "row", Value: int64(row)}, {Key: "surface", Value: surfaces[row]}, {Key: "source", Value: source},
 			{Key: "field", Value: field}, {Key: "names", Value: path}, {Key: "inside", Value: names}, {Key: "kind", Value: e.Kind},
 		})
 	}
@@ -95,8 +74,8 @@ func RegisteredMatching(ctx context.Context, o RetentionOptions, inside func(pat
 // declared commands (pluginwiring.Flag).
 const pluginLaunchFlag = "--plugin-launch"
 
-// PluginLaunches is every command a cached plugin version declares (the retention scan's row 5,
-// read by the scan's own readers) that runs a runtime program through the owned pointer in
+// PluginLaunches is every command a cached plugin version declares (row 5, read as
+// RegisteredMatching reads it) that runs a runtime program through the owned pointer in
 // plugin-launch mode: crw hook or crw bridge, or codex-thread-bridge, given --plugin-launch first
 // (decision 26), a command in a shell script the declaration runs included. Each is named with
 // its cached version directory, the declaration and field that hold it, the command as written
@@ -104,7 +83,7 @@ const pluginLaunchFlag = "--plugin-launch"
 // whether a cached declaration launches that way unknown. A runtime that does not read the flag,
 // a Python env-* runtime or a Go one built before decision 26, serves none of them. It writes
 // nothing.
-func PluginLaunches(o RetentionOptions) (launches []any, unreadable []string) {
+func PluginLaunches(o ScanOptions) (launches []any, unreadable []string) {
 	if o.CodexHome == "" {
 		o.CodexHome = CodexHome(o.Env)
 	}
@@ -170,7 +149,7 @@ type DaemonRecords struct {
 	Unreadable []string
 }
 
-// RecordedDaemons is the retention scan's row 3 for a caller that removes a runtime: every relay
+// RecordedDaemons is, for a caller that removes a runtime, every relay
 // daemon and worker recorded in a daemon.json (the relay state root, every scope under it,
 // $CODEX_SESSION_RELAY_STATE, each state directory the relay's scope registry records, and the
 // extra state directories given) or a scope registry claim that is alive - its pid present in
@@ -181,11 +160,10 @@ type DaemonRecords struct {
 //
 // The scope registry is the one the relay resolves in o.Env: $CODEX_SESSION_RELAY_SCOPE_DIR alone
 // when it is set, as a relay started there reads and claims its scope in that one and no other,
-// and otherwise the production one (o.ScopeRegistry, or under the passwd entry's home). The
-// retention scan reads the production registry under an override too, because it looks for every
-// daemon on this host whatever environment started it; a caller that removes a runtime finds a
-// process running out of it in the process table, whichever registry recorded it.
-func RecordedDaemons(o RetentionOptions, states ...string) DaemonRecords {
+// and otherwise the production one (o.ScopeRegistry, or under the passwd entry's home). A caller
+// that removes a runtime finds a process running out of it in the process table, whichever
+// registry recorded it.
+func RecordedDaemons(o ScanOptions, states ...string) DaemonRecords {
 	if o.CodexHome == "" {
 		o.CodexHome = CodexHome(o.Env)
 	}

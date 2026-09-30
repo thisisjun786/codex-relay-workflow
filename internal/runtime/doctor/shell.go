@@ -13,14 +13,14 @@ import (
 
 // A shell program (a hook command, a wrapper script, an sh -c string) is parsed with
 // mvdan.cc/sh/v3/syntax (docs/port/decisions.md 37) and judged only as far as it is written in
-// a small grammar this file understands completely (docs/port/cutover.md "Retention scan
-// surface"): simple commands joined by ;, &, &&, ||, |, |& and newlines; words that are literal
+// a small grammar this file understands completely (docs/runtime-install.md "What remove
+// reads"): simple commands joined by ;, &, &&, ||, |, |& and newlines; words that are literal
 // once the scan's expansions are made; redirections to such words. Every other construct - a
 // function, an assignment, a compound command, a here-document, a substitution, a glob or brace
 // pattern - is reported as unreadable, never interpreted: shell semantics read statically have
-// no bound, and todo 43 removes Python behind this scan's answer. The grammar is Bash's, a
-// superset of the POSIX one the shells that run a hook share, so a program either would run
-// parses; one the parser rejects is unreadable.
+// no bound, and crw install remove deletes a runtime behind this reading's answer. The grammar
+// is Bash's, a superset of the POSIX one the shells that run a hook share, so a program either
+// would run parses; one the parser rejects is unreadable.
 
 // maxDepth bounds how far sh -c programs, shell scripts and #! interpreters are followed from
 // one reference.

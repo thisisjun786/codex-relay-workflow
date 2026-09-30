@@ -53,24 +53,6 @@ func TestClassifyJudgesAScriptByWhatItRuns(t *testing.T) {
 	}
 }
 
-// The scan finds the same launchers from hook commands: a venv entry point written in the
-// exec polyglot form, and one outside any venv whose interpreter (GraalPy) is not named python*.
-func TestRetentionScanFindsAPolyglotConsoleScript(t *testing.T) {
-	h := newHost(t)
-	venv := filepath.Join(h.home, "venv")
-	write(t, filepath.Join(venv, "pyvenv.cfg"), "home = /usr/bin\n", 0o644)
-	link(t, "/bin/sh", filepath.Join(venv, "bin", "python3"))
-	script := filepath.Join(venv, "bin", "longshebang")
-	write(t, script, "#!/bin/sh\n'''exec' \""+filepath.Join(venv, "bin", "python3")+"\" \"$0\" \"$@\"\n' '''\n", 0o755)
-	graal := filepath.Join(h.home, "tools", "bin", "relay")
-	write(t, graal, "#!/bin/sh\n'''exec' '/opt/long path/bin/graalpy' \"$0\" \"$@\"\n' '''\n", 0o755)
-	write(t, filepath.Join(h.codex, "hooks.json"), `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "`+script+` hook", "timeout": 10}, {"type": "command", "command": "`+graal+` hook", "timeout": 10}]}]}}`, 0o600)
-	want := "9:hooks.Stop[0].hooks[0].command:" + script + "|9:hooks.Stop[0].hooks[1].command:" + graal
-	if got := references(h.scan(t)); strings.Join(got, "|") != want {
-		t.Fatalf("python references %v", got)
-	}
-}
-
 // A shell wrapper is judged at every command it runs, not only at an exec target: a bare
 // command no PATH directory holds leaves it unreadable whether it is exec'd or run after
 // true &&, a bare command PATH resolves to a venv console script makes it Python, and a command

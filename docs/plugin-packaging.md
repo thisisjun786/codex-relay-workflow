@@ -370,7 +370,7 @@ each declared surface is whether its reference outlives the directory it names.
 | --- | --- | --- | --- |
 | Native Stop command | No, it names the runtime pointer under `$HOME` | Nothing | `crw install install` |
 | Stop launcher, first candidate (legacy bootstrap a cached turn may still hold) | Yes | Falls through to the second candidate | No one: no payload ships it since todo 43, and a turn holding the bootstrap names a pre-native version directory an earlier install removed |
-| Stop launcher, second candidate at `<CODEX_HOME>/crw-stop-hook.py` | No | Nothing | Placed by the Python fence installer; `crw install` leaves it as it is, and the operator removes it once the retention scan reports nothing that could still reach it ([retention](port/cutover.md#retention)) |
+| Stop launcher, second candidate at `<CODEX_HOME>/crw-stop-hook.py` | No | Nothing | Placed by the Python fence installer; `crw install` leaves it as it is, and the operator removes it by hand once no turn that could still run the Python bootstrap is running ([retention](port/cutover.md#retention)) |
 | Stop settings at `<CODEX_HOME>/crw-completion-hook.json` | No | Nothing | `crw install hook --owner plugin`; one document serves a Go and a Python runtime through the pointer, and no promotion or rollback rewrites it. A Python-era document is replaced by its Go variant when the pointer moves onto a Go runtime (an install, an update or a rollback), which on the relay host is its first Go install; a move onto a Python runtime never rewrites it |
 | Adapter, relay and bridge executables | No, they sit under the installer pointer | Nothing | `crw install install` |
 | Hook document path in the run identifier | Yes | Held as an identifier and never re-read | The host |
@@ -483,8 +483,8 @@ when a turn starts and held until that turn ends; a thread staying loaded, an id
 App Server's own lifetime do not extend it. A thread can still run a hook command from a replaced
 version only while a turn that started before the replacement is running. Read through another App
 Server process, such a turn is `interrupted` with no `completedAt`, as is a turn whose process died,
-while a user's interrupt records a `completedAt`. Row 7 of the
-[retention scan](port/cutover.md#retention-scan-surface) applies this rule.
+while a user's interrupt records a `completedAt`. Row 7 of the retention scan applied this rule
+until `crw doctor retention-scan` was retired ([retention](port/cutover.md#retention-scan-surface)).
 
 ### Why the hook resolves the pointer
 
@@ -517,7 +517,7 @@ This subsection is history from before the cutover. It describes the Python boot
 declared before [the native wiring](#the-native-wiring), which a turn that started then could still
 run. The launchers it opens left the package in todo 43, after the cutover commit, and the
 repository in todo 44; the last copy, `<CODEX_HOME>/crw-stop-hook.py`, is the operator's to remove
-once the retention scan finds no such command ([retention](port/cutover.md#retention)). It stays as
+once no turn can still hold such a command ([retention](port/cutover.md#retention)). It stays as
 the record of why that bootstrap named two candidates, for a host that may still hold such a turn.
 
 That bootstrap named a file inside the version cache. Replace the package while a task still holds
@@ -538,7 +538,7 @@ So the declaration names two candidates and opens the first one it can read:
    payload from each marketplace it uses, this candidate is always gone.
 2. `<CODEX_HOME>/crw-stop-hook.py` — the copy the Python fence installer placed, which
    `crw install` leaves as it is. Reached only when the first one is already gone. The operator
-   removes it once the retention scan reports nothing that could still reach it; a turn that still
+   removes it once no turn can still hold the bootstrap; a turn that still
    held the bootstrap after that would have neither candidate, the case the next paragraph
    describes.
 
@@ -607,7 +607,7 @@ making its first policy registration as well, and step 8 says what that changes.
    hook moves with the payload: the native command names the pointer and the settings live in the
    Codex home. A turn that still holds the Python bootstrap falls back to `<CODEX_HOME>/crw-stop-hook.py`
    once its version directory is gone, and that copy stays where the Python installer put it until
-   the operator removes it, once the retention scan is clear ([retention](port/cutover.md#retention)).
+   the operator removes it, once no turn can still hold the bootstrap ([retention](port/cutover.md#retention)).
 4. Look at the candidate before adding it, whatever its bytes. Install it into a throwaway Codex home:
 
    ```sh

@@ -354,7 +354,7 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 // bridge would not start. A cached declaration that cannot be read leaves that unknown, which
 // keeps the pointer where it is as well.
 func nativePayload(o Options) (string, Object) {
-	launches, unread := doctor.PluginLaunches(doctor.RetentionOptions{Env: o.Env, CodexHome: o.CodexHome, Destination: o.Dest})
+	launches, unread := doctor.PluginLaunches(doctor.ScanOptions{Env: o.Env, CodexHome: o.CodexHome, Destination: o.Dest})
 	if launches == nil {
 		launches = []any{}
 	}
