@@ -299,13 +299,17 @@ def _creating(gate):
 
     A creator holds the gate EX from before any other opener can find it (_create_gate, Go's
     placeGate) until the store it creates is whole. Probed once without waiting, a shared lock
-    released at once; a gate that cannot be opened or locked is nobody's creation.
+    released at once; a gate that cannot be opened or locked is nobody's creation, and so is one
+    that is not a regular file, which no creator places. The open does not wait either
+    (O_NONBLOCK): a FIFO opened read-only would wait for a writer.
     """
     try:
-        fd = os.open(gate, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        fd = os.open(gate, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
     except OSError:
         return False
     try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return False
         fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
     except BlockingIOError:
         return True
@@ -332,7 +336,10 @@ def refuse_partial(path):
     A gate that another opener holds EX beside no D and no mirror is a first opener creating the
     store: it is let through, and the admitted open waits for that creation and judges what it
     left (Admission's blocking LOCK_SH, Go's awaitCreation). Only a gate nobody holds is
-    refused. The probe is the only lock this takes, and only for a moment.
+    refused. The probe is the only lock this takes, and only for a moment. A creation can
+    complete between the look and the probe, so a probe that finds the gate unheld is followed
+    by a second look, in Go's order (creating, then partialStore's own lstat of D): a D that now
+    exists, or a mirror that now holds a record, is left to check_start.
     """
     path = Path(path).resolve()
     gate = path.parent / "write-gate.lock"
@@ -341,6 +348,8 @@ def refuse_partial(path):
     if mirror(path) is not None:
         return
     if not _absent(gate) and _creating(gate):
+        return
+    if not _absent(path) or mirror(path) is not None:
         return
     raise OwnershipRefused("partial store: write-gate.lock without a database")
 

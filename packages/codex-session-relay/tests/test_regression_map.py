@@ -1397,6 +1397,10 @@ FAULT_SITES = (
 # excluded, because excluding a file is how you create the one place an arming sits unseen.
 UNACCOUNTED_FAULT_OCCURRENCES = (
     ("support.py", "killed_before_commit", "defines the helper"),
+    # Wraps ownership._creating so a paused first opener completes its creation just before the
+    # real probe runs; the creator's store and its transactions run unpatched.
+    ("test_fence.py", "test_a_creation_completed_before_the_probe_is_left_to_check_start",
+     "calls setattr"),
     # Lowers ownership.LOCK_WAIT_SECONDS so a held .replay.lock expires quickly; no DB hook.
     ("test_fence.py", "test_a_held_replay_lock_bounds_the_writer_wait_as_a_host_error",
      "calls setattr"),

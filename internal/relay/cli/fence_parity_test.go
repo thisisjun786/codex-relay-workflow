@@ -401,7 +401,11 @@ func TestScopeKey_of_an_authority_without_a_home_is_refused_as_the_fence_refuses
 // cli.py main runs check_start before a daemon's handler asks for its --socket, and Go's
 // runDaemon runs the same judgement (store.CheckStartLikeFence) first: a daemon started without
 // --socket on the other runtime's store is refused as the fence refuses it, exit 2, and on its
-// own runtime's store it is asked for its --socket, exit 4. Nothing is written either way.
+// own runtime's store it is asked for its --socket, exit 4. D is read as ownership.metadata
+// reads it: resolved loosely (Path.resolve()), so a D link loop stays unresolved and reads as
+// absent, and check_start passes it (exit 4); a D that is a directory fails the snapshot copy
+// as shutil.copyfile fails it, naming D, which is the fence's host error (exit 3). Byte for
+// byte alike in both runtimes, and nothing is written either way.
 func TestDaemon_without_a_socket_meets_check_start_before_asking_for_one(t *testing.T) {
 	home := pythonHome(t)
 	_, alias := packageBinary(t)
@@ -436,6 +440,43 @@ func TestDaemon_without_a_socket_meets_check_start_before_asking_for_one(t *test
 			if after, err := storeFiles(state); err != nil || !maps.Equal(before, after) {
 				t.Errorf("%s socketless daemon changed the %s-owned store (%v)", runtime, creator, err)
 			}
+		}
+	}
+	for _, layout := range []struct{ name, stdout string }{
+		{"link loop", usage},
+		{"directory", "{\n  \"error\": \"host\",\n  \"detail\": \"IsADirectoryError: [Errno 21] Is a directory: '<S>/relay.sqlite3'\"\n}\n"},
+	} {
+		answers := map[string]run{}
+		for _, runtime := range []string{"go", "python"} {
+			state := filepath.Join(home, runtime+"-"+strings.ReplaceAll(layout.name, " ", "-"))
+			if err := os.Mkdir(state, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			database := filepath.Join(state, "relay.sqlite3")
+			made := os.Mkdir
+			if layout.name == "link loop" {
+				made = func(name string, _ os.FileMode) error { return os.Symlink(name, name) }
+			}
+			if err := made(database, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			before, err := storeFiles(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			answer := relay(runtime, state, "daemon", "--allow-isolated-scope", "--max-ticks", "0")
+			answer.stdout = strings.ReplaceAll(answer.stdout, state, "<S>")
+			answers[runtime] = answer
+			if after, err := storeFiles(state); err != nil || !maps.Equal(before, after) {
+				t.Errorf("%s socketless daemon changed S beside a %s D (%v)", runtime, layout.name, err)
+			}
+		}
+		code := 4
+		if layout.name == "directory" {
+			code = 3
+		}
+		if goAnswer, pyAnswer := answers["go"], answers["python"]; goAnswer.code != code || goAnswer.stdout != layout.stdout || pyAnswer.code != goAnswer.code || pyAnswer.stdout != goAnswer.stdout {
+			t.Errorf("socketless daemon beside a %s D: go exit %d\n%s\npython exit %d\n%s", layout.name, goAnswer.code, goAnswer.stdout, pyAnswer.code, pyAnswer.stdout)
 		}
 	}
 	if claims, err := os.ReadDir(os.Getenv("CODEX_SESSION_RELAY_SCOPE_DIR")); !errors.Is(err, os.ErrNotExist) {

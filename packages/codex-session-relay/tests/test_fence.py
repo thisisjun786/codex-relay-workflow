@@ -1748,6 +1748,40 @@ def test_service_and_daemon_wait_for_a_first_opener_still_creating_the_store(tmp
         assert sorted(name.name for name in abandoned.parent.iterdir()) == before
 
 
+def test_a_creation_completed_before_the_probe_is_left_to_check_start(tmp_path, monkeypatch):
+    """refuse_partial looks again after a probe that finds the gate unheld, in Go's order.
+
+    Go's StartPreflight asks creating and then partialStore, which lstats D once more and lets a
+    D that now exists through to CheckStart. A first opener that completes its creation between
+    refuse_partial's look (a gate, no D, no mirror) and its probe (the gate no longer held) has
+    left a whole store, so the fence lets it through to check_start as Go does, rather than
+    refusing it as a partial one.
+    """
+    path = tmp_path / "state" / "relay.sqlite3"
+    creator = pausable_creator(path, "after-gate-placed")
+    probe = ownership._creating
+
+    def completed_then_probed(gate):
+        creator.stdin.write(b"go\n")
+        creator.stdin.flush()
+        assert line(creator) == b"created\n", creator.stderr.read()
+        assert creator.wait(timeout=30) == 0
+        return probe(gate)
+
+    try:
+        assert line(creator) == b"paused\n"
+        assert not path.exists() and not (path.parent / "takeover.json").exists()
+        monkeypatch.setattr(ownership, "_creating", completed_then_probed)
+        ownership.refuse_partial(path)
+    finally:
+        if creator.poll() is None:
+            creator.kill()
+            creator.wait()
+    assert creator.returncode == 0
+    assert ownership.metadata(path)["owner"] == "python" and ownership.mirror(path) is not None
+    ownership.check_start(path)
+
+
 @pytest.mark.parametrize("drift,refusal", [
     ("meta-socket", "scope without socket"),
     ("scope-key", "invalid socket/scope identity"),

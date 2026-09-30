@@ -176,8 +176,11 @@ any lock or record is written, and so does any store Go would not open (a legacy
 included, which Go never initializes). A partial store refuses them too, in both runtimes
 (Read-only clients). A `daemon` without `--socket` meets `check_start` first, in `main` and in
 Go's `runDaemon` (`store.CheckStartLikeFence`), and only then is asked for its socket: a store
-the fence refuses is refused in its words (exit 2), and one it passes answers the usage error
-(exit 4). The marker commands get `check_start` itself, read in
+the fence refuses is refused in its words (exit 2), one whose ownership read fails answers the
+fence's host error (exit 3; a `D` that is a directory fails the snapshot copy as
+`shutil.copyfile` fails it, naming `D`), and one it passes answers the usage error (exit 4),
+a `D` link loop among them: `D` is resolved as `Path.resolve()` resolves it, so the loop stays
+unresolved and reads as absent. The marker commands get `check_start` itself, read in
 the fence's order (`store.CheckStartLikeFence`): `main` runs it before the two forms that name
 the selected store (`intent-declare` without `--no-db-path`, `intent-register` without
 `--db-path`), `intent-claim` runs it on the store the intent names, and `intent-disposition`
@@ -348,6 +351,11 @@ clients). A live creator is told apart by its lock: while another opener holds t
 beside no `D` and no mirror, the start preflight of a service command or a daemon (which probes
 the gate once, without waiting) lets it through in both runtimes, and the daemon's admitted
 open waits for the creation and judges what it left; only a gate nobody holds is refused there.
+The probe opens the gate without waiting too (`O_NONBLOCK`), and a gate that is not a regular
+file (a FIFO, whose read-only open would wait for a writer) is nobody's creation: refused at
+once as the partial store it is. A probe that finds the gate unheld is followed by a second
+look, in Go's order: a creation completed between the first look and the probe leaves a `D`,
+which is left to `check_start`.
 Recovery is an operator action, the only removal of a lock file this protocol allows:
 confirm that `D` and `S/takeover.json` are absent and that no process has the gate open
 (`fuser S/write-gate.lock` or `lsof` lists none), then remove `S/write-gate.lock` and any

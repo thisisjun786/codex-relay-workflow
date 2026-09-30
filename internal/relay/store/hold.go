@@ -326,9 +326,11 @@ func partialStore(resolved string) error {
 // as partialStore reads it) and another opener holds the gate EX, as a creator holds the gate
 // it placed (placeGate, ownership.py _create_gate) until the store is whole. The gate is probed
 // once without waiting, a shared lock released at once, as ownership.py _creating probes it; a
-// gate that cannot be opened or locked is nobody's creation. A writer-side preflight lets such
-// a store through to its admitted open, which waits for the creation (awaitCreation); a reader
-// never probes the gate.
+// gate that cannot be opened or locked is nobody's creation, and so is one that is not a
+// regular file, which no creator places. The open does not wait either (O_NONBLOCK): a FIFO
+// opened read-only would wait for a writer. A writer-side preflight lets such a store through
+// to its admitted open, which waits for the creation (awaitCreation); a reader never probes the
+// gate.
 func creating(resolved string) bool {
 	if _, err := os.Lstat(resolved); !errors.Is(err, unix.ENOENT) {
 		return false
@@ -336,11 +338,15 @@ func creating(resolved string) bool {
 	if _, err := os.Stat(filepath.Join(filepath.Dir(resolved), "takeover.json")); !errors.Is(err, unix.ENOENT) {
 		return false
 	}
-	fd, err := unix.Open(filepath.Join(filepath.Dir(resolved), "write-gate.lock"), unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	fd, err := unix.Open(filepath.Join(filepath.Dir(resolved), "write-gate.lock"), unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return false
 	}
 	defer unix.Close(fd)
+	var gate unix.Stat_t
+	if err = unix.Fstat(fd, &gate); err != nil || gate.Mode&unix.S_IFMT != unix.S_IFREG {
+		return false
+	}
 	return errors.Is(unix.Flock(fd, unix.LOCK_SH|unix.LOCK_NB), unix.EWOULDBLOCK)
 }
 

@@ -1,7 +1,9 @@
 """Owner-independent read matrix and terminal inbox replay regressions."""
 
 import json
+import os
 import shutil
+import signal
 import sqlite3
 from contextlib import redirect_stdout
 from io import StringIO
@@ -436,6 +438,25 @@ def _cli(argv):
     return code, json.loads(output.getvalue())
 
 
+class _Blocked(BaseException):
+    """Raised through a blocked call: neither an OSError nor an Exception, so no handler of the
+    code under test can take it for an answer."""
+
+
+def _at_once(argv, seconds=30):
+    """_cli, failed rather than waited on when it blocks: every answer here comes at once."""
+    def blocked(_signum, _frame):
+        raise _Blocked(f"{argv} was still blocked after {seconds}s")
+
+    previous = signal.signal(signal.SIGALRM, blocked)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        return _cli(argv)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
 # The service and daemon commands act on S and the scope registry before any admitted open.
 # `service start`, `restart` and `run` are left out: were the refusal lost they would spawn or
 # run a supervisor here; the Go parity test drives the rest of them.
@@ -446,7 +467,7 @@ PARTIAL_STARTS = (["service", "enable"], ["service", "disable"], ["service", "st
 
 @pytest.mark.parametrize("argv", PARTIAL_STARTS)
 @pytest.mark.parametrize("layout", ["gate", "gate-beside-a-dangling-link", "mirror-link",
-                                    "gate-beside-a-mirror-link"])
+                                    "gate-beside-a-mirror-link", "fifo-gate"])
 def test_a_gate_without_a_database_is_refused_before_service_or_daemon_touch_anything(
         tmp_path, monkeypatch, argv, layout):
     """Go store.StartPreflight's partial-store refusal, in the fence (decision 31).
@@ -457,6 +478,8 @@ def test_a_gate_without_a_database_is_refused_before_service_or_daemon_touch_any
     cli.main refuses it first, with a writer's words, reason store_owned_by_other and exit 2; D
     is Path.resolve()'s, so a D link naming no file is no D. A daemon without --socket meets
     check_start alone, which passes these stores, and then asks for its --socket, as Go's does.
+    A gate that is not a regular file (a FIFO, whose read-only open would wait for a writer) is
+    nobody's creation: the creator probe opens it without waiting and refuses it at once.
     """
     scopes = tmp_path / "scopes"
     monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", str(scopes))
@@ -464,6 +487,8 @@ def test_a_gate_without_a_database_is_refused_before_service_or_daemon_touch_any
     state.mkdir(mode=0o700)
     if layout.startswith("gate"):
         (state / "write-gate.lock").touch(mode=0o600)
+    if layout == "fifo-gate":
+        os.mkfifo(state / "write-gate.lock", 0o600)
     if layout == "gate-beside-a-dangling-link":
         (state / "relay.sqlite3").symlink_to(state / "nowhere.sqlite3")
     if layout.endswith("mirror-link"):
@@ -471,11 +496,12 @@ def test_a_gate_without_a_database_is_refused_before_service_or_daemon_touch_any
     before = sorted(path.name for path in state.iterdir())
     refused = {"error": "refused", "reason": "store_owned_by_other",
                "detail": "partial store: write-gate.lock without a database"}
-    assert _cli(["--state", str(state), "--socket", str(tmp_path / "app.sock"), *argv]) == (2, refused)
+    assert _at_once(["--state", str(state), "--socket", str(tmp_path / "app.sock"), *argv]) == (
+        2, refused)
     assert sorted(path.name for path in state.iterdir()) == before
     assert not scopes.exists()
     if argv[0] == "daemon":
-        assert _cli(["--state", str(state), *argv]) == (4, {
+        assert _at_once(["--state", str(state), *argv]) == (4, {
             "error": "usage", "detail": "this command needs --socket to reach the host"})
         assert sorted(path.name for path in state.iterdir()) == before
         assert not scopes.exists()

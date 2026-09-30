@@ -524,7 +524,10 @@ func SnapshotMeta(ctx context.Context, path string) (Stamp, error) {
 }
 
 // CopySnapshot is for read-only preflight only, NOT the transfer backup. The
-// latter uses sqlite3_backup under the complete transfer barrier.
+// latter uses sqlite3_backup under the complete transfer barrier. Each source is copied as
+// ownership.metadata's shutil.copyfile copies it: a source that is a directory fails at its
+// open, naming that source (IsADirectoryError), where Go's open would succeed and the copy
+// fail later, naming the temporary destination.
 func CopySnapshot(path string) (dst string, cleanup func() error, err error) {
 	dir, err := os.MkdirTemp("", "crw-ownership-")
 	if err != nil {
@@ -544,6 +547,9 @@ func CopySnapshot(path string) (dst string, cleanup func() error, err error) {
 		}
 		if e != nil {
 			return "", nil, e
+		}
+		if info, e := src.Stat(); e == nil && info.IsDir() {
+			return "", nil, errors.Join(&os.PathError{Op: "open", Path: path + suffix, Err: unix.EISDIR}, src.Close())
 		}
 		out, e := os.OpenFile(dst+suffix, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if e != nil {

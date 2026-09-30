@@ -219,7 +219,10 @@ func stopMetadata(ctx context.Context, dbPath string) (map[string]string, error)
 	})
 }
 
-// readMetadata is OwnershipMetadata with the underlying OS or SQLite error.
+// readMetadata is OwnershipMetadata with the underlying OS or SQLite error. D is named as
+// ownership.metadata names it, Path.resolve()'s loose resolution: a component that cannot be
+// resolved (a link loop among them) is kept as spelled, and the stat that follows finds it
+// absent (ELOOP), where a strict resolution would fail.
 func readMetadata(ctx context.Context, dbPath string) (map[string]string, error) {
 	return metadataBy(ctx, dbPath, func(resolved string) (queryer, func() error, error) {
 		copied, cleanup, err := ownership.CopySnapshot(resolved)
@@ -244,12 +247,9 @@ type queryer interface {
 // the resolved database: none for an absent database (Path.exists()) or one without schema_meta.
 func metadataBy(ctx context.Context, dbPath string, open func(string) (queryer, func() error, error)) (map[string]string, error) {
 	meta := map[string]string{}
-	resolved, err := resolvePath(dbPath)
-	if err != nil {
-		return nil, err
-	}
+	resolved := resolveLoosely(dbPath)
 	// Path.exists(): only these errnos mean absent; anything else is raised.
-	if _, err = os.Stat(resolved); err != nil {
+	if _, err := os.Stat(resolved); err != nil {
 		for _, absent := range []syscall.Errno{syscall.ENOENT, syscall.ENOTDIR, syscall.EBADF, syscall.ELOOP} {
 			if errors.Is(err, absent) {
 				return meta, nil

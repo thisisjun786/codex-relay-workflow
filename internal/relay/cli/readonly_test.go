@@ -151,6 +151,11 @@ func storeFiles(dir string) (map[string][32]byte, error) {
 			files[entry.Name()] = sha256.Sum256([]byte("symlink:" + target))
 			continue
 		}
+		if !info.Mode().IsRegular() {
+			// A directory or a FIFO is its kind: reading a FIFO would wait for a writer.
+			files[entry.Name()] = sha256.Sum256([]byte("kind:" + info.Mode().Type().String()))
+			continue
+		}
 		raw, err := os.ReadFile(filepath.Join(dir, entry.Name()))
 		if err != nil {
 			return nil, err
@@ -390,9 +395,11 @@ func TestReadOnlyForms_take_a_dangling_database_link_for_an_absent_store(t *test
 // service.json or scope claim. D is the file every opener opens, Path.resolve()'s, so a D link
 // naming no file beside a gate is a gate without a database. A takeover.json link naming no
 // file reads as no record but is there, so beside no D it is partial too, gate or none, and no
-// writer initializes a store over it. A daemon without --socket meets check_start first, as
-// cli.py main runs it: refused in check_start's words where a mirror holds a record, else asked
-// for its --socket (exit 4), alike in both runtimes.
+// writer initializes a store over it. A gate that is not a regular file (a FIFO, whose
+// read-only open would wait for a writer) is nobody's creation: the start preflight's creator
+// probe opens it without waiting and refuses it at once. A daemon without --socket meets
+// check_start first, as cli.py main runs it: refused in check_start's words where a mirror holds
+// a record, else asked for its --socket (exit 4), alike in both runtimes.
 func TestReadOnlyForms_refuse_a_partial_store_as_a_writer_does(t *testing.T) {
 	home := pythonHome(t)
 	_, alias := packageBinary(t)
@@ -411,14 +418,16 @@ func TestReadOnlyForms_refuse_a_partial_store_as_a_writer_does(t *testing.T) {
 		files      map[string]string
 		dangling   bool
 		mirrorLink bool
+		fifoGate   bool
 		detail     string
 	}{
-		{"gate only", map[string]string{"write-gate.lock": ""}, false, false, "partial store: write-gate.lock without a database"},
-		{"mirror only", map[string]string{"takeover.json": string(mirror)}, false, false, "missing or unsupported writer protocol"},
-		{"gate and mirror", map[string]string{"write-gate.lock": "", "takeover.json": string(mirror)}, false, false, "missing or unsupported writer protocol"},
-		{"gate beside a dangling link", map[string]string{"write-gate.lock": ""}, true, false, "partial store: write-gate.lock without a database"},
-		{"dangling mirror link", nil, false, true, "partial store: write-gate.lock without a database"},
-		{"gate beside a dangling mirror link", map[string]string{"write-gate.lock": ""}, false, true, "partial store: write-gate.lock without a database"},
+		{"gate only", map[string]string{"write-gate.lock": ""}, false, false, false, "partial store: write-gate.lock without a database"},
+		{"mirror only", map[string]string{"takeover.json": string(mirror)}, false, false, false, "missing or unsupported writer protocol"},
+		{"gate and mirror", map[string]string{"write-gate.lock": "", "takeover.json": string(mirror)}, false, false, false, "missing or unsupported writer protocol"},
+		{"gate beside a dangling link", map[string]string{"write-gate.lock": ""}, true, false, false, "partial store: write-gate.lock without a database"},
+		{"dangling mirror link", nil, false, true, false, "partial store: write-gate.lock without a database"},
+		{"gate beside a dangling mirror link", map[string]string{"write-gate.lock": ""}, false, true, false, "partial store: write-gate.lock without a database"},
+		{"fifo gate", nil, false, false, true, "partial store: write-gate.lock without a database"},
 	} {
 		states := map[string]string{}
 		for _, runtime := range []string{"go", "python"} {
@@ -438,6 +447,11 @@ func TestReadOnlyForms_refuse_a_partial_store_as_a_writer_does(t *testing.T) {
 			}
 			if partial.mirrorLink {
 				if err := os.Symlink(filepath.Join(state, "nowhere.json"), filepath.Join(state, "takeover.json")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if partial.fifoGate {
+				if err := syscall.Mkfifo(filepath.Join(state, "write-gate.lock"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
