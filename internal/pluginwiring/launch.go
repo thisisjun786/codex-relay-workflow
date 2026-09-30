@@ -27,9 +27,10 @@ import (
 const Flag = "--plugin-launch"
 
 // The record contract of crw_bridge_mcp.py (decision 26), the Python launcher the package shipped
-// until todo 43 and testdata/pre-native-wiring keeps as the oracle, whose checks and order this
-// reproduces, and whose failure texts it keeps but for the repairs, which name the installer that
-// writes the record since todo 38 (RepairCommand).
+// until todo 43. Its recorded answers are the oracle (the copy kept in testdata/pre-native-wiring
+// left with the Python implementation in todo 44): this reproduces its checks and their order,
+// and keeps its failure texts but for the repairs, which name the installer that writes the
+// record since todo 38 (RepairCommand).
 const (
 	RecordName = "crw-bridge-mcp.json"
 	// RepairCommand writes the record (internal/runtime/install RegisterMCP).

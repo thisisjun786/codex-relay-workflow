@@ -19,9 +19,9 @@ import (
 )
 
 // The oracle is crw_bridge_mcp.py itself, run by the workspace interpreter: the launcher the
-// package shipped until todo 43, kept byte for byte in testdata/pre-native-wiring
-// (preNativeLauncher). What it did is recorded (pyoracle) and replayed unless
-// CRW_PYTHON_ORACLE asks for the live interpreter.
+// package shipped until todo 43, kept byte for byte in testdata/pre-native-wiring until todo 44
+// deleted it with the Python implementation. What it did is recorded (pyoracle) and replayed;
+// taking a recording again needs a checkout from before that deletion.
 // Both launchers are placed in the same cache layout under one Codex home and started with the
 // same record, environment and working directory; stderr and exit are compared byte for byte,
 // once Python's repairs are rewritten to the Go ones (goRepairs). Where Python would exec the
@@ -84,13 +84,10 @@ func newLauncherHost(t *testing.T) launcherHost {
 	if err := os.MkdirAll(filepath.Join(h.version, "wiring"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	source, err := os.ReadFile(preNativeLauncher("crw_bridge_mcp.py"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Placed under the native launcher's file name: codex_home() names its own __file__ in one
-	// failure text, and this makes that the same path on both sides rather than rewriting text.
-	write(t, filepath.Join(h.version, "wiring", launcherName), string(source), 0o644)
+	// The Python launcher stood under the native launcher's file name when its answers were
+	// recorded: codex_home() names its own __file__ in one failure text, and that made it the
+	// same path on both sides rather than rewriting text. The file keeps its place in the layout.
+	write(t, filepath.Join(h.version, "wiring", launcherName), "# crw_bridge_mcp.py stood here when its answers were recorded\n", 0o644)
 	h.probe = filepath.Join(root, "probe")
 	write(t, h.probe, "#!/bin/sh\nprintf 'argv=%s\\n' \"$*\"\nprintf 'policy=%s\\n' \"${CODEX_THREAD_BRIDGE_EXECUTION_POLICY-<unset>}\"\nprintf 'digest=%s\\n' \"${CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST-<unset>}\"\n", 0o755)
 	h.policy = filepath.Join(root, "execution-policy.json")

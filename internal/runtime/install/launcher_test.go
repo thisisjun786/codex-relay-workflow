@@ -21,22 +21,15 @@ type launcherHome struct {
 	settingsBytes             []byte
 }
 
-// newLauncherHome is a Codex home holding the launcher the package shipped until todo 43 (the
-// pre-native testdata keeps it), the way the placement left it, beside a settings document the
-// removal must not touch.
+// newLauncherHome is a Codex home holding a launcher CRW placed (legacyLauncher, standing in for
+// the one the package shipped until todo 43), the way the placement left it, beside a settings
+// document the removal must not touch.
 func newLauncherHome(t *testing.T) launcherHome {
 	t.Helper()
 	h := launcherHome{codex: t.TempDir()}
 	h.launcher = filepath.Join(h.codex, install.LauncherName)
 	h.settings = filepath.Join(h.codex, install.SettingsName)
-	shipped, err := os.ReadFile(preNativeWiring("crw_stop_hook.py"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(shipped), install.LauncherMarker) {
-		t.Fatalf("the shipped launcher does not carry %s", install.LauncherMarker)
-	}
-	write(t, h.launcher, string(shipped))
+	write(t, h.launcher, legacyLauncher)
 	h.settingsBytes = []byte(`{"configVersion": 1, "owner": "plugin"}`)
 	write(t, h.settings, string(h.settingsBytes))
 	return h

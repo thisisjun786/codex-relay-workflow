@@ -318,9 +318,9 @@ func TestPluginLaunch_evaluates_settings_the_plugin_owns(t *testing.T) {
 }
 
 // pythonPluginSettingsPath is crw_stop_hook.py settings_path() under env: the path the Python
-// plugin launcher reads. The package shipped it until todo 43; the pre-native testdata keeps it,
-// byte for byte the <CODEX_HOME>/crw-stop-hook.py copy a host may still hold. Its answer is
-// recorded (pyoracle), with home spelled <HOME>.
+// plugin launcher reads. The package shipped it until todo 43; the pre-native testdata kept it,
+// byte for byte the <CODEX_HOME>/crw-stop-hook.py copy a host may still hold, until todo 44
+// deleted it. Its answer is recorded (pyoracle), with home spelled <HOME>.
 func pythonPluginSettingsPath(t *testing.T, home string, env []string) string {
 	t.Helper()
 	return string(pyoracle.Answer(t, "settings_path", func() ([]byte, error) {

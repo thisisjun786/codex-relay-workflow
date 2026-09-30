@@ -281,7 +281,8 @@ var contractInputs = []string{
 	"plugins/crw/skills/crw-run/scripts/fixtures",
 	"plugins/crw/skills/crw-run/references/operations.md",
 	"plugins/crw/skills/crw-run/references/operations",
-	"scripts/crw_runtime/components.json",
+	"internal/runtime/definition/definition.go",
+	".goreleaser.yaml",
 	"contract/schema/bridge-mcp-tools.json",
 	"LICENSE",
 	"packages/codex-thread-bridge/LICENSE",
@@ -336,7 +337,7 @@ func Test47_ContractsPairsAndAbsentComponents(t *testing.T) {
 	for _, contract := range []string{
 		"plugins/crw/skills/crw-run/references/hook-contract.md",
 		"plugins/crw/skills/crw-run/references/start-policy.md",
-		"scripts/crw_runtime/components.json",
+		"internal/runtime/definition/definition.go",
 	} {
 		r := contractsRepo(t, contract)
 		if got := goCheck(t, r.root, nil, "contracts"); got.code != 1 || !strings.Contains(got.stderr, " contract check failed with exit status ") {
@@ -367,7 +368,7 @@ func Test47_ContractsPairsAndAbsentComponents(t *testing.T) {
 		t.Fatalf("repository: %+v", here)
 	}
 	for _, line := range []string{"fixtures matched", "sites reached", "OK every clause cited by any fixture exists",
-		"runtime: scripts/crw_runtime/components.json agrees with the Go definition", "vocabulary: 3 run modes and 3 observation paths, as declared",
+		"runtime: the component definition (internal/runtime/definition/definition.go) agrees with the checkout", "vocabulary: 3 run modes and 3 observation paths, as declared",
 		"title fixtures against their recorded expectations"} {
 		if !strings.Contains(here.stdout, line) || !strings.Contains(checked.stdout, line) {
 			t.Errorf("a check did not report %q\nrepository: %s\nwithout Python: %s", line, here.stdout, checked.stdout)
@@ -375,16 +376,18 @@ func Test47_ContractsPairsAndAbsentComponents(t *testing.T) {
 	}
 }
 
-// The runtime check judges what the Go build takes from components.json, one property per row.
+// The runtime check judges the one component definition against what it names outside itself,
+// one property per row: the licences in the checkout and the release archives, the identity tool
+// in the bridge's contract, and the links the release build makes.
 func TestContractsRuntimeDefinition(t *testing.T) {
 	base := func(t *testing.T) string {
 		root := newRepo(t).root
-		for _, rel := range []string{"scripts/crw_runtime/components.json", "contract/schema/bridge-mcp-tools.json", "LICENSE", "packages/codex-thread-bridge/LICENSE"} {
+		for _, rel := range []string{"internal/runtime/definition/definition.go", ".goreleaser.yaml", "contract/schema/bridge-mcp-tools.json", "LICENSE", "packages/codex-thread-bridge/LICENSE"} {
 			copyTree(t, root, rel)
 		}
 		return root
 	}
-	if got := goCheck(t, base(t), nil, "contracts"); got.code != 0 || !strings.Contains(got.stdout, "links codex-session-relay, codex-thread-bridge, crw-completion-hook") {
+	if got := goCheck(t, base(t), nil, "contracts"); got.code != 0 || !strings.Contains(got.stdout, "links codex-session-relay, codex-thread-bridge, crw-completion-hook as .goreleaser.yaml makes them") {
 		t.Fatalf("clean: %+v", got)
 	}
 	edit := func(t *testing.T, root, rel, old, new string) {
@@ -405,10 +408,9 @@ func TestContractsRuntimeDefinition(t *testing.T) {
 	for _, row := range []struct {
 		label, rel, old, new, fragment string
 	}{
-		{"version", "scripts/crw_runtime/components.json", `"definitionVersion": 1`, `"definitionVersion": 2`, "definitionVersion is not 1"},
-		{"field", "scripts/crw_runtime/components.json", `"version": "0.2.0"`, `"version": "0.3.0"`, `component 0 version is "0.3.0", the Go definition's is "0.2.0"`},
 		{"identity tool", "contract/schema/bridge-mcp-tools.json", `"name": "get_capabilities"`, `"name": "get_abilities"`, `identity tool "get_capabilities" is not a tool contract/schema/bridge-mcp-tools.json lists`},
-		{"link", "scripts/crw_runtime/components.json", `"consoleScript": "codex-session-relay"`, `"consoleScript": "crw-completion-hook"`, "the links the installer places are"},
+		{"link", ".goreleaser.yaml", "ln -sfn crw crw-completion-hook", "ln -sfn crw crw-hook", "links [codex-session-relay codex-thread-bridge crw-hook] beside crw, the installer places"},
+		{"archived licence", ".goreleaser.yaml", "      - packages/codex-thread-bridge/LICENSE", "      - packages/LICENSE", `licence "packages/codex-thread-bridge/LICENSE" is not a file .goreleaser.yaml archives`},
 	} {
 		root := base(t)
 		edit(t, root, row.rel, row.old, row.new)
@@ -421,6 +423,7 @@ func TestContractsRuntimeDefinition(t *testing.T) {
 	for _, row := range []struct{ label, rel, fragment string }{
 		{"licence", "packages/codex-thread-bridge/LICENSE", `FAIL runtime: codex-thread-bridge: licence "packages/codex-thread-bridge/LICENSE" is not a file in this checkout`},
 		{"tool schema", "contract/schema/bridge-mcp-tools.json", "FAIL runtime: contract/schema/bridge-mcp-tools.json: "},
+		{"release config", ".goreleaser.yaml", "FAIL runtime: .goreleaser.yaml: "},
 	} {
 		root := base(t)
 		if err := os.Remove(filepath.Join(root, row.rel)); err != nil {

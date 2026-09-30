@@ -12,10 +12,10 @@ import (
 )
 
 // The bridge's --version and its App Server clientInfo.version are the bridge component's
-// version in the compatibility definition (internal/runtime/definition, kept equal to
-// scripts/crw_runtime/components.json), so a later bump of one side fails here instead of
-// drifting silently. Until todo 44 this read the Python package's real
-// `codex-thread-bridge --version`; the Python runtime leaves in todo 44.
+// version in the compatibility definition (internal/runtime/definition, the only copy since todo
+// 44 removed scripts/crw_runtime/components.json), so a later bump of one side fails here
+// instead of drifting silently. Until todo 44 this read the Python package's real
+// `codex-thread-bridge --version`.
 func TestVersion_is_the_bridge_components_definition_version(t *testing.T) {
 	bridge, ok := definition.Of(definition.Bridge)
 	if !ok || bridge.Version == "" {

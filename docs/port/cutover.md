@@ -18,7 +18,7 @@ Two facts shape everything below.
 2. A cached hook command of the form `python3 /old/path.py` keeps being spawned by the host
    after an upgrade (crw_stop_hook.py:16-28 documents the exit-2 loop that a missing script
    caused; the package shipped it until todo 43, and internal/pluginwiring/testdata/pre-native-wiring
-   keeps it). Python interpreters and the tiny compatibility entry points stay
+   kept it until todo 44). Python interpreters and the tiny compatibility entry points stay
    until the retention scan (below) reports zero references.
 
 Names used throughout:
@@ -1139,9 +1139,10 @@ whatever a later payload ships. The one path that could still reach a later payl
 session holding the pre-native server declaration whose bridge the host starts again from a newer
 directory, which was not measured either way; without the launcher such a start fails and the
 session goes on without the bridge tools (`required: false`, docs/plugin-packaging.md "The native
-wiring"). The repository keeps both files, byte for byte, as test data beside the pre-native
-declarations in `internal/pluginwiring/testdata/pre-native-wiring`, for the tests that replay the
-bootstrap, place the shim and compare the Go record contract with the Python one.
+wiring"). The repository kept both files, byte for byte, as test data beside the pre-native
+declarations in `internal/pluginwiring/testdata/pre-native-wiring` until todo 44 deleted them with
+the Python implementation; the Go record contract is compared with the launcher's recorded
+answers.
 
 The `<CODEX_HOME>/crw-stop-hook.py` shim is host state, not package content, so no repository
 change removes it. The operator removes it on the host, with the ownership-checked

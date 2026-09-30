@@ -1,12 +1,10 @@
 package definition_test
 
 import (
-	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
@@ -14,45 +12,27 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
 
-// The Go definition carries components.json's retained fields and agrees with the committed
-// file field for field; it carries no per-target digest, so no build has to regenerate it.
-func TestDefinitionAgreesWithComponentsJSON(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join(golden.Root(), "scripts", "crw_runtime", "components.json"))
-	if err != nil {
-		t.Fatal(err)
+// The definition names the two components by their console scripts, each with a licence that is
+// in the checkout, and the links the installer places beside crw are those console scripts and
+// the completion hook's entry point, in that order. It carries no per-target digest, so no build
+// has to regenerate it.
+func TestDefinitionNamesTheComponentsTheInstallerPlaces(t *testing.T) {
+	if definition.Version != 1 {
+		t.Fatalf("definitionVersion %d: the host record states 1 (decision 34)", definition.Version)
 	}
-	var committed struct {
-		DefinitionVersion int `json:"definitionVersion"`
-		Components        []struct {
-			Component, ConsoleScript, Version, LicencePath, IdentityTool, ExerciseCommand string
-			Upstream                                                                      struct{ Remote, Revision, Licence string }
-		}
+	if len(definition.Components) != 2 || definition.Components[0].Name != definition.Bridge || definition.Components[1].Name != definition.Relay {
+		t.Fatalf("components %+v", definition.Components)
 	}
-	if err := json.Unmarshal(raw, &committed); err != nil {
-		t.Fatal(err)
-	}
-	if committed.DefinitionVersion != definition.Version || len(committed.Components) != len(definition.Components) {
-		t.Fatalf("definitionVersion %d, %d components", committed.DefinitionVersion, len(committed.Components))
-	}
-	for i, c := range committed.Components {
-		g := definition.Components[i]
-		if c.Component != g.Name || c.ConsoleScript != g.ConsoleScript || c.Version != g.Version || c.LicencePath != g.LicencePath ||
-			c.IdentityTool != g.IdentityTool || c.ExerciseCommand != g.ExerciseCommand || c.Upstream.Remote != g.Upstream.Remote ||
-			c.Upstream.Revision != g.Upstream.Revision || c.Upstream.Licence != g.Upstream.Licence {
-			t.Errorf("component %d: committed %+v, go %+v", i, c, g)
+	for _, g := range definition.Components {
+		if g.ConsoleScript != g.Name || g.Version == "" {
+			t.Errorf("%s: console script %q, version %q", g.Name, g.ConsoleScript, g.Version)
 		}
 		if _, err := os.Stat(filepath.Join(golden.Root(), g.LicencePath)); err != nil {
 			t.Errorf("%s: licence %s: %v", g.Name, g.LicencePath, err)
 		}
 	}
-	provenance, err := os.ReadFile(filepath.Join(golden.Root(), "packages", "README.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, g := range definition.Components {
-		if !strings.Contains(string(provenance), g.Upstream.Revision) {
-			t.Errorf("%s: upstream revision %s is not in packages/README.md", g.Name, g.Upstream.Revision)
-		}
+	if bridge, _ := definition.Of(definition.Bridge); bridge.IdentityTool != "get_capabilities" {
+		t.Errorf("the bridge is identified by %q", bridge.IdentityTool)
 	}
 	links := definition.Links()
 	if len(links) != 3 || links[0] != "codex-session-relay" || links[1] != "codex-thread-bridge" || links[2] != "crw-completion-hook" {
