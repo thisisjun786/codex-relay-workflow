@@ -5,12 +5,6 @@ import "testing"
 func Test23_CP_1_PythonScenario(t *testing.T) {
 	packetReplay(t, "test_child_packets", "test_every_parent_and_child_purpose_declares_its_required_data", "test_an_assignment_without_its_criteria_digest_is_refused_by_name", "test_a_stated_absence_is_not_a_value", "test_a_resume_that_drops_the_workflow_is_refused", "test_a_packet_missing_required_data_is_refused_rather_than_compared", "test_an_artifact_missing_half_its_identity_is_refused")
 }
-func Test23_CP_2_PythonScenario(t *testing.T) {
-	packetReplay(t, "test_child_packets", "test_an_assignment_without_the_instruction_body_names_the_missing_sections")
-}
-func Test23_CP_3_PythonScenario(t *testing.T) {
-	packetReplay(t, "test_child_packets", "test_a_progress_note_is_not_made_to_invent_a_head", "test_a_blocked_report_owes_an_answer_and_a_decision_owes_the_user_one")
-}
 func Test23_CP_4_PythonScenario(t *testing.T) {
 	packetReplay(t, "test_child_packets", "test_a_locator_and_a_digest_are_a_whole_artifact", "test_an_audit_is_never_measured_against_a_head_it_does_not_have", "test_a_deliverable_nobody_can_hash_is_not_one_this_can_identify", "test_a_non_pull_request_audit_completes_the_same_round_trip")
 }
@@ -37,12 +31,6 @@ func Test23_CP_11_PythonScenario(t *testing.T) {
 }
 func Test23_CP_12_PythonScenario(t *testing.T) {
 	packetReplay(t, "test_child_packets", "test_a_complete_body_is_missing_nothing", "test_a_section_mentioned_in_a_sentence_does_not_satisfy_it", "test_a_subsection_does_not_answer_for_the_section", "test_list_and_heading_markers_are_stepped_over", "test_something_that_is_not_text_is_missing_everything", "test_bare_headings_with_nothing_under_them_name_every_field_and_instruct_nobody", "test_content_on_the_line_below_the_heading_counts", "test_a_heading_whose_only_follower_is_the_next_heading_is_still_empty")
-}
-func Test23_CP_13_PythonScenario(t *testing.T) {
-	packetReplay(t, "test_child_packets", "test_a_restore_section_that_drops_the_workflow_is_refused", "test_a_restore_section_whose_values_were_all_blank_is_still_no_section", "test_a_restore_section_stating_the_workflow_is_accepted")
-}
-func Test23_CP_14_PythonScenario(t *testing.T) {
-	packetReplay(t, "test_child_packets", "test_a_blocked_outcome_no_longer_renders_as_a_completion", "test_it_reads_the_receipt_outcome_and_nothing_that_can_move", "test_every_derived_purpose_is_one_the_envelope_carries")
 }
 func Test23_CP_15_PythonScenario(t *testing.T) {
 	packetReplay(t, "test_child_packets", "test_the_round_trip_stays_on_one_task_one_pull_request_and_one_callback")
@@ -79,9 +67,6 @@ func Test23_RF_6_PythonScenario(t *testing.T) {
 }
 func Test23_RF_7_PythonScenario(t *testing.T) {
 	packetReplay(t, "test_reception_findings", "test_a_non_loop_reading_under_a_loop_policy_is_refused", "test_a_loop_reading_cannot_call_its_activation_inapplicable", "test_a_workflow_naming_cxc_loop_cannot_state_another_mode", "test_a_mode_the_receiver_does_not_hold_is_refused", "test_a_receiver_holding_no_mode_leaves_a_report_unchecked", "test_an_assignment_defines_the_mode_only_where_none_is_held", "test_a_loop_reading_under_a_loop_policy_passes")
-}
-func Test23_RF_8_PythonScenario(t *testing.T) {
-	packetReplay(t, "test_reception_findings", "test_a_ready_for_review_outcome_is_delivered_as_review_ready", "test_a_blocked_outcome_and_any_other_stay_as_they_were")
 }
 func Test23_RF_9_PythonScenario(t *testing.T) {
 	packetReplay(t, "test_reception_findings", "test_the_validators_table_is_the_contracts_table", "test_the_full_packet_of_every_purpose_is_accepted", "test_a_missing_required_field_is_refused_by_its_name", "test_a_field_the_record_cannot_answer_is_unavailable")

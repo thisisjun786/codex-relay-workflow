@@ -178,7 +178,14 @@ func (e *regionEnv) agreement(agreement any) any {
 func (e *regionEnv) show(f ShowFilter) any { return e.step(e.regions.Show(ctx(), repo, f)) }
 
 func (e *regionEnv) current(revision string) any {
-	return e.step(e.regions.CurrentRevision(ctx(), repo, revision))
+	return e.step(e.regions.currentRevision(ctx(), repo, revision))
+}
+
+// currentRevision is EditRegions.current_revision, whether nothing supersedes this revision: an
+// observation the recorded scenarios read, which no command answers.
+func (e *EditRegions) currentRevision(ctx context.Context, repository, revision string) (bool, error) {
+	r, err := e.one(ctx, "SELECT * FROM edit_revision_marks  WHERE repository = ? AND from_revision = ?", repository, revision)
+	return r == nil, err
 }
 
 func (e *regionEnv) followup(in Followup) any {

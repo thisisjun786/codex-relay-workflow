@@ -90,22 +90,11 @@ type Block struct {
 	Problems              []string
 }
 
-func (b Block) Record() Obj {
-	return obj("fields", b.Fields, "text", b.Text, "body", b.Text, "summary", b.Summary, "format", b.Format, "problems", b.Problems)
-}
-
 type Document struct {
 	Blocks                       map[string]Block
 	Order, Duplicates, Malformed []string
 }
 
-func (d Document) Record() Obj {
-	blocks := Obj{}
-	for _, id := range d.Order {
-		blocks = append(blocks, contract.Field{Key: id, Value: d.Blocks[id].Record()})
-	}
-	return obj("blocks", blocks, "duplicates", d.Duplicates, "malformed", d.Malformed)
-}
 func ParseDocument(source string) Document {
 	d := Document{Blocks: map[string]Block{}, Order: []string{}, Duplicates: []string{}, Malformed: []string{}}
 	lines := strings.Split(source, "\n")

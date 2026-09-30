@@ -3,9 +3,11 @@ package hook
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
@@ -162,4 +164,32 @@ func Test33NativeJournalPathsWhoseNamesAreNotUTF8(t *testing.T) {
 			t.Errorf("%s: Python reads %v, want %v", c.name, answers[i], c.want)
 		}
 	}
+}
+
+// ReadNativePrescanRow reads one journal file the way completion._read_record did: a regular
+// file, reached without a symlink, holding exactly the bytes RecordBytes writes for a
+// native-prescan row. No product path reads journal rows back (crw-dev stop-events has its own
+// reader); the tests read what the hook wrote through it.
+func ReadNativePrescanRow(path string) (Object, bool) {
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, false
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, false
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, maxInputBytes+1))
+	if err != nil || len(raw) > maxInputBytes {
+		return nil, false
+	}
+	row, err := decodeObject(raw)
+	if err != nil || !NativePrescanUnreachable(row) {
+		return nil, false
+	}
+	if !bytes.Equal(raw, RecordBytes(row)) {
+		return nil, false
+	}
+	return row, true
 }

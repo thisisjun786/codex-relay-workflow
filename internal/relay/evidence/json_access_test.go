@@ -9,8 +9,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
-// Envelope helpers are library surfaces, not commands. Compare their real Python
-// implementation, including error classes/details, rather than invented CLI flags.
+// Shown is the one envelope helper the product reads (the supervisor channel's rendered message).
+// Compare it with the real Python implementation over every JSON value shape, directly and as an
+// absence's detail; the recorded answer also holds the reach-ladder helpers retired in wave R1.
 func Test24EnvelopeAccessorPython(t *testing.T) {
 	root, err := filepath.Abs("../../..")
 	if err != nil {
@@ -49,31 +50,19 @@ print(json.dumps(out))`
 			Op                   string
 			Value, Result, Error any
 		}{Text(row["op"]), row["value"], row["result"], row["error"]}
+		if tc.Op != "shown" && tc.Op != "detail" {
+			continue
+		}
 		t.Run(tc.Op+"/"+Repr(tc.Value), func(t *testing.T) {
 			var got any
 			err := func() (err error) {
 				defer RecoverPython(&err)
-				ladder, _ := Unreached(ChildToParent)
-				ladder[TransportAccepted] = tc.Value
-				switch tc.Op {
-				case "shown":
+				if tc.Op == "shown" {
 					got = Shown(tc.Value)
-				case "detail":
+				} else {
 					got = Shown(map[string]any{"absent": "unknown", "detail": tc.Value})
-				case "holds":
-					got = StageHolds(ladder, TransportAccepted)
-				case "promotion":
-					got = PromotionRefused(ladder)
-					if got.([]string) == nil {
-						got = []string{}
-					}
-				case "source":
-					ladder[TransportAccepted] = map[string]any{"state": "yes", "source": tc.Value}
-					err = CheckReach(ChildToParent, ladder)
-				case "reach":
-					err = CheckReach(ChildToParent, ladder)
 				}
-				return err
+				return nil
 			}()
 			var failure any
 			if err != nil {

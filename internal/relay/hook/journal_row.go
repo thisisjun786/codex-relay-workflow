@@ -1,12 +1,9 @@
 package hook
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math/big"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -176,32 +173,4 @@ func surrogateEscape(s string) (rune, string, bool) {
 		return 0, s, false
 	}
 	return rune(v), s[2+width:], true
-}
-
-// ReadNativePrescanRow enforces the same regular-file, no-symlink and exact-byte
-// journal boundary as completion._read_record before accepting the new shape.
-// A false result says only that this extension cannot accept it; other row kinds
-// remain the owning reader's responsibility.
-func ReadNativePrescanRow(path string) (Object, bool) {
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, false
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return nil, false
-	}
-	raw, err := io.ReadAll(io.LimitReader(file, maxInputBytes+1))
-	if err != nil || len(raw) > maxInputBytes {
-		return nil, false
-	}
-	row, err := decodeObject(raw)
-	if err != nil || !NativePrescanUnreachable(row) {
-		return nil, false
-	}
-	if !bytes.Equal(raw, RecordBytes(row)) {
-		return nil, false
-	}
-	return row, true
 }

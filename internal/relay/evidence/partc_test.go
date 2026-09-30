@@ -1,6 +1,8 @@
 package evidence
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -177,68 +179,18 @@ func Test24_MEE_7_UndeclaredRequired(t *testing.T) {
 	whole(t, "MEE-7", []any{problemRows(ChecksProblemsWith(head, nil, red, true, nil)), problemRows(ChecksProblemsWith(head, []string{}, red, true, nil))})
 }
 
-func Test24_SEV_1_PurposeDirectionAndKind(t *testing.T) {
-	a, e := KindOf(ParentToSupervisor, "decision_request")
-	b, f := KindOf(SupervisorToParent, "relayed_decision")
-	c, g := KindOf(SupervisorToParent, "completion")
-	whole(t, "SEV-1", []any{errorRow(a, e), errorRow(b, f), errorRow(c, g)})
-}
-func Test24_SEV_2_LogicalMessageIdentity(t *testing.T) {
-	var rows []any
-	for _, p := range []string{"completion", "completion", "progress"} {
-		id, _ := MessageID(ChildToParent, "rel", p, "event")
-		rows = append(rows, id)
-	}
-	whole(t, "SEV-2", rows)
-}
-func Test24_SEV_3_Absences(t *testing.T) {
-	a, _ := Absent(Inherited, "stated on the assignment")
-	whole(t, "SEV-3", []any{a, Shown(a), IsAbsent(map[string]any{"absent": "probably"})})
-}
-func Test24_SEV_4_KindRequiresPayload(t *testing.T) {
-	a, e := Region(ParentToSupervisor, "decision_request", "rel", "p", "s", "subject", "time", nil)
-	b, f := Region(ParentToSupervisor, "status_response", "rel", "p", "s", "subject", "time", nil)
-	whole(t, "SEV-4", []any{errorRow(a, e), errorRow(b, f)})
-}
-func Test24_SEV_5_UnreachedLadder(t *testing.T) {
-	a, _ := Unreached(ParentToSupervisor)
-	whole(t, "SEV-5", a)
-}
-func Test24_SEV_6_SilenceAndSource(t *testing.T) {
-	l, _ := Unreached(ChildToParent)
-	a := StageHolds(l, Agreed)
-	_, e := Stage(Yes, "", "")
-	one, _ := Stage(Yes, "acks", "")
-	l[Agreed], _ = Stage(Conditional, "acks", "")
-	whole(t, "SEV-6", []any{a, errorRow(nil, e), one, StageHolds(l, Agreed)})
-}
-func Test24_SEV_7_PromotionRefused(t *testing.T) {
-	l, _ := Unreached(ChildToParent)
-	l[Applied], _ = Stage(Yes, "verdicts", "")
-	a := PromotionRefused(l)
-	l, _ = Unreached(ParentToChild)
-	l[TransportAccepted], _ = Stage(Yes, "attempts", "")
-	l[Applied], _ = Stage(Yes, "events", "")
-	b := PromotionRefused(l)
-	if b == nil {
-		b = []string{}
-	}
-	whole(t, "SEV-7", []any{a, b})
-}
-func Test24_SEV_8_ReachTableEnforced(t *testing.T) {
-	l, _ := Unreached(ParentToSupervisor)
-	l[Received], _ = Stage(Yes, "acks", "")
-	whole(t, "SEV-8", errorRow(nil, CheckReach(ParentToSupervisor, l)))
-}
-func messageWhole(t *testing.T, id, direction, purpose, relation, subject string) {
-	v, _ := MessageID(direction, relation, purpose, subject)
-	whole(t, id, v)
-}
 func Test24_SEV_9_DirectivePointerCoveredByRegistry(t *testing.T) {
 	sevDirectiveBytes(t, false)
 }
 func Test24_SEV_10_DirectiveCLIContract(t *testing.T) {
 	sevDirectiveBytes(t, true)
+}
+
+// envelopeMessageID is envelope.message_id for well-formed fields: the first 32 hex digits of
+// the sha256 of direction|relation|purpose|subject, which the registry's pointer check recomputes.
+func envelopeMessageID(direction, relation, purpose, subject string) string {
+	sum := sha256.Sum256([]byte(direction + "|" + relation + "|" + purpose + "|" + subject))
+	return hex.EncodeToString(sum[:])[:32]
 }
 
 // Replay pointer parsing through the registry's real CLI, including the complete
@@ -278,14 +230,8 @@ func sevDirectiveBytes(t *testing.T, correlationOnly bool) {
 	base := []string{"linkage-directive", "--scope-kind", "project", "--scope", "PRJ-1", "--from-task", "supervisor", "--from-scope", "INI-1", "--link", link, "--digest", "digest"}
 	cases := [][]string{{"--correlation", "msg-1"}}
 	if !correlationOnly {
-		good, err := MessageID(SupervisorToParent, link, "project_assignment", "digest")
-		if err != nil {
-			t.Fatal(err)
-		}
-		other, err := MessageID(SupervisorToParent, link, "project_assignment", "another")
-		if err != nil {
-			t.Fatal(err)
-		}
+		good := envelopeMessageID("supervisor_to_parent", link, "project_assignment", "digest")
+		other := envelopeMessageID("supervisor_to_parent", link, "project_assignment", "another")
 		cases = [][]string{{"--reference", "relay-envelope/1|supervisor_to_parent|project_assignment|" + other + "|-"}, {"--reference", "relay-envelope/1|supervisor_to_parent|project_assignment|" + good + "|msg-1"}, {"--purpose", "project_assignment", "--correlation", "-"}}
 	}
 	code := func(err error) int {
@@ -354,23 +300,6 @@ raise SystemExit(cli.main(sys.argv[2:]))`, at, "--state", pythonState}, args...)
 			t.Errorf("directive CLI byte diff %v\nGo(%d): %s\nPython(%d): %s", extra, code(goErr), got, want.Code, want.Output)
 		}
 	}
-}
-
-func Test24_SEV_11_OneDigestOneAnswerContract(t *testing.T) {
-	messageWhole(t, "SEV-11", SupervisorToParent, "scope_correction", "lnk", "digest")
-}
-func Test24_SEV_12_ReviewReadyEnvelope(t *testing.T) {
-	messageWhole(t, "SEV-12", ChildToParent, "review_ready", "rel", "event")
-}
-func Test24_SEV_13_UnknownScopeAndBudget(t *testing.T) {
-	r, _ := Region(ChildToParent, "completion", "rel", "child", "parent", "event", "time", nil)
-	whole(t, "SEV-13", r["scope"])
-}
-func Test24_SEV_14_DirectiveSeamContract(t *testing.T) {
-	messageWhole(t, "SEV-14", SupervisorToParent, "project_assignment", "lnk", "digest")
-}
-func Test24_SEV_15_OneDigestOneInstruction(t *testing.T) {
-	messageWhole(t, "SEV-15", SupervisorToParent, "scope_correction", "lnk", "digest")
 }
 
 func TestCaptureJSONStable(t *testing.T) {

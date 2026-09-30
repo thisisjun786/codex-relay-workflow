@@ -275,12 +275,6 @@ func (e *EditRegions) Agreement(ctx context.Context, identifier string) (contrac
 	return e.described(ctx, agreementRecord(r), nil, nil, nil)
 }
 
-// CurrentRevision is EditRegions.current_revision: whether nothing supersedes this revision.
-func (e *EditRegions) CurrentRevision(ctx context.Context, repository, revision string) (bool, error) {
-	r, err := e.one(ctx, "SELECT * FROM edit_revision_marks  WHERE repository = ? AND from_revision = ?", repository, revision)
-	return r == nil, err
-}
-
 // ShowFilter is EditRegions.show's keyword filters; invalid is None.
 type ShowFilter struct{ BaseRevision, Project, Path sql.NullString }
 

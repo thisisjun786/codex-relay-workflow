@@ -539,10 +539,3 @@ func (s TaskSettings) RootsNarrowing(response any, statusBefore any) []contract.
 	}
 	return notes
 }
-
-// TransportSettingsRefusals is transport.SETTINGS_REFUSALS: the resume refusal codes that are
-// completed pre-send refusals (withheld_pre_send, retry-safe), never uncertain outcomes.
-var TransportSettingsRefusals = []string{SettingsNotPreserved, SettingUnobservable, EnvironmentsUnknown, UnverifiablePermissionProfile, SettingsDifferAfterLoad}
-
-// IsPreSendSettingsRefusal reports whether a resume refusal code withholds before any send.
-func IsPreSendSettingsRefusal(code string) bool { return contains(TransportSettingsRefusals, code) }

@@ -44,10 +44,6 @@ type NoticeAnswer struct {
 	Waiting   [][2]string `json:"waiting"`
 }
 
-// NoticeRemaining is the single send allowance left by the report pass. The
-// caller counts claims/transports even when an attempt raises after sending.
-func NoticeRemaining(cap, reportAttempts int) int { return max(0, cap-reportAttempts) }
-
 func (d *NoticeDeliverer) Tick(ctx context.Context, now float64, limit int) (NoticeAnswer, error) {
 	answer := NoticeAnswer{Waiting: [][2]string{}}
 	if err := d.reconcile(ctx, &answer, now); err != nil {

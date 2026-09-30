@@ -85,13 +85,6 @@ func BranchRef(value any) (string, error) {
 	}
 	return text, nil
 }
-func CommitSHA(value any) (string, error) {
-	text := fmt.Sprint(value)
-	if value == nil || !shaPattern.MatchString(text) {
-		return "", &ForgeUsage{"a commit is a hexadecimal sha, not " + Repr(value)}
-	}
-	return text, nil
-}
 
 type Page struct {
 	Items []any

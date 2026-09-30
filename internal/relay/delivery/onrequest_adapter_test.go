@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -197,4 +198,34 @@ func without(o Obj, key string) Obj {
 		}
 	}
 	return out
+}
+
+// SPR-10: every settings refusal a resume answers with is a completed pre-send refusal
+// (withheld_pre_send, nothing sent, retry-safe, failed at thread/resume); an unrecognised code is
+// not one. Compared with transport.classify_operation_receipt's answers for a failed receipt
+// whose resume was answered and whose error carries the code.
+func Test25_SPR10_every_settings_refusal_is_a_pre_send_refusal(t *testing.T) {
+	raw, err := os.ReadFile("testdata/python_classify.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var classified map[string]map[string]any
+	if err := json.Unmarshal(raw, &classified); err != nil {
+		t.Fatal(err)
+	}
+	if len(classified) < len(SettingsRefusals)+2 {
+		t.Fatalf("the recording classifies %d codes", len(classified))
+	}
+	for code, facts := range classified {
+		receipt := Obj{{Key: "status", Value: FailedStatus}, {Key: "rpcError", Value: Obj{{Key: "code", Value: code}}},
+			{Key: "resumed", Value: Obj{{Key: "approvalPolicy", Value: "never"}}}}
+		got := Classify(receipt)
+		want := map[string]any{"deliveryState": got.DeliveryState, "sendAttempted": got.SendAttempted, "retrySafe": got.RetrySafe, "failedOperation": got.FailedOperation}
+		if fmt.Sprint(want) != fmt.Sprint(facts) {
+			t.Errorf("%s: Go %v, Python %v", code, want, facts)
+		}
+		if preSend, listed := got.DeliveryState == WithheldPreSend, slices.Contains(SettingsRefusals, code); preSend != listed {
+			t.Errorf("%s: withheld pre-send %v, listed as a settings refusal %v", code, preSend, listed)
+		}
+	}
 }
