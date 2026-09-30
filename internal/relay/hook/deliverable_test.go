@@ -4,19 +4,33 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
+
+// deliverableStateCase stages one stored receipt's deliverable. refer, when set, is the frozen
+// reference the receipt names instead of the copy's own path; claimed, when set, is the stored
+// receipt's manifest record, with %[1]s the artifact's path and %[2]s its digest.
+type deliverableStateCase struct {
+	name    string
+	stage   func(t *testing.T, artifact, reference, blob string)
+	refer   func(t *testing.T, reference string, entries []store.ManifestEntry) string
+	claimed string
+}
 
 // The Stop hook judges a stored receipt's deliverable by guard.deliverable_state's rule: a frozen
 // copy nobody could reach leaves it unverifiable with the reason named, and one that was read and
 // is not a manifest is changed, answered with the exception the fence raised rather than merged
-// into the live problems. Each case is staged once and answered by both, word for word.
+// into the live problems. Every record, the stored receipt's and the frozen copy's, is read as the
+// values json.loads made of it. Each case is staged once and answered by both, word for word.
 func TestDeliverableStateAnswersAsTheGuard(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root bypasses the permissions these cases depend on")
@@ -44,77 +58,145 @@ func TestDeliverableStateAnswersAsTheGuard(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, c := range []struct {
-		name  string
-		stage func(t *testing.T, artifact, reference, blob string)
-	}{
-		{"live-current", func(*testing.T, string, string, string) {}},
-		{"frozen-current", func(t *testing.T, artifact, _, _ string) { write(t, artifact, "a later revision") }},
-		{"frozen-absent", func(t *testing.T, artifact, reference, _ string) {
-			write(t, artifact, "a later revision")
+	moved := func(t *testing.T, artifact string) { write(t, artifact, "a later revision") }
+	cases := []deliverableStateCase{
+		{name: "live-current", stage: func(*testing.T, string, string, string) {}},
+		{name: "frozen-current", stage: func(t *testing.T, artifact, _, _ string) { moved(t, artifact) }},
+		{name: "frozen-absent", stage: func(t *testing.T, artifact, reference, _ string) {
+			moved(t, artifact)
 			remove(t, reference)
 		}},
-		{"frozen-tampered", func(t *testing.T, artifact, _, blob string) {
-			write(t, artifact, "a later revision")
+		{name: "frozen-tampered", stage: func(t *testing.T, artifact, _, blob string) {
+			moved(t, artifact)
 			write(t, blob, "tampered")
 		}},
-		{"frozen-blocked", func(t *testing.T, artifact, reference, _ string) {
-			write(t, artifact, "a later revision")
+		{name: "frozen-blocked", stage: func(t *testing.T, artifact, reference, _ string) {
+			moved(t, artifact)
 			block(t, reference)
 		}},
-		{"frozen-manifest-unreadable", func(t *testing.T, artifact, reference, _ string) {
-			write(t, artifact, "a later revision")
+		{name: "frozen-manifest-unreadable", stage: func(t *testing.T, artifact, reference, _ string) {
+			moved(t, artifact)
 			block(t, filepath.Join(reference, "MANIFEST.json"))
 		}},
-		{"frozen-corrupt", func(t *testing.T, artifact, reference, _ string) {
-			write(t, artifact, "a later revision")
+		{name: "frozen-corrupt", stage: func(t *testing.T, artifact, reference, _ string) {
+			moved(t, artifact)
 			write(t, filepath.Join(reference, "MANIFEST.json"), "not json")
 		}},
-		{"frozen-not-utf8", func(t *testing.T, artifact, reference, _ string) {
-			write(t, artifact, "a later revision")
+		{name: "frozen-not-utf8", stage: func(t *testing.T, artifact, reference, _ string) {
+			moved(t, artifact)
 			write(t, filepath.Join(reference, "MANIFEST.json"), "{\"entries\": [\xff]}")
 		}},
-		{"frozen-not-a-manifest", func(t *testing.T, artifact, reference, _ string) {
-			write(t, artifact, "a later revision")
+		{name: "frozen-not-a-manifest", stage: func(t *testing.T, artifact, reference, _ string) {
+			moved(t, artifact)
 			write(t, filepath.Join(reference, "MANIFEST.json"), `{"serialization": "none"}`)
 		}},
-		{"frozen-a-list", func(t *testing.T, artifact, reference, _ string) {
-			write(t, artifact, "a later revision")
+		{name: "frozen-a-list", stage: func(t *testing.T, artifact, reference, _ string) {
+			moved(t, artifact)
 			write(t, filepath.Join(reference, "MANIFEST.json"), "[]")
 		}},
-		{"frozen-entries-null", func(t *testing.T, artifact, reference, _ string) {
-			write(t, artifact, "a later revision")
+		{name: "frozen-entries-null", stage: func(t *testing.T, artifact, reference, _ string) {
+			moved(t, artifact)
 			write(t, filepath.Join(reference, "MANIFEST.json"), `{"entries": null}`)
 		}},
-		{"frozen-entries-empty-object", func(t *testing.T, artifact, reference, _ string) {
-			write(t, artifact, "a later revision")
+		{name: "frozen-entries-empty-object", stage: func(t *testing.T, artifact, reference, _ string) {
+			moved(t, artifact)
 			write(t, filepath.Join(reference, "MANIFEST.json"), `{"entries": {}}`)
 		}},
-		{"frozen-record-a-number", func(t *testing.T, artifact, reference, _ string) {
-			write(t, artifact, "a later revision")
+		{name: "frozen-record-a-number", stage: func(t *testing.T, artifact, reference, _ string) {
+			moved(t, artifact)
 			write(t, filepath.Join(reference, "MANIFEST.json"), `{"entries": [1.5]}`)
 		}},
-		{"frozen-record-with-a-relative-path", func(t *testing.T, artifact, reference, blob string) {
-			write(t, artifact, "a later revision")
+		{name: "frozen-record-with-a-relative-path", stage: func(t *testing.T, artifact, reference, blob string) {
+			moved(t, artifact)
 			write(t, filepath.Join(reference, "MANIFEST.json"), `{"entries": [{"path": "relative/deliver.txt", "sha256": "`+filepath.Base(blob)+`"}]}`)
 		}},
-		{"frozen-blobs-blocked", func(t *testing.T, artifact, reference, _ string) {
-			write(t, artifact, "a later revision")
+		{name: "frozen-blobs-blocked", stage: func(t *testing.T, artifact, reference, _ string) {
+			moved(t, artifact)
 			block(t, filepath.Join(reference, "files"))
 		}},
-		{"live-gone-frozen-absent", func(t *testing.T, artifact, reference, _ string) {
+		{name: "live-gone-frozen-absent", stage: func(t *testing.T, artifact, reference, _ string) {
 			remove(t, artifact)
 			remove(t, reference)
 		}},
-		{"live-blocked-frozen-corrupt", func(t *testing.T, artifact, reference, _ string) {
+		{name: "live-blocked-frozen-corrupt", stage: func(t *testing.T, artifact, reference, _ string) {
 			block(t, filepath.Dir(artifact))
 			write(t, filepath.Join(reference, "MANIFEST.json"), "not json")
 		}},
-		{"live-blocked-frozen-blocked", func(t *testing.T, artifact, reference, _ string) {
+		{name: "live-blocked-frozen-blocked", stage: func(t *testing.T, artifact, reference, _ string) {
 			block(t, reference)
 			block(t, filepath.Dir(artifact))
 		}},
-	} {
+		// A reference is a path the kernel walks, '..' after the component before it: through a
+		// missing directory the walk fails, and through a symlink it reaches the link target's
+		// parent, whose copy is good while the one at the lexical parent is tampered.
+		{name: "frozen-parent-of-missing", stage: func(t *testing.T, artifact, _, _ string) { moved(t, artifact) },
+			refer: func(_ *testing.T, reference string, _ []store.ManifestEntry) string {
+				return filepath.Dir(reference) + "/missing/../frozen"
+			}},
+		{name: "frozen-parent-through-symlink", stage: func(t *testing.T, artifact, _, blob string) {
+			write(t, blob, "tampered")
+			moved(t, artifact)
+		}, refer: func(t *testing.T, reference string, entries []store.ManifestEntry) string {
+			base := filepath.Dir(reference)
+			if err := store.FreezeManifest(entries, filepath.Join(base, "real", "frozen")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Join(base, "real", "inner"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(base, "real", "inner"), filepath.Join(base, "lnk")); err != nil {
+				t.Fatal(err)
+			}
+			return base + "/lnk/../frozen"
+		}},
+		// A blocked copy is named as pathlib spells the reference: '.', a repeated '/' and a
+		// trailing '/' dropped, '..' kept, and exactly two leading slashes kept.
+		{name: "frozen-blocked-parent-of-a-sibling", stage: func(t *testing.T, artifact, reference, _ string) {
+			moved(t, artifact)
+			block(t, reference)
+		}, refer: func(_ *testing.T, reference string, _ []store.ManifestEntry) string {
+			return filepath.Dir(reference) + "//work/./../frozen/"
+		}},
+		{name: "frozen-blocked-double-slash", stage: func(t *testing.T, artifact, reference, _ string) {
+			moved(t, artifact)
+			block(t, reference)
+		}, refer: func(_ *testing.T, reference string, _ []store.ManifestEntry) string { return "/" + reference }},
+		// The stored receipt's own records are read the same way: its bytes compared as the
+		// values they are, and a path or digest of another type raising what the fence raises.
+		{name: "claimed-bytes-numeric-string", stage: func(*testing.T, string, string, string) {},
+			claimed: `{"path": %[1]s, "sha256": %[2]s, "bytes": "19"}`},
+		{name: "claimed-bytes-float", stage: func(*testing.T, string, string, string) {},
+			claimed: `{"path": %[1]s, "sha256": %[2]s, "bytes": 19.0}`},
+		{name: "claimed-bytes-true", stage: func(*testing.T, string, string, string) {},
+			claimed: `{"path": %[1]s, "sha256": %[2]s, "bytes": true}`},
+		{name: "claimed-bytes-nan", stage: func(*testing.T, string, string, string) {},
+			claimed: `{"path": %[1]s, "sha256": %[2]s, "bytes": NaN}`},
+		{name: "claimed-and-frozen-bytes-list", stage: func(t *testing.T, artifact, reference, blob string) {
+			write(t, filepath.Join(reference, "MANIFEST.json"), `{"entries": [{"path": "`+artifact+`", "sha256": "`+filepath.Base(blob)+`", "bytes": [19]}]}`)
+		}, claimed: `{"path": %[1]s, "sha256": %[2]s, "bytes": [19]}`},
+		{name: "claimed-and-frozen-bytes-nan", stage: func(t *testing.T, artifact, reference, blob string) {
+			write(t, filepath.Join(reference, "MANIFEST.json"), `{"entries": [{"path": "`+artifact+`", "sha256": "`+filepath.Base(blob)+`", "bytes": NaN}]}`)
+		}, claimed: `{"path": %[1]s, "sha256": %[2]s, "bytes": NaN}`},
+		{name: "claimed-and-frozen-bytes-nan-in-a-list", stage: func(t *testing.T, artifact, reference, blob string) {
+			write(t, filepath.Join(reference, "MANIFEST.json"), `{"entries": [{"path": "`+artifact+`", "sha256": "`+filepath.Base(blob)+`", "bytes": [NaN]}]}`)
+		}, claimed: `{"path": %[1]s, "sha256": %[2]s, "bytes": [NaN]}`},
+		{name: "claimed-path-number", stage: func(*testing.T, string, string, string) {},
+			claimed: `{"path": 5, "sha256": %[2]s}`},
+		{name: "claimed-digest-null", stage: func(*testing.T, string, string, string) {},
+			claimed: `{"path": %[1]s, "sha256": null}`},
+		{name: "claimed-record-a-list", stage: func(*testing.T, string, string, string) {},
+			claimed: `[1]`},
+		{name: "claimed-record-without-digest", stage: func(*testing.T, string, string, string) {},
+			claimed: `{"path": %[1]s}`},
+	}
+	// A frozen MANIFEST.json no freeze writes is read as json.loads reads it.
+	for _, manifest := range testsupport.FrozenManifests() {
+		cases = append(cases, deliverableStateCase{name: manifest.Name, stage: func(t *testing.T, artifact, reference, blob string) {
+			moved(t, artifact)
+			write(t, filepath.Join(reference, "MANIFEST.json"), manifest.Document(artifact, filepath.Base(blob)))
+		}})
+	}
+	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			base := t.TempDir()
 			work := filepath.Join(base, "work")
@@ -135,11 +217,26 @@ func TestDeliverableStateAnswersAsTheGuard(t *testing.T) {
 			if err := store.FreezeManifest(entries, reference); err != nil {
 				t.Fatal(err)
 			}
-			c.stage(t, artifact, reference, filepath.Join(reference, "files", entries[0].SHA256))
-			raw, err := json.Marshal(map[string]any{"payload": map[string]any{"manifest": []any{map[string]any{"path": entries[0].Path, "sha256": entries[0].SHA256, "bytes": *entries[0].Bytes}}, "revisionHash": revision}, "reference": reference, "roots": []string{work}})
-			if err != nil {
-				t.Fatal(err)
+			named := reference
+			if c.refer != nil {
+				named = c.refer(t, reference, entries)
 			}
+			c.stage(t, artifact, reference, filepath.Join(reference, "files", entries[0].SHA256))
+			quote := func(v any) string {
+				raw, err := json.Marshal(v)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return string(raw)
+			}
+			record := fmt.Sprintf(`{"path": %s, "sha256": %s, "bytes": %d}`, quote(entries[0].Path), quote(entries[0].SHA256), *entries[0].Bytes)
+			switch {
+			case strings.Contains(c.claimed, "%"):
+				record = fmt.Sprintf(c.claimed, quote(entries[0].Path), quote(entries[0].SHA256))
+			case c.claimed != "":
+				record = c.claimed
+			}
+			raw := []byte(fmt.Sprintf(`{"payload": {"manifest": [%s], "revisionHash": %s}, "reference": %s, "roots": %s}`, record, quote(revision), quote(named), quote([]string{work})))
 			cmd := exec.Command(python(t), "-c", `import json, sys
 from codex_session_relay.guard import deliverable_state
 spec = json.load(sys.stdin)
@@ -154,7 +251,7 @@ print(json.dumps(list(deliverable_state(spec["payload"], spec["reference"], spec
 				t.Fatal(err)
 			}
 			o, _ := spec.(Object)
-			state, binding, detail := DeliverableState(context.Background(), get(o, "payload"), reference, get(o, "roots"))
+			state, binding, detail := DeliverableState(context.Background(), get(o, "payload"), named, get(o, "roots"))
 			var guard []any
 			if err := json.Unmarshal(want, &guard); err != nil {
 				t.Fatalf("%v: %s", err, want)

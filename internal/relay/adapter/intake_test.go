@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -35,7 +36,15 @@ func seedIntake(t *testing.T, path, root string) *store.Store {
 	return s
 }
 func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
-	for _, kind := range []string{"frozen-good", "frozen-unreachable", "frozen-tampered", "frozen-absent", "frozen-blocked", "frozen-corrupt", "frozen-manifest-unreadable", "live-good", "live-changed", "live-unreadable"} {
+	kinds := []string{"frozen-good", "frozen-unreachable", "frozen-tampered", "frozen-absent", "frozen-blocked", "frozen-corrupt", "frozen-manifest-unreadable", "frozen-parent-of-missing", "frozen-parent-through-symlink", "live-good", "live-changed", "live-unreadable"}
+	// A frozen MANIFEST.json no freeze writes is read as json.loads reads it, so the intake takes
+	// or refuses it, or fails on it, as the fence's intake does.
+	crafted := map[string]testsupport.FrozenManifest{}
+	for _, manifest := range testsupport.FrozenManifests() {
+		crafted[manifest.Name] = manifest
+		kinds = append(kinds, manifest.Name)
+	}
+	for _, kind := range kinds {
 		t.Run(kind, func(t *testing.T) {
 			root := t.TempDir()
 			work := filepath.Join(root, "work")
@@ -73,12 +82,39 @@ func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
 					}
 				}
 			})
-			switch kind {
-			case "frozen-good", "frozen-unreachable", "frozen-tampered", "frozen-absent", "frozen-blocked", "frozen-corrupt", "frozen-manifest-unreadable":
+			switch {
+			case strings.HasPrefix(kind, "frozen-"):
 				if _, err := Freeze(entries, ref); err != nil {
 					t.Fatal(err)
 				}
 				payload["manifestRef"] = ref
+				if kind == "frozen-parent-through-symlink" {
+					// The kernel takes lnk/.. to real, whose frozen copy is good. The copy at the
+					// lexical parent is tampered below, so a reader that folds the '..' away itself
+					// judges a different frozen copy than the fence.
+					if _, err := Freeze(entries, filepath.Join(root, "real", "frozen")); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.MkdirAll(filepath.Join(root, "real", "inner"), 0o700); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(filepath.Join(root, "real", "inner"), filepath.Join(root, "lnk")); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(ref, "files", entries[0].SHA256), []byte("tampered"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					payload["manifestRef"] = root + "/lnk/../frozen"
+				}
+				if kind == "frozen-parent-of-missing" {
+					// The kernel fails the walk at the missing directory before it reaches '..'.
+					payload["manifestRef"] = root + "/missing/../frozen"
+				}
+				if manifest, ok := crafted[kind]; ok {
+					if err := os.WriteFile(filepath.Join(ref, "MANIFEST.json"), []byte(manifest.Document(entries[0].Path, entries[0].SHA256)), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
 				if err := os.WriteFile(file, []byte("a later revision"), 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -117,11 +153,11 @@ func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-			case "live-changed":
+			case kind == "live-changed":
 				if err := os.WriteFile(file, []byte("a later revision"), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "live-unreadable":
+			case kind == "live-unreadable":
 				if err := os.Chmod(work, 0); err != nil {
 					t.Fatal(err)
 				}

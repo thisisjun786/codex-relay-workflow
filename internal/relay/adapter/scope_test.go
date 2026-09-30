@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func scopeCapture(t *testing.T, spec map[string]any, got any) {
@@ -186,6 +189,83 @@ func Test28_MSC_8_FrozenCopySurvivesRelocation(t *testing.T) {
 	}
 	frozenCapture(t, reference, entries)
 }
+
+// frozenRaisedCapture is frozenCapture with an exception named by its class as well, which the
+// fence's readers tell apart: an OSError or a ScopeError is a comparison that did not happen, and
+// any other a frozen copy that is not a manifest.
+func frozenRaisedCapture(t *testing.T, reference string, entries []Entry) {
+	t.Helper()
+	digest, problems, unreadable, err := VerifyFrozenDetailed(reference, entries)
+	var result any = map[string]any{"digest": digest, "problems": problems, "unreadable": unreadable}
+	if err != nil {
+		raised, ok := store.PythonHostDetail(err)
+		switch {
+		case ok:
+		case store.RefusalReason(err) != "":
+			raised = "ScopeError: " + err.Error()
+		default:
+			raised = "RuntimeError: " + err.Error()
+		}
+		result = map[string]any{"error": raised}
+	}
+	var records any
+	if entries != nil {
+		records = entriesRecord(entries)
+	}
+	scopeCapture(t, map[string]any{"op": "frozen", "reference": reference, "entries": records, "classed": true}, result)
+}
+
+// verify_frozen_detailed reads a frozen MANIFEST.json as json.loads reads it and judges each
+// record's fields as the values they are, and it reaches the copy by the path pathlib spells,
+// whose '..' the kernel resolves. Go answers the same revision, problems and access failures, or
+// raises the same exception, with the caller's entries and without them.
+func Test28_MSC_8b_FrozenCopyIsReadAsTheFenceReadsIt(t *testing.T) {
+	for _, manifest := range testsupport.FrozenManifests() {
+		t.Run(manifest.Name, func(t *testing.T) {
+			file, reference, entries := frozenFixture(t)
+			if err := os.WriteFile(filepath.Join(reference, "MANIFEST.json"), []byte(manifest.Document(file, entries[0].SHA256)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			frozenRaisedCapture(t, reference, entries)
+			frozenRaisedCapture(t, reference, nil)
+		})
+	}
+	t.Run("parent-steps", func(t *testing.T) {
+		file, _, entries := frozenFixture(t)
+		base := filepath.Dir(file)
+		frozenRaisedCapture(t, base+"/missing/../frozen", entries)
+		frozenRaisedCapture(t, base+"//./frozen/", entries)
+		// lnk/.. is real, whose copy is not a manifest, where the lexical parent's copy is good.
+		if err := os.MkdirAll(filepath.Join(base, "real", "inner"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(base, "real", "frozen"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(base, "real", "frozen", "MANIFEST.json"), []byte("not json"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(base, "real", "inner"), filepath.Join(base, "lnk")); err != nil {
+			t.Fatal(err)
+		}
+		frozenRaisedCapture(t, base+"/lnk/../frozen", entries)
+		// A blocked directory stops the walk before the '..' after it could leave it.
+		blocked := filepath.Join(base, "blocked")
+		if err := os.MkdirAll(filepath.Join(blocked, "frozen"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := os.Chmod(blocked, 0o700); err != nil {
+				t.Error(err)
+			}
+		})
+		if err := os.Chmod(blocked, 0); err != nil {
+			t.Fatal(err)
+		}
+		frozenRaisedCapture(t, blocked+"/frozen/../../frozen", entries)
+	})
+}
+
 func Test28_MSC_9_AccessFailureIsNotDisagreement(t *testing.T) {
 	file, reference, entries := frozenFixture(t)
 	// A declared component that exists but cannot be opened is unreadable,

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
@@ -136,39 +135,6 @@ func LookupReceipt(ctx context.Context, path string, fallback func() (string, er
 	base = set(base, "atCurrentHead", true)
 	return answer("at_head", Field{Key: "eventId", Value: id}, Field{Key: "revisionHash", Value: nullable(revision.String)}, Field{Key: "stage", Value: stage}, Field{Key: "deliverableBinding", Value: binding})
 }
-func manifestEntries(v any) ([]store.ManifestEntry, error) {
-	list, ok := evidence.List(v)
-	if !ok {
-		return nil, fmt.Errorf("TypeError: '%s' object is not iterable", evidence.TypeName(v))
-	}
-	out := []store.ManifestEntry{}
-	for _, raw := range list {
-		o, ok := evidence.Object(raw)
-		if !ok {
-			return nil, fmt.Errorf("TypeError: manifest entry is not an object")
-		}
-		for _, k := range []string{"path", "sha256"} {
-			if _, ok := evidence.Lookup(o, k); !ok {
-				return nil, fmt.Errorf("KeyError: %s", evidence.StrRepr(k))
-			}
-		}
-		path, pok := get(o, "path").(string)
-		digest, dok := get(o, "sha256").(string)
-		if !pok || !dok {
-			return nil, fmt.Errorf("TypeError: manifest path and digest must be strings")
-		}
-		entry := store.ManifestEntry{Path: path, SHA256: digest}
-		if n := get(o, "bytes"); n != nil {
-			size, ok := evidence.IntOf(n)
-			if !ok {
-				return nil, fmt.Errorf("TypeError: manifest bytes must be an integer")
-			}
-			entry.Bytes = &size
-		}
-		out = append(out, entry)
-	}
-	return out, nil
-}
 func accessFailure(err error) bool {
 	var refused *store.RefusedError
 	if errors.As(err, &refused) && refused.Reason == store.ReasonUnverifiablePathBinding {
@@ -180,6 +146,11 @@ func accessFailure(err error) bool {
 	}
 	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }
+
+// DeliverableState is guard.deliverable_state. The stored receipt's records and the frozen copy's
+// are read as the values json.loads made of them (store.PythonManifestEntries), so a path, digest
+// or byte count of another type is compared, printed and refused as the fence does, and an
+// exception the fence raises is answered as its except clauses answer it (raisedState).
 func DeliverableState(ctx context.Context, payload any, reference string, rootsValue any) (string, string, string) {
 	o, ok := evidence.Object(payload)
 	if !ok && evidence.Truthy(payload) {
@@ -189,13 +160,13 @@ func DeliverableState(ctx context.Context, payload any, reference string, rootsV
 	if !ok || len(records) == 0 {
 		return "changed", "", "the stored receipt carries no manifest to verify"
 	}
-	entries, err := manifestEntries(records)
+	entries, err := store.PythonManifestEntries(records)
 	if err != nil {
-		return "changed", "", err.Error()
+		return raisedState(err)
 	}
-	revision, err := store.ManifestRevision(entries)
+	revision, err := store.PythonRevisionHash(entries)
 	if err != nil {
-		return "unverifiable", "", "ScopeError: " + err.Error()
+		return raisedState(err)
 	}
 	claimed := get(o, "revisionHash")
 	if !evidence.Truthy(claimed) {
@@ -238,21 +209,40 @@ func DeliverableState(ctx context.Context, payload any, reference string, rootsV
 	}
 	return "changed", "", strings.Join(problems[:min(3, len(problems))], "; ")
 }
-func verifyEntries(ctx context.Context, entries []store.ManifestEntry, roots []string) ([]string, []string) {
+
+// raisedState is guard.deliverable_state's except clauses: an OSError or a ScopeError could not
+// look (unverifiable), and any other exception looked and found a record that is not the shape a
+// receipt is (changed), each named f"{type(error).__name__}: {error}".
+func raisedState(err error) (string, string, string) {
+	var exception *store.ManifestException
+	if errors.As(err, &exception) {
+		if exception.OSError() {
+			return "unverifiable", "", exception.PythonText()
+		}
+		return "changed", "", exception.PythonText()
+	}
+	return "unverifiable", "", "ScopeError: " + err.Error()
+}
+
+// verifyEntries is manifest.verify_against_disk_detailed over entries revision_hash accepted, so
+// each path and digest is a str; a byte count is compared as the value it is.
+func verifyEntries(ctx context.Context, entries []store.PythonEntry, roots []string) ([]string, []string) {
 	problems, unreadable := []string{}, []string{}
 	for _, e := range entries {
-		digest, size, _, err := store.HashArtifactContext(ctx, e.Path, roots, false)
+		path, _ := e.Path.(string)
+		claimed, _ := e.SHA256.(string)
+		digest, size, _, err := store.HashArtifactContext(ctx, path, roots, false)
 		message := ""
 		switch {
 		case err != nil:
-			message = e.Path + ": " + err.Error()
+			message = path + ": " + err.Error()
 			if accessFailure(err) {
 				unreadable = append(unreadable, message)
 			}
-		case digest != e.SHA256:
-			message = e.Path + ": bytes hash to " + digest + " but the manifest claims " + e.SHA256
-		case e.Bytes != nil && *e.Bytes != size:
-			message = fmt.Sprintf("%s: size %d but the manifest claims %d", e.Path, size, *e.Bytes)
+		case digest != claimed:
+			message = path + ": bytes hash to " + digest + " but the manifest claims " + claimed
+		case e.Bytes != nil && !store.PythonEqual(e.Bytes, size):
+			message = fmt.Sprintf("%s: size %d but the manifest claims %s", path, size, store.PythonStr(e.Bytes))
 		}
 		if message != "" {
 			problems = append(problems, message)
@@ -263,12 +253,14 @@ func verifyEntries(ctx context.Context, entries []store.ManifestEntry, roots []s
 
 // verifyFrozen is manifest.verify_frozen_detailed as guard.deliverable_state reads it, under the
 // hook's deadline and read bound: the problems, the subset that were failures to read, and what
-// it raised instead of answering, as the state deliverable_state gives the exception
-// ("unverifiable" for an OSError or a ScopeError, "changed" for a document that is not a
-// manifest) and the exception's words. A raised exception is the whole answer: the fence's
-// exception leaves before any live problem or unreadable live file is weighed.
-func verifyFrozen(ctx context.Context, reference string, entries []store.ManifestEntry) ([]string, []string, string, string) {
-	document := filepath.Join(reference, "MANIFEST.json")
+// it raised instead of answering, as the state deliverable_state gives the exception and the
+// exception's words (raisedState). A raised exception is the whole answer: the fence's exception
+// leaves before any live problem or unreadable live file is weighed. The document is the path
+// pathlib spells (store.FrozenDocument), and what follows its read is the store's own reading of
+// a frozen copy (store.VerifyFrozenDocument), so the hook, the intake and the omission reader
+// judge one frozen copy alike.
+func verifyFrozen(ctx context.Context, reference string, entries []store.PythonEntry) ([]string, []string, string, string) {
+	document := store.FrozenDocument(reference)
 	if strings.ContainsRune(document, 0) {
 		// os.stat refuses the name before any system call; the fence lets that ValueError out.
 		return nil, nil, "changed", "ValueError: embedded null byte"
@@ -286,77 +278,10 @@ func verifyFrozen(ctx context.Context, reference string, entries []store.Manifes
 		// Reached and not read: the fence raises the OSError, a comparison that did not happen.
 		return nil, nil, "unverifiable", store.PythonOSError(err)
 	}
-	if err := store.FrozenDocumentError(raw); err != nil {
-		var exception *store.FrozenException
-		if errors.As(err, &exception) {
-			return nil, nil, "changed", exception.PythonText()
-		}
-		return nil, nil, "changed", "ValueError: " + err.Error()
-	}
-	v, err := Decode(raw)
+	_, problems, unreadable, err := store.VerifyFrozenDocument(ctx, reference, raw, entries)
 	if err != nil {
-		return nil, nil, "changed", "JSONDecodeError: " + err.Error()
-	}
-	o, _ := evidence.Object(v)
-	records := get(o, "entries")
-	if _, ok := evidence.List(records); !ok {
-		// The shape check passed, so this is an empty dict or str, which iterates to no record.
-		records = []any{}
-	}
-	frozen, err := manifestEntries(records)
-	if err != nil {
-		return nil, nil, "changed", err.Error()
-	}
-	problems, unreadable := []string{}, []string{}
-	claimed, stored := map[[2]string]bool{}, map[[2]string]bool{}
-	sizes := map[string]*int64{}
-	for _, e := range entries {
-		claimed[[2]string{e.Path, e.SHA256}] = true
-	}
-	for _, e := range frozen {
-		stored[[2]string{e.Path, e.SHA256}] = true
-		sizes[e.Path] = e.Bytes
-	}
-	same := len(claimed) == len(stored)
-	for k := range claimed {
-		same = same && stored[k]
-	}
-	if !same {
-		problems = append(problems, reference+": the frozen manifest does not describe the same deliverables")
-	}
-	for _, e := range entries {
-		if s := sizes[e.Path]; e.Bytes != nil && s != nil && *s != *e.Bytes {
-			problems = append(problems, fmt.Sprintf("%s: caller claims %d bytes but the frozen copy records %d", e.Path, *e.Bytes, *s))
-		}
-	}
-	for _, e := range frozen {
-		if len(e.SHA256) != 64 || strings.Trim(e.SHA256, "0123456789abcdef") != "" {
-			problems = append(problems, e.Path+": "+evidence.StrRepr(e.SHA256)+" is not a digest")
-			continue
-		}
-		digest, size, err := store.ReadFrozenBlob(ctx, filepath.Join(reference, "files"), e.SHA256)
-		message := ""
-		switch {
-		case err != nil:
-			message = e.Path + ": frozen bytes unreadable for " + e.SHA256 + ": " + err.Error()
-			// A deleted blob is a broken snapshot (the pinned walk's answer), not a failure to look.
-			var scope *store.RefusedError
-			if !errors.As(err, &scope) || accessFailure(err) {
-				unreadable = append(unreadable, message)
-			}
-		case digest != e.SHA256:
-			message = e.Path + ": frozen bytes do not match " + e.SHA256
-		case e.Bytes != nil && size != *e.Bytes:
-			message = fmt.Sprintf("%s: frozen bytes are %d, not the claimed %d", e.Path, size, *e.Bytes)
-		}
-		if message != "" {
-			problems = append(problems, message)
-		}
-	}
-	// revision_hash(frozen) closes the fence's function, and a path in the frozen copy it will not
-	// normalize raises there, after every problem was found.
-	if _, err := store.ManifestRevision(frozen); err != nil {
-		return nil, nil, "unverifiable", "ScopeError: " + err.Error()
+		state, _, detail := raisedState(err)
+		return nil, nil, state, detail
 	}
 	return problems, unreadable, "", ""
 }

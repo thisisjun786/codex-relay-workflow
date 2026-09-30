@@ -686,7 +686,7 @@ func omissionDeliverable(entries []store.ManifestEntry, revision, reference stri
 		if err != nil {
 			// The fence raises here. An OSError or a ScopeError is a comparison that did not
 			// happen; anything else read the frozen copy and found no manifest in it.
-			var exception *store.FrozenException
+			var exception *store.ManifestException
 			if errors.As(err, &exception) && !exception.OSError() {
 				return "", exception.PythonText(), nil
 			}

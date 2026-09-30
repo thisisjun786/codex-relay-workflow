@@ -101,4 +101,45 @@ func TestFreezeAndVerifyResolveTheDestinationAsTheFenceDoes(t *testing.T) {
 			t.Fatalf("verify a relative reference: %v %v", problems, err)
 		}
 	})
+	// pathlib keeps '..' and the kernel resolves it after the symlink before it, so lnk/.. is the
+	// link target's parent and not the directory holding lnk.
+	t.Run("parent of a symlink", func(t *testing.T) {
+		base := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(base, "real", "inner"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(base, "real", "inner"), filepath.Join(base, "lnk")); err != nil {
+			t.Fatal(err)
+		}
+		reference := base + "/lnk/../frozen"
+		if err := FreezeManifest(entries, reference); err != nil {
+			t.Fatalf("freeze through a symlink's parent: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(base, "real", "frozen", "MANIFEST.json")); err != nil {
+			t.Fatalf("the frozen copy is not where the kernel resolves the destination: %v", err)
+		}
+		if _, err := os.Lstat(filepath.Join(base, "frozen")); !os.IsNotExist(err) {
+			t.Fatalf("a frozen copy was written at the lexical parent: %v", err)
+		}
+		if problems, err := VerifyFrozen(reference, entries); err != nil || len(problems) != 0 {
+			t.Fatalf("verify through a symlink's parent: %v %v", problems, err)
+		}
+		// The copy the lexical parent would name is not the one verified.
+		if problems, err := VerifyFrozen(base+"/elsewhere/../frozen", entries); err != nil || len(problems) != 1 || !strings.HasSuffix(problems[0], ": no MANIFEST.json in the frozen copy") {
+			t.Fatalf("verify through a missing directory's parent: %v %v", problems, err)
+		}
+	})
+	// Path.mkdir(parents=True) makes each missing parent as the kernel names it, so a destination
+	// through a missing directory's parent makes that directory too.
+	t.Run("parent of a missing directory", func(t *testing.T) {
+		base := t.TempDir()
+		if err := FreezeManifest(entries, base+"/missing/../frozen"); err != nil {
+			t.Fatalf("freeze through a missing directory's parent: %v", err)
+		}
+		for _, path := range []string{filepath.Join(base, "missing"), filepath.Join(base, "frozen", "MANIFEST.json")} {
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("freeze did not make %s: %v", path, err)
+			}
+		}
+	})
 }

@@ -153,7 +153,7 @@ func PythonHostDetail(err error) (string, bool) {
 		return host.Error(), true
 	}
 	// A frozen copy that is not a manifest leaves the fence's intake as this exception.
-	var frozen *FrozenException
+	var frozen *ManifestException
 	if errors.As(err, &frozen) {
 		return frozen.PythonText(), true
 	}

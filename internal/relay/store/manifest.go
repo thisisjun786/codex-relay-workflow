@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -80,8 +79,10 @@ func verifyAgainstDisk(entries []ManifestEntry, roots []string, allowLease bool)
 
 // FreezeManifest copies the bytes under their digests while keeping the original declared
 // paths, so a later verification reproduces the same revision (manifest.freeze).
+// Every path is the one pathlib spells from destination (frozenPath), so the kernel resolves its
+// '..' after the symlink before it, as it does for the fence.
 func FreezeManifest(entries []ManifestEntry, destination string) error {
-	files := filepath.Join(destination, "files")
+	files := frozenPath(destination, "files")
 	if err := os.MkdirAll(files, 0o700); err != nil {
 		return fmt.Errorf("frozen copy: %w", err)
 	}
@@ -90,7 +91,7 @@ func FreezeManifest(entries []ManifestEntry, destination string) error {
 		if !lowerDigest.MatchString(entry.SHA256) {
 			return refuse(ReasonManifestUnverified, "refusing to store bytes under a non-digest name %s", PythonRepr(entry.SHA256))
 		}
-		blob := filepath.Join(files, entry.SHA256)
+		blob := frozenPath(destination, "files", entry.SHA256)
 		if _, err := os.Stat(blob); errors.Is(err, os.ErrNotExist) {
 			if err := copyAuthorized(entry.Path, blob); err != nil {
 				return err
@@ -100,7 +101,7 @@ func FreezeManifest(entries []ManifestEntry, destination string) error {
 		// where _read_frozen_blob does: the blob and the files directory as Path.resolve() names
 		// them, so a destination reached through a symlink or named relative to the working
 		// directory is read from the place it was written to.
-		copied, size, err := ReadFrozenBlob(context.Background(), files, entry.SHA256)
+		copied, size, err := ReadFrozenBlob(context.Background(), destination, entry.SHA256)
 		if err != nil {
 			return err
 		}
@@ -119,7 +120,7 @@ func FreezeManifest(entries []ManifestEntry, destination string) error {
 	if err != nil {
 		return fmt.Errorf("frozen manifest: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(destination, "MANIFEST.json"), document, 0o600); err != nil {
+	if err := os.WriteFile(FrozenDocument(destination), document, 0o600); err != nil {
 		return fmt.Errorf("frozen manifest: %w", err)
 	}
 	return nil
@@ -148,15 +149,15 @@ func copyAuthorized(source, blob string) (err error) {
 	return handle.VerifyStable()
 }
 
-// ReadFrozenBlob is _read_frozen_blob: one stored blob hashed through the pinned traversal a
-// live artifact would use, with the blob and its files directory resolved as Path.resolve()
-// resolves them (resolveFrozenPath), within ctx's deadline.
-func ReadFrozenBlob(ctx context.Context, files, digest string) (string, int64, error) {
-	blob, err := resolveFrozenPath(filepath.Join(files, digest))
+// ReadFrozenBlob is _read_frozen_blob(reference, digest): one stored blob hashed through the
+// pinned traversal a live artifact would use, with the blob and its files directory resolved as
+// Path.resolve() resolves them (resolveFrozenPath), within ctx's deadline.
+func ReadFrozenBlob(ctx context.Context, reference, digest string) (string, int64, error) {
+	blob, err := resolveFrozenPath(frozenPath(reference, "files", digest))
 	if err != nil {
 		return "", 0, err
 	}
-	root, err := resolveFrozenPath(files)
+	root, err := resolveFrozenPath(frozenPath(reference, "files"))
 	if err != nil {
 		return "", 0, err
 	}
@@ -166,7 +167,8 @@ func ReadFrozenBlob(ctx context.Context, files, digest string) (string, int64, e
 
 // VerifyFrozen is manifest.verify_frozen: VerifyFrozenDetailed with the access breakdown dropped,
 // so every branch answers as the fence's two-value form does, including the exception it raises
-// for a frozen copy that was reached and is not a manifest (FrozenException).
+// for a frozen copy that was reached and is not a manifest (ManifestException, or a RefusedError
+// for the ScopeError of a frozen record revision_hash will not hash).
 func VerifyFrozen(reference string, entries []ManifestEntry) ([]string, error) {
 	_, problems, _, err := VerifyFrozenDetailed(reference, entries)
 	return problems, err

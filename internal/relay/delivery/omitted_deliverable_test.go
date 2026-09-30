@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // deliverableCase stages one stored receipt's deliverable: an artifact, its manifest, and the
@@ -17,6 +18,8 @@ import (
 type deliverableCase struct {
 	name  string
 	stage func(t *testing.T, artifact, reference string, entries []store.ManifestEntry)
+	// refer, when set, is the frozen reference the receipt names instead of the copy's own path.
+	refer func(t *testing.T, reference string, entries []store.ManifestEntry) string
 }
 
 func chmodBack(t *testing.T, path string) {
@@ -48,91 +51,136 @@ func chmodTest(t *testing.T, path string, mode os.FileMode) {
 // bytes behind it, could not be read at all.
 func deliverableCases() []deliverableCase {
 	moved := func(t *testing.T, artifact string) { writeTestFile(t, artifact, "a later revision") }
-	return []deliverableCase{
-		{"live-current", func(*testing.T, string, string, []store.ManifestEntry) {}},
-		{"frozen-current", func(t *testing.T, artifact, _ string, _ []store.ManifestEntry) { moved(t, artifact) }},
+	cases := []deliverableCase{
+		{"live-current", func(*testing.T, string, string, []store.ManifestEntry) {}, nil},
+		{"frozen-current", func(t *testing.T, artifact, _ string, _ []store.ManifestEntry) { moved(t, artifact) }, nil},
 		{"frozen-absent", func(t *testing.T, artifact, reference string, _ []store.ManifestEntry) {
 			moved(t, artifact)
 			if err := os.RemoveAll(reference); err != nil {
 				t.Fatal(err)
 			}
-		}},
+		}, nil},
 		{"frozen-tampered", func(t *testing.T, artifact, reference string, entries []store.ManifestEntry) {
 			moved(t, artifact)
 			writeTestFile(t, filepath.Join(reference, "files", entries[0].SHA256), "tampered")
-		}},
+		}, nil},
 		{"frozen-blocked", func(t *testing.T, artifact, reference string, _ []store.ManifestEntry) {
 			moved(t, artifact)
 			chmodTest(t, reference, 0)
-		}},
+		}, nil},
 		{"frozen-manifest-unreadable", func(t *testing.T, artifact, reference string, _ []store.ManifestEntry) {
 			moved(t, artifact)
 			chmodTest(t, filepath.Join(reference, "MANIFEST.json"), 0)
-		}},
+		}, nil},
 		{"frozen-corrupt", func(t *testing.T, artifact, reference string, _ []store.ManifestEntry) {
 			moved(t, artifact)
 			writeTestFile(t, filepath.Join(reference, "MANIFEST.json"), "not json")
-		}},
+		}, nil},
 		{"frozen-not-a-manifest", func(t *testing.T, artifact, reference string, _ []store.ManifestEntry) {
 			moved(t, artifact)
 			writeTestFile(t, filepath.Join(reference, "MANIFEST.json"), `{"serialization": "none"}`)
-		}},
+		}, nil},
 		{"frozen-not-utf8", func(t *testing.T, artifact, reference string, _ []store.ManifestEntry) {
 			moved(t, artifact)
 			writeTestFile(t, filepath.Join(reference, "MANIFEST.json"), "{\"entries\": [\xff]}")
-		}},
+		}, nil},
 		{"frozen-integer-too-long", func(t *testing.T, artifact, reference string, _ []store.ManifestEntry) {
 			moved(t, artifact)
 			writeTestFile(t, filepath.Join(reference, "MANIFEST.json"), `{"entries": [], "n": 1`+strings.Repeat("0", 4300)+`}`)
-		}},
+		}, nil},
 		{"frozen-a-list", func(t *testing.T, artifact, reference string, _ []store.ManifestEntry) {
 			moved(t, artifact)
 			writeTestFile(t, filepath.Join(reference, "MANIFEST.json"), "[]")
-		}},
+		}, nil},
 		{"frozen-entries-null", func(t *testing.T, artifact, reference string, _ []store.ManifestEntry) {
 			moved(t, artifact)
 			writeTestFile(t, filepath.Join(reference, "MANIFEST.json"), `{"entries": null}`)
-		}},
+		}, nil},
 		{"frozen-entries-text", func(t *testing.T, artifact, reference string, _ []store.ManifestEntry) {
 			moved(t, artifact)
 			writeTestFile(t, filepath.Join(reference, "MANIFEST.json"), `{"entries": "ab"}`)
-		}},
+		}, nil},
 		{"frozen-entries-empty-object", func(t *testing.T, artifact, reference string, _ []store.ManifestEntry) {
 			moved(t, artifact)
 			writeTestFile(t, filepath.Join(reference, "MANIFEST.json"), `{"entries": {}}`)
-		}},
+		}, nil},
 		{"frozen-record-without-path", func(t *testing.T, artifact, reference string, entries []store.ManifestEntry) {
 			moved(t, artifact)
 			writeTestFile(t, filepath.Join(reference, "MANIFEST.json"), `{"entries": [{"sha256": "`+entries[0].SHA256+`"}]}`)
-		}},
+		}, nil},
 		{"frozen-record-a-number", func(t *testing.T, artifact, reference string, _ []store.ManifestEntry) {
 			moved(t, artifact)
 			writeTestFile(t, filepath.Join(reference, "MANIFEST.json"), `{"entries": [1.5]}`)
-		}},
+		}, nil},
 		{"frozen-record-with-a-relative-path", func(t *testing.T, artifact, reference string, entries []store.ManifestEntry) {
 			moved(t, artifact)
 			writeTestFile(t, filepath.Join(reference, "MANIFEST.json"), `{"entries": [{"path": "relative/deliver.txt", "sha256": "`+entries[0].SHA256+`"}]}`)
-		}},
+		}, nil},
 		{"frozen-blobs-blocked", func(t *testing.T, artifact, reference string, _ []store.ManifestEntry) {
 			moved(t, artifact)
 			chmodTest(t, filepath.Join(reference, "files"), 0)
-		}},
+		}, nil},
 		{"live-gone-frozen-absent", func(t *testing.T, artifact, reference string, _ []store.ManifestEntry) {
 			for _, path := range []string{artifact, reference} {
 				if err := os.RemoveAll(path); err != nil {
 					t.Fatal(err)
 				}
 			}
-		}},
+		}, nil},
 		{"live-blocked-frozen-corrupt", func(t *testing.T, artifact, reference string, _ []store.ManifestEntry) {
 			chmodTest(t, filepath.Dir(artifact), 0)
 			writeTestFile(t, filepath.Join(reference, "MANIFEST.json"), "not json")
-		}},
+		}, nil},
 		{"live-blocked-frozen-blocked", func(t *testing.T, artifact, reference string, _ []store.ManifestEntry) {
 			chmodTest(t, reference, 0)
 			chmodTest(t, filepath.Dir(artifact), 0)
-		}},
+		}, nil},
 	}
+	// A reference is a path the kernel walks, '..' after the component before it: through a
+	// missing directory the walk fails, and through a symlink it reaches the link target's parent.
+	cases = append(cases,
+		deliverableCase{"frozen-parent-of-missing", func(t *testing.T, artifact, _ string, _ []store.ManifestEntry) { moved(t, artifact) },
+			func(_ *testing.T, reference string, _ []store.ManifestEntry) string {
+				return filepath.Dir(reference) + "/missing/../frozen"
+			}},
+		// The copy at the lexical parent is tampered and the one the kernel reaches is good.
+		deliverableCase{"frozen-parent-through-symlink", func(t *testing.T, artifact, reference string, entries []store.ManifestEntry) {
+			writeTestFile(t, filepath.Join(reference, "files", entries[0].SHA256), "tampered")
+			moved(t, artifact)
+		}, func(t *testing.T, reference string, entries []store.ManifestEntry) string {
+			base := filepath.Dir(reference)
+			if err := store.FreezeManifest(entries, filepath.Join(base, "real", "frozen")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Join(base, "real", "inner"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(base, "real", "inner"), filepath.Join(base, "lnk")); err != nil {
+				t.Fatal(err)
+			}
+			return base + "/lnk/../frozen"
+		}},
+		// A blocked copy is named as pathlib spells the reference: '.', a repeated '/' and a
+		// trailing '/' dropped, '..' kept, and exactly two leading slashes kept.
+		deliverableCase{"frozen-blocked-parent-of-a-sibling", func(t *testing.T, artifact, reference string, _ []store.ManifestEntry) {
+			moved(t, artifact)
+			chmodTest(t, reference, 0)
+		}, func(_ *testing.T, reference string, _ []store.ManifestEntry) string {
+			return filepath.Dir(reference) + "//work/./../frozen/"
+		}},
+		deliverableCase{"frozen-blocked-double-slash", func(t *testing.T, artifact, reference string, _ []store.ManifestEntry) {
+			moved(t, artifact)
+			chmodTest(t, reference, 0)
+		}, func(_ *testing.T, reference string, _ []store.ManifestEntry) string { return "/" + reference }},
+	)
+	// A frozen MANIFEST.json no freeze writes is read as json.loads reads it.
+	for _, manifest := range testsupport.FrozenManifests() {
+		cases = append(cases, deliverableCase{manifest.Name, func(t *testing.T, artifact, reference string, entries []store.ManifestEntry) {
+			moved(t, artifact)
+			writeTestFile(t, filepath.Join(reference, "MANIFEST.json"), manifest.Document(entries[0].Path, entries[0].SHA256))
+		}, nil})
+	}
+	return cases
 }
 
 // stageDeliverable returns the manifest, the revision, the frozen reference and the roots.
@@ -157,8 +205,12 @@ func stageDeliverable(t *testing.T, c deliverableCase) ([]store.ManifestEntry, s
 	if err := store.FreezeManifest(entries, reference); err != nil {
 		t.Fatal(err)
 	}
+	named := reference
+	if c.refer != nil {
+		named = c.refer(t, reference, entries)
+	}
 	c.stage(t, artifact, reference, entries)
-	return entries, revision, reference, []string{work}
+	return entries, revision, named, []string{work}
 }
 
 // guardDeliverableState is the fence's guard.deliverable_state over the same receipt:
