@@ -31,8 +31,8 @@ because it links a checkout, and a release archive has none. It stays idempotent
 replace an existing directory or a foreign link, and its `LINKED`, `MISSING` and `CONFLICT` words
 mean the same thing wherever this page uses them. A plugin installation has no skill links at all.
 
-The Python installer, `scripts/runtime_install.py`, still exists. It installs the Python fence
-release and it is the development and rollback path until the Python execution path is removed;
+The Python installer, `scripts/runtime_install.py`, installed the Python fence release and was the
+development and rollback path until todo 44 removed the Python execution path;
 [the Python fence installer](#the-python-fence-installer) is the one section of this page about it.
 Moving a host from the Python runtime to this one is [the cutover](port/cutover.md), not an install
 alone. The cutover moves the store's ownership. Where `crw install install`, which moves the pointer
@@ -948,7 +948,7 @@ duplicate and the Stop was released.
 
 `crw-dev stop-events --journal-root <root>`, in the repository's development binary, reads the rows,
 the accepted records and the host ledgers the claims name, and answers one verdict (the same reading
-as `scripts/stop_events.py` while that script exists). `FALSE` (exit 1) means an event was
+as `scripts/stop_events.py`, deleted in todo 44, gave). `FALSE` (exit 1) means an event was
 accepted more than once; `UNREADABLE` (exit 3) means the reading cannot vouch for what it read, and
 names why; `TRUE` (exit 0) otherwise.
 `--session` and `--turn` choose the events of one turn, `--since` and `--until` a window in the
@@ -1122,23 +1122,16 @@ This page is the procedure and the shape. It is not a record that anybody ran it
 
 ## The Python fence installer
 
-This section is developer-only and pre-cutover. `scripts/runtime_install.py` installs the Python
-runtime, the fence release that step 0 of [the cutover](port/cutover.md#step-0-deploy-and-activate-the-python-fence-release)
-deploys, and it is the rollback path until the Python execution path is removed (todo 44). It
-shares the destination, the owned pointer, the host record, the promotion lock and both settings
-files with `crw install`; what it installs is a Python virtual environment,
-`<destination>/env-1-<digest>`, built from this checkout's packages. It still takes `--dest`, and on
-a host `crw install` also serves, `<destination>` has to be `~/.local/share/crw-runtime`:
-`crw install` refuses a host record whose pointer names another link.
-
-| Command | What it does |
-| --- | --- |
-| `python3 scripts/runtime_install.py install --dest <destination> --apply` | Build, exercise and promote a Python runtime from this checkout. It needs a Python 3.11 or newer interpreter for the runtime (`--python`), and the controller needs `tomllib` (Python 3.11 or newer) to read a Codex configuration |
-| `python3 scripts/runtime_install.py diagnose --dest <destination>` | The Python diagnosis, including `--trial` |
-| `python3 scripts/runtime_install.py register-mcp --owner plugin --bridge-command <destination>/current/bin/codex-thread-bridge --apply` | The bridge record, with `--execution-policy`; before a version-2 record it probes the enabled package's cached launcher |
-| `python3 scripts/runtime_install.py hook --adapter completion --owner plugin --dest <destination> --apply` | The Python-era Stop settings, and the fallback launcher `<CODEX_HOME>/crw-stop-hook.py`, placed before them. Since todo 43 the package no longer ships the launcher, and the copy comes from `internal/pluginwiring/testdata/pre-native-wiring/crw_stop_hook.py`, the same bytes |
-| `python3 scripts/runtime_install.py hook-status` | The cell-by-cell firing reading, including `firingRecordAbsence` |
-| `python3 scripts/runtime_install.py verify-definition` | Re-derive [the one definition](#the-one-definition); CI runs it |
+`scripts/runtime_install.py` installed the Python runtime, the fence release that step 0 of
+[the cutover](port/cutover.md#step-0-deploy-and-activate-the-python-fence-release) deployed, and it
+was the rollback path until the cutover committed (todo 43). Todo 44 removed it with the rest of the
+Python execution path. It shared the destination, the owned pointer, the host record, the promotion
+lock and both settings files with `crw install`; what it installed was a Python virtual environment,
+`<destination>/env-1-<digest>`, built from the checkout's packages, and it took `--dest`, which is
+why `crw install` still refuses a host record whose pointer names another link. Its subcommands were
+`install`, `diagnose` (with `--trial`), `register-mcp`, `hook` (which also placed the fallback
+launcher `<CODEX_HOME>/crw-stop-hook.py`), `hook-status` and `verify-definition`; `crw install` and
+`crw doctor` carry what a Go install needs of them.
 
 Two properties of a Python runtime outlive this installer, and the cutover's retention rule rests on
 them. pip writes an absolute shebang into every console script, so a process started through
@@ -1151,21 +1144,14 @@ them from the package after the cutover commit.
 
 ### Trial mode
 
-`runtime_install.py diagnose --trial` is the only command that fills `deliveryAccepted` itself: it
-registers one relationship, emits and delivers once, and records the returned turn id. Everything the
-trial needs is checked before its first command, against what the relay itself enforces rather than
-what is merely present, so an incomplete trial writes no settings and no relationship row. It has no
-`crw` counterpart (it is deferred past the Python path's removal in [the inventory](port/inventory.md));
-[a live trial](live-trial.md) is a different thing with a similar name.
+`runtime_install.py diagnose --trial` was the only command that filled `deliveryAccepted` itself: it
+registered one relationship, emitted and delivered once, and recorded the returned turn id. It has
+no `crw` counterpart and left with the installer; [a live trial](live-trial.md) is a different
+thing with a similar name.
 
 The full reference this page carried for the Python installer, its design record and its acceptance
 procedure, is this page at the parent of the commit that rewrote it for `crw`, the oldest one that
-names todo 41:
-
-```sh
-rewrite="$(git log --format=%H --grep='(todo 41)' -- docs/runtime-install.md | tail -1)"
-git show "$rewrite^:docs/runtime-install.md"
-```
+names todo 41 (`git log --format=%H --grep='(todo 41)' -- docs/runtime-install.md | tail -1`).
 
 ## What none of this establishes
 

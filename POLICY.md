@@ -104,8 +104,8 @@ synthetic data; the Go checks need only the Go toolchain `go.mod` names. Pin any
 downloaded tooling by version, commit and checksum, and keep fixtures synthetic
 and local. Ordinary CI does not need a
 contributor's Codex, CXC, Paperthin, Linear account, App Server socket or user
-skill installation. Keep `scripts/install.py`, the legacy skill linker, standard-library-only
-while it remains; `crw-dev skills link` is its replacement in the development binary. Validate the
+skill installation. `crw-dev skills link` in the development binary links a checkout's skills
+(its Python predecessor, `scripts/install.py`, left in todo 44). Validate the
 documented minimum Python version in CI; cross-platform symlink behavior and
 actual host compatibility need their own evidence before claiming support.
 

@@ -9,18 +9,18 @@ deliver to, and a child that emitted against a relationship that had already bee
 
 This document fixes what is confirmed before a trial starts, in what order the parts are built, and
 how the interventions during preparation are kept apart from the ones inside the window that
-produces the result. The preflight (`scripts/trial_startup.py preflight`) performs the checks it
-can perform before the dispatch, and the ledger (`crw-dev trial-ledger`) grades the window after it
-closes; see [Running it](#running-it).
+produces the result. The ledger (`crw-dev trial-ledger`) grades the window after it closes; see
+[Running it](#running-it). Until todo 44 a preflight (`scripts/trial_startup.py preflight`)
+performed, before the dispatch, the checks it could perform on a Python install; it retired with
+that install and has no Go counterpart, so the checks below are made by hand.
 
-This page is developer-only. Both tools run from a checkout: the preflight is the Python install's
-and retires with it, and the ledger is in the repository's development binary. Neither is part of
-the `crw` runtime a host installs.
+This page is developer-only. The ledger runs from a checkout, in the repository's development
+binary; it is not part of the `crw` runtime a host installs.
 
-One other thing in this repository is named similarly and is not this. `runtime_install.py
---trial` is a diagnosis mode of the Python fence installer that registers, emits and delivers once
-to fill one field of its own record, and [its own trial mode](runtime-install.md#trial-mode)
-owns that name for the checks that mode needs. That name is not reused here.
+One other thing was named similarly and is not this. `runtime_install.py --trial` was a diagnosis
+mode of the Python fence installer that registered, emitted and delivered once to fill one field of
+its own record ([its trial mode](runtime-install.md#trial-mode)); it left with that installer in
+todo 44. That name is not reused here.
 
 ## The three failures this exists for
 
@@ -235,20 +235,19 @@ synthetic. This document carries placeholders for the same reason.
 
 ## Running it
 
-    python3 scripts/trial_startup.py preflight --start <trial-root>/start.json
     crw-dev trial-ledger --start <trial-root>/start.json
 
-The first is run once, immediately before the dispatch that opens the window. It is the Python
-install's preflight: it reaches the relay through the Python runtime's host record and console
-script, so it is the tool for a trial on a Python install, and it retires with that install.
-The second is run after the window has closed, which is what it needs in order to grade anything.
-It is the development binary's ledger (`make crw-dev` builds `dist/crw-dev`), and it prints the
-document `python3 scripts/trial_startup.py ledger --start ...` printed, byte for byte, so a grade
-taken with either compares with a grade taken with the other, when that Python is CPython 3.14. The
-exceptions are a record nested tens of thousands of containers deep, near where the interpreter's
-stack runs out, which no operator writes, and, under another CPython, a character its Unicode
-database assigns differently from 3.14's ([known differences](port/known-defects.md)). Both print one JSON object on standard
-output and create no file of their own. That is a claim about the checker rather than about the
+It is run after the window has closed, which is what it needs in order to grade anything. It is
+the development binary's ledger (`make crw-dev` builds `dist/crw-dev`), and it prints the document
+the Python ledger (`scripts/trial_startup.py ledger`, deleted in todo 44) printed, byte for byte, so
+a grade taken with either compares with a grade taken with the other, when that Python was CPython
+3.14. The exceptions are a record nested tens of thousands of containers deep, near where the
+interpreter's stack runs out, which no operator writes, and, under another CPython, a character
+its Unicode database assigns differently from 3.14's ([known differences](port/known-defects.md)).
+The Python install's preflight (`scripts/trial_startup.py preflight`), run once immediately before
+the dispatch, reached the relay through the Python runtime's host record and console script and
+retired with that install. Both printed one JSON object on standard output and created no file of
+their own. That is a claim about the checker rather than about the
 commands it runs: every relay command opens the store on construction and `doctor` writes a
 temporary file to measure whether the state directory is writable, so a mistyped state
 directory is where a probe leaves a new empty store behind instead of failing. The store
