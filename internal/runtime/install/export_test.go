@@ -2,7 +2,6 @@ package install
 
 import (
 	"context"
-	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -57,10 +56,3 @@ func ReplaceExchange(swap func(a, b string) error) (restore func()) {
 
 // ErrNoExchange is the answer of a platform or filesystem that cannot exchange two names.
 var ErrNoExchange = errNoExchange
-
-// ReplaceLauncherLock makes RemoveLauncher take its lock through lock until restored.
-func ReplaceLauncherLock(lock func(ctx context.Context, target string, timeout time.Duration) (*record.Locked, error)) (restore func()) {
-	saved := lockLauncher
-	lockLauncher = lock
-	return func() { lockLauncher = saved }
-}

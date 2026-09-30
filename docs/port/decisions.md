@@ -2965,3 +2965,18 @@ Evidence: `internal/runtime/doctor/scan.go`, `references.go`, `cli.go`; `scan_te
 retention scan's tests of rows 3, 4, 5, 9 and 10, ported to `RegisteredMatching` and
 `RecordedDaemons`); `internal/runtime/install` remove and reclaim tests; docs/runtime-install.md
 "What remove reads", docs/port/cutover.md "Retention scan surface".
+
+## 60. `install.RemoveLauncher`, the legacy launcher remover, is deleted (refactor R1)
+
+Decision: `internal/runtime/install` no longer carries `RemoveLauncher` (with `LauncherName`,
+`LauncherMarker` and its outcome vocabulary), the ownership-checked removal of the
+`<CODEX_HOME>/crw-stop-hook.py` launcher copy that `scripts/crw_transition` did before todo 39. It
+was deliberately never a command and nothing in the product called it; decision 33's correction
+(todo 39), which made its `<launcher>.crw-lock` a leaf of the lock order, no longer applies.
+
+Why: the copy it removed is gone from the relay host (verified 2026-10-01), no Python writer
+places one any more, and the operator removes one found on another host by hand once no turn can
+still run the pre-native bootstrap that falls back to it (docs/port/cutover.md "Retention").
+
+Evidence: `git grep -n RemoveLauncher` over cmd/ and internal/ before the deletion (its own file,
+its tests and a test seam only); docs/plugin-transition.md.
