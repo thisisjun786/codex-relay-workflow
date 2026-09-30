@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -307,7 +308,8 @@ func AuthorizedSettings(ctx context.Context, s *store.Store, taskID string, gate
 	}
 	data := loadsObj(row.S("settings"))
 	settings := &TaskSettings{Data: data}
-	if err := settings.RequireUsable(); err != nil {
+	// The relay's one set of settings rules (settings.py require_usable) is the registry's.
+	if err := (registry.TaskSettings{Data: data}).RequireUsable(); err != nil {
 		return nil, err
 	}
 	if gate == nil {
