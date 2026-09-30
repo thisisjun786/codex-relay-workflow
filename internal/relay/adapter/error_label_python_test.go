@@ -1,11 +1,9 @@
 package adapter
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -39,15 +37,9 @@ func Test28PythonErrorLabelsPersisted(t *testing.T) {
 	if receipt["error"] != want {
 		t.Fatalf("transport label %v", receipt)
 	}
-	repo, _ := filepath.Abs("../../..")
 	settings, _ := json.Marshal(authorized())
-	cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/error_label_capture.py"))
-	cmd.Dir = repo
-	cmd.Stdin = bytes.NewReader(append(settings, '\n'))
-	out, pyErr := cmd.CombinedOutput()
-	if pyErr != nil {
-		t.Fatalf("Python label oracle: %v\n%s", pyErr, out)
-	}
+	// The Python driver keeps the wall clock: the receipt's times are not compared.
+	out := pyDriverNormalized(t, "error_label_capture.py", append(settings, '\n'), withoutWallClock)
 	var python map[string]any
 	if err := json.Unmarshal(out, &python); err != nil {
 		t.Fatal(err)

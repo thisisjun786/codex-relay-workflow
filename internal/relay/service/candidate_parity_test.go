@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -24,14 +23,10 @@ type candidateResult struct {
 	err            error
 }
 
-// candidateOutcome runs one runtime's `service run --takeover-candidate` against the
-// channel the case sets up and returns its exit code, stdout and stderr.
-func candidateOutcome(home string, python bool, selector string, channel candidateChannel) (r candidateResult) {
-	program, argv := testBinary, []string{"relay", "--state", home + "/state", "--socket", home + "/socket", "service", "run", "--takeover-candidate", "--allow-isolated-scope"}
-	if python {
-		program, argv = testPython, argv[1:]
-	}
-	cmd := exec.Command(program, argv...)
+// candidateOutcome runs the Go `service run --takeover-candidate` against the channel the case
+// sets up and returns its exit code, stdout and stderr.
+func candidateOutcome(home, selector string, channel candidateChannel) (r candidateResult) {
+	cmd := exec.Command(testBinary, "relay", "--state", home+"/state", "--socket", home+"/socket", "service", "run", "--takeover-candidate", "--allow-isolated-scope")
 	cmd.Env = environment(home)
 	if selector != "" {
 		cmd.Env = append(cmd.Env, candidateFDEnv+"="+selector)
@@ -99,8 +94,9 @@ func socketChannel(kind int, message string, hold bool) candidateChannel {
 // missing or invalid activation channel as the retained Python fence does (cli.py
 // main, takeover.receive_candidate and CandidateChannel.receive): the same exit code
 // and nothing on stdout. Go keeps its diagnostic on stderr, the service log of a
-// launched candidate. Each case runs both runtimes at once: the silent controller
-// waits out both 20-second channel bounds together.
+// launched candidate. code is the exit the Python fence answered each case with, exit and
+// silence the test asserted of it while it ran beside Go (its candidate left with the Python
+// runtime, todo 44). The silent controller waits out the 20-second channel bound.
 func Test30CandidateChannelRefusalMatchesPython(t *testing.T) {
 	devnull := func() (*os.File, func() error, func() error, error) {
 		f, err := os.Open(os.DevNull)
@@ -138,19 +134,12 @@ func Test30CandidateChannelRefusalMatchesPython(t *testing.T) {
 		{"record-not-an-object", "3", socketChannel(stream, `{"kind":"start","record":"x"}`+"\n", false), 2},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			var py, native candidateResult
-			var wg sync.WaitGroup
-			wg.Go(func() { py = candidateOutcome(t.TempDir(), true, c.selector, c.channel) })
-			wg.Go(func() { native = candidateOutcome(t.TempDir(), false, c.selector, c.channel) })
-			wg.Wait()
-			if err := errors.Join(py.err, native.err); err != nil {
-				t.Fatal(err)
+			native := candidateOutcome(t.TempDir(), c.selector, c.channel)
+			if native.err != nil {
+				t.Fatal(native.err)
 			}
-			if py.code != c.code || py.stdout != "" || py.stderr != "" {
-				t.Fatalf("Python oracle: exit %d stdout %q stderr %q", py.code, py.stdout, py.stderr)
-			}
-			if native.code != py.code || native.stdout != "" {
-				t.Fatalf("Go: exit %d stdout %q; Python: exit %d, no output", native.code, native.stdout, py.code)
+			if native.code != c.code || native.stdout != "" {
+				t.Fatalf("Go: exit %d stdout %q; Python: exit %d, no output", native.code, native.stdout, c.code)
 			}
 			if !strings.HasPrefix(native.stderr, "{\n") {
 				t.Fatalf("Go dropped its diagnostic: %q", native.stderr)

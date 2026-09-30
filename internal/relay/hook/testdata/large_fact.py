@@ -28,6 +28,10 @@ import sqlite3
 with contextlib.closing(sqlite3.connect(config['dbPath'])) as db:
     db.execute("INSERT OR REPLACE INTO schema_meta VALUES('owner','go')"); db.commit()
 (home/'state/takeover.json').write_text('{"owner":"go","phase":"active"}')
+if sys.argv[3:] == ['prepare']:
+    # The fixture and Python's answer alone, recorded by the Go test (pyoracle).
+    print(json.dumps(dict(hook_output=json.dumps(expected['hook_output']), files=files)))
+    sys.exit()
 listener = socket.socket(socket.AF_UNIX); listener.bind(str(home/'state/control.sock')); listener.listen(); listener.settimeout(10)
 failures = []
 def serve():

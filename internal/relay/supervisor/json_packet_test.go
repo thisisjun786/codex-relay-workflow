@@ -3,12 +3,14 @@ package supervisor
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func Test24PacketAccessorPython(t *testing.T) {
@@ -37,12 +39,15 @@ for field in ("kind","sender","basis","evidence","observedAt","artifact","genera
   except Exception as ex: result=None;error=type(ex).__name__+": "+str(ex)
   out.append({"field":field,"value":value,"result":result,"error":error})
 print(json.dumps(out))`
-	cmd := exec.Command(filepath.Join(root, ".venv/bin/python"), "-c", script, f.c.StoreDirectory())
-	cmd.Stdin = strings.NewReader(row.Packet)
-	raw, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("oracle: %v\n%s", err, raw)
-	}
+	raw := pythonOutput(t, "packet-accessors", func() ([]byte, error) {
+		cmd := exec.Command(filepath.Join(root, ".venv/bin/python"), "-c", script, f.c.StoreDirectory())
+		cmd.Stdin = strings.NewReader(row.Packet)
+		raw, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("oracle: %v\n%s", err, raw)
+		}
+		return raw, nil
+	}, pyoracle.Substitute(f.c.StoreDirectory(), "<state>"))
 	for _, one := range evidence.Items(evidence.Decode(string(raw))) {
 		tc := evidence.Dict(one, false)
 		field := evidence.Text(tc["field"])

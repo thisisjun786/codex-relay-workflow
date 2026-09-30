@@ -48,27 +48,6 @@ func Test30FirstOpenerProcess(t *testing.T) {
 	fmt.Println("admitted")
 }
 
-// pythonFirstOpener is the fence's own writable first opener; "after-gate-placed" stops it
-// right after it linked write-gate.lock into place, still holding it EX (test_fence.py
-// test_concurrent_first_openers_never_see_a_partial_store).
-const pythonFirstOpener = `import os, sys
-from codex_session_relay.store import Store
-pause, paused = sys.argv[2], []
-real_link = os.link
-def link(source, target, **options):
-    real_link(source, target, **options)
-    if pause == 'after-gate-placed' and os.path.basename(target) == 'write-gate.lock' and not paused:
-        paused.append(True)
-        print('paused', flush=True)
-        sys.stdin.readline()
-os.link = link
-try:
-    Store(sys.argv[1]).close()
-except Exception as error:
-    print('refused:', type(error).__name__, error, flush=True)
-else:
-    print('admitted', flush=True)`
-
 type firstOpener struct {
 	runtime string
 	command *exec.Cmd
@@ -78,21 +57,17 @@ type firstOpener struct {
 }
 
 // startOpener starts runtime's first opener of path; paused stops it once its gate is placed.
+// The runtime is Go's: the Python fence's first opener raced these until todo 44 (rollback to
+// Python closed at todo 43, rollback_allowed=0, and the Python runtime leaves in todo 44).
 func startOpener(t *testing.T, runtime, path string, paused bool) *firstOpener {
 	t.Helper()
-	var command *exec.Cmd
-	if runtime == "go" {
-		command = exec.Command(os.Args[0], "-test.run=^Test30FirstOpenerProcess$")
-		command.Env = append(os.Environ(), "CRW_CRASH_DB="+path, "CRW30_FIRST_OPENER=1")
-		if paused {
-			command.Env = append(command.Env, "CRW30_PAUSE_POINT=gate-placed")
-		}
-	} else {
-		pause := "none"
-		if paused {
-			pause = "after-gate-placed"
-		}
-		command = pythonFence(t, "", pythonFirstOpener, path, pause)
+	if runtime != "go" {
+		t.Fatalf("no %s first opener", runtime)
+	}
+	command := exec.Command(os.Args[0], "-test.run=^Test30FirstOpenerProcess$")
+	command.Env = append(os.Environ(), "CRW_CRASH_DB="+path, "CRW30_FIRST_OPENER=1")
+	if paused {
+		command.Env = append(command.Env, "CRW30_PAUSE_POINT=gate-placed")
 	}
 	stdin, err := command.StdinPipe()
 	must(t, err)
@@ -141,7 +116,9 @@ func (o *firstOpener) answer(t *testing.T) string {
 // Decision 30, cutover.md Step 0.4: the creator places write-gate.lock already held EX, so
 // a concurrent first opener of either runtime that finds the gate waits for the creation
 // and then meets the created store: admitted when its own runtime created it, refused as
-// the other runtime's store otherwise, and never refused as a partial store.
+// the other runtime's store otherwise, and never refused as a partial store. Only Go's first
+// openers race here since todo 44; the Python fence's took part until rollback to Python closed
+// at todo 43 (rollback_allowed=0).
 func Test30ConcurrentFirstOpenersNeverSeeAPartialStore(t *testing.T) {
 	judge := func(t *testing.T, path, creator string, answers map[string]string) {
 		t.Helper()
@@ -169,7 +146,8 @@ func Test30ConcurrentFirstOpenersNeverSeeAPartialStore(t *testing.T) {
 		must(t, err)
 		must(t, ownership.Validate(path, record, stamp))
 	}
-	for _, tc := range []struct{ creator, second string }{{"go", "go"}, {"go", "python"}, {"python", "go"}} {
+	// Go's first openers alone: the Python fence's creator and waiter took part until todo 44.
+	for _, tc := range []struct{ creator, second string }{{"go", "go"}} {
 		t.Run(tc.creator+"-creates-"+tc.second+"-waits", func(t *testing.T) {
 			path := filepath.Join(stateDir(t), "state", "relay.sqlite3")
 			first := startOpener(t, tc.creator, path, true)
@@ -198,7 +176,7 @@ func Test30ConcurrentFirstOpenersNeverSeeAPartialStore(t *testing.T) {
 		})
 	}
 	// Unpaused: two first openers started together on an absent directory, several times.
-	for _, pair := range [][2]string{{"go", "go"}, {"go", "python"}} {
+	for _, pair := range [][2]string{{"go", "go"}} {
 		for round := 0; round < 4; round++ {
 			t.Run(fmt.Sprintf("race-%s-%s-%d", pair[0], pair[1], round), func(t *testing.T) {
 				path := filepath.Join(stateDir(t), "state", "relay.sqlite3")
@@ -233,7 +211,8 @@ func Test31StartPreflightWaitsForACreationAndRefusesAnAbandonedGate(t *testing.T
 	partial := "partial store: write-gate.lock without a database"
 	bound := CreationWait
 	t.Cleanup(func() { CreationWait = bound })
-	for _, creator := range []string{"go", "python"} {
+	// A Go creator alone: a Python creator took part until todo 44.
+	for _, creator := range []string{"go"} {
 		t.Run(creator, func(t *testing.T) {
 			detail := func(err error) string {
 				t.Helper()
@@ -290,7 +269,7 @@ func Test31StartPreflightWaitsForACreationAndRefusesAnAbandonedGate(t *testing.T
 				t.Fatalf("creator: %s", answer)
 			}
 			err = settled(verdict)
-			if creator == "go" && err != nil || creator == "python" && detail(err) != "the relay store belongs to another runtime" {
+			if err != nil {
 				t.Fatalf("the created %s store: %v", creator, err)
 			}
 			abandoned := filepath.Join(stateDir(t), "state", "relay.sqlite3")
@@ -389,8 +368,11 @@ func relayStart(t *testing.T, program, scopes string, argv ...string) <-chan rel
 // service.json, daemon.lock or daemon.json, no scope claim. The runtime's own creation lets the
 // same command go on once it is done. Each answer is the same bytes in both runtimes. Each form
 // meets its own creator in its own S and scope registry, so no form's lock meets another's.
+// Since todo 44 only Go's relay acts on a store Go's first opener creates: the Python relay and
+// fence took the other roles until rollback to Python closed at todo 43 (rollback_allowed=0).
 func Test31ServiceFormsWaitForACreatorAndJudgeTheStoreItLeaves(t *testing.T) {
-	relays := map[string]string{"go": relayCLI(t), "python": filepath.Join(repositoryRoot(t), ".venv", "bin", "codex-session-relay")}
+	// Go's relay alone: the Python relay acted and created here until todo 44.
+	relays := map[string]string{"go": relayCLI(t)}
 	foreign := "{\n  \"error\": \"refused\",\n  \"reason\": \"store_owned_by_other\",\n  \"detail\": \"the relay store belongs to another runtime\"\n}\n"
 	type pending struct {
 		form          []string
@@ -398,8 +380,8 @@ func Test31ServiceFormsWaitForACreatorAndJudgeTheStoreItLeaves(t *testing.T) {
 		creator       *firstOpener
 		answer        <-chan relayAnswer
 	}
-	for _, creator := range []string{"go", "python"} {
-		for _, actor := range []string{"go", "python"} {
+	for _, creator := range []string{"go"} {
+		for _, actor := range []string{"go"} {
 			t.Run(actor+"-acts-while-"+creator+"-creates", func(t *testing.T) {
 				forms := [][]string{{"service", "disable"}, {"service", "enable"}, {"service", "declare", "--forget-execution-policy"},
 					{"daemon", "--allow-isolated-scope", "--max-ticks", "0"}}

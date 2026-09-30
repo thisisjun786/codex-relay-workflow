@@ -2,9 +2,11 @@ package hook
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -13,6 +15,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // socketPair is a connected pair of stream sockets: the owner's end and the peer's.
@@ -54,12 +58,22 @@ func socketPair(t *testing.T) (owner, peer *net.UnixConn) {
 func TestControlReadsEveryFrameAsControlPyReadsIt(t *testing.T) {
 	root, state := t.TempDir(), t.TempDir()
 	t.Setenv("CODEX_SESSION_RELAY_MARKER_ROOT", root)
-	oracle := exec.Command(python(t), "testdata/control_frames.py", state)
-	var stderr bytesBuffer
-	oracle.Stderr = &stderr
-	out, err := oracle.Output()
+	// The Python owner's answers are recorded (pyoracle), each answer's bytes with the owner's
+	// state directory and marker root spelled <STATE> and <ROOT>: an answer is hex, which a
+	// recording's substitution does not reach.
+	out := pyoracle.Answer(t, "corpus", func() ([]byte, error) {
+		oracle := exec.Command(python(t), "testdata/control_frames.py", state)
+		var stderr bytesBuffer
+		oracle.Stderr = &stderr
+		out, err := oracle.Output()
+		if err != nil {
+			return nil, fmt.Errorf("control_frames.py: %v %s", err, stderr.String())
+		}
+		return respellAnswers(out, state, "<STATE>", root, "<ROOT>")
+	})
+	out, err := respellAnswers(out, "<STATE>", state, "<ROOT>", root)
 	if err != nil {
-		t.Fatalf("control_frames.py: %v %s", err, stderr)
+		t.Fatal(err)
 	}
 	var corpus []struct{ Name, Frame, Answer string }
 	if err = json.Unmarshal(out, &corpus); err != nil {
@@ -106,6 +120,30 @@ func TestControlReadsEveryFrameAsControlPyReadsIt(t *testing.T) {
 	if differ > 0 {
 		t.Fatalf("%d of %d frames answered otherwise", differ, len(corpus))
 	}
+}
+
+// respellAnswers replaces each old string with its new one (pairs) in the bytes of every hex
+// answer of a corpus.
+func respellAnswers(raw []byte, pairs ...string) ([]byte, error) {
+	var corpus []struct {
+		Name   string `json:"name"`
+		Frame  string `json:"frame"`
+		Answer string `json:"answer"`
+	}
+	if err := json.Unmarshal(raw, &corpus); err != nil {
+		return nil, err
+	}
+	for i, c := range corpus {
+		answer, err := hex.DecodeString(c.Answer)
+		if err != nil {
+			return nil, err
+		}
+		for j := 0; j+1 < len(pairs); j += 2 {
+			answer = bytes.ReplaceAll(answer, []byte(pairs[j]), []byte(pairs[j+1]))
+		}
+		corpus[i].Answer = hex.EncodeToString(answer)
+	}
+	return encodeJSON(corpus)
 }
 
 type bytesBuffer struct{ data []byte }

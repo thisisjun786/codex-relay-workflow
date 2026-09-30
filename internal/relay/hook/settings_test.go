@@ -4,14 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"syscall"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func Test33SettingsPython(t *testing.T) {
@@ -29,14 +28,11 @@ func Test33SettingsPython(t *testing.T) {
 		inputs = append(inputs, o)
 	}
 	raw := evidence.Dumps(inputs, false, false, true)
-	cmd := exec.Command(python(t), "-c", "import json,sys;sys.path.insert(0,sys.argv[1]);from crw_runtime.completion import complaints;print(json.dumps([complaints(v) for v in json.load(sys.stdin)]))", filepath.Join(testRoot, "scripts"))
-	cmd.Stdin = strings.NewReader(raw)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("%v %s", err, out)
-	}
+	out := pyoracle.Answer(t, "complaints", func() ([]byte, error) {
+		return pythonScript(t, nil, []byte(raw), "-c", "import json,sys;sys.path.insert(0,sys.argv[1]);from crw_runtime.completion import complaints;print(json.dumps([complaints(v) for v in json.load(sys.stdin)]))", filepath.Join(testRoot, "scripts"))
+	})
 	var expected [][]string
-	if err = json.Unmarshal(out, &expected); err != nil {
+	if err := json.Unmarshal(out, &expected); err != nil {
 		t.Fatal(err)
 	}
 	for i, v := range inputs {

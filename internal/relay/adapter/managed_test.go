@@ -6,11 +6,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -22,6 +24,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func Test28_ManagedSixMethodsRealSocket(t *testing.T) {
@@ -120,21 +123,44 @@ func Test28_ManagedSixMethodsRealSocket(t *testing.T) {
 	if err := contract.Emit(&got, result); err != nil {
 		t.Fatal(err)
 	}
-	// Python replays the start from the store Go wrote, after a takeover; the built CLI then
-	// replays it again after the store is taken back.
-	testsupport.HandOver(t, filepath.Join(state, "relay.sqlite3"), "python")
 	spec, err := json.Marshal(map[string]any{"state": state, "marker": marker, "socket": host.SocketPath, "request": request})
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo, _ := filepath.Abs("../../..")
-	cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/managed_capture.py"))
-	cmd.Dir = repo
-	cmd.Stdin = bytes.NewReader(spec)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("oracle %v %s", err, out)
+	// Python replays on the ledger Go's adapter opened, whose name is a digest of the socket's
+	// path; the request fingerprint is a digest of a request naming the test's directories
+	// (asGoAnswers). The ledger's device and inode are its file's.
+	var goReceipt struct {
+		RequestFingerprint string `json:"requestFingerprint"`
+		Ledger             struct {
+			RealPath string `json:"realPath"`
+		} `json:"ledger"`
 	}
+	if err := json.Unmarshal(got.Bytes(), &goReceipt); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(goReceipt.Ledger.RealPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledgerFile := info.Sys().(*syscall.Stat_t)
+	derived := []pyoracle.Option{
+		pyoracle.Substitute(host.SocketPath, "<host-socket>"),
+		asGoAnswers(filepath.Base(goReceipt.Ledger.RealPath), "<ledger-file>"),
+		asGoAnswers(goReceipt.RequestFingerprint, "<request-fingerprint>"),
+		pyoracle.Substitute(fmt.Sprintf(`"device": %d,`, uint64(ledgerFile.Dev)), `"device": "<ledger-device>",`),
+		pyoracle.Substitute(fmt.Sprintf(`"inode": %d`, ledgerFile.Ino), `"inode": "<ledger-inode>"`),
+	}
+	repo := pyRepo(t)
+	out := pyOutput(t, "managed_capture.py", func() *exec.Cmd {
+		// Python replays the start from the store Go wrote, after a takeover; the built CLI
+		// then replays it again after the store is taken back.
+		testsupport.HandOver(t, filepath.Join(state, "relay.sqlite3"), "python")
+		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/managed_capture.py"))
+		cmd.Dir = repo
+		cmd.Stdin = bytes.NewReader(spec)
+		return cmd
+	}, derived...)
 	if !bytes.Equal(got.Bytes(), out) {
 		t.Fatalf("Go %s\nPython %s", &got, out)
 	}

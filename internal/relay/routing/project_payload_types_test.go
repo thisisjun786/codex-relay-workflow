@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func Test23ProjectPayloadWrongTypesMatchPython(t *testing.T) {
@@ -27,12 +28,11 @@ for field in ('members','components'):
   one=dict(base); one[field]=(['m1',value] if field == 'members' else ['c1',value])
   out.append([field+'-item',one[field],projects._validate(one)])
 print(json.dumps(out))`
-	cmd := exec.Command(filepath.Join(root, ".venv/bin/python"), "-c", script)
-	cmd.Dir = root
-	raw, err := cmd.Output()
-	if err != nil {
-		t.Fatal(err)
-	}
+	raw := pyoracle.Answer(t, "projects._validate wrong types", func() ([]byte, error) {
+		cmd := exec.Command(filepath.Join(root, ".venv/bin/python"), "-c", script)
+		cmd.Dir = root
+		return cmd.Output()
+	})
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	var cases []struct {

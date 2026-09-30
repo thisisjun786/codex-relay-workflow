@@ -16,6 +16,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func verdictReplay(t *testing.T, names ...string) {
@@ -28,33 +29,46 @@ func verdictReplay(t *testing.T, names ...string) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	keep := t.TempDir()
-	cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/sync/testdata/verdict_capture.py"), keep, string(raw))
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "UV_PROJECT_ENVIRONMENT="+filepath.Join(root, ".venv"), "UV_CACHE_DIR="+keep+"/uv")
-	output, e := cmd.Output()
-	if e != nil {
-		var exit *exec.ExitError
-		if errors.As(e, &exit) {
-			t.Fatalf("Python verdict scenarios: %v\n%s", e, exit.Stderr)
+	answer := pythonAnswer(t, "verdict_capture.py", raw, func() ([]byte, error) {
+		keep := t.TempDir()
+		pyTmp := filepath.Join(keep, "tmp")
+		if e := os.Mkdir(pyTmp, 0o700); e != nil {
+			return nil, e
 		}
+		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/sync/testdata/verdict_capture.py"), keep, string(raw))
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "UV_PROJECT_ENVIRONMENT="+filepath.Join(root, ".venv"), "UV_CACHE_DIR="+keep+"/uv", "TMPDIR="+pyTmp)
+		output, e := cmd.Output()
+		if e != nil {
+			var exit *exec.ExitError
+			if errors.As(e, &exit) {
+				return nil, fmt.Errorf("python verdict scenarios: %v\n%s", e, exit.Stderr)
+			}
+			return nil, e
+		}
+		return callsWithStores(output, pyTmp)
+	}, pyoracle.SameWhen(sameUpToIdentifiers))
+	// Python's temporary directories are this run's.
+	calls, pool := openStores(t, relocated(answer, "<pytmp>", t.TempDir()))
+	var stores []struct{ Database json.RawMessage }
+	if e = json.Unmarshal(calls, &stores); e != nil {
 		t.Fatal(e)
 	}
-	d := json.NewDecoder(bytes.NewReader(output))
+	d := json.NewDecoder(bytes.NewReader(calls))
 	d.UseNumber()
 	value, e := decodeValue(d)
 	if e != nil {
 		t.Fatal(e)
 	}
-	calls := value.([]any)
-	if len(calls) == 0 {
+	if len(value.([]any)) == 0 {
 		t.Fatal("no verdict/outbox calls")
 	}
-	for index, call := range calls {
+	for index, call := range value.([]any) {
 		ctx := context.Background()
 		// The capture is a copy of Python's store: it gets its own identity, and Go replays the
 		// call on it after a takeover to Go.
-		database := text(reception.Get(call, "database"))
+		database := filepath.Join(t.TempDir(), "relay.sqlite3")
+		restoreStore(t, pool.dump(t, stores[index].Database), database)
 		testsupport.Rehome(t, database)
 		testsupport.HandOver(t, database, "go")
 		s, e := store.Open(ctx, database, "")

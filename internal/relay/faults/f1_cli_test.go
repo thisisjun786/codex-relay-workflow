@@ -40,20 +40,14 @@ func TestF1ClaimCLIOracle(t *testing.T) {
 			}
 			env := append(os.Environ(), "TMPDIR=/dev/shm")
 			for _, args := range steps {
-				py := exec.Command("uv", append([]string{"run", "--no-sync", "python", filepath.Join(root, "internal/relay/faults/testdata/f1_cli.py"), "--state", home + "/python", "--json"}, args...)...)
-				py.Dir = root
-				py.Env = env
-				want, pyerr := py.Output()
-				pyExit := 0
-				if pyerr != nil {
-					var x *exec.ExitError
-					if e, ok := pyerr.(*exec.ExitError); ok {
-						x = e
-					} else {
-						t.Fatal(pyerr)
-					}
-					pyExit = x.ExitCode()
-				}
+				var answer pyRun
+				pyValue(t, "f1_cli.py "+strings.Join(args, " "), args, pyRunPaths(t, home), &answer, func() (any, error) {
+					py := exec.Command("uv", append([]string{"run", "--no-sync", "python", filepath.Join(root, "internal/relay/faults/testdata/f1_cli.py"), "--state", home + "/python", "--json"}, args...)...)
+					py.Dir = root
+					py.Env = env
+					return runPython(py, false)
+				})
+				want, pyExit := []byte(answer.Stdout), answer.Code
 				var got, stderr bytes.Buffer
 				ctx := context.WithValue(context.Background(), f1InputsKey{}, f1Inputs{clock: &testClock{now: 100000}, entropy: bytes.NewReader([]byte{0, 1, 2, 3, 4, 5, 6, 7})})
 				exit, handled := executeAsCLI(ctx, append([]string{"--state", home + "/go", "--json"}, args...), &got, &stderr)

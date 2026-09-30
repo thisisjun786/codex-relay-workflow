@@ -11,12 +11,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func TestMain(m *testing.M) {
@@ -97,6 +99,37 @@ func restoreNumbers(value any) any {
 	}
 	return value
 }
+
+// pythonTemporaries names each temporary directory the Python scenarios made under TMPDIR by its
+// order of first appearance instead of its random name, so the answer is the same on every run.
+// The directories are gone when Python exits; Go only ever sees their names.
+func pythonTemporaries(raw []byte) []byte {
+	tmp := os.Getenv("TMPDIR")
+	if tmp == "" {
+		return raw
+	}
+	names := map[string]string{}
+	return regexp.MustCompile(regexp.QuoteMeta(tmp)+`/[A-Za-z0-9._-]+`).ReplaceAllFunc(raw, func(path []byte) []byte {
+		name, ok := names[string(path)]
+		if !ok {
+			name = fmt.Sprintf("%s/python-temporary-%d", tmp, len(names)+1)
+			names[string(path)] = name
+		}
+		return []byte(name)
+	})
+}
+
+// scenarioAnswer returns what a Python scenario capture script printed for property: the
+// recording by default, a live run under CRW_PYTHON_ORACLE=record or check (see pyoracle).
+func scenarioAnswer(t *testing.T, script, property string, capture func() ([]byte, error)) []byte {
+	t.Helper()
+	_, file, _, _ := runtime.Caller(0)
+	return pyoracle.AnswerInterned(t, script+" "+property, func() ([]byte, error) {
+		raw, err := capture()
+		return pythonTemporaries(raw), err
+	}, pyoracle.Substitute(filepath.Clean(filepath.Join(filepath.Dir(file), "../../..")), "<repo>"), pyoracle.Substitute(os.Getenv("TMPDIR"), "<tmpdir>"))
+}
+
 func pythonReplay(t *testing.T, property string) {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
@@ -104,14 +137,17 @@ func pythonReplay(t *testing.T, property string) {
 		t.Fatal("runtime.Caller")
 	}
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), "../../.."))
-	cmd := exec.Command("uv", "run", "--no-sync", "--no-project", "python3", filepath.Join(root, "internal/relay/routing/testdata/capture.py"), property)
-	cmd.Dir = root
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	raw, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("Python %s: %v\n%s", property, err, stderr.String())
-	}
+	raw := scenarioAnswer(t, "capture.py", property, func() ([]byte, error) {
+		cmd := exec.Command("uv", "run", "--no-sync", "--no-project", "python3", filepath.Join(root, "internal/relay/routing/testdata/capture.py"), property)
+		cmd.Dir = root
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		raw, err := cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("Python %s: %v\n%s", property, err, stderr.String())
+		}
+		return raw, nil
+	})
 	var records []struct {
 		Operation string
 		Arguments []any

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -190,20 +191,11 @@ var hostPython = sync.OnceValue(func() string {
 	return resolved
 })
 
-// pythonLib is the lib/python<X.Y> directory a venv built on hostPython uses, so the venv's own
-// interpreter finds the packages copied into it.
-var pythonLib = sync.OnceValue(func() string {
-	if hostPython() == "" {
-		return "python3.13"
-	}
-	out, err := exec.Command(hostPython(), "-c", "import sys; print('python%d.%d' % sys.version_info[:2])").Output()
-	if err != nil {
-		return "python3.13"
-	}
-	return strings.TrimSpace(string(out))
-})
+// pythonLib is the lib/python<X.Y> directory of the venv pythonVenv lays out. Nothing imports
+// from it any more (the fence source it held is placeholder bytes since todo 44), so it is fixed.
+const pythonLib = "python3.13"
 
-func sitePackages(env string) string { return filepath.Join(env, "lib", pythonLib(), "site-packages") }
+func sitePackages(env string) string { return filepath.Join(env, "lib", pythonLib, "site-packages") }
 
 func executable(t *testing.T, path, text string) {
 	t.Helper()
@@ -214,12 +206,13 @@ func executable(t *testing.T, path, text string) {
 }
 
 // pythonVenv lays out a Python install as runtime_install.py left it for the fence release: a
-// venv whose bin/python3 is this host's interpreter, the codex-session-relay package (the real
-// fence source, so its stopadapter and its ownership BUILD are the fence's) copied into
-// site-packages, the crw-completion-hook console script pip writes for
-// codex_session_relay.stopadapter:main, a COMPLETE claim, and install entries for both
-// components inside it. Its relay and bridge scripts run this build's crw, so the gate can ask
-// the relay when the venv is the selected runtime.
+// venv whose bin/python3 is this host's interpreter, the codex-session-relay package files the
+// Go install reads in site-packages (placeholder bytes, with ownership.py declaring the fence's
+// BUILD and a stopadapter.py present, which is all fenceProblems reads; nothing runs them since
+// the Python Stop adapter's own tests left in todo 44), the crw-completion-hook console script
+// pip writes for codex_session_relay.stopadapter:main, a COMPLETE claim, and install entries for
+// both components inside it. Its relay and bridge scripts run this build's crw, so the gate can
+// ask the relay when the venv is the selected runtime.
 func (h *host) pythonVenv(t *testing.T) string {
 	t.Helper()
 	env := filepath.Join(h.dest, "env-1-0be23c258476")
@@ -244,9 +237,13 @@ func (h *host) pythonVenv(t *testing.T) string {
 	executable(t, filepath.Join(env, "bin", "codex-session-relay"), "#!/bin/sh\nexec '"+crw+"' relay \"$@\"\n")
 	executable(t, filepath.Join(env, "bin", "codex-thread-bridge"), "#!/bin/sh\nexec '"+crw+"' bridge \"$@\"\n")
 	executable(t, filepath.Join(env, "bin", "crw-completion-hook"), "#!"+filepath.Join(env, "bin", "python3")+"\n# -*- coding: utf-8 -*-\nimport re\nimport sys\nfrom codex_session_relay.stopadapter import main\nif __name__ == \"__main__\":\n    sys.argv[0] = re.sub(r'(-script\\.pyw|\\.exe)?$', '', sys.argv[0])\n    sys.exit(main())\n")
-	source := filepath.Join(golden.Root(), "packages", "codex-session-relay", "src", "codex_session_relay")
-	for _, name := range []string{"__init__.py", "errors.py", "ownership.py", "stopadapter.py"} {
-		write(t, filepath.Join(sitePackages(env), "codex_session_relay", name), readFile(t, filepath.Join(source, name)))
+	for name, text := range map[string]string{
+		"__init__.py":    "",
+		"errors.py":      "# placeholder: the fence release's errors module\n",
+		"ownership.py":   "# placeholder: the fence release's ownership module\nBUILD = \"" + ownership.PythonBuild + "\"\n",
+		"stopadapter.py": "# placeholder: the fence release's Python Stop adapter\ndef main():\n    return 0\n",
+	} {
+		write(t, filepath.Join(sitePackages(env), "codex_session_relay", name), text)
 	}
 	claim := staging.Payload(staging.Complete, staging.WrittenByPython, "CRW-116", "1", 1, "host", "2026-09-25T00:40:21Z")
 	write(t, staging.ClaimPath(env), string(record.Encode(claim)))

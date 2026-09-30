@@ -2,17 +2,20 @@ package execution
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // A policy refusal quotes a name from the file as Python's f"{name!r}" does: its quote choice,
 // a backslash doubled, and every character str.isprintable() refuses (U+00A0, U+2028, U+200B)
 // escaped. A name escaped as a lone surrogate is that code point, as json.loads keeps it, so it
 // is quoted as '\udcff' and two names escaped as different surrogates stay two names. Each want
-// is ExecutionPolicy.from_bytes's ExecutionPolicyError for the same bytes.
+// is ExecutionPolicy.from_bytes's ExecutionPolicyError for the same bytes, recorded (pyoracle).
 func TestAPolicyRefusalQuotesANameAsPythonReprsIt(t *testing.T) {
 	root, err := filepath.Abs("../../..")
 	if err != nil {
@@ -43,12 +46,15 @@ for document in json.loads(sys.argv[1]):
     except ExecutionPolicyError as error:
         out.append(str(error))
 print(json.dumps(out))`
-	command := exec.Command(filepath.Join(root, ".venv", "bin", "python"), "-c", script, string(raw))
-	command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	out, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("oracle: %v\n%s", err, out)
-	}
+	out := pyoracle.Answer(t, "refusals", func() ([]byte, error) {
+		command := exec.Command(filepath.Join(root, ".venv", "bin", "python"), "-c", script, string(raw))
+		command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
+		out, err := command.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("oracle: %v\n%s", err, out)
+		}
+		return out, nil
+	})
 	var want []*string
 	if err = json.Unmarshal(out, &want); err != nil || len(want) != len(documents) {
 		t.Fatalf("%v: %s", err, out)

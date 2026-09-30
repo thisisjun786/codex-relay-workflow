@@ -43,10 +43,6 @@ func testOvertakenPresenceWholePythonPage(t *testing.T, total int) {
 	}
 	goStore := seed(filepath.Join(home, "go"))
 	defer goStore.Close()
-	pyStore := seed(filepath.Join(home, "py"))
-	pyStore.Close()
-	// Go seeded Python's store as well; Python reads it after a takeover.
-	testsupport.HandOver(t, filepath.Join(home, "py", "relay.sqlite3"), "python")
 	script := `import json,sys
 from codex_session_relay.store import Store
 from codex_session_relay import faultsweep, delivery
@@ -55,15 +51,22 @@ delivery.supersession_reason=lambda db,event: 'overtaken by test'
 try:
  print(json.dumps({'present':faultsweep.still_present(s,'delivery_stalled',{'recipient':'parent','attemptState':None}), 'memo':[dict(r) for r in s.all('SELECT * FROM fault_overtaken_deliveries ORDER BY event_id')]},sort_keys=True))
 finally: delivery.supersession_reason=old;faultsweep._now=old_now;s.close()`
-	cmd := exec.Command("uv", "run", "--no-sync", "python", "-c", script, filepath.Join(home, "py", "relay.sqlite3"))
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR=/dev/shm")
-	out, e := cmd.CombinedOutput()
-	if e != nil {
-		t.Fatalf("python: %v %s", e, out)
-	}
+	out := pyAnswer(t, "still_present", nil, pyRunPaths(t, home), func() ([]byte, error) {
+		pyStore := seed(filepath.Join(home, "py"))
+		pyStore.Close()
+		// Go seeded Python's store as well; Python reads it after a takeover.
+		testsupport.HandOver(t, filepath.Join(home, "py", "relay.sqlite3"), "python")
+		cmd := exec.Command("uv", "run", "--no-sync", "python", "-c", script, filepath.Join(home, "py", "relay.sqlite3"))
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR=/dev/shm")
+		out, e := cmd.CombinedOutput()
+		if e != nil {
+			return nil, fmt.Errorf("python: %v %s", e, out)
+		}
+		return out, nil
+	})
 	var want map[string]any
-	if e = json.Unmarshal(out, &want); e != nil {
+	if e := json.Unmarshal(out, &want); e != nil {
 		t.Fatal(e)
 	}
 	sw := &Sweeper{Store: goStore, Now: func() string { return "now" }, SupersessionReason: func(context.Context, string) (string, error) { return "overtaken by test", nil }}

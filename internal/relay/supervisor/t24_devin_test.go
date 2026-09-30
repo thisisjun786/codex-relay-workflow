@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,15 +14,11 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func devinPythonStage(t *testing.T, f *stageFixture, project string, readings []map[string]any) supervisorCapture {
 	t.Helper()
-	copyPath := filepath.Join(t.TempDir(), "relay.sqlite3")
-	if _, err := f.s.DB.ExecContext(f.ctx, "VACUUM INTO ?", copyPath); err != nil {
-		t.Fatal(err)
-	}
-	ownCopied(t, copyPath, "python")
 	raw, err := json.Marshal(readings)
 	if err != nil {
 		t.Fatal(err)
@@ -51,14 +48,23 @@ for row in store.all("SELECT name FROM sqlite_master WHERE type='table' AND name
 print(json.dumps({'captures':[answer], 'problems':[], 'tables':tables}, sort_keys=True))
 store.close()
 `
-	cmd := exec.Command(filepath.Join(repo, ".venv/bin/python"), "-c", script, copyPath, filepath.Join(f.root, "state"), project, string(raw))
-	home := t.TempDir()
-	cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_DATA_HOME="+home, "XDG_CONFIG_HOME="+home, "CODEX_HOME="+home, "TMPDIR=/dev/shm", "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src"))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("live Python stage: %v\n%s", err, out)
-	}
+	// Python answers on a copy it owns of the store as it stands (recorded, pythonOutput).
+	out := pythonOutput(t, pyKey(t, "stage"), func() ([]byte, error) {
+		copyPath := filepath.Join(t.TempDir(), "relay.sqlite3")
+		if _, err := f.s.DB.ExecContext(f.ctx, "VACUUM INTO ?", copyPath); err != nil {
+			return nil, err
+		}
+		ownCopied(t, copyPath, "python")
+		cmd := exec.Command(filepath.Join(repo, ".venv/bin/python"), "-c", script, copyPath, filepath.Join(f.root, "state"), project, string(raw))
+		home := t.TempDir()
+		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_DATA_HOME="+home, "XDG_CONFIG_HOME="+home, "CODEX_HOME="+home, "TMPDIR=/dev/shm", "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src"))
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("live Python stage: %v\n%s", err, out)
+		}
+		return out, nil
+	}, pyoracle.Substitute(f.root, "<fixture>"))
 	var capture supervisorCapture
 	if err := json.Unmarshal(out, &capture); err != nil {
 		t.Fatalf("live Python JSON: %v\n%s", err, out)
@@ -141,13 +147,31 @@ type devinReadbackCase struct {
 	turns     map[string]float64
 }
 
-func devinPythonReadback(t *testing.T, f *stageFixture, messageID string, tc devinReadbackCase) supervisorCapture {
+// devinTokens substitutes the delivery tokens Go's attempts drew at random, which Python's
+// readback on a copy of Go's store names.
+func devinTokens(t *testing.T, f *stageFixture) []pyoracle.Option {
 	t.Helper()
-	copyPath := filepath.Join(t.TempDir(), "relay.sqlite3")
-	if _, err := f.s.DB.ExecContext(f.ctx, "VACUUM INTO ?", copyPath); err != nil {
+	rows, err := f.s.DB.QueryContext(f.ctx, "SELECT delivery_token FROM supervisor_attempts ORDER BY rowid")
+	if err != nil {
 		t.Fatal(err)
 	}
-	ownCopied(t, copyPath, "python")
+	defer rows.Close()
+	var options []pyoracle.Option
+	for rows.Next() {
+		var token string
+		if err := rows.Scan(&token); err != nil {
+			t.Fatal(err)
+		}
+		options = append(options, pyoracle.Substitute(token, fmt.Sprintf("<delivery token %d>", len(options)+1)))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return options
+}
+
+func devinPythonReadback(t *testing.T, f *stageFixture, messageID string, tc devinReadbackCase) supervisorCapture {
+	t.Helper()
 	turns, err := json.Marshal(tc.turns)
 	if err != nil {
 		t.Fatal(err)
@@ -181,14 +205,23 @@ for row in store.all("SELECT name FROM sqlite_master WHERE type='table' AND name
 print(json.dumps({'captures':[answer],'problems':[],'tables':tables},sort_keys=True))
 store.close()
 `
-	cmd := exec.Command(filepath.Join(repo, ".venv/bin/python"), "-c", script, copyPath, messageID, tc.named, tc.holder, string(turns))
-	home := t.TempDir()
-	cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_DATA_HOME="+home, "XDG_CONFIG_HOME="+home, "CODEX_HOME="+home, "TMPDIR=/dev/shm", "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src"))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("live Python readback: %v\n%s", err, out)
-	}
+	// Python answers on a copy it owns of the store as it stands (recorded, pythonOutput).
+	out := pythonOutput(t, pyKey(t, "readback"), func() ([]byte, error) {
+		copyPath := filepath.Join(t.TempDir(), "relay.sqlite3")
+		if _, err := f.s.DB.ExecContext(f.ctx, "VACUUM INTO ?", copyPath); err != nil {
+			return nil, err
+		}
+		ownCopied(t, copyPath, "python")
+		cmd := exec.Command(filepath.Join(repo, ".venv/bin/python"), "-c", script, copyPath, messageID, tc.named, tc.holder, string(turns))
+		home := t.TempDir()
+		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_DATA_HOME="+home, "XDG_CONFIG_HOME="+home, "CODEX_HOME="+home, "TMPDIR=/dev/shm", "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src"))
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("live Python readback: %v\n%s", err, out)
+		}
+		return out, nil
+	}, append(devinTokens(t, f), pyoracle.Substitute(f.root, "<fixture>"))...)
 	var capture supervisorCapture
 	if err := json.Unmarshal(out, &capture); err != nil {
 		t.Fatalf("live Python JSON: %v\n%s", err, out)
@@ -306,11 +339,6 @@ func moveDevinSupervisor(t *testing.T, f *stageFixture) {
 
 func devinPythonRestage(t *testing.T, f *stageFixture, reading map[string]any) supervisorCapture {
 	t.Helper()
-	copyPath := filepath.Join(t.TempDir(), "relay.sqlite3")
-	if _, err := f.s.DB.ExecContext(f.ctx, "VACUUM INTO ?", copyPath); err != nil {
-		t.Fatal(err)
-	}
-	ownCopied(t, copyPath, "python")
 	raw, err := json.Marshal(reading)
 	if err != nil {
 		t.Fatal(err)
@@ -342,14 +370,23 @@ for row in store.all("SELECT name FROM sqlite_master WHERE type='table' AND name
 print(json.dumps({'captures':[answer],'problems':[],'tables':tables},sort_keys=True))
 store.close()
 `
-	cmd := exec.Command(filepath.Join(repo, ".venv/bin/python"), "-c", script, copyPath, filepath.Join(f.root, "state"), string(raw))
-	home := t.TempDir()
-	cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_DATA_HOME="+home, "XDG_CONFIG_HOME="+home, "CODEX_HOME="+home, "TMPDIR=/dev/shm", "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src"))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("live Python restage: %v\n%s", err, out)
-	}
+	// Python answers on a copy it owns of the store as it stands (recorded, pythonOutput).
+	out := pythonOutput(t, pyKey(t, "restage"), func() ([]byte, error) {
+		copyPath := filepath.Join(t.TempDir(), "relay.sqlite3")
+		if _, err := f.s.DB.ExecContext(f.ctx, "VACUUM INTO ?", copyPath); err != nil {
+			return nil, err
+		}
+		ownCopied(t, copyPath, "python")
+		cmd := exec.Command(filepath.Join(repo, ".venv/bin/python"), "-c", script, copyPath, filepath.Join(f.root, "state"), string(raw))
+		home := t.TempDir()
+		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_DATA_HOME="+home, "XDG_CONFIG_HOME="+home, "CODEX_HOME="+home, "TMPDIR=/dev/shm", "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src"))
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("live Python restage: %v\n%s", err, out)
+		}
+		return out, nil
+	}, pyoracle.Substitute(f.root, "<fixture>"))
 	var capture supervisorCapture
 	if err := json.Unmarshal(out, &capture); err != nil {
 		t.Fatalf("live Python JSON: %v\n%s", err, out)
@@ -421,11 +458,6 @@ func Test24DevinFrozenReadingCheckedBeforeReaddressMatchesLivePython(t *testing.
 
 func devinPythonStageUnsent(t *testing.T, f *stageFixture, project string, readings []map[string]any) supervisorCapture {
 	t.Helper()
-	copyPath := filepath.Join(t.TempDir(), "relay.sqlite3")
-	if _, err := f.s.DB.ExecContext(f.ctx, "VACUUM INTO ?", copyPath); err != nil {
-		t.Fatal(err)
-	}
-	ownCopied(t, copyPath, "python")
 	raw, _ := json.Marshal(readings)
 	repo, _ := filepath.Abs("../../..")
 	script := `
@@ -446,14 +478,23 @@ for row in store.all("SELECT name FROM sqlite_master WHERE type='table' AND name
  if values: tables[name]=values
 print(json.dumps({'captures':[answer],'problems':[],'tables':tables},sort_keys=True)); store.close()
 `
-	cmd := exec.Command(filepath.Join(repo, ".venv/bin/python"), "-c", script, copyPath, filepath.Join(f.root, "state"), string(raw), project)
-	home := t.TempDir()
-	cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_DATA_HOME="+home, "XDG_CONFIG_HOME="+home, "CODEX_HOME="+home, "TMPDIR=/dev/shm", "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src"))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("live Python stage_unsent: %v\n%s", err, out)
-	}
+	// Python answers on a copy it owns of the store as it stands (recorded, pythonOutput).
+	out := pythonOutput(t, pyKey(t, "stage_unsent"), func() ([]byte, error) {
+		copyPath := filepath.Join(t.TempDir(), "relay.sqlite3")
+		if _, err := f.s.DB.ExecContext(f.ctx, "VACUUM INTO ?", copyPath); err != nil {
+			return nil, err
+		}
+		ownCopied(t, copyPath, "python")
+		cmd := exec.Command(filepath.Join(repo, ".venv/bin/python"), "-c", script, copyPath, filepath.Join(f.root, "state"), string(raw), project)
+		home := t.TempDir()
+		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_DATA_HOME="+home, "XDG_CONFIG_HOME="+home, "CODEX_HOME="+home, "TMPDIR=/dev/shm", "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src"))
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("live Python stage_unsent: %v\n%s", err, out)
+		}
+		return out, nil
+	}, pyoracle.Substitute(f.root, "<fixture>"))
 	var capture supervisorCapture
 	if err := json.Unmarshal(out, &capture); err != nil {
 		t.Fatalf("live Python JSON: %v\n%s", err, out)

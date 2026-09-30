@@ -8,7 +8,8 @@ import (
 )
 
 // Each Python test in test_attempt_message_atomicity.py is replayed by the real Python
-// DeliveryService; Go must read back the same frozen bytes and report the same statuses.
+// DeliveryService (recorded, with the rows of its store: pythonDeliveryStore); Go must read back
+// the same frozen bytes and report the same statuses.
 func TestAttemptMessageAtomicity_python_properties(t *testing.T) {
 	ctx := context.Background()
 	t.Run("test_ordinary_send_carries_its_own_request_id", func(t *testing.T) {

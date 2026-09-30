@@ -3,6 +3,7 @@ package faults
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -91,13 +92,17 @@ func Test22_FLF_6_CreationAnswerIndexWholeOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/faults/testdata/flf_plan.py"), filepath.Join(pd, "relay.sqlite3"))
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "TMPDIR=/dev/shm")
-	want, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("python plan: %v %s", err, want)
-	}
+	// The query plan SQLite gives Python's twin for the same lookup.
+	want := pyAnswer(t, "flf_plan.py", nil, pyRunPaths(t, filepath.Dir(pd)), func() ([]byte, error) {
+		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/faults/testdata/flf_plan.py"), filepath.Join(pd, "relay.sqlite3"))
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "TMPDIR=/dev/shm")
+		want, err := cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("python plan: %v %s", err, want)
+		}
+		return want, nil
+	})
 	var py []string
 	if err = json.Unmarshal(want, &py); err != nil {
 		t.Fatal(err)
@@ -135,11 +140,7 @@ func flfInstallRecord(t *testing.T, location string, source map[string]any) {
 
 func flfLocation(t *testing.T) string {
 	t.Helper()
-	root, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return filepath.Join(root, "packages", "codex-session-relay", "src", "codex_session_relay")
+	return relayPackageLocation
 }
 
 func Test22_FLF_7_InstalledRevisionWholeOutput(t *testing.T) {

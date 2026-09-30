@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 var binaryOnce sync.Once
@@ -88,22 +90,63 @@ func builtBinary(t *testing.T) string {
 	}
 	return testBinary
 }
-func oracleScript(t *testing.T, name, mode, state string) []byte {
+
+// oracleScript returns what the Python oracle script printed for mode against state: the
+// recording by default, a live run under CRW_PYTHON_ORACLE=record or check (see pyoracle). Each
+// observe runs after a live run and judges what Python did beyond its answer.
+func oracleScript(t *testing.T, name, mode, state string, observe ...func() error) []byte {
 	t.Helper()
 	_, file, _, _ := runtime.Caller(0)
-	cmd := exec.Command("uv", "run", "--no-sync", "--no-project", "python3", filepath.Join(filepath.Dir(file), "testdata", name), mode, state)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	raw, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("oracle %v\n%s", err, stderr.String())
-	}
-	return raw
+	return pyoracle.AnswerInterned(t, name+" "+mode, func() ([]byte, error) {
+		cmd := exec.Command("uv", "run", "--no-sync", "--no-project", "python3", filepath.Join(filepath.Dir(file), "testdata", name), mode, state)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		raw, err := cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("oracle %v\n%s", err, stderr.String())
+		}
+		for _, check := range observe {
+			if err := check(); err != nil {
+				return nil, err
+			}
+		}
+		return raw, nil
+	}, pyoracle.Substitute(state, "<state>"), pyoracle.Substitute(filepath.Clean(filepath.Join(filepath.Dir(file), "../../..")), "<repo>"), pyoracle.Substitute(os.Getenv("TMPDIR"), "<tmpdir>"))
+}
+
+// stateFiles returns the regular files Python left in state once its store is gone, so a replay
+// hands Go the same directory: the recording by default, the live directory under
+// CRW_PYTHON_ORACLE=record or check.
+func stateFiles(t *testing.T, key, state string) map[string]string {
+	t.Helper()
+	files := map[string]string{}
+	pyoracle.JSON(t, key, &files, func() (any, error) {
+		found := map[string]string{}
+		err := filepath.WalkDir(state, func(path string, entry os.DirEntry, err error) error {
+			if err != nil || !entry.Type().IsRegular() {
+				return err
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			rel, err := filepath.Rel(state, path)
+			found[filepath.ToSlash(rel)] = string(data)
+			return err
+		})
+		return found, err
+	}, pyoracle.Substitute(state, "<state>"))
+	return files
 }
 func Test23_ArgparseWidthsBuiltBinary(t *testing.T) {
 	binary := builtBinary(t)
 	state := t.TempDir()
-	raw := oracleScript(t, "cli_capture.py", "argv", state)
+	raw := oracleScript(t, "cli_capture.py", "argv", state, func() error {
+		if _, err := os.Stat(filepath.Join(state, "relay.sqlite3")); !os.IsNotExist(err) {
+			return fmt.Errorf("parser-only oracle wrote store: %v", err)
+		}
+		return nil
+	})
 	var cases []struct {
 		Command        string
 		Args           []string
@@ -114,9 +157,6 @@ func Test23_ArgparseWidthsBuiltBinary(t *testing.T) {
 	}
 	if err := json.Unmarshal(raw, &cases); err != nil {
 		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(state, "relay.sqlite3")); !os.IsNotExist(err) {
-		t.Fatalf("parser-only oracle wrote store: %v", err)
 	}
 	acceptedRaw := oracleScript(t, "cli_capture.py", "accepted-argv", state)
 	accepted := cases[:0:0]
@@ -190,6 +230,16 @@ func cliReplay(t *testing.T, mode string) {
 	// the directory holds an absent store and Go's first command creates its own.
 	for _, name := range []string{"relay.sqlite3", "relay.sqlite3-wal", "relay.sqlite3-shm", "events.jsonl", "takeover.json", "write-gate.lock", "takeover.lock"} {
 		if err := os.Remove(filepath.Join(pythonState, name)); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+	// What Python left beside its store (PRD-10's binding.json) is input to Go's commands.
+	for name, data := range stateFiles(t, "files cli_capture.py "+mode+" left beside its store", pythonState) {
+		path := filepath.Join(pythonState, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}

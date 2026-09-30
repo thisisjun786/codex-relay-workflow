@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func Test23_SyncCommandsBuiltBinaryWholeBytes(t *testing.T) {
@@ -26,30 +28,53 @@ func Test23_SyncCommandsBuiltBinaryWholeBytes(t *testing.T) {
 	if e = os.Symlink(binary, alias); e != nil {
 		t.Fatal(e)
 	}
-	capture := exec.Command("uv", "run", "--no-sync", "python", root+"/internal/relay/sync/testdata/cli_capture.py", base)
-	capture.Dir = root
-	capture.Env = append(os.Environ(), "UV_PROJECT_ENVIRONMENT="+filepath.Join(root, ".venv"), "UV_CACHE_DIR="+base+"/uv")
-	raw, e := capture.Output()
-	if e != nil {
-		t.Fatalf("capture: %v %s", e, raw)
+	// Python works in a directory of its own; the Go side replays in base, which Python never
+	// touched, from the stores and files Python left.
+	answer := pyoracle.AnswerInterned(t, "cli_capture.py", func() ([]byte, error) {
+		base := t.TempDir()
+		capture := exec.Command("uv", "run", "--no-sync", "python", root+"/internal/relay/sync/testdata/cli_capture.py", base)
+		capture.Dir = root
+		capture.Env = append(os.Environ(), "UV_PROJECT_ENVIRONMENT="+filepath.Join(root, ".venv"), "UV_CACHE_DIR="+base+"/uv")
+		raw, e := capture.Output()
+		if e != nil {
+			return nil, fmt.Errorf("capture: %v %s", e, raw)
+		}
+		return cliCapturesRecorded(raw, base)
+	})
+	answer, pool := openStores(t, relocated(answer, "<base>", base))
+	var recorded struct {
+		Captures json.RawMessage
+		Files    map[string]string
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if e = json.Unmarshal(answer, &recorded); e != nil {
+		t.Fatal(e)
+	}
+	for path, content := range recorded.Files {
+		if e = os.WriteFile(path, []byte(content), 0o600); e != nil {
+			t.Fatal(e)
+		}
+	}
+	var stores []struct{ Database json.RawMessage }
+	if e = json.Unmarshal(recorded.Captures, &stores); e != nil {
+		t.Fatal(e)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(recorded.Captures))
 	decoder.UseNumber()
 	data, e := decodeValue(decoder)
 	if e != nil {
 		t.Fatal(e)
 	}
-	for _, item := range data.([]any) {
+	if e = os.MkdirAll(base+"/state", 0o700); e != nil {
+		t.Fatal(e)
+	}
+	for index, item := range data.([]any) {
+		dump := pool.dump(t, stores[index].Database)
 		args, _ := evidence.List(reception.Get(item, "argv"))
 		argv := []string{}
 		for _, arg := range args {
 			argv = append(argv, text(arg))
 		}
 		for _, program := range []string{binary, alias} {
-			before, e := os.ReadFile(text(reception.Get(item, "database")))
-			if e != nil {
-				t.Fatal(e)
-			}
 			db := base + "/state/relay.sqlite3"
 			// The previous store goes whole, its fence included; the state directory then holds
 			// a copy of Python's store before this command, which gets its own identity and is
@@ -59,9 +84,7 @@ func Test23_SyncCommandsBuiltBinaryWholeBytes(t *testing.T) {
 					t.Fatal(e)
 				}
 			}
-			if e = os.WriteFile(db, before, 0600); e != nil {
-				t.Fatal(e)
-			}
+			restoreStore(t, dump, db)
 			testsupport.Rehome(t, db)
 			testsupport.HandOver(t, db, "go")
 			commandArgs := argv

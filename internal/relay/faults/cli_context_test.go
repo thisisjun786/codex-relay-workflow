@@ -38,12 +38,12 @@ func executeAsCLI(ctx context.Context, argv []string, stdout, stderr io.Writer) 
 }
 
 // oracleState is the state directory Go is asked a command line in after live Python answered
-// it in pyState: pyState itself when Python left it absent, so both runtimes answer about the
-// same absent store and a refusal naming its path is compared byte for byte; goState when
-// Python created its store there, as each runtime writes only a store it owns.
-func oracleState(t *testing.T, pyState, goState string) string {
-	t.Helper()
-	if stateAbsent(t, pyState) {
+// it in pyState (pyCreated: whether Python's run left pyState in place, part of its recorded
+// answer): pyState itself when Python left it absent, so both runtimes answer about the same
+// absent store and a refusal naming its path is compared byte for byte; goState when Python
+// created its store there, as each runtime writes only a store it owns.
+func oracleState(pyCreated bool, pyState, goState string) string {
+	if !pyCreated {
 		return pyState
 	}
 	return goState
@@ -58,7 +58,7 @@ func neverCreated(t *testing.T, pyState, state string) {
 	}
 }
 
-func stateAbsent(t *testing.T, dir string) bool {
+func stateAbsent(t testing.TB, dir string) bool {
 	t.Helper()
 	_, err := os.Lstat(dir)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {

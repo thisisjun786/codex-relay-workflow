@@ -63,6 +63,10 @@ def run(label, session, item):
 cases = [('s', 'item'), ('se\ud800ss', 'item'), ('se\udfffss', 'item'),
          ('s', '\ud800item'), ('s', 'mid\udc00dle'), ('s', 'end\udbff'),
          ('s\U0001f600\udc00', '\U0001d11e\ud800item')]
+if sys.argv[4:] == ['python']:
+    # Python's side alone, recorded by the Go test (internal/testsupport/pyoracle).
+    print(json.dumps([run('python' + str(index), session, item) for index, (session, item) in enumerate(cases)]))
+    sys.exit()
 for index, (session, item) in enumerate(cases):
     py, go = run('python' + str(index), session, item), run('go' + str(index), session, item)
     assert py == go, (index, py, go)

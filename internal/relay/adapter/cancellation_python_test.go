@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -206,14 +205,7 @@ func Test28CallerCancellationStageParity(t *testing.T) {
 		stages[i] = map[string]any{"name": stage.name, "held": stage.held, "busy": stage.busy}
 	}
 	input, _ := json.Marshal(map[string]any{"settings": authorized(), "resume": resume(), "stages": stages})
-	repo, _ := filepath.Abs("../../..")
-	cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/cancellation_capture.py"))
-	cmd.Dir = repo
-	cmd.Stdin = bytes.NewReader(input)
-	want, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Python cancellation oracle: %v\n%s", err, want)
-	}
+	want := pyDriver(t, "cancellation_capture.py", input)
 	var expected []map[string]any
 	if err := json.Unmarshal(want, &expected); err != nil {
 		t.Fatal(err)

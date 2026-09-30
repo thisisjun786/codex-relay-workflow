@@ -17,19 +17,25 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
-// Each fixture state is judged by the real admission of both runtimes: store.Open for Go and the
-// retained Python fence's Store for Python. A runtime refusing a store the other runtime owns
-// is proven by its last check, the one that runs only after the mirror, the durable stamp and
-// the physical identity all agreed.
+// Each fixture state is judged by Go's real admission, store.Open. A refusal of a store the other
+// runtime owns is proven by its last check, the one that runs only after the mirror, the durable
+// stamp and the physical identity all agreed. The retained Python fence's own admission of these
+// stores was checked beside it until todo 44: rollback to Python closed at todo 43
+// (rollback_allowed=0), and the Python runtime leaves in todo 44.
 const (
-	admitted      = "admitted"
-	goRefusesPy   = "refused: store_owned_by_other: the relay store belongs to another runtime"
-	pyRefusesGo   = "refused: store_owned_by_other: the relay store belongs to another runtime"
-	pythonAdmits  = "import sys\nfrom codex_session_relay.store import Store\nfrom codex_session_relay.ownership import OwnershipRefused\ntry:\n    Store(sys.argv[1]).close()\nexcept OwnershipRefused as error:\n    print('refused:', error)\nelse:\n    print('admitted')"
+	admitted    = "admitted"
+	goRefusesPy = "refused: store_owned_by_other: the relay store belongs to another runtime"
+	// pythonCreates is the Python initializer creating an absent store; its schema_meta rows and
+	// its mirror are recorded (pythonCreated).
 	pythonCreates = "import json, sqlite3, sys\nfrom codex_session_relay.store import Store\nStore(sys.argv[1], sys.argv[2] or None).close()\ndb = sqlite3.connect(sys.argv[1])\nprint(json.dumps(dict(db.execute('SELECT key, value FROM schema_meta'))))\ndb.close()"
 )
+
+// fixedSocket is the App Server socket the initializer comparisons name. It is never connected;
+// it is fixed so that the scope key derived from it is the same in a recording and on replay.
+const fixedSocket = "/crw-test/app.sock"
 
 func repositoryRoot(t *testing.T) string {
 	t.Helper()
@@ -50,9 +56,39 @@ func python(t *testing.T, script string, args ...string) string {
 	return strings.TrimSpace(string(output))
 }
 
-func pythonAdmission(t *testing.T, path string) string {
+// scopeKey is the scope key of fixedSocket as this process's environment derives it: namespaced by
+// CODEX_SESSION_RELAY_SCOPE_DIR when that overrides the registry root. A recording spells it
+// <SCOPE-KEY>, since the override differs from host to host.
+func scopeKey(t *testing.T) string {
 	t.Helper()
-	return python(t, pythonAdmits, path)
+	key, err := ownership.ScopeKey(fixedSocket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key
+}
+
+// pythonCreated is what the Python initializer left creating an absent store at root/python: its
+// schema_meta rows but store_id and store_created_at, and its comparableMirror, recorded
+// (pyoracle).
+func pythonCreated(t *testing.T, root string) (map[string]string, map[string]any) {
+	t.Helper()
+	var answer struct {
+		Meta   map[string]string `json:"meta"`
+		Mirror map[string]any    `json:"mirror"`
+	}
+	pyoracle.JSON(t, "created", &answer, func() (any, error) {
+		real := filepath.Join(root, "python", "relay.sqlite3")
+		var created map[string]string
+		if err := json.Unmarshal([]byte(python(t, pythonCreates, real, fixedSocket)), &created); err != nil {
+			return nil, err
+		}
+		// Only what the comparisons read: which store and when never agree between two runs.
+		delete(created, "store_id")
+		delete(created, "store_created_at")
+		return map[string]any{"meta": created, "mirror": comparableMirror(mirror(t, real))}, nil
+	}, pyoracle.Substitute(root, "<ROOT>"), pyoracle.Substitute(scopeKey(t), "<SCOPE-KEY>"))
+	return answer.Meta, answer.Mirror
 }
 
 func goAdmission(t *testing.T, path, socket string) string {
@@ -67,16 +103,13 @@ func goAdmission(t *testing.T, path, socket string) string {
 	return admitted
 }
 
-// requireOwnedBy proves owner's runtime admits the store and the other runtime refuses it only
-// because of the owner.
+// requireOwnedBy proves Go admits a store Go owns and refuses one Python owns only because of the
+// owner.
 func requireOwnedBy(t *testing.T, path, socket, owner string) {
 	t.Helper()
-	want := map[string][2]string{"go": {admitted, pyRefusesGo}, "python": {goRefusesPy, admitted}}[owner]
-	if got := goAdmission(t, path, socket); got != want[0] {
+	want := map[string]string{"go": admitted, "python": goRefusesPy}[owner]
+	if got := goAdmission(t, path, socket); got != want {
 		t.Fatalf("Go admission of a %s store: %s", owner, got)
-	}
-	if got := pythonAdmission(t, path); got != want[1] {
-		t.Fatalf("Python admission of a %s store: %s", owner, got)
 	}
 }
 
@@ -249,20 +282,19 @@ func TestCreate_fills_an_empty_file_in_place(t *testing.T) {
 }
 
 // Fence and Create stamp exactly what each runtime's own absent-store initializer stamps: the
-// six schema_meta keys and the mirror agree with a store Python's Store and Go's store.Open
-// created from nothing, apart from which file and which store they are.
+// six schema_meta keys and the mirror agree with a store Python's Store (recorded) and Go's
+// store.Open created from nothing, apart from which file and which store they are.
 func TestFence_matches_each_runtimes_absent_store_initializer(t *testing.T) {
 	for _, owner := range []string{"python", "go"} {
 		t.Run(owner, func(t *testing.T) {
 			root := t.TempDir()
-			socket := filepath.Join(root, "app.sock")
-			real := filepath.Join(root, "runtime", "relay.sqlite3")
+			socket := fixedSocket
 			var created map[string]string
+			var createdMirror map[string]any
 			if owner == "python" {
-				if err := json.Unmarshal([]byte(python(t, pythonCreates, real, socket)), &created); err != nil {
-					t.Fatal(err)
-				}
+				created, createdMirror = pythonCreated(t, root)
 			} else {
+				real := filepath.Join(root, "go", "relay.sqlite3")
 				s, err := store.Open(context.Background(), real, socket)
 				if err != nil {
 					t.Fatal(err)
@@ -270,14 +302,14 @@ func TestFence_matches_each_runtimes_absent_store_initializer(t *testing.T) {
 				if err = s.Close(); err != nil {
 					t.Fatal(err)
 				}
-				created = meta(t, real)
+				created, createdMirror = meta(t, real), mirror(t, real)
 			}
 			fixture := filepath.Join(root, "fixture", "relay.sqlite3")
 			testsupport.Create(t, fixture, socket, owner)
 			if got, want := ownershipKeys(meta(t, fixture)), ownershipKeys(created); fmt.Sprint(got) != fmt.Sprint(want) || len(got) != 6 {
 				t.Fatalf("stamp %v, %s initializer %v", got, owner, want)
 			}
-			if got, want := comparableMirror(mirror(t, fixture)), comparableMirror(mirror(t, real)); fmt.Sprint(got) != fmt.Sprint(want) {
+			if got, want := comparableMirror(mirror(t, fixture)), comparableMirror(createdMirror); fmt.Sprint(got) != fmt.Sprint(want) {
 				t.Fatalf("mirror %v, %s initializer %v", got, owner, want)
 			}
 			for _, name := range []string{"write-gate.lock", "takeover.lock"} {
@@ -487,13 +519,10 @@ func TestRehome_gives_a_copied_store_its_own_identity(t *testing.T) {
 				if withMirror {
 					copyFile(t, filepath.Join(filepath.Dir(original), "takeover.json"), filepath.Join(filepath.Dir(copied), "takeover.json"))
 				}
-				// Reversion: the runtime that owns the copy refuses it before Rehome.
-				refused := goAdmission(t, copied, "")
-				if owner == "python" {
-					refused = pythonAdmission(t, copied)
-				}
-				if !strings.HasPrefix(refused, "refused: store_owned_by_other") {
-					t.Fatalf("%s admitted a copied store before Rehome: %s", owner, refused)
+				// Reversion: Go refuses the copy before Rehome, whoever owns it. (The Python fence's
+				// refusal of a Python-owned copy was checked here until todo 44.)
+				if refused := goAdmission(t, copied, ""); !strings.HasPrefix(refused, "refused: store_owned_by_other") {
+					t.Fatalf("Go admitted a copied %s store before Rehome: %s", owner, refused)
 				}
 				testsupport.Rehome(t, copied)
 				requireOwnedBy(t, copied, "", owner)
@@ -538,13 +567,10 @@ func TestRestamp_gives_a_copy_to_the_other_runtime_as_its_creator(t *testing.T) 
 				if withMirror {
 					copyFile(t, filepath.Join(filepath.Dir(original), "takeover.json"), filepath.Join(filepath.Dir(copied), "takeover.json"))
 				}
-				// Reversion: the runtime the copy is for refuses it before Restamp.
-				refused := goAdmission(t, copied, socket)
-				if owner == "python" {
-					refused = pythonAdmission(t, copied)
-				}
-				if !strings.HasPrefix(refused, "refused: store_owned_by_other") {
-					t.Fatalf("%s admitted the copy before Restamp: %s", owner, refused)
+				// Reversion: Go refuses the copy before Restamp, whoever it is for. (The Python fence's
+				// refusal of a copy restamped for it was checked here until todo 44.)
+				if refused := goAdmission(t, copied, socket); !strings.HasPrefix(refused, "refused: store_owned_by_other") {
+					t.Fatalf("Go admitted the copy for %s before Restamp: %s", owner, refused)
 				}
 				testsupport.Restamp(t, copied, owner)
 				requireOwnedBy(t, copied, socket, owner)
@@ -606,15 +632,13 @@ func TestRestamp_refuses_an_original_a_transferred_a_shared_and_an_unfenced_stor
 	})
 }
 
-// Python's and Go's absent-store initializers leave schema_meta rows that differ only in the
-// owner value and the store's own identity; OwnerNeutral removes the first and nothing else.
+// Python's (recorded) and Go's absent-store initializers leave schema_meta rows that differ only
+// in the owner value and the store's own identity; OwnerNeutral removes the first and nothing
+// else.
 func TestOwnerNeutral_is_the_only_runtime_difference_in_schema_meta(t *testing.T) {
 	root := t.TempDir()
-	socket := filepath.Join(root, "app.sock")
-	var pythonMeta map[string]string
-	if err := json.Unmarshal([]byte(python(t, pythonCreates, filepath.Join(root, "python", "relay.sqlite3"), socket)), &pythonMeta); err != nil {
-		t.Fatal(err)
-	}
+	socket := fixedSocket
+	pythonMeta, _ := pythonCreated(t, root)
 	goPath := filepath.Join(root, "go", "relay.sqlite3")
 	s, err := store.Open(context.Background(), goPath, socket)
 	if err != nil {

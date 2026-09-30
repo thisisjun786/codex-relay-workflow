@@ -3,6 +3,7 @@ package supervisor
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -37,11 +38,14 @@ for v in values:
   except Exception as e: result=None;error=type(e).__name__+": "+str(e)
   out.append({"value":v,"field":field,"result":result,"error":error})
 print(json.dumps(out))`
-	cmd := exec.Command(filepath.Join(root, ".venv/bin/python"), "-c", script)
-	raw, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("oracle: %v %s", err, raw)
-	}
+	raw := pythonOutput(t, "report-accessors", func() ([]byte, error) {
+		cmd := exec.Command(filepath.Join(root, ".venv/bin/python"), "-c", script)
+		raw, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("oracle: %v %s", err, raw)
+		}
+		return raw, nil
+	})
 	var cases []struct {
 		Value  any
 		Field  string
@@ -50,7 +54,7 @@ print(json.dumps(out))`
 	}
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))
 	decoder.UseNumber()
-	if err = decoder.Decode(&cases); err != nil {
+	if err := decoder.Decode(&cases); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range cases {

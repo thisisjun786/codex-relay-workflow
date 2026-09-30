@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func nativeJournalFixture(t *testing.T) (string, Object) {
@@ -69,15 +69,14 @@ func Test33NativeJournalReader(t *testing.T) {
 		}
 		inputs = append(inputs, copy)
 	}
+	// Python's reader over the same rows (completion._row_shape) is recorded (pyoracle): the
+	// native row and each neighbour.
 	script := `import json,sys;sys.path.insert(0,sys.argv[1]);from crw_runtime import completion;print(json.dumps([completion._row_shape(v) for v in json.load(sys.stdin)]))`
-	cmd := exec.Command(python(t), "-c", script, filepath.Join(testRoot, "scripts"))
-	cmd.Stdin = strings.NewReader(evidence.Dumps(inputs, false, false, true))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("%v %s", err, out)
-	}
+	out := pyoracle.Answer(t, "row_shape", func() ([]byte, error) {
+		return pythonScript(t, nil, []byte(evidence.Dumps(inputs, false, false, true)), "-c", script, filepath.Join(testRoot, "scripts"))
+	})
 	var answers []bool
-	if err = json.Unmarshal(out, &answers); err != nil {
+	if err := json.Unmarshal(out, &answers); err != nil {
 		t.Fatal(err)
 	}
 	if len(answers) != len(inputs) {
@@ -105,15 +104,6 @@ func Test33NativeJournalReader(t *testing.T) {
 		t.Fatal("symlink admitted")
 	}
 }
-func Test33NativeJournalReaderPythonLive(t *testing.T) {
-	cmd := exec.Command(python(t), "-m", "pytest", "-q", "testdata/test_journal_reader.py")
-	cmd.Env = append(os.Environ(), "CRW_TEST_BINARY="+binary(t))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("live reader parity %v\n%s", err, out)
-	}
-	t.Logf("%s", out)
-}
 func Test33NativeJournalDetailErrnos(t *testing.T) {
 	_, row := nativeJournalFixture(t)
 	for _, tc := range []struct{ name, prefix string }{{"ENOENT", "[Errno 2] No such file or directory"}, {"EACCES", "[Errno 13] Permission denied"}} {
@@ -131,7 +121,7 @@ func Test33NativeJournalDetailErrnos(t *testing.T) {
 // it, the lone surrogate surrogateescape makes of the byte, and such a path is one the system
 // takes: the native pre-scan row a relay state directory like that leaves is still the exempt
 // one. A surrogate that stands for no byte is not a path. Every row is judged by the Python
-// reader too.
+// reader too, its answers recorded (pyoracle).
 func Test33NativeJournalPathsWhoseNamesAreNotUTF8(t *testing.T) {
 	_, row := nativeJournalFixture(t)
 	prefix := "the configured runtime could not be run: [Errno 2] No such file or directory: "
@@ -160,14 +150,11 @@ func Test33NativeJournalPathsWhoseNamesAreNotUTF8(t *testing.T) {
 		inputs[i] = c.row
 	}
 	script := `import json,sys;sys.path.insert(0,sys.argv[1]);from crw_runtime import completion;print(json.dumps([completion._native_prescan_unreachable(v) for v in json.load(sys.stdin)]))`
-	cmd := exec.Command(python(t), "-c", script, filepath.Join(testRoot, "scripts"))
-	cmd.Stdin = strings.NewReader(evidence.Dumps(inputs, false, false, true))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("%v %s", err, out)
-	}
+	out := pyoracle.Answer(t, "native_prescan_unreachable", func() ([]byte, error) {
+		return pythonScript(t, nil, []byte(evidence.Dumps(inputs, false, false, true)), "-c", script, filepath.Join(testRoot, "scripts"))
+	})
 	var answers []bool
-	if err = json.Unmarshal(out, &answers); err != nil || len(answers) != len(cases) {
+	if err := json.Unmarshal(out, &answers); err != nil || len(answers) != len(cases) {
 		t.Fatalf("%v %s", err, out)
 	}
 	for i, c := range cases {

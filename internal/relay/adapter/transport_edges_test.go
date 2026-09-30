@@ -112,19 +112,15 @@ func transportEdge(t *testing.T, kind string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/transport_edges.py"))
-	cmd.Dir = repo
-	cmd.Stdin = bytes.NewReader(raw)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Python %v\n%s", err, out)
-	}
+	repo := pyRepo(t)
+	out := pyOutput(t, "transport_edges.py", func() *exec.Cmd {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		t.Cleanup(cancel)
+		cmd := exec.CommandContext(ctx, "uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/transport_edges.py"))
+		cmd.Dir = repo
+		cmd.Stdin = bytes.NewReader(raw)
+		return cmd
+	})
 	var want any
 	if err := json.Unmarshal(out, &want); err != nil {
 		t.Fatal(err)

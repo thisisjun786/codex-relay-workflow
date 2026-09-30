@@ -88,6 +88,10 @@ def clock(home: Path):
     for name in after:(root/name).unlink()
     now=datetime(2026,1,1,0,0,0,123456,tzinfo=timezone.utc).isoformat(timespec='microseconds')
     py=guard.evaluate(root,f['stop'],now=now,mode='hold',db_path=str(home/'clock.sqlite3'))
+    if sys.argv[3:]==['python']:
+        # Python's envelope and records alone, recorded by the Go test (pyoracle).
+        print(json.dumps(dict(envelope=json.dumps(py,separators=(',',':'))+'\n',files={str(p.relative_to(root)):p.read_text() for p in root.glob('*/*/hook/*/*/*.json')})))
+        return
     assert (json.dumps(py,separators=(',',':'))+'\n').encode()==(home/'actual.json').read_bytes()
     assert after=={str(p.relative_to(root)):p.read_bytes() for p in root.glob('*/*/hook/*/*/*.json')}
     print('injected clock: envelope, observation and hold bytes equal')

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"math"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -62,14 +61,7 @@ func Test28_BAD_19_GuardBudgets(t *testing.T) {
 		got := map[string]any{"receipt": plain(receipt), "calls": methods, "invalid": invalid}
 		spec := map[string]any{"root": root, "guard": guardCount, "settings": authorized(), "resume": resume()}
 		raw, _ := json.Marshal(spec)
-		repo, _ := filepath.Abs("../../..")
-		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/budget_capture.py"))
-		cmd.Dir = repo
-		cmd.Stdin = bytes.NewReader(raw)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("oracle %v %s", err, out)
-		}
+		out := pyDriver(t, "budget_capture.py", raw)
 		var want map[string]any
 		if err := json.Unmarshal(out, &want); err != nil {
 			t.Fatal(err)

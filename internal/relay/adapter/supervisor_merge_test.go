@@ -18,6 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 type supervisorRun struct {
@@ -228,16 +229,32 @@ func Test28_HOST_24_SupervisorSendRead(t *testing.T) {
 					t.Fatalf("message ids differ: %s %s", goID, pyID)
 				}
 				goRuns := runSupervisorBinary(t, mode.program, goState, goHost.SocketPath, goID)
-				// The oracle's store was seeded by Go: Python serves it after a takeover, and Go
-				// reads its tables back after one more.
-				testsupport.HandOver(t, filepath.Join(pyState, "relay.sqlite3"), "python")
-				pyRuns := runSupervisorPython(t, pyState, pyHost.SocketPath, pyID, mode.rendered)
+				var python struct {
+					Runs   []supervisorRun
+					Tables map[string]any
+				}
+				pyoracle.JSON(t, "supervisor_cli_capture.py", &python, func() (any, error) {
+					// The oracle's store was seeded by Go: Python serves it after a takeover, and
+					// Go reads its tables back after one more.
+					testsupport.HandOver(t, filepath.Join(pyState, "relay.sqlite3"), "python")
+					runs := runSupervisorPython(t, pyState, pyHost.SocketPath, pyID, mode.rendered)
+					testsupport.HandOver(t, filepath.Join(pyState, "relay.sqlite3"), "go")
+					return map[string]any{"Runs": runs, "Tables": normalizeSupervisorTables(supervisorTables(t, pyState), pyState, pyHost.SocketPath)}, nil
+				}, pyOptions(t, pyoracle.Substitute(pyHost.SocketPath, "<python-host-socket>"))...)
+				pyRuns := python.Runs
 				if !reflect.DeepEqual(goRuns, pyRuns) {
 					t.Fatalf("CLI differs\nGo: %#v\nPython: %#v", goRuns, pyRuns)
 				}
-				testsupport.HandOver(t, filepath.Join(pyState, "relay.sqlite3"), "go")
-				goTables := normalizeSupervisorTables(supervisorTables(t, goState), goState, goHost.SocketPath)
-				pyTables := normalizeSupervisorTables(supervisorTables(t, pyState), pyState, pyHost.SocketPath)
+				// Python's tables are recorded as JSON, so Go's are compared as JSON too.
+				var goTables map[string]any
+				encoded, err := json.Marshal(normalizeSupervisorTables(supervisorTables(t, goState), goState, goHost.SocketPath))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := decodeNumbers(encoded, &goTables); err != nil {
+					t.Fatal(err)
+				}
+				pyTables := python.Tables
 				if !reflect.DeepEqual(goTables, pyTables) {
 					g, _ := json.Marshal(goTables)
 					p, _ := json.Marshal(pyTables)

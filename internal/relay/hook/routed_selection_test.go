@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 type routedFixture struct {
@@ -143,21 +145,29 @@ func decoded(t *testing.T, raw []byte) any {
 	return value
 }
 
-// Test33RoutedSelectionRefusals is PR #185 thread 4127894191 across runtimes (decision 24): a
-// routed Stop carries the selection inputs, socketPath and program, so the owner refuses it
-// as the CLI's local fallback refuses it under the owner's configuration. The hook's own
-// environment sees one store for its socket and routes the Stop; the owner's sees two.
-// Directions: the retained Python client (guard-evaluate) to the Go owner, and the Go hook
-// client (RequestGuard, what crw hook sends) to the retained Python owner. The Python client
-// to the Python owner is test_fence.py's
-// test_a_routed_stop_is_refused_by_the_owner_as_the_owners_fallback_refuses_it.
+// relayEnv is the part of an environment a relay's selection reads (asOwner).
+var relayEnv = []string{"HOME", "CODEX_HOME", "XDG_STATE_HOME", "CODEX_SESSION_RELAY_MARKER_ROOT", "CODEX_SESSION_RELAY_STATE"}
+
+// Test33RoutedSelectionRefusals is PR #185 thread 4127894191 (decision 24): a routed Stop
+// carries the selection inputs, socketPath and program, so the owner refuses it as the CLI's
+// local fallback refuses it under the owner's configuration. The hook's own environment sees one
+// store for its socket and routes the Stop; the owner's sees two. routed_selection.py prepare
+// lays the fixture out and asks the Python CLI's local fallback under the owner's configuration
+// (expected); both are recorded (pythonFixture). The Go hook client (RequestGuard, what crw hook
+// sends) asks the Go owner, which must answer that refusal. The directions that crossed runtimes
+// (the Python client to the Go owner, the Go client to the retained Python owner) ran until
+// todo 44: rollback to Python closed at todo 43 (rollback_allowed=0), and the Python runtime
+// leaves in todo 44.
 func Test33RoutedSelectionRefusals(t *testing.T) {
 	for _, name := range []string{"override", "ambiguous"} {
 		t.Run(name, func(t *testing.T) {
 			home := hookHome(t, 5)
-			if out, err := exec.Command(python(t), "testdata/routed_selection.py", "prepare", home, name).CombinedOutput(); err != nil {
-				t.Fatalf("%v %s", err, out)
-			}
+			pythonFixture(t, "prepare", home, func() ([]byte, error) {
+				return pythonScript(t, nil, nil, "testdata/routed_selection.py", "prepare", home, name)
+			}, func() error {
+				// The hook's environment and the Python client's argv were the crossed direction's.
+				return keepEnv(filepath.Join(home, "fixture.json"), relayEnv, "ownerEnv", "-hookEnv", "-argv")
+			}, "app.sock")
 			raw, err := os.ReadFile(filepath.Join(home, "fixture.json"))
 			if err != nil {
 				t.Fatal(err)
@@ -168,33 +178,8 @@ func Test33RoutedSelectionRefusals(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-
-			// The Python client to the Go owner.
 			asOwner(t, f.OwnerEnv)
 			served := goOwner(t, ctx, f.State)
-			client := exec.CommandContext(ctx, f.Argv[0], f.Argv[1:]...)
-			client.Env = environ(f.HookEnv)
-			client.Dir = home
-			client.Stdin = bytes.NewReader(f.Stop)
-			var stderr bytes.Buffer
-			client.Stderr = &stderr
-			out, err := client.Output()
-			var exit *exec.ExitError
-			if !errors.As(err, &exit) || exit.ExitCode() != 2 || stderr.Len() != 0 {
-				t.Fatalf("Python client: %v %s %s", err, out, &stderr)
-			}
-			if served.Load() != 1 {
-				t.Fatalf("the Stop was not routed to the Go owner: %d", served.Load())
-			}
-			if got := decoded(t, out); !reflect.DeepEqual(got, f.Expected) {
-				t.Fatalf("Go owner answered\n%v\nthe owner's local fallback answers\n%v", got, f.Expected)
-			}
-			if err = os.Remove(filepath.Join(f.State, "control.sock")); err != nil && !errors.Is(err, os.ErrNotExist) {
-				t.Fatal(err)
-			}
-
-			// The Go hook client to the Python owner.
-			stop := pythonOwner(t, f.State, f.OwnerEnv)
 			conn, err := net.Dial("unix", filepath.Join(f.State, "control.sock"))
 			if err != nil {
 				t.Fatal(err)
@@ -208,11 +193,11 @@ func Test33RoutedSelectionRefusals(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if asked := stop(); asked != 1 {
-				t.Fatalf("the Python owner answered %d requests", asked)
+			if served.Load() != 1 {
+				t.Fatalf("the Stop was not routed to the Go owner: %d", served.Load())
 			}
 			if got := decoded(t, []byte(evidence.Dumps(answer, false, false, true))); !reflect.DeepEqual(got, f.Expected) {
-				t.Fatalf("Python owner answered\n%v\nits local fallback answers\n%v", got, f.Expected)
+				t.Fatalf("Go owner answered\n%v\nthe owner's local fallback answers\n%v", got, f.Expected)
 			}
 			if held, _ := filepath.Glob(filepath.Join(f.Root, "*", "*", "hook", "*", "*", "*.json")); len(held) != 0 {
 				t.Fatalf("a refusal recorded an observation: %v", held)
@@ -228,9 +213,9 @@ func Test33RoutedSelectionRefusals(t *testing.T) {
 // is the same file, are evaluated with the owner's own paths.
 func Test33OwnerEvaluatesOnlyItsOwnLocations(t *testing.T) {
 	home := hookHome(t, 5)
-	if out, err := exec.Command(python(t), "testdata/routed_selection.py", "paths", home).CombinedOutput(); err != nil {
-		t.Fatalf("%v %s", err, out)
-	}
+	pythonFixture(t, "paths", home, func() ([]byte, error) {
+		return pythonScript(t, nil, nil, "testdata/routed_selection.py", "paths", home)
+	}, nil)
 	raw, err := os.ReadFile(filepath.Join(home, "fixture.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -318,19 +303,31 @@ func Test33OwnerEvaluatesOnlyItsOwnLocations(t *testing.T) {
 	if err = os.Remove(filepath.Join(state, "control.sock")); err != nil && !errors.Is(err, os.ErrNotExist) {
 		t.Fatal(err)
 	}
-	// The retained Python owner answers every refusal with the same bytes.
-	env := map[string]string{}
-	for _, kv := range os.Environ() {
-		key, value, _ := strings.Cut(kv, "=")
-		env[key] = value
-	}
-	stop := pythonOwner(t, state, env)
-	for i, c := range refusals {
-		if frame := ask(request(c.root, c.db)); !bytes.Equal(frame, frames[i]) {
-			t.Fatalf("Python owner answered %q, Go %q", frame, frames[i])
+	// The retained Python owner answers every refusal with the same bytes: its frames, asked
+	// at the same state directory, are recorded (pyoracle).
+	raw = pyoracle.Answer(t, "python-owner", func() ([]byte, error) {
+		env := map[string]string{}
+		for _, kv := range os.Environ() {
+			key, value, _ := strings.Cut(kv, "=")
+			env[key] = value
 		}
+		stop := pythonOwner(t, state, env)
+		var python []string
+		for _, c := range refusals {
+			python = append(python, string(ask(request(c.root, c.db))))
+		}
+		if asked := stop(); asked != len(refusals) {
+			return nil, fmt.Errorf("the Python owner answered %d requests", asked)
+		}
+		return json.Marshal(python)
+	}, pyoracle.Substitute(home, "<HOME>"))
+	var python []string
+	if err = json.Unmarshal(raw, &python); err != nil || len(python) != len(frames) {
+		t.Fatalf("%v: %s", err, raw)
 	}
-	if asked := stop(); asked != len(refusals) {
-		t.Fatal(asked)
+	for i, frame := range frames {
+		if python[i] != string(frame) {
+			t.Fatalf("Python owner answered %q, Go %q", python[i], frame)
+		}
 	}
 }
