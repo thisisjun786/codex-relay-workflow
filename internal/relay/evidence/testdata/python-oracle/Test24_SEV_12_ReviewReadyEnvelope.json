@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "SEV-12": "txt:\"a4bf6c8815d17b2561cf81c662c70834\"\n"
+ }
+}

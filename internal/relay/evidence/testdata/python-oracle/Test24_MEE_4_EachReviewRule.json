@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "MEE-4": "txt:[[[[\"review_incomplete\",\"hasNextPage is still true, so the review was not enumerated\",\"\"]],{\"detail\":\"hasNextPage is still true, so the review was not enumerated\",\"reason\":\"merge_review_incomplete\"}],[[[\"review_incomplete\",\"no review page was read\",\"\"]],{\"detail\":\"no review page was read\",\"reason\":\"merge_review_incomplete\"}],[[[\"review_incomplete\",\"threadsSeen contains a blank identifier\",\"\"]],{\"detail\":\"threadsSeen contains a blank identifier\",\"reason\":\"merge_review_incomplete\"}],[[[\"review_incomplete\",\"threadsSeen repeats an identifier, so its length is not a count of threads actually seen\",\"\"]],{\"detail\":\"threadsSeen repeats an identifier, so its length is not a count of threads actually seen\",\"reason\":\"merge_review_incomplete\"}],[[[\"review_incomplete\",\"totalCount is 14 and 2 threads were seen\",\"\"]],{\"detail\":\"totalCount is 14 and 2 threads were seen\",\"reason\":\"merge_review_incomplete\"}],[[[\"review_incomplete\",\"14 threads are unresolved\",\"\"]],{\"detail\":\"14 threads are unresolved\",\"reason\":\"merge_review_incomplete\"}]]\n"
+ }
+}

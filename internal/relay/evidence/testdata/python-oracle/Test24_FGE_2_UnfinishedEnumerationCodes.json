@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "FGE-2": "txt:[[{\"complete\":false,\"connection\":\"items\",\"distinct\":1,\"pages\":[{\"returned\":1,\"token\":null,\"totalCount\":2},{\"returned\":1,\"token\":\"same\",\"totalCount\":2}],\"pagesRead\":2,\"totalCount\":2},[[\"enumeration_not_progressing\",\"the items connection handed back a page token it had already used, so the read was going in a circle and its page count is not evidence of distinct pages\",\"\"]]]]\n"
+ }
+}

@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "managed-start": "txt:{\"exit\":2,\"stdout\":\"{\\n  \\\"schema\\\": \\\"managed-start/1\\\",\\n  \\\"state\\\": \\\"refused\\\",\\n  \\\"stage\\\": \\\"preflight\\\",\\n  \\\"requestId\\\": \\\"managed-1\\\",\\n  \\\"reason\\\": \\\"worker_policy_unreadable\\\"\\n}\\n\"}"
+ }
+}

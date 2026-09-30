@@ -1,0 +1,21 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "exponent-boundary/ascii=0": "txt:1e+16",
+  "exponent-boundary/ascii=1": "txt:1e+16",
+  "fixed-boundary/ascii=0": "txt:0.0001",
+  "fixed-boundary/ascii=1": "txt:0.0001",
+  "integer/ascii=0": "txt:9007199254740993",
+  "integer/ascii=1": "txt:9007199254740993",
+  "integral-float/ascii=0": "txt:1.0",
+  "integral-float/ascii=1": "txt:1.0",
+  "large-exponent/ascii=0": "txt:1e+20",
+  "large-exponent/ascii=1": "txt:1e+20",
+  "negative-zero/ascii=0": "txt:-0.0",
+  "negative-zero/ascii=1": "txt:-0.0",
+  "small-exponent/ascii=0": "txt:1e-07",
+  "small-exponent/ascii=1": "txt:1e-07",
+  "unicode-html-separator/ascii=0": "txt:{\"z\": \"<>&\u2028\u2029\", \"é\": \"雪😀\"}",
+  "unicode-html-separator/ascii=1": "txt:{\"z\": \"<>&\\u2028\\u2029\", \"\\u00e9\": \"\\u96ea\\ud83d\\ude00\"}"
+ }
+}

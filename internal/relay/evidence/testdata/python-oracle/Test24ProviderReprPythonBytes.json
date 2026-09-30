@@ -1,0 +1,8 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "{\"dev-gate\":[\"42\"],\"external\":[\"43\"]}": "txt:{'dev-gate': ['42'], 'external': ['43']}",
+  "{\"external\":[\"43\"],\"dev-gate\":[\"42\"]}": "txt:{'external': ['43'], 'dev-gate': ['42']}",
+  "{\"z\":{\"b\":true,\"a\":null},\"a\":[1,\"x\"]}": "txt:{'z': {'b': True, 'a': None}, 'a': [1, 'x']}"
+ }
+}

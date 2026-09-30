@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "FGE-6": "txt:[[\"checks_stale\",\"required check 'dev-gate' (run 'run-1') concluded 'failure' on its newest attempt\",\"run-1\"]]\n"
+ }
+}

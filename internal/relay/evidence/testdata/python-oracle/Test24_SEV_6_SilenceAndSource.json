@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "SEV-6": "txt:[false,{\"detail\":\"malformed_receipt: a yes at a reach stage needs the record that says so\",\"error\":\"EnvelopeRefused\",\"reason\":\"malformed_receipt\"},{\"detail\":\"\",\"source\":\"acks\",\"state\":\"yes\"},false]\n"
+ }
+}

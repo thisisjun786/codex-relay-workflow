@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "SEV-1": "txt:[{\"ok\":\"decision\"},{\"ok\":\"request\"},{\"detail\":\"malformed_receipt: 'completion' is not a purpose supervisor_to_parent carries; it has midpoint_check, project_assignment, relayed_decision, resume, scope_correction, user_stop\",\"error\":\"EnvelopeRefused\",\"reason\":\"malformed_receipt\"}]\n"
+ }
+}

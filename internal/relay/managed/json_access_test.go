@@ -2,12 +2,14 @@ package managed
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // Preserve the real registration/admission path; only the external transport
@@ -35,10 +37,13 @@ from codex_session_relay.managed import ManagedStart
 m=object.__new__(ManagedStart)
 m.result=lambda state,stage,reason: {"state":state,"stage":stage,"reason":reason}
 print(json.dumps([{"value":v,"result":m._business_result({"status":v})} for v in [None,False,True,0,2,1.5,"","x",[],[1],{}, {"a":1}]]))`
-	raw, err := exec.Command(filepath.Join(root, ".venv/bin/python"), "-c", script).CombinedOutput()
-	if err != nil {
-		t.Fatalf("oracle: %v\n%s", err, raw)
-	}
+	raw := pyoracle.Answer(t, "business-results", func() ([]byte, error) {
+		raw, err := exec.Command(filepath.Join(root, ".venv/bin/python"), "-c", script).CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("oracle: %v\n%s", err, raw)
+		}
+		return raw, nil
+	})
 	for _, one := range evidence.Items(evidence.Decode(string(raw))) {
 		tc := evidence.Dict(one, false)
 		t.Run(evidence.Repr(tc["value"]), func(t *testing.T) {

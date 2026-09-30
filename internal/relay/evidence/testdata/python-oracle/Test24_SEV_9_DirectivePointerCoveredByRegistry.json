@@ -1,0 +1,8 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "--purpose project_assignment --correlation -": "txt:{\"code\":2,\"output\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"malformed_receipt\\\",\\n  \\\"detail\\\": \\\"'-' is how the pointer spells no correlation, so it cannot also be one\\\"\\n}\\n\"}",
+  "--reference relay-envelope/1|supervisor_to_parent|project_assignment|ced83c69b49c3ebf647b0f41b5409468|msg-1": "txt:{\"code\":0,\"output\":\"{\\n  \\\"directiveId\\\": \\\"dir-d597249c4ff4143d2aabac474a1fcd0c\\\",\\n  \\\"scopeKind\\\": \\\"project\\\",\\n  \\\"scopeKey\\\": \\\"PRJ-1\\\",\\n  \\\"fromTaskId\\\": \\\"supervisor\\\",\\n  \\\"fromScopeKey\\\": \\\"INI-1\\\",\\n  \\\"linkId\\\": \\\"lnk-6fa68afd8cc27a8e7780d400a52f73c2\\\",\\n  \\\"linkKind\\\": \\\"execution\\\",\\n  \\\"digest\\\": \\\"digest\\\",\\n  \\\"reference\\\": \\\"relay-envelope/1|supervisor_to_parent|project_assignment|ced83c69b49c3ebf647b0f41b5409468|msg-1\\\",\\n  \\\"revision\\\": 1,\\n  \\\"disposition\\\": null,\\n  \\\"decidedBy\\\": null,\\n  \\\"decidedAt\\\": null,\\n  \\\"recordedAt\\\": \\\"<recordedAt>\\\"\\n}\\n\"}",
+  "--reference relay-envelope/1|supervisor_to_parent|project_assignment|d9a65c37c09967713b2093fa1fdf485e|-": "txt:{\"code\":2,\"output\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"link_conflict\\\",\\n  \\\"detail\\\": \\\"the reference carries messageId d9a65c37c09967713b2093fa1fdf485e, but this link and digest derive ced83c69b49c3ebf647b0f41b5409468; the pointer belongs to another instruction\\\"\\n}\\n\"}"
+ }
+}

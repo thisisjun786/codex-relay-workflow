@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "SEV-8": "txt:{\"detail\":\"malformed_receipt: received on parent_to_supervisor is answered by supervisor_readbacks, not by 'acks'\",\"error\":\"EnvelopeRefused\",\"reason\":\"malformed_receipt\"}\n"
+ }
+}

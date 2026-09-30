@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "FGE-5": "txt:[[\"stale\",[{\"code\":\"candidate_moved\",\"detail\":\"the candidate changed while this was being collected (headSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' to 'cccccccccccccccccccccccccccccccccccccccc'), so what was read describes something that is no longer the candidate\"}]],[\"ready\",[]],[\"not_ready\",[{\"code\":\"candidate_conflicted\",\"detail\":\"the candidate does not merge cleanly into its base\"}]]]\n"
+ }
+}

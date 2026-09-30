@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "MEE-6": "txt:[[\"malformed_evidence\",\"check entry 0 does not state attempt, so which attempt is newest cannot be decided; an omitted attempt is not evidence that this is the newest\",\"\"]]\n"
+ }
+}

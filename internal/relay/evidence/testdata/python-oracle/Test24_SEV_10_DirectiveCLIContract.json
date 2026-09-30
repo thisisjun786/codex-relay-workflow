@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "--correlation msg-1": "txt:{\"code\":4,\"output\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"--correlation is part of an envelope pointer, so it requires --purpose\\\"\\n}\\n\"}"
+ }
+}

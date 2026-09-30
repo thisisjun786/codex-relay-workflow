@@ -1,0 +1,8 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "both-missing": "txt:{\"exit\":4,\"output\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"managed-start requires explicit --state and --socket\\\"\\n}\\n\"}",
+  "missing-socket": "txt:{\"exit\":4,\"output\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"managed-start requires explicit --state and --socket\\\"\\n}\\n\"}",
+  "missing-state": "txt:{\"exit\":4,\"output\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"managed-start requires explicit --state and --socket\\\"\\n}\\n\"}"
+ }
+}

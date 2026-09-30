@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "FGE-14": "txt:[\"late_finding\",\"candidate_moved\",\"gates_moved\",\"record_invalid\",\"malformed_evidence\"]\n"
+ }
+}

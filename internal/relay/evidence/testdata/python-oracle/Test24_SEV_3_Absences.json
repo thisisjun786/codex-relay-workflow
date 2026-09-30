@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "SEV-3": "txt:[{\"absent\":\"inherited\",\"detail\":\"stated on the assignment\"},\"<inherited: stated on the assignment>\",false]\n"
+ }
+}
