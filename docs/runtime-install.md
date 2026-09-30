@@ -38,7 +38,7 @@ Moving a host from the Python runtime to this one is [the cutover](port/cutover.
 alone. The cutover moves the store's ownership. Where `crw install install`, which moves the pointer
 (and on the relay host's first Go install replaces its Python-era Stop settings, once), falls among
 its steps is not written yet; that order is an open item todo 42 settles
-([the backlog](port/refactor-backlog.md#deferred-review-findings-fix-before-todo-42)).
+([the backlog](port/refactor-backlog.md#deferred-review-findings)).
 
 ## What an installation is
 
@@ -475,7 +475,7 @@ absolute path and never through the pointer ([cutover rollback](port/cutover.md#
 not imply the other, and a return to Python needs both. The cutover runbook does not yet say in
 which order they run, or where `crw install install` falls among the forward steps; both orders are
 open items todo 42 settles
-([the backlog](port/refactor-backlog.md#deferred-review-findings-fix-before-todo-42)). The one order
+([the backlog](port/refactor-backlog.md#deferred-review-findings)). The one order
 fixed today is the plugin payload's, above: the payload goes back before the runtime does.
 
 ## Removing a runtime
