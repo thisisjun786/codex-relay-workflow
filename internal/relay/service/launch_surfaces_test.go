@@ -21,11 +21,11 @@ import (
 )
 
 // Every surface that reports or enforces the launch declaration reads it through
-// ResolveLaunchPolicyAt, so each answers Python's resolution (testdata/launch_policy.json) and
-// refuses before whatever it would otherwise do first, as cli.py main does: doctor's and
-// status's launchPolicy, packet-check's receive step, and a supervisor started with
-// `service run`. The expected refusal is LaunchRefusal over Python's resolution, and the other
-// answers are the Python console script's bytes for the same tree.
+// ResolveLaunchPolicyAt, so each answers the resolution (the trees of
+// testdata/fixtures/launch_policy.json) and refuses before whatever it would otherwise do first,
+// as cli.py main does: doctor's and status's launchPolicy, packet-check's receive step, and a
+// supervisor started with `service run`. The goldens began as Python's resolution, the refusal
+// LaunchRefusal made of it, and the Python console script's bytes for the same tree.
 
 type relayRun struct {
 	code   int
@@ -39,16 +39,16 @@ func relay(t *testing.T, argv ...string) relayRun {
 	return relayRun{code, out.String()}
 }
 
-// launchTree builds golden case name under a fresh root, with this process's working
+// launchTree builds fixture case name under a fresh root, with this process's working
 // directory, HOME and policy variable set as the capture set them.
-func launchTree(t *testing.T, golden launchGolden, name string) (root, state string, c launchCase) {
+func launchTree(t *testing.T, fixture launchFixture, name string) (root, state string, c launchCase) {
 	t.Helper()
-	c, ok := golden.Cases[name]
+	c, ok := fixture.Cases[name]
 	if !ok {
-		t.Fatalf("no golden case %q", name)
+		t.Fatalf("no fixture case %q", name)
 	}
 	root = t.TempDir()
-	state = buildLaunchCase(t, root, golden, c)
+	state = buildLaunchCase(t, root, fixture, c)
 	t.Chdir(root)
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Setenv(execution.EnvPolicy, "")
@@ -83,7 +83,7 @@ func block(t *testing.T, stdout, key string, drop ...string) string {
 }
 
 func TestLaunchPolicy_doctor_and_status_report_the_one_resolution(t *testing.T) {
-	golden := loadLaunchGolden(t)
+	fixture := loadLaunchFixture(t)
 	// Each of these once read differently somewhere: undecodable bytes, a NaN in the record,
 	// two files named at once, a policy nested past the parser, a mode-0 declaration.
 	for _, name := range []string{"utf8-invalid-start", "record-nan", "conflict", "policy-deep-object", "unreadable-eacces", "record-trailing-slash"} {
@@ -91,60 +91,48 @@ func TestLaunchPolicy_doctor_and_status_report_the_one_resolution(t *testing.T) 
 			if name == "unreadable-eacces" && os.Geteuid() == 0 {
 				t.Skip("root reads a mode-0 file")
 			}
-			root, state, c := launchTree(t, golden, name)
-			doctor := relay(t, "--state", state, "--json", "doctor")
-			if got := strings.ReplaceAll(block(t, doctor.stdout, "launchPolicy"), root, "<R>"); got != c.Resolution {
-				t.Errorf("doctor\n%s\nPython\n%s", got, c.Resolution)
-			}
+			root, state, _ := launchTree(t, fixture, name)
+			doctor := strings.ReplaceAll(block(t, relay(t, "--state", state, "--json", "doctor").stdout, "launchPolicy"), root, "<R>")
 			status := relay(t, "--state", state, "service", "status")
-			if got := strings.ReplaceAll(block(t, status.stdout, "launchPolicy", "appliesTo", "runningDigest", "matchesRunning"), root, "<R>"); got != c.Resolution {
-				t.Errorf("status\n%s\nPython\n%s", got, c.Resolution)
+			if got := strings.ReplaceAll(block(t, status.stdout, "launchPolicy", "appliesTo", "runningDigest", "matchesRunning"), root, "<R>"); got != doctor {
+				t.Errorf("status\n%s\ndoctor\n%s", got, doctor)
 			}
+			checkFromPackage(t, "resolution", doctor)
 		})
 	}
 }
 
 // doctor's own rolePolicy reads the variable through the same parser and depth rule.
 func TestLaunchPolicy_doctor_role_policy_reads_as_the_launch_does(t *testing.T) {
-	golden := loadLaunchGolden(t)
-	root, state, c := launchTree(t, golden, "policy-deep-object")
+	fixture := loadLaunchFixture(t)
+	root, state, _ := launchTree(t, fixture, "policy-deep-object")
 	t.Setenv(execution.EnvPolicy, filepath.Join(root, "policy.json"))
 	if err := os.Remove(filepath.Join(state, "launch-policy.json")); err != nil {
-		t.Fatal(err)
-	}
-	var python struct{ Detail string }
-	if err := json.Unmarshal([]byte(c.Resolution), &python); err != nil {
 		t.Fatal(err)
 	}
 	var role struct{ State, Detail string }
 	if err := json.Unmarshal([]byte(block(t, relay(t, "--state", state, "--json", "doctor").stdout, "rolePolicy")), &role); err != nil {
 		t.Fatal(err)
 	}
-	if role.State != "unresolved" || strings.ReplaceAll(role.Detail, root, "<R>") != python.Detail {
-		t.Fatalf("rolePolicy %+v, Python's reading of the file: %s", role, python.Detail)
+	if role.State != "unresolved" {
+		t.Fatalf("rolePolicy %+v", role)
 	}
-}
-
-func refusalText(t *testing.T, root, resolution string) string {
-	t.Helper()
-	decoded, err := store.LoadsJSON([]byte(strings.ReplaceAll(resolution, "<R>", root)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return emitted(t, service.LaunchRefusal(decoded.(service.Object))) + "\n"
+	// The detail the launch resolution gives for the file (its golden began as Python's).
+	checkFromPackage(t, "detail", strings.ReplaceAll(role.Detail, root, "<R>"))
 }
 
 func TestLaunchPolicy_the_receive_check_settles_the_declaration_first(t *testing.T) {
-	golden := loadLaunchGolden(t)
+	fixture := loadLaunchFixture(t)
 	// A refused declaration answers before a packet that is not even there is read.
-	root, state, c := launchTree(t, golden, "utf8-invalid-start")
+	root, state, _ := launchTree(t, fixture, "utf8-invalid-start")
 	got := relay(t, "--state", state, "packet-check", "--packet", filepath.Join(root, "absent.json"), "--receiver", "task")
-	if want := refusalText(t, root, c.Resolution); got.code != 2 || got.stdout != want {
-		t.Fatalf("exit %d\n%s\nwant\n%s", got.code, got.stdout, want)
+	if got.code != 2 {
+		t.Fatalf("exit %d\n%s", got.code, got.stdout)
 	}
+	refusal := strings.ReplaceAll(got.stdout, root, "<R>")
 	// An empty --receiver still reads the store but is not the receive check main settles a
 	// declaration for, so a conflicting one does not answer for it (the Python answer).
-	root, state, _ = launchTree(t, golden, "conflict")
+	root, state, _ = launchTree(t, fixture, "conflict")
 	packet := filepath.Join(root, "packet.json")
 	if err := os.WriteFile(packet, []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
@@ -155,41 +143,50 @@ func TestLaunchPolicy_the_receive_check_settles_the_declaration_first(t *testing
 		t.Fatalf("empty receiver: exit %d\n%s", got.code, got.stdout)
 	}
 	// os.environ refuses the recorded path before anything reads it.
-	_, state, _ = launchTree(t, golden, "record-nul")
+	_, state, _ = launchTree(t, fixture, "record-nul")
 	got = relay(t, "--state", state, "packet-check", "--packet", packet, "--receiver", "task")
 	if want := "{\n  \"error\": \"host\",\n  \"detail\": \"ValueError: embedded null byte\"\n}\n"; got.code != 3 || got.stdout != want {
 		t.Fatalf("NUL: exit %d\n%s", got.code, got.stdout)
 	}
+	// The refusal LaunchRefusal makes of the resolution (its golden began as Python's).
+	checkFromPackage(t, "refusal", refusal)
 }
 
 func TestLaunchPolicy_service_run_is_refused_before_it_asks_for_a_host(t *testing.T) {
-	golden := loadLaunchGolden(t)
+	fixture := loadLaunchFixture(t)
+	// The refusals LaunchRefusal makes of the resolution (their goldens began as Python's).
+	refusals := map[string]string{}
 	for _, argv := range [][]string{{"service", "run"}, {"--socket", "app.sock", "service", "run", "--segment-seconds", "0"}} {
-		root, state, c := launchTree(t, golden, "utf8-invalid-start")
+		root, state, _ := launchTree(t, fixture, "utf8-invalid-start")
 		got := relay(t, append([]string{"--state", state}, argv...)...)
-		if want := refusalText(t, root, c.Resolution); got.code != 2 || got.stdout != want {
-			t.Fatalf("%v: exit %d\n%s\nwant\n%s", argv, got.code, got.stdout, want)
+		if got.code != 2 {
+			t.Fatalf("%v: exit %d\n%s", argv, got.code, got.stdout)
 		}
+		refusals[strings.Join(argv, " ")] = strings.ReplaceAll(got.stdout, root, "<R>")
 	}
 	// A run its own launch settled (the id matches, as str.strip()ped) is not asked again.
-	_, state, _ := launchTree(t, golden, "utf8-invalid-start")
+	_, state, _ := launchTree(t, fixture, "utf8-invalid-start")
 	t.Setenv(service.SettledEnv, " launch-7 ")
 	got := relay(t, "--state", state, "service", "run", "--launch-id", "launch-7")
 	if want := "{\n  \"error\": \"usage\",\n  \"detail\": \"this command needs --socket to reach the host\"\n}\n"; got.code != 4 || got.stdout != want {
 		t.Fatalf("settled: exit %d\n%s", got.code, got.stdout)
 	}
 	// Another launch's settlement says nothing about this one.
-	root, state, c := launchTree(t, golden, "utf8-invalid-start")
+	root, state, _ := launchTree(t, fixture, "utf8-invalid-start")
 	t.Setenv(service.SettledEnv, "launch-6")
 	got = relay(t, "--state", state, "service", "run", "--launch-id", "launch-7")
-	if want := refusalText(t, root, c.Resolution); got.code != 2 || got.stdout != want {
+	if got.code != 2 {
 		t.Fatalf("another launch's settlement: exit %d\n%s", got.code, got.stdout)
 	}
+	refusals["another launch's settlement"] = strings.ReplaceAll(got.stdout, root, "<R>")
 	t.Setenv(service.SettledEnv, "")
-	_, state, _ = launchTree(t, golden, "record-nul")
+	_, state, _ = launchTree(t, fixture, "record-nul")
 	got = relay(t, "--state", state, "service", "run")
 	if want := "{\n  \"error\": \"host\",\n  \"detail\": \"ValueError: embedded null byte\"\n}\n"; got.code != 3 || got.stdout != want {
 		t.Fatalf("NUL: exit %d\n%s", got.code, got.stdout)
+	}
+	for _, key := range []string{"service run", "--socket app.sock service run --segment-seconds 0", "another launch's settlement"} {
+		checkFromPackage(t, key, refusals[key])
 	}
 }
 
@@ -329,9 +326,9 @@ func TestLaunchPolicy_state_files_follow_the_spelled_state_directory(t *testing.
 // environment, after it opened daemon.log: subprocess.Popen's ValueError, exit 3, the log
 // created and empty, no child.
 func TestLaunchPolicy_start_and_restart_meet_a_recorded_NUL_as_the_launcher_does(t *testing.T) {
-	golden := loadLaunchGolden(t)
+	fixture := loadLaunchFixture(t)
 	for _, command := range []string{"start", "restart"} {
-		_, state, _ := launchTree(t, golden, "record-nul")
+		_, state, _ := launchTree(t, fixture, "record-nul")
 		if got := relay(t, "--state", state, "--socket", "app.sock", "service", "enable"); got.code != 0 {
 			t.Fatalf("enable: exit %d\n%s", got.code, got.stdout)
 		}
