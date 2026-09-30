@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/plugins"
 )
 
@@ -44,7 +45,7 @@ func pyRepr(v any) string {
 	case nil:
 		return "None"
 	case string:
-		return "'" + strings.ReplaceAll(strings.ReplaceAll(x, "\\", "\\\\"), "'", "\\'") + "'"
+		return evidence.StrRepr(x)
 	default:
 		raw, _ := json.Marshal(x)
 		s := string(raw)

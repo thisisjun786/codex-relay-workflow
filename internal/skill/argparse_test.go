@@ -71,6 +71,13 @@ func TestSkillArgparseMatchesLivePython(t *testing.T) {
 			tests[family] = append(tests[family], argparseCase{strings.Join(command, " ") + " trailing double dash", append(command, "--")})
 		}
 	}
+	// argparse names a refused value with repr(): a quote inside picks the other
+	// quote, and control and non-ASCII characters print as Python escapes them.
+	for family := range pythonArgparseFamilies {
+		for _, value := range []string{"it's", `say "hi"`, `it's "both"`, "tab\there", "caf\u00e9\x7f", "back\\slash"} {
+			tests[family] = append(tests[family], argparseCase{"repr of invalid choice", []string{value}}, argparseCase{"repr of help argument", []string{"--help=" + value}})
+		}
+	}
 	for family, spec := range pythonArgparseFamilies {
 		for _, args := range [][]string{{"--unknown", "--help"}, {"--he"}, {"-hh"}, {"--help=yes"}, {"--", "--help"}} {
 			tests[family] = append(tests[family], argparseCase{"root edge", args})
