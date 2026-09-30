@@ -11,11 +11,12 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
-// TestArgumentRefusals_fall_where_the_python_fence_puts_them drives the built crw and the live
-// Python fence through the same command lines and compares stdout bytes, exit codes and what
-// each left in its state directory. cli.main opens a write form's store in _ownership_preflight
+// TestArgumentRefusals_fall_where_the_python_fence_puts_them drives the built crw through the
+// command lines the Python fence answered (recorded, internal/testsupport/pyoracle) and compares
+// stdout bytes, exit codes and what each left in its state directory. cli.main opens a write form's store in _ownership_preflight
 // before the handler reads its arguments, so a write form's own refusal leaves an absent store
 // initialized (decision 30) and a store the other runtime owns answers with the ownership
 // refusal. A read-only form's Services.store is lazy, so a handler that refuses its arguments
@@ -88,9 +89,21 @@ func TestArgumentRefusals_fall_where_the_python_fence_puts_them(t *testing.T) {
 			goState, pyState := filepath.Join(home, "go"), filepath.Join(home, "python")
 			if c.foreign {
 				testsupport.Create(t, filepath.Join(goState, "relay.sqlite3"), "", "python")
-				testsupport.Create(t, filepath.Join(pyState, "relay.sqlite3"), "", "go")
 			}
-			goSide, pySide := run(t, home, goState, c.argv, false), run(t, home, pyState, c.argv, true)
+			var recorded struct {
+				Stdout string   `json:"stdout"`
+				Exit   int      `json:"exit"`
+				Left   []string `json:"left"`
+			}
+			pyoracle.JSON(t, "python", &recorded, func() (any, error) {
+				if c.foreign {
+					testsupport.Create(t, filepath.Join(pyState, "relay.sqlite3"), "", "go")
+				}
+				answer := run(t, home, pyState, c.argv, true)
+				return map[string]any{"stdout": answer.stdout, "exit": answer.exit, "left": answer.left}, nil
+			}, pyoracle.Substitute(home, "<HOME>"))
+			pySide := side{recorded.Stdout, recorded.Exit, recorded.Left}
+			goSide := run(t, home, goState, c.argv, false)
 			if goSide.stdout != pySide.stdout || goSide.exit != pySide.exit {
 				t.Fatalf("crw exit %d\n%s\npython exit %d\n%s", goSide.exit, goSide.stdout, pySide.exit, pySide.stdout)
 			}

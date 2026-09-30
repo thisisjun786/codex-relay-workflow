@@ -12,6 +12,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if mode := os.Getenv(sqlitePeerEnv); mode != "" {
+		os.Exit(sqlitePeer(mode, os.Getenv(sqlitePeerPath)))
+	}
 	dir, err := os.MkdirTemp("", "crw-contracttest-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -120,7 +123,7 @@ func replay(t *testing.T, scenario Scenario, skips *int) {
 	if err != nil {
 		t.Fatalf("%s: %v", scenario.ID, err)
 	}
-	if err := Assert(scenario, actual); err != nil {
+	if err := Assert(withNativeExpectations(t, scenario), actual); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-func hookShapeCases(t *testing.T) []skillShapeCase {
+func hookShapeCases(t *testing.T, inputs string) []skillShapeCase {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(repositoryRoot(), "plugins", defaultFixture("decisions"), "t24-invalid-persisted-counts.json"))
+	raw, err := os.ReadFile(filepath.Join(inputs, "decisions", "t24-invalid-persisted-counts.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

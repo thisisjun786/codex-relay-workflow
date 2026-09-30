@@ -49,8 +49,25 @@ func stripPythonTraceback(stderr string) string {
 // byte-identical, and stderr is byte-identical once Python's traceback frames
 // are removed. Go stderr is never stripped, so fake Go frames still fail.
 func skillProcessParity(python, gocli skillProcessResult) bool {
-	return python.exit == gocli.exit && python.stdout == gocli.stdout &&
+	return python.exit == gocli.exit && unreachedByFunction(python.stdout) == unreachedByFunction(gocli.stdout) &&
 		stripPythonTraceback(python.stderr) == gocli.stderr
+}
+
+// unreachedByFunction reduces each line hook-probe replay prints for an unreached return to
+// `  UNREACHED <function>`. The reference named a return by its Python line and source, the Go
+// replay names it by its ordinal and label (hookReturnSites), so parity compares which functions
+// keep unreached returns, in order and with multiplicity; TestHookReplayNamesEachUnreachedReturn
+// pins the Go lines themselves.
+func unreachedByFunction(out string) string {
+	lines := strings.Split(out, "\n")
+	for i, line := range lines {
+		if rest, ok := strings.CutPrefix(line, "  UNREACHED "); ok {
+			if end := strings.IndexAny(rest, ":#"); end >= 0 {
+				lines[i] = "  UNREACHED " + rest[:end]
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func TestSkillProcessParityComparator(t *testing.T) {

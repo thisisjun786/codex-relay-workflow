@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python": "txt:{\"exit\":0,\"stdout\":\"usage: codex-session-relay intent-declare [-h] [--marker-root MARKER_ROOT]\\n                                          --workspace WORKSPACE\\n                                          --dispatch-request-id DISPATCH_REQUEST_ID\\n                                          --issue ISSUE\\n                                          [--declared-at DECLARED_AT]\\n                                          [--criteria-source CRITERIA_SOURCE]\\n                                          [--baseline-revision BASELINE_REVISION]\\n                                          [--settings SETTINGS] [--no-db-path]\\n\\noptions:\\n  -h, --help            show this help message and exit\\n  --marker-root MARKER_ROOT\\n  --workspace WORKSPACE\\n  --dispatch-request-id DISPATCH_REQUEST_ID\\n  --issue ISSUE\\n  --declared-at DECLARED_AT\\n  --criteria-source CRITERIA_SOURCE\\n  --baseline-revision BASELINE_REVISION\\n  --settings SETTINGS   the authorised execution settings, as JSON\\n  --no-db-path          do not record where the relay store lives; the hook\\n                        must then be told explicitly\\n\",\"stderr\":\"\"}\n"
+ }
+}

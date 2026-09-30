@@ -9,6 +9,7 @@ import (
 )
 
 func TestHookRegistrationLivePython(t *testing.T) {
+	pythonOracleRoot(t)
 	t.Setenv("PYTHONDONTWRITEBYTECODE", "1")
 	root := repositoryRoot()
 	crw := filepath.Join(t.TempDir(), "crw")
@@ -27,7 +28,7 @@ func TestHookRegistrationLivePython(t *testing.T) {
 			if err := os.WriteFile(binary, []byte(schema), 0600); err != nil {
 				t.Fatal(err)
 			}
-			codexHome := filepath.Join(dir, "home")
+			codexHome := filepath.Join(dir, "codex-home")
 			if name != "no registration" {
 				for path, contents := range map[string]string{
 					"hooks.json": `{"hooks":{"Stop":[],"SessionStart":[]}}`,
@@ -53,7 +54,7 @@ func TestHookRegistrationLivePython(t *testing.T) {
 			// When both public command dispatchers observe the same fixture host.
 			python := exec.Command(filepath.Join(root, ".venv/bin/python"), append([]string{filepath.Join(root, "plugins/crw/skills/crw-run/scripts/hook_probe.py")}, args...)...)
 			python.Env = oracleEnv("PYTHONDONTWRITEBYTECODE=1")
-			want := captureSkillProcess(t, python)
+			want := pythonProcess(t, "", python)
 			if want.exit != 0 {
 				t.Fatalf("Python oracle failed: %+v", want)
 			}

@@ -36,7 +36,7 @@ func observeShapeCases(t *testing.T) []skillShapeCase {
 			parts = strings.Split(path, ".")
 		}
 		for _, variant := range shapeVariants() {
-			cases = append(cases, skillShapeCase{name: "observe/registration/" + path + "/" + variant.name, family: "hook-probe", args: []string{"observe", "--binary", "$TMP/codex", "--codex-home", "$TMP/home"}, files: map[string]any{"codex": shapeClone(t, input), "home/hooks.json": shapeSet(map[string]any{"hooks": map[string]any{"Stop": []any{}}}, parts, variant)}})
+			cases = append(cases, skillShapeCase{name: "observe/registration/" + path + "/" + variant.name, family: "hook-probe", args: []string{"observe", "--binary", "$TMP/codex", "--codex-home", "$TMP/codex-home"}, files: map[string]any{"codex": shapeClone(t, input), "codex-home/hooks.json": shapeSet(map[string]any{"hooks": map[string]any{"Stop": []any{}}}, parts, variant)}})
 		}
 	}
 	cases = append(cases, observeSortShapeCases(t, input, output)...)

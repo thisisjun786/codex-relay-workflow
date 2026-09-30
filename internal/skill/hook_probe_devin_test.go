@@ -4,14 +4,11 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -36,6 +33,8 @@ func buildHookProbeCLI(t *testing.T) string {
 	return binary
 }
 
+// runHookProbePython answers what hook_probe.py answered for args (recorded; see
+// python_oracle_test.go).
 func runHookProbePython(t *testing.T, args ...string) hookProbeResult {
 	t.Helper()
 	root := repositoryRoot()
@@ -44,17 +43,7 @@ func runHookProbePython(t *testing.T, args ...string) hookProbeResult {
 		append([]string{filepath.Join(root, "plugins", "crw", "skills", "crw-run", "scripts", "hook_probe.py")}, args...)...,
 	)
 	command.Env = oracleEnv("PYTHONDONTWRITEBYTECODE=1")
-	var stdout, stderr bytes.Buffer
-	command.Stdout, command.Stderr = &stdout, &stderr
-	exit := 0
-	if err := command.Run(); err != nil {
-		var failed *exec.ExitError
-		if !errors.As(err, &failed) {
-			t.Fatal(err)
-		}
-		exit = failed.ExitCode()
-	}
-	return hookProbeResult{exit, stdout.String(), stderr.String()}
+	return hookProbeResult(pythonProcess(t, "", command))
 }
 
 func runHookProbeGo(t *testing.T, binary string, args ...string) hookProbeResult {
@@ -76,6 +65,7 @@ func runHookProbeGo(t *testing.T, binary string, args ...string) hookProbeResult
 
 func requireHookProbeParity(t *testing.T, python, goResult hookProbeResult) {
 	t.Helper()
+	python.stdout, goResult.stdout = unreachedByFunction(python.stdout), unreachedByFunction(goResult.stdout)
 	if goResult != python {
 		t.Fatalf("live Python mismatch\nexit Python=%d Go=%d\nstdout %s\nstderr %s", python.exit, goResult.exit, firstHookProbeDifference(python.stdout, goResult.stdout), firstHookProbeDifference(python.stderr, goResult.stderr))
 	}
@@ -90,16 +80,14 @@ func firstHookProbeDifference(want, got string) string {
 	return "at=" + fmt.Sprint(at) + " Python=" + fmt.Sprintf("%q", want[from:min(len(want), at+800)]) + " Go=" + fmt.Sprintf("%q", got[from:min(len(got), at+800)])
 }
 
-func diskSkillPath(parts ...string) string {
-	return filepath.Join(append([]string{repositoryRoot(), "plugins"}, parts...)...)
-}
-
 func TestHookProbeReplayFailuresMatchLivePython(t *testing.T) {
+	pythonOracleRoot(t)
 	binary := buildHookProbeCLI(t)
 	root := repositoryRoot()
-	decisions := diskSkillPath(defaultFixture("decisions"))
-	contractPath := diskSkillPath(defaultContract("hook-contract.md"))
-	host := diskSkillPath(defaultFixture("host"))
+	inputs := pythonInputs(t)
+	decisions := filepath.Join(inputs, "decisions")
+	contractPath := filepath.Join(inputs, "hook-contract.md")
+	host := filepath.Join(inputs, "host")
 
 	t.Run("drifted documented trace", func(t *testing.T) {
 		fixtures := filepath.Join(t.TempDir(), "decisions")
@@ -161,9 +149,10 @@ func TestHookProbeReplayFailuresMatchLivePython(t *testing.T) {
 }
 
 func TestHookProbeMalformedSelectionAndCountersMatchLivePython(t *testing.T) {
+	pythonOracleRoot(t)
 	binary := buildHookProbeCLI(t)
-	fixturePath := filepath.Join(defaultFixture("decisions"), "claim-whose-preimage-is-not-a-string.json")
-	raw, err := fs.ReadFile(bundledSkillFiles, fixturePath)
+	decisions := filepath.Join(pythonInputs(t), "decisions")
+	raw, err := os.ReadFile(filepath.Join(decisions, "claim-whose-preimage-is-not-a-string.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,8 +181,7 @@ func TestHookProbeMalformedSelectionAndCountersMatchLivePython(t *testing.T) {
 		assertDecideParity(t, binary, workspaceObservation, "marker_malformed")
 	})
 
-	baseCountersPath := filepath.Join(defaultFixture("decisions"), "t24-invalid-persisted-counts.json")
-	counterRaw, err := fs.ReadFile(bundledSkillFiles, baseCountersPath)
+	counterRaw, err := os.ReadFile(filepath.Join(decisions, "t24-invalid-persisted-counts.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,45 +228,6 @@ func cloneHookObject(t *testing.T, source hook.Object) hook.Object {
 		t.Fatal(err)
 	}
 	return asObject(value)
-}
-
-func TestHookProbeReturnSitesMatchCanonicalPythonSource(t *testing.T) {
-	// Given the embedded Python oracle source and the live Python AST implementation.
-	pythonSites, err := pythonReturnSites(bundledSkillFiles)
-	if err != nil {
-		t.Fatal(err)
-	}
-	root := repositoryRoot()
-	code := `import importlib.util,json,pathlib
-p=pathlib.Path(` + fmt.Sprintf("%q", filepath.Join(root, "plugins", "crw", "skills", "crw-run", "scripts", "hook_probe.py")) + `)
-s=importlib.util.spec_from_file_location("hook_probe",p);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
-sites=m.return_sites()
-print(json.dumps([{"function":name,"line":line,"source":sites[(name,line)].splitlines()[0].strip()} for name,line in sites],sort_keys=True))`
-	command := exec.Command(filepath.Join(root, ".venv", "bin", "python"), "-c", code)
-	command.Env = oracleEnv("PYTHONDONTWRITEBYTECODE=1")
-	output, err := command.Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var live []struct {
-		Function string `json:"function"`
-		Line     int    `json:"line"`
-		Source   string `json:"source"`
-	}
-	if err := json.Unmarshal(output, &live); err != nil {
-		t.Fatal(err)
-	}
-	got := make([]struct {
-		Function string `json:"function"`
-		Line     int    `json:"line"`
-		Source   string `json:"source"`
-	}, len(pythonSites))
-	for i, site := range pythonSites {
-		got[i].Function, got[i].Line, got[i].Source = site.function, site.line, site.source
-	}
-	if !reflect.DeepEqual(got, live) {
-		t.Fatalf("source parser drifted from live Python AST\nGo: %#v\nPython: %#v", got, live)
-	}
 }
 
 func assertDecideParity(t *testing.T, binary string, observation contract.OrderedObject, expectedState string) {

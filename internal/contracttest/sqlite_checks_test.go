@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,16 +33,10 @@ func checkSQLiteContract(t *testing.T) {
 		if err != nil || !bytes.Equal(frozen, embedded) {
 			t.Fatalf("embedded DDL differs from frozen Python contract: %v", err)
 		}
+		// The schema the Python store created, as the committed fixture holds it: a copy is read,
+		// because opening the fixture in place would leave WAL sidecars in the corpus.
 		python := filepath.Join(root, "python", "relay.sqlite3")
-		if err := os.MkdirAll(filepath.Dir(python), 0700); err != nil {
-			t.Fatal(err)
-		}
-		cmd := exec.Command("uv", "run", "--no-sync", "python", "-c", "from codex_session_relay.store import Store; import sys; Store(sys.argv[1])", python)
-		cmd.Dir = RootMust(t)
-		cmd.Env = append(sqliteEnv(t), "PYTHONPATH="+filepath.Join(cmd.Dir, "packages/codex-session-relay/src"))
-		if output, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("Python Store: %v: %s", err, output)
-		}
+		copySQLiteFixture(t, python)
 		goPath := filepath.Join(root, "go", "relay.sqlite3")
 		s, err := store.Open(context.Background(), goPath, "")
 		if err != nil {
@@ -49,18 +44,12 @@ func checkSQLiteContract(t *testing.T) {
 		}
 		defer s.Close()
 		if got, want := sqliteMaster(t, goPath), sqliteMaster(t, python); !reflect.DeepEqual(got, want) {
-			t.Fatalf("sqlite_master differs from Python: Go %v, Python %v", got, want)
+			t.Fatalf("sqlite_master differs from the Python store's: Go %v, Python %v", got, want)
 		}
 	})
 	t.Run("fixture", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "relay.sqlite3")
-		fixture, err := os.ReadFile(filepath.Join(RootMust(t), "contract/fixtures/sqlite-ddl/python-store.sqlite3"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, fixture, 0600); err != nil {
-			t.Fatal(err)
-		}
+		copySQLiteFixture(t, path)
 		// The fixture is written by hand, unfenced; the Go host owns it as its initializer would.
 		testsupport.Fence(t, path, "go")
 		before := sqliteMaster(t, path)
@@ -119,8 +108,9 @@ func checkSQLiteContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer s.Close()
-		holder := exec.Command("python3", "-c", "import sqlite3,sys; c=sqlite3.connect(sys.argv[1],isolation_level=None); c.execute('BEGIN IMMEDIATE'); print('LOCKED',flush=True); sys.stdin.readline(); c.execute('ROLLBACK')", path)
-		holder.Env = sqliteEnv(t)
+		// A second process holds the store's write lock: the SQLite locking contract is between
+		// processes, whichever runtime each one is. The peer is this test binary (sqlitePeer).
+		holder := sqlitePeerCommand(t, "hold", path)
 		stdout, err := holder.StdoutPipe()
 		if err != nil {
 			t.Fatal(err)
@@ -144,10 +134,10 @@ func checkSQLiteContract(t *testing.T) {
 		select {
 		case line := <-ready:
 			if strings.TrimSpace(line) != "LOCKED" {
-				t.Fatalf("Python lock: %q", line)
+				t.Fatalf("peer lock: %q", line)
 			}
 		case <-time.After(5 * time.Second):
-			t.Fatal("Python lock timeout")
+			t.Fatal("peer lock timeout")
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 		_, err = s.DB.ExecContext(ctx, "INSERT INTO schema_meta VALUES ('lock_probe','value')")
@@ -170,11 +160,9 @@ func checkSQLiteContract(t *testing.T) {
 		if _, err := conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
 			t.Fatal(err)
 		}
-		writer := exec.Command("python3", "-c", "import sqlite3,sys; c=sqlite3.connect(sys.argv[1],timeout=0.2,isolation_level=None); c.execute('BEGIN IMMEDIATE'); c.execute(\"INSERT INTO schema_meta VALUES ('lock_probe','value')\"); c.execute('COMMIT')", path)
-		writer.Env = sqliteEnv(t)
-		output, err := writer.CombinedOutput()
+		output, err := sqlitePeerCommand(t, "write", path).CombinedOutput()
 		if err == nil || !strings.Contains(string(output), "database is locked") {
-			t.Fatalf("Python should see SQLITE_BUSY: %v: %s", err, output)
+			t.Fatalf("the peer should see SQLITE_BUSY: %v: %s", err, output)
 		}
 		if _, err := conn.ExecContext(context.Background(), "ROLLBACK"); err != nil {
 			t.Fatal(err)
@@ -188,6 +176,79 @@ func checkSQLiteContract(t *testing.T) {
 			t.Fatalf("integrity=%q: %v", integrity, err)
 		}
 	})
+}
+
+// sqlitePeerEnv names the SQLite peer mode a re-executed test binary runs instead of the tests
+// (TestMain), and sqlitePeerPath the store it opens.
+const (
+	sqlitePeerEnv  = "CRW_CONTRACTTEST_SQLITE_PEER"
+	sqlitePeerPath = "CRW_CONTRACTTEST_SQLITE_PATH"
+)
+
+func sqlitePeerCommand(t *testing.T, mode, path string) *exec.Cmd {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd.Env = append(sqliteEnv(t), sqlitePeerEnv+"="+mode, sqlitePeerPath+"="+path)
+	return cmd
+}
+
+// sqlitePeer is the second process of the locks check. "hold" takes the write lock with BEGIN
+// IMMEDIATE, prints LOCKED and keeps it until a line arrives on stdin; "write" tries to write
+// with a 200 ms busy timeout and exits 1 printing the error when the lock is held elsewhere.
+func sqlitePeer(mode, path string) int {
+	ctx := context.Background()
+	dsn := "file:" + path
+	if mode == "write" {
+		dsn += "?_pragma=busy_timeout(200)"
+	}
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	defer db.Close()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	switch mode {
+	case "hold":
+		fmt.Println("LOCKED")
+		_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
+		_, err = conn.ExecContext(ctx, "ROLLBACK")
+	case "write":
+		if _, err = conn.ExecContext(ctx, "INSERT INTO schema_meta VALUES ('lock_probe','value')"); err == nil {
+			_, err = conn.ExecContext(ctx, "COMMIT")
+		}
+	default:
+		err = fmt.Errorf("unknown SQLite peer mode %q", mode)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return 0
+}
+
+// copySQLiteFixture writes the committed Python store (contract/fixtures/sqlite-ddl) to path.
+func copySQLiteFixture(t *testing.T, path string) {
+	t.Helper()
+	fixture, err := os.ReadFile(filepath.Join(RootMust(t), "contract/fixtures/sqlite-ddl/python-store.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, fixture, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func RootMust(t *testing.T) string {

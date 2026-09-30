@@ -1,0 +1,8 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "\"<ROOT>/plugins/crw/skills/crw-run/scripts/hook_probe.py replay --fixtures <TMP>/002 --allow-unreached\" | exit": "txt:3",
+  "\"<ROOT>/plugins/crw/skills/crw-run/scripts/hook_probe.py replay --fixtures <TMP>/002 --allow-unreached\" | stderr": "txt:Probe failed: [Errno 13] Permission denied: '<TMP>/002/unreadable.json'. Nothing was written.\n",
+  "\"<ROOT>/plugins/crw/skills/crw-run/scripts/hook_probe.py replay --fixtures <TMP>/002 --allow-unreached\" | stdout": "txt:ok   oracle self-check: 6 compared keys proven load-bearing\n"
+ }
+}
