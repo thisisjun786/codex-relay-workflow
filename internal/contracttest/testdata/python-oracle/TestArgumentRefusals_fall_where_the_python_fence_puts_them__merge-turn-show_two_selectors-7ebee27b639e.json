@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"exit\":2,\"left\":null,\"stdout\":\"{\\n  \\\"ok\\\": false,\\n  \\\"reason\\\": \\\"bad_invocation\\\",\\n  \\\"detail\\\": \\\"merge-turn-show takes exactly one selector - --turn, --parent-task, or --repository with --base-ref - and this named --parent-task, --repository with --base-ref\\\"\\n}\\n\"}"
- }
-}

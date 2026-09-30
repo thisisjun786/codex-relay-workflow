@@ -1,7 +1,6 @@
 package contracttest
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,13 +8,8 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
-
-type argparseRun struct {
-	code           int
-	stdout, stderr []byte
-}
 
 func todo24Root(t *testing.T) string {
 	t.Helper()
@@ -23,44 +17,15 @@ func todo24Root(t *testing.T) string {
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 }
 
-func runArgparseBinary(t *testing.T, dir, program string, env []string, argv ...string) argparseRun {
+func runArgparseBinary(t *testing.T, dir, program string, env []string, argv ...string) processAnswer {
 	t.Helper()
 	cmd := exec.Command(program, argv...)
 	cmd.Dir, cmd.Env = dir, env
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	code := 0
-	if err := cmd.Run(); err != nil {
-		exit, ok := err.(*exec.ExitError)
-		if !ok {
-			t.Fatal(err)
-		}
-		code = exit.ExitCode()
+	answer, err := runProcess(cmd)
+	if err != nil {
+		t.Fatal(err)
 	}
-	return argparseRun{code, stdout.Bytes(), stderr.Bytes()}
-}
-
-// pythonArgparse is what the Python CLI (`uv run codex-session-relay`) answered to args in dir
-// (recorded, internal/testsupport/pyoracle). after runs once the live Python has answered, to
-// undo what it wrote before the Go side runs; a replay has nothing to undo.
-func pythonArgparse(t *testing.T, key, dir, root string, env, args []string, after func(), opts ...pyoracle.Option) argparseRun {
-	t.Helper()
-	answer := pythonProcess(t, key, func() (processAnswer, error) {
-		pythonArgs := append([]string{"run", "--no-sync", "--project", root, "codex-session-relay"}, args...)
-		run := runArgparseBinary(t, dir, "uv", env, pythonArgs...)
-		if after != nil {
-			after()
-		}
-		return processAnswer{exit: run.code, stdout: run.stdout, stderr: run.stderr}, nil
-	}, append(opts, pyoracle.Substitute(dir, "<HOME>"), pyoracle.Substitute(root, "<ROOT>"))...)
-	return argparseRun{answer.exit, answer.stdout, answer.stderr}
-}
-
-func requireArgparseBytes(t *testing.T, want, got argparseRun) {
-	t.Helper()
-	if want.code != got.code || !bytes.Equal(want.stdout, got.stdout) || !bytes.Equal(want.stderr, got.stderr) {
-		t.Fatalf("Python exit=%d stdout=%q stderr=%q\nGo exit=%d stdout=%q stderr=%q", want.code, want.stdout, want.stderr, got.code, got.stdout, got.stderr)
-	}
+	return answer
 }
 
 func replaceArg(base []string, flag, value string) []string {
@@ -74,7 +39,8 @@ func replaceArg(base []string, flag, value string) []string {
 	return append(out, flag, value)
 }
 
-// The Python side of the two Test24 tests is recorded (internal/testsupport/pyoracle).
+// The two Test24 tests hold the built crw to the goldens of each command line's exit status and
+// output bytes (first taken as what the Python CLI, `uv run codex-session-relay`, answered).
 func Test24IntentDeclareSamePathMatchesLivePythonBytes(t *testing.T) {
 	root := todo24Root(t)
 	binary := relayAlias(t)
@@ -89,24 +55,13 @@ func Test24IntentDeclareSamePathMatchesLivePythonBytes(t *testing.T) {
 	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xdg-state"), "XDG_CONFIG_HOME="+filepath.Join(home, "xdg-config"), "XDG_DATA_HOME="+filepath.Join(home, "xdg-data"), "XDG_CACHE_HOME="+filepath.Join(home, "xdg-cache"), "CODEX_HOME="+filepath.Join(home, "codex"), "COLUMNS=80", "TMPDIR="+os.TempDir())
 	args := []string{"--state", state, "intent-declare", "--marker-root", marker, "--workspace", workspace, "--dispatch-request-id", "D", "--issue", "I", "--declared-at", "2026-01-01T00:00:00+00:00"}
 	// The assignment directory is named by the workspace's digest, which follows the temporary
-	// path; the recording names it by placeholder, and a replay puts back this run's digest.
+	// path; the golden names it by placeholder, and a check puts back this run's digest.
 	workspaceKey, err := delivery.WorkspaceKey(workspace)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := pythonArgparse(t, "python", home, root, env, args, func() {
-		if err := os.RemoveAll(marker); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.RemoveAll(state); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.MkdirAll(marker, 0700); err != nil {
-			t.Fatal(err)
-		}
-	}, pyoracle.Substitute(workspaceKey, "<WORKSPACE_KEY>"))
 	got := runArgparseBinary(t, home, binary, env, args...)
-	requireArgparseBytes(t, want, got)
+	checkProcess(t, "answer", got, golden.Substitute(workspaceKey, "<WORKSPACE_KEY>"), golden.Substitute(home, "<HOME>"), golden.Substitute(root, "<ROOT>"))
 }
 
 func Test24Todo24ArgparseSweepMatchesLivePythonBytes(t *testing.T) {
@@ -154,9 +109,8 @@ func Test24Todo24ArgparseSweepMatchesLivePythonBytes(t *testing.T) {
 				home := t.TempDir()
 				env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xdg-state"), "XDG_CONFIG_HOME="+filepath.Join(home, "xdg-config"), "XDG_DATA_HOME="+filepath.Join(home, "xdg-data"), "XDG_CACHE_HOME="+filepath.Join(home, "xdg-cache"), "CODEX_HOME="+filepath.Join(home, "codex"), "COLUMNS=80", "TMPDIR="+os.TempDir(), "CRW_FORGE_SCENARIO=ready", "PATH="+filepath.Join(root, "internal/relay/cli/testdata")+":"+os.Getenv("PATH"))
 				args := append([]string{command.name}, argv...)
-				want := pythonArgparse(t, "python", home, root, env, args, nil)
 				got := runArgparseBinary(t, home, binary, env, args...)
-				requireArgparseBytes(t, want, got)
+				checkProcess(t, "answer", got, golden.Substitute(home, "<HOME>"), golden.Substitute(root, "<ROOT>"))
 			})
 		}
 	}

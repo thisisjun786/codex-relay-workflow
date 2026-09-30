@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"exit\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay intent-resolve [-h] [--marker-root MARKER_ROOT]\\n                                          --workspace WORKSPACE\\n                                          --assignment ASSIGNMENT\\n                                          --chosen-task CHOSEN_TASK\\n                                          --chosen-session CHOSEN_SESSION\\n                                          --reason REASON\\n                                          --adjudicate ADJUDICATE\\ncodex-session-relay intent-resolve: error: ambiguous option: --chosen could match --chosen-task, --chosen-session\\n\"}\n"
- }
-}

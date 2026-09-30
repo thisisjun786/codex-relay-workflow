@@ -4,16 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // capacityCommands are the relay commands todo 27 part A registers (cli.py:5215-5262). Their
@@ -123,20 +121,9 @@ func TestRegionCommands_the_built_crw_prints_what_python_printed(t *testing.T) {
 }
 
 // Test27_CCL1_capacity_and_region_commands_are_registered_offline_and_not_marker_commands
-// compares the shipped doctor's classification and parser dispatch with Python's (recorded,
-// internal/testsupport/pyoracle).
+// holds the shipped doctor's classification and parser dispatch of the thirteen commands to the
+// golden (first taken as how the Python CLI registered and classified them).
 func Test27_CCL1_capacity_and_region_commands_are_registered_offline_and_not_marker_commands(t *testing.T) {
-	root, err := Root()
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw := pyoracle.Answer(t, "classification", func() ([]byte, error) {
-		return pythonClassification(t, root)
-	})
-	var want map[string]map[string]bool
-	if err := json.Unmarshal(raw, &want); err != nil {
-		t.Fatal(err)
-	}
 	binary, err := crwBinary()
 	if err != nil {
 		t.Fatal(err)
@@ -162,35 +149,16 @@ func Test27_CCL1_capacity_and_region_commands_are_registered_offline_and_not_mar
 	for _, v := range reach["hostRequiredCommands"].([]any) {
 		host[v.(string)] = true
 	}
-	if len(want) != 13 {
-		t.Fatalf("Python commands=%d", len(want))
-	}
-	for name, expected := range want {
+	classification := map[string]map[string]bool{}
+	for _, name := range append(append([]string(nil), capacityCommands...), regionCommands...) {
 		command := exec.Command(binary, "relay", "--state", state, name, "--help")
 		command.Env = doctor.Env
 		help, err := command.CombinedOutput()
 		registered := err == nil && strings.Contains(string(help), name)
-		got := map[string]bool{"registered": registered, "offline": offline[name], "host": host[name], "marker": false}
-		if !reflect.DeepEqual(got, expected) {
-			t.Errorf("%s Go=%v Python=%v help=%s", name, got, expected, help)
-		}
+		classification[name] = map[string]bool{"registered": registered, "offline": offline[name], "host": host[name], "marker": false}
 	}
-}
-
-// pythonClassification is the Python CLI's own answer to which of the capacity and region
-// commands its parser registers and how cli.py classifies them.
-func pythonClassification(t *testing.T, root string) ([]byte, error) {
-	t.Helper()
-	python := exec.Command("uv", "run", "--no-sync", "python", "-c", `import json
-from codex_session_relay.cli import OFFLINE_COMMANDS,HOST_REQUIRED_COMMANDS,MARKER_COMMANDS_BY_NAME,build_parser
-names=['slot-reserve','slot-release','limit-declare','usage-observe','capacity-show','region-propose','region-settle','region-restate-revision','region-reaffirm','region-followup','region-followup-accept','region-followup-settle','region-show']
-parser=build_parser()
-print(json.dumps({n:{'registered':n in parser._subparsers._group_actions[0].choices,'offline':n in OFFLINE_COMMANDS,'host':n in HOST_REQUIRED_COMMANDS,'marker':n in MARKER_COMMANDS_BY_NAME} for n in names}))`)
-	python.Dir = root
-	python.Env = append(os.Environ(), "HOME="+t.TempDir(), "XDG_STATE_HOME="+t.TempDir(), "XDG_CONFIG_HOME="+t.TempDir(), "CODEX_HOME="+t.TempDir())
-	raw, err := python.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("python: %w %s", err, raw)
+	if len(classification) != 13 {
+		t.Fatalf("commands=%d", len(classification))
 	}
-	return raw, nil
+	golden.CheckJSON(t, "classification", classification)
 }

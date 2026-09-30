@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"exit\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay intent-disposition [-h] [--marker-root MARKER_ROOT]\\n                                              --workspace WORKSPACE\\n                                              --assignment ASSIGNMENT\\n                                              --session SESSION --turn TURN\\n                                              --outcome {in_progress,blocked_needs_input,interrupted,failed,ready_for_review}\\ncodex-session-relay intent-disposition: error: argument --outcome: invalid choice: 'bad' (choose from 'in_progress', 'blocked_needs_input', 'interrupted', 'failed', 'ready_for_review')\\n\"}\n"
- }
-}
