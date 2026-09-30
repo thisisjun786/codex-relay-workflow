@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,10 +11,6 @@ import (
 
 // Fresh disposable state per process; compare the actual CLI JSON bytes, not selected fields.
 func TestCCLIOracle(t *testing.T) {
-	root, e := filepath.Abs("../../..")
-	if e != nil {
-		t.Fatal(e)
-	}
 	cases := [][]string{
 		{"fault-show"}, {"fault-next"}, {"fault-show", "--fault", "missing"},
 		{"fault-show", "--fault", "missing", "--product", "crw"},
@@ -34,19 +29,9 @@ func TestCCLIOracle(t *testing.T) {
 			t.Cleanup(func() { _ = os.RemoveAll(home) })
 			py := filepath.Join(home, "python")
 			goDir := filepath.Join(home, "go")
-			cmd := exec.Command("uv", append([]string{"run", "--no-sync", "codex-session-relay", "--state", py, "--json"}, args...)...)
-			cmd.Dir = root
-			cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR=/dev/shm")
-			want, e := cmd.Output()
-			pyCode := 0
-			if e != nil {
-				if exit, ok := e.(*exec.ExitError); ok {
-					pyCode = exit.ExitCode()
-				} else {
-					t.Fatal(e)
-				}
-			}
-			goDir = oracleState(t, py, goDir)
+			answer := pyCLIRun(t, home, py, append([]string{"--state", py, "--json"}, args...), false, pyHomeEnv(home)...)
+			want, pyCode := []byte(answer.Stdout), answer.Code
+			goDir = oracleState(answer.Created, py, goDir)
 			var got, stderr bytes.Buffer
 			code, handled := executeAsCLI(context.Background(), append([]string{"--state", goDir, "--json"}, args...), &got, &stderr)
 			if !handled {

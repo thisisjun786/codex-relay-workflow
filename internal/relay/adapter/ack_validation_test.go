@@ -12,13 +12,11 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func Test28_AckValidationLivePython(t *testing.T) {
-	repo, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
+	repo := pyRepo(t)
 	root := t.TempDir()
 	host := fakehost.Start(t)
 	valid := "0123456789abcdef0123456789abcdef"
@@ -58,14 +56,18 @@ func Test28_AckValidationLivePython(t *testing.T) {
 					}
 					ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 					goOut, goErr := exec.CommandContext(ctx, program, goArgs...).CombinedOutput()
-					pyArgv := append([]string{}, argv...)
-					pyArgv[1] = filepath.Join(dir, "python")
-					py := exec.CommandContext(ctx, "uv", append([]string{"run", "--no-sync", "python", "-m", "codex_session_relay.cli"}, pyArgv...)...)
-					py.Dir = repo
-					pyOut, pyErr := py.CombinedOutput()
 					cancel()
-					if code(goErr) != code(pyErr) || !bytes.Equal(goOut, pyOut) {
-						t.Fatalf("%s %q %q: Go exit %d %s\nPython exit %d %s", command, tc.event, tc.turn, code(goErr), goOut, code(pyErr), pyOut)
+					python := pyProcess(t, command+" "+filepath.Base(program), true, func() *exec.Cmd {
+						pyArgv := append([]string{}, argv...)
+						pyArgv[1] = filepath.Join(dir, "python")
+						ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+						t.Cleanup(cancel)
+						py := exec.CommandContext(ctx, "uv", append([]string{"run", "--no-sync", "python", "-m", "codex_session_relay.cli"}, pyArgv...)...)
+						py.Dir = repo
+						return py
+					}, pyoracle.Substitute(host.SocketPath, "<host-socket>"))
+					if code(goErr) != python.Code || !bytes.Equal(goOut, []byte(python.Stdout)) {
+						t.Fatalf("%s %q %q: Go exit %d %s\nPython exit %d %s", command, tc.event, tc.turn, code(goErr), goOut, python.Code, python.Stdout)
 					}
 				}
 			}

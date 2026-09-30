@@ -53,10 +53,6 @@ func testSettingsHoldWholePythonObservation(t *testing.T, held bool) {
 	}
 	gs := seed(filepath.Join(home, "go"))
 	defer gs.Close()
-	ps := seed(filepath.Join(home, "py"))
-	ps.Close()
-	// Go seeded Python's store as well; Python reads it after a takeover.
-	testsupport.HandOver(t, filepath.Join(home, "py", "relay.sqlite3"), "python")
 	script := `import json,sys
 from codex_session_relay.store import Store
 from codex_session_relay import faultsweep
@@ -66,20 +62,27 @@ try:
  page=(faultsweep.delivery_faults if sys.argv[3]=='held' else faultsweep.retry_faults)(s,product='crw',scope={})
  print(json.dumps(page,sort_keys=True))
 finally: faultsweep.installation=old;s.close()`
-	cmd := exec.Command("uv", "run", "--no-sync", "python", "-c", script, filepath.Join(home, "py", "relay.sqlite3"), filepath.Join(home, "state", "codex-relay-workflow", "host-record.json"), func() string {
-		if held {
-			return "held"
+	output := pyAnswer(t, "faultsweep page", nil, pyRunPaths(t, home), func() ([]byte, error) {
+		ps := seed(filepath.Join(home, "py"))
+		ps.Close()
+		// Go seeded Python's store as well; Python reads it after a takeover.
+		testsupport.HandOver(t, filepath.Join(home, "py", "relay.sqlite3"), "python")
+		cmd := exec.Command("uv", "run", "--no-sync", "python", "-c", script, filepath.Join(home, "py", "relay.sqlite3"), filepath.Join(home, "state", "codex-relay-workflow", "host-record.json"), func() string {
+			if held {
+				return "held"
+			}
+			return "retry"
+		}())
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR=/dev/shm")
+		output, e := cmd.CombinedOutput()
+		if e != nil {
+			return nil, fmt.Errorf("Python %v %s", e, output)
 		}
-		return "retry"
-	}())
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR=/dev/shm")
-	output, e := cmd.CombinedOutput()
-	if e != nil {
-		t.Fatalf("Python %v %s", e, output)
-	}
+		return output, nil
+	})
 	var want map[string]any
-	if e = json.Unmarshal(output, &want); e != nil {
+	if e := json.Unmarshal(output, &want); e != nil {
 		t.Fatal(e)
 	}
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))

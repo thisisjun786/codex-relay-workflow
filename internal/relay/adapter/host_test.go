@@ -8,20 +8,19 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // The real binary's host-only commands must reach the same socket as Python, not
 // an injected CLI replacement or a bridge subprocess.
 func Test28_BuiltBinaryHostRoundTrips(t *testing.T) {
-	repo, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
+	repo := pyRepo(t)
 	root := t.TempDir()
 	binary, alias := suiteBinary, suiteAlias
 	host := fakehost.Start(t)
@@ -35,17 +34,19 @@ func Test28_BuiltBinaryHostRoundTrips(t *testing.T) {
 			}
 			goCmd := exec.Command(program, goArgs...)
 			goOut, goErr := goCmd.CombinedOutput()
-			// Python answers from the store Go just created, after a takeover.
-			if _, err := os.Stat(filepath.Join(state, "relay.sqlite3")); err == nil {
-				testsupport.HandOver(t, filepath.Join(state, "relay.sqlite3"), "python")
-			} else if !errors.Is(err, os.ErrNotExist) {
-				t.Fatal(err)
-			}
-			py := exec.Command("uv", append([]string{"run", "--no-sync", "python", "-m", "codex_session_relay.cli"}, argv...)...)
-			py.Dir = repo
-			pyOut, pyErr := py.CombinedOutput()
-			if goErr != nil || pyErr != nil || !bytes.Equal(goOut, pyOut) {
-				t.Fatalf("%s: Go %v %s; Python %v %s", name, goErr, goOut, pyErr, pyOut)
+			python := pyProcess(t, name+" "+filepath.Base(program), true, func() *exec.Cmd {
+				// Python answers from the store Go just created, after a takeover.
+				if _, err := os.Stat(filepath.Join(state, "relay.sqlite3")); err == nil {
+					testsupport.HandOver(t, filepath.Join(state, "relay.sqlite3"), "python")
+				} else if !errors.Is(err, os.ErrNotExist) {
+					t.Fatal(err)
+				}
+				py := exec.Command("uv", append([]string{"run", "--no-sync", "python", "-m", "codex_session_relay.cli"}, argv...)...)
+				py.Dir = repo
+				return py
+			}, pyoracle.Substitute(host.SocketPath, "<host-socket>"))
+			if goErr != nil || python.Code != 0 || !bytes.Equal(goOut, []byte(python.Stdout)) {
+				t.Fatalf("%s: Go %v %s; Python exit %d %s", name, goErr, goOut, python.Code, python.Stdout)
 			}
 		}
 	}
@@ -58,11 +59,13 @@ func Test28_BuiltBinaryHostRoundTrips(t *testing.T) {
 				goArgs = append([]string{"relay"}, argv...)
 			}
 			goOut, goErr := exec.Command(program, goArgs...).CombinedOutput()
-			pyArgv := append([]string{}, argv...)
-			pyArgv[1] = filepath.Join(filepath.Dir(state), "python")
-			py := exec.Command("uv", append([]string{"run", "--no-sync", "python", "-m", "codex_session_relay.cli"}, pyArgv...)...)
-			py.Dir = repo
-			pyOut, pyErr := py.CombinedOutput()
+			python := pyProcess(t, "refusal "+strings.Join(args, " ")+" "+filepath.Base(program), true, func() *exec.Cmd {
+				pyArgv := append([]string{}, argv...)
+				pyArgv[1] = filepath.Join(filepath.Dir(state), "python")
+				py := exec.Command("uv", append([]string{"run", "--no-sync", "python", "-m", "codex_session_relay.cli"}, pyArgv...)...)
+				py.Dir = repo
+				return py
+			}, pyoracle.Substitute(host.SocketPath, "<host-socket>"))
 			exitCode := func(err error) int {
 				if e, ok := err.(*exec.ExitError); ok {
 					return e.ExitCode()
@@ -73,8 +76,8 @@ func Test28_BuiltBinaryHostRoundTrips(t *testing.T) {
 				t.Fatal(err)
 				return -1
 			}
-			if exitCode(goErr) != exitCode(pyErr) || !bytes.Equal(goOut, pyOut) {
-				t.Fatalf("refusal %v: Go %v %s Python %v %s", args, goErr, goOut, pyErr, pyOut)
+			if exitCode(goErr) != python.Code || !bytes.Equal(goOut, []byte(python.Stdout)) {
+				t.Fatalf("refusal %v: Go %v %s Python exit %d %s", args, goErr, goOut, python.Code, python.Stdout)
 			}
 		}
 	}

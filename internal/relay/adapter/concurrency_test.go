@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -107,14 +106,7 @@ func concurrencyCase(t *testing.T, kind string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo, _ := filepath.Abs("../../..")
-	cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/concurrency_capture.py"))
-	cmd.Dir = repo
-	cmd.Stdin = bytes.NewReader(raw)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("oracle %v %s", err, out)
-	}
+	out := pyDriver(t, "concurrency_capture.py", raw)
 	var want any
 	if err := json.Unmarshal(out, &want); err != nil {
 		t.Fatal(err)

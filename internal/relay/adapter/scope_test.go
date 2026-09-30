@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func scopeCapture(t *testing.T, spec map[string]any, got any) {
@@ -19,14 +20,7 @@ func scopeCapture(t *testing.T, spec map[string]any, got any) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo, _ := filepath.Abs("../../..")
-	cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/scope_capture.py"))
-	cmd.Dir = repo
-	cmd.Stdin = bytes.NewReader(raw)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("oracle %v %s", err, out)
-	}
+	out := pyDriver(t, "scope_capture.py", raw, runDerived(spec, got)...)
 	var want any
 	if err := json.Unmarshal(out, &want); err != nil {
 		t.Fatal(err)
@@ -39,6 +33,29 @@ func scopeCapture(t *testing.T, spec map[string]any, got any) {
 	if !bytes.Equal(expected, actual) {
 		t.Fatalf("Go %s\nPython %s", actual, expected)
 	}
+}
+
+// jsonPosition is where a JSON decoder says a document went wrong.
+var jsonPosition = regexp.MustCompile(`line \d+ column \d+ \(char \d+\)`)
+
+// runDerived names the values of a scope answer that follow from the run's own paths (asGoAnswers):
+// the digest of a frozen manifest, which lists the test's temporary files, and the offset at
+// which such a manifest fails to decode.
+func runDerived(spec map[string]any, got any) []pyoracle.Option {
+	result, ok := got.(map[string]any)
+	if !ok || spec["op"] != "frozen" {
+		return nil
+	}
+	var options []pyoracle.Option
+	if digest, ok := result["digest"].(string); ok && digest != "" {
+		options = append(options, asGoAnswers(digest, "<frozen-manifest-digest>"))
+	}
+	if message, ok := result["error"].(string); ok {
+		if position := jsonPosition.FindString(message); position != "" {
+			options = append(options, asGoAnswers(position, "<json-error-position>"))
+		}
+	}
+	return options
 }
 func entriesRecord(entries []Entry) []any {
 	out := []any{}

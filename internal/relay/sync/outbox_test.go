@@ -16,6 +16,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func TestMain(m *testing.M) {
@@ -133,13 +134,16 @@ func replay(t *testing.T, input []action) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/sync/testdata/capture.py"), home+"/python", string(raw))
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "UV_PROJECT_ENVIRONMENT="+filepath.Join(root, ".venv"), "UV_CACHE_DIR="+home+"/uv")
-	want, e := cmd.CombinedOutput()
-	if e != nil {
-		t.Fatalf("python: %v\n%s", e, want)
-	}
+	want := pythonAnswer(t, "capture.py", raw, func() ([]byte, error) {
+		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/sync/testdata/capture.py"), home+"/python", string(raw))
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "UV_PROJECT_ENVIRONMENT="+filepath.Join(root, ".venv"), "UV_CACHE_DIR="+home+"/uv")
+		want, e := cmd.CombinedOutput()
+		if e != nil {
+			return nil, fmt.Errorf("python: %v\n%s", e, want)
+		}
+		return want, nil
+	}, pyoracle.Substitute(home, "<home>"))
 	ctx := context.Background()
 	s, e := store.Open(ctx, home+"/go/relay.sqlite3", "")
 	if e != nil {

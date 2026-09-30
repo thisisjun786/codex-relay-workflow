@@ -23,13 +23,16 @@ func routeReplay(t *testing.T, property string) {
 	t.Helper()
 	_, file, _, _ := runtime.Caller(0)
 	script := filepath.Join(filepath.Dir(file), "testdata/routes_capture.py")
-	cmd := exec.Command("uv", "run", "--no-sync", "--no-project", "python3", script, property)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	raw, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("Python: %v\n%s", err, stderr.String())
-	}
+	raw := scenarioAnswer(t, "routes_capture.py", property, func() ([]byte, error) {
+		cmd := exec.Command("uv", "run", "--no-sync", "--no-project", "python3", script, property)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		raw, err := cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("Python: %v\n%s", err, stderr.String())
+		}
+		return raw, nil
+	})
 	var records []struct {
 		Operation string
 		Args      []any

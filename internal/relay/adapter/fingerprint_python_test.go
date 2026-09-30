@@ -1,11 +1,8 @@
 package adapter
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -25,15 +22,8 @@ func Test28RecipientFingerprintTurnIDParity(t *testing.T) {
 		{map[string]any{"turnId": "turn", "id": json.Number("7"), "item": map[string]any{"id": json.Number("7"), "value": json.Number("1e20")}}},
 		{map[string]any{"turnId": "turn", "id": nil, "item": map[string]any{"id": nil, "value": json.Number("1.50")}}},
 	}
-	repo, _ := filepath.Abs("../../..")
 	input, _ := json.Marshal(pages)
-	cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/fingerprint_capture.py"))
-	cmd.Dir = repo
-	cmd.Stdin = bytes.NewReader(input)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Python fingerprint oracle: %v\n%s", err, out)
-	}
+	out := pyDriver(t, "fingerprint_capture.py", input)
 	want := strings.Fields(string(out))
 	for i, page := range pages {
 		a := New(Options{RPC: fingerprintRPC{page}})

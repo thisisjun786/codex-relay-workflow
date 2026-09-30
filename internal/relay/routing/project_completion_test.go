@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -52,13 +53,16 @@ func (r projectReader) Owners(context.Context, string, string) ([]contract.Order
 func projectCompletionReplay(t *testing.T, id string) {
 	t.Helper()
 	_, file, _, _ := runtime.Caller(0)
-	cmd := exec.Command("uv", "run", "--no-sync", "--no-project", "python3", filepath.Join(filepath.Dir(file), "testdata/project_completion_capture.py"), id, filepath.Join(filepath.Dir(file), "testdata/properties.md"))
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	raw, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("Python %v %s", err, stderr.String())
-	}
+	raw := scenarioAnswer(t, "project_completion_capture.py", id, func() ([]byte, error) {
+		cmd := exec.Command("uv", "run", "--no-sync", "--no-project", "python3", filepath.Join(filepath.Dir(file), "testdata/project_completion_capture.py"), id, filepath.Join(filepath.Dir(file), "testdata/properties.md"))
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		raw, err := cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("Python %v %s", err, stderr.String())
+		}
+		return raw, nil
+	})
 	var records []struct {
 		Args Object
 		Wire string

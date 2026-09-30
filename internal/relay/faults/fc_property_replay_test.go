@@ -107,7 +107,7 @@ func Test22_FC_11_BusyIsWaitingWholeOutput(t *testing.T) {
 
 func Test22_FC_16_CappedProductDoesNotHideAnotherWholeOutput(t *testing.T) {
 	ctx, gd, pd := f1ReplayStores(t)
-	for _, product := range []string{"crw", "lina"} {
+	for _, product := range []string{"crw", "other"} {
 		f1ReplayCLI(t, ctx, gd, pd, []string{"fault-target", "--product", product, "--project", "P", "--team", "team-" + product, "--project-ref", "project-" + product})
 	}
 	pubs := []string{}
@@ -119,7 +119,7 @@ func Test22_FC_16_CappedProductDoesNotHideAnotherWholeOutput(t *testing.T) {
 	for _, pub := range pubs[:5] {
 		f1ReplayCLI(t, ctx, gd, pd, []string{"fault-claim", "--publication", pub, "--owner", "writer"})
 	}
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-observe", "--observation", `{"schema":"fault-observation/1","product":"lina","faultClass":"report_omitted","severity":"broken","signature":{"relationship":"rel","turn":"turn"},"occurrenceKey":"one","scope":{"projectKey":"P"}}`})
+	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-observe", "--observation", `{"schema":"fault-observation/1","product":"other","faultClass":"report_omitted","severity":"broken","signature":{"relationship":"rel","turn":"turn"},"occurrenceKey":"one","scope":{"projectKey":"P"}}`})
 	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-next", "--limit", "3"})
 	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-attention"})
 }
@@ -347,11 +347,19 @@ func fcComparePath(t *testing.T, ctx context.Context, s *store.Store, pd, action
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/faults/testdata/fc_paths.py"), pd+"/relay.sqlite3", action, variant)
-	cmd.Dir = root
-	raw, err := cmd.CombinedOutput()
+	// Python's replies, hook calls and tables for the same path on its twin.
+	raw := pyAnswer(t, "fc_paths.py "+action+" "+variant, []string{action, variant}, pyRunPaths(t, filepath.Dir(pd)), func() ([]byte, error) {
+		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/faults/testdata/fc_paths.py"), pd+"/relay.sqlite3", action, variant)
+		cmd.Dir = root
+		raw, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("Python %v: %s", err, raw)
+		}
+		return recordEvidenceDigests(raw)
+	})
+	raw, err = replayEvidenceDigests(raw)
 	if err != nil {
-		t.Fatalf("Python %v: %s", err, raw)
+		t.Fatalf("recorded Python answer: %v", err)
 	}
 	var want any
 	if err = json.Unmarshal(raw, &want); err != nil {

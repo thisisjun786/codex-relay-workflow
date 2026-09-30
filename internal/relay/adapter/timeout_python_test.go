@@ -1,11 +1,9 @@
 package adapter
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -38,16 +36,10 @@ func Test28SendDeadlineRaisesAndSavesBareUnknown(t *testing.T) {
 	if _, present := receipt["error"]; present {
 		t.Fatalf("deadline receipt has error: %v", receipt)
 	}
-	repo, _ := filepath.Abs("../../..")
 	settings, _ := json.Marshal(authorized())
 	resumed, _ := json.Marshal(resume())
-	cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/timeout_capture.py"))
-	cmd.Dir = repo
-	cmd.Stdin = bytes.NewReader(append(append(settings, '\n'), append(resumed, '\n')...))
-	out, pyErr := cmd.CombinedOutput()
-	if pyErr != nil {
-		t.Fatalf("Python timeout oracle: %v\n%s", pyErr, out)
-	}
+	// The Python driver keeps the wall clock: the receipt's times are not compared.
+	out := pyDriverNormalized(t, "timeout_capture.py", append(append(settings, '\n'), append(resumed, '\n')...), withoutWallClock)
 	var python map[string]any
 	if err := json.Unmarshal(out, &python); err != nil {
 		t.Fatal(err)
