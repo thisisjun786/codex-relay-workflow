@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "fresh process": "txt:{\"code\":0,\"stdout\":\"{\\n  \\\"jobs\\\": [],\\n  \\\"pending\\\": 0,\\n  \\\"failed\\\": 0,\\n  \\\"confirmed\\\": 0\\n}\\n\",\"stderr\":\"\"}"
+ }
+}

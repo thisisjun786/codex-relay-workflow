@@ -1,0 +1,9 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python [\"fault-limit\" \"--product\" \"example\" \"--kind\" \"append_comment\" \"--max-count\" \"3\" \"--window\" \"60\"]": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"store_owned_by_other\\\",\\n  \\\"detail\\\": \\\"the relay store belongs to another runtime\\\"\\n}\\n\",\"stderr\":\"\"}",
+  "python [\"fault-policy\" \"--product\" \"example\" \"--fault-class\" \"delivery_refused\" \"--severity\" \"degraded\" \"--threshold\" \"2\" \"--reason\" \"r\"]": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"store_owned_by_other\\\",\\n  \\\"detail\\\": \\\"the relay store belongs to another runtime\\\"\\n}\\n\",\"stderr\":\"\"}",
+  "python [\"fault-target\" \"--product\" \"example\" \"--workspace\" \"<path>\" \"--team\" \"T\"]": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"store_owned_by_other\\\",\\n  \\\"detail\\\": \\\"the relay store belongs to another runtime\\\"\\n}\\n\",\"stderr\":\"\"}",
+  "python [\"store-challenge\" \"--write\"]": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"store_owned_by_other\\\",\\n  \\\"detail\\\": \\\"the relay store belongs to another runtime\\\"\\n}\\n\",\"stderr\":\"\"}"
+ }
+}

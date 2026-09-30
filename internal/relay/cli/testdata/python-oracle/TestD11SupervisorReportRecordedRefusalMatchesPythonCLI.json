@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "supervisor-report-recorded": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"contradictory_observation\\\",\\n  \\\"detail\\\": \\\"record refusal\\\"\\n}\\n\",\"stderr\":\"\"}"
+ }
+}

@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python [\"--state\" \"<path>\" \"--socket\" \"<path>\" \"status\"]": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"state_directory_serves_another_socket\\\",\\n  \\\"detail\\\": \\\"this store records a different App Server socket; serving the requested one from it would expose one installation's assignments through another\\\",\\n  \\\"recordedSocket\\\": \\\"<fixed0>/pair-first.sock\\\",\\n  \\\"requestedSocket\\\": \\\"<fixed0>/pair-second.sock\\\",\\n  \\\"stateDirectory\\\": \\\"<fixed0>/pair\\\",\\n  \\\"recover\\\": [\\n    \\\"<repo>/.venv/bin/codex-session-relay --state=<fixed0>/pair --socket=<fixed0>/pair-first.sock doctor\\\",\\n    \\\"  reads this store under the socket it actually records\\\",\\n    \\\"<repo>/.venv/bin/codex-session-relay --socket=<fixed0>/pair-second.sock doctor\\\",\\n    \\\"  discovers by socket alone, ignoring any pinned directory\\\"\\n  ],\\n  \\\"note\\\": \\\"using a store does not rewrite the socket it recorded, so neither command here adopts anything; choose the matching pair\\\"\\n}\\n\",\"stderr\":\"\"}"
+ }
+}

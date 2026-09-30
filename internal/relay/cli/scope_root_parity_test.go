@@ -2,8 +2,10 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,10 +30,17 @@ func TestTheScopeRootIsTheOnePythonResolves(t *testing.T) {
 	}
 	alias := filepath.Join(root, "alias", "wd")
 	t.Chdir(alias)
-	t.Setenv("HOME", filepath.Join(root, "home"))
-	for _, override := range []string{"scopes", "./a/../scopes/", "~/scopes", "/" + filepath.Join(root, "s"), ""} {
-		t.Run("CODEX_SESSION_RELAY_SCOPE_DIR="+override, func(t *testing.T) {
-			t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", override)
+	t.Setenv("HOME", filepath.Join(root, "user-home"))
+	passwd, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, override := range []string{"scopes", "./a/../scopes/", "~/scopes", "/" + filepath.Join(root, "s"), ""} {
+		// Python's answer is asked here, in the test (recorded: see askPython); a root under the
+		// passwd home is spelled so.
+		t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", override)
+		var want []string
+		askPython(t, fmt.Sprintf("resolve_scope_root %d", i), &want, func() (any, error) {
 			command := exec.Command(filepath.Join(repo, ".venv", "bin", "python"), "-c", `import json
 from codex_session_relay.service import resolve_scope_root
 root, authority = resolve_scope_root()
@@ -40,12 +49,19 @@ print(json.dumps([str(root), authority]))`)
 			command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
 			raw, err := command.CombinedOutput()
 			if err != nil {
-				t.Fatalf("python: %v\n%s", err, raw)
+				return nil, fmt.Errorf("python: %v\n%s", err, raw)
 			}
-			var want []string
-			if err = json.Unmarshal(raw, &want); err != nil {
-				t.Fatalf("%v: %s", err, raw)
+			var answer []string
+			if err = json.Unmarshal(raw, &answer); err == nil && len(answer) == 2 && passwd.HomeDir != "" {
+				answer[0] = strings.Replace(answer[0], passwd.HomeDir, "<passwd home>", 1)
 			}
+			return answer, err
+		}, root, alias, override)
+		if len(want) == 2 {
+			want[0] = strings.Replace(want[0], "<passwd home>", passwd.HomeDir, 1)
+		}
+		t.Run("CODEX_SESSION_RELAY_SCOPE_DIR="+override, func(t *testing.T) {
+			t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", override)
 			if got, authority := scopeRoot(); got != want[0] || authority != want[1] {
 				t.Errorf("%q %q, python %q", got, authority, want)
 			}

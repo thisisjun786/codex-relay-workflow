@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "fresh process": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"route_product_unknown\\\",\\n  \\\"detail\\\": \\\"'v' is not a registered product\\\"\\n}\\n\",\"stderr\":\"\"}"
+ }
+}

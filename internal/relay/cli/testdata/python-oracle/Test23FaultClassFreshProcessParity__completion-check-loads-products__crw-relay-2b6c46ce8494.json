@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "fresh process": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"route_input_malformed\\\",\\n  \\\"detail\\\": \\\"a completion reading carries schema None, not completion-reading/1\\\"\\n}\\n\",\"stderr\":\"\"}"
+ }
+}

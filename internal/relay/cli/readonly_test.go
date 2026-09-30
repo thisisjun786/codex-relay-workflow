@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -21,6 +22,8 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // matrixPython runs testdata/readonly_matrix.py with the real Python relay package and its
@@ -41,10 +44,35 @@ func matrixPython(t *testing.T, args ...string) string {
 }
 
 // restamp flips the owner of a stopped store in both halves, schema_meta and takeover.json,
-// with the real Python fence's own identity and encoding (test_fence.py stamp).
+// as the real Python fence's own stamp does (test_fence.py stamp; stampStore).
 func restamp(t *testing.T, state, owner string) {
 	t.Helper()
-	matrixPython(t, "stamp", filepath.Join(state, "relay.sqlite3"), owner, "active", "1", "")
+	stampStore(t, filepath.Join(state, "relay.sqlite3"), owner, "active", 1, "")
+}
+
+// pythonRelay is the answer the Python relay's console script gave for argv as given, with no
+// store handed over first (recorded under key: see oracleRun).
+func pythonRelay(t *testing.T, key string, argv []string, options ...pyoracle.Option) run {
+	t.Helper()
+	root := repositoryRoot(t)
+	return oracleRun(t, key, func() (run, error) {
+		return execute("uv", append([]string{"run", "--no-sync", "--project", root, "codex-session-relay"}, argv...)...)
+	}, append(placeholders(argv...), options...)...)
+}
+
+// readOnlyFixture is test_fence_readonly.py's populated store with its READ_FORMS, built by
+// testdata/readonly_matrix.py under dir (recorded: see pythonFixture).
+func readOnlyFixture(t *testing.T, dir string) (db string, forms []json.RawMessage) {
+	t.Helper()
+	var built struct {
+		DB    string            `json:"db"`
+		Forms []json.RawMessage `json:"forms"`
+	}
+	output := pythonFixture(t, "readonly fixture", dir, nil, func() (string, error) { return matrixPython(t, "fixture", dir), nil })
+	if err := json.Unmarshal([]byte(output), &built); err != nil {
+		t.Fatal(err)
+	}
+	return built.DB, built.Forms
 }
 
 // execute is one answer of a program: its exit status and output. Safe off the test goroutine.
@@ -91,6 +119,8 @@ func comparable(command, stdout string) (string, error) {
 		return quoted
 	})
 	masked = installation.ReplaceAllString(masked, `"installationId": "<installation>"`)
+	// A recorded answer was read from another file with the same rows.
+	masked = identityNeutral(masked)
 	if command != "doctor" {
 		return masked, nil
 	}
@@ -177,14 +207,11 @@ func storeFiles(dir string) (map[string][32]byte, error) {
 func TestReadOnlyForms_match_python_in_every_ownership_state(t *testing.T) {
 	home := pythonHome(t)
 	_, alias := packageBinary(t)
-	root := repositoryRoot(t)
 	var built struct {
-		DB    string            `json:"db"`
-		Forms []json.RawMessage `json:"forms"`
+		DB    string
+		Forms []json.RawMessage
 	}
-	if err := json.Unmarshal([]byte(matrixPython(t, "fixture", filepath.Join(home, "fixture"))), &built); err != nil {
-		t.Fatal(err)
-	}
+	built.DB, built.Forms = readOnlyFixture(t, filepath.Join(home, "fixture"))
 	type form struct {
 		command string
 		options []string
@@ -221,7 +248,8 @@ func TestReadOnlyForms_match_python_in_every_ownership_state(t *testing.T) {
 	for i, state := range states {
 		dir := filepath.Join(home, "states", string(rune('a'+i)))
 		copyStore(t, filepath.Dir(built.DB), dir)
-		matrixPython(t, "stamp", filepath.Join(dir, "relay.sqlite3"), state.owner, state.phase, state.epoch, state.takeover)
+		epoch, _ := strconv.ParseInt(state.epoch, 10, 64)
+		stampStore(t, filepath.Join(dir, "relay.sqlite3"), state.owner, state.phase, epoch, state.takeover)
 		if state.gate {
 			gate, err := os.OpenFile(filepath.Join(dir, "write-gate.lock"), os.O_RDWR, 0)
 			if err != nil {
@@ -239,7 +267,7 @@ func TestReadOnlyForms_match_python_in_every_ownership_state(t *testing.T) {
 			fail := func(format string, args ...any) {
 				failures[i] = append(failures[i], state.name+": "+fmt.Sprintf(format, args...))
 			}
-			for _, f := range forms {
+			for index, f := range forms {
 				argv := append([]string{"--state", dir, f.command}, f.options...)
 				before, err := storeFiles(dir)
 				if err != nil {
@@ -257,10 +285,21 @@ func TestReadOnlyForms_match_python_in_every_ownership_state(t *testing.T) {
 				if after, err := storeFiles(dir); err != nil || !mayWrite && !maps.Equal(before, after) {
 					fail("%s changed a store it may not write (%v):\nbefore %v\nafter  %v", f.command, err, before, after)
 				}
-				py, err := execute("uv", append([]string{"run", "--no-sync", "--project", root, "codex-session-relay"}, argv...)...)
+				// Keyed by state and form: the states run side by side.
+				key := fmt.Sprintf("%s/%02d %s", state.name, index, f.command)
+				before, err = storeFiles(dir)
 				if err != nil {
 					fail("%v", err)
 					return
+				}
+				py := pythonRelay(t, key, argv, sameFixture)
+				// The owner Python persists housekeeping too, which the next form reads: what it
+				// left is recorded with its answer and put in place where it did not run.
+				if state.owner == "python" {
+					if err = followPython(t, key+" left", dir, before); err != nil {
+						fail("%v", err)
+						return
+					}
 				}
 				pyText, pyErr := comparable(f.command, py.stdout)
 				goText, goErr := comparable(f.command, got.stdout)
@@ -276,6 +315,45 @@ func TestReadOnlyForms_match_python_in_every_ownership_state(t *testing.T) {
 			t.Error(failure)
 		}
 	}
+}
+
+// followPython records whether the Python owner's last command changed the store in dir (whose
+// files were before), and the store it left if so; where Python did not run, that store is put
+// in dir, rehomed, as the Go side's next command meets it.
+func followPython(t *testing.T, key, dir string, before map[string][32]byte) error {
+	var left struct {
+		Changed bool      `json:"changed"`
+		Tree    treeImage `json:"tree"`
+	}
+	pyoracle.JSON(t, key, &left, func() (any, error) {
+		after, err := storeFiles(dir)
+		if err != nil {
+			return nil, err
+		}
+		if left.Changed = !maps.Equal(before, after); left.Changed {
+			if left.Tree, err = snapshotTree(dir, nil); err != nil {
+				return nil, err
+			}
+		}
+		return left, nil
+	}, append(placeholders(dir), sameFixture)...)
+	if pyoracle.Live() || !left.Changed {
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err = os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
+			return err
+		}
+	}
+	if err = materializeTree(dir, left.Tree); err != nil {
+		return err
+	}
+	testsupport.Rehome(t, filepath.Join(dir, "relay.sqlite3"))
+	return nil
 }
 
 // A read-only command never creates, initializes or binds a store (decision 30, cutover.md
@@ -328,22 +406,6 @@ func TestReadOnlyForms_take_a_dangling_database_link_for_an_absent_store(t *test
 	home := pythonHome(t)
 	_, alias := packageBinary(t)
 	app := filepath.Join(home, "app.sock")
-	relay := func(runtime string, argv ...string) run {
-		if runtime == "go" {
-			return binaryRun(t, alias, argv...)
-		}
-		return fence(t, argv...)
-	}
-	dangling := func(name string) string {
-		state := filepath.Join(home, name)
-		if err := os.MkdirAll(state, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink(filepath.Join(state, "nowhere.sqlite3"), filepath.Join(state, "relay.sqlite3")); err != nil {
-			t.Fatal(err)
-		}
-		return state
-	}
 	names := func(state string) []string {
 		entries, err := os.ReadDir(state)
 		if err != nil {
@@ -355,6 +417,47 @@ func TestReadOnlyForms_take_a_dangling_database_link_for_an_absent_store(t *test
 		}
 		return listed
 	}
+	// Python's answer and the names it left in S, recorded together (see oracleRun).
+	fenceListing := func(state string, argv ...string) (run, []string) {
+		var answer struct {
+			Run   recordedRun `json:"run"`
+			Names []string    `json:"names"`
+		}
+		program := filepath.Join(repositoryRoot(t), ".venv", "bin", "codex-session-relay")
+		pyoracle.JSON(t, oracleKey(t, "fence "+oracleLabel(argv...)), &answer, func() (any, error) {
+			ran, err := execute(program, argv...)
+			if err != nil {
+				return nil, err
+			}
+			entries, err := os.ReadDir(state)
+			if err != nil {
+				return nil, err
+			}
+			answer.Run = recordedRun{ran.code, ran.stdout, ran.stderr}
+			for _, entry := range entries {
+				answer.Names = append(answer.Names, entry.Name())
+			}
+			return answer, nil
+		}, placeholders(argv...)...)
+		return run{answer.Run.Code, answer.Run.Stdout, answer.Run.Stderr}, answer.Names
+	}
+	relay := func(runtime, state string, argv ...string) (run, []string) {
+		if runtime == "python" {
+			return fenceListing(state, argv...)
+		}
+		answer := binaryRun(t, alias, argv...)
+		return answer, names(state)
+	}
+	dangling := func(name string) string {
+		state := filepath.Join(home, name)
+		if err := os.MkdirAll(state, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(state, "nowhere.sqlite3"), filepath.Join(state, "relay.sqlite3")); err != nil {
+			t.Fatal(err)
+		}
+		return state
+	}
 	for i, argv := range [][]string{
 		{"status"}, {"show", "--event", "absent"}, {"store-identity"}, {"store-challenge", "--read", "absent"},
 		{"fault-show"}, {"fault-next"}, {"sync-status"}, {"route-show"}, {"--socket", app, "status"},
@@ -362,10 +465,10 @@ func TestReadOnlyForms_take_a_dangling_database_link_for_an_absent_store(t *test
 		answers := map[string]run{}
 		for _, runtime := range []string{"go", "python"} {
 			state := dangling(fmt.Sprintf("%s-read-%d", runtime, i))
-			answer := relay(runtime, append([]string{"--state", state}, argv...)...)
+			answer, listed := relay(runtime, state, append([]string{"--state", state}, argv...)...)
 			answer.stdout = strings.ReplaceAll(answer.stdout, state, "<S>")
 			answers[runtime] = answer
-			if listed := names(state); !slices.Equal(listed, []string{"relay.sqlite3"}) {
+			if !slices.Equal(listed, []string{"relay.sqlite3"}) {
 				t.Errorf("%s %v on a dangling D link changed S: %v", runtime, argv, listed)
 			}
 		}
@@ -378,10 +481,11 @@ func TestReadOnlyForms_take_a_dangling_database_link_for_an_absent_store(t *test
 		listed := map[string][]string{}
 		for _, runtime := range []string{"go", "python"} {
 			state := dangling(fmt.Sprintf("%s-write-%d", runtime, i))
-			if answer := relay(runtime, append([]string{"--state", state}, argv...)...); answer.code != 0 {
+			answer, left := relay(runtime, state, append([]string{"--state", state}, argv...)...)
+			if answer.code != 0 {
 				t.Errorf("%s %v on a dangling D link: exit %d\n%s", runtime, argv, answer.code, answer.stdout)
 			}
-			listed[runtime] = names(state)
+			listed[runtime] = left
 		}
 		if !slices.Equal(listed["go"], listed["python"]) {
 			t.Errorf("%v on a dangling D link: go left %v, python %v", argv, listed["go"], listed["python"])
@@ -408,7 +512,7 @@ func TestReadOnlyForms_refuse_a_partial_store_as_a_writer_does(t *testing.T) {
 	home := pythonHome(t)
 	_, alias := packageBinary(t)
 	source := filepath.Join(home, "source")
-	pythonCreates(t, home, source)
+	pythonCreates(t, source)
 	mirror, err := os.ReadFile(filepath.Join(source, "takeover.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -510,16 +614,16 @@ func TestReadOnlyForms_refuse_a_partial_store_as_a_writer_does(t *testing.T) {
 // judges the store again from the start, before it touches S or the scope registry. A holder
 // that keeps the gate past the bound is refused in one wording and exit by both. One that lets
 // the gate go with D still absent (a creator that died) leaves a partial store: the waiting
-// commands refuse it in the fence writer's words, and so does the next one. Alike in both.
+// commands refuse it in the fence writer's words, and so does the next one. The fence's own run
+// of these steps (the same waits, timings and answers, checked against the same words) left
+// with the Python runtime (todo 44); the Go run is held to those words here.
 func TestServiceAndDaemon_wait_for_a_creation_in_progress_as_the_fence_does(t *testing.T) {
 	home := pythonHome(t)
 	_, alias := packageBinary(t)
-	root := repositoryRoot(t)
-	programs := map[string]string{"go": alias, "python": filepath.Join(root, ".venv", "bin", "codex-session-relay")}
+	programs := map[string]string{"go": alias}
 	partial := "{\n  \"error\": \"refused\",\n  \"reason\": \"store_owned_by_other\",\n  \"detail\": \"partial store: write-gate.lock without a database\"\n}\n"
 	expired := "{\n  \"error\": \"refused\",\n  \"reason\": \"store_owned_by_other\",\n  \"detail\": \"store creation in progress: write-gate.lock still held after 0.5s; retry\"\n}\n"
-	// Each runtime's bound, lowered to half a second for one command: Go's in this process,
-	// the fence's module constant in its own.
+	// The bound, lowered to half a second for one command in this process.
 	bound := store.CreationWait
 	t.Cleanup(func() { store.CreationWait = bound })
 	shortened := map[string]func(argv ...string) run{
@@ -529,14 +633,6 @@ func TestServiceAndDaemon_wait_for_a_creation_in_progress_as_the_fence_does(t *t
 			var stdout, stderr bytes.Buffer
 			code := cli.ExecuteAs(context.Background(), "codex-session-relay", argv, &stdout, &stderr)
 			return run{code, stdout.String(), stderr.String()}
-		},
-		"python": func(argv ...string) run {
-			script := "import sys\nfrom codex_session_relay import cli, ownership\nownership.CREATION_WAIT_SECONDS = 0.5\nsys.exit(cli.main(sys.argv[1:]))\n"
-			answer, err := execute(filepath.Join(root, ".venv", "bin", "python"), append([]string{"-c", script}, argv...)...)
-			if err != nil {
-				t.Fatal(err)
-			}
-			return answer
 		},
 	}
 	scopes := filepath.Join(home, "scopes")
@@ -549,7 +645,7 @@ func TestServiceAndDaemon_wait_for_a_creation_in_progress_as_the_fence_does(t *t
 			t.Errorf("%s %s touched the scope registry: %v %v", runtime, what, claims, err)
 		}
 	}
-	for _, runtime := range []string{"go", "python"} {
+	for _, runtime := range []string{"go"} {
 		program := programs[runtime]
 		state := filepath.Join(home, runtime)
 		app := filepath.Join(home, runtime+".sock")
@@ -649,11 +745,16 @@ func TestServiceAndDaemon_wait_for_a_creation_in_progress_as_the_fence_does(t *t
 // runtime's it routes to that owner.
 func TestGuardEvaluate_reports_the_live_state_refusal(t *testing.T) {
 	t.Setenv("CRW_REFUSE_LIVE_STATE", "1")
-	home := pythonHome(t)
+	// The Stop's markers are filed under a digest of the workspace path: a home at a fixed path
+	// keeps the recorded fixture's markers where this run looks for them.
+	home := pythonHomeAt(t, fixedTree(t, t.Name()))
 	_, alias := packageBinary(t)
 	state := filepath.Join(home, ".local", "state", "codex-session-relay", "scope")
 	var guard struct{ Root, Stop, Now string }
-	if err := json.Unmarshal([]byte(matrixPython(t, "guard", filepath.Join(home, "guard"), filepath.Join(state, "relay.sqlite3"))), &guard); err != nil {
+	built := pythonFixture(t, "guard fixture", home, []string{"guard", ".local"}, func() (string, error) {
+		return matrixPython(t, "guard", filepath.Join(home, "guard"), filepath.Join(state, "relay.sqlite3")), nil
+	})
+	if err := json.Unmarshal([]byte(built), &guard); err != nil {
 		t.Fatal(err)
 	}
 	restamp(t, state, "go")
@@ -679,14 +780,11 @@ func TestPacketCheck_reports_the_live_state_refusal(t *testing.T) {
 	t.Setenv("CRW_REFUSE_LIVE_STATE", "1")
 	home := pythonHome(t)
 	_, alias := packageBinary(t)
-	root := repositoryRoot(t)
 	var built struct {
-		DB    string            `json:"db"`
-		Forms []json.RawMessage `json:"forms"`
+		DB    string
+		Forms []json.RawMessage
 	}
-	if err := json.Unmarshal([]byte(matrixPython(t, "fixture", filepath.Join(home, "fixture"))), &built); err != nil {
-		t.Fatal(err)
-	}
+	built.DB, built.Forms = readOnlyFixture(t, filepath.Join(home, "fixture"))
 	var options []string
 	for _, raw := range built.Forms {
 		var pair []json.RawMessage
@@ -719,10 +817,7 @@ func TestPacketCheck_reports_the_live_state_refusal(t *testing.T) {
 	}
 	t.Setenv("CRW_REFUSE_LIVE_STATE", "")
 	allowed := binaryRun(t, alias, argv...)
-	py, err := execute("uv", append([]string{"run", "--no-sync", "--project", root, "codex-session-relay"}, argv...)...)
-	if err != nil {
-		t.Fatal(err)
-	}
+	py := pythonRelay(t, "packet-check", argv, sameFixture)
 	if allowed.code != 0 || py.code != 0 || allowed.stdout != py.stdout {
 		t.Fatalf("exit go=%d python=%d\ngo:\n%s\npython:\n%s", allowed.code, py.code, allowed.stdout, py.stdout)
 	}
@@ -736,7 +831,7 @@ func TestWriteForms_refuse_a_foreign_store_as_python_does(t *testing.T) {
 	home := pythonHome(t)
 	_, alias := packageBinary(t)
 	pythonOwned := filepath.Join(home, "python-owned")
-	pythonCreates(t, home, pythonOwned)
+	pythonCreates(t, pythonOwned)
 	goOwned := filepath.Join(home, "go-owned")
 	copyStore(t, pythonOwned, goOwned)
 	restamp(t, goOwned, "go")
@@ -751,10 +846,7 @@ func TestWriteForms_refuse_a_foreign_store_as_python_does(t *testing.T) {
 			t.Fatal(err)
 		}
 		got := binaryRun(t, alias, append([]string{"--state", pythonOwned}, argv...)...)
-		py, err := execute("uv", append([]string{"run", "--no-sync", "--project", repositoryRoot(t), "codex-session-relay", "--state", goOwned}, argv...)...)
-		if err != nil {
-			t.Fatal(err)
-		}
+		py := pythonRelay(t, oracleKey(t, "python "+oracleLabel(argv...)), append([]string{"--state", goOwned}, argv...))
 		// The fence's own words for the other owner (ownership.py validate), byte for byte.
 		if got.code != 2 || py.code != 2 || got.stdout != py.stdout || !strings.Contains(got.stdout, `"detail": "the relay store belongs to another runtime"`) {
 			t.Errorf("%v: go %d %s\npython %d %s", argv, got.code, got.stdout, py.code, py.stdout)

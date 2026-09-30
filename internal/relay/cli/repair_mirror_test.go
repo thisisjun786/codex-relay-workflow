@@ -14,6 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // schemaMeta is every schema_meta row of the store in state, read through a read-only connection.
@@ -89,10 +90,16 @@ func Test30RepairMirrorPublishesTheStampedMirror(t *testing.T) {
 				"python": func(argv ...string) run { return fence(t, argv...) },
 				"go":     func(argv ...string) run { return binaryRun(t, alias, argv...) },
 			}
-			if created := relay[creator](with("store-challenge", "--write")...); created.code != 0 {
+			path := filepath.Join(state, "relay.sqlite3")
+			if creator == "python" {
+				// The store the fence's absent-store initializer creates (testsupport.Create).
+				if err := os.MkdirAll(state, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				testsupport.Create(t, path, tc.socket, "python")
+			} else if created := relay[creator](with("store-challenge", "--write")...); created.code != 0 {
 				t.Fatalf("%s creates the store: %+v", creator, created)
 			}
-			path := filepath.Join(state, "relay.sqlite3")
 			published, err := ownership.ReadRecord(path)
 			if err != nil {
 				t.Fatal(err)

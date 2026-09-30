@@ -20,23 +20,35 @@ type amaCapture struct {
 	Problems []string `json:"problems"`
 }
 
+// amaTree is the tree test_attempt_message_atomicity.py's method left (its store and
+// artifacts) and the values it asserted, recorded (see pythonFixture): the module runs under
+// capture.py over a fixed root, so every run spells the same paths.
 func amaTree(t *testing.T, method string) (string, amaCapture) {
 	t.Helper()
-	amaRoot := t.TempDir()
-	home := t.TempDir()
-	cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repositoryRoot(t), "internal/relay/delivery/testdata/capture.py"), amaRoot, "test_attempt_message_atomicity")
-	cmd.Dir = filepath.Join(repositoryRoot(t), "packages/codex-session-relay")
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home, "PYTHONPATH="+filepath.Join(repositoryRoot(t), "packages/codex-session-relay/src")+":"+filepath.Join(repositoryRoot(t), "packages/codex-session-relay"))
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatal(&captureFailure{err, string(output)})
-	}
-	tree := filepath.Join(amaRoot, "AttemptMessageAtomicity."+method)
-	raw, err := os.ReadFile(filepath.Join(tree, "capture.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	amaRoot := fixedTree(t, t.Name())
+	name := "AttemptMessageAtomicity." + method
+	tree := filepath.Join(amaRoot, name)
+	built := pythonFixture(t, name, amaRoot, []string{filepath.Join(name, "state"), filepath.Join(name, "work")}, func() (string, error) {
+		home := t.TempDir()
+		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repositoryRoot(t), "internal/relay/delivery/testdata/capture.py"), amaRoot, "test_attempt_message_atomicity")
+		cmd.Dir = filepath.Join(repositoryRoot(t), "packages/codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home, "PYTHONPATH="+filepath.Join(repositoryRoot(t), "packages/codex-session-relay/src")+":"+filepath.Join(repositoryRoot(t), "packages/codex-session-relay"))
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return "", &captureFailure{err, string(output)}
+		}
+		raw, err := os.ReadFile(filepath.Join(tree, "capture.json"))
+		if err != nil {
+			return "", err
+		}
+		var captured amaCapture
+		if err = json.Unmarshal(raw, &captured); err != nil {
+			return "", err
+		}
+		out, err := json.Marshal(captured)
+		return string(out), err
+	})
 	var captured amaCapture
-	if err := json.Unmarshal(raw, &captured); err != nil {
+	if err := json.Unmarshal([]byte(built), &captured); err != nil {
 		t.Fatal(err)
 	}
 	if len(captured.Problems) > 0 {

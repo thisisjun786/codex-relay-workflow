@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"malformed_receipt\\\",\\n  \\\"detail\\\": \\\"attempt must be a positive integer or null\\\"\\n}\\n\",\"stderr\":\"\"}"
+ }
+}

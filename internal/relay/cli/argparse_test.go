@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"os/exec"
 	"path/filepath"
@@ -38,24 +39,24 @@ func Test24ArgparsePython(t *testing.T) {
 		{"merge-evidence", []string{"--repo", "invalid", "--pull", "1"}},
 	} {
 		for _, mode := range []string{"help", "empty", "unknown", "abbreviation", "unknown-after-required", "missing-value"} {
-			t.Run(tc.name+"/"+mode, func(t *testing.T) {
-				var tail []string
-				switch mode {
-				case "help":
-					tail = []string{"--help"}
-				case "unknown":
-					tail = []string{"--unknown", "value"}
-				case "abbreviation":
-					tail = tc.abbreviated
-				case "unknown-after-required":
-					tail = append(append([]string{}, tc.abbreviated...), "--unknown", "value")
-				case "missing-value":
-					tail = []string{tc.abbreviated[0]}
-				}
-				args := append([]string{"--state", filepath.Join(home, "state"), tc.name}, tail...)
-				// Test parsing independently from clocks and host I/O, but use each real
-				// command's FlagSet. Accepted parses return their machine-consumed values.
-				script := `import contextlib,io,json,sys
+			var tail []string
+			switch mode {
+			case "help":
+				tail = []string{"--help"}
+			case "unknown":
+				tail = []string{"--unknown", "value"}
+			case "abbreviation":
+				tail = tc.abbreviated
+			case "unknown-after-required":
+				tail = append(append([]string{}, tc.abbreviated...), "--unknown", "value")
+			case "missing-value":
+				tail = []string{tc.abbreviated[0]}
+			}
+			args := append([]string{"--state", filepath.Join(home, "state"), tc.name}, tail...)
+			// Test parsing independently from clocks and host I/O, but use each real
+			// command's FlagSet. Accepted parses return their machine-consumed values.
+			// Python's parse is recorded (see askPython), asked here in the test.
+			script := `import contextlib,io,json,sys
 from codex_session_relay.cli import build_parser
 out,err=io.StringIO(),io.StringIO()
 code=0
@@ -66,19 +67,21 @@ with contextlib.redirect_stdout(out),contextlib.redirect_stderr(err):
   print(json.dumps(vars(a),sort_keys=True))
  except SystemExit as e: code=e.code
 print(json.dumps(dict(code=code,out=out.getvalue(),err=err.getvalue())))`
-				encoded, _ := json.Marshal(args)
+			encoded, _ := json.Marshal(args)
+			var py struct {
+				Code     int
+				Out, Err string
+			}
+			askPython(t, tc.name+"/"+mode, &py, func() (any, error) {
 				cmd := exec.Command(filepath.Join(repo, ".venv/bin/python"), "-c", script, string(encoded))
 				output, err := cmd.CombinedOutput()
 				if err != nil {
-					t.Fatalf("Python: %v %s", err, output)
+					return nil, fmt.Errorf("Python: %v %s", err, output)
 				}
-				var py struct {
-					Code     int
-					Out, Err string
-				}
-				if err = json.Unmarshal(output, &py); err != nil {
-					t.Fatal(err)
-				}
+				var answer any
+				return answer, json.Unmarshal(output, &answer)
+			}, home)
+			t.Run(tc.name+"/"+mode, func(t *testing.T) {
 				var out, stderr bytes.Buffer
 				command := Command{}
 				for _, c := range Commands {

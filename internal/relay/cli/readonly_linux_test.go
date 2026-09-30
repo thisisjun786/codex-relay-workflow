@@ -17,7 +17,7 @@ func TestReadOnlyForms_leave_a_foreign_write_gate_unopened(t *testing.T) {
 	home := pythonHome(t)
 	_, alias := packageBinary(t)
 	state := filepath.Join(home, "python-owned")
-	pythonCreates(t, home, state)
+	pythonCreates(t, state)
 	watch, err := unix.InotifyInit1(unix.IN_NONBLOCK | unix.IN_CLOEXEC)
 	if err != nil {
 		t.Fatal(err)

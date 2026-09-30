@@ -2,13 +2,18 @@ package cli_test
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // clockReading is a clock reading, which differs between the two runs of one registration.
@@ -27,6 +32,9 @@ var clockReading = regexp.MustCompile(`"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+\+00:
 func TestAnArgumentThatIsNotUTF8IsRefusedWherePythonEncodesIt(t *testing.T) {
 	_, relay := packageBinary(t)
 	root := t.TempDir()
+	// A relative workspace is refused at its position in the absolute path, which starts with
+	// the working directory: one at a fixed path spells the same position on every run.
+	t.Chdir(fixedTree(t, t.Name()))
 	artifacts := filepath.Join(root, "artifacts")
 	register := func(field, value string) []string {
 		argv := []string{"--json", "register", "--parent-task", "p", "--parent-host", "h", "--child-task", "c", "--child-host", "h", "--issue", "T",
@@ -88,9 +96,20 @@ func TestAnArgumentThatIsNotUTF8IsRefusedWherePythonEncodesIt(t *testing.T) {
 	argvs = append(argvs, register("--artifact-root", "a\xff"))
 	pythonArgvs = append(pythonArgvs, append([]string{"--state", filepath.Join(root, "python")}, argvs[len(argvs)-1]...))
 	want := pythonCLI(t, pythonArgvs...)
+	// What Python's sqlite3 read back from the store Python registered in (recorded; see
+	// oracleRun). Go's store is read below, by Go, as TEXT.
 	stored := `import json, sqlite3, sys
 print(json.dumps([sqlite3.connect(path).execute("SELECT artifact_roots FROM relationships").fetchall() for path in sys.argv[1:]]))`
-	command := exec.Command(filepath.Join(repositoryRoot(t), ".venv", "bin", "python"), "-c", stored, filepath.Join(root, "python", "relay.sqlite3"), filepath.Join(root, "go", "relay.sqlite3"))
+	pythonDatabase := filepath.Join(root, "python", "relay.sqlite3")
+	pythonStored := oracleRun(t, "stored artifact roots", func() (run, error) {
+		command := exec.Command(filepath.Join(repositoryRoot(t), ".venv", "bin", "python"), "-c", stored, pythonDatabase)
+		command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
+		raw, err := command.CombinedOutput()
+		if err != nil {
+			return run{}, fmt.Errorf("python reading its store: %v\n%s", err, raw)
+		}
+		return run{stdout: string(raw)}, nil
+	}, placeholders(pythonDatabase)...)
 	for i, argv := range argvs {
 		if i == len(argvs)-1 {
 			// Printed back through Go's reader, which decodes the stored escape as U+FFFD
@@ -118,13 +137,21 @@ print(json.dumps([sqlite3.connect(path).execute("SELECT artifact_roots FROM rela
 			t.Errorf("%q:\ngo     %d %s\npython %d %s", argv, got.code, got.stdout, want[i].code, want[i].stdout)
 		}
 	}
-	command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	raw, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("python reading both stores: %v\n%s", err, raw)
+	if want := `[[["[\"a\\udcff\"]"]]]` + "\n"; pythonStored.stdout != want {
+		t.Errorf("stored artifact roots, Python's store: %s want %s", pythonStored.stdout, want)
 	}
-	if want := `[[["[\"a\\udcff\"]"]], [["[\"a\\udcff\"]"]]]` + "\n"; string(raw) != want {
-		t.Errorf("stored artifact roots, Python's store then Go's: %s want %s", raw, want)
+	database, err := sql.Open("sqlite", "file:"+filepath.Join(root, "go", "relay.sqlite3")+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	var kind string
+	var text []byte
+	if err = database.QueryRow("SELECT typeof(artifact_roots), CAST(artifact_roots AS BLOB) FROM relationships").Scan(&kind, &text); err != nil {
+		t.Fatal(err)
+	}
+	if want := `["a\udcff"]`; kind != "text" || string(text) != want {
+		t.Errorf("stored artifact roots, Go's store: %s %q want text %q", kind, text, want)
 	}
 }
 
@@ -136,49 +163,67 @@ print(json.dumps([sqlite3.connect(path).execute("SELECT artifact_roots FROM rela
 func TestDoctorLookupsReadAStoreTheyCannotPrepareBeforeTheyBind(t *testing.T) {
 	_, relay := packageBinary(t)
 	root := t.TempDir()
-	notRelay := func(path string) {
-		command := exec.Command(filepath.Join(repositoryRoot(t), ".venv", "bin", "python"), "-c",
-			"import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute('create table t(x)'); c.commit()", path)
-		if raw, err := command.CombinedOutput(); err != nil {
-			t.Fatalf("%v\n%s", err, raw)
+	// Each runtime's store is prepared with its own sqlite3: Go's here, Python's in the capture
+	// closure (see oracleRun), where the fence's answer is taken.
+	execute := func(python bool, path, statement string) error {
+		if python {
+			command := exec.Command(filepath.Join(repositoryRoot(t), ".venv", "bin", "python"), "-c",
+				"import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute(sys.argv[2]); c.commit()", path, statement)
+			if raw, err := command.CombinedOutput(); err != nil {
+				return fmt.Errorf("%v\n%s", err, raw)
+			}
+			return nil
 		}
+		database, err := sql.Open("sqlite", "file:"+path)
+		if err != nil {
+			return err
+		}
+		_, err = database.Exec(statement)
+		return errors.Join(err, database.Close())
 	}
 	garbage := bytes.Repeat([]byte("not a database \x00\xff"), 256)
-	dropped := func(path string) {
-		command := exec.Command(filepath.Join(repositoryRoot(t), ".venv", "bin", "python"), "-c",
-			"import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute('drop table store_challenge'); c.commit()", path)
-		if raw, err := command.CombinedOutput(); err != nil {
-			t.Fatalf("%v\n%s", err, raw)
+	prepare := func(python bool, state, kind string) error {
+		if err := os.MkdirAll(state, 0o700); err != nil {
+			return err
 		}
+		database := filepath.Join(state, "relay.sqlite3")
+		switch kind {
+		case "tables":
+			return execute(python, database, "create table t(x)")
+		case "garbage":
+			return os.WriteFile(database, garbage, 0o600)
+		case "dropped":
+			// A relay store without the table the nonce lookup reads.
+			registered := exec.Command(relay, "--state", state, "--json", "register", "--parent-task", "p", "--parent-host", "h",
+				"--child-task", "c", "--child-host", "h", "--issue", "T", "--artifact-root", filepath.Join(root, "artifacts"),
+				"--allowed-recipient", "p", "--dispatch-request-id", "d1")
+			if raw, err := registered.CombinedOutput(); err != nil {
+				return fmt.Errorf("%v\n%s", err, raw)
+			}
+			return execute(python, database, "drop table store_challenge")
+		}
+		return nil
 	}
 	for _, flag := range []string{"--issue", "--expect-nonce"} {
 		for _, kind := range []string{"tables", "garbage", "dropped"} {
 			states := map[string]string{"python": filepath.Join(root, flag, kind, "python"), "go": filepath.Join(root, flag, kind, "go")}
-			for _, state := range states {
-				if err := os.MkdirAll(state, 0o700); err != nil {
-					t.Fatal(err)
-				}
-				database := filepath.Join(state, "relay.sqlite3")
-				switch kind {
-				case "tables":
-					notRelay(database)
-				case "garbage":
-					if err := os.WriteFile(database, garbage, 0o600); err != nil {
-						t.Fatal(err)
-					}
-				case "dropped":
-					// A relay store without the table the nonce lookup reads.
-					registered := exec.Command(relay, "--state", state, "--json", "register", "--parent-task", "p", "--parent-host", "h",
-						"--child-task", "c", "--child-host", "h", "--issue", "T", "--artifact-root", filepath.Join(root, "artifacts"),
-						"--allowed-recipient", "p", "--dispatch-request-id", "d1")
-					if raw, err := registered.CombinedOutput(); err != nil {
-						t.Fatalf("%v\n%s", err, raw)
-					}
-					dropped(database)
-				}
+			if err := prepare(false, states["go"], kind); err != nil {
+				t.Fatal(err)
 			}
 			argv := []string{"--json", "doctor", flag, "x\xffy"}
-			want := pythonCLI(t, append([]string{"--state", states["python"]}, argv...))[0]
+			pythonArgv := append([]string{"--state", states["python"]}, argv...)
+			var recorded recordedRun
+			pyoracle.JSON(t, flag+" over "+kind, &recorded, func() (any, error) {
+				if err := prepare(true, states["python"], kind); err != nil {
+					return nil, err
+				}
+				answers, err := livePythonCLI(pythonArgv)
+				if err != nil {
+					return nil, err
+				}
+				return recordedRun{Code: answers[0].code, Stdout: answers[0].stdout}, nil
+			}, placeholders(pythonArgv...)...)
+			want := answer{recorded.Code, recorded.Stdout}
 			command := exec.Command(relay, append([]string{"--state", states["go"]}, argv...)...)
 			var stdout bytes.Buffer
 			command.Stdout = &stdout

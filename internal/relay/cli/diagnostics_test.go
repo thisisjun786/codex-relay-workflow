@@ -7,12 +7,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // scenario is one test_diagnostics.py scenario as the real Python relay left it: its store,
@@ -43,7 +45,7 @@ var (
 	scenariosOnce sync.Once
 	scenarios     recorded
 	scenariosErr  error
-	scenariosDir  string
+	scenariosDir  string // the fixed directory the live scenarios were built in
 	binaryOnce    sync.Once
 	binaryPath    string
 	binaryAlias   string
@@ -76,6 +78,9 @@ func packageBinary(t *testing.T) (string, string) {
 
 // TestMain removes the directory the Python scenarios were built in, whatever the tests did.
 func TestMain(m *testing.M) {
+	if filepath.Base(os.Args[0]) == "gh" {
+		os.Exit(fakeGH(os.Args[1:], os.Stdout, os.Stderr))
+	}
 	cleanup, err := testsupport.IsolateRelayState()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -86,7 +91,11 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		code = 1
 	}
-	for _, dir := range []string{scenariosDir, binaryDir} {
+	if err := removeProcessTrees(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		code = 1
+	}
+	for _, dir := range []string{binaryDir, ghDir} {
 		if dir != "" {
 			if err := os.RemoveAll(dir); err != nil {
 				fmt.Fprintln(os.Stderr, err)
@@ -97,21 +106,22 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// pythonScenarios runs testdata/diagnostics_scenarios.py once per package run: every Python
-// test in test_diagnostics.py executes with its own assertions, and its store is kept.
-func pythonScenarios(t *testing.T) map[string]scenario { return pythonRecorded(t).Status }
-
+// pythonRecorded runs testdata/diagnostics_scenarios.py once per package run (live only: every
+// test reads its scenarios through pythonScenario and pythonShows): every Python test in
+// test_diagnostics.py executes with its own assertions, and its store is kept. The scenarios
+// are built at one fixed directory with the fixture directories named in a fixed sequence, so
+// every run spells the same paths and derives the same ids from them.
 func pythonRecorded(t *testing.T) recorded {
 	t.Helper()
 	scenariosOnce.Do(func() {
 		root := repositoryRoot(t)
-		dir, err := os.MkdirTemp("", "crw20-diagnostics-")
+		dir, err := processFixedTree("diagnostics scenarios")
 		if err != nil {
 			scenariosErr = err
 			return
 		}
 		scenariosDir = dir
-		home := filepath.Join(dir, "home")
+		home := filepath.Join(dir, "user-home")
 		if err := os.MkdirAll(home, 0o700); err != nil {
 			scenariosErr = err
 			return
@@ -121,7 +131,14 @@ func pythonRecorded(t *testing.T) recorded {
 			scenariosErr = err
 			return
 		}
-		command := exec.Command("uv", "run", "--no-sync", "--project", root, "python", script, dir)
+		// The driver as it is, with tempfile's name sequence seeded.
+		seeded := `import os, random, runpy, sys, tempfile
+names = tempfile._get_candidate_names()
+names._rng, names._rng_pid = random.Random(0), os.getpid()
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+`
+		command := exec.Command("uv", "run", "--no-sync", "--project", root, "python", "-c", seeded, script, dir)
 		command.Dir = filepath.Join(root, "packages", "codex-session-relay")
 		command.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(dir, "xdg-state"),
 			"XDG_CONFIG_HOME="+filepath.Join(dir, "xdg-config"), "XDG_DATA_HOME="+filepath.Join(dir, "xdg-data"),
@@ -154,6 +171,93 @@ func pythonRecorded(t *testing.T) recorded {
 	return scenarios
 }
 
+var (
+	rebuiltMu sync.Mutex
+	rebuilt   = map[string]bool{}
+)
+
+// scenarioRoot is where the scenarios are: built by Python in this run, or rebuilt from the
+// recordings at the same fixed directory.
+func scenarioRoot(t *testing.T) string {
+	t.Helper()
+	if pyoracle.Live() {
+		pythonRecorded(t)
+		return scenariosDir
+	}
+	dir, err := processFixedTree("diagnostics scenarios")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// scenarioStore is the recorded tree of one scenario's directory (its store and artifacts),
+// rebuilt once per process where Python did not run, and handed to Go as Python's run was.
+func scenarioStore(t *testing.T, root, state string) {
+	t.Helper()
+	directory := filepath.Dir(state)
+	rel, err := filepath.Rel(root, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tree treeImage
+	pyoracle.JSON(t, "store "+rel, &tree, func() (any, error) { return snapshotTree(directory, nil) },
+		append(placeholders(root), pyoracle.Substitute(root, "<scenarios>"), sameFixture)...)
+	if pyoracle.Live() {
+		return
+	}
+	rebuiltMu.Lock()
+	defer rebuiltMu.Unlock()
+	if rebuilt[directory] {
+		return
+	}
+	if err = os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err = materializeTree(directory, tree); err != nil {
+		t.Fatal(err)
+	}
+	database := filepath.Join(directory, "state", "relay.sqlite3")
+	testsupport.Rehome(t, database)
+	ownedBy(t, database, "go")
+	rebuilt[directory] = true
+}
+
+// pythonScenario is test_diagnostics.py scenario name as the real Python relay left it (recorded
+// with its store: see scenarioStore).
+func pythonScenario(t *testing.T, name string) scenario {
+	t.Helper()
+	root := scenarioRoot(t)
+	var found scenario
+	pyoracle.JSON(t, "status "+name, &found, func() (any, error) {
+		found, ok := pythonRecorded(t).Status[name]
+		if !ok {
+			return nil, fmt.Errorf("no Python scenario %q", name)
+		}
+		return found, nil
+	}, append(placeholders(root), pyoracle.Substitute(root, "<scenarios>"), sameFixture)...)
+	scenarioStore(t, root, found.State)
+	return found
+}
+
+// pythonShows is Python's show for every scenario event (recorded with the stores).
+func pythonShows(t *testing.T) map[string]shown {
+	t.Helper()
+	root := scenarioRoot(t)
+	var shows map[string]shown
+	pyoracle.JSON(t, "show", &shows, func() (any, error) { return pythonRecorded(t).Show, nil },
+		append(placeholders(root), pyoracle.Substitute(root, "<scenarios>"), sameFixture)...)
+	var states []string
+	for _, s := range shows {
+		states = append(states, s.State)
+	}
+	slices.Sort(states)
+	for _, state := range slices.Compact(states) {
+		scenarioStore(t, root, state)
+	}
+	return shows
+}
+
 type scriptError struct {
 	err    error
 	stderr string
@@ -164,10 +268,7 @@ func (e *scriptError) Error() string { return e.err.Error() + "\n" + e.stderr }
 // compareStatus runs Go's status on the store Python left and compares the whole JSON.
 func compareStatus(t *testing.T, name string) map[string]any {
 	t.Helper()
-	found, ok := pythonScenarios(t)[name]
-	if !ok {
-		t.Fatalf("no Python scenario %q", name)
-	}
+	found := pythonScenario(t, name)
 	restore := cli.SetClock(found.Now)
 	defer restore()
 	got := golang(t, filepath.Dir(found.State), append([]string{"--state", found.State, "status"}, found.Argv...)...)
@@ -411,7 +512,7 @@ func TestStatus_observation_health_matches_python(t *testing.T) {
 
 // P19 opening a store backfills assignment_settlements from observations.
 func TestStatus_test_an_upgraded_store_does_not_forget_what_it_had_already_settled(t *testing.T) {
-	found := pythonScenarios(t)["test_an_upgraded_store_does_not_forget_what_it_had_already_settled"]
+	found := pythonScenario(t, "test_an_upgraded_store_does_not_forget_what_it_had_already_settled")
 	restore := cli.SetClock(found.Now)
 	defer restore()
 	// The Go build opens the upgraded file; the anchor it settled before is settled again.
@@ -427,7 +528,7 @@ func TestStatus_test_an_upgraded_store_does_not_forget_what_it_had_already_settl
 // show over every event the scenarios left: the whole JSON, byte for byte, including the
 // frozen attempt messages, and the usage refusal for an unknown event.
 func TestShow_matches_python_on_every_scenario_event(t *testing.T) {
-	shows := pythonRecorded(t).Show
+	shows := pythonShows(t)
 	if len(shows) < 20 {
 		t.Fatalf("only %d show scenarios", len(shows))
 	}

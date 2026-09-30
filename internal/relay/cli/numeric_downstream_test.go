@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
@@ -18,15 +19,21 @@ func Test24NumericDownstreamBytes(t *testing.T) {
 	t.Parallel()
 	root, _ := filepath.Abs("../../..")
 	_, alias := packageBinary(t)
-	home := t.TempDir()
+	home := fixedTree(t, t.Name())
 	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xdg", "XDG_CONFIG_HOME="+home+"/config", "XDG_DATA_HOME="+home+"/data", "CODEX_HOME="+home+"/codex", "CRW_REFUSE_LIVE_STATE=", "PATH="+root+"/internal/relay/cli/testdata:"+os.Getenv("PATH"))
+	goEnv := append(append([]string{}, env...), goForgePath(t))
 	python := filepath.Join(root, ".venv/bin/python")
-	setup := runParityProcess(t, env, python, "testdata/numeric_downstream.py", home)
-	if setup.code != 0 {
-		t.Fatalf("setup: %+v", setup)
-	}
+	// The store Python's setup leaves is recorded (see pythonFixture) and rebuilt where Python
+	// does not run.
+	output := pythonFixture(t, "setup", home, []string{"state", "art"}, func() (string, error) {
+		setup := runParityProcess(t, env, python, filepath.Join(root, "internal/relay/cli/testdata/numeric_downstream.py"), home)
+		if setup.code != 0 {
+			return "", fmt.Errorf("setup: %+v", setup)
+		}
+		return setup.out, nil
+	})
 	var ids map[string]string
-	if err := json.Unmarshal([]byte(setup.out), &ids); err != nil {
+	if err := json.Unmarshal([]byte(output), &ids); err != nil {
 		t.Fatal(err)
 	}
 	db := filepath.Join(home, "state", "relay.sqlite3")
@@ -53,9 +60,9 @@ func Test24NumericDownstreamBytes(t *testing.T) {
 		t.Helper()
 		args = append([]string{"--state", filepath.Join(home, "state")}, args...)
 		restore(t)
-		want := runParityProcess(t, env, python, append([]string{"-m", "codex_session_relay.cli"}, args...)...)
+		want := pythonProcess(t, "python", env, "", python, append([]string{"-m", "codex_session_relay.cli"}, args...)...)
 		restore(t)
-		got := runParityProcess(t, env, alias, args...)
+		got := runParityProcess(t, goEnv, alias, args...)
 		want.out = evidenceTimestamp.ReplaceAllString(want.out, "<time>")
 		got.out = evidenceTimestamp.ReplaceAllString(got.out, "<time>")
 		if got != want {
@@ -92,7 +99,14 @@ func Test24NumericDownstreamBytes(t *testing.T) {
 		return "v"
 	}
 	represented := map[string]bool{}
-	for name, spec := range argparse.Specs {
+	// In name order, so the representative int and float actions are the same on every run.
+	names := make([]string, 0, len(argparse.Specs))
+	for name := range argparse.Specs {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		spec := argparse.Specs[name]
 		if !cli.Registered(name) || name == "slot-release" || name == "limit-declare" || name == "usage-observe" {
 			continue
 		}

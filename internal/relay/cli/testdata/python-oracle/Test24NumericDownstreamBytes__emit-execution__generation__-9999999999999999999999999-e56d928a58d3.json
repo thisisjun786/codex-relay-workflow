@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python": "txt:{\"code\":3,\"stdout\":\"{\\n  \\\"error\\\": \\\"host\\\",\\n  \\\"detail\\\": \\\"ValueError: generation must be a positive integer\\\"\\n}\\n\",\"stderr\":\"\"}"
+ }
+}

@@ -6,75 +6,12 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 )
-
-// guardOwner is a live Python owner's control server (control.GuardServer) on state, evaluating
-// under root, that counts the requests it answers.
-type guardOwner struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout *bufio.Reader
-}
-
-func startGuardOwner(t *testing.T, state, root string) *guardOwner {
-	t.Helper()
-	script := `import sys
-from codex_session_relay import control
-answered = []
-original = control.GuardServer._answer
-def counted(self, connection):
-    answered.append(1)
-    return original(self, connection)
-control.GuardServer._answer = counted
-server = control.GuardServer(sys.argv[1])
-print("ready", flush=True)
-sys.stdin.readline()
-server.close()
-print(len(answered), flush=True)
-`
-	cmd := exec.Command(filepath.Join(repositoryRoot(t), ".venv", "bin", "python"), "-c", script, state)
-	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "CODEX_SESSION_RELAY_MARKER_ROOT="+root)
-	cmd.Stderr = os.Stderr
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	owner := &guardOwner{cmd: cmd, stdin: stdin, stdout: bufio.NewReader(stdout)}
-	if line, err := owner.stdout.ReadString('\n'); err != nil || line != "ready\n" {
-		_ = cmd.Process.Kill()
-		t.Fatalf("the Python owner did not start: %q %v", line, err)
-	}
-	return owner
-}
-
-// stop closes the owner's control server and answers how many requests it answered.
-func (o *guardOwner) stop(t *testing.T) string {
-	t.Helper()
-	if _, err := io.WriteString(o.stdin, "stop\n"); err != nil {
-		t.Fatal(err)
-	}
-	count, err := o.stdout.ReadString('\n')
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := o.cmd.Wait(); err != nil {
-		t.Fatal(err)
-	}
-	return strings.TrimSpace(count)
-}
 
 // listen binds path, through /proc/self/fd when a sockaddr_un cannot hold it.
 func listen(t *testing.T, path string) net.Listener {
@@ -131,16 +68,21 @@ func fakeOwner(t *testing.T, path, reply string) func() {
 // its receipt is sent to <state>/control.sock, and the owner's answer is the command's. Where no
 // owner can be asked and the other runtime owns the store, each runtime refuses with the fence's
 // words (no socket, a socket nobody listens on); an owner that says nothing readable is a host
-// error; under its own store and with no daemon, each evaluates in-process. The Go CLI and the
-// live fence answer byte for byte: against one live Python owner, and each against a store the
-// other runtime owns.
+// error; under its own store and with no daemon, each evaluates in-process. The Go CLI answers
+// what the fence answered (recorded: see oracleRun) byte for byte, each against a store the other
+// runtime owns. (A live Python owner answering both runtimes' requests on its control socket
+// left with the Python runtime, todo 44; the Go owner's control server is
+// internal/relay/control's.)
 func TestGuardEvaluate_routes_to_the_owners_control_socket_as_the_fence_does(t *testing.T) {
 	home := pythonHome(t)
 	type fixture struct{ Root, Stop, Now string }
 	build := func(name string) (string, fixture) {
 		state := filepath.Join(home, name, "state")
 		var f fixture
-		if err := json.Unmarshal([]byte(matrixPython(t, "guard", filepath.Join(home, name, "guard"), filepath.Join(state, "relay.sqlite3"))), &f); err != nil {
+		built := pythonFixture(t, "guard "+name, filepath.Join(home, name), nil, func() (string, error) {
+			return matrixPython(t, "guard", filepath.Join(home, name, "guard"), filepath.Join(state, "relay.sqlite3")), nil
+		})
+		if err := json.Unmarshal([]byte(built), &f); err != nil {
 			t.Fatal(err)
 		}
 		return state, f
@@ -223,25 +165,6 @@ func TestGuardEvaluate_routes_to_the_owners_control_socket_as_the_fence_does(t *
 		if !strings.Contains(got.stdout, owner.detail) {
 			t.Errorf("%s: %s", owner.name, got.stdout)
 		}
-	}
-
-	// A live Python owner answers both runtimes' requests: its verdict under its own marker root,
-	// and its host error for a request naming another one.
-	owner := startGuardOwner(t, python, pf.Root)
-	got = goCLI(t, argv(python, pf, pf.Root)...)
-	fence = pythonCLI(t, argv(python, pf, pf.Root))
-	if count := owner.stop(t); count != "2" {
-		t.Errorf("the owner answered %s requests, not the two routed to it", count)
-	}
-	same("routed to the owner", got, fence[0], 0)
-	elsewhere := filepath.Join(home, "owner-markers")
-	owner = startGuardOwner(t, python, elsewhere)
-	got = goCLI(t, argv(python, pf, pf.Root)...)
-	fence = pythonCLI(t, argv(python, pf, pf.Root))
-	owner.stop(t)
-	same("routed to an owner under another marker root", got, fence[0], 3)
-	if !strings.Contains(got.stdout, "control.sock evaluates Stops only under this owner's marker root "+elsewhere) {
-		t.Errorf("the owner's marker root: %s", got.stdout)
 	}
 
 	// Where no owner answers and the store is its own, each runtime checks the store's ownership

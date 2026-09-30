@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,14 +16,14 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
-// Decision 25 across the runtimes, in process: the Go producer and the Go drain against the
-// retained Python fence's (live, one Python process per batch). The built-binary candidate
-// drain is internal/relay/service Test31GoCandidateDrainsPythonQueuedEntriesBuiltCLI.
+// Decision 25 across the runtimes, in process: the Go producer and the Go drain against what the
+// retained Python fence answered (one Python process per batch, recorded: see pythonCLI). The
+// built-binary candidate drain is internal/relay/service Test31GoCandidateDrainsPythonQueuedEntriesBuiltCLI.
 
 type answer struct {
 	code   int
@@ -37,10 +38,41 @@ func goCLI(t *testing.T, argv ...string) answer {
 	return answer{code, stdout.String()}
 }
 
-// pythonCLI runs each argv through the fence's cli.main in one Python process, byte for byte
-// (argv that is not UTF-8 arrives surrogate-escaped, as on a command line).
+// pythonCLI is what the fence's cli.main answered for each argv, in one Python process, byte
+// for byte (argv that is not UTF-8 arrives surrogate-escaped, as on a command line); recorded,
+// see oracleRun.
 func pythonCLI(t *testing.T, argvs ...[]string) []answer {
 	t.Helper()
+	var words []string
+	for _, argv := range argvs {
+		words = append(words, argv...)
+	}
+	label := "cli.main"
+	if len(argvs) > 0 {
+		label += fmt.Sprintf(" x%d %s", len(argvs), oracleLabel(argvs[0]...))
+	}
+	var recorded []recordedRun
+	askOracle(t, oracleKey(t, label), &recorded, func() (any, error) {
+		answers, err := livePythonCLI(argvs...)
+		out := make([]recordedRun, len(answers))
+		for i, a := range answers {
+			out[i] = recordedRun{Code: a.code, Stdout: a.stdout}
+		}
+		return out, err
+	}, placeholders(words...)...)
+	if len(recorded) != len(argvs) {
+		t.Fatalf("%d answers for %d argvs", len(recorded), len(argvs))
+	}
+	out := make([]answer, len(recorded))
+	for i, r := range recorded {
+		out[i] = answer{r.Code, r.Stdout}
+	}
+	return out
+}
+
+// livePythonCLI runs each argv through the fence's cli.main in one live Python process. Only a
+// capture closure calls it.
+func livePythonCLI(argvs ...[]string) ([]answer, error) {
 	var encoded [][]string
 	for _, argv := range argvs {
 		var items []string
@@ -51,7 +83,7 @@ func pythonCLI(t *testing.T, argvs ...[]string) []answer {
 	}
 	input, err := json.Marshal(encoded)
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	script := `import base64, contextlib, io, json, os, sys
 from codex_session_relay import cli
@@ -63,26 +95,66 @@ for argv in json.load(sys.stdin):
     out.append([code, printed.getvalue()])
 json.dump(out, sys.stdout)
 `
-	python := exec.Command(filepath.Join(repositoryRoot(t), ".venv", "bin", "python"), "-c", script)
+	python := exec.Command(filepath.Join(repositoryRootPath(), ".venv", "bin", "python"), "-c", script)
 	python.Stdin = bytes.NewReader(input)
 	python.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
 	raw, err := python.Output()
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
-			t.Fatalf("%v: %s", err, exit.Stderr)
+			return nil, fmt.Errorf("%v: %s", err, exit.Stderr)
 		}
-		t.Fatal(err)
+		return nil, err
 	}
 	var decoded [][2]any
 	if err = json.Unmarshal(raw, &decoded); err != nil || len(decoded) != len(argvs) {
-		t.Fatalf("%v %s", err, raw)
+		return nil, fmt.Errorf("%v %s", err, raw)
 	}
 	out := make([]answer, len(decoded))
 	for i, d := range decoded {
 		out[i] = answer{int(d[0].(float64)), d[1].(string)}
 	}
-	return out
+	return out, nil
+}
+
+// pythonInbox is every takeover-inbox entry the fence left in state, by name (recorded right
+// after the answers that queued them).
+func pythonInbox(t *testing.T, state string) map[string][]byte {
+	t.Helper()
+	var entries map[string][]byte
+	pyoracle.JSON(t, oracleKey(t, "takeover-inbox"), &entries, func() (any, error) {
+		out := map[string][]byte{}
+		for _, name := range inboxEntries(t, state) {
+			raw, err := os.ReadFile(filepath.Join(state, "takeover-inbox", name))
+			if err != nil {
+				return nil, err
+			}
+			out[name] = raw
+		}
+		return out, nil
+	}, placeholders(state)...)
+	return entries
+}
+
+// sameInbox requires the entries Go queued in state to be, name for name and byte for byte, the
+// ones the fence queued.
+func sameInbox(t *testing.T, state string, python map[string][]byte, count int) {
+	t.Helper()
+	entries := inboxEntries(t, state)
+	var names []string
+	for name := range python {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	if !slices.Equal(entries, names) || len(entries) != count {
+		t.Fatalf("go queued %v, python %v", entries, names)
+	}
+	for _, name := range entries {
+		raw, _ := os.ReadFile(filepath.Join(state, "takeover-inbox", name))
+		if !bytes.Equal(raw, python[name]) {
+			t.Fatalf("%s:\n go     %s\n python %s", name, raw, python[name])
+		}
+	}
 }
 
 func object(t *testing.T, text string) map[string]any {
@@ -207,114 +279,13 @@ func registerRelationship(t *testing.T, state, roots string, python bool) string
 	return id
 }
 
-// fixedClock makes every delivery timestamp of the in-process Go CLI one instant, so a
-// replayed receipt and its direct twin compare whole.
-func fixedClock(t *testing.T) {
-	t.Helper()
-	previous := delivery.CommandClock
-	delivery.CommandClock = &delivery.FakeClock{T: 1_800_000_000}
-	t.Cleanup(func() { delivery.CommandClock = previous })
-}
-
-// twin copies a stopped store into its own directory, as a copy made before the requests.
-func twin(t *testing.T, dbPath, state string) string {
-	t.Helper()
-	db, err := ownership.OpenExisting(t.Context(), dbPath, "rw")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
-	if err = errors.Join(err, db.Close()); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	copyPath := filepath.Join(state, "relay.sqlite3")
-	if err = os.WriteFile(copyPath, raw, 0600); err != nil {
-		t.Fatal(err)
-	}
-	testsupport.Rehome(t, copyPath)
-	return copyPath
-}
-
-// Python queues -> Go drains: receipts and acknowledgments the fence queued under a Go owner
-// are applied by the Go owner's drain before its next writable command, and what they leave -
-// every events and deliveries row, and each marker's answer - is exactly what the same
-// commands applied directly by Go leave on a copy of the store made before them.
-func Test31_python_queued_requests_apply_through_the_go_drain_as_direct_commands(t *testing.T) {
-	home := pythonHome(t)
-	roots := ownerOnlyState(t, home, "artifacts")
-	if err := os.WriteFile(filepath.Join(roots, "report.txt"), []byte("the deliverable\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	stateA := ownerOnlyState(t, home, "a")
-	relationship := registerRelationship(t, stateA, roots, false)
-	fixedClock(t)
-	stateB := ownerOnlyState(t, home, "b")
-	dbB := twin(t, filepath.Join(stateA, "relay.sqlite3"), stateB)
-	requests := [][]string{
-		{"emit", "--relationship", relationship, "--generation", "1", "--outcome", "failed", "--turn-status", "failed", "--turn-thread", "child-1", "--turn-id", "turn-1", "--continues-anchor", "turn-0"},
-		{"emit", "--relationship", relationship, "--generation", "1", "--outcome", "interrupted", "--turn-status", "interrupted", "--turn-thread", "child-1", "--turn-id", "turn-2", "--continues-anchor", "turn-0", "--no-enqueue", "--attempt", "2"},
-		{"emit", "--relationship", relationship, "--generation", "1", "--outcome", "ready_for_review", "--turn-status", "completed", "--turn-thread", "child-1", "--turn-id", "turn-3", "--continues-anchor", "turn-0", "--continuation-reason", "reviewable", "--artifact", filepath.Join(roots, "report.txt")},
-		{"emit", "--relationship", relationship, "--generation", "1", "--outcome", "failed", "--turn-thread", "child-1", "--turn-id", "turn-4"},
-		{"emit", "--relationship", "no-such-relationship", "--generation", "1", "--outcome", "failed", "--turn-thread", "child-1", "--turn-id", "turn-5"},
-		{"ack", "--event", strings.Repeat("ab", 16), "--ack-turn", "parent-turn", "--ack-proof", "proof-1"},
-		{"fault-notification-ack", "--notification", "notice-1", "--token", "token-1", "--ref", "receipt-1"},
-	}
-	var queued [][]string
-	for _, request := range requests {
-		queued = append(queued, append([]string{"--state", stateA}, request...))
-	}
-	for i, got := range pythonCLI(t, queued...) {
-		if got.code != 0 || object(t, got.stdout)["status"] != "durably_queued" {
-			t.Fatalf("request %d under the Go owner was not queued: %+v", i, got)
-		}
-	}
-	if n := len(inboxEntries(t, stateA)); n != len(requests) {
-		t.Fatalf("%d entries", n)
-	}
-	// The Go owner's next writable command drains first.
-	if got := goCLI(t, "--state", stateA, "store-challenge", "--write", "--actor", "t31"); got.code != 0 {
-		t.Fatalf("%+v", got)
-	}
-	if left := inboxEntries(t, stateA); len(left) != 0 {
-		t.Fatalf("entries left after the drain: %v", left)
-	}
-	dbA := filepath.Join(stateA, "relay.sqlite3")
-	for _, request := range requests {
-		direct := goCLI(t, append([]string{"--state", stateB}, request...)...)
-		markers := snapshotQuery(t, dbA, "SELECT value FROM schema_meta WHERE key LIKE ?", "inbox:"+request[0]+".%")
-		var marker map[string]any
-		for _, row := range markers {
-			candidate := object(t, row["value"].(string))
-			if reflect.DeepEqual(candidate["answer"], object(t, direct.stdout)) {
-				marker = candidate
-			}
-		}
-		if marker == nil || marker["exit"] != float64(direct.code) {
-			t.Fatalf("%v: no marker holds the direct answer %d %s (markers %v)", request, direct.code, direct.stdout, markers)
-		}
-	}
-	// The drain applies in operation-ID order, the direct run in request order: same rows.
-	for _, table := range []string{"events", "deliveries", "delivery_supersession"} {
-		a := snapshotQuery(t, dbA, "SELECT * FROM "+table+" ORDER BY event_id")
-		b := snapshotQuery(t, dbB, "SELECT * FROM "+table+" ORDER BY event_id")
-		if !reflect.DeepEqual(a, b) {
-			t.Fatalf("%s differs:\n drained %v\n  direct %v", table, a, b)
-		}
-	}
-	if events := snapshotQuery(t, dbA, "SELECT event_id FROM events"); len(events) != 3 {
-		t.Fatalf("%d events: %v", len(events), snapshotQuery(t, dbA, "SELECT key, value FROM schema_meta WHERE key LIKE 'inbox:%'"))
-	}
-}
-
-// Go queues -> Python drains: under a Python owner the Go producer publishes the fence's own
-// bytes and answers with the fence's own stdout (checked against the fence queueing the same
-// request under a Go owner: acceptance, retry, conflict and both usage rejections), and the
-// Python owner's next writable command applies them.
-func Test31_go_queues_under_a_python_owner_as_the_fence_does_and_python_applies_it(t *testing.T) {
+// Go queues under a Python owner: the Go producer publishes the fence's own bytes and answers
+// with the fence's own stdout (checked against the fence queueing the same request under a Go
+// owner: acceptance, retry, conflict and both usage rejections). The Python owner's drain of
+// those entries (the second half of this test while the fence ran) left with the Python runtime
+// (todo 44): the Go drain of queued entries is Test31_receipts_queued_while_draining_apply_once_
+// after_activation and Test31_every_writable_command_drains_before_its_handler_reads_its_arguments.
+func Test31_go_queues_under_a_python_owner_as_the_fence_does(t *testing.T) {
 	home := pythonHome(t)
 	roots := ownerOnlyState(t, home, "artifacts")
 	statePython := ownerOnlyState(t, home, "python-owned")
@@ -339,45 +310,21 @@ func Test31_go_queues_under_a_python_owner_as_the_fence_does_and_python_applies_
 		fence = append(fence, append([]string{"--state", stateGo}, request...))
 	}
 	want := pythonCLI(t, fence...)
+	queued := pythonInbox(t, stateGo)
 	for i, request := range requests {
 		got := goCLI(t, append([]string{"--state", statePython}, request...)...)
 		if got != want[i] {
 			t.Fatalf("%q:\n go     %d %s\n python %d %s", request, got.code, got.stdout, want[i].code, want[i].stdout)
 		}
 	}
-	entries := inboxEntries(t, statePython)
-	if !slices.Equal(entries, inboxEntries(t, stateGo)) || len(entries) != 3 {
-		t.Fatalf("%v %v", entries, inboxEntries(t, stateGo))
-	}
-	for _, name := range entries {
-		a, _ := os.ReadFile(filepath.Join(statePython, "takeover-inbox", name))
-		b, _ := os.ReadFile(filepath.Join(stateGo, "takeover-inbox", name))
-		if !bytes.Equal(a, b) {
-			t.Fatalf("%s:\n go     %s\n python %s", name, a, b)
-		}
-	}
-	if got := pythonCLI(t, []string{"--state", statePython, "store-challenge", "--write", "--actor", "t31"})[0]; got.code != 0 {
-		t.Fatalf("%+v", got)
-	}
-	if left := inboxEntries(t, statePython); len(left) != 0 {
-		t.Fatalf("the Python owner left %v", left)
-	}
-	events := snapshotQuery(t, dbPython, "SELECT turn_id, outcome FROM events")
-	if len(events) != 1 || events[0]["turn_id"] != "turn-0" || events[0]["outcome"] != "failed" {
-		t.Fatalf("%v", events)
-	}
-	for _, name := range entries {
-		marker, ok := meta(t, dbPython, "inbox:"+name)
-		exit := map[bool]float64{true: 0, false: 2}[strings.HasPrefix(name, "emit.")]
-		if !ok || marker["exit"] != exit {
-			t.Fatalf("%s: %v", name, marker)
-		}
-	}
+	sameInbox(t, statePython, queued, 3)
 }
 
-// Todo 31 QA: 100 receipts submitted while the store drains - through the Go and the Python
-// producer, and while a transfer barrier holds the write gate exclusively - are applied once
-// when Go owns the store in phase active again: 100 domain rows, 0 duplicates. The same
+// Todo 31 QA: 100 receipts submitted while the store drains - through the Go producer, and
+// while a transfer barrier holds the write gate exclusively - are applied once when Go owns the
+// store in phase active again: 100 domain rows, 0 duplicates. (The first 40 were the Python
+// producer's while the fence ran; that producer left with the Python runtime, todo 44, and the
+// fence's entry bytes are Test31_go_queues_under_a_python_owner_as_the_fence_does's.) The same
 // operation ID with different bytes is refused at submit while the entry exists, and a retired
 // ID reused with different bytes is recorded as a conflict and never applied.
 func Test31_receipts_queued_while_draining_apply_once_after_activation(t *testing.T) {
@@ -390,17 +337,8 @@ func Test31_receipts_queued_while_draining_apply_once_after_activation(t *testin
 	emit := func(turn int) []string {
 		return []string{"--state", state, "emit", "--relationship", relationship, "--generation", "1", "--outcome", "failed", "--turn-status", "failed", "--turn-thread", "child-1", "--turn-id", "turn-" + string(rune('A'+turn/26)) + string(rune('a'+turn%26)), "--continues-anchor", "turn-0"}
 	}
-	var python [][]string
-	for turn := range 40 {
-		python = append(python, emit(turn))
-	}
-	for _, got := range pythonCLI(t, python...) {
-		if got.code != 0 || object(t, got.stdout)["status"] != "durably_queued" {
-			t.Fatalf("python while draining: %+v", got)
-		}
-	}
 	var barrier *os.File
-	for turn := 40; turn < 100; turn++ {
+	for turn := 0; turn < 100; turn++ {
 		if turn == 70 {
 			// Step 3's transfer barrier: write-gate EX held; the Go writer is refused at once
 			// as the fence's lock-free preflight refuses a draining store, so it queues.
@@ -485,16 +423,16 @@ func Test31_receipts_queued_while_draining_apply_once_after_activation(t *testin
 	}
 }
 
-// Both owners drain at daemon start (cmd_daemon; cutover.md Wire format, "Both owners drain"):
-// an acknowledgment queued while the other runtime owned the store (Go's queue under a Python
-// owner) or while it drained (Go's own) is judged by the owner's `daemon` before its first tick.
+// The owner drains at daemon start (cmd_daemon; cutover.md Wire format, "Both owners drain"):
+// an acknowledgment queued while the store drained is judged by the owner's `daemon` before its
+// first tick. (The Python owner's daemon draining Go's queue under it left with the Python
+// runtime, todo 44.)
 func Test31_the_owners_daemon_drains_at_start(t *testing.T) {
 	home := pythonHome(t)
 	_, alias := packageBinary(t)
 	event := strings.Repeat("0a", 16)
 	for runtime, relay := range map[string]func(argv ...string) run{
-		"go":     func(argv ...string) run { return binaryRun(t, alias, argv...) },
-		"python": func(argv ...string) run { return fence(t, argv...) },
+		"go": func(argv ...string) run { return binaryRun(t, alias, argv...) },
 	} {
 		state := ownerOnlyState(t, home, runtime)
 		dbPath := filepath.Join(state, "relay.sqlite3")
@@ -538,9 +476,8 @@ func Test31_a_queueable_refusal_queues_before_the_selection_and_kind_module_refu
 	other := filepath.Join(home, "other.sock")
 	statePython := ownerOnlyState(t, home, "python-owned")
 	stateGo := ownerOnlyState(t, home, "go-owned")
-	if got := pythonCLI(t, []string{"--state", statePython, "--socket", bound, "store-challenge", "--write"})[0]; got.code != 0 {
-		t.Fatalf("%+v", got)
-	}
+	// The Python-owned store bound to its socket, as the fence's store-challenge --write leaves it.
+	testsupport.Create(t, filepath.Join(statePython, "relay.sqlite3"), bound, "python")
 	if got := goCLI(t, "--state", stateGo, "--socket", bound, "store-challenge", "--write"); got.code != 0 {
 		t.Fatalf("%+v", got)
 	}
@@ -560,6 +497,7 @@ func Test31_a_queueable_refusal_queues_before_the_selection_and_kind_module_refu
 	own := []string{"--socket", other, "ack", "--event", strings.Repeat("ef", 16), "--ack-turn", "parent-turn", "--ack-proof", "proof-1"}
 	fence = append(fence, append([]string{"--state", statePython}, own...))
 	want := pythonCLI(t, fence...)
+	queued := pythonInbox(t, stateGo)
 	for i, request := range requests {
 		got := goCLI(t, append([]string{"--state", statePython}, request...)...)
 		if got != want[i] || got.code != 0 || object(t, got.stdout)["status"] != "durably_queued" {
@@ -570,17 +508,7 @@ func Test31_a_queueable_refusal_queues_before_the_selection_and_kind_module_refu
 	if python := want[len(requests)]; refused.code != 2 || python.code != 2 || object(t, refused.stdout)["reason"] != "state_directory_serves_another_socket" || object(t, python.stdout)["reason"] != "state_directory_serves_another_socket" {
 		t.Fatalf("own owner:\n go     %+v\n python %+v", refused, python)
 	}
-	entries := inboxEntries(t, statePython)
-	if !slices.Equal(entries, inboxEntries(t, stateGo)) || len(entries) != len(requests) {
-		t.Fatalf("%v %v", entries, inboxEntries(t, stateGo))
-	}
-	for _, name := range entries {
-		a, _ := os.ReadFile(filepath.Join(statePython, "takeover-inbox", name))
-		b, _ := os.ReadFile(filepath.Join(stateGo, "takeover-inbox", name))
-		if !bytes.Equal(a, b) {
-			t.Fatalf("%s:\n go     %s\n python %s", name, a, b)
-		}
-	}
+	sameInbox(t, statePython, queued, len(requests))
 }
 
 // cli.py main runs check_start for every command that is neither read-only nor answers without
@@ -598,9 +526,7 @@ func Test31_check_start_precedes_the_selection_kind_module_and_handler_refusals(
 	other := filepath.Join(home, "other.sock")
 	statePython := ownerOnlyState(t, home, "python-owned")
 	stateGo := ownerOnlyState(t, home, "go-owned")
-	if got := pythonCLI(t, []string{"--state", statePython, "--socket", bound, "store-challenge", "--write"})[0]; got.code != 0 {
-		t.Fatalf("%+v", got)
-	}
+	testsupport.Create(t, filepath.Join(statePython, "relay.sqlite3"), bound, "python")
 	if got := goCLI(t, "--state", stateGo, "--socket", bound, "store-challenge", "--write"); got.code != 0 {
 		t.Fatalf("%+v", got)
 	}
@@ -665,18 +591,12 @@ func Test31_check_start_precedes_the_selection_kind_module_and_handler_refusals(
 func Test31_every_writable_command_drains_before_its_handler_reads_its_arguments(t *testing.T) {
 	home := pythonHome(t)
 	socket := filepath.Join(home, "drainer.sock")
+	phases := []string{"corrupt", "valid", "readback"}
 	states := map[string]string{}
-	var creates [][]string
-	for _, phase := range []string{"corrupt", "valid", "readback"} {
+	for _, phase := range phases {
 		states["go-"+phase] = ownerOnlyState(t, home, "go-"+phase)
-		states["python-"+phase] = ownerOnlyState(t, home, "python-"+phase)
-		creates = append(creates, []string{"--state", states["python-"+phase], "store-challenge", "--write"})
+		states["python-"+phase] = filepath.Join(home, "python-"+phase)
 		if got := goCLI(t, "--state", states["go-"+phase], "store-challenge", "--write"); got.code != 0 {
-			t.Fatalf("%+v", got)
-		}
-	}
-	for _, got := range pythonCLI(t, creates...) {
-		if got.code != 0 {
 			t.Fatalf("%+v", got)
 		}
 	}
@@ -693,18 +613,22 @@ func Test31_every_writable_command_drains_before_its_handler_reads_its_arguments
 		"valid":    {"ack.event-1": goldenEntry("ack"), emptyList: []byte(`{"arguments":{"artifact":[],"generation":1,"outcome":"failed","relationship":"relationship-1","turn_id":"turn-1","turn_thread":"child-1"},"command":"emit","inboxVersion":1,"operationId":"emit.edb680737833a16cc18b813934d667cf","payloadDigest":"sha256:edb680737833a16cc18b813934d667cff1b1d2d0ad5336e2dc847e03f55b024b"}`)},
 		"readback": {"supervisor-read.message-1": goldenEntry("supervisor-read")},
 	}
-	for phase, files := range entries {
-		for _, runtime := range []string{"go-", "python-"} {
+	queue := func(runtime string) error {
+		for phase, files := range entries {
 			directory := filepath.Join(states[runtime+phase], "takeover-inbox")
 			if err := os.MkdirAll(directory, 0700); err != nil {
-				t.Fatal(err)
+				return err
 			}
 			for name, raw := range files {
 				if err := os.WriteFile(filepath.Join(directory, name), raw, 0600); err != nil {
-					t.Fatal(err)
+					return err
 				}
 			}
 		}
+		return nil
+	}
+	if err := queue("go-"); err != nil {
+		t.Fatal(err)
 	}
 	refusedArguments := [][]string{
 		{"deliver", "--limit", "1"},
@@ -716,13 +640,66 @@ func Test31_every_writable_command_drains_before_its_handler_reads_its_arguments
 		{"supervisor-read", "--message", "message-1", "--turn", "t", "--proof", "p", "--as", "a"},
 		{"store-challenge"},
 	}
+	// The fence's side, one recorded answer: its own stores created by its writer, the same
+	// entries queued in them, each command's answer, and then the markers its drain left and the
+	// entries it kept (see oracleRun).
+	var python struct {
+		Answers []recordedRun             `json:"answers"`
+		Markers map[string]map[string]any `json:"markers"`
+		Left    map[string][]string       `json:"left"`
+	}
 	var fence [][]string
 	for _, argv := range refusedArguments {
 		fence = append(fence, append([]string{"--state", states["python-corrupt"]}, argv...))
 	}
 	fence = append(fence, []string{"--state", states["python-valid"], "deliver", "--limit", "1"},
 		[]string{"--state", states["python-readback"], "--socket", socket, "store-challenge", "--write"})
-	want := pythonCLI(t, fence...)
+	var anchors []string
+	for _, argv := range fence {
+		anchors = append(anchors, argv...)
+	}
+	pyoracle.JSON(t, "fence", &python, func() (any, error) {
+		var creates [][]string
+		for _, phase := range phases {
+			if err := os.MkdirAll(states["python-"+phase], 0o700); err != nil {
+				return nil, err
+			}
+			creates = append(creates, []string{"--state", states["python-"+phase], "store-challenge", "--write"})
+		}
+		created, err := livePythonCLI(creates...)
+		if err != nil {
+			return nil, err
+		}
+		for _, got := range created {
+			if got.code != 0 {
+				return nil, fmt.Errorf("the fence's writer: %+v", got)
+			}
+		}
+		if err = queue("python-"); err != nil {
+			return nil, err
+		}
+		answers, err := livePythonCLI(fence...)
+		if err != nil {
+			return nil, err
+		}
+		python.Answers, python.Markers, python.Left = nil, map[string]map[string]any{}, map[string][]string{}
+		for _, a := range answers {
+			python.Answers = append(python.Answers, recordedRun{Code: a.code, Stdout: a.stdout})
+		}
+		for phase, files := range entries {
+			python.Left[phase] = inboxEntries(t, states["python-"+phase])
+			for name := range files {
+				if marker, ok := meta(t, filepath.Join(states["python-"+phase], "relay.sqlite3"), "inbox:"+name); ok {
+					python.Markers[name] = marker
+				}
+			}
+		}
+		return python, nil
+	}, placeholders(anchors...)...)
+	want := make([]answer, len(python.Answers))
+	for i, r := range python.Answers {
+		want[i] = answer{r.Code, r.Stdout}
+	}
 	for i, argv := range refusedArguments {
 		got := goCLI(t, append([]string{"--state", states["go-corrupt"]}, argv...)...)
 		if got != want[i] || got.code != 3 {
@@ -737,29 +714,39 @@ func Test31_every_writable_command_drains_before_its_handler_reads_its_arguments
 		t.Fatalf("%+v %+v", got, want[len(fence)-1])
 	}
 	for phase, files := range entries {
+		left := inboxEntries(t, states["go-"+phase])
 		if phase == "corrupt" {
-			for _, runtime := range []string{"go-", "python-"} {
-				if left := inboxEntries(t, states[runtime+phase]); !slices.Equal(left, []string{"ack.corrupt"}) {
-					t.Fatalf("%s%s: %v", runtime, phase, left)
-				}
+			if !slices.Equal(left, []string{"ack.corrupt"}) || !slices.Equal(python.Left[phase], []string{"ack.corrupt"}) {
+				t.Fatalf("%s: go kept %v, python %v", phase, left, python.Left[phase])
 			}
 			continue
 		}
 		for name := range files {
 			goMarker, goOK := meta(t, filepath.Join(states["go-"+phase], "relay.sqlite3"), "inbox:"+name)
-			pythonMarker, pythonOK := meta(t, filepath.Join(states["python-"+phase], "relay.sqlite3"), "inbox:"+name)
-			if !goOK || !pythonOK || !reflect.DeepEqual(goMarker, pythonMarker) || goMarker["exit"] != float64(2) {
+			pythonMarker, pythonOK := python.Markers[name]
+			if !goOK || !pythonOK || !reflect.DeepEqual(normalizeJSONNumbers(goMarker), normalizeJSONNumbers(pythonMarker)) || goMarker["exit"] != float64(2) {
 				t.Fatalf("%s:\n go     %v\n python %v", name, goMarker, pythonMarker)
 			}
 		}
-		for _, runtime := range []string{"go-", "python-"} {
-			if left := inboxEntries(t, states[runtime+phase]); len(left) != 0 {
-				t.Fatalf("%s%s kept %v", runtime, phase, left)
-			}
+		if len(left) != 0 || len(python.Left[phase]) != 0 {
+			t.Fatalf("%s: go kept %v, python %v", phase, left, python.Left[phase])
 		}
 	}
 	readback, _ := meta(t, filepath.Join(states["go-readback"], "relay.sqlite3"), "inbox:supervisor-read.message-1")
 	if answer, _ := readback["answer"].(map[string]any); answer["reason"] != "not_claimable" || answer["detail"] != "no supervisor message is staged as 'message-1'" {
 		t.Fatalf("%v", readback)
 	}
+}
+
+// normalizeJSONNumbers is v as encoding/json decodes it into any, whichever decoder read it.
+func normalizeJSONNumbers(v any) any {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return v
+	}
+	var out any
+	if err = json.Unmarshal(raw, &out); err != nil {
+		return v
+	}
+	return out
 }
