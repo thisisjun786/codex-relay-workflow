@@ -44,6 +44,19 @@ func ErrorWithLimit(doc string, maxDepth int) (message string, recursion bool) {
 	return "", false
 }
 
+// RawDecodePrefix is the text of the value json.JSONDecoder().raw_decode(doc) reads at the start
+// of doc, with whatever follows it left unread, or false where raw_decode raises ValueError: a
+// JSONDecodeError, or the integer-digit limit. As in Python, NaN, Infinity and -Infinity are
+// values, and no whitespace is skipped before the value.
+func RawDecodePrefix(doc string) (string, bool) {
+	p := &pyScan{s: []rune(doc)}
+	end, msg, _ := p.value(0)
+	if msg != "" || p.integerError != "" {
+		return "", false
+	}
+	return string(p.s[:end]), true
+}
+
 type pyScan struct {
 	s                            []rune
 	integerError, recursionError string

@@ -2,6 +2,8 @@ package skill
 
 import (
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 )
 
 // probeSorted is sorted(value or []): Python's '<' in CPython's comparison
@@ -15,12 +17,15 @@ func probeSorted(value any) ([]any, error) {
 }
 
 // probeCapabilityMatrix is capability_matrix. It reduces the schemas in the
-// order the binary first embeds each title, as Python's dict keeps them, so
-// the schema whose arrays cannot be sorted first is the one that raises.
-func probeCapabilityMatrix(titles []string, schemas map[string]map[string]any) (map[string]any, error) {
+// order the binary first embeds each title, and walks each schema's
+// definitions in the order the schema spells them, as Python's dicts keep
+// both, so the first schema or definition that cannot be read is the one that
+// raises.
+func probeCapabilityMatrix(titles []string, schemas map[string]contract.OrderedObject) (map[string]any, error) {
 	events := map[string]any{}
 	for _, title := range titles {
-		schema := schemas[title]
+		ordered := schemas[title]
+		schema, _ := orderedPlain(ordered).(map[string]any)
 		name, kind, _ := strings.Cut(title, ".command.")
 		entry, _ := events[name].(map[string]any)
 		if entry == nil {
@@ -59,7 +64,10 @@ func probeCapabilityMatrix(titles []string, schemas map[string]map[string]any) (
 				decision = defs["PreToolUseDecisionWire"]
 			}
 			additional := false
-			for _, v := range defs {
+			// definitions.values(): a falsy definitions is {} and has none.
+			definitionsOrdered, _ := objGet(ordered, "definitions").(contract.OrderedObject)
+			for _, field := range definitionsOrdered {
+				v := defs[field.Key]
 				definition, ok := v.(map[string]any)
 				if !ok {
 					return nil, pythonAttribute(v, "get")

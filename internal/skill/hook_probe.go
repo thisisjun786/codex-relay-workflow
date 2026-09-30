@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +18,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
@@ -292,7 +292,8 @@ func runHookProbe(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, e)
 			return 1
 		}
-		_ = emitUnicode(stdout, got)
+		// print(json.dumps(decide(...), indent=2, sort_keys=True)), as observe prints.
+		fmt.Fprintln(stdout, evidence.DumpsIndent(got, 2, true, true))
 		return 0
 	case "replay":
 		return replayHook(args[1:], stdout, stderr)
@@ -724,7 +725,7 @@ func observeHook(args []string, stdout, stderr io.Writer) int {
 		return 3
 	}
 	needle := []byte("{\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\"")
-	schemas := map[string]map[string]any{}
+	schemas := map[string]contract.OrderedObject{}
 	titles := []string{}
 	for at := 0; ; {
 		n := bytes.Index(raw[at:], needle)
@@ -732,28 +733,30 @@ func observeHook(args []string, stdout, stderr io.Writer) int {
 			break
 		}
 		start := at + n
+		at = start + 1
 		window := raw[start:]
 		if len(window) > 1<<16 {
 			window = window[:1<<16]
 		}
-		var schemaRaw json.RawMessage
-		dec := json.NewDecoder(bytes.NewReader(window))
-		if dec.Decode(&schemaRaw) == nil {
-			decoded, err := hook.Decode(schemaRaw)
-			if err != nil {
-				at = start + 1
-				continue
-			}
-			value, _ := orderedPlain(decoded).(map[string]any)
-			title, _ := value["title"].(string)
-			if strings.Contains(title, ".command.") {
-				if _, seen := schemas[title]; !seen {
-					titles = append(titles, title)
-				}
-				schemas[title] = value
-			}
+		// extract_schemas: decoder.raw_decode(chunk.decode("utf-8", "replace")) reads
+		// the first value in the window, NaN and Infinity included, and a ValueError
+		// skips it.
+		text, ok := pyjson.RawDecodePrefix(pyjson.DecodeReplace(window))
+		if !ok {
+			continue
 		}
-		at = start + 1
+		decoded, err := hook.Decode([]byte(text))
+		if err != nil {
+			continue
+		}
+		value, _ := decoded.(contract.OrderedObject)
+		title, _ := objGet(value, "title").(string)
+		if strings.Contains(title, ".command.") {
+			if _, seen := schemas[title]; !seen {
+				titles = append(titles, title)
+			}
+			schemas[title] = value
+		}
 	}
 	if len(schemas) == 0 {
 		fmt.Fprintf(stderr, "No embedded hook schemas found in %s.\n", binary)
