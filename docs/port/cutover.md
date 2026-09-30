@@ -16,8 +16,9 @@ Two facts shape everything below.
    Python **fence release** is a required deliverable and every pre-fence process must be
    replaced before any Go writer opens the DB.
 2. A cached hook command of the form `python3 /old/path.py` keeps being spawned by the host
-   after an upgrade (plugins/crw/wiring/crw_stop_hook.py:16-28 documents the exit-2 loop that
-   a missing script caused). Python interpreters and the tiny compatibility entry points stay
+   after an upgrade (crw_stop_hook.py:16-28 documents the exit-2 loop that a missing script
+   caused; the package shipped it until todo 43, and internal/pluginwiring/testdata/pre-native-wiring
+   keeps it). Python interpreters and the tiny compatibility entry points stay
    until the retention scan (below) reports zero references.
 
 Names used throughout:
@@ -1046,7 +1047,7 @@ Limits in force today:
 |---|---:|---|
 | registered plugin hook timeout | 10 s | plugins/crw/wiring/hooks/stop-recording-completion.json:9 |
 | default guard subprocess budget | 5 s | stopadapter.py:83-85 |
-| legacy launcher deadline | `min(timeoutSeconds + 2, 9)`, 7 s by default | plugins/crw/wiring/crw_stop_hook.py:60-73, 118-122 |
+| legacy launcher deadline | `min(timeoutSeconds + 2, 9)`, 7 s by default | crw_stop_hook.py:60-73, 118-122 (the host's `<CODEX_HOME>/crw-stop-hook.py`; packaged until todo 43, kept in internal/pluginwiring/testdata/pre-native-wiring) |
 | live settings `timeoutSeconds` | 5 s | `~/.codex/crw-completion-hook.json` |
 | transcript identity scan | 0.75 s / 64 MiB | stopadapter.py:158-164 |
 
@@ -1110,10 +1111,31 @@ What "live or resumable" means here:
   codex-cli 0.154.0 via docs/plugin-packaging.md:98).
 
 Until then the following stay in place: the retained fence Python runtime and its interpreter
-(`~/.local/share/crw-runtime/env-*`), the `<CODEX_HOME>/crw-stop-hook.py` shim, the legacy
-`crw_stop_hook.py` and `crw_bridge_mcp.py` in the plugin package, the `guard-evaluate` CLI
-envelope and its settings keys. Replacing a `.py` file with an ELF binary at the same path is not
-the protocol.
+(`~/.local/share/crw-runtime/env-*`), the `<CODEX_HOME>/crw-stop-hook.py` shim, the `guard-evaluate`
+CLI envelope and its settings keys. Replacing a `.py` file with an ELF binary at the same path is
+not the protocol.
+
+The legacy `crw_stop_hook.py` and `crw_bridge_mcp.py` in the plugin package were retired with the
+plugin change that followed the commit point (todo 43, `chore(plugin): retire legacy Python
+launchers after cutover commit`), which also re-recorded the payload's version suffix. They are not
+on the list above because a packaged copy is reached only through the version directory a cached
+command was loaded from, and a cached Python Stop bootstrap names the pre-native directory, which
+the install that brought the native wiring (todo 34) removed; it already falls back to the shim,
+whatever a later payload ships. The one path that could still reach a later payload's copy is a
+session holding the pre-native server declaration whose bridge the host starts again from a newer
+directory, which was not measured either way; without the launcher such a start fails and the
+session goes on without the bridge tools (`required: false`, docs/plugin-packaging.md "The native
+wiring"). The repository keeps both files, byte for byte, as test data beside the pre-native
+declarations in `internal/pluginwiring/testdata/pre-native-wiring`, for the tests that replay the
+bootstrap, place the shim and compare the Go record contract with the Python one.
+
+The `<CODEX_HOME>/crw-stop-hook.py` shim is host state, not package content, so no repository
+change removes it. The operator removes it on the host, with the ownership-checked
+`install.RemoveLauncher` (it takes only a regular file carrying the launcher marker), once
+`crw doctor retention-scan` reports no reference that could still reach it: no live hold, no
+unscanned row, and no Python reference but the shim's own row 8 entry, which lists the file for as
+long as it exists. The cached bootstrap commands of row 5 are what would fall back to it, and row 7
+the resumable threads that could still run one, so the scan has to read row 7 before this holds.
 
 ## Retention scan surface
 

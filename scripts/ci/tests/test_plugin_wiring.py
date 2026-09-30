@@ -31,11 +31,11 @@ from crw_runtime import bridgerecord, completion, hooks, hostrecord, reading
 import plugin
 
 sys.path.insert(0, str(ROOT / "scripts" / "ci" / "tests"))
-from legacy_wiring import LEGACY_MCP_DECLARATION, LEGACY_STOP_COMMAND  # noqa: E402
+from legacy_wiring import (  # noqa: E402
+    BRIDGE_LAUNCHER, LEGACY_MCP_DECLARATION, LEGACY_STOP_COMMAND, STOP_LAUNCHER)
 
 RUNTIME_INSTALL = ROOT / "scripts" / "runtime_install.py"
 BRIDGE_SOURCE = ROOT / "packages" / "codex-thread-bridge" / "src"
-BRIDGE_LAUNCHER = ROOT / "plugins" / "crw" / "wiring" / "crw_bridge_mcp.py"
 
 # The bridge's own policy module, loaded from this checkout. It imports nothing outside the
 # standard library, so the launcher's variables and digests are compared with the real reader
@@ -73,10 +73,11 @@ def write_policy(path, mapping=POLICY):
 
 
 def load_launcher():
-    """The packaged launcher as a module. Its main() runs only under __main__.
+    """The Python bridge launcher as a module. Its main() runs only under __main__.
 
-    Compiled from its source rather than imported, because an import writes a __pycache__ into
-    the plugin root, and everything in that directory ships: the payload check then refuses it.
+    Compiled from its source rather than imported, because an import writes a __pycache__ beside
+    it; in the plugin root, where it shipped until todo 43, everything ships, and the payload
+    check refused it.
     """
     module = types.ModuleType("crw_bridge_mcp_under_test")
     module.__file__ = str(BRIDGE_LAUNCHER)
@@ -1232,7 +1233,9 @@ class BridgeRecordPolicyTest(unittest.TestCase):
     def register_with_a_module_swapped_for_a_pipe(self, relative):
         checkout = self.home.destination.parent / "checkout"
         ignore = shutil.ignore_patterns("__pycache__")
-        for part in ("scripts", "plugins", "packages/codex-thread-bridge/src"):
+        # The pre-native wiring holds the launcher runtime_install.py's register-mcp probe runs.
+        for part in ("scripts", "plugins", "packages/codex-thread-bridge/src",
+                     "internal/pluginwiring/testdata/pre-native-wiring"):
             shutil.copytree(ROOT / part, checkout / part, ignore=ignore)
         target = checkout / relative
         self.assertTrue(target.is_file(), target)
@@ -1520,7 +1523,7 @@ class BridgeRecordPolicyTest(unittest.TestCase):
 class StopLauncherTest(unittest.TestCase):
     """The launcher may never cost a turn, and may never be the second hook on one Stop."""
 
-    LAUNCHER = ROOT / "plugins/crw/wiring/crw_stop_hook.py"
+    LAUNCHER = STOP_LAUNCHER
     PAYLOAD = json.dumps({"hook_event_name": "Stop", "session_id": "s", "turn_id": "t"})
 
     def setUp(self):
@@ -1636,7 +1639,7 @@ class StopLauncherTest(unittest.TestCase):
 class BridgeLauncherTest(unittest.TestCase):
     """The opposite failure direction: a server that cannot start says why."""
 
-    LAUNCHER = ROOT / "plugins/crw/wiring/crw_bridge_mcp.py"
+    LAUNCHER = BRIDGE_LAUNCHER
 
     def setUp(self):
         self.stack = contextlib.ExitStack()
@@ -2460,8 +2463,7 @@ class DeclaredStopCommandTest(unittest.TestCase):
         """Not a stub: the packaged launcher, reached the way the host reaches it."""
         cache = self.root / "cache" / "0.4.0"
         (cache / "wiring").mkdir(parents=True)
-        shutil.copyfile(ROOT / "plugins/crw/wiring/crw_stop_hook.py",
-                        cache / "wiring" / "crw_stop_hook.py")
+        shutil.copyfile(STOP_LAUNCHER, cache / "wiring" / "crw_stop_hook.py")
         home = self.root / "home"
         home.mkdir()
         adapter = home / "adapter.py"
@@ -2573,7 +2575,7 @@ class DeclaredStopCommandTest(unittest.TestCase):
 class LauncherContractVersionTest(unittest.TestCase):
     """An installed fallback outlives the package that wrote it, so it may meet a later contract."""
 
-    LAUNCHER = ROOT / "plugins/crw/wiring/crw_stop_hook.py"
+    LAUNCHER = STOP_LAUNCHER
 
     def setUp(self):
         self.stack = contextlib.ExitStack()
@@ -2618,7 +2620,7 @@ class LauncherContractVersionTest(unittest.TestCase):
 class StableLauncherPlacementTest(unittest.TestCase):
     """Who may write the fallback, and what it refuses to write over."""
 
-    SOURCE = ROOT / "plugins/crw/wiring/crw_stop_hook.py"
+    SOURCE = STOP_LAUNCHER
 
     def setUp(self):
         self.stack = contextlib.ExitStack()
@@ -2790,6 +2792,6 @@ class PluginGuardBudgetTest(unittest.TestCase):
 
     def test_the_launcher_mirrors_the_same_two_numbers(self):
         """The launcher cannot import this module, so the numbers are asserted to agree."""
-        source = (ROOT / "plugins/crw/wiring/crw_stop_hook.py").read_text(encoding="utf-8")
+        source = STOP_LAUNCHER.read_text(encoding="utf-8")
         self.assertIn("MAX_SECONDS = " + str(completion.LAUNCHER_CEILING_SECONDS), source)
         self.assertIn("MARGIN_SECONDS = " + str(completion.LAUNCHER_MARGIN_SECONDS), source)

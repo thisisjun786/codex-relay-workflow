@@ -106,7 +106,7 @@ REGISTERED_TIMEOUT_SECONDS = 10
 # host and the adapter, so its deadline has to be longer than the adapter's guard budget:
 # a launcher that expires first kills the adapter mid-call and discards the very record that
 # would have explained the timeout, and then releases the turn saying nothing. Mirrored in
-# plugins/crw/wiring/crw_stop_hook.py, which cannot import this module.
+# crw_stop_hook.py (LAUNCHER_SOURCE), which cannot import this module.
 LAUNCHER_CEILING_SECONDS = 9
 # The margin that launcher keeps between its own deadline and the adapter's budget, mirrored
 # from the same file. The two numbers only mean something together: the launcher waits
@@ -437,7 +437,10 @@ CONFIG_SETTLED = (CONFIG_CREATED, CONFIG_UNCHANGED, CONFIG_WOULD_CREATE)
 # opened. That ordering matters: the cache copy is always the current version, so this copy can
 # never outrank it, and the only moment it is reached is the moment the cache cannot answer.
 LAUNCHER_NAME = "crw-stop-hook.py"
-LAUNCHER_SOURCE = "plugins/crw/wiring/crw_stop_hook.py"
+# The package shipped it at plugins/crw/wiring/crw_stop_hook.py until todo 43 retired it; the
+# repository keeps those bytes with the pre-native wiring, so this installer, deleted in todo 44,
+# places and compares the same launcher a host already holds.
+LAUNCHER_SOURCE = "internal/pluginwiring/testdata/pre-native-wiring/crw_stop_hook.py"
 # Mirrored from that file, which cannot import this module. It marks the file as CRW's to
 # replace and establishes nothing else: not who wrote it, and not that its bytes are whole. The
 # digest reported beside it answers the second question; nothing answers the first.

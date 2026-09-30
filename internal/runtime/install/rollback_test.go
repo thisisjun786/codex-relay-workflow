@@ -33,8 +33,9 @@ func needsPython(t *testing.T) {
 
 // stopRecorded runs the Stop command a host holds while a rollback to a venv runs - the
 // pre-native declaration, whose packaged launcher runs [adapterInterpreter, adapterEntryPoint,
-// settings] - as a cached turn runs it (only HOME, CODEX_HOME, the plugin root and PATH), and
-// answers whether the adapter the settings name through the pointer journaled the Stop. That is
+// settings] - as a cached turn runs it (only HOME, CODEX_HOME, PATH and the plugin root, which names
+// a pre-native payload's version directory), and answers whether the adapter the settings name
+// through the pointer journaled the Stop. That is
 // the declaration such a host holds because the payload goes back before the runtime: the native
 // declaration runs current/bin/crw, which a venv does not carry (decision 26,
 // docs/plugin-packaging.md "Update and roll back"); nativeStopRecorded runs that one.
@@ -55,7 +56,7 @@ func (h *host) stopRecordedBy(t *testing.T, command string) bool {
 	journal := filepath.Join(h.home, "journal")
 	before := len(journalRows(t, journal))
 	cmd := exec.Command("sh", "-c", command)
-	cmd.Env = h.launcherEnv(filepath.Join(golden.Root(), "plugins", "crw"))
+	cmd.Env = h.launcherEnv(preNativePayload(t))
 	cmd.Stdin = strings.NewReader(stopPayload)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -189,8 +190,8 @@ func TestARollbackToAVenvRefusesWhileTheNativePayloadIsCached(t *testing.T) {
 	}
 
 	cache(preNativeWiring, filepath.Join("hooks", "stop-recording-completion.json"), "mcp.json")
-	write(t, filepath.Join(version, "wiring", "crw_stop_hook.py"), readFile(t, wiring("crw_stop_hook.py")))
-	write(t, filepath.Join(version, "wiring", "crw_bridge_mcp.py"), readFile(t, wiring("crw_bridge_mcp.py")))
+	write(t, filepath.Join(version, "wiring", "crw_stop_hook.py"), readFile(t, preNativeWiring("crw_stop_hook.py")))
+	write(t, filepath.Join(version, "wiring", "crw_bridge_mcp.py"), readFile(t, preNativeWiring("crw_bridge_mcp.py")))
 	result, code := install.Rollback(context.Background(), h.options(), venv)
 	if code != install.OK || h.pointerTarget(t) != venv || readFile(t, path) != settings {
 		t.Fatalf("the Python bootstrap payload: exit %d\n%s", code, golden.Canon(result))

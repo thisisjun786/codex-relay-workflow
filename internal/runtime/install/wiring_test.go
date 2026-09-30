@@ -23,11 +23,21 @@ func wiring(parts ...string) string {
 	return filepath.Join(append([]string{golden.Root(), "plugins", "crw", "wiring"}, parts...)...)
 }
 
-// preNativeWiring is the wiring the package declared before the native commands (todo 34), kept
-// as testdata because a turn or session that cached it still runs it until the cached Python
-// commands are retired (todo 43).
+// preNativeWiring is the wiring the package declared before the native commands (todo 34), with
+// the two Python launchers it shipped until todo 43, kept as testdata because a turn or session
+// that cached it still runs it, and the <CODEX_HOME>/crw-stop-hook.py a host may still hold is
+// a copy of its crw_stop_hook.py, until the operator removes that copy.
 func preNativeWiring(parts ...string) string {
 	return filepath.Join(append([]string{golden.Root(), "internal", "pluginwiring", "testdata", "pre-native-wiring"}, parts...)...)
+}
+
+// preNativePayload is a cached version directory of a pre-native payload, as far as its Stop
+// bootstrap reads it: the packaged launcher at ${PLUGIN_ROOT}/wiring/crw_stop_hook.py.
+func preNativePayload(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "wiring", "crw_stop_hook.py"), readFile(t, preNativeWiring("crw_stop_hook.py")))
+	return dir
 }
 
 // stopCommandIn is the Stop command a declaration file registers, as Codex caches it.
@@ -138,10 +148,10 @@ func TestTheNativeStopCommandJournalsTheStopThroughThePointer(t *testing.T) {
 }
 
 // The launchers a turn cached before this install still runs - the pre-native bootstrap, opening
-// the packaged crw_stop_hook.py and the <CODEX_HOME>/crw-stop-hook.py copy it falls back to - run
-// [adapterInterpreter, adapterEntryPoint, settings]. With adapterInterpreter /usr/bin/env that
-// reaches the Go hook through the pointer with the settings path as its argument, and the hook
-// journals the Stop.
+// the pre-native payload's crw_stop_hook.py and the <CODEX_HOME>/crw-stop-hook.py copy it falls
+// back to - run [adapterInterpreter, adapterEntryPoint, settings]. With adapterInterpreter
+// /usr/bin/env that reaches the Go hook through the pointer with the settings path as its
+// argument, and the hook journals the Stop.
 func TestLegacyStopLaunchersReachTheGoHook(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 runs the legacy launchers")
@@ -157,7 +167,7 @@ func TestLegacyStopLaunchersReachTheGoHook(t *testing.T) {
 		name, pluginRoot string
 		fallback         bool
 	}{
-		{"packaged launcher", filepath.Join(golden.Root(), "plugins", "crw"), false},
+		{"packaged launcher", preNativePayload(t), false},
 		{"CODEX_HOME copy after the cache was replaced", filepath.Join(h.home, "replaced-cache"), true},
 	} {
 		session := "s-" + strings.ReplaceAll(launcher.name, " ", "-")
@@ -169,7 +179,7 @@ func TestLegacyStopLaunchersReachTheGoHook(t *testing.T) {
 			if stdout, stderr := runStop(t, command, h.launcherEnv(launcher.pluginRoot), stopPayloadFor(h, session+"-uncopied", "t-1")); len(journalRows(t, journal)) != before {
 				t.Fatalf("%s: a row without the launcher copy; stdout %q stderr %q", launcher.name, stdout, stderr)
 			}
-			write(t, filepath.Join(h.codex, "crw-stop-hook.py"), readFile(t, wiring("crw_stop_hook.py")))
+			write(t, filepath.Join(h.codex, "crw-stop-hook.py"), readFile(t, preNativeWiring("crw_stop_hook.py")))
 		}
 		before := len(journalRows(t, journal))
 		stdout, stderr := runStop(t, command, h.launcherEnv(launcher.pluginRoot), stopPayloadFor(h, session, "t-1"))
@@ -211,7 +221,7 @@ var bridgeLaunchers = []bridgeLauncher{
 	{name: "legacy crw_bridge_mcp.py", python: true, repair: "register-mcp",
 		place: func(t *testing.T, h *host) (string, []string) {
 			cached := filepath.Join(h.codex, "plugins", "cache", "crw", "crw", "0.9.0", "wiring", "crw_bridge_mcp.py")
-			write(t, cached, readFile(t, wiring("crw_bridge_mcp.py")))
+			write(t, cached, readFile(t, preNativeWiring("crw_bridge_mcp.py")))
 			return "", []string{"python3", cached}
 		}},
 }
