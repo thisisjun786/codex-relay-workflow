@@ -14,7 +14,7 @@ import (
 )
 
 // test_registry.py properties (REG-1..REG-11). Every refusal and record is compared whole with
-// the Python registry's answer for the same steps (testdata/python_registry.json).
+// the golden, which began as the Python registry's answer for the same steps.
 
 func identityScenario(t *testing.T) []map[string]any {
 	r := newRegistry(t)
@@ -36,7 +36,7 @@ func identityScenario(t *testing.T) []map[string]any {
 
 func Test25_REG1_routing_key_is_the_pair_of_actual_task_ids_and_carries_no_title(t *testing.T) {
 	steps := identityScenario(t)
-	sameAsPython(t, "identity", steps)
+	sameAsGolden(t, "identity", steps)
 	record := steps[1]["ok"].(map[string]any)
 	if record["relationshipId"] != "rel-46d5b5ac690ef861" {
 		t.Fatalf("relationship id %v", record["relationshipId"])
@@ -53,7 +53,7 @@ func Test25_REG1_routing_key_is_the_pair_of_actual_task_ids_and_carries_no_title
 
 func Test25_REG2_reregistration_is_idempotent_and_a_different_scope_conflicts(t *testing.T) {
 	steps := identityScenario(t)
-	sameAsPython(t, "identity", steps)
+	sameAsGolden(t, "identity", steps)
 	again := steps[2]["ok"].(map[string]any)
 	if again["executionGeneration"] != float64(1) || len(again["generations"].([]any)) != 1 {
 		t.Fatalf("re-registration opened a generation: %v", again)
@@ -65,7 +65,7 @@ func Test25_REG2_reregistration_is_idempotent_and_a_different_scope_conflicts(t 
 
 func Test25_REG3_cxc_bindings_are_kept_and_never_in_the_contract_record(t *testing.T) {
 	steps := identityScenario(t)
-	sameAsPython(t, "identity", steps)
+	sameAsGolden(t, "identity", steps)
 	bindings := steps[0]["ok"].(map[string]any)["_bindings"].(map[string]any)
 	if bindings["parentCxcSession"] != "cxc-parent" || bindings["childCxcSession"] != "cxc-child" {
 		t.Fatalf("bindings %v", bindings)
@@ -77,7 +77,7 @@ func Test25_REG3_cxc_bindings_are_kept_and_never_in_the_contract_record(t *testi
 
 func Test25_REG4_an_unregistered_relationship_is_refused(t *testing.T) {
 	steps := identityScenario(t)
-	sameAsPython(t, "identity", steps)
+	sameAsGolden(t, "identity", steps)
 	if steps[4]["refused"].(map[string]any)["reason"] != string(contract.RefusalUnregisteredRelationship) {
 		t.Fatalf("%v", steps[4])
 	}
@@ -103,7 +103,7 @@ func Test25_REG5_a_replayed_dispatch_opens_no_generation_and_every_generation_is
 	steps = append(steps, outcome(t, nil, err))
 	record, err := r.Get(ctx(), rid)
 	steps = append(steps, outcome(t, record.ContractRecord(), err))
-	sameAsPython(t, "generations", steps)
+	sameAsGolden(t, "generations", steps)
 	if len(record.Generations) != 3 || record.Generations[0].DispatchTurnID.String != dispatchTurn {
 		t.Fatalf("generations %v", record.Generations)
 	}
@@ -128,7 +128,7 @@ func Test25_REG6_an_anchor_binds_only_from_a_dispatch_receipt_to_one_exact_turn(
 	}
 	_, err = r.BindAnchor(ctx(), rid, 7, "x", "dispatch_receipt")
 	steps = append(steps, outcome(t, nil, err))
-	sameAsPython(t, "anchors", steps)
+	sameAsGolden(t, "anchors", steps)
 }
 
 func lifecycleSteps(t *testing.T) []map[string]any {
@@ -160,7 +160,7 @@ func lifecycleSteps(t *testing.T) []map[string]any {
 
 func Test25_REG7_inactive_is_never_active_opens_nothing_and_status_only_deactivates(t *testing.T) {
 	steps := lifecycleSteps(t)
-	sameAsPython(t, "lifecycle", steps)
+	sameAsGolden(t, "lifecycle", steps)
 	for i := 0; i < 3; i++ {
 		for _, at := range []int{4*i + 1, 4*i + 2} {
 			if steps[at]["refused"].(map[string]any)["reason"] != string(contract.RefusalRelationshipNotActive) {
@@ -199,7 +199,7 @@ func Test25_REG8_resume_restates_the_generation_and_the_whole_scope(t *testing.T
 	steps = append(steps, outcome(t, nil, err))
 	resumed, err := r.Resume(ctx(), rid, 1, []string{root}, []string{parent, child}, "t")
 	steps = append(steps, outcome(t, resumed.ContractRecord(), err))
-	sameAsPython(t, "resume_restatement", steps)
+	sameAsGolden(t, "resume_restatement", steps)
 	if resumed.Status != Active {
 		t.Fatal(resumed.Status)
 	}
@@ -222,7 +222,7 @@ func Test25_REG9_a_replacement_supersedes_and_preserves_the_original(t *testing.
 	steps = append(steps, outcome(t, old.FullRecord(), err), outcome(t, replacement.ContractRecord(), nil))
 	_, err = r.Resume(ctx(), original.ID, 1, []string{root}, []string{parent}, "t")
 	steps = append(steps, outcome(t, nil, err))
-	sameAsPython(t, "supersession", steps)
+	sameAsGolden(t, "supersession", steps)
 
 	s := newRegistry(t)
 	x, err := s.Register(ctx(), fixture())
@@ -233,7 +233,7 @@ func Test25_REG9_a_replacement_supersedes_and_preserves_the_original(t *testing.
 		t.Fatal(err)
 	}
 	_, err = s.Resume(ctx(), x.ID, 1, []string{root}, []string{parent}, "t")
-	sameAsPython(t, "superseded_resume", []map[string]any{outcome(t, nil, err)})
+	sameAsGolden(t, "superseded_resume", []map[string]any{outcome(t, nil, err)})
 }
 
 func replacementOf(childTask string) Registration {
@@ -274,7 +274,7 @@ func Test25_REG10_resume_after_reassignment_is_refused_and_leaves_one_owner(t *t
 	}
 	resumed, err := r.Resume(ctx(), original, 1, []string{root}, []string{parent}, "ok")
 	steps = append(steps, outcome(t, resumed.ContractRecord(), err))
-	sameAsPython(t, "resume_ownership", steps)
+	sameAsGolden(t, "resume_ownership", steps)
 
 	// A dead identity registered again without naming a predecessor is named, not silent.
 	s := newRegistry(t)
@@ -290,7 +290,7 @@ func Test25_REG10_resume_after_reassignment_is_refused_and_leaves_one_owner(t *t
 	tenure = append(tenure, outcome(t, nil, err))
 	z, err := s.Register(ctx(), replacementOf("different-child"))
 	tenure = append(tenure, outcome(t, z.ContractRecord(), err))
-	sameAsPython(t, "returning_tenure", tenure)
+	sameAsGolden(t, "returning_tenure", tenure)
 }
 
 // REG-11: two independent stores race a stale generation-1 resume against resume + advance +
