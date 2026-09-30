@@ -1624,11 +1624,10 @@ def test_socket_binding_waits_for_other_writers_within_the_declared_bound(databa
     assert ownership.mirror(database)["appServerSocket"] == app
 
 
-@pytest.mark.parametrize("pause", ["before-first-lock", "after-gate-placed"])
-def test_concurrent_first_openers_never_see_a_partial_store(tmp_path, pause):
-    """The gate is placed already held EX, so a racing first opener waits instead of refusing."""
-    path = tmp_path / "state" / "relay.sqlite3"
-    first = subprocess.Popen([sys.executable, "-u", "-c", """
+# A writable first opener of argv[1] that stops at argv[2] ("before-first-lock", or
+# "after-gate-placed": write-gate.lock linked into place and still held EX, no D yet), prints
+# "paused", and goes on after a line on stdin.
+PAUSABLE_CREATOR = """
 import fcntl, os, sys
 from codex_session_relay.store import Store
 pause, paused = sys.argv[2], []
@@ -1649,7 +1648,19 @@ def link(source, target, **options):
 fcntl.flock, os.link = flock, link
 Store(sys.argv[1]).close()
 print('created', flush=True)
-""", str(path), pause], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+"""
+
+
+def pausable_creator(path, pause):
+    return subprocess.Popen([sys.executable, "-u", "-c", PAUSABLE_CREATOR, str(path), pause],
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+
+@pytest.mark.parametrize("pause", ["before-first-lock", "after-gate-placed"])
+def test_concurrent_first_openers_never_see_a_partial_store(tmp_path, pause):
+    """The gate is placed already held EX, so a racing first opener waits instead of refusing."""
+    path = tmp_path / "state" / "relay.sqlite3"
+    first = pausable_creator(path, pause)
     second = None
     try:
         assert line(first) == b"paused\n"
@@ -1676,6 +1687,65 @@ Store(sys.argv[1]).close()
     assert ownership.metadata(path)["owner"] == "python"
     ownership.check_start(path)
     assert sorted(name.name for name in path.parent.iterdir() if name.name.startswith(".write-gate")) == []
+
+
+def test_service_and_daemon_wait_for_a_first_opener_still_creating_the_store(tmp_path, monkeypatch,
+                                                                          capsys):
+    """refuse_partial lets a gate its creator holds through (Go StartPreflight's creating).
+
+    A first opener places the gate already held EX and creates D after it, so in that window S
+    holds a gate and no D. That is no partial store: a service command goes on as check_start
+    lets it, and a socketed daemon's admitted open waits for the creation, then runs on the
+    store it created. Once no process holds it, the same gate beside no D is partial again, and
+    a service command and the daemon refuse it before they touch S.
+    """
+    monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", str(tmp_path / "scopes"))
+    path = tmp_path / "state" / "relay.sqlite3"
+    app = str(tmp_path / "app.sock")
+    daemon = [str(Path(sys.executable).parent / "codex-session-relay"), "--state", str(path.parent),
+              "--socket", app, "daemon", "--allow-isolated-scope", "--max-ticks", "0"]
+    creator = pausable_creator(path, "after-gate-placed")
+    waiting = None
+    try:
+        assert line(creator) == b"paused\n"
+        assert not path.exists() and (path.parent / "write-gate.lock").exists()
+        ownership.refuse_partial(path)
+        assert cli.main(["--state", str(path.parent), "--socket", app, "service", "disable"]) == 0
+        assert json.loads(capsys.readouterr().out)["ok"] is True
+        waiting = subprocess.Popen(daemon, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        with pytest.raises(subprocess.TimeoutExpired):
+            waiting.wait(timeout=1)  # its admitted open waits on the gate the creator holds
+        creator.stdin.write(b"go\n")
+        creator.stdin.flush()
+        assert line(creator) == b"created\n", creator.stderr.read()
+        out, err = waiting.communicate(timeout=60)
+        assert waiting.returncode == 0, (out, err)
+        assert json.loads(out)["ok"] is True
+        assert creator.wait(timeout=30) == 0
+    finally:
+        for process in (creator, waiting):
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait()
+    assert ownership.metadata(path)["owner"] == "python"
+    # A creator that died after placing its gate leaves a gate nobody holds: partial.
+    abandoned = tmp_path / "abandoned" / "relay.sqlite3"
+    creator = pausable_creator(abandoned, "after-gate-placed")
+    try:
+        assert line(creator) == b"paused\n"
+    finally:
+        creator.kill()
+        creator.wait()
+    before = sorted(name.name for name in abandoned.parent.iterdir())
+    with pytest.raises(ownership.OwnershipRefused, match="^store_owned_by_other: partial store: "
+                       "write-gate.lock without a database$"):
+        ownership.refuse_partial(abandoned)
+    refused = {"error": "refused", "reason": "store_owned_by_other",
+               "detail": "partial store: write-gate.lock without a database"}
+    for argv in (["service", "disable"], ["daemon", "--allow-isolated-scope", "--max-ticks", "0"]):
+        assert cli.main(["--state", str(abandoned.parent), "--socket", app, *argv]) == 2
+        assert json.loads(capsys.readouterr().out) == refused
+        assert sorted(name.name for name in abandoned.parent.iterdir()) == before
 
 
 @pytest.mark.parametrize("drift,refusal", [
@@ -1742,6 +1812,48 @@ def test_a_scope_key_from_another_lock_authority_is_refused_like_go(tmp_path, mo
     monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", str(tmp_path / "bound"))
     Store(path, socket_path=socket_path).close()
     assert ownership.mirror(path)["scopeKey"] == bound
+
+
+def test_an_authority_whose_home_cannot_be_found_is_refused_like_go(tmp_path, monkeypatch, capsys):
+    """An override whose ~user has no home gives this process no key to judge a bound record by.
+
+    pathlib raises RuntimeError there; validate refuses instead, as Go's record.go Validate does
+    (ownership.NoAuthorityDetail): reason store_owned_by_other, exit 2, non-queueably and before
+    the owner is judged, so a read-only form still reads the store, store-identity's probe
+    still describes it without raising, and nothing in S changes. A binding or an
+    initialization, which records a new key, still raises the RuntimeError (the host envelope).
+    """
+    path = tmp_path / "state" / "relay.sqlite3"
+    socket_path = str(tmp_path / "app.sock")
+    monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", str(tmp_path / "bound"))
+    Store(path, socket_path=socket_path).close()
+    before = files(path.parent)
+    monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", "~crw-no-such-user-31/scopes")
+    detail = "scope key cannot be judged: Could not determine home directory."
+    for opener in (lambda: Store(path, socket_path=socket_path), lambda: Store(path),
+                   lambda: ownership.check_start(path), lambda: ownership.check_stop(path)):
+        with pytest.raises(ownership.OwnershipRefused) as refused:
+            opener()
+        assert refused.value.detail == detail
+        assert not refused.value.queueable
+    refusal = {"error": "refused", "reason": "store_owned_by_other", "detail": detail}
+    for argv in (["--socket", socket_path, "store-challenge", "--write"], ["store-challenge", "--write"],
+                 ["--socket", socket_path, "service", "disable"],
+                 ["daemon", "--allow-isolated-scope", "--max-ticks", "0"]):
+        assert cli.main(["--state", str(path.parent), *argv]) == 2, argv
+        assert json.loads(capsys.readouterr().out) == refusal, argv
+    assert files(path.parent) == before
+    stamp(path, owner="go")
+    with pytest.raises(ownership.OwnershipRefused, match=re.escape(detail)):
+        ownership.check_start(path)
+    stamp(path, owner="python")
+    for argv in (["store-identity"], ["status"]):
+        assert cli.main(["--state", str(path.parent), *argv]) == 0, argv
+        answer = json.loads(capsys.readouterr().out)
+        if argv == ["store-identity"]:
+            assert answer["store"]["storeId"] == ownership.metadata(path)["store_id"]
+    with pytest.raises(RuntimeError, match="Could not determine home directory"):
+        Store(tmp_path / "fresh" / "relay.sqlite3", socket_path=socket_path)
 
 
 def test_a_socket_directory_that_becomes_a_symlink_keeps_the_recorded_scope_key(tmp_path, capsys):

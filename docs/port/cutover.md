@@ -138,9 +138,15 @@ read-only form still reads it. That key is the recorded `appServerSocket`'s, has
 recorded (`ownership.ScopeKey`, `ownership.scope_key`): the binding recorded the canonical
 spelling, which is never resolved again, so a socket directory that later becomes a symlink
 leaves the record valid in both runtimes. The production authority's key has no salt, so
-neither runtime looks up the passwd entry to judge it. Every launch on one host shares the
-production authority, so before todo 42 confirm that no launch environment (the service, the
-hooks, crw-run shells) sets `CODEX_SESSION_RELAY_SCOPE_DIR`.
+neither runtime looks up the passwd entry to judge it. An override whose `~` or `~user` names
+no home gives no key (pathlib's `RuntimeError`): both runtimes refuse the record at that same
+check (`scope key cannot be judged: Could not determine home directory.`, reason
+`store_owned_by_other`, exit 2), so a read-only form still reads that store too, and what must
+record a new key or lock the scope under that override (a binding, an initialization, a
+`service` form or `daemon` on a store with no socket yet) answers the fence's host envelope,
+`RuntimeError: Could not determine home directory.` (exit 3), in both. Every launch on one
+host shares the production authority, so before todo 42 confirm that no launch environment
+(the service, the hooks, crw-run shells) sets `CODEX_SESSION_RELAY_SCOPE_DIR`.
 
 Socket binding. A writable open that passes an App Server socket `K` (canonicalized) to an
 unbound store owned by the opening runtime, in `phase=active` with `transition` null, binds
@@ -168,7 +174,10 @@ that disagrees with it. Both runtimes implement the binding: Go in `store.Open`
 `status`: a store the other runtime owns, or one draining or starting, refuses them before
 any lock or record is written, and so does any store Go would not open (a legacy `D`
 included, which Go never initializes). A partial store refuses them too, in both runtimes
-(Read-only clients). The marker commands get `check_start` itself, read in
+(Read-only clients). A `daemon` without `--socket` meets `check_start` first, in `main` and in
+Go's `runDaemon` (`store.CheckStartLikeFence`), and only then is asked for its socket: a store
+the fence refuses is refused in its words (exit 2), and one it passes answers the usage error
+(exit 4). The marker commands get `check_start` itself, read in
 the fence's order (`store.CheckStartLikeFence`): `main` runs it before the two forms that name
 the selected store (`intent-declare` without `--no-db-path`, `intent-register` without
 `--db-path`), `intent-claim` runs it on the store the intent names, and `intent-disposition`
@@ -335,7 +344,10 @@ either runtime, writable or read-only, refuses it non-queueably with reason
 `store_owned_by_other`, detail `partial store: write-gate.lock without a database`, exit 2 (a
 writer once no creator holds the gate, a reader without taking it), and so do the service
 commands and a daemon before they write anything into `S` or the scope registry (Read-only
-clients).
+clients). A live creator is told apart by its lock: while another opener holds the gate EX
+beside no `D` and no mirror, the start preflight of a service command or a daemon (which probes
+the gate once, without waiting) lets it through in both runtimes, and the daemon's admitted
+open waits for the creation and judges what it left; only a gate nobody holds is refused there.
 Recovery is an operator action, the only removal of a lock file this protocol allows:
 confirm that `D` and `S/takeover.json` are absent and that no process has the gate open
 (`fuser S/write-gate.lock` or `lsof` lists none), then remove `S/write-gate.lock` and any
@@ -684,13 +696,20 @@ uncreated, in both runtimes alike (Record). A partial store (`takeover.json` or
 read or write, with the answer the fence's writer gives it: reason `store_owned_by_other`,
 exit 2, detail `partial store: write-gate.lock without a database` for a gate alone, and beside
 a mirror the refusal `check_start` meets first (the mirror's own when it cannot be read, else
-validate's `missing or unsupported writer protocol`). `S` is left unchanged, and a reader never
-takes the gate. The `service` forms but `status`, and `daemon` once it has the `--socket` it
-asks for first, answer it the same way before they write `daemon.lock`, `daemon.json`,
-`service.json` or a scope claim: `check_start` passes a gate alone as unfenced, so the fence's
+validate's `missing or unsupported writer protocol`). A `takeover.json` link naming no file is
+there but reads as no record, so beside no `D` it is a partial store with a gate's answer,
+gate or none, and no writer initializes a store over it. `S` is left unchanged, and a reader
+never takes the gate. The `service` forms but `status`, and a `daemon` given `--socket`, answer
+it the same way before they write `daemon.lock`, `daemon.json`, `service.json` or a scope
+claim: `check_start` passes a store whose mirror reads as no record as unfenced, so the fence's
 `main` refuses it ahead of `check_start` (`ownership.refuse_partial`), as Go's
-`store.StartPreflight` does. Absence is judged beside the `D` every opener opens,
-`Path.resolve()`'s, in both runtimes: a `D` link naming no file is no `D`, so alone it is an
+`store.StartPreflight` does. The one gate beside no `D` and no mirror they let through is one
+another opener holds EX, a first opener still creating the store: probed once without waiting,
+it is left to the admitted open, which waits for the creation (Step 0 recovery). A `daemon`
+without `--socket` meets `check_start` alone and then asks for its socket, in both runtimes:
+beside a mirror it is refused in `check_start`'s words, and a gate alone, or a mirror link
+naming no file, answers the usage error (exit 4). Absence is judged beside the `D` every
+opener opens, `Path.resolve()`'s, in both runtimes: a `D` link naming no file is no `D`, so alone it is an
 absent store (`store_absent` for a read-only form; a writer, service form or daemon creates the
 store through the link) and beside a gate a partial one. The forms that do not open the store
 this way (`ack-proof`, `dispositions-show`, `doctor`, `guard-evaluate`, `intent-show`,

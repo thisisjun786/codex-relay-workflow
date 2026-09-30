@@ -187,7 +187,9 @@ def validate(path, meta, record, *, admitted_epoch=None, candidate=None):
     # store's schema_meta socket_path, or null exactly when the store records none, and its
     # scopeKey is the key this process's own scope-registry authority (its
     # CODEX_SESSION_RELAY_SCOPE_DIR, or the production root) gives that socket. A process under
-    # another authority would lock another scope for the same App Server, so it is refused.
+    # another authority would lock another scope for the same App Server, so it is refused, and
+    # so is one whose override names a home that cannot be found (pathlib's RuntimeError): it
+    # has no authority to judge the key by. Both are refusals, so a read-only form still reads.
     socket_path = record["appServerSocket"]
     if socket_path is None:
         if record["scopeKey"] is not None or meta.get("socket_path"):
@@ -197,7 +199,7 @@ def validate(path, meta, record, *, admitted_epoch=None, candidate=None):
             or not isinstance(record["scopeKey"], str) or not record["scopeKey"]
             or socket_path != meta.get("socket_path")):
         raise OwnershipRefused("invalid socket/scope identity")
-    elif record["scopeKey"] != scope_key(socket_path):
+    elif record["scopeKey"] != _authority_key(socket_path):
         raise OwnershipRefused("scope key disagrees with lock authority")
     if record["phase"] not in ("active", "draining", "starting"):
         raise OwnershipRefused("invalid takeover phase")
@@ -278,31 +280,69 @@ def check_start(path, *, candidate=None, socket=None):
     validate(path, meta, record, candidate=candidate)
 
 
-def refuse_partial(path):
-    """Refuse a write gate beside a certainly absent D and no mirror, without taking the gate.
+def _absent(name):
+    """Whether nothing at all is at `name`: only a name lstat certainly finds missing.
 
-    A writer's Admission meets that partial store and refuses it, but the service and daemon
-    commands act on S and the scope registry (daemon.lock, daemon.json, service.json, the scope
-    claim) before any admitted open, and check_start passes it as unfenced; cli.main runs this
-    first for them, as Go's store.StartPreflight does. D, the mirror and the gate are named as
-    every opener names them, beside Path.resolve()'s D (a dangling D link names an absent D).
-    A mirror beside no D is left to check_start, which refuses it in the same place.
+    A link naming no file is there, so a store holding one is never an absent store.
+    """
+    try:
+        os.lstat(name)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
+def _creating(gate):
+    """Whether another opener holds `gate` EX: a first opener still creating the store.
+
+    A creator holds the gate EX from before any other opener can find it (_create_gate, Go's
+    placeGate) until the store it creates is whole. Probed once without waiting, a shared lock
+    released at once; a gate that cannot be opened or locked is nobody's creation.
+    """
+    try:
+        fd = os.open(gate, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+    return False
+
+
+def refuse_partial(path):
+    """Refuse a partial store before a service command or the daemon touches S.
+
+    A partial store has no D (certainly absent) but a gate or a mirror name. A writer's
+    Admission meets it and refuses it, but the service and daemon commands act on S and the
+    scope registry (daemon.lock, daemon.json, service.json, the scope claim) before any admitted
+    open, and check_start passes a store whose mirror reads as no record as unfenced; cli.main
+    runs this first for them, in Go's store.StartPreflight order. D, the mirror and the gate
+    are named as every opener names them, beside Path.resolve()'s D (a dangling D link names an
+    absent D). The mirror is read as check_start reads it: an unreadable one refuses here in
+    check_start's words, and a record is left to check_start, whose validate refuses it next. A
+    mirror link naming no file reads as no record but is there, so beside no D it is partial.
+
+    A gate that another opener holds EX beside no D and no mirror is a first opener creating the
+    store: it is let through, and the admitted open waits for that creation and judges what it
+    left (Admission's blocking LOCK_SH, Go's awaitCreation). Only a gate nobody holds is
+    refused. The probe is the only lock this takes, and only for a moment.
     """
     path = Path(path).resolve()
-
-    def absent(name):
-        # Only a name that is certainly not there is absent.
-        try:
-            os.lstat(name)
-        except FileNotFoundError:
-            return True
-        except OSError:
-            return False
-        return False
-
-    if (absent(path) and absent(path.parent / "takeover.json")
-            and not absent(path.parent / "write-gate.lock")):
-        raise OwnershipRefused("partial store: write-gate.lock without a database")
+    gate = path.parent / "write-gate.lock"
+    if not _absent(path) or (_absent(path.parent / "takeover.json") and _absent(gate)):
+        return
+    if mirror(path) is not None:
+        return
+    if not _absent(gate) and _creating(gate):
+        return
+    raise OwnershipRefused("partial store: write-gate.lock without a database")
 
 
 def check_stop(path):
@@ -350,6 +390,18 @@ def scope_key(socket_path):
         return canonical_scope_key(socket_path)
     root, _authority = resolve_scope_root()
     return canonical_scope_key(socket_path, root)
+
+
+def _authority_key(socket_path):
+    """scope_key for validate: an authority that gives no key refuses rather than raises.
+
+    Go's record.go Validate refuses the same state in the same words (NoAuthorityDetail). A
+    binding or an initialization, which records a new key, still raises the RuntimeError.
+    """
+    try:
+        return scope_key(socket_path)
+    except RuntimeError as error:
+        raise OwnershipRefused(f"scope key cannot be judged: {error}") from error
 
 
 def _legacy(meta, record):
@@ -430,6 +482,11 @@ class Admission:
             meta, record = metadata(self.path), mirror(self.path)
             if any(key in meta for key in KEYS) or record is not None:
                 raise OwnershipRefused("the fenced store has no write admission gate")
+            if _absent(self.path) and not _absent(self.path.parent / "takeover.json"):
+                # A mirror name that reads as no record (a link naming no file) beside no D is
+                # not an absent store but a partial one, as every reader, refuse_partial and Go
+                # judge it: refused in the gate's words and never initialized (decision 30).
+                raise OwnershipRefused("partial store: write-gate.lock without a database")
             # Pre-fence stores are initialized only under an exclusive maintenance gate.
             self.fd, created = _create_gate(self.path.parent, flags)
         try:

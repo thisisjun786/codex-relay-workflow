@@ -1055,3 +1055,46 @@ func TestReadRecordReadsTheMirrorAsJSONLoadsBytes(t *testing.T) {
 		}
 	}
 }
+
+// An override whose ~user has no home gives no scope key (pathlib's RuntimeError, ErrNoHome, in
+// the fence's host words), and Validate refuses a bound record it cannot judge rather than
+// failing (ownership.py validate): NoAuthorityDetail, not queueable, before the owner.
+func TestValidateRefusesARecordWhoseAuthorityHasNoHome(t *testing.T) {
+	dir := t.TempDir()
+	must(t, os.Chmod(dir, 0700))
+	path := filepath.Join(dir, "relay.sqlite3")
+	socket := filepath.Join(dir, "app.sock")
+	t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", filepath.Join(dir, "scopes"))
+	testsupport.Create(t, path, socket, "go")
+	r, err := ownership.ReadRecord(path)
+	must(t, err)
+	s, err := ownership.SnapshotMeta(t.Context(), path)
+	must(t, err)
+	must(t, ownership.Validate(path, r, s))
+	t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", "~crw-no-such-user-31/scopes")
+	if _, err = ownership.ScopeRoot("~crw-no-such-user-31/scopes"); !errors.Is(err, ownership.ErrNoHome) || err.Error() != "RuntimeError: Could not determine home directory." {
+		t.Fatalf("ScopeRoot of an unknown ~user: %v", err)
+	}
+	if _, err = ownership.ScopeKey(socket); !errors.Is(err, ownership.ErrNoHome) {
+		t.Fatalf("ScopeKey under an unknown ~user: %v", err)
+	}
+	for _, check := range []func() error{
+		func() error { return ownership.Validate(path, r, s) },
+		func() error { return ownership.CheckStart(t.Context(), path, "") },
+		func() error {
+			admission, err := ownership.Admit(t.Context(), path)
+			if err == nil {
+				must(t, admission.Close())
+			}
+			return err
+		},
+	} {
+		var refused *ownership.Refused
+		if err = check(); !errors.As(err, &refused) || refused.Detail != ownership.NoAuthorityDetail || refused.Queueable {
+			t.Errorf("a bound record under an authority with no home: %#v", err)
+		}
+	}
+	if ownership.NoAuthorityDetail != "scope key cannot be judged: Could not determine home directory." {
+		t.Errorf("NoAuthorityDetail %q", ownership.NoAuthorityDetail)
+	}
+}

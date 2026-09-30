@@ -387,13 +387,18 @@ PARTIAL_READS = (["status"], ["show", "--event", "absent"], ["store-identity"],
     ("gate", "partial store: write-gate.lock without a database"),
     ("mirror", "missing or unsupported writer protocol"),
     ("gate and mirror", "missing or unsupported writer protocol"),
+    ("mirror link", "partial store: write-gate.lock without a database"),
+    ("gate and mirror link", "partial store: write-gate.lock without a database"),
 ])
 def test_a_partial_store_is_refused_as_a_writer_refuses_it(tmp_path, partial, detail):
     """A partial store (a write gate or a mirror without D) is refused, never read or repaired.
 
     Decision 30: a read-only form answers exactly the refusal a writer's admission gives the
     same state, reason store_owned_by_other with exit 2, rather than a host error that invites a
-    retry, and leaves S exactly as it found it. A reader never takes the gate.
+    retry, and leaves S exactly as it found it. A reader never takes the gate. A takeover.json
+    link naming no file reads as no record but is there: beside no D it is partial too, and the
+    writer refuses it in the gate's words rather than initializing a store over it (Go's
+    partialStore).
     """
     source = tmp_path / "source" / "relay.sqlite3"
     Store(source).close()
@@ -401,7 +406,9 @@ def test_a_partial_store_is_refused_as_a_writer_refuses_it(tmp_path, partial, de
     state.mkdir(mode=0o700)
     if "gate" in partial:
         (state / "write-gate.lock").touch(mode=0o600)
-    if "mirror" in partial:
+    if partial.endswith("mirror link"):
+        (state / "takeover.json").symlink_to(state / "nowhere.json")
+    elif "mirror" in partial:
         shutil.copyfile(source.parent / "takeover.json", state / "takeover.json")
 
     def snapshot():
@@ -438,24 +445,29 @@ PARTIAL_STARTS = (["service", "enable"], ["service", "disable"], ["service", "st
 
 
 @pytest.mark.parametrize("argv", PARTIAL_STARTS)
-@pytest.mark.parametrize("dangling", [False, True], ids=["gate", "gate-beside-a-dangling-link"])
+@pytest.mark.parametrize("layout", ["gate", "gate-beside-a-dangling-link", "mirror-link",
+                                    "gate-beside-a-mirror-link"])
 def test_a_gate_without_a_database_is_refused_before_service_or_daemon_touch_anything(
-        tmp_path, monkeypatch, argv, dangling):
+        tmp_path, monkeypatch, argv, layout):
     """Go store.StartPreflight's partial-store refusal, in the fence (decision 31).
 
-    check_start passes a gate without D as unfenced, and no admitted open follows before a
-    service command or the daemon writes daemon.lock, daemon.json or service.json into S or a
-    claim into the scope registry. cli.main refuses it first, with a writer's words, reason
-    store_owned_by_other and exit 2; D is Path.resolve()'s, so a D link naming no file is no D.
-    A daemon asks for its --socket before that, as Go's does.
+    check_start passes a gate without D, or a mirror link naming no file (it reads as no
+    record), as unfenced, and no admitted open follows before a service command or the daemon
+    writes daemon.lock, daemon.json or service.json into S or a claim into the scope registry.
+    cli.main refuses it first, with a writer's words, reason store_owned_by_other and exit 2; D
+    is Path.resolve()'s, so a D link naming no file is no D. A daemon without --socket meets
+    check_start alone, which passes these stores, and then asks for its --socket, as Go's does.
     """
     scopes = tmp_path / "scopes"
     monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", str(scopes))
     state = tmp_path / "state"
     state.mkdir(mode=0o700)
-    (state / "write-gate.lock").touch(mode=0o600)
-    if dangling:
+    if layout.startswith("gate"):
+        (state / "write-gate.lock").touch(mode=0o600)
+    if layout == "gate-beside-a-dangling-link":
         (state / "relay.sqlite3").symlink_to(state / "nowhere.sqlite3")
+    if layout.endswith("mirror-link"):
+        (state / "takeover.json").symlink_to(state / "nowhere.json")
     before = sorted(path.name for path in state.iterdir())
     refused = {"error": "refused", "reason": "store_owned_by_other",
                "detail": "partial store: write-gate.lock without a database"}

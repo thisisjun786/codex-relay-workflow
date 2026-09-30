@@ -1069,11 +1069,20 @@ mirror or a write gate without `D`) is never read, created or repaired: every fo
 runtimes that opens the store, read or write, answers the fence writer's refusal, reason
 `store_owned_by_other`, exit 2, detail `partial store: write-gate.lock without a database` for
 a gate alone and, beside a mirror, the refusal `check_start` meets first (the mirror's own when
-it cannot be read, else validate's `missing or unsupported writer protocol`). The `service`
-forms but `status`, and `daemon` once it has the `--socket` it asks for first, refuse it in the
-same words before they write anything into `S` or the scope registry: Go in its start preflight
+it cannot be read, else validate's `missing or unsupported writer protocol`). A `takeover.json`
+link naming no file reads as no record but is there, so beside no `D` it is partial with a
+gate's answer, gate or none; the fence's writer, which had initialized a store over it, refuses
+it too. The `service` forms but `status`, and `daemon` given `--socket`, refuse it in the same
+words before they write anything into `S` or the scope registry: Go in its start preflight
 (`store.StartPreflight`), the fence in `main` ahead of `check_start` (`ownership.refuse_partial`),
-since `check_start` passes a gate alone as unfenced. A reader never takes the gate. Both
+since `check_start` passes a store whose mirror reads as no record as unfenced. Both let one
+gate beside no `D` and no mirror through: a gate another opener holds EX, a first opener still
+creating the store, found by probing the gate once without waiting; the admitted open then
+waits for the creation, as racing first openers do. A `daemon` without `--socket` meets
+`check_start` alone before it asks for its socket, in `main` and in Go's `runDaemon`
+(`store.CheckStartLikeFence`): beside a mirror, or on the other runtime's, a draining or a
+starting store, it is refused in the fence's words, and otherwise answers the usage error
+(exit 4). A reader never takes the gate. Both
 runtimes judge absence beside the `D` every opener opens, `Path.resolve()`'s, so a `D` link
 naming no file is no `D`: alone it is an absent store (`store_absent` to a read-only form, and
 created through the link by a writer, a service form or a daemon), beside a gate a partial one.
@@ -1082,8 +1091,10 @@ Go had worded all of these `ownership refused: existing database required: lstat
 form with the host error `OperationalError: unable to open database file` (exit 3), took a
 dangling `D` link for a store (creating one through it for a reader, or the host error beside a
 gate), let `service enable`, `disable`, `stop` and `declare` act on a gate alone, and had its
-daemon write `daemon.lock`, `daemon.json` and a released scope claim before refusing one. All
-are corrected. A read-only form never binds an unbound store to
+daemon write `daemon.lock`, `daemon.json` and a released scope claim before refusing one; its
+writer created a store over a `takeover.json` link naming no file, and its service forms and
+daemon acted on one. Both start preflights also refused a gate its creator still held, and
+Go's socketless daemon asked for its `--socket` before `check_start`. All are corrected. A read-only form never binds an unbound store to
 its socket either: it reads `mode=ro` instead (decision 30).
 
 Argument refusals keep `cli.py` `main`'s order against the store. A read-only form refuses
@@ -1286,7 +1297,10 @@ The creator places `write-gate.lock` already held EX (a temporary `S/.write-gate
 file, `flock`, `link(2)`), as the fence does, and a Go writer that finds the gate held EX
 while the store is incomplete (no `D` or no mirror) or active (a creation finishing, a socket
 binding) waits to share it within its busy timeout before admission, so racing first
-openers of either runtime never refuse each other as a partial store. A transfer barrier,
+openers of either runtime never refuse each other as a partial store. The start preflight of a
+service command or a daemon lets such a creation through in both runtimes (it probes the gate
+once, without waiting, and refuses only a gate nobody holds), so a `service start` or `daemon`
+racing a first `register` waits at its admitted open rather than failing. A transfer barrier,
 taken only after the record left active, is still refused at once.
 Go binds an unbound store it owns (active, no transition) to the App Server socket of its
 first socketed writable open, as the fence does (cutover.md Record): under `write-gate EX`,

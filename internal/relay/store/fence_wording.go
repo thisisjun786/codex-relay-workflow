@@ -161,7 +161,8 @@ func fenceUnbound(record map[string]any, meta map[string]string, socket string) 
 // null exactly when schema_meta records no socket_path (and then so is scopeKey), else an
 // absolute, normalized string equal to socket_path beside a non-empty scopeKey, which must be the
 // key this process's own scope-registry authority gives that socket (ownership.ScopeKey, Python's
-// scope_key). judged is false when that key cannot be computed here.
+// scope_key); an authority whose home cannot be found gives none (ownership.NoAuthorityDetail).
+// judged is false when that key cannot be computed here for another reason.
 func fenceScopeRefusal(record map[string]any, meta map[string]string) (why string, judged bool) {
 	recorded, hasSocket := meta["socket_path"]
 	switch socket := record["appServerSocket"].(type) {
@@ -176,6 +177,9 @@ func fenceScopeRefusal(record map[string]any, meta map[string]string) (why strin
 			return "invalid socket/scope identity", true
 		}
 		authority, err := ownership.ScopeKey(socket)
+		if errors.Is(err, ownership.ErrNoHome) {
+			return ownership.NoAuthorityDetail, true
+		}
 		if err != nil {
 			return "", false
 		}

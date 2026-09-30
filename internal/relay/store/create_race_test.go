@@ -3,6 +3,7 @@ package store
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -212,5 +213,60 @@ func Test30ConcurrentFirstOpenersNeverSeeAPartialStore(t *testing.T) {
 				judge(t, path, stamp.Owner, map[string]string{pair[0]: first, pair[1]: second})
 			})
 		}
+	}
+}
+
+// A first opener places the gate already held EX and creates D after it, so in that window S
+// holds a gate and no D. The start preflight of a service command or a daemon lets it through
+// (creating), as check_start and ownership.py refuse_partial do, rather than refusing it as a
+// partial store; the admitted open then waits for the creation (awaitCreation). Once the
+// creation is done the preflight judges the created store: its runtime's own passes, the other
+// runtime's is refused. A creator that died after placing its gate leaves a gate nobody holds,
+// which the same preflight refuses as a partial store. A reader never probes the gate.
+func Test31StartPreflightLetsACreationThroughAndRefusesAnAbandonedGate(t *testing.T) {
+	partial := "partial store: write-gate.lock without a database"
+	detail := func(err error) string {
+		var refused *RefusedError
+		if !errors.As(err, &refused) || refused.Reason != "store_owned_by_other" {
+			t.Fatalf("not an ownership refusal: %#v", err)
+		}
+		return refused.Detail
+	}
+	for _, creator := range []string{"go", "python"} {
+		t.Run(creator, func(t *testing.T) {
+			path := filepath.Join(stateDir(t), "state", "relay.sqlite3")
+			first := startOpener(t, creator, path, true)
+			if line := first.next(t); line != "paused" {
+				t.Fatalf("creator: %s", line)
+			}
+			if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("D exists before the creation: %v", err)
+			}
+			if err := StartPreflight(t.Context(), path, ""); err != nil {
+				t.Fatalf("a store being created was refused: %v", err)
+			}
+			if _, err := openForRead(t.Context(), path, ""); detail(err) != partial {
+				t.Fatalf("a reader during the creation: %v", err)
+			}
+			_, err := io.WriteString(first.stdin, "go\n")
+			must(t, err)
+			if answer := first.answer(t); answer != "admitted" {
+				t.Fatalf("creator: %s", answer)
+			}
+			err = StartPreflight(t.Context(), path, "")
+			if creator == "go" && err != nil || creator == "python" && detail(err) != "the relay store belongs to another runtime" {
+				t.Fatalf("the created %s store: %v", creator, err)
+			}
+			abandoned := filepath.Join(stateDir(t), "state", "relay.sqlite3")
+			dead := startOpener(t, creator, abandoned, true)
+			if line := dead.next(t); line != "paused" {
+				t.Fatalf("creator: %s", line)
+			}
+			must(t, dead.command.Process.Kill())
+			<-dead.done
+			if got := detail(StartPreflight(t.Context(), abandoned, "")); got != partial {
+				t.Fatalf("a gate its dead creator left: %q", got)
+			}
+		})
 	}
 }

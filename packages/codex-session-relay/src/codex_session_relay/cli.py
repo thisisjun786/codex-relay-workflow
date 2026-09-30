@@ -6050,8 +6050,10 @@ def main(argv=None) -> int:
             services.candidate_channel = channel
             services.candidate = channel.permit
         if not services.read_only and not _reads_no_selected_store(args):
-            # Go store.StartPreflight's order: a service command, and a daemon once it has the
-            # --socket it asks for first, refuses a partial store before it touches S.
+            # A service command, and a daemon given the --socket it needs, refuses a partial
+            # store before it touches S (Go store.StartPreflight). A socketless daemon meets
+            # check_start alone and then its handler asks for --socket, in this order in Go
+            # too (runDaemon: store.CheckStartLikeFence, then requireDaemonHost).
             if args.command == "service" or (args.command == "daemon" and services.adapter_requested):
                 refuse_partial(services.selection.db_path)
             check_start(services.selection.db_path, candidate=services.candidate,

@@ -39,10 +39,17 @@ func admitWrite(ctx context.Context, path string) (*ownership.Admission, error) 
 // binding is let through (cutover.md Record); one that cannot be canonicalized binds
 // nothing, and the opener reports it.
 // The store is named as every opener names it, beside Path.resolve()'s D: a dangling D link
-// alone is an absent store, which the writable opener creates through the link.
+// alone is an absent store, which the writable opener creates through the link. A gate that
+// another opener holds EX beside no D and no mirror is a first opener of either runtime still
+// creating the store (creating): it passes, as check_start passes it, and the admitted open
+// waits for that creation (awaitCreation) and judges what it left; only a gate nobody holds is
+// a partial store here (ownership.py refuse_partial).
 func StartPreflight(ctx context.Context, dbPath, socketPath string) error {
 	resolved := resolveLoosely(dbPath)
 	if !storeAbsent(resolved) {
+		if creating(resolved) {
+			return nil
+		}
 		if err := partialStore(resolved); err != nil {
 			return err
 		}
@@ -58,8 +65,9 @@ func StartPreflight(ctx context.Context, dbPath, socketPath string) error {
 }
 
 // CheckStartLikeFence is ownership.check_start without a candidate, read in the fence's order
-// and answered with its outcomes, for the marker commands the fence runs it for: cli.py main
-// before intent-declare recording the selected store and intent-register confirming against it,
+// and answered with its outcomes, for the commands the fence runs it for ahead of anything else
+// they check: cli.py main before intent-declare recording the selected store and
+// intent-register confirming against it, and before a daemon without --socket asks for one;
 // cmd_intent_claim on the store an intent names, and declarations.Held's Store() on it for
 // intent-disposition. In order:
 //
@@ -200,8 +208,9 @@ func AsOwnershipRefusal(err error) error {
 }
 
 // fenceWords is the fence's wording of the ownership decisions both runtimes make that Go's
-// judge words its own way (the three the fence answers queueably, and validate's lock-authority
-// check, which Go words alike but under Refused's prefix), or "" for any other refusal.
+// judge words its own way (the three the fence answers queueably, and validate's two
+// lock-authority refusals, which Go words alike but under Refused's prefix), or "" for any
+// other refusal.
 func fenceWords(detail string) string {
 	switch {
 	case strings.HasPrefix(detail, "store belongs to "):
@@ -210,7 +219,7 @@ func fenceWords(detail string) string {
 		return "only the designated candidate may enter starting"
 	case detail == "store is draining":
 		return "the relay store is draining"
-	case detail == "scope key disagrees with lock authority":
+	case detail == "scope key disagrees with lock authority", detail == ownership.NoAuthorityDetail:
 		return detail
 	}
 	return ""

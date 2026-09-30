@@ -262,16 +262,37 @@ func ScopeKey(socket string) (string, error) {
 	return fmt.Sprintf("isolated-%x-%s", salt[:4], key), nil
 }
 
+// noHome is str() of pathlib's RuntimeError for a ~ or ~user expanduser cannot resolve.
+const noHome = "Could not determine home directory."
+
+// ErrNoHome is that RuntimeError for a CODEX_SESSION_RELAY_SCOPE_DIR override whose ~ or ~user
+// has no home, which service.py resolve_scope_root raises out of every caller that needs the
+// scope registry or a new scope key (the daemon and service commands, a binding, an
+// initialization). Its text is the fence's host envelope detail for it,
+// f"{type(error).__name__}: {error}" (exit 3), so a caller that answers it unchanged answers
+// as the fence does. Validate refuses it instead (NoAuthorityDetail).
+//
+//lint:ignore ST1005 the fence's caller-visible host detail, kept byte-identical
+var ErrNoHome = errors.New("RuntimeError: " + noHome)
+
+// NoAuthorityDetail is the refusal Validate and ownership.py validate give a bound record when
+// this process's scope-registry authority gives no key for its socket (ErrNoHome): the
+// recorded key cannot be judged, so a writer is refused as under another authority, reason
+// store_owned_by_other, and a read-only form still reads the store.
+const NoAuthorityDetail = "scope key cannot be judged: " + noHome
+
 // ScopeRoot is str(Path(override).expanduser().absolute()) (service.py
 // resolve_scope_root), the spelling both runtimes salt isolated keys with and name
-// K.lock by. It is lexical: '..' and symlinks are kept, never cleaned or resolved.
+// K.lock by. It is lexical: '..' and symlinks are kept, never cleaned or resolved. A ~ or
+// ~user expanduser cannot resolve is ErrNoHome.
 func ScopeRoot(override string) (string, error) {
 	path := override
 	if strings.HasPrefix(path, "~") {
 		name, rest, _ := strings.Cut(path[1:], "/")
 		home, err := UserHome(name)
 		if err != nil {
-			return "", err
+			// The fence's host detail exactly, without the passwd lookup's own words.
+			return "", ErrNoHome
 		}
 		// pathlib joins the remaining components to the home (with_segments).
 		path = home
@@ -299,10 +320,6 @@ func JoinCwd(cwd, path string) string {
 	}
 	return cwd + "/" + path
 }
-
-// ErrNoHome is pathlib's RuntimeError("Could not determine home directory."): a ~ or ~user that
-// nothing answers.
-var ErrNoHome = errors.New("could not determine home directory")
 
 // UserHome is the home posixpath.expanduser puts in place of a leading ~name, "" naming ~ alone:
 // HOME whenever HOME is set, else this user's passwd entry (pwd.getpwuid(os.getuid())), and for a
@@ -364,6 +381,9 @@ func Validate(path string, r Record, s Stamp) error {
 			return refuse("invalid socket/scope identity")
 		}
 		key, err := ScopeKey(socket)
+		if errors.Is(err, ErrNoHome) {
+			return refuse("%s", NoAuthorityDetail)
+		}
 		if err != nil {
 			return err
 		}

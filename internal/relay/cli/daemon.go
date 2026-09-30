@@ -107,6 +107,10 @@ func serviceError(err error) error {
 	if errors.As(err, &refusal) {
 		return &PayloadExit{Code: 2, Payload: contract.OrderedObject{{Key: "ok", Value: false}, {Key: "reason", Value: refusal.Reason}, {Key: "detail", Value: nullableText(refusal.Detail)}}}
 	}
+	if errors.Is(err, ownership.ErrNoHome) {
+		// Already the fence's host detail, RuntimeError: Could not determine home directory.
+		return err
+	}
 	if errors.Is(err, service.ErrEmbeddedNUL) {
 		// The launcher's environment assignment (os.environ / subprocess.Popen).
 		return &HostError{Class: "ValueError", Detail: service.ErrEmbeddedNUL.Error()}
@@ -326,6 +330,16 @@ func runDaemon(ctx context.Context, services Services, args Args) (out any, err 
 		// the channel stays registered until the process exits. Its hard stops stay SIGTERM,
 		// SIGKILL and its supervisor's death (PR_SET_PDEATHSIG).
 		signal.Notify(make(chan os.Signal, 1), os.Interrupt)
+	}
+	if !services.AdapterRequested {
+		// cli.py main runs check_start before the daemon's handler asks for its --socket, so a
+		// socketless daemon is refused for any store the fence refuses first (a foreign,
+		// draining or partial one that holds a mirror), in its words, and only then for the
+		// missing socket; a store check_start passes (absent, legacy, a gate alone) gets the
+		// usage error. Nothing is written either way.
+		if err = store.CheckStartLikeFence(ctx, services.Selection.DBPath(), ""); err != nil {
+			return nil, err
+		}
 	}
 	if err = requireDaemonHost(services); err != nil {
 		return nil, err

@@ -335,6 +335,114 @@ func TestScopeKey_from_another_lock_authority_is_refused_as_the_fence_refuses_it
 	}
 }
 
+// An override whose ~user has no home gives the validating process no key to judge a bound
+// record's scopeKey by (pathlib's RuntimeError). Both runtimes refuse that record to every
+// writer, service form and daemon (socketless too) alike, reason store_owned_by_other, exit 2,
+// whoever owns the store and with nothing changed, while a read-only form still reads it. What
+// records a new key under that override (an absent store's first socketed writer or daemon)
+// answers the fence's RuntimeError host envelope in both.
+func TestScopeKey_of_an_authority_without_a_home_is_refused_as_the_fence_refuses_it(t *testing.T) {
+	home := pythonHome(t)
+	_, alias := packageBinary(t)
+	app := filepath.Join(home, "app.sock")
+	states := map[string]string{"go": filepath.Join(home, "go"), "python": filepath.Join(home, "python")}
+	relay := func(runtime, state string, argv ...string) run {
+		argv = append([]string{"--state", state}, argv...)
+		if runtime == "go" {
+			return binaryRun(t, alias, argv...)
+		}
+		return fence(t, argv...)
+	}
+	for creator, state := range states {
+		if created := relay(creator, state, "--socket", app, "store-challenge", "--write"); created.code != 0 {
+			t.Fatalf("%s creates the bound store: %+v", creator, created)
+		}
+	}
+	t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", "~crw-no-such-user-31/scopes")
+	refused := "{\n  \"error\": \"refused\",\n  \"reason\": \"store_owned_by_other\",\n  \"detail\": \"scope key cannot be judged: Could not determine home directory.\"\n}\n"
+	for _, runtime := range []string{"go", "python"} {
+		for creator, state := range states {
+			before, err := storeFiles(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, argv := range [][]string{
+				{"--socket", app, "store-challenge", "--write"}, {"store-challenge", "--write"},
+				{"--socket", app, "service", "disable"}, {"service", "enable"},
+				{"--socket", app, "daemon", "--allow-isolated-scope", "--max-ticks", "0"},
+				{"daemon", "--allow-isolated-scope", "--max-ticks", "0"},
+			} {
+				if answer := relay(runtime, state, argv...); answer.code != 2 || answer.stdout != refused {
+					t.Errorf("%s %v on the %s-owned store: exit %d\n%s", runtime, argv, creator, answer.code, answer.stdout)
+				}
+			}
+			if after, err := storeFiles(state); err != nil || !maps.Equal(before, after) {
+				t.Errorf("%s changed the %s-owned store (%v)", runtime, creator, err)
+			}
+			if read := relay(runtime, state, "store-identity"); read.code != 0 {
+				t.Errorf("%s reader of the %s-owned store: %+v", runtime, creator, read)
+			}
+		}
+	}
+	host := "{\n  \"error\": \"host\",\n  \"detail\": \"RuntimeError: Could not determine home directory.\"\n}\n"
+	for _, runtime := range []string{"go", "python"} {
+		for i, argv := range [][]string{
+			{"--socket", app, "service", "disable"},
+			{"--socket", app, "daemon", "--allow-isolated-scope", "--max-ticks", "0"},
+		} {
+			state := filepath.Join(home, "absent-"+runtime+"-"+string(rune('a'+i)))
+			if answer := relay(runtime, state, argv...); answer.code != 3 || answer.stdout != host {
+				t.Errorf("%s %v on an absent store: exit %d\n%s", runtime, argv, answer.code, answer.stdout)
+			}
+		}
+	}
+}
+
+// cli.py main runs check_start before a daemon's handler asks for its --socket, and Go's
+// runDaemon runs the same judgement (store.CheckStartLikeFence) first: a daemon started without
+// --socket on the other runtime's store is refused as the fence refuses it, exit 2, and on its
+// own runtime's store it is asked for its --socket, exit 4. Nothing is written either way.
+func TestDaemon_without_a_socket_meets_check_start_before_asking_for_one(t *testing.T) {
+	home := pythonHome(t)
+	_, alias := packageBinary(t)
+	states := map[string]string{"go": filepath.Join(home, "go"), "python": filepath.Join(home, "python")}
+	relay := func(runtime, state string, argv ...string) run {
+		argv = append([]string{"--state", state}, argv...)
+		if runtime == "go" {
+			return binaryRun(t, alias, argv...)
+		}
+		return fence(t, argv...)
+	}
+	for creator, state := range states {
+		if created := relay(creator, state, "store-challenge", "--write"); created.code != 0 {
+			t.Fatalf("%s creates the store: %+v", creator, created)
+		}
+	}
+	usage := "{\n  \"error\": \"usage\",\n  \"detail\": \"this command needs --socket to reach the host\"\n}\n"
+	other := "{\n  \"error\": \"refused\",\n  \"reason\": \"store_owned_by_other\",\n  \"detail\": \"the relay store belongs to another runtime\"\n}\n"
+	for _, runtime := range []string{"go", "python"} {
+		for creator, state := range states {
+			before, err := storeFiles(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			code, want := 4, usage
+			if runtime != creator {
+				code, want = 2, other
+			}
+			if answer := relay(runtime, state, "daemon", "--allow-isolated-scope", "--max-ticks", "0"); answer.code != code || answer.stdout != want {
+				t.Errorf("%s socketless daemon on the %s-owned store: exit %d\n%s", runtime, creator, answer.code, answer.stdout)
+			}
+			if after, err := storeFiles(state); err != nil || !maps.Equal(before, after) {
+				t.Errorf("%s socketless daemon changed the %s-owned store (%v)", runtime, creator, err)
+			}
+		}
+	}
+	if claims, err := os.ReadDir(os.Getenv("CODEX_SESSION_RELAY_SCOPE_DIR")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a socketless daemon touched the scope registry: %v %v", claims, err)
+	}
+}
+
 // The mirror's scopeKey is judged against the recorded appServerSocket as it is, never
 // resolved again (ownership.ScopeKey, ownership.py scope_key): the binding recorded the
 // canonical spelling and its key, so a socket directory replaced by a symlink after binding
