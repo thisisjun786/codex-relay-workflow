@@ -15,7 +15,7 @@ installer, and the package only points at what that installer left behind.
 | `plugins/crw/` | The plugin root, copied into the version cache as it stands |
 | `plugins/crw/.codex-plugin/plugin.json` | Manifest: plugin name, the version that names the payload, and the declared skills path |
 | `plugins/crw/skills/` | The registered skills, one of the two declared components |
-| `plugins/crw/wiring/` | The declared Stop hook and MCP server, the `crw-bridge.sh` launcher the server starts, and the two legacy Python launchers kept for cached commands until the Python path is removed |
+| `plugins/crw/wiring/` | The declared Stop hook and MCP server, and the `crw-bridge.sh` launcher the server starts. The two Python launchers the pre-native declarations started left the package in todo 43 ([the native wiring](#the-native-wiring)) |
 | `plugins/crw/LICENSE` | The repository license, shipped with the package |
 | `skills` | A link to `plugins/crw/skills`, kept for installations made before the move |
 
@@ -185,11 +185,22 @@ Known limits of this wiring:
   turn and read its journal row
   ([registration is not firing](runtime-install.md#registration-is-not-firing)).
 
-`wiring/crw_stop_hook.py` and `wiring/crw_bridge_mcp.py` still ship. The package no longer
-declares them. A turn whose Stop command was fixed before this change, or a session that loaded
-the older server declaration, can still name them. They leave with the rest of the Python
-execution path once the retention scan finds no such reference
-([cutover](port/cutover.md#retention)).
+`wiring/crw_stop_hook.py` and `wiring/crw_bridge_mcp.py`, the Python launchers the pre-native
+declarations started, no longer ship: todo 43 retired them from the package after the cutover
+commit, and the payload that dropped them names new bytes, so it carries a new version suffix. A
+pre-native command names the version directory it was loaded from. A turn whose Stop command was
+fixed before the native wiring therefore names a directory the install that brought the native
+wiring already removed, whatever later payloads hold, and it falls back to
+`<CODEX_HOME>/crw-stop-hook.py` ([the bootstrap a cached turn may still run](#the-bootstrap-a-cached-turn-may-still-run)).
+A session that loaded the older server declaration and has its bridge started again from a
+version directory without the launcher gets no bridge: `python3` finds no script, and the
+declaration's `required: false` lets the session go on without the bridge tools until it loads the
+native declaration. Whether the host ever starts an old declaration from a newer directory was not
+measured. The repository keeps both launchers, byte for byte, beside the pre-native declarations in
+`internal/pluginwiring/testdata/pre-native-wiring`, for the tests that replay that bootstrap and
+compare the Go record contract with the Python one, and for `scripts/runtime_install.py`, which
+places its Stop launcher copy from there until todo 44 deletes it. Neither the package nor
+`crw install` ships them.
 
 Hooks ship as an array with one event per file. A single file carrying several events
 works too, but a hook's identity is positional, so adding an event to a shared file
@@ -359,8 +370,8 @@ each declared surface is whether its reference outlives the directory it names.
 | Reference | Bound to the cache | What a replacement does to it | Owner |
 | --- | --- | --- | --- |
 | Native Stop command | No, it names the runtime pointer under `$HOME` | Nothing | `crw install install` |
-| Stop launcher, first candidate (legacy bootstrap a cached turn may still hold) | Yes | Falls through to the second candidate | This package |
-| Stop launcher, second candidate at `<CODEX_HOME>/crw-stop-hook.py` | No | Nothing | Placed by the Python fence installer; `crw install` leaves it as it is, and the cutover removes it once the retention scan is clear |
+| Stop launcher, first candidate (legacy bootstrap a cached turn may still hold) | Yes | Falls through to the second candidate | No one: no payload ships it since todo 43, and a turn holding the bootstrap names a pre-native version directory an earlier install removed |
+| Stop launcher, second candidate at `<CODEX_HOME>/crw-stop-hook.py` | No | Nothing | Placed by the Python fence installer; `crw install` leaves it as it is, and the operator removes it once the retention scan reports nothing that could still reach it ([retention](port/cutover.md#retention)) |
 | Stop settings at `<CODEX_HOME>/crw-completion-hook.json` | No | Nothing | `crw install hook --owner plugin`; one document serves a Go and a Python runtime through the pointer, and no promotion or rollback rewrites it. A Python-era document is replaced by its Go variant when the pointer moves onto a Go runtime (an install, an update or a rollback), which on the relay host is its first Go install; a move onto a Python runtime never rewrites it |
 | Adapter, relay and bridge executables | No, they sit under the installer pointer | Nothing | `crw install install` |
 | Hook document path in the run identifier | Yes | Held as an identifier and never re-read | The host |
@@ -477,9 +488,10 @@ them apart; [updating safely](#updating-safely) compares the declarations instea
 ### The bootstrap a cached turn may still run
 
 This subsection is pre-cutover. It describes the Python bootstrap the package declared before
-[the native wiring](#the-native-wiring), which a turn that started then may still run, and it goes
-with the Python execution path once the retention scan finds no such command
-([retention](port/cutover.md#retention)).
+[the native wiring](#the-native-wiring), which a turn that started then may still run. The launchers
+it opens left the package in todo 43, after the cutover commit, and the subsection goes once the
+operator has removed the last copy, `<CODEX_HOME>/crw-stop-hook.py`, which waits until the retention
+scan finds no such command ([retention](port/cutover.md#retention)).
 
 That bootstrap named a file inside the version cache. Replace the package while a task still holds
 it and it names a file that no longer exists. `python3` exits **2** for a
@@ -492,10 +504,16 @@ produced thirty-seven in one turn.
 
 So the declaration names two candidates and opens the first one it can read:
 
-1. `${PLUGIN_ROOT}/wiring/crw_stop_hook.py` — the packaged copy. Always the current version, so a
-   fallback left by an older install can never outrank it.
+1. `${PLUGIN_ROOT}/wiring/crw_stop_hook.py` — the packaged copy in the version directory the turn
+   was loaded from, always that version's own, so a fallback left by an older install could never
+   outrank it. A pre-native directory lasts only until its marketplace's package is next
+   installed, and no payload ships this copy since todo 43, so once a host has installed a native
+   payload from each marketplace it uses, this candidate is always gone.
 2. `<CODEX_HOME>/crw-stop-hook.py` — the copy the Python fence installer placed, which
-   `crw install` leaves as it is. Reached only when the first one is already gone.
+   `crw install` leaves as it is. Reached only when the first one is already gone. The operator
+   removes it once the retention scan reports nothing that could still reach it; a turn that still
+   held the bootstrap after that would have neither candidate, the case the next paragraph
+   describes.
 
 If neither can be opened it exits 0 and prints nothing. That is not error suppression: the
 launcher’s own contract has always been that a Stop it cannot judge is a Stop it releases, and
@@ -563,7 +581,7 @@ making its first policy registration as well, and step 8 says what that changes.
    hook moves with the payload: the native command names the pointer and the settings live in the
    Codex home. A turn that still holds the Python bootstrap falls back to `<CODEX_HOME>/crw-stop-hook.py`
    once its version directory is gone, and that copy stays where the Python installer put it until
-   the retention scan is clear ([retention](port/cutover.md#retention)).
+   the operator removes it, once the retention scan is clear ([retention](port/cutover.md#retention)).
 4. Look at the candidate before adding it, whatever its bytes. Install it into a throwaway Codex home:
 
    ```sh

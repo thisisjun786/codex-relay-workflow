@@ -4925,10 +4925,12 @@ def _copy_regular(source, destination):
 # behind that pointer reads the record (decision 26 in docs/port/decisions.md). The probe's HOME
 # is scratch, so it holds a stand-in runtime there: it accepts only that exact invocation and then
 # runs this checkout's crw_bridge_mcp.py from the copied package, the reference implementation of
-# the record contract the Go runtime reproduces (internal/pluginwiring). What the probe
+# the record contract the Go runtime reproduces (internal/pluginwiring). The package shipped it
+# until todo 43; the repository keeps it with the pre-native wiring. What the probe
 # establishes about the package is that its declared command reaches that contract under the App
 # Server's environment; the runtime's own half is the runtime's tests' to establish.
-PLUGIN_LAUNCH_REFERENCE = ROOT / "plugins" / "crw" / "wiring" / "crw_bridge_mcp.py"
+PLUGIN_LAUNCH_REFERENCE = (ROOT / "internal" / "pluginwiring" / "testdata" / "pre-native-wiring"
+                           / "crw_bridge_mcp.py")
 _PROBE_RUNTIME = (
     "import os, sys\n"
     "if sys.argv[1:2] != ['--plugin-launch']:\n"

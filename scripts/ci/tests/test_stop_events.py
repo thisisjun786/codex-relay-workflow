@@ -32,13 +32,12 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from crw_runtime import completion  # noqa: E402
 
 sys.path.insert(0, str(ROOT / "scripts" / "ci" / "tests"))
-from legacy_wiring import LEGACY_STOP_COMMAND  # noqa: E402
+from legacy_wiring import LEGACY_STOP_COMMAND, STOP_LAUNCHER  # noqa: E402
 
 PACKAGED = ROOT / "packages" / "codex-session-relay" / "src" / "codex_session_relay" / "stopadapter.py"
 CHECKOUT = ROOT / "scripts" / "completion_hook.py"
 VERIFIER = ROOT / "scripts" / "stop_events.py"
-PLUGIN_ROOT = ROOT / "plugins" / "crw"
-DECLARATION = PLUGIN_ROOT / "wiring" / "hooks" / "stop-recording-completion.json"
+DECLARATION = ROOT / "plugins" / "crw" / "wiring" / "hooks" / "stop-recording-completion.json"
 FIXTURE = ROOT / "packages" / "codex-session-relay" / "tests" / "fixtures" / "stop_event_r1.json"
 DAY = re.compile(r"^[0-9]{8}$")
 ROW = re.compile(r"^[0-9a-f]{32}\.json$")
@@ -53,7 +52,8 @@ def declared_command():
     Python adapter the settings name as adapterEntryPoint. The package now declares the native
     `crw hook --plugin-launch`, which runs neither (it dials the relay's control socket), and this
     suite's CI job has no Go runtime. So the command driven is the bootstrap the package declared
-    before todo 34, which cached turns still run until todo 44 and whose launcher still ships. The
+    before todo 34, which cached turns may still run, with the launcher the package shipped until
+    todo 43, laid out as the pre-native payload's version directory (Host.plugin_root). The
     native path's one-evaluation-per-Stop is internal/relay/hook TestPluginLaunch_* and the
     Domain/hook corpus. The shipped declaration is still read and checked to be the native command,
     so this stops passing silently if the package's Stop hook changes again.
@@ -70,6 +70,10 @@ class Host:
         self.root = root
         self.codex_home = root / "codex"
         self.codex_home.mkdir(parents=True, exist_ok=True)
+        # The version directory the pre-native bootstrap names: its packaged Stop launcher.
+        self.plugin_root = root / "pre-native-payload"
+        (self.plugin_root / "wiring").mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(STOP_LAUNCHER, self.plugin_root / "wiring" / "crw_stop_hook.py")
         self.journal = journal or (root / "journal")
         self.calls = root / "guard-calls"
         self.transcript = root / "rollout.jsonl"
@@ -102,7 +106,7 @@ class Host:
     def declared(self):
         """The plugin's declared command, through a shell, the way the host runs it."""
         environment = {"PATH": os.environ["PATH"], "CODEX_HOME": str(self.codex_home),
-                       "PLUGIN_ROOT": str(PLUGIN_ROOT)}
+                       "PLUGIN_ROOT": str(self.plugin_root)}
         return (["/bin/sh", "-c", declared_command()], environment)
 
     def checkout(self):

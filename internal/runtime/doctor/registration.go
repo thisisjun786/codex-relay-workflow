@@ -35,12 +35,13 @@ import (
 //   - the Stop settings (crw-completion-hook.json), through the Go hook's own acceptance check
 //     (hook.ReadSettings: a document it refuses runs no relay); then relayExecutable and, for a
 //     plugin owner, the [adapterInterpreter, adapterEntryPoint, <settings>] invocation of the
-//     packaged launcher (plugins/crw/wiring/crw_stop_hook.py);
+//     Python launcher (crw_stop_hook.py, packaged until todo 43, and its
+//     <CODEX_HOME>/crw-stop-hook.py copy);
 //   - every Stop command of <CODEX_HOME>/hooks.json that runs a Stop adapter, which is what a
 //     user-owned registration runs (runtime_install.py hook appends it there);
-//   - the plugin-owned bridge record (crw-bridge-mcp.json), through the packaged launcher's
-//     record contract (plugins/crw/wiring/crw_bridge_mcp.py): a record it refuses starts no
-//     bridge;
+//   - the plugin-owned bridge record (crw-bridge-mcp.json), through the launcher's record
+//     contract (crw_bridge_mcp.py until todo 43, codex-thread-bridge --plugin-launch since todo
+//     34): a record it refuses starts no bridge;
 //   - config.toml's mcp_servers, read whole as codexconfig.registration_view reads it (a
 //     malformed table makes the configuration unreadable), and every table that starts the
 //     bridge: the one named codex-thread-bridge, the one a user-owned bridge record names, and
@@ -190,8 +191,8 @@ func (j judge) stopSettings(ctx context.Context, into *componentRegistrations, p
 var systemEnv = []string{"/usr/bin/env", "/bin/env"}
 
 // interpreter judges the Stop settings' adapterInterpreter against the launcher contract of
-// decision 18 (as todo 38 corrects it): the packaged launcher (plugins/crw/wiring/crw_stop_hook.py
-// and its <CODEX_HOME>/crw-stop-hook.py copy) runs [adapterInterpreter, adapterEntryPoint,
+// decision 18 (as todo 38 corrects it): the Python launcher (crw_stop_hook.py, packaged until
+// todo 43, and its <CODEX_HOME>/crw-stop-hook.py copy) runs [adapterInterpreter, adapterEntryPoint,
 // <settings>]. That reaches the Go hook only when adapterInterpreter is the system env
 // (systemEnv, resolving to a native executable regular file), so that the entry point runs as
 // crw-completion-hook with the settings path as its one argument, and only when the entry point

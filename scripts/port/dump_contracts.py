@@ -293,7 +293,7 @@ def hook_contract(source: Path) -> dict[str, JSONValue]:
                                 input=b"{}", capture_output=True, env=env, check=False)
     if result.stdout or result.stderr:
         raise RuntimeError("hook emitted unexpected output for an unconfigured Stop")
-    launcher = source_tree(ROOT / "plugins/crw/wiring/crw_stop_hook.py")
+    launcher = source_tree(ROOT / "internal/pluginwiring/testdata/pre-native-wiring/crw_stop_hook.py")
     launcher_bounds = {target.id: entry.value.value for entry in launcher.body
                        if isinstance(entry, ast.Assign) and isinstance(entry.value, ast.Constant)
                        for target in entry.targets if isinstance(target, ast.Name)

@@ -26,9 +26,10 @@ import (
 // Flag is the first argument the plugin's declared commands pass to the bridge and `crw hook`.
 const Flag = "--plugin-launch"
 
-// The record contract of plugins/crw/wiring/crw_bridge_mcp.py (decision 26), whose checks and
-// order this reproduces, and whose failure texts it keeps but for the repairs, which name the
-// installer that writes the record since todo 38 (RepairCommand).
+// The record contract of crw_bridge_mcp.py (decision 26), the Python launcher the package shipped
+// until todo 43 and testdata/pre-native-wiring keeps as the oracle, whose checks and order this
+// reproduces, and whose failure texts it keeps but for the repairs, which name the installer that
+// writes the record since todo 38 (RepairCommand).
 const (
 	RecordName = "crw-bridge-mcp.json"
 	// RepairCommand writes the record (internal/runtime/install RegisterMCP).
