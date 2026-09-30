@@ -196,11 +196,10 @@ A session that loaded the older server declaration and has its bridge started ag
 version directory without the launcher gets no bridge: `python3` finds no script, and the
 declaration's `required: false` lets the session go on without the bridge tools until it loads the
 native declaration. Whether the host ever starts an old declaration from a newer directory was not
-measured. The repository keeps both launchers, byte for byte, beside the pre-native declarations in
-`internal/pluginwiring/testdata/pre-native-wiring`, for the tests that replay that bootstrap and
-compare the Go record contract with the Python one, and for `scripts/runtime_install.py`, which
-places its Stop launcher copy from there until todo 44 deletes it. Neither the package nor
-`crw install` ships them.
+measured. The repository kept both launchers, byte for byte, beside the pre-native declarations in
+`internal/pluginwiring/testdata/pre-native-wiring` until todo 44 deleted them with the Python
+implementation; the declarations stay there, and the Go record contract is compared with the
+launcher's recorded answers. Neither the package nor `crw install` ships them.
 
 Hooks ship as an array with one event per file. A single file carrying several events
 works too, but a hook's identity is positional, so adding an event to a shared file

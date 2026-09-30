@@ -212,8 +212,8 @@ func TestARollbackToAVenvRefusesWhileTheNativePayloadIsCached(t *testing.T) {
 	}
 
 	cache(preNativeWiring, filepath.Join("hooks", "stop-recording-completion.json"), "mcp.json")
-	write(t, filepath.Join(version, "wiring", "crw_stop_hook.py"), readFile(t, preNativeWiring("crw_stop_hook.py")))
-	write(t, filepath.Join(version, "wiring", "crw_bridge_mcp.py"), readFile(t, preNativeWiring("crw_bridge_mcp.py")))
+	write(t, filepath.Join(version, "wiring", "crw_stop_hook.py"), legacyLauncher)
+	write(t, filepath.Join(version, "wiring", "crw_bridge_mcp.py"), "#!/usr/bin/env python3\n# The bridge launcher the package shipped before todo 43 (a stand-in).\n")
 	result, code := install.Rollback(context.Background(), h.options(), venv)
 	if code != install.OK || h.pointerTarget(t) != venv || readFile(t, path) != settings {
 		t.Fatalf("the Python bootstrap payload: exit %d\n%s", code, golden.Canon(result))

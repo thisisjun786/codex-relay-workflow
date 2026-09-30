@@ -87,14 +87,6 @@ func packageRoot(t *testing.T) string {
 	return filepath.Join(repoRoot(t), "plugins", "crw")
 }
 
-// preNativeLauncher is one of the Python launchers the package shipped before todo 43 retired
-// them, kept beside the pre-native declarations that started them: the host's
-// <CODEX_HOME>/crw-stop-hook.py is a copy of crw_stop_hook.py, and the bridge launcher is the
-// oracle of the record contract Prepare reproduces.
-func preNativeLauncher(name string) string {
-	return filepath.Join(moduleRoot, "internal", "pluginwiring", "testdata", "pre-native-wiring", name)
-}
-
 // stopCommandIn is the one Stop command hook a declaration file registers.
 func stopCommandIn(t *testing.T, path string) (string, int) {
 	t.Helper()
