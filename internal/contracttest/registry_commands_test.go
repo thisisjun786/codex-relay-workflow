@@ -13,62 +13,63 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // registryCommands are the relay commands todo 25 part A registers (cli.py:4045-4125, :4393).
 // No cli-shape fixture exercises them alone (every one also needs emit or dispositions-show),
 // so their CLI shape is proved here against the built crw binary: every case of
-// internal/relay/registry/testdata/cli_cases.json, replayed through `crw relay`, must print the
-// exact stdout bytes and exit code the Python CLI printed (python_cli.json, from gen_cli.py).
+// testdata/fixtures/registry-cli-cases.json (a copy of internal/relay/registry/testdata/cli_cases.json),
+// replayed through `crw relay`, must print the exact stdout bytes and exit code its golden holds.
 var registryCommands = []string{"register", "settings-record", "settings-show", "generation-open",
 	"generation-bind", "admit-turn", "relationship-status", "relationship-resume"}
+
+// cliStep is what one step of a CLI case answered: its exit status and its stdout with the
+// case's run-specific values (timestamps, the case directory, target keys) as placeholders.
+type cliStep struct {
+	Exit   int    `json:"exit"`
+	Stdout string `json:"stdout"`
+}
 
 var isoStamp = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}\+00:00`)
 
 func TestRegistryCommands_the_built_crw_prints_what_python_printed(t *testing.T) {
-	replayCLICases(t, filepath.Join("internal", "relay", "registry", "testdata"), registryCommands)
+	replayCLICases(t, "registry-cli-cases.json", false, registryCommands)
 }
 
-// replayCLICases replays <dir>/cli_cases.json through the built `crw relay` and compares every
-// step's stdout bytes and exit code with <dir>/python_cli.json; every command in commands must
-// be exercised by some case.
-func replayCLICases(t *testing.T, dir string, commands []string) {
+// replayCLICases replays the cases of testdata/fixtures/<fixture> (each a sequence of seeding
+// SQL, written files and `crw relay` command lines) through the built crw and holds each case's
+// answers to its golden: every step's exit status and stdout, timestamps as <T>, the case
+// directory as <HOME> and, with targetKeys, each merge target key as <target-key-N> in order of
+// appearance. The goldens were first taken as what the Python CLI printed (python_cli.json, from
+// gen_cli.py). Every command in commands must be exercised by some case.
+func replayCLICases(t *testing.T, fixture string, targetKeys bool, commands []string) {
 	t.Helper()
 	binary, err := crwBinary()
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := Root()
-	if err != nil {
-		t.Fatal(err)
-	}
-	data := filepath.Join(root, dir)
 	var cases map[string][]struct {
 		Argv  []string          `json:"argv"`
 		Files map[string]string `json:"files"`
 		SQL   string            `json:"sql"`
 	}
-	var want map[string][]struct {
-		Exit   int    `json:"exit"`
-		Stdout string `json:"stdout"`
-	}
-	for file, into := range map[string]any{"cli_cases.json": &cases, "python_cli.json": &want} {
-		raw, err := os.ReadFile(filepath.Join(data, file))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := json.Unmarshal(raw, into); err != nil {
-			t.Fatal(err)
-		}
+	if err := json.Unmarshal(golden.Fixture(t, fixture), &cases); err != nil {
+		t.Fatal(err)
 	}
 	covered := map[string]bool{}
 	for name, steps := range cases {
+		for _, step := range steps {
+			if len(step.Argv) > 0 {
+				covered[step.Argv[0]] = true
+			}
+		}
 		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
 			targetNames := map[string]string{}
 			targetPattern := regexp.MustCompile(`tgt-[0-9a-f]{32}`)
 			state := filepath.Join(home, "state")
-			index := 0
+			var answered []cliStep
 			for _, step := range steps {
 				for file, text := range step.Files {
 					if err := os.WriteFile(filepath.Join(home, file), []byte(strings.ReplaceAll(text, "${HOME}", home)), 0o600); err != nil {
@@ -94,9 +95,6 @@ func replayCLICases(t *testing.T, dir string, commands []string) {
 				for _, a := range step.Argv {
 					argv = append(argv, strings.ReplaceAll(a, "${HOME}", home))
 				}
-				if len(step.Argv) > 0 {
-					covered[step.Argv[0]] = true
-				}
 				command := exec.Command(binary, argv...)
 				command.Dir = home
 				command.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xs", "XDG_DATA_HOME="+home+"/xd",
@@ -112,7 +110,7 @@ func replayCLICases(t *testing.T, dir string, commands []string) {
 					exit = exitErr.ExitCode()
 				}
 				got := strings.ReplaceAll(isoStamp.ReplaceAllString(stdout.String(), "<T>"), home, "<HOME>")
-				if dir == filepath.Join("internal", "relay", "mergeturn", "testdata") {
+				if targetKeys {
 					got = targetPattern.ReplaceAllStringFunc(got, func(value string) string {
 						if name, ok := targetNames[value]; ok {
 							return name
@@ -122,11 +120,12 @@ func replayCLICases(t *testing.T, dir string, commands []string) {
 						return name
 					})
 				}
-				if exit != want[name][index].Exit || got != want[name][index].Stdout {
-					t.Errorf("step %d %v: crw exit %d\n%s\npython exit %d\n%s\nstderr: %s", index, step.Argv, exit, got, want[name][index].Exit, want[name][index].Stdout, stderr.String())
+				if stderr.Len() > 0 {
+					t.Logf("step %d %v stderr: %s", len(answered), step.Argv, stderr.String())
 				}
-				index++
+				answered = append(answered, cliStep{exit, got})
 			}
+			golden.CheckJSON(t, "steps", answered)
 		})
 	}
 	for _, command := range commands {

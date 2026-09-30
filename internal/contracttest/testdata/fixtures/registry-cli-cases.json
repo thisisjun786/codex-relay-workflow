@@ -1,0 +1,740 @@
+{
+ "register_with_settings": [
+  {
+   "argv": [
+    "register",
+    "--parent-task",
+    "01parent-task",
+    "--parent-host",
+    "host-a",
+    "--child-task",
+    "01child-task",
+    "--child-host",
+    "host-a",
+    "--issue",
+    "REL-1",
+    "--artifact-root",
+    "${HOME}/work",
+    "--allowed-recipient",
+    "01parent-task",
+    "--dispatch-request-id",
+    "dispatch-1",
+    "--dispatch-turn-id",
+    "turn-dispatch-1",
+    "--parent-settings",
+    "{\"sandbox\": {\"type\": \"workspaceWrite\", \"writableRoots\": [], \"networkAccess\": false, \"excludeTmpdirEnvVar\": false, \"excludeSlashTmp\": false}, \"approvalPolicy\": \"never\", \"cwd\": \"/parent\", \"runtimeWorkspaceRoots\": [\"/parent\"], \"model\": \"anthropic/claude-opus-5\", \"reasoningEffort\": \"xhigh\", \"environments\": [{\"environmentId\": \"local\", \"cwd\": \"/parent\", \"runtimeWorkspaceRoots\": [\"/parent\"]}]}",
+    "--child-settings",
+    "{\"sandbox\": {\"type\": \"workspaceWrite\", \"writableRoots\": [], \"networkAccess\": false, \"excludeTmpdirEnvVar\": false, \"excludeSlashTmp\": false}, \"approvalPolicy\": \"never\", \"cwd\": \"${HOME}/work\", \"runtimeWorkspaceRoots\": [\"${HOME}/work\"], \"model\": \"anthropic/claude-opus-5\", \"reasoningEffort\": \"xhigh\", \"environments\": [{\"environmentId\": \"local\", \"cwd\": \"${HOME}/work\", \"runtimeWorkspaceRoots\": [\"${HOME}/work\"]}]}"
+   ]
+  },
+  {
+   "argv": [
+    "settings-show",
+    "--task",
+    "01parent-task"
+   ]
+  },
+  {
+   "argv": [
+    "settings-show",
+    "--task",
+    "01child-task"
+   ]
+  }
+ ],
+ "register_without_settings": [
+  {
+   "argv": [
+    "register",
+    "--parent-task",
+    "01parent-task",
+    "--parent-host",
+    "host-a",
+    "--child-task",
+    "01child-task",
+    "--child-host",
+    "host-a",
+    "--issue",
+    "REL-1",
+    "--artifact-root",
+    "${HOME}/work",
+    "--allowed-recipient",
+    "01parent-task",
+    "--dispatch-request-id",
+    "dispatch-1",
+    "--dispatch-turn-id",
+    "turn-dispatch-1"
+   ]
+  },
+  {
+   "argv": [
+    "settings-show",
+    "--task",
+    "01parent-task"
+   ]
+  }
+ ],
+ "settings_record_file": [
+  {
+   "files": {
+    "settings.json": "{\"sandbox\": {\"type\": \"workspaceWrite\", \"writableRoots\": [], \"networkAccess\": false, \"excludeTmpdirEnvVar\": false, \"excludeSlashTmp\": false}, \"approvalPolicy\": \"never\", \"cwd\": \"/parent\", \"runtimeWorkspaceRoots\": [\"/parent\"], \"model\": \"anthropic/claude-opus-5\", \"reasoningEffort\": \"xhigh\", \"environments\": [{\"environmentId\": \"local\", \"cwd\": \"/parent\", \"runtimeWorkspaceRoots\": [\"/parent\"]}]}"
+   },
+   "argv": [
+    "settings-record",
+    "--task",
+    "01parent-task",
+    "--settings",
+    "@${HOME}/settings.json"
+   ]
+  },
+  {
+   "argv": [
+    "settings-show",
+    "--task",
+    "01parent-task"
+   ]
+  }
+ ],
+ "settings_incomplete": [
+  {
+   "argv": [
+    "settings-record",
+    "--task",
+    "01parent-task",
+    "--settings",
+    "{\"sandbox\": {\"type\": \"workspaceWrite\", \"writableRoots\": [], \"networkAccess\": false, \"excludeTmpdirEnvVar\": false, \"excludeSlashTmp\": false}, \"approvalPolicy\": \"never\", \"cwd\": \"/parent\", \"runtimeWorkspaceRoots\": [\"/parent\"], \"model\": \"anthropic/claude-opus-5\", \"reasoningEffort\": \"xhigh\"}"
+   ]
+  },
+  {
+   "argv": [
+    "settings-show",
+    "--task",
+    "01parent-task"
+   ]
+  }
+ ],
+ "settings_mistyped": [
+  {
+   "argv": [
+    "settings-record",
+    "--task",
+    "01parent-task",
+    "--settings",
+    "{\"sandbox\": {\"type\": \"workspaceWrite\", \"writableRoots\": [], \"networkAccess\": false, \"excludeTmpdirEnvVar\": false, \"excludeSlashTmp\": false}, \"approvalPolicy\": \"never\", \"cwd\": \"/parent\", \"runtimeWorkspaceRoots\": [\"/parent\"], \"model\": 7, \"reasoningEffort\": \"xhigh\", \"environments\": [{\"environmentId\": \"local\", \"cwd\": \"/parent\", \"runtimeWorkspaceRoots\": [\"/parent\"]}]}"
+   ]
+  }
+ ],
+ "settings_untrusted": [
+  {
+   "argv": [
+    "settings-record",
+    "--task",
+    "01parent-task",
+    "--settings",
+    "{\"sandbox\": {\"type\": \"workspaceWrite\", \"writableRoots\": [], \"networkAccess\": false, \"excludeTmpdirEnvVar\": false, \"excludeSlashTmp\": false}, \"approvalPolicy\": \"untrusted\", \"cwd\": \"/parent\", \"runtimeWorkspaceRoots\": [\"/parent\"], \"model\": \"anthropic/claude-opus-5\", \"reasoningEffort\": \"xhigh\", \"environments\": [{\"environmentId\": \"local\", \"cwd\": \"/parent\", \"runtimeWorkspaceRoots\": [\"/parent\"]}]}"
+   ]
+  },
+  {
+   "argv": [
+    "settings-show",
+    "--task",
+    "01parent-task"
+   ]
+  }
+ ],
+ "settings_sandbox_list": [
+  {
+   "argv": [
+    "settings-record",
+    "--task",
+    "01other",
+    "--settings",
+    "{\"sandbox\": [\"workspaceWrite\"], \"approvalPolicy\": \"never\", \"cwd\": \"/parent\", \"runtimeWorkspaceRoots\": [\"/parent\"], \"model\": \"anthropic/claude-opus-5\", \"reasoningEffort\": \"xhigh\", \"environments\": [{\"environmentId\": \"local\", \"cwd\": \"/parent\", \"runtimeWorkspaceRoots\": [\"/parent\"]}]}"
+   ]
+  },
+  {
+   "argv": [
+    "settings-show",
+    "--task",
+    "01other"
+   ]
+  }
+ ],
+ "show_cwd_int": [
+  {
+   "argv": [
+    "settings-record",
+    "--task",
+    "01parent-task",
+    "--settings",
+    "{\"sandbox\": {\"type\": \"workspaceWrite\", \"writableRoots\": [], \"networkAccess\": false, \"excludeTmpdirEnvVar\": false, \"excludeSlashTmp\": false}, \"approvalPolicy\": \"never\", \"cwd\": \"/parent\", \"runtimeWorkspaceRoots\": [\"/parent\"], \"model\": \"anthropic/claude-opus-5\", \"reasoningEffort\": \"xhigh\", \"environments\": [{\"environmentId\": \"local\", \"cwd\": \"/parent\", \"runtimeWorkspaceRoots\": [\"/parent\"]}]}"
+   ]
+  },
+  {
+   "sql": "UPDATE authorized_settings SET settings = '{\"sandbox\": {\"type\": \"workspaceWrite\", \"writableRoots\": [], \"networkAccess\": false, \"excludeTmpdirEnvVar\": false, \"excludeSlashTmp\": false}, \"approvalPolicy\": \"never\", \"cwd\": 7, \"runtimeWorkspaceRoots\": [7], \"model\": \"anthropic/claude-opus-5\", \"reasoningEffort\": \"xhigh\", \"environments\": [{\"environmentId\": \"local\", \"cwd\": 7, \"runtimeWorkspaceRoots\": [7]}]}' WHERE task_id = '01parent-task'"
+  },
+  {
+   "argv": [
+    "settings-show",
+    "--task",
+    "01parent-task"
+   ]
+  }
+ ],
+ "show_bare_sandbox": [
+  {
+   "argv": [
+    "settings-record",
+    "--task",
+    "01parent-task",
+    "--settings",
+    "{\"sandbox\": {\"type\": \"workspaceWrite\", \"writableRoots\": [], \"networkAccess\": false, \"excludeTmpdirEnvVar\": false, \"excludeSlashTmp\": false}, \"approvalPolicy\": \"never\", \"cwd\": \"/parent\", \"runtimeWorkspaceRoots\": [\"/parent\"], \"model\": \"anthropic/claude-opus-5\", \"reasoningEffort\": \"xhigh\", \"environments\": [{\"environmentId\": \"local\", \"cwd\": \"/parent\", \"runtimeWorkspaceRoots\": [\"/parent\"]}]}"
+   ]
+  },
+  {
+   "sql": "UPDATE authorized_settings SET settings = '{\"sandbox\": \"workspaceWrite\", \"approvalPolicy\": \"never\", \"cwd\": \"/parent\", \"runtimeWorkspaceRoots\": [\"/parent\"], \"model\": \"anthropic/claude-opus-5\", \"reasoningEffort\": \"xhigh\", \"environments\": [{\"environmentId\": \"local\", \"cwd\": \"/parent\", \"runtimeWorkspaceRoots\": [\"/parent\"]}]}' WHERE task_id = '01parent-task'"
+  },
+  {
+   "argv": [
+    "settings-show",
+    "--task",
+    "01parent-task"
+   ]
+  }
+ ],
+ "re_record_replaces": [
+  {
+   "argv": [
+    "settings-record",
+    "--task",
+    "01other",
+    "--settings",
+    "{\"sandbox\": {\"type\": \"workspaceWrite\", \"writableRoots\": [], \"networkAccess\": false, \"excludeTmpdirEnvVar\": false, \"excludeSlashTmp\": false}, \"approvalPolicy\": \"never\", \"cwd\": \"/a\", \"runtimeWorkspaceRoots\": [\"/a\"], \"model\": \"anthropic/claude-opus-5\", \"reasoningEffort\": \"xhigh\", \"environments\": [{\"environmentId\": \"local\", \"cwd\": \"/a\", \"runtimeWorkspaceRoots\": [\"/a\"]}]}"
+   ]
+  },
+  {
+   "argv": [
+    "settings-record",
+    "--task",
+    "01other",
+    "--settings",
+    "{\"sandbox\": {\"type\": \"workspaceWrite\", \"writableRoots\": [], \"networkAccess\": false, \"excludeTmpdirEnvVar\": false, \"excludeSlashTmp\": false}, \"approvalPolicy\": \"never\", \"cwd\": \"/b\", \"runtimeWorkspaceRoots\": [\"/b\"], \"model\": \"anthropic/claude-opus-5\", \"reasoningEffort\": \"xhigh\", \"environments\": [{\"environmentId\": \"local\", \"cwd\": \"/b\", \"runtimeWorkspaceRoots\": [\"/b\"]}]}",
+    "--source",
+    "user_transition"
+   ]
+  },
+  {
+   "argv": [
+    "settings-show",
+    "--task",
+    "01other"
+   ]
+  }
+ ],
+ "clear_and_cite": [
+  {
+   "argv": [
+    "settings-record",
+    "--task",
+    "01parent-task",
+    "--settings",
+    "{\"sandbox\": {\"type\": \"workspaceWrite\", \"writableRoots\": [], \"networkAccess\": false, \"excludeTmpdirEnvVar\": false, \"excludeSlashTmp\": false}, \"approvalPolicy\": \"never\", \"cwd\": \"/parent\", \"runtimeWorkspaceRoots\": [\"/parent\"], \"model\": \"anthropic/claude-opus-5\", \"reasoningEffort\": \"xhigh\", \"environments\": [{\"environmentId\": \"local\", \"cwd\": \"/parent\", \"runtimeWorkspaceRoots\": [\"/parent\"]}]}",
+    "--exception",
+    "x",
+    "--clear-exception"
+   ]
+  }
+ ],
+ "pause_resume": [
+  {
+   "argv": [
+    "register",
+    "--parent-task",
+    "01parent-task",
+    "--parent-host",
+    "host-a",
+    "--child-task",
+    "01child-task",
+    "--child-host",
+    "host-a",
+    "--issue",
+    "REL-1",
+    "--artifact-root",
+    "${HOME}/work",
+    "--allowed-recipient",
+    "01parent-task",
+    "--dispatch-request-id",
+    "dispatch-1",
+    "--dispatch-turn-id",
+    "turn-dispatch-1"
+   ]
+  },
+  {
+   "argv": [
+    "relationship-status",
+    "--relationship",
+    "rel-46d5b5ac690ef861",
+    "--status",
+    "paused",
+    "--actor",
+    "user"
+   ]
+  },
+  {
+   "argv": [
+    "relationship-resume",
+    "--relationship",
+    "rel-46d5b5ac690ef861",
+    "--expect-generation",
+    "9",
+    "--expect-artifact-root",
+    "${HOME}/work",
+    "--expect-allowed-recipient",
+    "01parent-task",
+    "--actor",
+    "user"
+   ]
+  },
+  {
+   "argv": [
+    "relationship-resume",
+    "--relationship",
+    "rel-46d5b5ac690ef861",
+    "--expect-generation",
+    "1",
+    "--expect-artifact-root",
+    "${HOME}/work",
+    "--expect-allowed-recipient",
+    "01parent-task",
+    "--actor",
+    "user"
+   ]
+  }
+ ],
+ "generations_cli": [
+  {
+   "argv": [
+    "register",
+    "--parent-task",
+    "01parent-task",
+    "--parent-host",
+    "host-a",
+    "--child-task",
+    "01child-task",
+    "--child-host",
+    "host-a",
+    "--issue",
+    "REL-1",
+    "--artifact-root",
+    "${HOME}/work",
+    "--allowed-recipient",
+    "01parent-task",
+    "--dispatch-request-id",
+    "dispatch-1"
+   ]
+  },
+  {
+   "argv": [
+    "generation-bind",
+    "--relationship",
+    "rel-46d5b5ac690ef861",
+    "--generation",
+    "1",
+    "--dispatch-turn-id",
+    "t1"
+   ]
+  },
+  {
+   "argv": [
+    "generation-bind",
+    "--relationship",
+    "rel-46d5b5ac690ef861",
+    "--generation",
+    "1",
+    "--dispatch-turn-id",
+    "t2"
+   ]
+  },
+  {
+   "argv": [
+    "generation-open",
+    "--relationship",
+    "rel-46d5b5ac690ef861",
+    "--dispatch-request-id",
+    "d2",
+    "--dispatch-turn-id",
+    "t2"
+   ]
+  },
+  {
+   "argv": [
+    "generation-open",
+    "--relationship",
+    "rel-46d5b5ac690ef861",
+    "--dispatch-request-id",
+    "d2"
+   ]
+  },
+  {
+   "argv": [
+    "admit-turn",
+    "--relationship",
+    "rel-46d5b5ac690ef861",
+    "--generation",
+    "2",
+    "--turn",
+    "t3",
+    "--actor",
+    "parent",
+    "--reason",
+    "continues"
+   ]
+  },
+  {
+   "argv": [
+    "admit-turn",
+    "--relationship",
+    "rel-46d5b5ac690ef861",
+    "--generation",
+    "9",
+    "--turn",
+    "t3",
+    "--actor",
+    "parent"
+   ]
+  },
+  {
+   "argv": [
+    "relationship-status",
+    "--relationship",
+    "rel-0000000000000000",
+    "--status",
+    "archived",
+    "--actor",
+    "x"
+   ]
+  }
+ ],
+ "register_refusals": [
+  {
+   "argv": [
+    "register",
+    "--parent-task",
+    "01parent-task",
+    "--parent-host",
+    "host-a",
+    "--child-task",
+    "01child-task",
+    "--child-host",
+    "host-a",
+    "--issue",
+    "REL-1",
+    "--artifact-root",
+    "${HOME}/work",
+    "--allowed-recipient",
+    "01parent-task",
+    "--dispatch-request-id",
+    "dispatch-1",
+    "--dispatch-turn-id",
+    "turn-dispatch-1"
+   ]
+  },
+  {
+   "argv": [
+    "register",
+    "--parent-task",
+    "01parent-task",
+    "--parent-host",
+    "host-a",
+    "--child-task",
+    "01child-task",
+    "--child-host",
+    "host-a",
+    "--issue",
+    "REL-1",
+    "--artifact-root",
+    "${HOME}/work",
+    "--artifact-root",
+    "/elsewhere",
+    "--allowed-recipient",
+    "01parent-task",
+    "--dispatch-request-id",
+    "dispatch-1"
+   ]
+  },
+  {
+   "argv": [
+    "register",
+    "--parent-task",
+    "01parent-task",
+    "--parent-host",
+    "host-a",
+    "--child-task",
+    "other-child",
+    "--child-host",
+    "host-a",
+    "--issue",
+    "REL-1",
+    "--artifact-root",
+    "${HOME}/work",
+    "--allowed-recipient",
+    "01parent-task",
+    "--dispatch-request-id",
+    "d9"
+   ]
+  },
+  {
+   "argv": [
+    "register",
+    "--parent-task",
+    "01parent-task",
+    "--parent-host",
+    "host-a",
+    "--child-task",
+    "01child-task",
+    "--child-host",
+    "host-a",
+    "--issue",
+    "REL-1",
+    "--artifact-root",
+    "${HOME}/work",
+    "--allowed-recipient",
+    "01parent-task",
+    "--dispatch-request-id",
+    "dispatch-1",
+    "--dispatch-turn-id",
+    "turn-dispatch-1",
+    "--parent-settings",
+    "{\"sandbox\": {\"type\": \"workspaceWrite\", \"writableRoots\": [], \"networkAccess\": false, \"excludeTmpdirEnvVar\": false, \"excludeSlashTmp\": false}, \"approvalPolicy\": \"never\", \"cwd\": \"/parent\", \"runtimeWorkspaceRoots\": [\"/parent\"], \"model\": \"anthropic/claude-opus-5\", \"reasoningEffort\": \"xhigh\"}"
+   ]
+  }
+ ],
+ "argparse_stray_positional": [
+  {
+   "argv": [
+    "register",
+    "--parent-task",
+    "01parent-two",
+    "01parent-task",
+    "--parent-host",
+    "host-a",
+    "--child-task",
+    "01child-task",
+    "--child-host",
+    "host-a",
+    "--issue",
+    "REL-1",
+    "--artifact-root",
+    "${HOME}/work",
+    "--allowed-recipient",
+    "01parent-task",
+    "--dispatch-request-id",
+    "dispatch-1",
+    "--dispatch-turn-id",
+    "turn-dispatch-1",
+    "--project",
+    "PROJ-1"
+   ]
+  }
+ ],
+ "contested_project": [
+  {
+   "argv": [
+    "settings-show",
+    "--task",
+    "nobody"
+   ]
+  },
+  {
+   "sql": "INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key, task_id, host_id, cwd, cxc_session, status, revision, supersedes, superseded_by, handover_note, created_at, updated_at) VALUES ('bnd-seeded','parent','project','PROJ-1','01parent-two','host-a','/other','cxc-other','active',1,NULL,NULL,NULL,'t','t')"
+  },
+  {
+   "argv": [
+    "register",
+    "--parent-task",
+    "01parent-task",
+    "--parent-host",
+    "host-a",
+    "--child-task",
+    "01child-task",
+    "--child-host",
+    "host-a",
+    "--issue",
+    "REL-1",
+    "--artifact-root",
+    "${HOME}/work",
+    "--allowed-recipient",
+    "01parent-task",
+    "--dispatch-request-id",
+    "dispatch-1",
+    "--dispatch-turn-id",
+    "turn-dispatch-1",
+    "--project",
+    "PROJ-1"
+   ]
+  },
+  {
+   "argv": [
+    "register",
+    "--parent-task",
+    "01parent-task",
+    "--parent-host",
+    "host-a",
+    "--child-task",
+    "01child-task",
+    "--child-host",
+    "host-a",
+    "--issue",
+    "REL-1",
+    "--artifact-root",
+    "${HOME}/work",
+    "--allowed-recipient",
+    "01parent-task",
+    "--dispatch-request-id",
+    "dispatch-1",
+    "--dispatch-turn-id",
+    "turn-dispatch-1",
+    "--project",
+    "PROJ-1"
+   ]
+  }
+ ],
+ "project_attach": [
+  {
+   "argv": [
+    "settings-show",
+    "--task",
+    "nobody"
+   ]
+  },
+  {
+   "sql": "INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key, task_id, host_id, cwd, cxc_session, status, revision, supersedes, superseded_by, handover_note, created_at, updated_at) VALUES ('bnd-seeded','parent','project','PROJ-1','01parent-task','host-a','/other','cxc-other','active',1,NULL,NULL,NULL,'t','t')"
+  },
+  {
+   "argv": [
+    "register",
+    "--parent-task",
+    "01parent-task",
+    "--parent-host",
+    "host-a",
+    "--child-task",
+    "01child-task",
+    "--child-host",
+    "host-a",
+    "--issue",
+    "REL-1",
+    "--artifact-root",
+    "${HOME}/work",
+    "--allowed-recipient",
+    "01parent-task",
+    "--dispatch-request-id",
+    "dispatch-1",
+    "--dispatch-turn-id",
+    "turn-dispatch-1",
+    "--project",
+    "PROJ-1",
+    "--child-role",
+    "child",
+    "--child-settings",
+    "{\"sandbox\": {\"type\": \"workspaceWrite\", \"writableRoots\": [], \"networkAccess\": false, \"excludeTmpdirEnvVar\": false, \"excludeSlashTmp\": false}, \"approvalPolicy\": \"never\", \"cwd\": \"/w\", \"runtimeWorkspaceRoots\": [\"/w\"], \"model\": \"m\", \"reasoningEffort\": \"x\", \"environments\": []}"
+   ]
+  },
+  {
+   "argv": [
+    "settings-show",
+    "--task",
+    "01child-task"
+   ]
+  },
+  {
+   "argv": [
+    "relationship-status",
+    "--relationship",
+    "rel-46d5b5ac690ef861",
+    "--status",
+    "paused",
+    "--actor",
+    "u"
+   ]
+  },
+  {
+   "argv": [
+    "settings-record",
+    "--task",
+    "01child-task",
+    "--settings",
+    "{\"sandbox\": {\"type\": \"workspaceWrite\"}, \"approvalPolicy\": \"never\", \"cwd\": \"/w\", \"runtimeWorkspaceRoots\": [\"/w\"], \"model\": \"m\", \"reasoningEffort\": \"x\", \"environments\": []}",
+    "--role",
+    "parent"
+   ]
+  }
+ ],
+ "host_errors": [
+  {
+   "argv": [
+    "register",
+    "--parent-task",
+    "01parent-task",
+    "--parent-host",
+    "host-a",
+    "--child-task",
+    "01child-task",
+    "--child-host",
+    "host-a",
+    "--issue",
+    "REL-1",
+    "--artifact-root",
+    "/w",
+    "--allowed-recipient",
+    "01parent-task",
+    "--dispatch-request-id",
+    "d",
+    "--parent-settings",
+    "@${HOME}/missing.json"
+   ]
+  },
+  {
+   "argv": [
+    "register",
+    "--parent-task",
+    "01parent-task",
+    "--parent-host",
+    "host-a",
+    "--child-task",
+    "01child-task",
+    "--child-host",
+    "host-a",
+    "--issue",
+    "REL-1",
+    "--artifact-root",
+    "/w",
+    "--allowed-recipient",
+    "01parent-task",
+    "--dispatch-request-id",
+    "d",
+    "--parent-settings",
+    "{not json"
+   ]
+  },
+  {
+   "argv": [
+    "settings-show",
+    "--task",
+    "01parent-task"
+   ]
+  },
+  {
+   "argv": [
+    "admit-turn",
+    "--relationship",
+    "r",
+    "--generation",
+    "1",
+    "--turn",
+    " ",
+    "--actor",
+    "a"
+   ]
+  }
+ ]
+}

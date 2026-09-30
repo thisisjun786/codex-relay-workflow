@@ -3,35 +3,26 @@ package contracttest
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// Test_every_mcp_reply_equals_the_python_servers_whole_json replays the steps recorded by
-// internal/bridge/mcp/testdata/gen_mcp_python.py through the built `crw bridge` against the Go
-// port of the same FakeServer, and compares each whole reply -- isError, the text content
-// (parsed when it is JSON) and structuredContent -- with what the Python server sent: every
-// receipt, refusal and read reply the tools produce, success and failure alike.
+// Test_every_mcp_reply_equals_the_python_servers_whole_json replays the steps
+// gen_mcp_python.py drove (testdata/fixtures/mcp-steps.json) through the built `crw bridge`
+// against the Go port of the same FakeServer, and holds each whole reply -- isError, the text
+// content (parsed when it is JSON) and structuredContent -- to its golden, first taken as what the
+// Python server sent: every receipt, refusal and read reply the tools produce, success and failure
+// alike.
 func Test_every_mcp_reply_equals_the_python_servers_whole_json(t *testing.T) {
-	root, err := Root()
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(filepath.Join(root, "internal", "bridge", "mcp", "testdata", "mcp_python.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var recorded struct {
-		Steps   []map[string]any `json:"steps"`
-		Results []any            `json:"results"`
-	}
-	if err := json.Unmarshal(raw, &recorded); err != nil {
+	var steps []map[string]any
+	if err := json.Unmarshal(golden.Fixture(t, "mcp-steps.json"), &steps); err != nil {
 		t.Fatal(err)
 	}
 	binary, err := crwBinary()
@@ -52,7 +43,7 @@ func Test_every_mcp_reply_equals_the_python_servers_whole_json(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = session.Close() }()
-	for i, step := range recorded.Steps {
+	for i, step := range steps {
 		if step["tool"] == "get_active_turn" {
 			// The generator makes the thread's newest turn run before this step.
 			if err := host.set([]any{"threads", "thread-1", "status"}, map[string]any{"type": "active", "activeFlags": []any{}}); err != nil {
@@ -72,11 +63,7 @@ func Test_every_mcp_reply_equals_the_python_servers_whole_json(t *testing.T) {
 			t.Fatalf("step %d %v: %v", i, step["tool"], err)
 		}
 		got := scrubReply(t, result, caseDir, host.server.SocketPath)
-		if want := recorded.Results[i]; !reflect.DeepEqual(got, want) {
-			gotJSON, _ := json.MarshalIndent(got, "", " ")
-			wantJSON, _ := json.MarshalIndent(want, "", " ")
-			t.Errorf("step %d %v differs from Python\n got: %s\nwant: %s", i, step["tool"], gotJSON, wantJSON)
-		}
+		golden.CheckJSON(t, fmt.Sprintf("step %02d %s", i, stringValue(step["tool"])), got)
 	}
 }
 
