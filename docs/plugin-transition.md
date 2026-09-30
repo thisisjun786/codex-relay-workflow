@@ -56,18 +56,14 @@ What the tool did that is still needed has another home:
 
 ## A host that still needs it
 
-A host this repository cannot see may still carry a manual install. Run the tool from a revision
-before the native wiring, where it still runs and this page is still the full reference. The
-revisions between the native wiring and the tool's deletion carry it, but their `transition`,
-`disable` and `remove` refuse. `53caad67` on `dev` is one such earlier revision:
-
-```sh
-git worktree add --detach /path/to/transition 53caad67
-cd /path/to/transition && python3 scripts/plugin_transition.py inspect
-```
-
-Its preflight requires `<dest>/current/bin/python3` and a cached payload equal to that revision's,
-so it moves only a host still on the Python runtime and the pre-native payload.
+A host this repository cannot see may still carry a manual install. The tool that moved one,
+`scripts/plugin_transition.py`, read a host still on the Python runtime and the pre-native
+payload (its preflight required `<dest>/current/bin/python3` and a cached payload equal to its
+revision's), so it belongs to a revision before the native wiring, such as `53caad67` on `dev`,
+where it still runs and this page was the full reference; the revisions between the native wiring
+and its deletion carry it, but their `transition`, `disable` and `remove` refuse. Nothing in this
+revision runs it: the Python runtime it served left the repository in todo 44, and such a host
+moves through [the cutover](port/cutover.md) from a revision before that.
 
 ## Approval policy
 

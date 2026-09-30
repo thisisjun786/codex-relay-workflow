@@ -9,7 +9,7 @@ is the one that record supports, including where that record withholds. Every va
 is that example's stated assumption rather than an observation, and the outcome is what those
 assumptions force rather than a report about a machine. That record describes Python-era installs,
 virtual environments with an install mode and an interpreter, which is the shape the Python fence
-installer records until the Python execution path is removed; a Go install records a runtime
+installer recorded until todo 44 removed it; a Go install records a runtime
 directory, a `binaryDigest` and a `target` instead (OPS-1.1).
 
 ## Situation

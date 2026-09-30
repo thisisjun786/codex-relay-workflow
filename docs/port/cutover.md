@@ -311,6 +311,11 @@ Details that matter:
 
 ## Steps 0-7
 
+These steps ran on the owner's host at todo 42 and were committed at todo 43. Their Python half,
+the fence release Step 0 installs and the Python candidate a rollback launches, left the repository
+in todo 44 (decision 48), so this page is the record of what ran; a host still on the Python
+runtime would run it from a revision before that.
+
 Each step names what the controller does, then its failure branch and recovery. No step deletes
 `D-wal` or `D-shm`, and no step creates an alternate empty database.
 

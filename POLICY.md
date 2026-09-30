@@ -82,8 +82,8 @@ The release workflow is manual and owner-controlled.
 
 | Evidence | What it establishes |
 | --- | --- |
-| Skill metadata, local links and Python syntax | Repository structure and readable source |
-| Installer subprocess tests in temporary destinations | Idempotence and preservation of conflicting files, directories and links |
+| Skill metadata, local links and the syntax of the Python developer tools left | Repository structure and readable source |
+| Installer and skill-linker tests in temporary destinations (Go) | Idempotence and preservation of conflicting files, directories and links |
 | CI-control negative tests | Missing, malformed, failed, cancelled or skipped prerequisites cannot pass the aggregator; main-target PRs and invalid release sources are rejected |
 | Go lint, the Go test suite with the contract corpus, static release binaries and the isolated-home install | The Go runtime builds, passes its tests and installs and wires from this checkout |
 | Pinned secret scan of available Git history | No finding under the reviewed scanner configuration in that fetched history |
@@ -99,14 +99,15 @@ in the PR; reuse evidence only while its bytes, criteria and environment remain
 applicable. A structural test does not prove the workflow's meaning, and a fixture
 replay does not prove an actual Codex hook, relay delivery or Desktop behavior.
 
-The skill and installer checks use Python's standard library and temporary
-synthetic data; the Go checks need only the Go toolchain `go.mod` names. Pin any
+The Go checks need only the Go toolchain `go.mod` names and temporary synthetic
+data; the CI checks' Python twins, developer tools listed in
+`scripts/dev/ALLOWED_PYTHON.txt` until todo 48, use Python's standard library. Pin any
 downloaded tooling by version, commit and checksum, and keep fixtures synthetic
 and local. Ordinary CI does not need a
 contributor's Codex, CXC, Paperthin, Linear account, App Server socket or user
 skill installation. `crw-dev skills link` in the development binary links a checkout's skills
-(its Python predecessor, `scripts/install.py`, left in todo 44). Validate the
-documented minimum Python version in CI; cross-platform symlink behavior and
+(its Python predecessor, `scripts/install.py`, left in todo 44). While the twins
+remain, CI runs them on the documented minimum Python version; cross-platform symlink behavior and
 actual host compatibility need their own evidence before claiming support.
 
 Use hosted Linux runners, pinned Action commits, bounded timeouts and a

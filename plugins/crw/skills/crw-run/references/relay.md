@@ -4,8 +4,9 @@ Read when an assignment is actually HELD BY A RELAY. Ordinary `crw-run` does not
 this: without a relay the existing dispatch, review, and correction rules stand unchanged, and
 nothing below becomes a prerequisite.
 
-`codex-session-relay` is the relay of the installed runtime: the `crw` binary under that name on a
-Go runtime, or the Python fence release's console script on a host the cutover has not yet moved. It
+`codex-session-relay` is the relay of the installed runtime: the `crw` binary under that name. (A
+host the cutover has not moved still runs the Python fence release's console script, which left this
+repository in todo 44; move it through the cutover before relying on this page.) It
 records one issue's assignment durably: the relationship, its execution generations, each delivery attempt, the
 parent's acknowledgement and verdict, and the coordination summary owed to a Linear document. It owns none of that
 workflow's authority. It does not read or write any task's CXC state, and CXC startup and phase
@@ -25,8 +26,7 @@ finds first. The runtime installer places that name in `~/.local/share/crw-runti
 and does not manage `PATH`. Before relying on a result, check that
 `readlink -f "$(command -v codex-session-relay)"` lies inside the runtime directory the pointer
 selects, `readlink -f ~/.local/share/crw-runtime/current`, and not in an older copy earlier on
-`PATH`. That is the directory's `bin/crw` on a Go runtime (`bin-<version>-<digest>`), and its
-`bin/codex-session-relay` on a Python fence runtime (`env-*`) before the cutover. Or run the relay
+`PATH`. That is the directory's `bin/crw` (`bin-<version>-<digest>`). Or run the relay
 by that absolute path
 ([how skill commands reach the relay](../../../../../docs/runtime-install.md#how-skill-commands-reach-the-relay)).
 
@@ -142,11 +142,12 @@ what reports a real assignment as absent from whatever store answers there, or r
 6. `doctor --issue <issue>` again — expect `holds` true, the responsible child, and
    `storeAgreement` `same`.
 
-`tests/test_managed_execution.py` in the Python relay package runs exactly this sequence against a
-real store and asserts the chain, and `Test27_MEX_1_PythonInstructedSequenceWholeOutput` in
+`tests/test_managed_execution.py` in the Python relay package ran exactly this sequence against a
+real store and asserted the chain until todo 44 removed that package, and
+`Test27_MEX_1_PythonInstructedSequenceWholeOutput` in
 [the Go runtime's managed tests](../../../../../internal/relay/managed/capture_test.go) holds the Go
-relay's output for the same sequence equal to it, so an instruction that stopped producing it fails
-there. It covers
+relay's output for the same sequence equal to its recorded answer, so an instruction that stopped
+producing it fails there. It covers
 managed START only: an offline `emit` stages and a staged receipt has no delivery row, and
 `deliver` needs the socket, so the delivery and correction legs are asserted against a real store
 through the fake host instead. Note that the doc and the test are not yet compared automatically —
